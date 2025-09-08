@@ -1,10 +1,13 @@
 use std::path::Path;
 use crate::{
-    data::Data1D,
+    data::{Data1D, DataShader},
     render::{Color, LineStyle, MarkerStyle, Theme},
     render::skia::{SkiaRenderer, calculate_plot_area, map_data_to_pixels, generate_ticks},
     core::{Position, PlottingError, Result},
 };
+
+#[cfg(feature = "parallel")]
+use crate::render::{ParallelRenderer, SeriesRenderData};
 
 /// Main Plot struct - the core API entry point
 /// 
@@ -36,6 +39,9 @@ pub struct Plot {
     scientific_notation: bool,
     /// Auto-generate colors for series without explicit colors
     auto_color_index: usize,
+    #[cfg(feature = "parallel")]
+    /// Parallel renderer for performance optimization
+    parallel_renderer: ParallelRenderer,
 }
 
 /// Configuration for a single data series
@@ -131,6 +137,8 @@ impl Plot {
             margin: None,
             scientific_notation: false,
             auto_color_index: 0,
+            #[cfg(feature = "parallel")]
+            parallel_renderer: ParallelRenderer::new(),
         }
     }
     
@@ -139,6 +147,29 @@ impl Plot {
         let mut plot = Self::new();
         plot.theme = theme;
         plot
+    }
+
+    
+    /// Set the theme for the plot (fluent API)
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
+        self
+    }
+    
+    /// Configure parallel rendering settings
+    #[cfg(feature = "parallel")]
+    pub fn with_parallel(mut self, threads: Option<usize>) -> Self {
+        if let Some(thread_count) = threads {
+            self.parallel_renderer = ParallelRenderer::with_threads(thread_count);
+        }
+        self
+    }
+    
+    /// Set parallel processing threshold
+    #[cfg(feature = "parallel")]
+    pub fn parallel_threshold(mut self, threshold: usize) -> Self {
+        self.parallel_renderer = self.parallel_renderer.with_threshold(threshold);
+        self
     }
     
     /// Set the plot title
@@ -407,6 +438,64 @@ impl Plot {
         Ok(())
     }
     
+    /// Helper method to render a single series using normal (non-DataShader) rendering
+    fn render_series_normal(
+        &self,
+        series: &PlotSeries,
+        renderer: &mut SkiaRenderer,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
+        let line_width = series.line_width.unwrap_or(2.0);
+        let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        
+        match &series.series_type {
+            SeriesType::Line { x_data, y_data } => {
+                let points: Vec<(f32, f32)> = x_data.iter()
+                    .zip(y_data.iter())
+                    .map(|(&x, &y)| {
+                        crate::render::skia::map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area)
+                    })
+                    .collect();
+                
+                renderer.draw_polyline(&points, color, line_width, line_style)?;
+            }
+            SeriesType::Scatter { x_data, y_data } => {
+                let marker_size = 6.0; // Default marker size
+                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                
+                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
+                    let (px, py) = crate::render::skia::map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
+                    renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                }
+            }
+            SeriesType::Bar { values, .. } => {
+                // Simple bar rendering
+                let bar_width = plot_area.width() / values.len() as f32 * 0.8;
+                for (i, &value) in values.iter().enumerate() {
+                    let x = i as f64;
+                    let (px, py) = crate::render::skia::map_data_to_pixels(x, value, x_min, x_max, y_min, y_max, plot_area);
+                    let (_, py_zero) = crate::render::skia::map_data_to_pixels(x, 0.0, x_min, x_max, y_min, y_max, plot_area);
+                    renderer.draw_rectangle(
+                        px - bar_width / 2.0, 
+                        py.min(py_zero), 
+                        bar_width, 
+                        (py - py_zero).abs(), 
+                        color, 
+                        true
+                    )?;
+                }
+            }
+            _ => {} // Other plot types not implemented yet
+        }
+        
+        Ok(())
+    }
+
     /// Render the plot to an in-memory image
     pub fn render(&self) -> Result<Image> {
         // Validate we have at least one series
@@ -461,7 +550,25 @@ impl Plot {
             }
         }
 
-        // Create renderer
+        // Check if DataShader optimization should be used
+        let total_points = self.calculate_total_points();
+        let use_datashader = DataShader::should_activate(total_points);
+        
+        if use_datashader {
+            // Use DataShader for large datasets
+            return self.render_with_datashader();
+        }
+        
+        // Check if parallel processing should be used
+        #[cfg(feature = "parallel")]
+        {
+            let series_count = self.series.len();
+            if self.parallel_renderer.should_use_parallel(series_count, total_points) {
+                return self.render_with_parallel();
+            }
+        }
+        
+        // Create renderer for standard rendering
         let mut renderer = SkiaRenderer::new(self.dimensions.0, self.dimensions.1, self.theme.clone())?;
         
         // Calculate plot area with margins
@@ -660,6 +767,404 @@ impl Plot {
         Ok(renderer.to_image())
     }
     
+    /// Calculate total number of data points across all series
+    fn calculate_total_points(&self) -> usize {
+        self.series.iter().map(|series| {
+            match &series.series_type {
+                SeriesType::Line { x_data, .. } |
+                SeriesType::Scatter { x_data, .. } |
+                SeriesType::ErrorBars { x_data, .. } |
+                SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
+                SeriesType::Bar { categories, .. } => categories.len(),
+            }
+        }).sum()
+    }
+    
+    /// Render plot using DataShader optimization for large datasets
+    fn render_with_datashader(&self) -> Result<Image> {
+        // Calculate combined data bounds across all series
+        let mut all_points = Vec::new();
+        
+        // Collect all points from all series
+        for series in &self.series {
+            match &series.series_type {
+                SeriesType::Line { x_data, y_data } |
+                SeriesType::Scatter { x_data, y_data } => {
+                    for i in 0..x_data.len() {
+                        let x = x_data[i];
+                        let y = y_data[i];
+                        if x.is_finite() && y.is_finite() {
+                            all_points.push(crate::core::types::Point2f::new(x as f32, y as f32));
+                        }
+                    }
+                }
+                SeriesType::ErrorBars { x_data, y_data, .. } |
+                SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                    for i in 0..x_data.len() {
+                        let x = x_data[i];
+                        let y = y_data[i];
+                        if x.is_finite() && y.is_finite() {
+                            all_points.push(crate::core::types::Point2f::new(x as f32, y as f32));
+                        }
+                    }
+                }
+                SeriesType::Bar { values, .. } => {
+                    // For bar charts, convert category indices to points
+                    for (i, &value) in values.iter().enumerate() {
+                        if value.is_finite() {
+                            all_points.push(crate::core::types::Point2f::new(i as f32, value as f32));
+                        }
+                    }
+                }
+            }
+        }
+        
+        if all_points.is_empty() {
+            return Err(PlottingError::EmptyDataSet);
+        }
+        
+        // Simple DataShader implementation - create basic aggregated image
+        let mut datashader = DataShader::with_canvas_size(
+            self.dimensions.0 as usize, 
+            self.dimensions.1 as usize
+        );
+        
+        // Convert points to (f64, f64) format for aggregation
+        let points_f64: Vec<(f64, f64)> = all_points.iter()
+            .map(|p| (p.x as f64, p.y as f64))
+            .collect();
+        
+        // Aggregate points (this will auto-set bounds)
+        let x_data: Vec<f64> = points_f64.iter().map(|p| p.0).collect();
+        let y_data: Vec<f64> = points_f64.iter().map(|p| p.1).collect();
+        
+        datashader.aggregate(&x_data, &y_data)?;
+        let ds_image = datashader.render();
+        
+        // Convert to Image format
+        let image = Image {
+            width: ds_image.width as u32,
+            height: ds_image.height as u32,
+            pixels: ds_image.pixels,
+        };
+        
+        Ok(image)
+    }
+    
+    /// Render plot using parallel processing for multiple series
+    #[cfg(feature = "parallel")]
+    fn render_with_parallel(&self) -> Result<Image> {
+        use crate::render::parallel::{DataBounds, PlotArea, RenderSeriesType};
+        
+        // Start timing for performance measurement
+        let start_time = std::time::Instant::now();
+        
+        // Create renderer
+        let mut renderer = SkiaRenderer::new(self.dimensions.0, self.dimensions.1, self.theme.clone())?;
+        let plot_area = calculate_plot_area(self.dimensions.0, self.dimensions.1, 0.15);
+        
+        // Convert to parallel renderer format
+        let parallel_plot_area = PlotArea {
+            left: plot_area.left(),
+            right: plot_area.right(),
+            top: plot_area.top(),
+            bottom: plot_area.bottom(),
+        };
+        
+        // Calculate data bounds across all series (sequential - small operation)
+        let bounds = self.calculate_data_bounds()?;
+        let data_bounds = DataBounds {
+            x_min: bounds.0,
+            x_max: bounds.1,
+            y_min: bounds.2,
+            y_max: bounds.3,
+        };
+        
+        // Generate nice tick values
+        let x_ticks = generate_ticks(bounds.0, bounds.1, 8);
+        let y_ticks = generate_ticks(bounds.2, bounds.3, 6);
+        
+        // Convert ticks to pixel coordinates
+        let x_tick_pixels: Vec<f32> = x_ticks.iter()
+            .map(|&tick| map_data_to_pixels(tick, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).0)
+            .collect();
+        let y_tick_pixels: Vec<f32> = y_ticks.iter()
+            .map(|&tick| map_data_to_pixels(0.0, tick, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1)
+            .collect();
+        
+        // Draw grid if enabled (sequential - UI elements)
+        if self.grid.enabled {
+            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid)?;
+        }
+        
+        // Draw axes (sequential - UI elements)
+        renderer.draw_axes(plot_area, &x_tick_pixels, &y_tick_pixels, self.theme.foreground)?;
+        
+        // Process all series in parallel
+        let processed_series = self.parallel_renderer.process_series_parallel(
+            &self.series,
+            |series, index| -> Result<SeriesRenderData> {
+                // Get series styling with defaults
+                let color = series.color.unwrap_or_else(|| {
+                    self.theme.get_color(index)
+                });
+                let line_width = series.line_width.unwrap_or(self.theme.line_width);
+                let alpha = series.alpha.unwrap_or(1.0);
+                
+                // Process each series type
+                let render_series_type = match &series.series_type {
+                    SeriesType::Line { x_data, y_data } => {
+                        // Transform coordinates in parallel
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            x_data, 
+                            y_data, 
+                            data_bounds.clone(), 
+                            parallel_plot_area.clone()
+                        )?;
+                        
+                        // Process line segments in parallel
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            series.line_style.clone().unwrap_or(LineStyle::Solid),
+                            color,
+                            line_width,
+                        )?;
+                        
+                        RenderSeriesType::Line { segments }
+                    }
+                    SeriesType::Scatter { x_data, y_data } => {
+                        // Transform coordinates in parallel
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            x_data, 
+                            y_data, 
+                            data_bounds.clone(), 
+                            parallel_plot_area.clone()
+                        )?;
+                        
+                        // Process markers in parallel
+                        let markers = self.parallel_renderer.process_markers_parallel(
+                            &points,
+                            series.marker_style.unwrap_or(MarkerStyle::Circle),
+                            color,
+                            8.0, // Default marker size
+                        )?;
+                        
+                        RenderSeriesType::Scatter { markers }
+                    }
+                    SeriesType::Bar { categories, values } => {
+                        // Convert categories to x-coordinates
+                        let x_data: Vec<f64> = (0..categories.len()).map(|i| i as f64).collect();
+                        
+                        // Transform coordinates
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &x_data, 
+                            values, 
+                            data_bounds.clone(), 
+                            parallel_plot_area.clone()
+                        )?;
+                        
+                        // Create bar instances
+                        let bar_width = if categories.len() > 1 {
+                            let available_width = parallel_plot_area.width() * 0.8;
+                            (available_width / categories.len() as f32).min(40.0)
+                        } else {
+                            40.0
+                        };
+                        
+                        let baseline_y = map_data_to_pixels(0.0, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                        
+                        let bars = points.iter().enumerate().map(|(i, point)| {
+                            let height = (baseline_y - point.y).abs();
+                            crate::render::parallel::BarInstance {
+                                x: point.x - bar_width * 0.5,
+                                y: if values[i] >= 0.0 { point.y } else { baseline_y },
+                                width: bar_width,
+                                height,
+                                color,
+                            }
+                        }).collect();
+                        
+                        RenderSeriesType::Bar { bars }
+                    }
+                    SeriesType::ErrorBars { x_data, y_data, .. } |
+                    SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                        // For now, render error bars as scatter points
+                        // Full error bar implementation would be added here
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            x_data, 
+                            y_data, 
+                            data_bounds.clone(), 
+                            parallel_plot_area.clone()
+                        )?;
+                        
+                        let markers = self.parallel_renderer.process_markers_parallel(
+                            &points,
+                            MarkerStyle::Circle,
+                            color,
+                            6.0,
+                        )?;
+                        
+                        RenderSeriesType::Scatter { markers }
+                    }
+                };
+                
+                Ok(SeriesRenderData {
+                    series_type: render_series_type,
+                    color,
+                    line_width,
+                    alpha,
+                    label: series.label.clone(),
+                })
+            }
+        )?;
+        
+        // Render processed series (sequential - final drawing)
+        for processed in processed_series {
+            match processed.series_type {
+                RenderSeriesType::Line { segments } => {
+                    // Draw all line segments
+                    for segment in segments {
+                        renderer.draw_polyline(
+                            &[(segment.start.x, segment.start.y), (segment.end.x, segment.end.y)],
+                            segment.color,
+                            segment.width,
+                            segment.style,
+                        )?;
+                    }
+                }
+                RenderSeriesType::Scatter { markers } => {
+                    // Draw all markers
+                    for marker in markers {
+                        renderer.draw_marker(
+                            marker.position.x,
+                            marker.position.y,
+                            marker.size,
+                            marker.style,
+                            marker.color,
+                        )?;
+                    }
+                }
+                RenderSeriesType::Bar { bars } => {
+                    // Draw all bars
+                    for bar in bars {
+                        renderer.draw_rectangle(
+                            bar.x,
+                            bar.y,
+                            bar.width,
+                            bar.height,
+                            bar.color,
+                            true,
+                        )?;
+                    }
+                }
+                RenderSeriesType::ErrorBars { .. } => {
+                    // Error bars implementation would go here
+                }
+            }
+        }
+        
+        // Record performance statistics
+        let duration = start_time.elapsed();
+        let total_points = self.calculate_total_points();
+        
+        // Log performance info (could be optional/debug in production)
+        let stats = self.parallel_renderer.performance_stats();
+        println!("⚡ Parallel: {} series, {} points in {:.1}ms ({:.1}x speedup, {} threads)",
+                self.series.len(),
+                total_points,
+                duration.as_millis(),
+                stats.estimated_speedup,
+                stats.configured_threads);
+        
+        // Convert renderer output to Image
+        Ok(renderer.to_image())
+    }
+    
+    /// Calculate data bounds across all series
+    fn calculate_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
+        let mut x_min = f64::INFINITY;
+        let mut x_max = f64::NEG_INFINITY;
+        let mut y_min = f64::INFINITY;
+        let mut y_max = f64::NEG_INFINITY;
+        
+        for series in &self.series {
+            match &series.series_type {
+                SeriesType::Line { x_data, y_data } |
+                SeriesType::Scatter { x_data, y_data } => {
+                    for i in 0..x_data.len() {
+                        let x_val = x_data[i];
+                        let y_val = y_data[i];
+                        
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                }
+                SeriesType::Bar { categories, values } => {
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max((categories.len() - 1) as f64);
+                    
+                    for &val in values {
+                        if val.is_finite() {
+                            y_min = y_min.min(val.min(0.0));
+                            y_max = y_max.max(val.max(0.0));
+                        }
+                    }
+                }
+                SeriesType::ErrorBars { x_data, y_data, y_errors } => {
+                    for i in 0..x_data.len() {
+                        let x_val = x_data[i];
+                        let y_val = y_data[i];
+                        let y_err = y_errors[i];
+                        
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() && y_err.is_finite() {
+                            y_min = y_min.min(y_val - y_err);
+                            y_max = y_max.max(y_val + y_err);
+                        }
+                    }
+                }
+                SeriesType::ErrorBarsXY { x_data, y_data, x_errors, y_errors } => {
+                    for i in 0..x_data.len() {
+                        let x_val = x_data[i];
+                        let y_val = y_data[i];
+                        let x_err = x_errors[i];
+                        let y_err = y_errors[i];
+                        
+                        if x_val.is_finite() && x_err.is_finite() {
+                            x_min = x_min.min(x_val - x_err);
+                            x_max = x_max.max(x_val + x_err);
+                        }
+                        if y_val.is_finite() && y_err.is_finite() {
+                            y_min = y_min.min(y_val - y_err);
+                            y_max = y_max.max(y_val + y_err);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle edge cases
+        if (x_max - x_min).abs() < f64::EPSILON {
+            x_min -= 1.0;
+            x_max += 1.0;
+        }
+        if (y_max - y_min).abs() < f64::EPSILON {
+            y_min -= 1.0;
+            y_max += 1.0;
+        }
+        
+        Ok((x_min, x_max, y_min, y_max))
+    }
+    
     /// Save the plot to a PNG file
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         use crate::render::skia::SkiaRenderer;
@@ -736,57 +1241,87 @@ impl Plot {
         // Always draw axes
         renderer.draw_axes(plot_area, &x_tick_pixels, &y_tick_pixels, self.theme.foreground)?;
         
-        // Render each series
-        for series in &self.series {
-            let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
-            let line_width = series.line_width.unwrap_or(2.0);
-            let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
-            
+        // Draw axis labels and tick values
+        let x_label = self.xlabel.as_deref().unwrap_or("X");
+        let y_label = self.ylabel.as_deref().unwrap_or("Y");
+        renderer.draw_axis_labels(plot_area, x_min, x_max, y_min, y_max, x_label, y_label, self.theme.foreground)?;
+        
+        // Draw title if present
+        if let Some(ref title) = self.title {
+            renderer.draw_title(title, plot_area, self.theme.foreground)?;
+        }
+        
+        // Check if we should use DataShader for large datasets
+        let total_points: usize = self.series.iter().map(|series| {
             match &series.series_type {
-                SeriesType::Line { x_data, y_data } => {
-                    let points: Vec<(f32, f32)> = x_data.iter()
-                        .zip(y_data.iter())
-                        .map(|(&x, &y)| {
-                            crate::render::skia::map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area)
-                        })
-                        .collect();
-                    
-                    renderer.draw_polyline(&points, color, line_width, line_style)?;
-                }
-                SeriesType::Scatter { x_data, y_data } => {
-                    let marker_size = 6.0; // Default marker size
-                    let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-                    
-                    for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                        let (px, py) = crate::render::skia::map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
-                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
-                    }
-                }
-                SeriesType::Bar { values, .. } => {
-                    // Simple bar rendering
-                    let bar_width = plot_area.width() / values.len() as f32 * 0.8;
-                    for (i, &value) in values.iter().enumerate() {
-                        let x = i as f64;
-                        let (px, py) = crate::render::skia::map_data_to_pixels(x, value, x_min, x_max, y_min, y_max, plot_area);
-                        let (_, py_zero) = crate::render::skia::map_data_to_pixels(x, 0.0, x_min, x_max, y_min, y_max, plot_area);
-                        renderer.draw_rectangle(
-                            px - bar_width / 2.0, 
-                            py.min(py_zero), 
-                            bar_width, 
-                            (py - py_zero).abs(), 
-                            color, 
-                            true
-                        )?;
-                    }
-                }
-                _ => {} // Other plot types not implemented yet
+                SeriesType::Line { x_data, .. } |
+                SeriesType::Scatter { x_data, .. } |
+                SeriesType::ErrorBars { x_data, .. } |
+                SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
+                SeriesType::Bar { categories, .. } => categories.len(),
             }
+        }).sum();
+
+        const DATASHADER_THRESHOLD: usize = 100_000; // Activate DataShader for >100K points
+
+        if total_points > DATASHADER_THRESHOLD {
+            // Use DataShader for massive datasets - simplified version
+            use crate::data::DataShader;
+            
+            for series in &self.series {
+                match &series.series_type {
+                    SeriesType::Scatter { x_data, y_data } | 
+                    SeriesType::Line { x_data, y_data } => {
+                        let mut datashader = DataShader::with_canvas_size(
+                            plot_area.width() as usize,
+                            plot_area.height() as usize
+                        );
+                        
+                        datashader.aggregate(x_data, y_data)?;
+                        let image = datashader.render();
+                        
+                        // Draw the DataShader result
+                        renderer.draw_datashader_image(&image, plot_area)?;
+                    }
+                    _ => {
+                        // For other plot types, use normal rendering
+                        self.render_series_normal(series, &mut renderer, plot_area, x_min, x_max, y_min, y_max)?;
+                    }
+                }
+            }
+        } else {
+            // Use normal rendering for smaller datasets
+            for series in &self.series {
+                self.render_series_normal(series, &mut renderer, plot_area, x_min, x_max, y_min, y_max)?;
+            }
+        }
+        
+        // Collect legend items from series with labels
+        let legend_items: Vec<(String, crate::render::Color)> = self.series.iter()
+            .filter_map(|series| {
+                series.label.as_ref().map(|label| {
+                    let color = series.color.unwrap_or(self.theme.foreground);
+                    (label.clone(), color)
+                })
+            })
+            .collect();
+            
+        // Draw legend if there are labeled series
+        if !legend_items.is_empty() {
+            renderer.draw_legend(&legend_items, plot_area)?;
         }
         
         // Save as PNG
         renderer.save_png(path)?;
         
         Ok(())
+    }
+
+    /// Save the plot to a PNG file with custom dimensions
+    pub fn save_with_size<P: AsRef<Path>>(mut self, path: P, width: u32, height: u32) -> Result<()> {
+        // Update dimensions
+        self.dimensions = (width, height);
+        self.save(path)
     }
     
     /// Export to SVG format
@@ -951,6 +1486,12 @@ impl PlotSeriesBuilder {
     
     /// Save the plot to file
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
+        self.end_series().save(path)
+    }
+
+    /// Save the plot to file with custom dimensions
+    pub fn save_with_size<P: AsRef<Path>>(mut self, path: P, width: u32, height: u32) -> Result<()> {
+        self.plot.dimensions = (width, height);
         self.end_series().save(path)
     }
     

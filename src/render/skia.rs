@@ -1,5 +1,6 @@
 use std::path::Path;
 use tiny_skia::*;
+// use fontdue::{Font, FontSettings}; // Temporarily disabled
 use crate::{
     core::{PlottingError, Result, plot::Image},
     render::{Color, LineStyle, MarkerStyle, Theme},
@@ -12,6 +13,7 @@ pub struct SkiaRenderer {
     pixmap: Pixmap,
     paint: Paint<'static>,
     theme: Theme,
+    // font: Font, // Temporarily disabled - will implement proper text rendering later
 }
 
 impl SkiaRenderer {
@@ -26,12 +28,16 @@ impl SkiaRenderer {
         
         let paint = Paint::default();
         
+        // Load embedded DejaVu Sans font
+        // Font loading temporarily disabled - will implement proper text rendering later
+        
         Ok(Self {
             width,
             height,
             pixmap,
             paint,
             theme,
+            // font, // Temporarily disabled
         })
     }
     
@@ -267,6 +273,189 @@ impl SkiaRenderer {
             if y >= plot_area.top() && y <= plot_area.bottom() {
                 self.draw_line(plot_area.left() - tick_size, y, plot_area.left(), y, color, 1.0, LineStyle::Solid)?;
             }
+        }
+        
+        Ok(())
+    }
+
+    
+    /// Draw a DataShader aggregated image
+    pub fn draw_datashader_image(&mut self, image: &crate::data::DataShaderImage, plot_area: Rect) -> Result<()> {
+        // Create a pixmap from the DataShader image data
+        let mut datashader_pixmap = Pixmap::new(image.width as u32, image.height as u32)
+            .ok_or(PlottingError::OutOfMemory)?;
+            
+        // Copy the RGBA data from DataShader
+        if image.pixels.len() != (image.width * image.height * 4) {
+            return Err(PlottingError::RenderError(
+                "Invalid DataShader image pixel data".to_string()
+            ));
+        }
+        
+        // Convert RGBA u8 data to tiny-skia's format
+        let pixmap_data = datashader_pixmap.data_mut();
+        for (i, chunk) in image.pixels.chunks_exact(4).enumerate() {
+            let r = chunk[0];
+            let g = chunk[1]; 
+            let b = chunk[2];
+            let a = chunk[3];
+            
+            // tiny-skia uses premultiplied alpha BGRA format
+            let alpha_f = a as f32 / 255.0;
+            let premult_r = ((r as f32 * alpha_f) as u8);
+            let premult_g = ((g as f32 * alpha_f) as u8);
+            let premult_b = ((b as f32 * alpha_f) as u8);
+            
+            // BGRA order for tiny-skia
+            pixmap_data[i * 4] = premult_b;
+            pixmap_data[i * 4 + 1] = premult_g;
+            pixmap_data[i * 4 + 2] = premult_r;
+            pixmap_data[i * 4 + 3] = a;
+        }
+        
+        // Scale and draw the DataShader image onto the plot area
+        let src_rect = Rect::from_xywh(0.0, 0.0, image.width as f32, image.height as f32)
+            .ok_or(PlottingError::RenderError("Invalid source rect".to_string()))?;
+            
+        let transform = Transform::from_scale(
+            plot_area.width() / image.width as f32,
+            plot_area.height() / image.height as f32,
+        ).post_translate(plot_area.x(), plot_area.y());
+        
+        self.pixmap.draw_pixmap(
+            plot_area.x() as i32,
+            plot_area.y() as i32,
+            datashader_pixmap.as_ref(),
+            &PixmapPaint::default(),
+            Transform::identity(),
+            None
+        );
+        
+        Ok(())
+    }
+
+    /// Draw text at the specified position (placeholder implementation)
+    pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        // Temporary placeholder: draw a rectangle where text would be
+        // This allows us to test the rest of the functionality
+        let text_width = text.len() as f32 * size * 0.6; // Rough estimate
+        let text_height = size;
+        
+        // Draw a simple rectangle as placeholder for text
+        self.draw_rectangle(x, y - text_height, text_width, text_height, color, false)?;
+        
+        Ok(())
+    }
+    
+    /// Draw axis labels and tick values
+    pub fn draw_axis_labels(&mut self, plot_area: Rect, x_min: f64, x_max: f64, y_min: f64, y_max: f64, 
+                           x_label: &str, y_label: &str, color: Color) -> Result<()> {
+        let label_size = 14.0;
+        let tick_size = 10.0;
+        
+        // Generate and draw X-axis tick labels
+        let x_ticks = generate_ticks(x_min, x_max, 5);
+        for (i, &tick_value) in x_ticks.iter().enumerate() {
+            let x_pixel = plot_area.left() + (tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
+            let label_text = if tick_value.abs() < 0.001 {
+                "0".to_string()
+            } else if tick_value.abs() > 1000.0 {
+                format!("{:.0e}", tick_value)
+            } else {
+                format!("{:.1}", tick_value)
+            };
+            
+            self.draw_text(&label_text, x_pixel - 15.0, plot_area.bottom() + 20.0, tick_size, color)?;
+        }
+        
+        // Generate and draw Y-axis tick labels
+        let y_ticks = generate_ticks(y_min, y_max, 5);
+        for (i, &tick_value) in y_ticks.iter().enumerate() {
+            let y_pixel = plot_area.bottom() - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+            let label_text = if tick_value.abs() < 0.001 {
+                "0".to_string()
+            } else if tick_value.abs() > 1000.0 {
+                format!("{:.0e}", tick_value)
+            } else {
+                format!("{:.1}", tick_value)
+            };
+            
+            self.draw_text(&label_text, plot_area.left() - 50.0, y_pixel + 5.0, tick_size, color)?;
+        }
+        
+        // Draw X-axis label
+        let x_label_x = plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * 4.0;
+        let x_label_y = plot_area.bottom() + 50.0;
+        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
+        
+        // Draw Y-axis label (rotated text simulation - just place it vertically)
+        let y_label_x = 20.0;
+        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
+        self.draw_text(y_label, y_label_x, y_label_y, label_size, color)?;
+        
+        Ok(())
+    }
+    
+    /// Draw title
+    pub fn draw_title(&mut self, title: &str, plot_area: Rect, color: Color) -> Result<()> {
+        let title_size = 16.0;
+        let title_x = plot_area.left() + plot_area.width() / 2.0 - title.len() as f32 * 5.0;
+        let title_y = plot_area.top() - 20.0;
+        self.draw_text(title, title_x, title_y, title_size, color)
+    }
+    
+    /// Draw legend
+    pub fn draw_legend(&mut self, legend_items: &[(String, Color)], plot_area: Rect) -> Result<()> {
+        if legend_items.is_empty() {
+            return Ok(());
+        }
+        
+        let legend_size = 12.0;
+        let legend_spacing = 20.0;
+        let legend_x = plot_area.right() - 150.0;
+        let mut legend_y = plot_area.top() + 30.0;
+        
+        // Draw legend background (simple rectangle)
+        let legend_bg = Rect::from_xywh(
+            legend_x - 10.0, 
+            legend_y - 15.0,
+            140.0,
+            legend_items.len() as f32 * legend_spacing + 10.0
+        ).ok_or(PlottingError::InvalidData { 
+            message: "Invalid legend dimensions".to_string(),
+            position: None 
+        })?;
+        
+        self.draw_rectangle(
+            legend_bg.left(), 
+            legend_bg.top(), 
+            legend_bg.width(), 
+            legend_bg.height(), 
+            Color::new_rgba(255, 255, 255, 200), 
+            true
+        )?;
+        
+        // Draw legend items
+        for (label, color) in legend_items {
+            // Draw color square
+            let color_rect = Rect::from_xywh(legend_x, legend_y - 8.0, 12.0, 12.0)
+                .ok_or(PlottingError::InvalidData { 
+                message: "Invalid legend item dimensions".to_string(),
+                position: None 
+            })?;
+            self.draw_rectangle(
+                color_rect.left(), 
+                color_rect.top(), 
+                color_rect.width(), 
+                color_rect.height(), 
+                *color, 
+                true
+            )?;
+            
+            // Draw label text
+            self.draw_text(label, legend_x + 20.0, legend_y, legend_size, Color::new_rgba(0, 0, 0, 255))?;
+            
+            legend_y += legend_spacing;
         }
         
         Ok(())
