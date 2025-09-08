@@ -1,0 +1,1 @@
+// Text rendering implementation (future)
