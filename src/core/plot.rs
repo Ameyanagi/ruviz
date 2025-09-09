@@ -1306,9 +1306,9 @@ impl Plot {
             })
             .collect();
             
-        // Draw legend if there are labeled series
-        if !legend_items.is_empty() {
-            renderer.draw_legend(&legend_items, plot_area)?;
+        // Draw legend if there are labeled series and legend is enabled
+        if !legend_items.is_empty() && self.legend.enabled {
+            renderer.draw_legend_positioned(&legend_items, plot_area, self.legend.position)?;
         }
         
         // Save as PNG
@@ -1476,6 +1476,12 @@ impl PlotSeriesBuilder {
     /// Enable/disable grid
     pub fn grid(mut self, enabled: bool) -> Self {
         self.plot.grid.enabled = enabled;
+        self
+    }
+    
+    /// Set DPI for export quality
+    pub fn dpi(mut self, dpi: u32) -> Self {
+        self.plot.dpi = dpi.max(72);
         self
     }
     
