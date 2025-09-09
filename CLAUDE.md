@@ -93,10 +93,18 @@ let config = FontConfig::builder()
 ```
 
 ## Current Implementation Status
-**Phase**: Scientific plotting enhancement planning complete
-**Status**: Ready for TDD implementation of publication-quality themes  
-**Active**: Y-axis rotation fixed, cosmic-text integration working
-**Next**: Implement IEEE publication theme following strict TDD (test-first approach)
+**Phase**: Scientific plotting DPI API implementation complete
+**Status**: DPI fluent API implemented using TDD methodology  
+**Active**: DPI method works in fluent chain: `.dpi(u32).save("")`
+**Next**: Implement DPI-aware rendering scaling for actual resolution changes
+
+### ✅ DPI API Implementation (Complete)
+- **TDD Approach**: 6 comprehensive tests written first, all passing
+- **Fluent API**: `Plot::new().line(&x, &y).dpi(300).save("file.png")` works
+- **DPI Validation**: Minimum 72 DPI enforced (typography standard)
+- **Scientific Standards**: Support for 96, 150, 300, 600 DPI presets
+- **Theme Integration**: DPI works with publication themes
+- **Test Coverage**: Basic, IEEE, validation, multi-DPI, theme integration, presets
 
 ## Scientific Plotting Enhancement Plan
 **Goal**: Transform ruviz into publication-ready scientific plotting library
