@@ -1,0 +1,21 @@
+# Rust
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test outputs
+test_output/*
+export_test_output/*
+
+# Temporary files
+*.tmp
+*.temp
