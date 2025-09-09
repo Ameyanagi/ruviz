@@ -3,7 +3,6 @@ use std::fmt;
 /// Result type alias for plotting operations
 pub type Result<T> = std::result::Result<T, PlottingError>;
 
-/// Comprehensive error types for plotting operations
 #[derive(Debug)]
 pub enum PlottingError {
     /// Data arrays have mismatched lengths
@@ -47,6 +46,11 @@ pub enum PlottingError {
         feature: String,
         operation: String,
     },
+
+    /// System-level error
+    SystemError(String),
+    /// Invalid input parameter
+    InvalidInput(String),
     /// Data contains invalid values (NaN, Inf)
     InvalidData {
         message: String,
@@ -60,6 +64,87 @@ pub enum PlottingError {
         actual: usize,
         maximum: usize,
     },
+    
+    // DataShader-specific errors
+    /// DataShader initialization failed
+    DataShaderError {
+        message: String,
+        cause: Option<String>,
+    },
+    /// Aggregation operation failed
+    AggregationError {
+        operation: String,
+        data_points: usize,
+        error: String,
+    },
+    /// Canvas resolution too high for DataShader
+    DataShaderCanvasError {
+        width: u32,
+        height: u32,
+        max_pixels: usize,
+    },
+    /// Atomic operation failed in parallel aggregation
+    AtomicOperationError(String),
+    
+    // Parallel rendering errors
+    /// Parallel rendering initialization failed
+    ParallelRenderError {
+        threads: usize,
+        error: String,
+    },
+    /// Thread pool configuration error
+    ThreadPoolError(String),
+    /// Parallel task synchronization error
+    SynchronizationError(String),
+    /// Work stealing queue error
+    WorkStealingError(String),
+    
+    // GPU acceleration errors
+    /// GPU backend not available
+    GpuNotAvailable(String),
+    /// GPU initialization failed
+    GpuInitError {
+        backend: String,
+        error: String,
+    },
+    /// GPU memory allocation failed
+    GpuMemoryError {
+        requested: usize,
+        available: Option<usize>,
+    },
+    /// GPU shader compilation failed
+    ShaderError {
+        shader_type: String,
+        error: String,
+    },
+    /// GPU buffer operation failed
+    BufferError(String),
+    /// GPU command submission failed
+    CommandError(String),
+    /// GPU device lost
+    DeviceLost,
+    /// GPU feature not supported
+    UnsupportedGpuFeature(String),
+    
+    // SIMD optimization errors
+    /// SIMD feature not available on this CPU
+    SimdNotAvailable,
+    /// SIMD operation alignment error
+    SimdAlignmentError {
+        required: usize,
+        actual: usize,
+    },
+    
+    // Memory pool errors
+    /// Memory pool initialization failed
+    PoolInitError(String),
+    /// Memory pool exhausted
+    PoolExhausted {
+        pool_type: String,
+        requested: usize,
+    },
+    /// Memory pool corruption detected
+    PoolCorruption(String),
 }
 
 impl fmt::Display for PlottingError {
@@ -113,6 +198,12 @@ impl fmt::Display for PlottingError {
             PlottingError::FeatureNotEnabled { feature, operation } => {
                 write!(f, "Feature '{}' not enabled - required for operation: {}", feature, operation)
             }
+            PlottingError::SystemError(msg) => {
+                write!(f, "System error: {}", msg)
+            }
+            PlottingError::InvalidInput(msg) => {
+                write!(f, "Invalid input: {}", msg)
+            }
             PlottingError::InvalidData { message, position } => {
                 match position {
                     Some(pos) => write!(f, "Invalid data at position {}: {}", pos, message),
@@ -124,6 +215,85 @@ impl fmt::Display for PlottingError {
             }
             PlottingError::PerformanceLimit { limit_type, actual, maximum } => {
                 write!(f, "{} limit exceeded: {} (maximum {})", limit_type, actual, maximum)
+            }
+            
+            // DataShader errors
+            PlottingError::DataShaderError { message, cause } => {
+                match cause {
+                    Some(c) => write!(f, "DataShader error: {} (cause: {})", message, c),
+                    None => write!(f, "DataShader error: {}", message),
+                }
+            }
+            PlottingError::AggregationError { operation, data_points, error } => {
+                write!(f, "Aggregation '{}' failed on {} points: {}", operation, data_points, error)
+            }
+            PlottingError::DataShaderCanvasError { width, height, max_pixels } => {
+                write!(f, "DataShader canvas {}x{} exceeds maximum {} pixels", width, height, max_pixels)
+            }
+            PlottingError::AtomicOperationError(msg) => {
+                write!(f, "Atomic operation error: {}", msg)
+            }
+            
+            // Parallel rendering errors
+            PlottingError::ParallelRenderError { threads, error } => {
+                write!(f, "Parallel rendering failed with {} threads: {}", threads, error)
+            }
+            PlottingError::ThreadPoolError(msg) => {
+                write!(f, "Thread pool error: {}", msg)
+            }
+            PlottingError::SynchronizationError(msg) => {
+                write!(f, "Thread synchronization error: {}", msg)
+            }
+            PlottingError::WorkStealingError(msg) => {
+                write!(f, "Work stealing queue error: {}", msg)
+            }
+            
+            // GPU errors
+            PlottingError::GpuNotAvailable(msg) => {
+                write!(f, "GPU not available: {}", msg)
+            }
+            PlottingError::GpuInitError { backend, error } => {
+                write!(f, "GPU initialization failed for {}: {}", backend, error)
+            }
+            PlottingError::GpuMemoryError { requested, available } => {
+                match available {
+                    Some(avail) => write!(f, "GPU memory allocation failed: requested {} bytes, only {} available", requested, avail),
+                    None => write!(f, "GPU memory allocation failed: requested {} bytes", requested),
+                }
+            }
+            PlottingError::ShaderError { shader_type, error } => {
+                write!(f, "Shader compilation failed for {}: {}", shader_type, error)
+            }
+            PlottingError::BufferError(msg) => {
+                write!(f, "GPU buffer error: {}", msg)
+            }
+            PlottingError::CommandError(msg) => {
+                write!(f, "GPU command error: {}", msg)
+            }
+            PlottingError::DeviceLost => {
+                write!(f, "GPU device lost - try restarting the application")
+            }
+            PlottingError::UnsupportedGpuFeature(feature) => {
+                write!(f, "GPU feature '{}' not supported on this device", feature)
+            }
+            
+            // SIMD errors
+            PlottingError::SimdNotAvailable => {
+                write!(f, "SIMD instructions not available on this CPU")
+            }
+            PlottingError::SimdAlignmentError { required, actual } => {
+                write!(f, "SIMD alignment error: required {}-byte alignment, got {}", required, actual)
+            }
+            
+            // Memory pool errors
+            PlottingError::PoolInitError(msg) => {
+                write!(f, "Memory pool initialization failed: {}", msg)
+            }
+            PlottingError::PoolExhausted { pool_type, requested } => {
+                write!(f, "{} pool exhausted: {} bytes requested", pool_type, requested)
+            }
+            PlottingError::PoolCorruption(msg) => {
+                write!(f, "Memory pool corruption detected: {}", msg)
             }
         }
     }

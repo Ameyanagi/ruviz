@@ -11,6 +11,26 @@ impl Point2f {
     pub fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
+    
+    /// Create from f64 coordinates
+    pub fn from_f64(x: f64, y: f64) -> Self {
+        Self { x: x as f32, y: y as f32 }
+    }
+    
+    /// Convert to array for SIMD operations
+    pub fn to_array(&self) -> [f32; 2] {
+        [self.x, self.y]
+    }
+    
+    /// Create from array
+    pub fn from_array(arr: [f32; 2]) -> Self {
+        Self { x: arr[0], y: arr[1] }
+    }
+    
+    /// Create zero point
+    pub fn zero() -> Self {
+        Self { x: 0.0, y: 0.0 }
+    }
 }
 
 /// Axis-aligned bounding box

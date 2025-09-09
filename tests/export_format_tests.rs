@@ -216,10 +216,6 @@ fn test_export_format_validation() -> Result<(), Box<dyn std::error::Error>> {
     let x_data = vec![1.0, 2.0, 3.0];
     let y_data = vec![1.0, 4.0, 2.0];
     
-    let plot = Plot::new()
-        .title("Format Validation Test".to_string())
-        .line(&x_data, &y_data);
-    
     // Test file extensions
     let test_files = vec![
         "export_test_output/png/validation_test.png",
@@ -228,13 +224,19 @@ fn test_export_format_validation() -> Result<(), Box<dyn std::error::Error>> {
     ];
     
     for file_path in test_files {
+        let plot = Plot::new()
+            .title("Format Validation Test".to_string())
+            .line(&x_data, &y_data);
         match plot.save(file_path) {
             Ok(_) => println!("✅ Successfully saved: {}", file_path),
             Err(e) => println!("⚠️  Error saving {}: {}", file_path, e),
         }
     }
     
-    // Test image data validation
+    // Test image data validation - create fresh plot
+    let plot = Plot::new()
+        .title("Format Validation Test".to_string())
+        .line(&x_data, &y_data);
     let image = plot.render()?;
     
     // Validate image properties
@@ -266,6 +268,7 @@ fn test_high_resolution_exports() -> Result<(), Box<dyn std::error::Error>> {
     ];
     
     for (width, height, name) in resolutions {
+        // Create plot for PNG save
         let plot = Plot::new()
             .dimensions(width, height)
             .title(format!("High Resolution Test - {}", name.to_uppercase()))
@@ -284,7 +287,13 @@ fn test_high_resolution_exports() -> Result<(), Box<dyn std::error::Error>> {
             height
         )?;
         
-        // Save raw data with size info
+        // Create fresh plot for render
+        let plot = Plot::new()
+            .dimensions(width, height)
+            .title(format!("High Resolution Test - {}", name.to_uppercase()))
+            .xlabel("X Values".to_string())
+            .ylabel("Sin(X) * 10".to_string())
+            .line(&x_data, &y_data);
         let image = plot.render()?;
         fs::write(
             &format!("export_test_output/raw/resolution_{}_{}_{}x{}.bin", name, "raw", width, height),
@@ -315,14 +324,14 @@ fn run_all_export_tests() {
     println!("\n📤 RUNNING COMPREHENSIVE EXPORT FORMAT TESTS");
     println!("===============================================");
     
-    let tests = vec![
-        ("PNG Export", test_png_export),
-        ("SVG Export", test_svg_export),
-        ("Raw Data Export", test_raw_data_export),
-        ("Direct Renderer Exports", test_direct_renderer_exports),
-        ("All Themes All Formats", test_all_themes_all_formats),
-        ("Export Format Validation", test_export_format_validation),
-        ("High Resolution Exports", test_high_resolution_exports),
+    let tests: Vec<(&str, fn() -> Result<(), Box<dyn std::error::Error>>)> = vec![
+        ("PNG Export", test_png_export as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("SVG Export", test_svg_export as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Raw Data Export", test_raw_data_export as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Direct Renderer Exports", test_direct_renderer_exports as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("All Themes All Formats", test_all_themes_all_formats as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Export Format Validation", test_export_format_validation as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("High Resolution Exports", test_high_resolution_exports as fn() -> Result<(), Box<dyn std::error::Error>>),
     ];
     
     let mut passed = 0;

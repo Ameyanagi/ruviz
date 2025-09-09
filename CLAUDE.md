@@ -106,6 +106,14 @@ let config = FontConfig::builder()
 - **Theme Integration**: DPI works with publication themes
 - **Test Coverage**: Basic, IEEE, validation, multi-DPI, theme integration, presets
 
+### ✅ DPI-Aware Rendering Scaling (Complete)
+- **Canvas Scaling**: DPI values now affect actual image resolution
+- **Scientific Ratios**: 96→150→300→600 DPI with proper size increases
+- **File Size Validation**: Higher DPI produces significantly larger images (17.9x for 600 DPI)
+- **Scaling Formula**: `scaled_size = base_size * (dpi / 96.0)`
+- **Test Results**: 300 DPI = 5.17x file size, 600 DPI = 17.9x file size
+- **Backward Compatibility**: All existing tests pass with new scaling
+
 ## Scientific Plotting Enhancement Plan
 **Goal**: Transform ruviz into publication-ready scientific plotting library
 **Key improvements**: IEEE/Nature themes, accessibility-tested color palettes, mathematical typography, DPI consistency

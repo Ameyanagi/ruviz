@@ -225,7 +225,7 @@ fn test_grid_enabled() -> Result<(), Box<dyn std::error::Error>> {
         .title("Grid Enabled Test".to_string())
         .xlabel("X Axis".to_string())
         .ylabel("Y Axis".to_string())
-        .show_grid(true)
+        .grid(true)
         .line(&x_data, &y_data);
     
     plot.save("test_output/11_grid_enabled.png")?;
@@ -245,7 +245,7 @@ fn test_grid_disabled() -> Result<(), Box<dyn std::error::Error>> {
         .title("Grid Disabled Test".to_string())
         .xlabel("X Axis".to_string())
         .ylabel("Y Axis".to_string())
-        .show_grid(false)
+        .grid(false)
         .line(&x_data, &y_data);
     
     plot.save("test_output/12_grid_disabled.png")?;
@@ -337,22 +337,22 @@ fn run_all_visual_tests() {
     println!("\n🎨 RUNNING COMPREHENSIVE VISUAL TESTS");
     println!("=====================================");
     
-    let tests = vec![
-        ("Basic Line Plot", test_basic_line_plot),
-        ("Scatter Plot", test_scatter_plot),
-        ("Bar Plot", test_bar_plot),
-        ("Multiple Series", test_multiple_series),
-        ("Dark Theme", test_dark_theme),
-        ("Light Theme", test_light_theme),
-        ("Publication Theme", test_publication_theme),
-        ("Minimal Theme", test_minimal_theme),
-        ("Large Dataset", test_large_dataset),
-        ("Mathematical Functions", test_mathematical_functions),
-        ("Grid Enabled", test_grid_enabled),
-        ("Grid Disabled", test_grid_disabled),
-        ("Custom Dimensions", test_custom_dimensions),
-        ("Mixed Plot Types", test_mixed_plot_types),
-        ("Edge Cases", test_edge_cases),
+    let tests: Vec<(&str, fn() -> Result<(), Box<dyn std::error::Error>>)> = vec![
+        ("Basic Line Plot", test_basic_line_plot as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Scatter Plot", test_scatter_plot as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Bar Plot", test_bar_plot as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Multiple Series", test_multiple_series as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Dark Theme", test_dark_theme as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Light Theme", test_light_theme as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Publication Theme", test_publication_theme as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Minimal Theme", test_minimal_theme as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Large Dataset", test_large_dataset as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Mathematical Functions", test_mathematical_functions as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Grid Enabled", test_grid_enabled as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Grid Disabled", test_grid_disabled as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Custom Dimensions", test_custom_dimensions as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Mixed Plot Types", test_mixed_plot_types as fn() -> Result<(), Box<dyn std::error::Error>>),
+        ("Edge Cases", test_edge_cases as fn() -> Result<(), Box<dyn std::error::Error>>),
     ];
     
     let mut passed = 0;

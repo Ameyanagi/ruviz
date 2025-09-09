@@ -16,21 +16,23 @@ mod basic_line_integration_tests {
         let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
         let y = vec![0.0, 1.0, 4.0, 9.0, 16.0]; // quadratic function
         
-        // When: I create a basic line plot with axis labels and title
-        // Will fail until Plot::new(), line(), title(), xlabel(), ylabel(), save() are implemented
+        // Ensure test output directory exists
+        std::fs::create_dir_all("test_output").expect("Failed to create test_output directory");
+        
+        // When: I create a basic line plot with axis labels and title using cosmic-text
         let result = Plot::new()
             .line(&x, &y)
-            .title("Quadratic Function")
+            .title("Quadratic Function (Cosmic-Text)")
             .xlabel("x")
             .ylabel("y = x²")
-            .save("test_basic_line_integration.png");
+            .save("test_output/test_basic_line_integration.png");
         
-        // Then: The library generates a clear, properly labeled visualization
+        // Then: The library generates a clear, properly labeled visualization with professional typography
         assert!(result.is_ok(), "Basic line plot creation failed: {:?}", result.err());
         
-        // Verify the file was created
-        assert!(Path::new("test_basic_line_integration.png").exists(),
-                "PNG file was not created");
+        // Verify the file was created in test_output directory
+        assert!(Path::new("test_output/test_basic_line_integration.png").exists(),
+                "PNG file was not created in test_output directory");
         
         // Verify file is not empty (basic sanity check)
         let metadata = std::fs::metadata("test_basic_line_integration.png")

@@ -214,6 +214,17 @@ impl Plot {
     fn dpi_scale(&self) -> f32 {
         self.dpi as f32 / 96.0
     }
+
+    
+    /// Calculate DPI-scaled font size
+    pub fn dpi_scaled_font_size(&self, base_size: f32) -> f32 {
+        base_size * self.dpi_scale()
+    }
+    
+    /// Calculate DPI-scaled line width
+    pub fn dpi_scaled_line_width(&self, base_width: f32) -> f32 {
+        base_width * self.dpi_scale()
+    }
     
     /// Set margin around plot area
     pub fn margin(mut self, margin: f32) -> Self {
@@ -463,7 +474,7 @@ impl Plot {
         y_max: f64,
     ) -> Result<()> {
         let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
-        let line_width = series.line_width.unwrap_or(2.0);
+        let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         
         match &series.series_type {
@@ -478,7 +489,7 @@ impl Plot {
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
             }
             SeriesType::Scatter { x_data, y_data } => {
-                let marker_size = 6.0; // Default marker size
+                let marker_size = self.dpi_scaled_line_width(6.0); // DPI-scaled marker size
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                 
                 for (&x, &y) in x_data.iter().zip(y_data.iter()) {
@@ -697,7 +708,7 @@ impl Plot {
                 let palette = Color::default_palette();
                 palette[self.auto_color_index % palette.len()]
             });
-            let line_width = series.line_width.unwrap_or(self.theme.line_width);
+            let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(self.theme.line_width));
             let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
             let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
             
@@ -725,7 +736,7 @@ impl Plot {
                         let y_val = y_data[i];
                         if x_val.is_finite() && y_val.is_finite() {
                             let (px, py) = map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
-                            renderer.draw_marker(px, py, 8.0, marker_style, color)?;
+                            renderer.draw_marker(px, py, self.dpi_scaled_line_width(8.0), marker_style, color)?;
                         }
                     }
                 }
@@ -767,7 +778,7 @@ impl Plot {
                                 let y_val = y_data[i];
                                 if x_val.is_finite() && y_val.is_finite() {
                                     let (px, py) = map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
-                                    renderer.draw_marker(px, py, 6.0, MarkerStyle::Circle, color)?;
+                                    renderer.draw_marker(px, py, self.dpi_scaled_line_width(6.0), MarkerStyle::Circle, color)?;
                                 }
                             }
                         }
@@ -923,7 +934,7 @@ impl Plot {
                 let color = series.color.unwrap_or_else(|| {
                     self.theme.get_color(index)
                 });
-                let line_width = series.line_width.unwrap_or(self.theme.line_width);
+                let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(self.theme.line_width));
                 let alpha = series.alpha.unwrap_or(1.0);
                 
                 // Process each series type
@@ -1260,11 +1271,11 @@ impl Plot {
         // Draw axis labels and tick values
         let x_label = self.xlabel.as_deref().unwrap_or("X");
         let y_label = self.ylabel.as_deref().unwrap_or("Y");
-        renderer.draw_axis_labels(plot_area, x_min, x_max, y_min, y_max, x_label, y_label, self.theme.foreground)?;
+        renderer.draw_axis_labels(plot_area, x_min, x_max, y_min, y_max, x_label, y_label, self.theme.foreground, self.dpi_scaled_font_size(14.0), self.dpi_scale())?;
         
         // Draw title if present
         if let Some(ref title) = self.title {
-            renderer.draw_title(title, plot_area, self.theme.foreground)?;
+            renderer.draw_title(title, plot_area, self.theme.foreground, self.dpi_scaled_font_size(16.0), self.dpi_scale())?;
         }
         
         // Check if we should use DataShader for large datasets
