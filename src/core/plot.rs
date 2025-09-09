@@ -2,8 +2,9 @@ use std::path::Path;
 use crate::{
     data::{Data1D, DataShader},
     render::{Color, LineStyle, MarkerStyle, Theme},
-    render::skia::{SkiaRenderer, calculate_plot_area, map_data_to_pixels, generate_ticks},
+    render::skia::{SkiaRenderer, calculate_plot_area, calculate_plot_area_dpi, map_data_to_pixels, generate_ticks},
     core::{Position, PlottingError, Result},
+    plots::histogram::{HistogramConfig, HistogramData, calculate_histogram},
 };
 
 #[cfg(feature = "parallel")]
@@ -14,6 +15,7 @@ use crate::render::{ParallelRenderer, SeriesRenderData};
 /// Provides a fluent builder interface for creating plots with multiple data series,
 /// styling options, and export capabilities.
 #[derive(Clone)]
+#[derive(Debug)]
 pub struct Plot {
     /// Plot title
     title: Option<String>,
@@ -33,6 +35,8 @@ pub struct Plot {
     legend: LegendConfig,
     /// Grid configuration
     grid: GridConfig,
+    /// Tick configuration
+    tick_config: TickConfig,
     /// Margin around plot area (fraction of canvas)
     margin: Option<f32>,
     /// Whether to use scientific notation on axes
@@ -59,6 +63,8 @@ struct PlotSeries {
     line_style: Option<LineStyle>,
     /// Marker style for scatter plots
     marker_style: Option<MarkerStyle>,
+    /// Marker size for scatter plots
+    marker_size: Option<f32>,
     /// Alpha/transparency override
     alpha: Option<f32>,
 }
@@ -89,6 +95,10 @@ enum SeriesType {
         x_errors: Vec<f64>,
         y_errors: Vec<f64>,
     },
+    Histogram {
+        data: Vec<f64>,
+        config: crate::plots::histogram::HistogramConfig,
+    },
 }
 
 /// Legend configuration
@@ -113,6 +123,68 @@ struct GridConfig {
     style: Option<LineStyle>,
 }
 
+/// Tick direction configuration
+#[derive(Clone, Debug, PartialEq)]
+pub enum TickDirection {
+    /// Ticks point inward into the plot area (default)
+    Inside,
+    /// Ticks point outward from the plot area
+    Outside,
+}
+
+impl Default for TickDirection {
+    fn default() -> Self {
+        TickDirection::Inside
+    }
+}
+
+/// Grid display mode for major and minor ticks
+#[derive(Clone, Debug, PartialEq)]
+pub enum GridMode {
+    /// Show grid lines only at major ticks
+    MajorOnly,
+    /// Show grid lines only at minor ticks
+    MinorOnly,
+    /// Show grid lines at both major and minor ticks
+    Both,
+}
+
+impl Default for GridMode {
+    fn default() -> Self {
+        GridMode::MajorOnly
+    }
+}
+
+/// Tick configuration for axes
+#[derive(Clone, Debug)]
+struct TickConfig {
+    /// Direction ticks point (inside or outside)
+    direction: TickDirection,
+    /// Number of major ticks on X axis
+    major_ticks_x: usize,
+    /// Number of minor ticks between major ticks on X axis
+    minor_ticks_x: usize,
+    /// Number of major ticks on Y axis
+    major_ticks_y: usize,
+    /// Number of minor ticks between major ticks on Y axis
+    minor_ticks_y: usize,
+    /// Grid display mode
+    grid_mode: GridMode,
+}
+
+impl Default for TickConfig {
+    fn default() -> Self {
+        TickConfig {
+            direction: TickDirection::Inside,
+            major_ticks_x: 10,
+            minor_ticks_x: 0,
+            major_ticks_y: 8,
+            minor_ticks_y: 0,
+            grid_mode: GridMode::MajorOnly,
+        }
+    }
+}
+
 impl Plot {
     /// Create a new Plot with default settings
     pub fn new() -> Self {
@@ -134,6 +206,7 @@ impl Plot {
                 color: None,
                 style: None,
             },
+            tick_config: TickConfig::default(),
             margin: None,
             scientific_notation: false,
             auto_color_index: 0,
@@ -154,6 +227,11 @@ impl Plot {
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
+    }
+    
+    /// Get the current theme
+    pub fn get_theme(&self) -> Theme {
+        self.theme.clone()
     }
     
     /// Configure parallel rendering settings
@@ -263,6 +341,7 @@ impl Plot {
             line_width: None,
             line_style: None,
             marker_style: None,
+            marker_size: None,
             alpha: None,
         };
         
@@ -288,6 +367,7 @@ impl Plot {
             line_width: None,
             line_style: None,
             marker_style: Some(MarkerStyle::Circle),
+            marker_size: None,
             alpha: None,
         };
         
@@ -313,6 +393,37 @@ impl Plot {
             line_width: None,
             line_style: None,
             marker_style: None,
+            marker_size: None,
+            alpha: None,
+        };
+        
+        PlotSeriesBuilder::new(self, series)
+    }
+
+    /// Add a histogram plot series
+    pub fn histogram<T, D: Data1D<T>>(self, data: &D, config: Option<HistogramConfig>) -> PlotSeriesBuilder 
+    where
+        T: Into<f64> + Copy,
+    {
+        let mut data_vec = Vec::with_capacity(data.len());
+        for i in 0..data.len() {
+            if let Some(val) = data.get(i) {
+                data_vec.push((*val).into());
+            }
+        }
+        let hist_config = config.unwrap_or_else(|| HistogramConfig::new());
+        
+        let series = PlotSeries {
+            series_type: SeriesType::Histogram {
+                data: data_vec,
+                config: hist_config,
+            },
+            label: None,
+            color: None,
+            line_width: None,
+            line_style: None,
+            marker_style: None,
+            marker_size: None,
             alpha: None,
         };
         
@@ -341,6 +452,7 @@ impl Plot {
             line_width: None,
             line_style: None,
             marker_style: None,
+            marker_size: None,
             alpha: None,
         };
         
@@ -378,6 +490,7 @@ impl Plot {
             line_width: None,
             line_style: None,
             marker_style: None,
+            marker_size: None,
             alpha: None,
         };
         
@@ -394,6 +507,83 @@ impl Plot {
     /// Enable/disable grid
     pub fn grid(mut self, enabled: bool) -> Self {
         self.grid.enabled = enabled;
+        self
+    }
+
+    /// Set tick direction to inside (default)
+    pub fn tick_direction_inside(mut self) -> Self {
+        self.tick_config.direction = TickDirection::Inside;
+        self
+    }
+
+    /// Set tick direction to outside
+    pub fn tick_direction_outside(mut self) -> Self {
+        self.tick_config.direction = TickDirection::Outside;
+        self
+    }
+
+    /// Set number of major ticks for both axes
+    pub fn major_ticks(mut self, count: usize) -> Self {
+        self.tick_config.major_ticks_x = count;
+        self.tick_config.major_ticks_y = count;
+        self
+    }
+
+    /// Set number of minor ticks between major ticks for both axes
+    pub fn minor_ticks(mut self, count: usize) -> Self {
+        self.tick_config.minor_ticks_x = count;
+        self.tick_config.minor_ticks_y = count;
+        self
+    }
+
+    /// Set number of major ticks for X axis
+    pub fn major_ticks_x(mut self, count: usize) -> Self {
+        self.tick_config.major_ticks_x = count;
+        self
+    }
+
+    /// Set number of minor ticks between major ticks for X axis
+    pub fn minor_ticks_x(mut self, count: usize) -> Self {
+        self.tick_config.minor_ticks_x = count;
+        self
+    }
+
+    /// Set number of major ticks for Y axis
+    pub fn major_ticks_y(mut self, count: usize) -> Self {
+        self.tick_config.major_ticks_y = count;
+        self
+    }
+
+    /// Set number of minor ticks between major ticks for Y axis
+    pub fn minor_ticks_y(mut self, count: usize) -> Self {
+        self.tick_config.minor_ticks_y = count;
+        self
+    }
+
+    /// Grid lines only at major ticks
+    pub fn grid_major_only(mut self) -> Self {
+        self.tick_config.grid_mode = GridMode::MajorOnly;
+        self
+    }
+
+    /// Grid lines only at minor ticks
+    pub fn grid_minor_only(mut self) -> Self {
+        self.tick_config.grid_mode = GridMode::MinorOnly;
+        self
+    }
+
+    /// Grid lines at both major and minor ticks
+    pub fn grid_both(mut self) -> Self {
+        self.tick_config.grid_mode = GridMode::Both;
+        self
+    }
+
+    /// Enable tight layout (automatic margin adjustment like matplotlib)
+    pub fn tight_layout(mut self, enabled: bool) -> Self {
+        // This will automatically adjust margins to fit labels and ticks
+        if enabled {
+            self.margin = None; // Auto-calculate margins
+        }
         self
     }
     
@@ -453,6 +643,7 @@ impl Plot {
             line_width: None,
             line_style: None,
             marker_style: None,
+            marker_size: None,
             alpha: None,
         };
         
@@ -489,7 +680,7 @@ impl Plot {
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
             }
             SeriesType::Scatter { x_data, y_data } => {
-                let marker_size = self.dpi_scaled_line_width(6.0); // DPI-scaled marker size
+                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)); // DPI-scaled marker size
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                 
                 for (&x, &y) in x_data.iter().zip(y_data.iter()) {
@@ -512,6 +703,33 @@ impl Plot {
                         color, 
                         true
                     )?;
+                }
+            }
+            SeriesType::Histogram { data, config } => {
+                // Calculate histogram data
+                let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                    .map_err(|e| PlottingError::RenderError(format!("Histogram calculation failed: {}", e)))?;
+                
+                // Render histogram bars
+                for (i, &count) in hist_data.counts.iter().enumerate() {
+                    if count > 0.0 {
+                        let x_left = hist_data.bin_edges[i];
+                        let x_right = hist_data.bin_edges[i + 1];
+                        let x_center = (x_left + x_right) / 2.0;
+                        let bar_width = (x_right - x_left) as f32;
+                        
+                        let (px, py) = crate::render::skia::map_data_to_pixels(x_center, count, x_min, x_max, y_min, y_max, plot_area);
+                        let (_, py_zero) = crate::render::skia::map_data_to_pixels(x_center, 0.0, x_min, x_max, y_min, y_max, plot_area);
+                        
+                        renderer.draw_rectangle(
+                            px - bar_width / 2.0,
+                            py.min(py_zero),
+                            bar_width,
+                            (py - py_zero).abs(),
+                            color,
+                            true
+                        )?;
+                    }
                 }
             }
             _ => {} // Other plot types not implemented yet
@@ -571,6 +789,11 @@ impl Plot {
                         });
                     }
                 }
+                SeriesType::Histogram { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -597,7 +820,7 @@ impl Plot {
         let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
         
         // Calculate plot area with margins using DPI-scaled dimensions
-        let plot_area = calculate_plot_area(scaled_width, scaled_height, 0.15);
+        let plot_area = calculate_plot_area_dpi(scaled_width, scaled_height, self.dpi_scale());
         
         // Calculate data bounds across all series
         let mut x_min = f64::INFINITY;
@@ -665,6 +888,24 @@ impl Plot {
                         if y_val.is_finite() && y_err.is_finite() {
                             y_min = y_min.min(y_val - y_err);
                             y_max = y_max.max(y_val + y_err);
+                        }
+                    }
+                }
+                SeriesType::Histogram { data, config } => {
+                    // Calculate histogram to get bounds
+                    if let Ok(hist_data) = crate::plots::histogram::calculate_histogram(data, config) {
+                        // X bounds from bin edges
+                        if !hist_data.bin_edges.is_empty() {
+                            x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
+                            x_max = x_max.max(*hist_data.bin_edges.last().unwrap());
+                        }
+                        
+                        // Y bounds from counts (include zero baseline)
+                        y_min = y_min.min(0.0);
+                        for &count in &hist_data.counts {
+                            if count.is_finite() && count > 0.0 {
+                                y_max = y_max.max(count);
+                            }
                         }
                     }
                 }
@@ -736,7 +977,7 @@ impl Plot {
                         let y_val = y_data[i];
                         if x_val.is_finite() && y_val.is_finite() {
                             let (px, py) = map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
-                            renderer.draw_marker(px, py, self.dpi_scaled_line_width(8.0), marker_style, color)?;
+                            renderer.draw_marker(px, py, self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)), marker_style, color)?;
                         }
                     }
                 }
@@ -767,6 +1008,38 @@ impl Plot {
                         }
                     }
                 }
+                SeriesType::Histogram { data, config } => {
+                    // Calculate histogram data
+                    let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                        .map_err(|e| PlottingError::RenderError(format!("Histogram calculation failed: {}", e)))?;
+                    
+                    // Calculate bar width from bin edges
+                    let bar_width_data = if hist_data.bin_edges.len() > 1 {
+                        hist_data.bin_edges[1] - hist_data.bin_edges[0]
+                    } else {
+                        1.0
+                    };
+                    
+                    // Convert to pixel width
+                    let left_px = map_data_to_pixels(hist_data.bin_edges[0], 0.0, x_min, x_max, y_min, y_max, plot_area).0;
+                    let right_px = map_data_to_pixels(hist_data.bin_edges[0] + bar_width_data, 0.0, x_min, x_max, y_min, y_max, plot_area).0;
+                    let bar_width_px = (right_px - left_px).abs();
+                    
+                    // Draw histogram bars
+                    let baseline = map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area).1;
+                    
+                    for (i, &count) in hist_data.counts.iter().enumerate() {
+                        if count > 0.0 && count.is_finite() {
+                            // Use bin center for x position
+                            let bin_center = (hist_data.bin_edges[i] + hist_data.bin_edges[i + 1]) / 2.0;
+                            let (px, py) = map_data_to_pixels(bin_center, count, x_min, x_max, y_min, y_max, plot_area);
+                            let bar_height = (baseline - py).abs();
+                            let bar_x = px - bar_width_px * 0.5;
+                            
+                            renderer.draw_rectangle(bar_x, py, bar_width_px, bar_height, color, true)?;
+                        }
+                    }
+                }
                 _ => {
                     // For unsupported plot types (error bars), render as scatter points for now
                     // This is a placeholder - full implementation would handle error bars properly
@@ -778,7 +1051,7 @@ impl Plot {
                                 let y_val = y_data[i];
                                 if x_val.is_finite() && y_val.is_finite() {
                                     let (px, py) = map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
-                                    renderer.draw_marker(px, py, self.dpi_scaled_line_width(6.0), MarkerStyle::Circle, color)?;
+                                    renderer.draw_marker(px, py, self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)), MarkerStyle::Circle, color)?;
                                 }
                             }
                         }
@@ -791,6 +1064,223 @@ impl Plot {
         // Convert renderer output to Image
         Ok(renderer.to_image())
     }
+
+    /// Render the plot to an external renderer (used for subplots)
+    pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
+        // Validate we have at least one series
+        if self.series.is_empty() {
+            return Err(PlottingError::NoDataSeries);
+        }
+
+        // Validate all series data (same validation as render method)
+        for (_i, series) in self.series.iter().enumerate() {
+            match &series.series_type {
+                SeriesType::Line { x_data, y_data } |
+                SeriesType::Scatter { x_data, y_data } => {
+                    if x_data.len() != y_data.len() {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: x_data.len(),
+                            y_len: y_data.len(),
+                        });
+                    }
+                    if x_data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Bar { categories, values } => {
+                    if categories.len() != values.len() {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: categories.len(),
+                            y_len: values.len(),
+                        });
+                    }
+                    if categories.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::ErrorBars { x_data, y_data, y_errors } => {
+                    if x_data.len() != y_data.len() || y_data.len() != y_errors.len() {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: x_data.len(),
+                            y_len: y_data.len(),
+                        });
+                    }
+                }
+                SeriesType::ErrorBarsXY { x_data, y_data, x_errors, y_errors } => {
+                    if x_data.len() != y_data.len() || 
+                       x_data.len() != x_errors.len() || 
+                       x_data.len() != y_errors.len() {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: x_data.len(),
+                            y_len: y_data.len(),
+                        });
+                    }
+                }
+                SeriesType::Histogram { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+            }
+        }
+
+        // Calculate plot area with margins using external renderer dimensions
+        let dpi_scale = dpi / 96.0;
+        let plot_area = calculate_plot_area_dpi(renderer.width(), renderer.height(), dpi_scale);
+        
+        // Calculate data bounds across all series
+        let (x_min, x_max, y_min, y_max) = self.calculate_data_bounds()?;
+        
+        // Generate nice tick values
+        let x_ticks = generate_ticks(x_min, x_max, 8);
+        let y_ticks = generate_ticks(y_min, y_max, 6);
+        
+        // Convert ticks to pixel coordinates
+        let x_tick_pixels: Vec<f32> = x_ticks.iter()
+            .map(|&tick| map_data_to_pixels(tick, 0.0, x_min, x_max, y_min, y_max, plot_area).0)
+            .collect();
+        let y_tick_pixels: Vec<f32> = y_ticks.iter()
+            .map(|&tick| map_data_to_pixels(0.0, tick, x_min, x_max, y_min, y_max, plot_area).1)
+            .collect();
+        
+        // Draw grid if enabled
+        if self.grid.enabled {
+            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid)?;
+        }
+        
+        // Draw axes
+        renderer.draw_axes(plot_area, &x_tick_pixels, &y_tick_pixels, self.theme.foreground)?;
+
+        // Draw title if present
+        if let Some(ref title) = self.title {
+            let title_size = self.dpi_scaled_font_size(16.0) * dpi_scale;
+            let title_y = 20.0 * dpi_scale;
+            renderer.draw_text_centered(
+                title,
+                renderer.width() as f32 / 2.0,
+                title_y,
+                title_size,
+                self.theme.foreground,
+            )?;
+        }
+
+        // Draw axis labels if present
+        if let Some(ref xlabel) = self.xlabel {
+            let label_size = self.dpi_scaled_font_size(12.0) * dpi_scale;
+            let xlabel_y = renderer.height() as f32 - 20.0 * dpi_scale;
+            renderer.draw_text_centered(
+                xlabel,
+                renderer.width() as f32 / 2.0,
+                xlabel_y,
+                label_size,
+                self.theme.foreground,
+            )?;
+        }
+
+        if let Some(ref ylabel) = self.ylabel {
+            let label_size = self.dpi_scaled_font_size(12.0) * dpi_scale;
+            let ylabel_x = 20.0 * dpi_scale;
+            renderer.draw_text_rotated(
+                ylabel,
+                ylabel_x,
+                renderer.height() as f32 / 2.0,
+                label_size,
+                self.theme.foreground,
+            )?;
+        }
+        
+        // Render each data series
+        let mut color_index = 0;
+        for series in &self.series {
+            // Get series styling with defaults
+            let color = series.color.unwrap_or_else(|| {
+                let palette = Color::default_palette();
+                palette[color_index % palette.len()]
+            });
+            let line_width = series.line_width.unwrap_or(self.theme.line_width) * dpi_scale;
+            let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+            let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+            
+            match &series.series_type {
+                SeriesType::Line { x_data, y_data } => {
+                    // Convert data to pixel coordinates
+                    let mut points = Vec::new();
+                    for i in 0..x_data.len() {
+                        let x_val = x_data[i];
+                        let y_val = y_data[i];
+                        if x_val.is_finite() && y_val.is_finite() {
+                            let (px, py) = map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
+                            points.push((px, py));
+                        }
+                    }
+                    
+                    if points.len() >= 2 {
+                        renderer.draw_polyline(&points, color, line_width, line_style)?;
+                    }
+                }
+                SeriesType::Scatter { x_data, y_data } => {
+                    // Draw individual markers
+                    for i in 0..x_data.len() {
+                        let x_val = x_data[i];
+                        let y_val = y_data[i];
+                        if x_val.is_finite() && y_val.is_finite() {
+                            let (px, py) = map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
+                            let marker_size = series.marker_size.unwrap_or(10.0) * dpi_scale;
+                            renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                        }
+                    }
+                }
+                SeriesType::Bar { categories, values } => {
+                    // Calculate bar width based on data density
+                    let bar_width = if categories.len() > 1 {
+                        let available_width = plot_area.width() * 0.8;
+                        (available_width / categories.len() as f32).min(40.0 * dpi_scale)
+                    } else {
+                        40.0 * dpi_scale // Default bar width
+                    };
+                    
+                    // Draw bars from baseline to data value
+                    let baseline = map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area).1;
+                    
+                    for (i, &value) in values.iter().enumerate() {
+                        if value.is_finite() {
+                            let x_val = i as f64;
+                            let (px, py) = map_data_to_pixels(x_val, value, x_min, x_max, y_min, y_max, plot_area);
+                            let bar_height = (baseline - py).abs();
+                            let bar_x = px - bar_width * 0.5;
+                            
+                            if value >= 0.0 {
+                                renderer.draw_rectangle(bar_x, py, bar_width, bar_height, color, true)?;
+                            } else {
+                                renderer.draw_rectangle(bar_x, baseline, bar_width, bar_height, color, true)?;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // For unsupported plot types (error bars), render as scatter points
+                    match &series.series_type {
+                        SeriesType::ErrorBars { x_data, y_data, .. } |
+                        SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                            for i in 0..x_data.len() {
+                                let x_val = x_data[i];
+                                let y_val = y_data[i];
+                                if x_val.is_finite() && y_val.is_finite() {
+                                    let (px, py) = map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
+                                    let marker_size = series.marker_size.unwrap_or(10.0) * dpi_scale;
+                                    renderer.draw_marker(px, py, marker_size, MarkerStyle::Circle, color)?;
+                                }
+                            }
+                        }
+                        _ => {} // Already handled above
+                    }
+                }
+            }
+            color_index += 1;
+        }
+        
+        Ok(())
+    }
     
     /// Calculate total number of data points across all series
     fn calculate_total_points(&self) -> usize {
@@ -801,6 +1291,7 @@ impl Plot {
                 SeriesType::ErrorBars { x_data, .. } |
                 SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
                 SeriesType::Bar { categories, .. } => categories.len(),
+                SeriesType::Histogram { data, .. } => data.len(),
             }
         }).sum()
     }
@@ -838,6 +1329,17 @@ impl Plot {
                     for (i, &value) in values.iter().enumerate() {
                         if value.is_finite() {
                             all_points.push(crate::core::types::Point2f::new(i as f32, value as f32));
+                        }
+                    }
+                }
+                SeriesType::Histogram { data, config } => {
+                    // Calculate histogram and add bin center points
+                    if let Ok(hist_data) = crate::plots::histogram::calculate_histogram(data, config) {
+                        for (i, &count) in hist_data.counts.iter().enumerate() {
+                            if count > 0.0 {
+                                let x_center = (hist_data.bin_edges[i] + hist_data.bin_edges[i + 1]) / 2.0;
+                                all_points.push(crate::core::types::Point2f::new(x_center as f32, count as f32));
+                            }
                         }
                     }
                 }
@@ -887,7 +1389,7 @@ impl Plot {
         // Create renderer with DPI scaling
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
         let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
-        let plot_area = calculate_plot_area(scaled_width, scaled_height, 0.15);
+        let plot_area = calculate_plot_area_dpi(scaled_width, scaled_height, self.dpi_scale());
         
         // Convert to parallel renderer format
         let parallel_plot_area = PlotArea {
@@ -1032,6 +1534,40 @@ impl Plot {
                         
                         RenderSeriesType::Scatter { markers }
                     }
+                    SeriesType::Histogram { data, config } => {
+                        // Calculate histogram data
+                        let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                            .map_err(|e| PlottingError::RenderError(format!("Histogram calculation failed: {}", e)))?;
+                        
+                        // Convert histogram to bar format for parallel rendering
+                        let x_data: Vec<f64> = hist_data.bin_edges.windows(2)
+                            .map(|w| (w[0] + w[1]) / 2.0) // bin centers
+                            .collect();
+                        
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &x_data, 
+                            &hist_data.counts, 
+                            data_bounds.clone(), 
+                            parallel_plot_area.clone()
+                        )?;
+                        
+                        // Create bar instances for histogram
+                        let baseline_y = map_data_to_pixels(0.0, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                        
+                        let bars = points.iter().enumerate().map(|(i, point)| {
+                            let bar_width = (hist_data.bin_edges[i + 1] - hist_data.bin_edges[i]) as f32;
+                            let height = (baseline_y - point.y).abs();
+                            crate::render::parallel::BarInstance {
+                                x: point.x - bar_width * 0.5,
+                                y: point.y,
+                                width: bar_width,
+                                height,
+                                color,
+                            }
+                        }).collect();
+                        
+                        RenderSeriesType::Bar { bars }
+                    }
                 };
                 
                 Ok(SeriesRenderData {
@@ -1175,6 +1711,24 @@ impl Plot {
                         }
                     }
                 }
+                SeriesType::Histogram { data, config } => {
+                    // Calculate histogram to get data bounds
+                    if let Ok(hist_data) = crate::plots::histogram::calculate_histogram(data, config) {
+                        // X bounds from bin edges
+                        if !hist_data.bin_edges.is_empty() {
+                            x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
+                            x_max = x_max.max(*hist_data.bin_edges.last().unwrap());
+                        }
+                        
+                        // Y bounds from counts (include zero baseline)
+                        y_min = y_min.min(0.0);
+                        for &count in &hist_data.counts {
+                            if count.is_finite() && count > 0.0 {
+                                y_max = y_max.max(count);
+                            }
+                        }
+                    }
+                }
             }
         }
         
@@ -1195,6 +1749,47 @@ impl Plot {
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         use crate::render::skia::SkiaRenderer;
         
+        // Validate data before rendering
+        for series in &self.series {
+            match &series.series_type {
+                SeriesType::Line { x_data, y_data } | 
+                SeriesType::Scatter { x_data, y_data } |
+                SeriesType::ErrorBars { x_data, y_data, .. } |
+                SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                    // Check for empty data
+                    if x_data.is_empty() || y_data.is_empty() {
+                        return Err(crate::core::PlottingError::EmptyDataSet);
+                    }
+                    // Check for mismatched data lengths
+                    if x_data.len() != y_data.len() {
+                        return Err(crate::core::PlottingError::DataLengthMismatch {
+                            x_len: x_data.len(),
+                            y_len: y_data.len(),
+                        });
+                    }
+                }
+                SeriesType::Bar { categories, values } => {
+                    // Check for empty data
+                    if categories.is_empty() || values.is_empty() {
+                        return Err(crate::core::PlottingError::EmptyDataSet);
+                    }
+                    // Check for mismatched data lengths
+                    if categories.len() != values.len() {
+                        return Err(crate::core::PlottingError::DataLengthMismatch {
+                            x_len: categories.len(),
+                            y_len: values.len(),
+                        });
+                    }
+                }
+                SeriesType::Histogram { data, .. } => {
+                    // Check for empty data
+                    if data.is_empty() {
+                        return Err(crate::core::PlottingError::EmptyDataSet);
+                    }
+                }
+            }
+        }
+        
         // Create renderer and render the plot with DPI scaling
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
         let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
@@ -1203,10 +1798,10 @@ impl Plot {
         renderer.clear();
         
         // Calculate plot area and data bounds using DPI-scaled dimensions
-        let plot_area = crate::render::skia::calculate_plot_area(
+        let plot_area = crate::render::skia::calculate_plot_area_dpi(
             scaled_width, 
             scaled_height, 
-            0.1
+            self.dpi_scale()
         );
         
         // Calculate data bounds across all series
@@ -1237,6 +1832,22 @@ impl Plot {
                         y_max = y_max.max(value);
                     }
                 }
+                SeriesType::Histogram { data, config } => {
+                    // Calculate histogram data to get bounds
+                    if let Ok(hist_data) = crate::plots::histogram::calculate_histogram(data, config) {
+                        // X bounds from bin edges
+                        if let (Some(&first), Some(&last)) = (hist_data.bin_edges.first(), hist_data.bin_edges.last()) {
+                            x_min = x_min.min(first);
+                            x_max = x_max.max(last);
+                        }
+                        
+                        // Y bounds from zero to max count
+                        y_min = y_min.min(0.0);
+                        if let Some(&max_count) = hist_data.counts.iter().max_by(|a, b| a.partial_cmp(b).unwrap()) {
+                            y_max = y_max.max(max_count);
+                        }
+                    }
+                }
             }
         }
         
@@ -1248,9 +1859,43 @@ impl Plot {
         y_min -= y_range * 0.05;
         y_max += y_range * 0.05;
         
-        // Generate ticks for axes (always needed)
-        let x_ticks = crate::render::skia::generate_ticks(x_min, x_max, 10);
-        let y_ticks = crate::render::skia::generate_ticks(y_min, y_max, 8);
+        // Generate major and minor ticks for axes
+        let x_major_ticks = crate::render::skia::generate_ticks(x_min, x_max, self.tick_config.major_ticks_x);
+        let y_major_ticks = crate::render::skia::generate_ticks(y_min, y_max, self.tick_config.major_ticks_y);
+        
+        // Generate minor ticks if configured
+        let x_minor_ticks = if self.tick_config.minor_ticks_x > 0 {
+            crate::render::skia::generate_minor_ticks(&x_major_ticks, self.tick_config.minor_ticks_x)
+        } else {
+            Vec::new()
+        };
+        let y_minor_ticks = if self.tick_config.minor_ticks_y > 0 {
+            crate::render::skia::generate_minor_ticks(&y_major_ticks, self.tick_config.minor_ticks_y)
+        } else {
+            Vec::new()
+        };
+        
+        // Combine ticks for rendering based on grid mode
+        let x_ticks = match self.tick_config.grid_mode {
+            GridMode::MajorOnly => x_major_ticks.clone(),
+            GridMode::MinorOnly => x_minor_ticks.clone(),
+            GridMode::Both => {
+                let mut combined = x_major_ticks.clone();
+                combined.extend(x_minor_ticks.iter());
+                combined.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                combined
+            }
+        };
+        let y_ticks = match self.tick_config.grid_mode {
+            GridMode::MajorOnly => y_major_ticks.clone(),
+            GridMode::MinorOnly => y_minor_ticks.clone(),
+            GridMode::Both => {
+                let mut combined = y_major_ticks.clone();
+                combined.extend(y_minor_ticks.iter());
+                combined.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                combined
+            }
+        };
         
         let x_tick_pixels: Vec<f32> = x_ticks.iter().map(|&x| {
             crate::render::skia::map_data_to_pixels(x, 0.0, x_min, x_max, 0.0, 1.0, plot_area).0
@@ -1265,13 +1910,35 @@ impl Plot {
                              self.theme.grid_color, crate::render::LineStyle::Solid)?;
         }
         
-        // Always draw axes
-        renderer.draw_axes(plot_area, &x_tick_pixels, &y_tick_pixels, self.theme.foreground)?;
+        // Convert tick values to pixel positions for major and minor ticks
+        let x_major_tick_pixels: Vec<f32> = x_major_ticks.iter().map(|&x| {
+            crate::render::skia::map_data_to_pixels(x, 0.0, x_min, x_max, 0.0, 1.0, plot_area).0
+        }).collect();
+        let y_major_tick_pixels: Vec<f32> = y_major_ticks.iter().map(|&y| {
+            crate::render::skia::map_data_to_pixels(0.0, y, 0.0, 1.0, y_min, y_max, plot_area).1
+        }).collect();
         
-        // Draw axis labels and tick values
+        let x_minor_tick_pixels: Vec<f32> = x_minor_ticks.iter().map(|&x| {
+            crate::render::skia::map_data_to_pixels(x, 0.0, x_min, x_max, 0.0, 1.0, plot_area).0
+        }).collect();
+        let y_minor_tick_pixels: Vec<f32> = y_minor_ticks.iter().map(|&y| {
+            crate::render::skia::map_data_to_pixels(0.0, y, 0.0, 1.0, y_min, y_max, plot_area).1
+        }).collect();
+
+        // Always draw axes with enhanced tick system
+        renderer.draw_axes_with_config(plot_area, 
+                                     &x_major_tick_pixels, &y_major_tick_pixels,
+                                     &x_minor_tick_pixels, &y_minor_tick_pixels,
+                                     &self.tick_config.direction, 
+                                     self.theme.foreground)?;
+        
+        // Draw axis labels and tick values using major ticks only
         let x_label = self.xlabel.as_deref().unwrap_or("X");
         let y_label = self.ylabel.as_deref().unwrap_or("Y");
-        renderer.draw_axis_labels(plot_area, x_min, x_max, y_min, y_max, x_label, y_label, self.theme.foreground, self.dpi_scaled_font_size(14.0), self.dpi_scale())?;
+        renderer.draw_axis_labels_with_ticks(plot_area, x_min, x_max, y_min, y_max, 
+                                           &x_major_ticks, &y_major_ticks,
+                                           x_label, y_label, self.theme.foreground, 
+                                           self.dpi_scaled_font_size(14.0), self.dpi_scale())?;
         
         // Draw title if present
         if let Some(ref title) = self.title {
@@ -1286,6 +1953,7 @@ impl Plot {
                 SeriesType::ErrorBars { x_data, .. } |
                 SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
                 SeriesType::Bar { categories, .. } => categories.len(),
+                SeriesType::Histogram { data, .. } => data.len(),
             }
         }).sum();
 
@@ -1305,6 +1973,28 @@ impl Plot {
                         );
                         
                         datashader.aggregate(x_data, y_data)?;
+                        let image = datashader.render();
+                        
+                        // Draw the DataShader result
+                        renderer.draw_datashader_image(&image, plot_area)?;
+                    }
+                    SeriesType::Histogram { data, config } => {
+                        // For histograms, calculate bins and use DataShader for high density
+                        let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                            .map_err(|e| PlottingError::RenderError(format!("Histogram calculation failed: {}", e)))?;
+                        
+                        // Convert histogram to x,y data for DataShader
+                        let x_data: Vec<f64> = hist_data.bin_edges.windows(2)
+                            .map(|w| (w[0] + w[1]) / 2.0)
+                            .collect();
+                        let y_data: Vec<f64> = hist_data.counts;
+                        
+                        let mut datashader = DataShader::with_canvas_size(
+                            plot_area.width() as usize,
+                            plot_area.height() as usize
+                        );
+                        
+                        datashader.aggregate(&x_data, &y_data)?;
                         let image = datashader.render();
                         
                         // Draw the DataShader result
@@ -1414,6 +2104,13 @@ impl PlotSeriesBuilder {
     /// Set marker style (for scatter plots)
     pub fn marker(mut self, marker: MarkerStyle) -> Self {
         self.series.marker_style = Some(marker);
+        self
+    }
+
+    
+    /// Set marker size (for scatter plots)
+    pub fn marker_size(mut self, size: f32) -> Self {
+        self.series.marker_size = Some(size.max(0.1));
         self
     }
     
@@ -1552,6 +2249,104 @@ impl Image {
     }
 }
 
+    #[test]
+    fn test_get_theme_method() {
+        use crate::render::Theme;
+        
+        let plot = Plot::new();
+        let theme = plot.get_theme();
+        
+        // Should return a valid theme (can't compare directly since Theme doesn't implement PartialEq)
+        // Just ensure the method works without panicking
+        
+        // Test with custom theme - just ensure get/set works
+        let custom_theme = Theme::dark();
+        let plot = Plot::new().theme(custom_theme);
+        let _retrieved_theme = plot.get_theme();
+        // Test passes if no panic occurs
+    }
+
+    #[test]
+    fn test_render_to_renderer_basic() {
+        use crate::render::{SkiaRenderer, Theme};
+        
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+        
+        let plot = Plot::new()
+            .line(&x_data, &y_data)
+            .title("Test Plot")
+            .xlabel("X")
+            .ylabel("Y")
+            .end_series();
+        
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        
+        // Should render without error
+        let result = plot.render_to_renderer(&mut renderer, 96.0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_to_renderer_empty_series() {
+        use crate::render::{SkiaRenderer, Theme};
+        
+        let plot = Plot::new().title("Empty Plot");
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        
+        // Should fail with no data series
+        let result = plot.render_to_renderer(&mut renderer, 96.0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_render_to_renderer_multiple_series() {
+        use crate::render::{SkiaRenderer, Theme};
+        
+        let x1 = vec![1.0, 2.0, 3.0];
+        let y1 = vec![2.0, 4.0, 3.0];
+        let x2 = vec![1.5, 2.5, 3.5];
+        let y2 = vec![1.0, 3.0, 2.0];
+        
+        let plot = Plot::new()
+            .line(&x1, &y1)
+            .label("Series 1")
+            .line(&x2, &y2)
+            .label("Series 2")
+            .title("Multi-series Plot")
+            .end_series();
+        
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        
+        // Should render multiple series without error
+        let result = plot.render_to_renderer(&mut renderer, 96.0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_render_to_renderer_dpi_scaling() {
+        use crate::render::{SkiaRenderer, Theme};
+        
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+        
+        let plot = Plot::new()
+            .line(&x_data, &y_data)
+            .title("DPI Test")
+            .end_series();
+        
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        
+        // Test different DPI values
+        let result_96 = plot.clone().render_to_renderer(&mut renderer, 96.0);
+        assert!(result_96.is_ok());
+        
+        let result_144 = plot.clone().render_to_renderer(&mut renderer, 144.0);
+        assert!(result_144.is_ok());
+        
+        let result_300 = plot.render_to_renderer(&mut renderer, 300.0);
+        assert!(result_300.is_ok());
+    }
 #[cfg(test)]
 mod tests {
     use super::*;

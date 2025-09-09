@@ -41,7 +41,7 @@ pub mod export;
 
 /// Convenience re-exports for common usage
 pub mod prelude {
-    pub use crate::core::{Plot, Position};
+    pub use crate::core::{Plot, Position, SubplotFigure, GridSpec, subplots, subplots_default};
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
     pub use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme, FontFamily, FontConfig, FontWeight, FontStyle};
 }

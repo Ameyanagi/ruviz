@@ -345,6 +345,87 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Draw axis lines and ticks with advanced configuration
+    pub fn draw_axes_with_config(&mut self, 
+                                 plot_area: Rect, 
+                                 x_major_ticks: &[f32], 
+                                 y_major_ticks: &[f32],
+                                 x_minor_ticks: &[f32],
+                                 y_minor_ticks: &[f32],
+                                 tick_direction: &crate::core::plot::TickDirection,
+                                 color: Color) -> Result<()> {
+        let axis_width = 1.5;
+        let major_tick_size = 8.0;
+        let minor_tick_size = 4.0;
+        
+        // Draw main axis lines
+        // X-axis (bottom)
+        self.draw_line(
+            plot_area.left(), 
+            plot_area.bottom(), 
+            plot_area.right(), 
+            plot_area.bottom(), 
+            color, 
+            axis_width, 
+            LineStyle::Solid
+        )?;
+        
+        // Y-axis (left)
+        self.draw_line(
+            plot_area.left(), 
+            plot_area.top(), 
+            plot_area.left(), 
+            plot_area.bottom(), 
+            color, 
+            axis_width, 
+            LineStyle::Solid
+        )?;
+        
+        // Determine tick direction multiplier
+        let tick_dir_multiplier = match tick_direction {
+            crate::core::plot::TickDirection::Inside => -1.0,
+            crate::core::plot::TickDirection::Outside => 1.0,
+        };
+        
+        // Draw major tick marks on X-axis
+        for &x in x_major_ticks {
+            if x >= plot_area.left() && x <= plot_area.right() {
+                let tick_start = plot_area.bottom();
+                let tick_end = plot_area.bottom() + major_tick_size * tick_dir_multiplier;
+                self.draw_line(x, tick_start, x, tick_end, color, 1.5, LineStyle::Solid)?;
+            }
+        }
+        
+        // Draw minor tick marks on X-axis
+        for &x in x_minor_ticks {
+            if x >= plot_area.left() && x <= plot_area.right() {
+                let tick_start = plot_area.bottom();
+                let tick_end = plot_area.bottom() + minor_tick_size * tick_dir_multiplier;
+                self.draw_line(x, tick_start, x, tick_end, color, 1.0, LineStyle::Solid)?;
+            }
+        }
+        
+        // Draw major tick marks on Y-axis
+        for &y in y_major_ticks {
+            if y >= plot_area.top() && y <= plot_area.bottom() {
+                let tick_start = plot_area.left();
+                let tick_end = plot_area.left() + major_tick_size * -tick_dir_multiplier; // Opposite direction for Y-axis
+                self.draw_line(tick_start, y, tick_end, y, color, 1.5, LineStyle::Solid)?;
+            }
+        }
+        
+        // Draw minor tick marks on Y-axis
+        for &y in y_minor_ticks {
+            if y >= plot_area.top() && y <= plot_area.bottom() {
+                let tick_start = plot_area.left();
+                let tick_end = plot_area.left() + minor_tick_size * -tick_dir_multiplier; // Opposite direction for Y-axis
+                self.draw_line(tick_start, y, tick_end, y, color, 1.0, LineStyle::Solid)?;
+            }
+        }
+        
+        Ok(())
+    }
+
     
     /// Draw a DataShader aggregated image
     pub fn draw_datashader_image(&mut self, image: &crate::data::DataShaderImage, plot_area: Rect) -> Result<()> {
@@ -423,6 +504,18 @@ impl SkiaRenderer {
     pub fn draw_text_fallback(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
         // Use fontdue implementation with baseline alignment as fallback
         self.draw_text_fontdue(text, x, y, size, color)
+    }
+    
+    /// Draw text centered horizontally at the given position
+    pub fn draw_text_centered(&mut self, text: &str, center_x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        // Estimate text width for centering (more accurate than previous method)
+        let char_width_estimate = size * 0.6; // More accurate character width estimation
+        let text_width_estimate = text.len() as f32 * char_width_estimate;
+        
+        // Calculate x position to center the text
+        let x = center_x - text_width_estimate / 2.0;
+        
+        self.draw_text(text, x, y, size, color)
     }
     
     /// Draw text using fontdue with proper baseline alignment
@@ -1186,7 +1279,7 @@ impl SkiaRenderer {
         
         // Generate and draw X-axis tick labels
         let x_ticks = generate_ticks(x_min, x_max, 5);
-        for (i, &tick_value) in x_ticks.iter().enumerate() {
+        for (_i, &tick_value) in x_ticks.iter().enumerate() {
             let x_pixel = plot_area.left() + (tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
             let label_text = if tick_value.abs() < 0.001 {
                 "0".to_string()
@@ -1196,12 +1289,14 @@ impl SkiaRenderer {
                 format!("{:.1}", tick_value)
             };
             
-            self.draw_text(&label_text, x_pixel - tick_offset_x, plot_area.bottom() + tick_offset_y, tick_size, color)?;
+            // Center X-axis tick labels horizontally under the tick mark
+            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
+            self.draw_text(&label_text, x_pixel - text_width_estimate, plot_area.bottom() + tick_offset_y, tick_size, color)?;
         }
         
         // Generate and draw Y-axis tick labels
         let y_ticks = generate_ticks(y_min, y_max, 5);
-        for (i, &tick_value) in y_ticks.iter().enumerate() {
+        for (_i, &tick_value) in y_ticks.iter().enumerate() {
             let y_pixel = plot_area.bottom() - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
             let label_text = if tick_value.abs() < 0.001 {
                 "0".to_string()
@@ -1211,7 +1306,9 @@ impl SkiaRenderer {
                 format!("{:.1}", tick_value)
             };
             
-            self.draw_text(&label_text, plot_area.left() - y_tick_offset, y_pixel + y_tick_baseline, tick_size, color)?;
+            // Right-align Y-axis tick labels next to the tick mark (vertically centered)
+            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            self.draw_text(&label_text, plot_area.left() - text_width_estimate - 10.0 * dpi_scale, y_pixel - tick_size / 3.0, tick_size, color)?;
         }
         
         // Draw X-axis label
@@ -1220,21 +1317,120 @@ impl SkiaRenderer {
         self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
         
         // Draw Y-axis label (rotated 90 degrees counterclockwise)
-        let y_label_x = y_label_offset;
+        // Position consistently relative to plot area left edge
+        let y_label_x = plot_area.left() - y_label_offset;
         let y_label_y = plot_area.top() + plot_area.height() / 2.0;
         self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
+        
+        // Draw border around plot area
+        self.draw_plot_border(plot_area, color, dpi_scale)?;
+        
+        Ok(())
+    }
+
+    /// Draw axis labels and tick values with provided major ticks
+    pub fn draw_axis_labels_with_ticks(&mut self, plot_area: Rect, 
+                                      x_min: f64, x_max: f64, y_min: f64, y_max: f64,
+                                      x_major_ticks: &[f64], y_major_ticks: &[f64],
+                                      x_label: &str, y_label: &str, 
+                                      color: Color, label_size: f32, dpi_scale: f32) -> Result<()> {
+        let tick_size = label_size * 0.7; // Tick labels slightly smaller than axis labels
+        
+        // Scale all positioning offsets with DPI - increased spacing
+        let tick_offset_y = 25.0 * dpi_scale; // Increased from 20.0
+        let x_label_offset = 55.0 * dpi_scale; // Increased from 50.0
+        let y_label_offset = 50.0 * dpi_scale; // Increased from 25.0 to give more space
+        let y_tick_offset = 15.0 * dpi_scale; // Additional offset for Y-axis tick labels
+        let char_width_estimate = 4.0 * dpi_scale; // Rough character width for centering
+        
+        // Draw X-axis tick labels using provided major ticks
+        for &tick_value in x_major_ticks {
+            let x_pixel = plot_area.left() + (tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
+            let label_text = if tick_value.abs() < 0.001 {
+                "0".to_string()
+            } else if tick_value.abs() > 1000.0 {
+                format!("{:.0e}", tick_value)
+            } else {
+                format!("{:.1}", tick_value)
+            };
+            
+            // Center X-axis tick labels horizontally under the tick mark, with proper offset
+            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
+            self.draw_text(&label_text, x_pixel - text_width_estimate, plot_area.bottom() + tick_offset_y, tick_size, color)?;
+        }
+        
+        // Draw Y-axis tick labels using provided major ticks
+        for &tick_value in y_major_ticks {
+            let y_pixel = plot_area.bottom() - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+            let label_text = if tick_value.abs() < 0.001 {
+                "0".to_string()
+            } else if tick_value.abs() > 1000.0 {
+                format!("{:.0e}", tick_value)
+            } else {
+                format!("{:.1}", tick_value)
+            };
+            
+            // Right-align Y-axis tick labels next to the tick mark with proper offset
+            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            self.draw_text(&label_text, plot_area.left() - text_width_estimate - y_tick_offset, y_pixel - tick_size / 3.0, tick_size, color)?;
+        }
+        
+        // Draw X-axis label
+        let x_label_x = plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
+        let x_label_y = plot_area.bottom() + x_label_offset;
+        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
+        
+        // Draw Y-axis label (rotated 90 degrees counterclockwise)
+        // Position with increased offset from plot area left edge
+        let y_label_x = plot_area.left() - y_label_offset;
+        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
+        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
+        
+        // Draw border around plot area
+        self.draw_plot_border(plot_area, color, dpi_scale)?;
+        
+        Ok(())
+    }
+    
+    /// Draw border around plot area
+    pub fn draw_plot_border(&mut self, plot_area: Rect, color: Color, dpi_scale: f32) -> Result<()> {
+        let border_width = 1.0 * dpi_scale;
+        
+        // Create border paint
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
+        paint.anti_alias = true;
+        
+        // Create stroke
+        let stroke = tiny_skia::Stroke {
+            width: border_width,
+            ..tiny_skia::Stroke::default()
+        };
+        
+        // Draw rectangle border around plot area
+        let path = tiny_skia::PathBuilder::from_rect(plot_area);
+        self.pixmap.stroke_path(
+            &path,
+            &paint,
+            &stroke,
+            tiny_skia::Transform::identity(),
+            None,
+        );
         
         Ok(())
     }
     
     /// Draw title
     pub fn draw_title(&mut self, title: &str, plot_area: Rect, color: Color, title_size: f32, dpi_scale: f32) -> Result<()> {
-        let char_width_estimate = 5.0 * dpi_scale; // Rough character width for centering
-        let title_offset = 20.0 * dpi_scale; // Offset from plot area top
+        let title_offset = 30.0 * dpi_scale; // Offset from plot area top
         
-        let title_x = plot_area.left() + plot_area.width() / 2.0 - title.len() as f32 * char_width_estimate;
-        let title_y = plot_area.top() - title_offset;
-        self.draw_text(title, title_x, title_y, title_size, color)
+        // Center title horizontally over the plot area (simple center approach)
+        let title_x = plot_area.left() + plot_area.width() / 2.0;
+        
+        // Position title above plot area, ensuring it stays within canvas bounds
+        let title_y = (plot_area.top() - title_offset).max(title_size + 5.0); // Ensure minimum 5px from top edge
+        
+        self.draw_text_centered(title, title_x, title_y, title_size, color)
     }
     
     /// Draw legend
@@ -1408,6 +1604,38 @@ impl SkiaRenderer {
         
         Ok(())
     }
+
+    /// Get the width of the renderer
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Get the height of the renderer  
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Draw a subplot image at the specified position
+    pub fn draw_subplot(&mut self, subplot_image: crate::core::plot::Image, x: u32, y: u32) -> Result<()> {
+        // Convert our Image struct to tiny-skia Pixmap for drawing
+        let subplot_pixmap = tiny_skia::Pixmap::from_vec(
+            subplot_image.pixels,
+            tiny_skia::IntSize::from_wh(subplot_image.width, subplot_image.height)
+                .ok_or_else(|| PlottingError::InvalidInput("Invalid subplot dimensions".to_string()))?
+        ).ok_or_else(|| PlottingError::RenderError("Failed to create subplot pixmap".to_string()))?;
+
+        // Draw the subplot pixmap onto our main pixmap at the specified position
+        self.pixmap.draw_pixmap(
+            x as i32,
+            y as i32,
+            subplot_pixmap.as_ref(),
+            &tiny_skia::PixmapPaint::default(),
+            tiny_skia::Transform::identity(),
+            None,
+        );
+
+        Ok(())
+    }
 }
 
 /// Helper function to calculate plot area with margins
@@ -1421,6 +1649,35 @@ pub fn calculate_plot_area(canvas_width: u32, canvas_height: u32, margin_fractio
         (canvas_width as f32) - 2.0 * margin_x,
         (canvas_height as f32) - 2.0 * margin_y,
     ).unwrap_or_else(|| Rect::from_xywh(10.0, 10.0, (canvas_width as f32) - 20.0, (canvas_height as f32) - 20.0).unwrap())
+}
+
+/// Calculate plot area with DPI-aware margins for text space
+pub fn calculate_plot_area_dpi(canvas_width: u32, canvas_height: u32, dpi_scale: f32) -> Rect {
+    // Base margins in pixels (at 96 DPI)
+    let base_margin_x = 80.0; // Space for Y-axis label and tick labels
+    let base_margin_y = 60.0; // Space for title and X-axis label
+    
+    // Scale margins with DPI
+    let margin_x = base_margin_x * dpi_scale;
+    let margin_y = base_margin_y * dpi_scale;
+    
+    let plot_width = (canvas_width as f32) - 2.0 * margin_x;
+    let plot_height = (canvas_height as f32) - 2.0 * margin_y;
+    
+    // Ensure minimum plot area
+    if plot_width > 100.0 && plot_height > 100.0 {
+        Rect::from_xywh(margin_x, margin_y, plot_width, plot_height)
+            .unwrap_or_else(|| Rect::from_xywh(40.0, 40.0, (canvas_width as f32) - 80.0, (canvas_height as f32) - 80.0).unwrap())
+    } else {
+        // Fallback for very small canvases
+        let fallback_margin = (canvas_width.min(canvas_height) as f32) * 0.1;
+        Rect::from_xywh(
+            fallback_margin, 
+            fallback_margin, 
+            (canvas_width as f32) - 2.0 * fallback_margin, 
+            (canvas_height as f32) - 2.0 * fallback_margin
+        ).unwrap()
+    }
 }
 
 /// Helper function to map data coordinates to pixel coordinates
@@ -1476,6 +1733,82 @@ pub fn generate_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
     ticks
 }
 
+/// Generate minor tick values between major ticks
+pub fn generate_minor_ticks(major_ticks: &[f64], minor_count: usize) -> Vec<f64> {
+    if major_ticks.len() < 2 || minor_count == 0 {
+        return Vec::new();
+    }
+    
+    let mut minor_ticks = Vec::new();
+    
+    for i in 0..major_ticks.len() - 1 {
+        let start = major_ticks[i];
+        let end = major_ticks[i + 1];
+        let step = (end - start) / (minor_count + 1) as f64;
+        
+        for j in 1..=minor_count {
+            let minor_tick = start + step * j as f64;
+            minor_ticks.push(minor_tick);
+        }
+    }
+    
+    minor_ticks
+}
+
+    #[test]
+    fn test_renderer_dimensions() {
+        let theme = Theme::default();
+        let renderer = SkiaRenderer::new(800, 600, theme).unwrap();
+        
+        assert_eq!(renderer.width(), 800);
+        assert_eq!(renderer.height(), 600);
+    }
+
+    #[test]
+    fn test_draw_subplot() {
+        use crate::core::plot::Image;
+        
+        let theme = Theme::default();
+        let mut main_renderer = SkiaRenderer::new(800, 600, theme.clone()).unwrap();
+        let subplot_renderer = SkiaRenderer::new(200, 150, theme).unwrap();
+        
+        // Convert subplot to image
+        let subplot_image = subplot_renderer.to_image();
+        
+        // Should draw subplot without error
+        let result = main_renderer.draw_subplot(subplot_image, 10, 20);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_draw_subplot_bounds_checking() {
+        use crate::core::plot::Image;
+        
+        let theme = Theme::default();
+        let mut main_renderer = SkiaRenderer::new(400, 300, theme.clone()).unwrap();
+        let subplot_renderer = SkiaRenderer::new(200, 150, theme).unwrap();
+        
+        let subplot_image = subplot_renderer.to_image();
+        
+        // Should handle valid positions
+        assert!(main_renderer.draw_subplot(subplot_image.clone(), 0, 0).is_ok());
+        assert!(main_renderer.draw_subplot(subplot_image.clone(), 100, 50).is_ok());
+        
+        // Should handle edge positions
+        assert!(main_renderer.draw_subplot(subplot_image, 200, 150).is_ok());
+    }
+
+    #[test]
+    fn test_to_image_conversion() {
+        let theme = Theme::default();
+        let renderer = SkiaRenderer::new(400, 300, theme).unwrap();
+        
+        let image = renderer.to_image();
+        
+        assert_eq!(image.width, 400);
+        assert_eq!(image.height, 300);
+        assert_eq!(image.pixels.len(), 400 * 300 * 4); // RGBA pixels
+    }
 #[cfg(test)]
 mod tests {
     use super::*;

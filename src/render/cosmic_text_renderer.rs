@@ -135,8 +135,10 @@ impl CosmicTextRenderer {
         let metrics = Metrics::new(font_size, font_size * 1.2);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
         
-        // Set generous dimensions for text rendering
-        buffer.set_size(&mut self.font_system, Some(500.0), Some(100.0));
+        // Set generous dimensions for text rendering, scaled with font size
+        let buffer_width = (font_size * 20.0).max(500.0); // Scale width with font size, minimum 500
+        let buffer_height = (font_size * 4.0).max(100.0);  // Scale height with font size, minimum 100
+        buffer.set_size(&mut self.font_system, Some(buffer_width), Some(buffer_height));
         
         let attrs = Attrs::new()
             .family(Family::SansSerif)

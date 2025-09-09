@@ -84,3 +84,32 @@ codegen-units = 1
 [profile.bench]
 debug = true
 
+# Gallery Examples
+[[example]]
+name = "basic_example"
+path = "gallery/basic/basic_example.rs"
+
+[[example]]
+name = "simple_visual_test"
+path = "gallery/basic/simple_visual_test.rs"
+
+[[example]]
+name = "axis_legend_test"
+path = "gallery/basic/axis_legend_test.rs"
+
+[[example]]
+name = "font_demo"
+path = "gallery/advanced/font_demo.rs"
+
+[[example]]
+name = "simple_publication_test"
+path = "gallery/publication/simple_publication_test.rs"
+
+[[example]]
+name = "scientific_plotting"
+path = "gallery/scientific/scientific_plotting.rs"
+
+[[example]]
+name = "subplot_example"
+path = "examples/subplot_example.rs"
+
