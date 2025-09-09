@@ -202,6 +202,19 @@ impl Plot {
         self
     }
     
+    /// Calculate DPI-scaled canvas dimensions
+    fn dpi_scaled_dimensions(&self) -> (u32, u32) {
+        let scale = self.dpi as f32 / 96.0;
+        let scaled_width = (self.dimensions.0 as f32 * scale).round() as u32;
+        let scaled_height = (self.dimensions.1 as f32 * scale).round() as u32;
+        (scaled_width, scaled_height)
+    }
+    
+    /// Calculate DPI scaling factor
+    fn dpi_scale(&self) -> f32 {
+        self.dpi as f32 / 96.0
+    }
+    
     /// Set margin around plot area
     pub fn margin(mut self, margin: f32) -> Self {
         self.margin = Some(margin.clamp(0.0, 0.5));
@@ -568,11 +581,12 @@ impl Plot {
             }
         }
         
-        // Create renderer for standard rendering
-        let mut renderer = SkiaRenderer::new(self.dimensions.0, self.dimensions.1, self.theme.clone())?;
+        // Create renderer for standard rendering with DPI scaling
+        let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
+        let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
         
-        // Calculate plot area with margins
-        let plot_area = calculate_plot_area(self.dimensions.0, self.dimensions.1, 0.15);
+        // Calculate plot area with margins using DPI-scaled dimensions
+        let plot_area = calculate_plot_area(scaled_width, scaled_height, 0.15);
         
         // Calculate data bounds across all series
         let mut x_min = f64::INFINITY;
@@ -859,9 +873,10 @@ impl Plot {
         // Start timing for performance measurement
         let start_time = std::time::Instant::now();
         
-        // Create renderer
-        let mut renderer = SkiaRenderer::new(self.dimensions.0, self.dimensions.1, self.theme.clone())?;
-        let plot_area = calculate_plot_area(self.dimensions.0, self.dimensions.1, 0.15);
+        // Create renderer with DPI scaling
+        let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
+        let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
+        let plot_area = calculate_plot_area(scaled_width, scaled_height, 0.15);
         
         // Convert to parallel renderer format
         let parallel_plot_area = PlotArea {
@@ -1169,16 +1184,17 @@ impl Plot {
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         use crate::render::skia::SkiaRenderer;
         
-        // Create renderer and render the plot
-        let mut renderer = SkiaRenderer::new(self.dimensions.0, self.dimensions.1, self.theme.clone())?;
+        // Create renderer and render the plot with DPI scaling
+        let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
+        let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
         
         // Clear background
         renderer.clear();
         
-        // Calculate plot area and data bounds
+        // Calculate plot area and data bounds using DPI-scaled dimensions
         let plot_area = crate::render::skia::calculate_plot_area(
-            self.dimensions.0, 
-            self.dimensions.1, 
+            scaled_width, 
+            scaled_height, 
             0.1
         );
         
