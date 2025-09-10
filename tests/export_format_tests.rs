@@ -151,7 +151,7 @@ fn test_direct_renderer_exports() -> Result<(), Box<dyn std::error::Error>> {
     let x_ticks = vec![100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 700.0];
     let y_ticks = vec![100.0, 200.0, 300.0, 400.0, 500.0];
     
-    grid_renderer.draw_grid(&x_ticks, &y_ticks, plot_area, Color::new(200, 200, 200), LineStyle::Dotted)?;
+    grid_renderer.draw_grid(&x_ticks, &y_ticks, plot_area, Color::new(200, 200, 200), LineStyle::Dotted, 1.0)?;
     grid_renderer.draw_axes(plot_area, &x_ticks, &y_ticks, Color::new(0, 0, 0))?;
     grid_renderer.save_png("export_test_output/direct/03_grid_and_axes.png")?;
     

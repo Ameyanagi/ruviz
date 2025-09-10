@@ -313,20 +313,19 @@ impl SkiaRenderer {
     }
     
     /// Draw grid lines
-    pub fn draw_grid(&mut self, x_ticks: &[f32], y_ticks: &[f32], plot_area: Rect, color: Color, style: LineStyle) -> Result<()> {
-        let width = 1.0;
+    pub fn draw_grid(&mut self, x_ticks: &[f32], y_ticks: &[f32], plot_area: Rect, color: Color, style: LineStyle, line_width: f32) -> Result<()> {
         
         // Vertical grid lines
         for &x in x_ticks {
             if x >= plot_area.left() && x <= plot_area.right() {
-                self.draw_line(x, plot_area.top(), x, plot_area.bottom(), color, width, style.clone())?;
+                self.draw_line(x, plot_area.top(), x, plot_area.bottom(), color, line_width, style.clone())?;
             }
         }
         
         // Horizontal grid lines
         for &y in y_ticks {
             if y >= plot_area.top() && y <= plot_area.bottom() {
-                self.draw_line(plot_area.left(), y, plot_area.right(), y, color, width, style.clone())?;
+                self.draw_line(plot_area.left(), y, plot_area.right(), y, color, line_width, style.clone())?;
             }
         }
         
@@ -1415,8 +1414,10 @@ impl SkiaRenderer {
         self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
         
         // Draw Y-axis label (rotated 90 degrees counterclockwise)
-        // Position with increased offset from plot area left edge
-        let y_label_x = plot_area.left() - y_label_offset;
+        // Calculate required margin based on rotated text dimensions
+        let estimated_text_width = y_label.len() as f32 * label_size * 0.8;
+        let improved_y_label_offset = (estimated_text_width * 0.6).max(y_label_offset);
+        let y_label_x = plot_area.left() - improved_y_label_offset;
         let y_label_y = plot_area.top() + plot_area.height() / 2.0;
         self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
         
@@ -1787,8 +1788,8 @@ fn generate_scientific_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
     let epsilon = step * 1e-10; // Very small epsilon for float comparison
     
     while tick <= end + epsilon {
-        // Only include ticks within or slightly beyond the data range
-        if tick >= min - epsilon {
+        // Only include ticks within the actual data range
+        if tick >= min - epsilon && tick <= max + epsilon {
             ticks.push(tick);
         }
         tick += step;

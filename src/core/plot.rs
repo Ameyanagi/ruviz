@@ -1046,7 +1046,7 @@ impl Plot {
         
         // Draw grid if enabled
         if self.grid.enabled {
-            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid)?;
+            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid, self.dpi_scaled_line_width(1.0))?;
         }
         
         // Draw axes
@@ -1260,7 +1260,7 @@ impl Plot {
         
         // Draw grid if enabled
         if self.grid.enabled {
-            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid)?;
+            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid, self.dpi_scaled_line_width(1.0))?;
         }
         
         // Draw axes
@@ -1268,15 +1268,7 @@ impl Plot {
 
         // Draw title if present
         if let Some(ref title) = self.title {
-            let title_size = self.dpi_scaled_font_size(16.0) * dpi_scale;
-            let title_y = 20.0 * dpi_scale;
-            renderer.draw_text_centered(
-                title,
-                renderer.width() as f32 / 2.0,
-                title_y,
-                title_size,
-                self.theme.foreground,
-            )?;
+            renderer.draw_title(title, plot_area, self.theme.foreground, self.dpi_scaled_font_size(16.0), dpi_scale)?;
         }
 
         // Draw axis labels if present
@@ -1293,8 +1285,10 @@ impl Plot {
         }
 
         if let Some(ref ylabel) = self.ylabel {
-            let label_size = self.dpi_scaled_font_size(12.0) * dpi_scale;
-            let ylabel_x = 20.0 * dpi_scale;
+            let label_size = self.dpi_scaled_font_size(12.0);
+            // Calculate required margin based on rotated text dimensions
+            let estimated_text_width = ylabel.len() as f32 * label_size * 0.8;
+            let ylabel_x = (estimated_text_width * 0.6).max(35.0 * dpi_scale);
             renderer.draw_text_rotated(
                 ylabel,
                 ylabel_x,
@@ -1543,7 +1537,7 @@ impl Plot {
         
         // Draw grid if enabled (sequential - UI elements)
         if self.grid.enabled {
-            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid)?;
+            renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, self.theme.grid_color, LineStyle::Solid, self.dpi_scaled_line_width(1.0))?;
         }
         
         // Draw axes (sequential - UI elements)
@@ -2191,7 +2185,7 @@ impl Plot {
         // Render grid if enabled
         if self.grid.enabled {
             renderer.draw_grid(&x_tick_pixels, &y_tick_pixels, plot_area, 
-                             self.theme.grid_color, crate::render::LineStyle::Solid)?;
+                             self.theme.grid_color, crate::render::LineStyle::Solid, self.dpi_scaled_line_width(1.0))?;
         }
         
         // Convert tick values to pixel positions for major and minor ticks
