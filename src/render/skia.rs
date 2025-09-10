@@ -1323,8 +1323,11 @@ impl SkiaRenderer {
             };
             
             // Center X-axis tick labels horizontally under the tick mark
+            // Ensure labels don't overflow canvas bounds
             let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            self.draw_text(&label_text, x_pixel - text_width_estimate, plot_area.bottom() + tick_offset_y, tick_size, color)?;
+            let label_x = (x_pixel - text_width_estimate).max(0.0).min(self.width() as f32 - text_width_estimate * 2.0);
+            let label_y = (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0); // Ensure within canvas
+            self.draw_text(&label_text, label_x, label_y, tick_size, color)?;
         }
         
         // Generate and draw Y-axis tick labels
@@ -1340,8 +1343,10 @@ impl SkiaRenderer {
             };
             
             // Right-align Y-axis tick labels next to the tick mark (vertically centered)
+            // Ensure labels fit within the left margin space
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            self.draw_text(&label_text, plot_area.left() - text_width_estimate - 10.0 * dpi_scale, y_pixel - tick_size / 3.0, tick_size, color)?;
+            let label_x = (plot_area.left() - text_width_estimate - 15.0 * dpi_scale).max(5.0); // Ensure minimum 5px from canvas edge
+            self.draw_text(&label_text, label_x, y_pixel - tick_size / 3.0, tick_size, color)?;
         }
         
         // Draw X-axis label
@@ -1388,8 +1393,11 @@ impl SkiaRenderer {
             };
             
             // Center X-axis tick labels horizontally under the tick mark, with proper offset
+            // Ensure labels don't overflow canvas bounds
             let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            self.draw_text(&label_text, x_pixel - text_width_estimate, plot_area.bottom() + tick_offset_y, tick_size, color)?;
+            let label_x = (x_pixel - text_width_estimate).max(0.0).min(self.width() as f32 - text_width_estimate * 2.0);
+            let label_y = (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0); // Ensure within canvas
+            self.draw_text(&label_text, label_x, label_y, tick_size, color)?;
         }
         
         // Draw Y-axis tick labels using provided major ticks
@@ -1404,8 +1412,10 @@ impl SkiaRenderer {
             };
             
             // Right-align Y-axis tick labels next to the tick mark with proper offset
+            // Ensure labels fit within the left margin space
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            self.draw_text(&label_text, plot_area.left() - text_width_estimate - y_tick_offset, y_pixel + tick_size * 0.3, tick_size, color)?;
+            let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0); // Ensure minimum 5px from canvas edge
+            self.draw_text(&label_text, label_x, y_pixel + tick_size * 0.3, tick_size, color)?;
         }
         
         // Draw X-axis label
@@ -1459,13 +1469,14 @@ impl SkiaRenderer {
     pub fn draw_title(&mut self, title: &str, plot_area: Rect, color: Color, title_size: f32, dpi_scale: f32) -> Result<()> {
         let title_offset = 30.0 * dpi_scale; // Offset from plot area top
         
-        // Center title horizontally over the plot area (simple center approach)
-        let title_x = plot_area.left() + plot_area.width() / 2.0;
+        // Center title horizontally over the entire canvas width, not just plot area
+        // This ensures the title is truly centered even with asymmetric margins
+        let canvas_center_x = self.width() as f32 / 2.0;
         
         // Position title above plot area, ensuring it stays within canvas bounds
         let title_y = (plot_area.top() - title_offset).max(title_size + 5.0); // Ensure minimum 5px from top edge
         
-        self.draw_text_centered(title, title_x, title_y, title_size, color)
+        self.draw_text_centered(title, canvas_center_x, title_y, title_size, color)
     }
     
     /// Draw legend
@@ -1688,20 +1699,28 @@ pub fn calculate_plot_area(canvas_width: u32, canvas_height: u32, margin_fractio
 
 /// Calculate plot area with DPI-aware margins for text space
 pub fn calculate_plot_area_dpi(canvas_width: u32, canvas_height: u32, dpi_scale: f32) -> Rect {
-    // Base margins in pixels (at 96 DPI)
-    let base_margin_x = 80.0; // Space for Y-axis label and tick labels
-    let base_margin_y = 60.0; // Space for title and X-axis label
+    // Base margins in pixels (at 96 DPI) - asymmetric to account for labels
+    let base_margin_left = 100.0; // Space for Y-axis label and tick labels (more space needed)
+    let base_margin_right = 40.0; // Less space needed on right side
+    let base_margin_top = 80.0; // Space for title (more space needed)
+    let base_margin_bottom = 60.0; // Space for X-axis label
     
     // Scale margins with DPI
-    let margin_x = base_margin_x * dpi_scale;
-    let margin_y = base_margin_y * dpi_scale;
+    let margin_left = base_margin_left * dpi_scale;
+    let margin_right = base_margin_right * dpi_scale;
+    let margin_top = base_margin_top * dpi_scale;
+    let margin_bottom = base_margin_bottom * dpi_scale;
     
-    let plot_width = (canvas_width as f32) - 2.0 * margin_x;
-    let plot_height = (canvas_height as f32) - 2.0 * margin_y;
+    let plot_width = (canvas_width as f32) - margin_left - margin_right;
+    let plot_height = (canvas_height as f32) - margin_top - margin_bottom;
     
     // Ensure minimum plot area
     if plot_width > 100.0 && plot_height > 100.0 {
-        Rect::from_xywh(margin_x, margin_y, plot_width, plot_height)
+        // Center the plot area within the available space after accounting for labels
+        let plot_x = margin_left;
+        let plot_y = margin_top;
+        
+        Rect::from_xywh(plot_x, plot_y, plot_width, plot_height)
             .unwrap_or_else(|| Rect::from_xywh(40.0, 40.0, (canvas_width as f32) - 80.0, (canvas_height as f32) - 80.0).unwrap())
     } else {
         // Fallback for very small canvases
