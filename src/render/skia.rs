@@ -541,12 +541,17 @@ impl SkiaRenderer {
     
     /// Draw text centered horizontally at the given position
     pub fn draw_text_centered(&mut self, text: &str, center_x: f32, y: f32, size: f32, color: Color) -> Result<()> {
-        // Estimate text width for centering (more accurate than previous method)
-        let char_width_estimate = size * 0.6; // More accurate character width estimation
-        let text_width_estimate = text.len() as f32 * char_width_estimate;
+        // Measure actual text width using cosmic-text for precise centering
+        let (text_width, _text_height) = self.cosmic_text.measure_text(text, size)
+            .unwrap_or_else(|_| {
+                // Fallback to estimation if measurement fails
+                let char_width_estimate = size * 0.6;
+                let text_width_estimate = text.len() as f32 * char_width_estimate;
+                (text_width_estimate, size)
+            });
         
-        // Calculate x position to center the text
-        let x = center_x - text_width_estimate / 2.0;
+        // Calculate x position to center the text precisely
+        let x = center_x - text_width / 2.0;
         
         self.draw_text(text, x, y, size, color)
     }
