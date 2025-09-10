@@ -1273,7 +1273,7 @@ impl Plot {
 
         // Draw axis labels if present
         if let Some(ref xlabel) = self.xlabel {
-            let label_size = self.dpi_scaled_font_size(12.0) * dpi_scale;
+            let label_size = self.dpi_scaled_font_size(12.0); // Remove double DPI scaling
             let xlabel_y = renderer.height() as f32 - 20.0 * dpi_scale;
             renderer.draw_text_centered(
                 xlabel,
