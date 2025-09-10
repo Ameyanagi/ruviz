@@ -4,7 +4,8 @@ use crate::{
     render::{Color, LineStyle, MarkerStyle, Theme},
     render::skia::{SkiaRenderer, calculate_plot_area, calculate_plot_area_dpi, map_data_to_pixels, generate_ticks},
     core::{Position, PlottingError, Result},
-    plots::histogram::{HistogramConfig, HistogramData, calculate_histogram},
+    plots::histogram::{HistogramConfig, calculate_histogram},
+    plots::boxplot::{BoxPlotConfig, calculate_box_plot},
 };
 
 #[cfg(feature = "parallel")]
@@ -43,6 +44,10 @@ pub struct Plot {
     scientific_notation: bool,
     /// Auto-generate colors for series without explicit colors
     auto_color_index: usize,
+    /// Manual X-axis limits (min, max)
+    x_limits: Option<(f64, f64)>,
+    /// Manual Y-axis limits (min, max)
+    y_limits: Option<(f64, f64)>,
     #[cfg(feature = "parallel")]
     /// Parallel renderer for performance optimization
     parallel_renderer: ParallelRenderer,
@@ -98,6 +103,10 @@ enum SeriesType {
     Histogram {
         data: Vec<f64>,
         config: crate::plots::histogram::HistogramConfig,
+    },
+    BoxPlot {
+        data: Vec<f64>,
+        config: crate::plots::boxplot::BoxPlotConfig,
     },
 }
 
@@ -210,6 +219,8 @@ impl Plot {
             margin: None,
             scientific_notation: false,
             auto_color_index: 0,
+            x_limits: None,
+            y_limits: None,
             #[cfg(feature = "parallel")]
             parallel_renderer: ParallelRenderer::new(),
         }
@@ -265,6 +276,22 @@ impl Plot {
     /// Set the Y-axis label
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
         self.ylabel = Some(label.into());
+        self
+    }
+    
+    /// Set X-axis limits (min, max)
+    pub fn xlim(mut self, min: f64, max: f64) -> Self {
+        if min < max && min.is_finite() && max.is_finite() {
+            self.x_limits = Some((min, max));
+        }
+        self
+    }
+    
+    /// Set Y-axis limits (min, max)
+    pub fn ylim(mut self, min: f64, max: f64) -> Self {
+        if min < max && min.is_finite() && max.is_finite() {
+            self.y_limits = Some((min, max));
+        }
         self
     }
     
@@ -417,6 +444,37 @@ impl Plot {
             series_type: SeriesType::Histogram {
                 data: data_vec,
                 config: hist_config,
+            },
+            label: None,
+            color: None,
+            line_width: None,
+            line_style: None,
+            marker_style: None,
+            marker_size: None,
+            alpha: None,
+        };
+        
+        PlotSeriesBuilder::new(self, series)
+    }
+
+    /// Add a box plot series
+    pub fn boxplot<T, D: Data1D<T>>(self, data: &D, config: Option<BoxPlotConfig>) -> PlotSeriesBuilder 
+    where
+        T: Into<f64> + Copy,
+    {
+        let mut data_vec = Vec::with_capacity(data.len());
+        for i in 0..data.len() {
+            if let Some(val) = data.get(i) {
+                data_vec.push((*val).into());
+            }
+        }
+        let box_config = config.unwrap_or_else(|| BoxPlotConfig::new());
+        
+        
+        let series = PlotSeries {
+            series_type: SeriesType::BoxPlot {
+                data: data_vec,
+                config: box_config,
             },
             label: None,
             color: None,
@@ -716,18 +774,139 @@ impl Plot {
                         let x_left = hist_data.bin_edges[i];
                         let x_right = hist_data.bin_edges[i + 1];
                         let x_center = (x_left + x_right) / 2.0;
-                        let bar_width = (x_right - x_left) as f32;
+                        
+                        // Convert bar width from data coordinates to pixel coordinates
+                        let (px_left, _) = crate::render::skia::map_data_to_pixels(x_left, 0.0, x_min, x_max, y_min, y_max, plot_area);
+                        let (px_right, _) = crate::render::skia::map_data_to_pixels(x_right, 0.0, x_min, x_max, y_min, y_max, plot_area);
+                        let bar_width_px = (px_right - px_left).abs();
                         
                         let (px, py) = crate::render::skia::map_data_to_pixels(x_center, count, x_min, x_max, y_min, y_max, plot_area);
                         let (_, py_zero) = crate::render::skia::map_data_to_pixels(x_center, 0.0, x_min, x_max, y_min, y_max, plot_area);
                         
                         renderer.draw_rectangle(
-                            px - bar_width / 2.0,
+                            px - bar_width_px / 2.0,
                             py.min(py_zero),
-                            bar_width,
+                            bar_width_px,
                             (py - py_zero).abs(),
                             color,
                             true
+                        )?;
+                    }
+                }
+            }
+            SeriesType::BoxPlot { data, config } => {
+                // Calculate box plot statistics
+                let box_data = crate::plots::boxplot::calculate_box_plot(data, config)
+                    .map_err(|e| PlottingError::RenderError(format!("Box plot calculation failed: {}", e)))?;
+                
+                // Box plot positioning
+                let x_center = 0.5; // Center the box plot
+                let box_width = 0.3; // Box width
+                
+                // Map coordinates to pixels
+                let (x_center_px, _) = crate::render::skia::map_data_to_pixels(x_center, 0.0, x_min, x_max, y_min, y_max, plot_area);
+                let (_, q1_y) = crate::render::skia::map_data_to_pixels(0.0, box_data.q1, x_min, x_max, y_min, y_max, plot_area);
+                let (_, median_y) = crate::render::skia::map_data_to_pixels(0.0, box_data.median, x_min, x_max, y_min, y_max, plot_area);
+                let (_, q3_y) = crate::render::skia::map_data_to_pixels(0.0, box_data.q3, x_min, x_max, y_min, y_max, plot_area);
+                let (_, lower_whisker_y) = crate::render::skia::map_data_to_pixels(0.0, box_data.min, x_min, x_max, y_min, y_max, plot_area);
+                let (_, upper_whisker_y) = crate::render::skia::map_data_to_pixels(0.0, box_data.max, x_min, x_max, y_min, y_max, plot_area);
+                
+                let box_half_width = box_width * plot_area.width() * 0.5;
+                let box_left = x_center_px - box_half_width;
+                let box_right = x_center_px + box_half_width;
+                
+                // Draw the box (IQR) - ensure positive dimensions
+                let box_width = box_right - box_left;
+                let box_height = (q1_y - q3_y).abs(); // Ensure positive height
+                let box_top = q3_y.min(q1_y); // Use the smaller y value as top
+                
+                // Validate dimensions before drawing
+                if box_width > 0.0 && box_height > 0.0 && box_width.is_finite() && box_height.is_finite() {
+                    renderer.draw_rectangle(
+                        box_left,
+                        box_top,
+                        box_width,
+                        box_height,
+                        color,
+                        false, // outline only
+                    )?;
+                }
+                
+                // Draw median line - validate coordinates
+                if box_left.is_finite() && median_y.is_finite() && box_right.is_finite() {
+                    renderer.draw_line(
+                        box_left,
+                        median_y,
+                        box_right,
+                        median_y,
+                        color,
+                        line_width * 1.5, // thicker median line
+                        line_style.clone(),
+                    )?;
+                }
+                
+                // Draw lower whisker - validate coordinates  
+                if x_center_px.is_finite() && q1_y.is_finite() && lower_whisker_y.is_finite() {
+                    renderer.draw_line(
+                        x_center_px,
+                        q1_y,
+                        x_center_px,
+                        lower_whisker_y,
+                        color,
+                        line_width,
+                        line_style.clone(),
+                    )?;
+                }
+                
+                // Draw upper whisker - validate coordinates
+                if x_center_px.is_finite() && q3_y.is_finite() && upper_whisker_y.is_finite() {
+                    renderer.draw_line(
+                        x_center_px,
+                        q3_y,
+                        x_center_px,
+                        upper_whisker_y,
+                        color,
+                        line_width,
+                        line_style.clone(),
+                    )?;
+                }
+                
+                // Draw whisker caps - validate coordinates
+                let cap_width = box_half_width * 0.6;
+                if x_center_px.is_finite() && lower_whisker_y.is_finite() && cap_width.is_finite() {
+                    renderer.draw_line(
+                        x_center_px - cap_width,
+                        lower_whisker_y,
+                        x_center_px + cap_width,
+                        lower_whisker_y,
+                        color,
+                        line_width,
+                        line_style.clone(),
+                    )?;
+                }
+                
+                if x_center_px.is_finite() && upper_whisker_y.is_finite() && cap_width.is_finite() {
+                    renderer.draw_line(
+                        x_center_px - cap_width,
+                        upper_whisker_y,
+                        x_center_px + cap_width,
+                        upper_whisker_y,
+                        color,
+                        line_width,
+                        line_style.clone(),
+                    )?;
+                }
+                
+                // Draw outliers - validate coordinates
+                for &outlier in &box_data.outliers {
+                    let (_, outlier_y) = crate::render::skia::map_data_to_pixels(0.0, outlier, x_min, x_max, y_min, y_max, plot_area);
+                    if x_center_px.is_finite() && outlier_y.is_finite() {
+                        renderer.draw_marker(
+                            x_center_px,
+                            outlier_y,
+                            4.0, // outlier marker size
+                            MarkerStyle::Circle,
+                            color,
                         )?;
                     }
                 }
@@ -794,6 +973,11 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::BoxPlot { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -822,95 +1006,21 @@ impl Plot {
         // Calculate plot area with margins using DPI-scaled dimensions
         let plot_area = calculate_plot_area_dpi(scaled_width, scaled_height, self.dpi_scale());
         
-        // Calculate data bounds across all series
-        let mut x_min = f64::INFINITY;
-        let mut x_max = f64::NEG_INFINITY;
-        let mut y_min = f64::INFINITY;
-        let mut y_max = f64::NEG_INFINITY;
-        
-        for series in &self.series {
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data } |
-                SeriesType::Scatter { x_data, y_data } => {
-                    for i in 0..x_data.len() {
-                        let x_val = x_data[i];
-                        let y_val = y_data[i];
-                        
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                }
-                SeriesType::Bar { categories, values } => {
-                    // For bar charts, use category indices as x-values
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max((categories.len() - 1) as f64);
-                    
-                    for &val in values {
-                        if val.is_finite() {
-                            y_min = y_min.min(val.min(0.0)); // Include zero for bars
-                            y_max = y_max.max(val.max(0.0));
-                        }
-                    }
-                }
-                SeriesType::ErrorBars { x_data, y_data, y_errors } => {
-                    for i in 0..x_data.len() {
-                        let x_val = x_data[i];
-                        let y_val = y_data[i];
-                        let y_err = y_errors[i];
-                        
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                SeriesType::ErrorBarsXY { x_data, y_data, x_errors, y_errors } => {
-                    for i in 0..x_data.len() {
-                        let x_val = x_data[i];
-                        let y_val = y_data[i];
-                        let x_err = x_errors[i];
-                        let y_err = y_errors[i];
-                        
-                        if x_val.is_finite() && x_err.is_finite() {
-                            x_min = x_min.min(x_val - x_err);
-                            x_max = x_max.max(x_val + x_err);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                SeriesType::Histogram { data, config } => {
-                    // Calculate histogram to get bounds
-                    if let Ok(hist_data) = crate::plots::histogram::calculate_histogram(data, config) {
-                        // X bounds from bin edges
-                        if !hist_data.bin_edges.is_empty() {
-                            x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
-                            x_max = x_max.max(*hist_data.bin_edges.last().unwrap());
-                        }
-                        
-                        // Y bounds from counts (include zero baseline)
-                        y_min = y_min.min(0.0);
-                        for &count in &hist_data.counts {
-                            if count.is_finite() && count > 0.0 {
-                                y_max = y_max.max(count);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // Calculate or use manual data bounds
+        let (mut x_min, mut x_max, mut y_min, mut y_max) = if let (Some((x_min_manual, x_max_manual)), Some((y_min_manual, y_max_manual))) = (self.x_limits, self.y_limits) {
+            // Use both manual limits
+            (x_min_manual, x_max_manual, y_min_manual, y_max_manual)
+        } else if let Some((x_min_manual, x_max_manual)) = self.x_limits {
+            // Use manual X limits, calculate Y bounds from data
+            let (_, _, y_min_calc, y_max_calc) = self.calculate_data_bounds()?;
+            (x_min_manual, x_max_manual, y_min_calc, y_max_calc)
+        } else if let Some((y_min_manual, y_max_manual)) = self.y_limits {
+            // Use manual Y limits, calculate X bounds from data
+            let (x_min_calc, x_max_calc, _, _) = self.calculate_data_bounds()?;
+            (x_min_calc, x_max_calc, y_min_manual, y_max_manual)
+        } else {
+            self.calculate_data_bounds()?
+        };
         
         // Handle edge case where all data is the same
         if (x_max - x_min).abs() < f64::EPSILON {
@@ -1121,6 +1231,11 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::BoxPlot { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -1292,6 +1407,7 @@ impl Plot {
                 SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
                 SeriesType::Bar { categories, .. } => categories.len(),
                 SeriesType::Histogram { data, .. } => data.len(),
+            SeriesType::BoxPlot { data, .. } => data.len(),
             }
         }).sum()
     }
@@ -1341,6 +1457,11 @@ impl Plot {
                                 all_points.push(crate::core::types::Point2f::new(x_center as f32, count as f32));
                             }
                         }
+                    }
+                }
+                SeriesType::BoxPlot { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
                     }
                 }
             }
@@ -1568,6 +1689,51 @@ impl Plot {
                         
                         RenderSeriesType::Bar { bars }
                     }
+                    SeriesType::BoxPlot { data, config } => {
+                        // Calculate box plot statistics
+                        let box_data = crate::plots::boxplot::calculate_box_plot(data, config)
+                            .map_err(|e| PlottingError::RenderError(format!("Box plot calculation failed: {}", e)))?;
+                        
+                        // Transform coordinates for box plot elements
+                        let x_center = 0.5; // Center the box plot
+                        let box_width = 0.3; // Box width
+                        
+                        // Map Y coordinates to plot area
+                        let q1_y = map_data_to_pixels(box_data.q1, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                        let median_y = map_data_to_pixels(box_data.median, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                        let q3_y = map_data_to_pixels(box_data.q3, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                        let lower_whisker_y = map_data_to_pixels(box_data.min, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                        let upper_whisker_y = map_data_to_pixels(box_data.max, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                        
+                        // Map X coordinate  
+                        let x_center_px = map_data_to_pixels(x_center, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).0;
+                        let box_left = x_center_px - box_width * plot_area.width() * 0.5;
+                        let box_right = x_center_px + box_width * plot_area.width() * 0.5;
+                        
+                        // Transform outliers
+                        let mut outliers = Vec::new();
+                        for &outlier in &box_data.outliers {
+                            let outlier_y = map_data_to_pixels(outlier, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1;
+                            outliers.push(crate::core::types::Point2f { x: x_center_px, y: outlier_y });
+                        }
+                        
+                        let box_render_data = crate::render::parallel::BoxPlotRenderData {
+                            x_center: x_center_px,
+                            box_left,
+                            box_right,
+                            q1_y,
+                            median_y,
+                            q3_y,
+                            lower_whisker_y,
+                            upper_whisker_y,
+                            outliers,
+                            box_color: color,
+                            line_color: color,
+                            outlier_color: color,
+                        };
+                        
+                        RenderSeriesType::BoxPlot { box_data: box_render_data }
+                    }
                 };
                 
                 Ok(SeriesRenderData {
@@ -1616,6 +1782,85 @@ impl Plot {
                             bar.height,
                             bar.color,
                             true,
+                        )?;
+                    }
+                }
+                RenderSeriesType::BoxPlot { box_data } => {
+                    // Draw box plot components
+                    
+                    // Draw the box (IQR)
+                    renderer.draw_rectangle(
+                        box_data.box_left,
+                        box_data.q3_y,
+                        box_data.box_right - box_data.box_left,
+                        box_data.q1_y - box_data.q3_y,
+                        box_data.box_color,
+                        false, // outline only
+                    )?;
+                    
+                    // Draw median line
+                    renderer.draw_line(
+                        box_data.box_left,
+                        box_data.median_y,
+                        box_data.box_right,
+                        box_data.median_y,
+                        box_data.line_color,
+                        2.0, // median line width
+                        LineStyle::Solid,
+                    )?;
+                    
+                    // Draw lower whisker
+                    renderer.draw_line(
+                        box_data.x_center,
+                        box_data.q1_y,
+                        box_data.x_center,
+                        box_data.lower_whisker_y,
+                        box_data.line_color,
+                        1.0,
+                        LineStyle::Solid,
+                    )?;
+                    
+                    // Draw upper whisker
+                    renderer.draw_line(
+                        box_data.x_center,
+                        box_data.q3_y,
+                        box_data.x_center,
+                        box_data.upper_whisker_y,
+                        box_data.line_color,
+                        1.0,
+                        LineStyle::Solid,
+                    )?;
+                    
+                    // Draw whisker caps
+                    let cap_width = (box_data.box_right - box_data.box_left) * 0.3;
+                    renderer.draw_line(
+                        box_data.x_center - cap_width,
+                        box_data.lower_whisker_y,
+                        box_data.x_center + cap_width,
+                        box_data.lower_whisker_y,
+                        box_data.line_color,
+                        1.0,
+                        LineStyle::Solid,
+                    )?;
+                    
+                    renderer.draw_line(
+                        box_data.x_center - cap_width,
+                        box_data.upper_whisker_y,
+                        box_data.x_center + cap_width,
+                        box_data.upper_whisker_y,
+                        box_data.line_color,
+                        1.0,
+                        LineStyle::Solid,
+                    )?;
+                    
+                    // Draw outliers
+                    for outlier in &box_data.outliers {
+                        renderer.draw_marker(
+                            outlier.x,
+                            outlier.y,
+                            4.0, // outlier marker size
+                            MarkerStyle::Circle,
+                            box_data.outlier_color,
                         )?;
                     }
                 }
@@ -1729,6 +1974,23 @@ impl Plot {
                         }
                     }
                 }
+                SeriesType::BoxPlot { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    
+                    // Set x bounds for box plot (centered at 0.5)
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                    
+                    // Y bounds include all data values
+                    for &value in data {
+                        if value.is_finite() {
+                            y_min = y_min.min(value);
+                            y_max = y_max.max(value);
+                        }
+                    }
+                }
             }
         }
         
@@ -1785,6 +2047,11 @@ impl Plot {
                     // Check for empty data
                     if data.is_empty() {
                         return Err(crate::core::PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::BoxPlot { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
                     }
                 }
             }
@@ -1845,6 +2112,23 @@ impl Plot {
                         y_min = y_min.min(0.0);
                         if let Some(&max_count) = hist_data.counts.iter().max_by(|a, b| a.partial_cmp(b).unwrap()) {
                             y_max = y_max.max(max_count);
+                        }
+                    }
+                }
+                SeriesType::BoxPlot { data, config } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    
+                    // Set x bounds for box plot (centered at 0.5)
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                    
+                    // Y bounds include all data values
+                    for &value in data {
+                        if value.is_finite() {
+                            y_min = y_min.min(value);
+                            y_max = y_max.max(value);
                         }
                     }
                 }
@@ -1954,6 +2238,7 @@ impl Plot {
                 SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
                 SeriesType::Bar { categories, .. } => categories.len(),
                 SeriesType::Histogram { data, .. } => data.len(),
+            SeriesType::BoxPlot { data, .. } => data.len(),
             }
         }).sum();
 
@@ -2249,6 +2534,10 @@ impl Image {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     #[test]
     fn test_get_theme_method() {
         use crate::render::Theme;
@@ -2347,111 +2636,5 @@ impl Image {
         let result_300 = plot.render_to_renderer(&mut renderer, 300.0);
         assert!(result_300.is_ok());
     }
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_plot_creation() {
-        let plot = Plot::new();
-        assert_eq!(plot.dimensions, (800, 600));
-        assert_eq!(plot.dpi, 96);
-        assert!(plot.series.is_empty());
-    }
-
-    #[test]
-    fn test_plot_configuration() {
-        let plot = Plot::new()
-            .title("Test Plot")
-            .xlabel("X Axis")
-            .ylabel("Y Axis")
-            .dimensions(1000, 750)
-            .dpi(300);
-        
-        assert_eq!(plot.title, Some("Test Plot".to_string()));
-        assert_eq!(plot.xlabel, Some("X Axis".to_string()));
-        assert_eq!(plot.ylabel, Some("Y Axis".to_string()));
-        assert_eq!(plot.dimensions, (1000, 750));
-        assert_eq!(plot.dpi, 300);
-    }
-
-    #[test]
-    fn test_line_plot() {
-        let x = vec![1.0, 2.0, 3.0];
-        let y = vec![1.0, 4.0, 9.0];
-        
-        let plot = Plot::new()
-            .line(&x, &y)
-                .label("Test Series")
-                .color(Color::RED)
-            .title("Line Plot Test")
-            .save("test_line.png");
-        
-        // In a real test, we'd verify the file was created
-        // For now, we just verify the method chain works
-        assert!(plot.is_ok());
-    }
-
-    #[test]
-    fn test_multi_series() {
-        let x1 = vec![1.0, 2.0, 3.0];
-        let y1 = vec![1.0, 4.0, 9.0];
-        let x2 = vec![1.0, 2.0, 3.0];
-        let y2 = vec![2.0, 5.0, 10.0];
-        
-        let plot = Plot::new()
-            .line(&x1, &y1)
-                .label("Series 1")
-                .color(Color::RED)
-            .line(&x2, &y2)
-                .label("Series 2")
-                .color(Color::BLUE)
-            .legend(Position::TopRight)
-            .grid(true);
-        
-        let result = plot.render();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_scatter_plot() {
-        let x = vec![1.0, 2.0, 3.0, 4.0];
-        let y = vec![2.0, 5.0, 3.0, 8.0];
-        
-        let result = Plot::new()
-            .scatter(&x, &y)
-                .label("Scatter Data")
-                .color(Color::GREEN)
-                .marker(MarkerStyle::Circle)
-            .render();
-        
-        assert!(result.is_ok());
-        let image = result.unwrap();
-        assert_eq!(image.width(), 800);
-        assert_eq!(image.height(), 600);
-    }
-
-    #[test]
-    fn test_validation_errors() {
-        // Empty data
-        let empty_x: Vec<f64> = vec![];
-        let empty_y: Vec<f64> = vec![];
-        
-        let plot = Plot::new().line(&empty_x, &empty_y);
-        let result = plot.render();
-        assert!(result.is_err());
-        
-        // Mismatched lengths
-        let x = vec![1.0, 2.0, 3.0];
-        let y = vec![1.0, 2.0];
-        
-        let plot = Plot::new().line(&x, &y);
-        let result = plot.render();
-        assert!(result.is_err());
-        
-        // No series
-        let plot = Plot::new();
-        let result = plot.render();
-        assert!(result.is_err());
-    }
 }

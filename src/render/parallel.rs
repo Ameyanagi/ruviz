@@ -450,6 +450,9 @@ pub enum RenderSeriesType {
         points: Vec<Point2f>,
         error_lines: Vec<LineSegment>,
     },
+    BoxPlot {
+        box_data: BoxPlotRenderData,
+    },
 }
 
 /// Line segment for parallel line rendering
@@ -479,6 +482,23 @@ pub struct BarInstance {
     pub width: f32,
     pub height: f32,
     pub color: Color,
+}
+
+/// Box plot render data for parallel rendering
+#[derive(Debug, Clone)]
+pub struct BoxPlotRenderData {
+    pub x_center: f32,
+    pub box_left: f32,
+    pub box_right: f32,
+    pub q1_y: f32,
+    pub median_y: f32,
+    pub q3_y: f32,
+    pub lower_whisker_y: f32,
+    pub upper_whisker_y: f32,
+    pub outliers: Vec<Point2f>,
+    pub box_color: Color,
+    pub line_color: Color,
+    pub outlier_color: Color,
 }
 
 

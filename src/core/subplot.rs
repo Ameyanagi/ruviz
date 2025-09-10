@@ -266,109 +266,6 @@ pub fn subplots_default(rows: usize, cols: usize) -> Result<SubplotFigure> {
     SubplotFigure::new(rows, cols, width, height)
 }
 
-    #[test]
-    fn test_subplot_rendering_integration() {
-        use crate::render::Theme;
-        
-        let x = vec![1.0, 2.0, 3.0];
-        let y = vec![2.0, 4.0, 3.0];
-        
-        let plot = Plot::new()
-            .line(&x, &y)
-            .title("Test Plot")
-            .end_series();
-        
-        let figure = SubplotFigure::new(1, 1, 400, 300).unwrap()
-            .subplot(0, 0, plot).unwrap();
-        
-        assert_eq!(figure.subplot_count(), 1);
-        
-        // The rendering itself is tested by the working example,
-        // this tests the structure is correctly set up
-        assert_eq!(figure.grid_spec().total_subplots(), 1);
-        assert_eq!(figure.width, 400);
-        assert_eq!(figure.height, 300);
-    }
-
-    #[test]
-    fn test_subplot_with_different_themes() {
-        use crate::render::Theme;
-        
-        let x = vec![1.0, 2.0, 3.0];
-        let y1 = vec![2.0, 4.0, 3.0];
-        let y2 = vec![1.0, 3.0, 2.0];
-        
-        let plot1 = Plot::new()
-            .line(&x, &y1)
-            .theme(Theme::default())
-            .title("Default Theme")
-            .end_series();
-            
-        let plot2 = Plot::new()
-            .line(&x, &y2)
-            .theme(Theme::dark())
-            .title("Dark Theme")
-            .end_series();
-        
-        let figure = SubplotFigure::new(1, 2, 800, 400).unwrap()
-            .subplot(0, 0, plot1).unwrap()
-            .subplot(0, 1, plot2).unwrap();
-        
-        assert_eq!(figure.subplot_count(), 2);
-        
-        // Verify themes are preserved
-        let spec = figure.grid_spec();
-        assert_eq!(spec.rows, 1);
-        assert_eq!(spec.cols, 2);
-    }
-
-    #[test]
-    fn test_subplot_suptitle_and_spacing() {
-        let plot = Plot::new();
-        
-        let figure = SubplotFigure::new(2, 2, 800, 600).unwrap()
-            .suptitle("Overall Title")
-            .hspace(0.4)
-            .wspace(0.5)
-            .subplot_at(0, plot).unwrap();
-        
-        assert_eq!(figure.subplot_count(), 1);
-        assert_eq!(figure.grid_spec().hspace, 0.4);
-        assert_eq!(figure.grid_spec().wspace, 0.5);
-        assert!(figure.suptitle.is_some());
-        assert_eq!(figure.suptitle.unwrap(), "Overall Title");
-    }
-
-    #[test] 
-    fn test_empty_subplot_figure() {
-        let figure = SubplotFigure::new(2, 2, 800, 600).unwrap();
-        
-        assert_eq!(figure.subplot_count(), 0);
-        assert_eq!(figure.grid_spec().total_subplots(), 4);
-        
-        // Empty figure should still be valid for adding plots later
-        let plot = Plot::new();
-        let updated_figure = figure.subplot(1, 1, plot).unwrap();
-        assert_eq!(updated_figure.subplot_count(), 1);
-    }
-
-    #[test]
-    fn test_large_subplot_grid() {
-        // Test performance with larger grids
-        let result = SubplotFigure::new(5, 4, 1200, 900);
-        assert!(result.is_ok());
-        
-        let figure = result.unwrap();
-        assert_eq!(figure.grid_spec().total_subplots(), 20);
-        
-        // Test bounds - should be within the 10x10 limit
-        let large_result = SubplotFigure::new(10, 10, 2000, 2000);
-        assert!(large_result.is_ok());
-        
-        // Should fail - exceeds 10x10 limit  
-        let too_large_result = SubplotFigure::new(11, 10, 2000, 2000);
-        assert!(too_large_result.is_err());
-    }
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,8 +368,8 @@ mod tests {
         
         let plot = Plot::new()
             .line(&x, &y)
-            .title("Test Plot")
-            .end_series();
+            .end_series()
+            .title("Test Plot");
         
         let figure = SubplotFigure::new(1, 1, 400, 300).unwrap()
             .subplot(0, 0, plot).unwrap();
@@ -496,15 +393,15 @@ mod tests {
         
         let plot1 = Plot::new()
             .line(&x, &y1)
+            .end_series()
             .theme(Theme::default())
-            .title("Default Theme")
-            .end_series();
+            .title("Default Theme");
             
         let plot2 = Plot::new()
             .line(&x, &y2)
+            .end_series()
             .theme(Theme::dark())
-            .title("Dark Theme")
-            .end_series();
+            .title("Dark Theme");
         
         let figure = SubplotFigure::new(1, 2, 800, 400).unwrap()
             .subplot(0, 0, plot1).unwrap()

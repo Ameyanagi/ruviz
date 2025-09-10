@@ -194,12 +194,7 @@ impl SkiaRenderer {
         Ok(())
     }
     
-    /// Draw a rectangle (for bar plots)
     pub fn draw_rectangle(&mut self, x: f32, y: f32, width: f32, height: f32, color: Color, filled: bool) -> Result<()> {
-        let mut paint = Paint::default();
-        paint.set_color(color.to_tiny_skia_color());
-        paint.anti_alias = true;
-        
         let rect = Rect::from_xywh(x, y, width, height)
             .ok_or(PlottingError::RenderError("Invalid rectangle dimensions".to_string()))?;
         
@@ -208,8 +203,47 @@ impl SkiaRenderer {
         let path = path.finish().ok_or(PlottingError::RenderError("Failed to create rectangle path".to_string()))?;
         
         if filled {
-            self.pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            // Professional filled rectangle with subtle transparency and border
+            let mut fill_paint = Paint::default();
+            
+            // Use slightly transparent fill for professional look
+            let (r, g, b, a) = color.to_rgba_f32();
+            let professional_alpha = (a * 0.85).min(1.0); // 85% opacity for better visual appeal
+            let fill_color = tiny_skia::Color::from_rgba(r, g, b, professional_alpha)
+                .ok_or(PlottingError::RenderError("Invalid color for rectangle fill".to_string()))?;
+            
+            fill_paint.set_color(fill_color);
+            fill_paint.anti_alias = true;
+            
+            // Fill the rectangle
+            self.pixmap.fill_path(&path, &fill_paint, FillRule::Winding, Transform::identity(), None);
+            
+            // Add professional border for definition
+            let mut border_paint = Paint::default();
+            
+            // Darker border color (20% darker than fill)
+            let border_r = (r * 0.8).max(0.0);
+            let border_g = (g * 0.8).max(0.0); 
+            let border_b = (b * 0.8).max(0.0);
+            let border_color = tiny_skia::Color::from_rgba(border_r, border_g, border_b, a)
+                .ok_or(PlottingError::RenderError("Invalid border color".to_string()))?;
+            
+            border_paint.set_color(border_color);
+            border_paint.anti_alias = true;
+            
+            // Professional border stroke (1.0px width)
+            let mut stroke = Stroke::default();
+            stroke.width = 1.0;
+            stroke.line_cap = LineCap::Square;
+            stroke.line_join = LineJoin::Miter;
+            
+            self.pixmap.stroke_path(&path, &border_paint, &stroke, Transform::identity(), None);
         } else {
+            // Outline only
+            let mut paint = Paint::default();
+            paint.set_color(color.to_tiny_skia_color());
+            paint.anti_alias = true;
+            
             let stroke = Stroke::default();
             self.pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
@@ -1372,7 +1406,7 @@ impl SkiaRenderer {
             
             // Right-align Y-axis tick labels next to the tick mark with proper offset
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            self.draw_text(&label_text, plot_area.left() - text_width_estimate - y_tick_offset, y_pixel - tick_size / 3.0, tick_size, color)?;
+            self.draw_text(&label_text, plot_area.left() - text_width_estimate - y_tick_offset, y_pixel + tick_size * 0.3, tick_size, color)?;
         }
         
         // Draw X-axis label
@@ -1697,37 +1731,84 @@ pub fn map_data_to_pixels(
     (pixel_x, pixel_y)
 }
 
-/// Generate nice tick values for an axis
+/// Generate intelligent ticks using matplotlib's MaxNLocator algorithm
+/// Produces 5-7 major ticks with "nice" numbers for scientific plotting
 pub fn generate_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
     if min >= max || target_count == 0 {
         return vec![min, max];
     }
     
-    let range = max - min;
-    let rough_step = range / (target_count as f64);
+    // Clamp target_count to reasonable scientific range (5-7 ticks optimal)
+    let max_ticks = target_count.clamp(3, 10);
     
-    // Find a "nice" step size
+    generate_scientific_ticks(min, max, max_ticks)
+}
+
+/// MaxNLocator algorithm implementation for scientific plotting
+/// Based on matplotlib's tick generation with nice number selection
+fn generate_scientific_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
+    let range = max - min;
+    if range <= 0.0 {
+        return vec![min];
+    }
+    
+    // Calculate rough step size
+    let rough_step = range / (max_ticks - 1) as f64;
+    
+    // Handle very small ranges
+    if rough_step <= f64::EPSILON {
+        return vec![min, max];
+    }
+    
+    // Round to "nice" numbers using powers of 10
     let magnitude = 10.0_f64.powf(rough_step.log10().floor());
     let normalized_step = rough_step / magnitude;
     
-    let nice_step = if normalized_step <= 1.0 {
-        1.0
-    } else if normalized_step <= 2.0 {
-        2.0
-    } else if normalized_step <= 5.0 {
-        5.0
-    } else {
-        10.0
+    // Select nice step sizes: prefer 1, 2, 5, 10 sequence
+    let nice_step = if normalized_step <= 1.0 { 
+        1.0 
+    } else if normalized_step <= 2.0 { 
+        2.0 
+    } else if normalized_step <= 5.0 { 
+        5.0 
+    } else { 
+        10.0 
     };
     
     let step = nice_step * magnitude;
-    let start = (min / step).ceil() * step;
     
+    // Find optimal start point that includes the data range
+    let start = (min / step).floor() * step;
+    let end = (max / step).ceil() * step;
+    
+    // Generate ticks with epsilon for floating point stability
     let mut ticks = Vec::new();
     let mut tick = start;
-    while tick <= max + step * 0.001 { // Small epsilon for floating point comparison
-        ticks.push(tick);
+    let epsilon = step * 1e-10; // Very small epsilon for float comparison
+    
+    while tick <= end + epsilon {
+        // Only include ticks within or slightly beyond the data range
+        if tick >= min - epsilon {
+            ticks.push(tick);
+        }
         tick += step;
+        
+        // Safety check to prevent infinite loops
+        if ticks.len() > max_ticks * 2 {
+            break;
+        }
+    }
+    
+    // Ensure we have reasonable number of ticks (3-10)
+    if ticks.len() < 3 {
+        // Fall back to simple min/max/middle approach
+        let middle = (min + max) / 2.0;
+        return vec![min, middle, max];
+    }
+    
+    // Limit to max_ticks to prevent overcrowding
+    if ticks.len() > max_ticks {
+        ticks.truncate(max_ticks);
     }
     
     ticks
