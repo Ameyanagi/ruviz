@@ -39,9 +39,20 @@ pub mod layout;
 pub mod text;
 pub mod export;
 
+#[cfg(feature = "interactive")]
+pub mod interactive;
+
 /// Convenience re-exports for common usage
 pub mod prelude {
     pub use crate::core::{Plot, Position, SubplotFigure, GridSpec, subplots, subplots_default};
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
     pub use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme, FontFamily, FontConfig, FontWeight, FontStyle};
+    
+    #[cfg(feature = "interactive")]
+    pub use crate::interactive::{
+        event::{InteractionEvent, Point2D, Vector2D, Rectangle},
+        state::InteractionState,
+        renderer::RealTimeRenderer,
+        window::{InteractiveWindow, InteractiveWindowBuilder, show_interactive},
+    };
 }

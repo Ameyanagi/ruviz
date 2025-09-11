@@ -74,6 +74,7 @@ env_logger = "0.11"
 [features]
 default = ["ndarray", "parallel"]
 window = ["winit", "raw-window-handle"]
+interactive = ["window", "gpu"]
 serde = ["dep:serde", "serde_json", "palette/serde"]
 ndarray_support = ["ndarray"]
 polars_support = ["polars"]  
@@ -82,7 +83,7 @@ gpu = ["wgpu", "bytemuck", "wgsl_bindgen", "pollster", "futures-intrusive"]
 simd = ["wide"]
 svg = []
 performance = ["parallel", "simd"]
-full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg"]
+full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "interactive"]
 
 [profile.release]
 lto = true
