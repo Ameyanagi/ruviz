@@ -12,6 +12,7 @@ pub mod font;
 pub mod parallel;
 #[cfg(feature = "simd")]
 pub mod simd;
+pub mod pooled;
 
 pub use backend::Renderer;
 pub use skia::SkiaRenderer;
@@ -25,3 +26,4 @@ pub use font::{FontFamily, FontConfig, FontWeight, FontStyle};
 pub use parallel::{ParallelRenderer, ParallelConfig, PerformanceStats, SeriesRenderData, DetailedPerformanceInfo};
 #[cfg(feature = "simd")]
 pub use simd::{SIMDTransformer, SIMDPerformanceInfo, CoordinateBounds, PixelViewport};
+pub use pooled::{PooledRenderer, PooledRendererStats, LineSegment, get_pooled_renderer};

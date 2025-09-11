@@ -113,3 +113,12 @@ path = "gallery/scientific/scientific_plotting.rs"
 name = "subplot_example"
 path = "examples/subplot_example.rs"
 
+# Benchmarks
+[[bench]]
+name = "memory_pool_benchmarks"
+harness = false
+
+
+[[bench]]
+name = "simple_memory_benchmark"
+harness = false

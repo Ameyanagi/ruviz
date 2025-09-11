@@ -6,6 +6,9 @@ pub mod transform;
 pub mod datashader;
 pub mod datashader_simple;
 pub mod memory;
+pub mod memory_pool;
+pub mod pooled_vec;
+pub mod zero_copy;
 pub mod elements;
 pub mod adaptive;
 pub mod profiler;
@@ -15,6 +18,9 @@ pub use traits::Data1D;
 // Use simple DataShader temporarily to fix compilation
 pub use datashader_simple::{DataShader, DataShaderCanvas, DataShaderImage, DataShaderStats};
 pub use memory::{MemoryManager, MemoryConfig, MemoryStats, ManagedBuffer, get_memory_manager, initialize_memory_manager};
+pub use memory_pool::{MemoryPool, PooledBuffer, SharedMemoryPool, PoolStatistics};
+pub use pooled_vec::{PooledVec, PooledVecIntoIter};
+pub use zero_copy::{DataView, DataViewIter, MappedDataView, MappedDataViewIter};
 pub use elements::{
     PlotElementStorage, LineSegment, MarkerInstance, Polygon, TextElement, ErrorBar,
     TextAlignment, PlotElementStats, PoolStats, get_plot_element_storage
