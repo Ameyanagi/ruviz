@@ -226,9 +226,9 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
         .legend(&["CPU", "GPU"])
-        .width(1200)
-        .height(800)
+        .width(1200.0)
         .dpi(150)
+        .build()
         .save("gpu_throughput_scaling.png")?;
     
     // Create speedup plot
@@ -249,9 +249,9 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
             .title("GPU Speedup vs Dataset Size")
             .xlabel("Dataset Size (points)")
             .ylabel("GPU Speedup (x)")
-            .width(1200)
-            .height(800)  
+            .width(1200.0)
             .dpi(150)
+            .build()
             .save("gpu_speedup_scaling.png")?;
     }
     

@@ -143,7 +143,8 @@ fn create_performance_demo_plot(base_plot: Plot, dataset: &PerformanceDataset) -
         .title(&enhanced_title)
         .xlabel("Time (s)")
         .ylabel("Multi-frequency Signal")
-        .legend(Position::TopLeft);
+        .legend(Position::TopLeft)
+        .build();
     
     Ok(plot)
 }

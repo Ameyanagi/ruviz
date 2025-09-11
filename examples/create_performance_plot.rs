@@ -27,9 +27,9 @@ fn main() -> Result<()> {
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
         .legend(&["CPU Performance", "GPU Performance"])
-        .width(1200)
-        .height(800)
+        .width(1200.0)
         .dpi(150)
+        .build()
         .save("gpu_cpu_performance_comparison.png")?;
     
     println!("✅ Saved: gpu_cpu_performance_comparison.png");
@@ -42,9 +42,9 @@ fn main() -> Result<()> {
         .title("GPU Speedup vs Dataset Size")
         .xlabel("Dataset Size (points)")
         .ylabel("GPU Speedup Factor (x)")
-        .width(1200)
-        .height(800)
+        .width(1200.0)
         .dpi(150)
+        .build()
         .save("gpu_speedup_scaling.png")?;
     
     println!("✅ Saved: gpu_speedup_scaling.png");

@@ -370,8 +370,8 @@ mod tests {
         assert_eq!(mapped.get(4), Some(10.0));
         
         // Test Data1D implementation on mapped view
-        assert_eq!(mapped.get(0).unwrap().into(), 2.0);
-        assert_eq!(mapped.get(4).unwrap().into(), 10.0);
+        assert_eq!(mapped.get(0).unwrap().into() as f64, 2.0);
+        assert_eq!(mapped.get(4).unwrap().into() as f64, 10.0);
     }
 
     #[test]
