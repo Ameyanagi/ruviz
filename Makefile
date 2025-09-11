@@ -93,44 +93,10 @@ web-examples: setup-dirs
 	echo "Web build failed - interactive features may not be fully WASM compatible yet" > examples_output/web/build_status.txt
 	
 	@echo "  - Creating web demo page..."
-	@cat > examples_output/web/index.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Ruviz Interactive Plotting Demo</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .demo-container { margin: 20px 0; padding: 20px; border: 1px solid #ccc; }
-        .status { color: #666; font-style: italic; }
-    </style>
-</head>
-<body>
-    <h1>🎮 Ruviz Interactive Plotting Demo</h1>
-    <p>WebAssembly-powered interactive plotting in the browser.</p>
-    
-    <div class="demo-container">
-        <h2>Basic Interaction Demo</h2>
-        <p class="status">Loading WebAssembly module...</p>
-        <canvas id="plot-canvas" width="800" height="600" style="border: 1px solid #ccc;"></canvas>
-    </div>
-    
-    <div class="demo-container">
-        <h2>Controls</h2>
-        <ul>
-            <li>Mouse wheel: Zoom in/out</li>
-            <li>Left click + drag: Pan</li>
-            <li>Escape: Reset view</li>
-        </ul>
-    </div>
-    
-    <script>
-        // WebAssembly loading will be implemented when WASM support is complete
-        console.log("Ruviz WASM demo - Implementation in progress");
-    </script>
-</body>
-</html>
-EOF
+	@echo "<!DOCTYPE html>" > examples_output/web/index.html
+	@echo "<html><head><title>Ruviz Interactive Plotting Demo</title></head>" >> examples_output/web/index.html
+	@echo "<body><h1>🎮 Ruviz Interactive Plotting Demo</h1>" >> examples_output/web/index.html
+	@echo "<p>WebAssembly-powered interactive plotting in the browser.</p></body></html>" >> examples_output/web/index.html
 	@echo "✅ Web examples prepared (WASM implementation in progress)"
 
 # Set up output directory structure
@@ -144,98 +110,11 @@ setup-dirs:
 # Generate comprehensive documentation
 docs: setup-dirs
 	@echo "📖 Generating example documentation..."
-	@cat > examples_output/documentation/README.md << 'EOF'
-# Ruviz Example Gallery
-
-This directory contains examples demonstrating the capabilities of the Ruviz interactive plotting library.
-
-## Directory Structure
-
-- `static/` - Traditional plot outputs (PNG files)
-- `interactive/` - Interactive plotting demos and screenshots  
-- `performance/` - Performance benchmarks and analysis reports
-- `web/` - WebAssembly demos for browser-based plotting
-- `documentation/` - This documentation and example guides
-
-## Static Examples
-
-### GPU Performance Comparison
-- `gpu_cpu_throughput.png` - Throughput comparison between CPU and GPU rendering
-- `gpu_speedup.png` - GPU acceleration factor vs dataset size
-
-### Scientific Plotting
-- `scientific_showcase.png` - Multi-panel scientific figure
-- `boxplot_example.png` - Statistical box plot demonstration
-- `histogram_example.png` - Data distribution visualization
-
-## Interactive Examples
-
-### Basic Interaction (`basic_interaction_static.png`)
-Demonstrates fundamental interactive features:
-- Mouse wheel zoom
-- Click-and-drag pan
-- View reset functionality
-
-### Data Brushing (`data_brushing_*.png`)
-Shows linked multi-plot interactions:
-- Cross-plot data selection
-- Synchronized zooming
-- Multi-series highlighting
-
-### Real-time Performance (`real_time_performance_static.png`) 
-Large dataset interaction demonstration:
-- 100K+ point rendering
-- 60fps interaction target
-- GPU acceleration benefits
-
-## Performance Reports
-
-### Benchmark Results (`performance/`)
-- `gpu_cpu_benchmark.txt` - Detailed performance comparison
-- `interactive_perf_report.txt` - Real-time interaction analysis
-- `memory_analysis.txt` - Memory usage profiling
-- `scaling_analysis.txt` - Performance vs dataset size
-
-## Web Examples
-
-### WebAssembly Demos (`web/`)
-- `index.html` - Browser-based interactive plotting demo
-- WASM modules for cross-platform deployment
-
-## Usage
-
-To regenerate all examples:
-```bash
-make examples
-```
-
-To generate specific categories:
-```bash
-make static-examples      # Static plot outputs
-make interactive-examples # Interactive demonstrations  
-make performance-examples # Benchmarks and analysis
-make web-examples        # WebAssembly builds
-```
-
-## Interactive Features
-
-The Ruviz library provides matplotlib/seaborn/makie.jl inspired functionality with:
-
-- **Real-time Interactivity**: 60fps zoom, pan, data brushing
-- **GPU Acceleration**: 2.6x-7.0x speedup for large datasets  
-- **Publication Quality**: High-DPI output with professional typography
-- **Cross-Platform**: Native (winit) and Web (WASM) support
-
-## Performance Characteristics
-
-Based on benchmark results:
-- **GPU Threshold**: 5,000 points (automatic CPU/GPU switching)
-- **Interactive Performance**: 60fps maintained up to 100K points
-- **Memory Efficiency**: <2x data size memory usage
-- **Render Speed**: <100ms for 100K points in release mode
-
-Generated on $(date)
-EOF
+	@echo "# Ruviz Example Gallery" > examples_output/documentation/README.md
+	@echo "" >> examples_output/documentation/README.md
+	@echo "This directory contains examples demonstrating the capabilities of the Ruviz interactive plotting library." >> examples_output/documentation/README.md
+	@echo "" >> examples_output/documentation/README.md
+	@echo "Generated on $$(date)" >> examples_output/documentation/README.md
 	@echo "📖 Documentation generated"
 
 # Quick demo - generate a small subset for quick testing
