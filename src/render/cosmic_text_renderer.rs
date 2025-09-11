@@ -50,29 +50,36 @@ impl CosmicTextRenderer {
         // A Buffer provides shaping and layout for a UTF-8 string, create one per text widget
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
 
-        // Set buffer dimensions - allow text to flow naturally
-        buffer.set_size(&mut self.font_system, Some(800.0), Some(200.0));
+        // Calculate generous buffer dimensions to handle very long titles at high DPI
+        let dpi_scale = (font_size / 12.0).max(1.0);
+        let text_length_factor = (text.len() as f32).max(8.0);
+        
+        // Much more generous width calculation for long titles
+        let buffer_width = (text_length_factor * font_size * 2.0 * dpi_scale).max(3200.0);
+        let buffer_height = (font_size * 6.0 * dpi_scale).max(600.0);
+        
+        buffer.set_size(&mut self.font_system, Some(buffer_width), Some(buffer_height));
 
-        // Set text with professional typography - use high-quality font
-        let attrs = Attrs::new().family(Family::Name("Roboto")); // Use Roboto font directly
+        // Set text with professional typography
+        let attrs = Attrs::new().family(Family::Name("Roboto"));
 
         buffer.set_text(
             &mut self.font_system,
             text,
             attrs,
-            Shaping::Advanced, // Enable advanced text shaping (ligatures, kerning)
+            Shaping::Advanced,
         );
 
-        // Shape the text - this performs the advanced typography processing
+        // Shape the text - do NOT set center alignment to avoid double centering
         buffer.shape_until_scroll(&mut self.font_system, false);
 
         // Convert our color to cosmic-text format
         let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
 
-        // Render each text run with professional rasterization
+        // Render each text run - use manual positioning from draw_text_centered
         for run in buffer.layout_runs() {
             for glyph in run.glyphs.iter() {
-                // Get physical glyph placement
+                // Use the x position from manual centering calculation
                 let physical_glyph = glyph.physical((x, y), 1.0);
 
                 // Rasterize glyph with cosmic-text's high-quality renderer
@@ -322,8 +329,13 @@ impl CosmicTextRenderer {
         let metrics = Metrics::new(font_size, font_size * 1.2);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
 
-        // Set large dimensions for measurement
-        buffer.set_size(&mut self.font_system, Some(f32::MAX), Some(f32::MAX));
+        // Use generous buffer dimensions consistent with render_text
+        let dpi_scale = (font_size / 12.0).max(1.0);
+        let text_length_factor = (text.len() as f32).max(8.0);
+        let buffer_width = (text_length_factor * font_size * 2.0 * dpi_scale).max(3200.0);
+        let buffer_height = (font_size * 6.0 * dpi_scale).max(600.0);
+        
+        buffer.set_size(&mut self.font_system, Some(buffer_width), Some(buffer_height));
 
         let attrs = Attrs::new()
             .family(Family::Name("DejaVu Sans"))
@@ -334,7 +346,7 @@ impl CosmicTextRenderer {
 
         buffer.shape_until_scroll(&mut self.font_system, false);
 
-        // Calculate actual text dimensions
+        // Calculate actual text dimensions (no need for center alignment in measurement)
         let mut width: f32 = 0.0;
         let mut height: f32 = 0.0;
 
