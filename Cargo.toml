@@ -50,6 +50,11 @@ num_cpus = "1.16"
 wgpu = { version = "22.1", optional = true }
 bytemuck = { version = "1.14", optional = true }
 wgsl_bindgen = { version = "0.21", optional = true }
+pollster = { version = "0.3", optional = true }
+futures-intrusive = { version = "0.5", optional = true }
+
+# Logging
+log = "0.4"
 
 # SIMD optimization
 wide = { version = "0.7", optional = true }
@@ -63,6 +68,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 approx = "0.5"
 tempfile = "3.8"
 rand = "0.8"
+tokio = { version = "1.0", features = ["full"] }
+env_logger = "0.11"
 
 [features]
 default = ["ndarray", "parallel"]
@@ -71,7 +78,7 @@ serde = ["dep:serde", "serde_json", "palette/serde"]
 ndarray_support = ["ndarray"]
 polars_support = ["polars"]  
 parallel = ["rayon"]
-gpu = ["wgpu", "bytemuck", "wgsl_bindgen"]
+gpu = ["wgpu", "bytemuck", "wgsl_bindgen", "pollster", "futures-intrusive"]
 simd = ["wide"]
 svg = []
 performance = ["parallel", "simd"]

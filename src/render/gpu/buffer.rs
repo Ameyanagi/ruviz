@@ -39,8 +39,9 @@ impl BufferUsage {
 }
 
 /// Managed GPU buffer with automatic lifetime management
+#[derive(Clone)]
 pub struct GpuBuffer {
-    buffer: wgpu::Buffer,
+    buffer: Arc<wgpu::Buffer>,
     size: u64,
     usage: BufferUsage,
     label: String,
@@ -71,7 +72,7 @@ impl GpuBuffer {
         });
         
         Ok(Self {
-            buffer,
+            buffer: Arc::new(buffer),
             size,
             usage,
             label: label.to_string(),
@@ -103,7 +104,7 @@ impl GpuBuffer {
         });
         
         Ok(Self {
-            buffer,
+            buffer: Arc::new(buffer),
             size,
             usage,
             label: label.to_string(),
@@ -114,7 +115,7 @@ impl GpuBuffer {
     
     /// Get wgpu buffer reference
     pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
+        &*self.buffer
     }
     
     /// Get buffer size
@@ -487,18 +488,5 @@ impl BufferHandle {
     }
 }
 
-// Clone is needed for the BufferHandle to be used properly
-impl Clone for GpuBuffer {
-    fn clone(&self) -> Self {
-        // Note: This creates a reference to the same underlying buffer
-        // The actual GPU buffer is not duplicated
-        Self {
-            buffer: self.buffer.clone(), // wgpu::Buffer is Arc-based internally
-            size: self.size,
-            usage: self.usage,
-            label: self.label.clone(),
-            mapped: false, // Don't clone mapping state
-            pool_id: self.pool_id,
-        }
-    }
-}
+// Note: GpuBuffer doesn't implement Clone as wgpu::Buffer doesn't support cloning
+// This is intentional to prevent accidental duplication of GPU resources

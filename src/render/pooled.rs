@@ -228,6 +228,28 @@ impl PooledRenderer {
         Ok(result)
     }
 
+    /// Transform both X and Y coordinates in one call using SIMD and memory pooling
+    pub fn transform_coordinates_pooled<T>(
+        &self,
+        x_data: &T,
+        y_data: &T,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    ) -> Result<(PooledVec<f32>, PooledVec<f32>)>
+    where
+        T: crate::data::Data1D<f64>,
+    {
+        let x_result = self.transform_x_coordinates_pooled(x_data, x_min, x_max, left, right)?;
+        let y_result = self.transform_y_coordinates_pooled(y_data, y_min, y_max, top, bottom)?;
+        Ok((x_result, y_result))
+    }
+
     /// Generate tick marks using pooled memory
     /// 
     /// Replaces the frequent small allocations in tick generation with

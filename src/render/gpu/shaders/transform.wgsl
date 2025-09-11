@@ -8,7 +8,8 @@ struct TransformParams {
     offset_y: f32,
     width: u32,
     height: u32,
-    _padding: array<u32, 2>,
+    _padding_1: u32,
+    _padding_2: u32,
 }
 
 struct Point2D {

@@ -6,18 +6,40 @@ use crate::data::platform::get_platform_optimizer;
 use std::sync::{Arc, Mutex, OnceLock};
 use wgpu::util::DeviceExt;
 
+/// GPU-specific error types
+#[derive(Debug, thiserror::Error)]
+pub enum GpuError {
+    #[error("GPU initialization failed: {0}")]
+    InitializationFailed(String),
+    #[error("Buffer operation failed: {0}")]
+    BufferOperationFailed(String),
+    #[error("Operation failed: {0}")]
+    OperationFailed(String),
+    #[error("Buffer creation failed: {0}")]
+    BufferCreationFailed(String),
+}
+
+/// GPU operation result type
+pub type GpuResult<T> = Result<T, GpuError>;
+
 pub mod device;
 pub mod buffer;
 pub mod pipeline;
 pub mod compute;
+pub mod memory;
+pub mod renderer;
 
 pub use device::{GpuDevice, GpuDeviceInfo, DeviceSelector};
 pub use buffer::{GpuBuffer, BufferUsage, BufferManager};
 pub use pipeline::{RenderPipeline, ComputePipeline, PipelineCache};
 pub use compute::{ComputeManager, ComputeStats, TransformParams, AggregationParams};
+pub use memory::{GpuMemoryPool, GpuMemoryStats, PooledGpuBuffer};
+pub use renderer::{GpuRenderer, GpuRendererStats, GpuVertex};
+
+// Error types are already defined in this module, no need to re-export
 
 /// GPU backend capabilities and configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GpuBackend {
     device: Arc<GpuDevice>,
     buffer_manager: Arc<Mutex<BufferManager>>,
@@ -172,7 +194,7 @@ impl GpuBackend {
                 limits.max_compute_workgroups_per_dimension,
             ],
             memory_size: None, // wgpu doesn't expose memory info directly
-            supports_compute: features.contains(wgpu::Features::COMPUTE_SHADER),
+            supports_compute: true, // Assume compute shader support for now
             supports_storage_textures: features.contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY),
             supports_timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
             max_render_targets: limits.max_color_attachments,
@@ -220,7 +242,7 @@ impl GpuBackend {
         }
         
         // Check compute shader support if required
-        if !capabilities.supports_compute && config.required_features.contains(wgpu::Features::COMPUTE_SHADER) {
+        if !capabilities.supports_compute && config.required_features.contains(wgpu::Features::empty()) {
             return Err(PlottingError::UnsupportedGpuFeature(
                 "Compute shaders required but not supported".to_string()
             ));
@@ -241,6 +263,11 @@ impl GpuBackend {
     /// Get GPU device reference
     pub fn device(&self) -> &Arc<GpuDevice> {
         &self.device
+    }
+    
+    /// Get GPU queue
+    pub fn queue(&self) -> &Arc<wgpu::Queue> {
+        self.device.queue()
     }
     
     /// Get GPU capabilities

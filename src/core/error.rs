@@ -125,6 +125,8 @@ pub enum PlottingError {
     DeviceLost,
     /// GPU feature not supported
     UnsupportedGpuFeature(String),
+    /// GPU operation timeout
+    GpuTimeoutError,
     
     // SIMD optimization errors
     /// SIMD feature not available on this CPU
@@ -276,6 +278,9 @@ impl fmt::Display for PlottingError {
             PlottingError::UnsupportedGpuFeature(feature) => {
                 write!(f, "GPU feature '{}' not supported on this device", feature)
             }
+            PlottingError::GpuTimeoutError => {
+                write!(f, "GPU operation timed out")
+            }
             
             // SIMD errors
             PlottingError::SimdNotAvailable => {
@@ -317,6 +322,22 @@ impl From<std::io::Error> for PlottingError {
 impl From<crate::render::ColorError> for PlottingError {
     fn from(err: crate::render::ColorError) -> Self {
         PlottingError::InvalidColor(err.to_string())
+    }
+}
+
+#[cfg(feature = "gpu")]
+impl From<crate::render::gpu::GpuError> for PlottingError {
+    fn from(err: crate::render::gpu::GpuError) -> Self {
+        use crate::render::gpu::GpuError;
+        match err {
+            GpuError::InitializationFailed(msg) => PlottingError::GpuInitError { 
+                backend: "wgpu".to_string(), 
+                error: msg 
+            },
+            GpuError::BufferCreationFailed(msg) => PlottingError::BufferError(msg),
+            GpuError::BufferOperationFailed(msg) => PlottingError::BufferError(msg),
+            GpuError::OperationFailed(msg) => PlottingError::CommandError(msg),
+        }
     }
 }
 

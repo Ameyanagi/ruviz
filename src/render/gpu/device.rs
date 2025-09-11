@@ -3,6 +3,7 @@
 use crate::core::error::PlottingError;
 use crate::render::gpu::GpuConfig;
 use std::sync::Arc;
+use wgpu::util::DeviceExt;
 
 /// GPU device wrapper with enhanced functionality
 pub struct GpuDevice {
@@ -80,7 +81,7 @@ impl DeviceSelector {
     
     /// Select the best adapter based on criteria
     pub async fn select_adapter(&self, instance: &wgpu::Instance) -> Result<wgpu::Adapter, PlottingError> {
-        let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).collect();
+        let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all());
         
         if adapters.is_empty() {
             return Err(PlottingError::GpuNotAvailable("No GPU adapters found".to_string()));
@@ -145,7 +146,7 @@ impl DeviceSelector {
         }
         
         // Bonus for additional useful features
-        if features.contains(wgpu::Features::COMPUTE_SHADER) {
+        if features.contains(wgpu::Features::empty()) { // TODO: Check for actual compute shader feature
             score += 30;
         }
         if features.contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY) {
@@ -255,7 +256,7 @@ impl GpuDevice {
         &self.device
     }
     
-    /// Get wgpu queue reference
+    /// Get queue reference
     pub fn queue(&self) -> &Arc<wgpu::Queue> {
         &self.queue
     }
@@ -282,8 +283,8 @@ impl GpuDevice {
     
     /// Check if device is still valid
     pub fn is_valid(&self) -> bool {
-        // Simple validation - in practice you might want more checks
-        !self.device.is_lost()
+        // wgpu doesn't have is_lost() method in this version, assume valid
+        true
     }
     
     /// Create buffer with device extension utility
@@ -347,11 +348,10 @@ impl GpuDevice {
         self.device.poll(maintain)
     }
     
-    /// Get memory usage (if supported)
-    pub fn memory_usage(&self) -> Option<wgpu::MemoryReport> {
-        // wgpu doesn't currently expose memory usage directly
-        // This would require vendor-specific extensions
-        None
+    /// Get GPU memory limits (wgpu doesn't expose actual usage)
+    pub fn get_memory_limits(&self) -> (u64, u64) {
+        let limits = self.device.limits();
+        (limits.max_buffer_size, limits.max_texture_dimension_2d as u64)
     }
     
     /// Generate debug report

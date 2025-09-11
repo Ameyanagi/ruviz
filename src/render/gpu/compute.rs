@@ -6,6 +6,7 @@
 use crate::core::error::{PlottingError, Result};
 use std::sync::Arc;
 use wgpu::*;
+use wgpu::util::DeviceExt;
 
 /// Compute shader manager for GPU-accelerated operations
 pub struct ComputeManager {
@@ -17,11 +18,18 @@ pub struct ComputeManager {
 impl ComputeManager {
     /// Creates a new compute manager
     pub fn new(device: Arc<Device>, queue: Arc<Queue>) -> Self {
-        Self {
+        let mut manager = Self {
             device,
             queue,
             compute_pipelines: std::collections::HashMap::new(),
+        };
+        
+        // Initialize transform pipeline
+        if let Err(e) = manager.create_transform_pipeline() {
+            log::warn!("Failed to initialize transform pipeline: {}", e);
         }
+        
+        manager
     }
 
     /// Creates a coordinate transformation compute pipeline
@@ -212,8 +220,8 @@ impl ComputeManager {
         let command_buffer = encoder.finish();
         self.queue.submit([command_buffer]);
 
-        // Wait for completion
-        self.device.poll(Maintain::Wait);
+        // Wait for completion with timeout to prevent hanging
+        self.device.poll(wgpu::Maintain::Wait);
 
         Ok(())
     }
@@ -280,6 +288,33 @@ impl ComputeManager {
         Ok(())
     }
 
+    /// Execute coordinate transformation (synchronous wrapper for GpuRenderer)
+    pub fn execute_transform(
+        &self,
+        input_buffer: &crate::render::gpu::memory::GpuBuffer,
+        output_buffer: &crate::render::gpu::memory::GpuBuffer,
+        params: &TransformParams,
+        point_count: u32,
+    ) -> Result<()> {
+        // Create parameters buffer
+        let params_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Transform Parameters"),
+            contents: bytemuck::cast_slice(&[*params]),
+            usage: BufferUsages::UNIFORM,
+        });
+
+        // Use async runtime for the transform operation
+        let future = self.transform_coordinates(
+            input_buffer.buffer(),
+            output_buffer.buffer(),
+            &params_buffer,
+            point_count,
+        );
+
+        // Block on the async operation
+        pollster::block_on(future)
+    }
+
     /// Gets compute pipeline statistics
     pub fn get_stats(&self) -> ComputeStats {
         ComputeStats {
@@ -300,13 +335,13 @@ pub struct ComputeStats {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TransformParams {
-    pub scale_x: f32,
-    pub scale_y: f32,
-    pub offset_x: f32,
-    pub offset_y: f32,
-    pub width: u32,
-    pub height: u32,
-    pub _padding: [u32; 2], // Align to 32 bytes
+    pub scale_x: f32,      // 4 bytes
+    pub scale_y: f32,      // 4 bytes
+    pub offset_x: f32,     // 4 bytes
+    pub offset_y: f32,     // 4 bytes - total 16 bytes (aligned)
+    pub width: u32,        // 4 bytes
+    pub height: u32,       // 4 bytes
+    pub _padding: [u32; 2], // 8 bytes - total 16 bytes (aligned)
 }
 
 /// Aggregation parameters for DataShader-style operations

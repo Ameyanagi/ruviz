@@ -13,6 +13,8 @@ pub mod parallel;
 #[cfg(feature = "simd")]
 pub mod simd;
 pub mod pooled;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 
 pub use backend::Renderer;
 pub use skia::SkiaRenderer;
@@ -27,3 +29,5 @@ pub use parallel::{ParallelRenderer, ParallelConfig, PerformanceStats, SeriesRen
 #[cfg(feature = "simd")]
 pub use simd::{SIMDTransformer, SIMDPerformanceInfo, CoordinateBounds, PixelViewport};
 pub use pooled::{PooledRenderer, PooledRendererStats, LineSegment, get_pooled_renderer};
+#[cfg(feature = "gpu")]
+pub use gpu::{GpuBackend, GpuRenderer, initialize_gpu_backend, is_gpu_available};
