@@ -2,12 +2,17 @@
 
 Professional figures meeting journal standards (IEEE, Nature, Science).
 
-## Examples
+## Scientific Analysis Figure
 
-This category will showcase:
-- IEEE-format figures
-- Multi-panel layouts
-- Professional themes
-- High-DPI exports
+Multi-panel scientific figure with publication-quality formatting (2×2 subplot layout).
+
+![Scientific Analysis](scientific_analysis_figure.png)
+
+**Features:**
+- IEEE-compliant dimensions and DPI
+- Professional typography
+- Clean seaborn styling
+- Multi-panel layout with proper spacing
+- Suitable for journal submission
 
 [← Back to Gallery](../README.md)

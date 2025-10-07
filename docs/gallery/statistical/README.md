@@ -2,12 +2,16 @@
 
 Statistical analysis and distribution visualization.
 
-## Examples
+## Seaborn-Style Box Plot
 
-This category will showcase:
-- Histograms
-- Box plots
-- Distribution analysis
-- Statistical summaries
+Professional statistical visualization with seaborn color palette and styling.
+
+![Seaborn Box Plot](seaborn_boxplot_example.png)
+
+## Histogram Distribution
+
+Frequency distribution analysis with optimal binning.
+
+![Histogram](histogram_example.png)
 
 [← Back to Gallery](../README.md)
