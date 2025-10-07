@@ -7,7 +7,7 @@ pub mod error;
 pub mod position;
 pub mod subplot;
 
-pub use plot::Plot;
+pub use plot::{Plot, BackendType};
 pub use position::Position;
 pub use types::{BoundingBox, Point2f};
 pub use error::{PlottingError, Result};

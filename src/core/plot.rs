@@ -55,6 +55,23 @@ pub struct Plot {
     pooled_renderer: Option<crate::render::PooledRenderer>,
     /// Enable memory pooled rendering for performance
     enable_pooled_rendering: bool,
+    /// Selected backend (None = auto-select)
+    backend: Option<BackendType>,
+    /// Whether auto-optimization has been applied
+    auto_optimized: bool,
+}
+
+/// Backend types for rendering
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendType {
+    /// Default Skia backend (CPU-based, good for <1K points)
+    Skia,
+    /// Parallel multi-threaded backend (good for 1K-100K points)
+    Parallel,
+    /// GPU-accelerated backend (good for >100K points)
+    GPU,
+    /// DataShader aggregation backend (good for >1M points)
+    DataShader,
 }
 
 /// Configuration for a single data series
@@ -229,6 +246,8 @@ impl Plot {
             parallel_renderer: ParallelRenderer::new(),
             pooled_renderer: None,
             enable_pooled_rendering: false,
+            backend: None,
+            auto_optimized: false,
         }
     }
     
@@ -2039,7 +2058,82 @@ impl Plot {
         
         Ok((x_min, x_max, y_min, y_max))
     }
-    
+
+    /// Automatically optimize backend selection based on data size
+    ///
+    /// Selects the most appropriate rendering backend based on dataset characteristics:
+    /// - < 1K points: Skia (simple, fast)
+    /// - 1K-10K points: Parallel (multi-threaded)
+    /// - 10K-100K points: Parallel (optimized)
+    /// - > 100K points: GPU/DataShader (hardware acceleration)
+    ///
+    /// If a backend was explicitly set with `.backend()`, that choice is respected.
+    pub fn auto_optimize(mut self) -> Self {
+        // If backend already explicitly set, respect that choice
+        if self.backend.is_some() {
+            self.auto_optimized = true;
+            return self;
+        }
+
+        // Count total data points across all series
+        let total_points = self.series.iter().map(|s| {
+            match &s.series_type {
+                SeriesType::Line { x_data, .. } => x_data.len(),
+                SeriesType::Scatter { x_data, .. } => x_data.len(),
+                SeriesType::Bar { values, .. } => values.len(),
+                SeriesType::Histogram { data, .. } => data.len(),
+                SeriesType::BoxPlot { data, .. } => data.len(),
+                SeriesType::ErrorBars { x_data, .. } => x_data.len(),
+                SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
+            }
+        }).sum::<usize>();
+
+        // Select backend based on data size
+        let selected_backend = if total_points < 1000 {
+            BackendType::Skia
+        } else if total_points < 100_000 {
+            #[cfg(feature = "parallel")]
+            {
+                BackendType::Parallel
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                BackendType::Skia
+            }
+        } else {
+            // For very large datasets, prefer GPU if available, else DataShader
+            #[cfg(feature = "gpu")]
+            {
+                BackendType::GPU
+            }
+            #[cfg(not(feature = "gpu"))]
+            {
+                BackendType::DataShader
+            }
+        };
+
+        self.backend = Some(selected_backend);
+        self.auto_optimized = true;
+        self
+    }
+
+    /// Set backend explicitly (overrides auto-optimization)
+    pub fn backend(mut self, backend: BackendType) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
+    /// Get the current backend name (for testing)
+    pub fn get_backend_name(&self) -> &'static str {
+        match self.backend {
+            Some(BackendType::Skia) => "skia",
+            Some(BackendType::Parallel) => "parallel",
+            Some(BackendType::GPU) => "gpu",
+            Some(BackendType::DataShader) => "datashader",
+            None => "auto",
+        }
+    }
+
     /// Save the plot to a PNG file
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         use crate::render::skia::SkiaRenderer;
@@ -2546,6 +2640,23 @@ impl PlotSeriesBuilder {
     /// Export to SVG
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
         self.end_series().export_svg(path)
+    }
+
+    /// Automatically optimize backend selection (fluent API)
+    /// Note: This ends the current series before optimizing
+    pub fn auto_optimize(self) -> Plot {
+        self.end_series().auto_optimize()
+    }
+
+    /// Set backend explicitly (fluent API)
+    /// Note: This ends the current series before setting backend
+    pub fn backend(self, backend: BackendType) -> Plot {
+        self.end_series().backend(backend)
+    }
+
+    /// Get current backend name (for testing)
+    pub fn get_backend_name(&self) -> &'static str {
+        self.plot.get_backend_name()
     }
 }
 

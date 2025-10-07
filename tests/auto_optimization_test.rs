@@ -27,8 +27,12 @@ fn test_medium_dataset_uses_parallel() {
         .line(&x, &y)
         .auto_optimize();
 
-    // THEN: Should select Parallel backend
+    // THEN: Should select Parallel backend (if available) or Skia (fallback)
+    #[cfg(feature = "parallel")]
     assert_eq!(plot.get_backend_name(), "parallel");
+
+    #[cfg(not(feature = "parallel"))]
+    assert_eq!(plot.get_backend_name(), "skia");
 }
 
 #[test]
@@ -40,7 +44,7 @@ fn test_explicit_backend_not_overridden() {
     // WHEN: Explicitly set Skia before auto_optimize
     let plot = Plot::new()
         .line(&x, &y)
-        .backend(Backend::Skia)
+        .backend(BackendType::Skia)
         .auto_optimize();
 
     // THEN: Explicit selection should be respected
@@ -91,13 +95,4 @@ fn test_auto_optimize_with_multiple_series() {
 
     // THEN: Should work with multiple series
     assert_eq!(plot.get_backend_name(), "skia");
-}
-
-// Backend enum for testing
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Backend {
-    Skia,
-    Parallel,
-    GPU,
-    DataShader,
 }
