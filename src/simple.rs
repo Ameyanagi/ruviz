@@ -216,9 +216,9 @@ mod tests {
     #[test]
     fn test_simple_api_exists() {
         // Ensure module compiles and functions are available
-        let _ = line_plot;
-        let _ = scatter_plot;
-        let _ = bar_chart;
-        let _ = histogram;
+        let _ = line_plot::<&str>;
+        let _ = scatter_plot::<&str>;
+        let _ = bar_chart::<&str>;
+        let _ = histogram::<&str>;
     }
 }

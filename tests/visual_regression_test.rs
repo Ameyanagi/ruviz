@@ -55,11 +55,11 @@ fn calculate_image_diff(path1: &Path, path2: &Path) -> Result<f64, Box<dyn std::
 /// Generate test output and compare against golden image
 /// Returns true if images match within tolerance
 fn test_against_golden(
-    generate_fn: impl FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+    generate_fn: impl FnOnce() -> std::result::Result<(), Box<dyn std::error::Error>>,
     test_path: &str,
     golden_path: &str,
     tolerance: f64,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate test image
     generate_fn()?;
 
@@ -80,7 +80,7 @@ fn test_against_golden(
 }
 
 #[test]
-fn test_visual_regression_basic_line() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_basic_line() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Basic Line Plot");
@@ -105,7 +105,7 @@ fn test_visual_regression_basic_line() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[test]
-fn test_visual_regression_multi_series() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Multi-Series Plot");
@@ -135,7 +135,7 @@ fn test_visual_regression_multi_series() -> Result<(), Box<dyn std::error::Error
 }
 
 #[test]
-fn test_visual_regression_scatter() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_scatter() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Scatter Plot");
@@ -162,7 +162,7 @@ fn test_visual_regression_scatter() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_visual_regression_bar_chart() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_bar_chart() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Bar Chart");
@@ -186,7 +186,7 @@ fn test_visual_regression_bar_chart() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
-fn test_visual_regression_histogram() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_histogram() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Histogram");
@@ -213,7 +213,7 @@ fn test_visual_regression_histogram() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
-fn test_visual_regression_boxplot() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_boxplot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Box Plot");
@@ -236,7 +236,7 @@ fn test_visual_regression_boxplot() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_visual_regression_themes() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
@@ -270,7 +270,7 @@ fn test_visual_regression_themes() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_visual_regression_unicode() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_unicode() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Unicode Text");
@@ -295,7 +295,7 @@ fn test_visual_regression_unicode() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_visual_regression_dimensions() -> Result<(), Box<dyn std::error::Error>> {
+fn test_visual_regression_dimensions() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
     println!("Testing: Custom Dimensions");

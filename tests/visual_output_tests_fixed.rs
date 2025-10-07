@@ -7,13 +7,13 @@ use ruviz::prelude::*;
 use std::fs;
 
 /// Setup test output directory
-fn setup_output_dir() -> Result<(), Box<dyn std::error::Error>> {
+fn setup_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("test_output")?;
     Ok(())
 }
 
 #[test]
-fn test_basic_line_plot() -> Result<(), Box<dyn std::error::Error>> {
+fn test_basic_line_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
@@ -32,7 +32,7 @@ fn test_basic_line_plot() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_scatter_plot() -> Result<(), Box<dyn std::error::Error>> {
+fn test_scatter_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
@@ -51,7 +51,7 @@ fn test_scatter_plot() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_bar_plot() -> Result<(), Box<dyn std::error::Error>> {
+fn test_bar_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let categories = vec!["Apple", "Banana", "Cherry", "Date", "Elderberry"];
@@ -70,7 +70,7 @@ fn test_bar_plot() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_multiple_series() -> Result<(), Box<dyn std::error::Error>> {
+fn test_multiple_series() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
@@ -93,7 +93,7 @@ fn test_multiple_series() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_themes() -> Result<(), Box<dyn std::error::Error>> {
+fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
@@ -140,7 +140,7 @@ fn test_themes() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_large_dataset() -> Result<(), Box<dyn std::error::Error>> {
+fn test_large_dataset() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     // Generate sine wave data
@@ -160,7 +160,7 @@ fn test_large_dataset() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_mathematical_functions() -> Result<(), Box<dyn std::error::Error>> {
+fn test_mathematical_functions() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let x_data: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
@@ -183,7 +183,7 @@ fn test_mathematical_functions() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_grid_options() -> Result<(), Box<dyn std::error::Error>> {
+fn test_grid_options() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -203,7 +203,7 @@ fn test_grid_options() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_custom_dimensions() -> Result<(), Box<dyn std::error::Error>> {
+fn test_custom_dimensions() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     let categories = vec!["Q1", "Q2", "Q3", "Q4"];
@@ -223,7 +223,7 @@ fn test_custom_dimensions() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
+fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
     
     // Single point scatter

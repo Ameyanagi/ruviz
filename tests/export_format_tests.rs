@@ -7,7 +7,7 @@ use ruviz::render::skia::{SkiaRenderer, calculate_plot_area};
 use std::fs;
 
 /// Setup test output directories
-fn setup_export_dirs() -> Result<(), Box<dyn std::error::Error>> {
+fn setup_export_dirs() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("export_test_output/png")?;
     fs::create_dir_all("export_test_output/svg")?;
     fs::create_dir_all("export_test_output/raw")?;
@@ -16,7 +16,7 @@ fn setup_export_dirs() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_png_export() -> Result<(), Box<dyn std::error::Error>> {
+fn test_png_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -47,7 +47,7 @@ fn test_png_export() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_svg_export() -> Result<(), Box<dyn std::error::Error>> {
+fn test_svg_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -74,7 +74,7 @@ fn test_svg_export() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_raw_data_export() -> Result<(), Box<dyn std::error::Error>> {
+fn test_raw_data_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
@@ -119,7 +119,7 @@ fn test_raw_data_export() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_direct_renderer_exports() -> Result<(), Box<dyn std::error::Error>> {
+fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     // Test direct SkiaRenderer usage with manual drawing
@@ -160,7 +160,7 @@ fn test_direct_renderer_exports() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_all_themes_all_formats() -> Result<(), Box<dyn std::error::Error>> {
+fn test_all_themes_all_formats() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -210,7 +210,7 @@ fn test_all_themes_all_formats() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_export_format_validation() -> Result<(), Box<dyn std::error::Error>> {
+fn test_export_format_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![1.0, 2.0, 3.0];
@@ -253,7 +253,7 @@ fn test_export_format_validation() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_high_resolution_exports() -> Result<(), Box<dyn std::error::Error>> {
+fn test_high_resolution_exports() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data: Vec<f64> = (0..20).map(|i| i as f64 * 0.5).collect();
@@ -324,14 +324,14 @@ fn run_all_export_tests() {
     println!("\n📤 RUNNING COMPREHENSIVE EXPORT FORMAT TESTS");
     println!("===============================================");
     
-    let tests: Vec<(&str, fn() -> Result<(), Box<dyn std::error::Error>>)> = vec![
-        ("PNG Export", test_png_export as fn() -> Result<(), Box<dyn std::error::Error>>),
-        ("SVG Export", test_svg_export as fn() -> Result<(), Box<dyn std::error::Error>>),
-        ("Raw Data Export", test_raw_data_export as fn() -> Result<(), Box<dyn std::error::Error>>),
-        ("Direct Renderer Exports", test_direct_renderer_exports as fn() -> Result<(), Box<dyn std::error::Error>>),
-        ("All Themes All Formats", test_all_themes_all_formats as fn() -> Result<(), Box<dyn std::error::Error>>),
-        ("Export Format Validation", test_export_format_validation as fn() -> Result<(), Box<dyn std::error::Error>>),
-        ("High Resolution Exports", test_high_resolution_exports as fn() -> Result<(), Box<dyn std::error::Error>>),
+    let tests: Vec<(&str, fn() -> std::result::Result<(), Box<dyn std::error::Error>>)> = vec![
+        ("PNG Export", test_png_export as fn() -> std::result::Result<(), Box<dyn std::error::Error>>),
+        ("SVG Export", test_svg_export as fn() -> std::result::Result<(), Box<dyn std::error::Error>>),
+        ("Raw Data Export", test_raw_data_export as fn() -> std::result::Result<(), Box<dyn std::error::Error>>),
+        ("Direct Renderer Exports", test_direct_renderer_exports as fn() -> std::result::Result<(), Box<dyn std::error::Error>>),
+        ("All Themes All Formats", test_all_themes_all_formats as fn() -> std::result::Result<(), Box<dyn std::error::Error>>),
+        ("Export Format Validation", test_export_format_validation as fn() -> std::result::Result<(), Box<dyn std::error::Error>>),
+        ("High Resolution Exports", test_high_resolution_exports as fn() -> std::result::Result<(), Box<dyn std::error::Error>>),
     ];
     
     let mut passed = 0;

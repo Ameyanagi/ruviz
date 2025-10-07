@@ -8,7 +8,7 @@ use ruviz::render::skia::SkiaRenderer;
 use std::fs;
 
 /// Setup export output directories
-fn setup_export_dirs() -> Result<(), Box<dyn std::error::Error>> {
+fn setup_export_dirs() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("export_output/png")?;
     fs::create_dir_all("export_output/svg")?;
     fs::create_dir_all("export_output/raw")?;
@@ -16,7 +16,7 @@ fn setup_export_dirs() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_png_exports() -> Result<(), Box<dyn std::error::Error>> {
+fn test_png_exports() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -58,7 +58,7 @@ fn test_png_exports() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_svg_exports() -> Result<(), Box<dyn std::error::Error>> {
+fn test_svg_exports() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     // Test SVG export using SkiaRenderer directly
@@ -79,7 +79,7 @@ fn test_svg_exports() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_raw_data_exports() -> Result<(), Box<dyn std::error::Error>> {
+fn test_raw_data_exports() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
@@ -137,7 +137,7 @@ fn test_raw_data_exports() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_all_themes_export() -> Result<(), Box<dyn std::error::Error>> {
+fn test_all_themes_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -181,7 +181,7 @@ fn test_all_themes_export() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_different_resolutions() -> Result<(), Box<dyn std::error::Error>> {
+fn test_different_resolutions() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data: Vec<f64> = (0..10).map(|i| i as f64).collect();
@@ -243,7 +243,7 @@ fn test_different_resolutions() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Validation test to ensure all exports contain actual data
 #[test]
-fn test_export_validation() -> Result<(), Box<dyn std::error::Error>> {
+fn test_export_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
     
     let x_data = vec![1.0, 2.0, 3.0];

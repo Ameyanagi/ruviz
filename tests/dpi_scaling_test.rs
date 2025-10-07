@@ -7,13 +7,13 @@ use ruviz::prelude::*;
 use std::fs;
 
 /// Setup test output directory
-fn setup_test_output_dir() -> Result<(), Box<dyn std::error::Error>> {
+fn setup_test_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("test_output")?;
     Ok(())
 }
 
 #[test]
-fn test_dpi_scaling_produces_different_file_sizes() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_scaling_produces_different_file_sizes() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -55,7 +55,7 @@ fn test_dpi_scaling_produces_different_file_sizes() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-fn test_dpi_canvas_size_scaling() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_canvas_size_scaling() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![0.0, 1.0, 2.0];
@@ -94,7 +94,7 @@ fn test_dpi_canvas_size_scaling() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_dpi_font_scaling_consistency() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_font_scaling_consistency() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     // Simple plot to test font scaling

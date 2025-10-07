@@ -6,13 +6,13 @@ use ruviz::prelude::*;
 use std::fs;
 
 /// Setup test output directory
-fn setup_test_output_dir() -> Result<(), Box<dyn std::error::Error>> {
+fn setup_test_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("test_output")?;
     Ok(())
 }
 
 #[test]
-fn test_dpi_fluent_api_basic() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_fluent_api_basic() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -32,7 +32,7 @@ fn test_dpi_fluent_api_basic() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_ieee_publication_dpi() -> Result<(), Box<dyn std::error::Error>> {
+fn test_ieee_publication_dpi() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
@@ -52,7 +52,7 @@ fn test_ieee_publication_dpi() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_multiple_dpi_outputs() -> Result<(), Box<dyn std::error::Error>> {
+fn test_multiple_dpi_outputs() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
@@ -74,7 +74,7 @@ fn test_multiple_dpi_outputs() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_dpi_with_theme() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_with_theme() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0];
@@ -95,7 +95,7 @@ fn test_dpi_with_theme() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_dpi_validation() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_validation() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![1.0, 2.0];
@@ -113,7 +113,7 @@ fn test_dpi_validation() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_scientific_dpi_presets() -> Result<(), Box<dyn std::error::Error>> {
+fn test_scientific_dpi_presets() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![0.0, 0.5, 1.0, 1.5, 2.0];

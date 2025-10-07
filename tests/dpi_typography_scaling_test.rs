@@ -7,13 +7,13 @@ use ruviz::prelude::*;
 use std::fs;
 
 /// Setup test output directory
-fn setup_test_output_dir() -> Result<(), Box<dyn std::error::Error>> {
+fn setup_test_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("test_output")?;
     Ok(())
 }
 
 #[test]
-fn test_dpi_font_scaling_visual_consistency() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_font_scaling_visual_consistency() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -52,7 +52,7 @@ fn test_dpi_font_scaling_visual_consistency() -> Result<(), Box<dyn std::error::
 }
 
 #[test] 
-fn test_dpi_line_width_scaling() -> Result<(), Box<dyn std::error::Error>> {
+fn test_dpi_line_width_scaling() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
@@ -84,7 +84,7 @@ fn test_dpi_line_width_scaling() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_publication_dpi_typography_standards() -> Result<(), Box<dyn std::error::Error>> {
+fn test_publication_dpi_typography_standards() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![1.0, 2.0, 3.0];
@@ -120,7 +120,7 @@ fn test_publication_dpi_typography_standards() -> Result<(), Box<dyn std::error:
 }
 
 #[test]
-fn test_font_line_ratio_consistency() -> Result<(), Box<dyn std::error::Error>> {
+fn test_font_line_ratio_consistency() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_test_output_dir()?;
     
     let x_data = vec![0.0, 5.0, 10.0];
