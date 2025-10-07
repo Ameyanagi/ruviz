@@ -45,11 +45,26 @@ Plot::new()
     .line(&x, &y)
     .title("Plot Title")
     .title_font("Arial", 16.0)        // System font
-    .xlabel("X Axis") 
+    .xlabel("X Axis")
     .xlabel_font("Open Sans", 12.0)   // Open font (auto-download)
     .ylabel("Y Axis")
     .ylabel_font_file(&path, 12.0)    // Custom TTF file
+    .auto_optimize()                  // Automatic backend selection
     .save("output.png")?
+```
+
+### Simple API (One-Liners)
+```rust
+use ruviz::simple::*;
+
+// Quick plots with automatic optimization
+line_plot(&x, &y, "line.png")?;
+scatter_plot(&x, &y, "scatter.png")?;
+bar_chart(&categories, &values, "bar.png")?;
+histogram(&data, "histogram.png")?;
+
+// With titles
+line_plot_with_title(&x, &y, "My Plot", "line.png")?;
 ```
 
 ### Plot Types
@@ -93,10 +108,10 @@ let config = FontConfig::builder()
 ```
 
 ## Current Implementation Status
-**Phase**: Phase 4: Performance Optimization COMPLETE
-**Status**: Production-ready high-performance plotting library achieved
-**Active**: All major plot types with professional seaborn styling implemented
-**Next**: Ready for advanced features and GPU acceleration integration
+**Phase**: Week 5: API Simplification COMPLETE
+**Status**: Production-ready with intelligent auto-optimization and one-liner convenience API
+**Active**: Auto-optimization, simple API, comprehensive test coverage
+**Next**: Performance validation and benchmarking (Week 6)
 
 ## ⚡ Phase 4: Performance Optimization Results
 
@@ -201,6 +216,51 @@ let config = FontConfig::builder()
 - **DataShader-style aggregation** for large datasets
 - **Custom themes and styling** with comprehensive font configuration
 - **Cross-platform support** (Linux, macOS, Windows, WASM)
+
+## ✅ Week 5: API Simplification (COMPLETE)
+
+### Auto-Optimization API
+- **Intelligent Backend Selection**: Automatic selection based on data size
+  - < 1K points → Skia (simple, fast)
+  - 1K-100K points → Parallel (multi-threaded)
+  - > 100K points → GPU/DataShader (hardware acceleration)
+- **Fluent Integration**: `.auto_optimize()` method in builder pattern
+- **Feature-aware Fallback**: Graceful degradation when features unavailable
+- **Test Coverage**: 6 comprehensive tests validating all decision paths
+
+**Usage**:
+```rust
+Plot::new()
+    .line(&x, &y)
+    .auto_optimize()  // Automatic backend selection
+    .save("plot.png")?;
+```
+
+### Simple API Module
+- **One-Liner Functions**: Zero-configuration plotting with 8 convenience functions
+- **Automatic Optimization**: All functions call `.auto_optimize()` by default
+- **Complete Coverage**: Line, scatter, bar, histogram with titled variants
+- **Clean API**: `use ruviz::simple::*;` for quick access
+- **Test Coverage**: 10 tests covering all functions and edge cases
+
+**Usage**:
+```rust
+use ruviz::simple::*;
+
+// Simple plots
+line_plot(&x, &y, "line.png")?;
+scatter_plot(&x, &y, "scatter.png")?;
+bar_chart(&categories, &values, "bar.png")?;
+histogram(&data, "histogram.png")?;
+
+// With titles
+line_plot_with_title(&x, &y, "My Plot", "line.png")?;
+```
+
+### TDD Achievements
+- **Complete TDD Cycle**: Red → Green → Refactor for both components
+- **16 Total Tests**: 6 auto-optimization + 10 simple API (all passing)
+- **Quality Standards**: Professional error handling, validation, edge cases
 
 ## Development Guidelines
 - Pure Rust implementation (no C dependencies)

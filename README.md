@@ -9,6 +9,20 @@
 
 ## Quick Start
 
+### Simple API (One-Liner)
+
+```rust
+use ruviz::simple::*;
+
+let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+let y: Vec<f64> = x.iter().map(|&x| x * x).collect();
+
+// One line with automatic optimization
+line_plot_with_title(&x, &y, "Quadratic Function", "plot.png")?;
+```
+
+### Builder API (Full Control)
+
 ```rust
 use ruviz::prelude::*;
 
@@ -20,6 +34,7 @@ Plot::new()
     .title("Quadratic Function")
     .xlabel("x")
     .ylabel("y = x²")
+    .auto_optimize()  // Intelligent backend selection
     .save("plot.png")?;
 ```
 
@@ -55,6 +70,8 @@ Plot::new()
 - **Unicode text**: Full UTF-8 support with cosmic-text
 
 ### ⚡ Advanced Features
+- **Auto-optimization**: Intelligent backend selection based on data size
+- **Simple API**: One-liner functions for quick plotting
 - **Parallel rendering**: Multi-threaded for large datasets
 - **GPU acceleration**: Optional wgpu backend for real-time
 - **Interactive plots**: Optional winit integration
