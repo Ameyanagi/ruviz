@@ -325,10 +325,10 @@ mod tests {
         assert!(view.get(5).is_none());
         
         // Test iterator from Data1D trait
-        let collected: Vec<&f64> = view.iter().collect();
+        let collected: Vec<f64> = view.iter().collect();
         assert_eq!(collected.len(), 5);
-        assert_eq!(*collected[0], 1.0);
-        assert_eq!(*collected[4], 5.0);
+        assert_eq!(collected[0], 1.0);
+        assert_eq!(collected[4], 5.0);
     }
 
     #[test]
@@ -370,8 +370,8 @@ mod tests {
         assert_eq!(mapped.get(4), Some(10.0));
         
         // Test Data1D implementation on mapped view
-        assert_eq!(mapped.get(0).unwrap().into() as f64, 2.0);
-        assert_eq!(mapped.get(4).unwrap().into() as f64, 10.0);
+        assert_eq!(mapped.get(0).unwrap(), 2.0);
+        assert_eq!(mapped.get(4).unwrap(), 10.0);
     }
 
     #[test]

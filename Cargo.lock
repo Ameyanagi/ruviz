@@ -2992,6 +2992,7 @@ dependencies = [
  "rand",
  "raw-window-handle",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
