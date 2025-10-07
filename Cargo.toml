@@ -135,3 +135,11 @@ harness = false
 [[bench]]
 name = "simple_memory_benchmark"
 harness = false
+
+[[bench]]
+name = "baseline_benchmarks"
+harness = false
+
+[[bench]]
+name = "memory_benchmarks"
+harness = false
