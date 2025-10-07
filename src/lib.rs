@@ -38,6 +38,7 @@ pub mod axes;
 pub mod layout;
 pub mod text;
 pub mod export;
+pub mod simple;
 
 #[cfg(feature = "interactive")]
 pub mod interactive;
