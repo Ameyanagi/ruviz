@@ -7,6 +7,7 @@ pub mod primitives;
 pub mod style;
 pub mod color;
 pub mod theme;
+pub mod text;
 pub mod font;
 #[cfg(feature = "parallel")]
 pub mod parallel;
@@ -24,6 +25,7 @@ pub use color::{Color, ColorError, ColorMap};
 pub use theme::{Theme, ThemeBuilder, ThemeVariant};
 pub use primitives::Primitive;
 pub use font::{FontFamily, FontConfig, FontWeight, FontStyle};
+pub use text::{TextRenderer, initialize_text_system, get_font_system, get_swash_cache};
 #[cfg(feature = "parallel")]
 pub use parallel::{ParallelRenderer, ParallelConfig, PerformanceStats, SeriesRenderData, DetailedPerformanceInfo};
 #[cfg(feature = "simd")]

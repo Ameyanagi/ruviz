@@ -22,9 +22,8 @@ nalgebra = { version = "0.32", optional = true }
 # Color management
 palette = "0.7"
 
-# Text rendering
-fontdue = "0.8"  # Keep for fallback compatibility
-cosmic-text = "0.13"  # Professional text layout and shaping
+# Text rendering - unified on cosmic-text (pure Rust)
+cosmic-text = "0.13"  # Professional text layout, shaping, and font discovery
 unicode-width = "0.1"
 
 # Data structures (optional)
