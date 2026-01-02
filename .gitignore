@@ -19,3 +19,13 @@ export_test_output/*
 # Temporary files
 *.tmp
 *.temp
+
+# AI/Assistant artifacts
+.serena/
+.claude/
+openspec/
+memory/
+plans/
+claudedocs/
+AGENTS.md
+CLAUDE.md
