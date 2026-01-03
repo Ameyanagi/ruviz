@@ -1,6 +1,3 @@
 # Clippy configuration
 avoid-breaking-exported-api = false
 msrv = "1.82"
-
-# Performance lints (critical for plotting library)
-cargo-clippy-version = "1.82.0"

@@ -1,17 +1,33 @@
 //! Core plotting functionality and main API
 
-pub mod plot;
 pub mod builder;
-pub mod types;
+pub mod config;
 pub mod error;
+pub mod layout;
+pub mod plot;
 pub mod position;
+pub mod style;
 pub mod subplot;
+pub mod types;
+pub mod units;
 
-pub use plot::{Plot, BackendType};
-pub use position::Position;
-pub use types::{BoundingBox, Point2f};
+pub use config::{
+    ComputedMargins, FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig,
+    TypographyConfig,
+};
 pub use error::{PlottingError, Result};
-pub use subplot::{SubplotFigure, GridSpec, subplots, subplots_default};
+pub use layout::{
+    ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, PlotContent, PlotLayout,
+    TextPosition,
+};
+pub use plot::{BackendType, Plot};
+pub use position::Position;
+pub use style::PlotStyle;
+pub use subplot::{GridSpec, SubplotFigure, subplots, subplots_default};
+pub use types::{BoundingBox, Point2f};
+pub use units::{
+    POINTS_PER_INCH, REFERENCE_DPI, in_to_pt, in_to_px, pt_to_in, pt_to_px, px_to_in, px_to_pt,
+};
 
 #[cfg(test)]
 mod validation_test;

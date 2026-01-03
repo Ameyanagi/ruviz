@@ -66,7 +66,7 @@ impl<T> MemoryPool<T> {
                 let buffer = self.available.remove(i).unwrap();
                 let ptr = NonNull::new(buffer.as_ptr() as *mut T).unwrap();
                 self.in_use.insert(ptr.as_ptr() as usize);
-                
+
                 return PooledBuffer {
                     data: ptr,
                     len,
@@ -79,12 +79,12 @@ impl<T> MemoryPool<T> {
 
         // No suitable buffer found, allocate a new one
         self.grow_pool(len);
-        
+
         // Try again after growing
         if let Some(buffer) = self.available.pop_front() {
             let ptr = NonNull::new(buffer.as_ptr() as *mut T).unwrap();
             self.in_use.insert(ptr.as_ptr() as usize);
-            
+
             PooledBuffer {
                 data: ptr,
                 len,
@@ -102,7 +102,7 @@ impl<T> MemoryPool<T> {
         if let Some(boxed) = buffer._box.take() {
             let ptr_addr = boxed.as_ptr() as usize;
             self.in_use.remove(&ptr_addr);
-            
+
             // Only keep the buffer if we haven't exceeded max_pools
             if self.available.len() < self.max_pools {
                 self.available.push_back(boxed);
@@ -132,7 +132,7 @@ impl<T> MemoryPool<T> {
     pub fn shrink_unused(&mut self) {
         // Keep only half of the available buffers
         let target_size = (self.available.len() / 2).max(1);
-        
+
         while self.available.len() > target_size {
             if let Some(buffer) = self.available.pop_back() {
                 self.total_capacity -= buffer.len();
@@ -141,9 +141,11 @@ impl<T> MemoryPool<T> {
     }
 
     /// Grow the pool by adding a new buffer
+    #[allow(clippy::uninit_vec)]
     fn grow_pool(&mut self, min_size: usize) {
         let size = min_size.max(self.chunk_size);
         // Allocate uninitialized memory - users must initialize before use
+        // Safety: callers must ensure they initialize the buffer before reading
         let mut vec = Vec::with_capacity(size);
         unsafe {
             vec.set_len(size);
@@ -165,7 +167,7 @@ impl<T> PooledBuffer<T> {
     pub fn new_unmanaged(data: Box<[T]>) -> Self {
         let len = data.len();
         let ptr = NonNull::new(data.as_ptr() as *mut T).unwrap();
-        
+
         Self {
             data: ptr,
             len,
@@ -252,7 +254,7 @@ impl<T> Drop for PooledBuffer<T> {
                 if let Some(boxed) = self._box.take() {
                     let ptr_addr = boxed.as_ptr() as usize;
                     p.in_use.remove(&ptr_addr);
-                    
+
                     if p.available.len() < p.max_pools {
                         p.available.push_back(boxed);
                     } else {
@@ -294,7 +296,7 @@ impl<T> SharedMemoryPool<T> {
             let mut pool = self.inner.lock().unwrap();
             pool.acquire(len)
         };
-        
+
         // Convert to managed buffer
         PooledBuffer::new_managed(buffer, self.inner.clone())
     }
@@ -320,7 +322,7 @@ impl<T> SharedMemoryPool<T> {
 #[derive(Debug, Clone)]
 pub struct PoolStatistics {
     pub available_count: usize,
-    pub in_use_count: usize,  
+    pub in_use_count: usize,
     pub total_capacity: usize,
 }
 
@@ -340,23 +342,23 @@ mod tests {
     fn test_buffer_operations() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let buffer = PooledBuffer::new_unmanaged(data.into_boxed_slice());
-        
+
         assert_eq!(buffer.len(), 5);
         assert_eq!(buffer[0], 1.0);
         assert_eq!(buffer[4], 5.0);
-        
+
         let slice = buffer.as_slice();
         assert_eq!(slice.len(), 5);
         assert_eq!(slice, &[1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
-    #[test] 
+    #[test]
     fn test_shared_pool() {
         let shared_pool = SharedMemoryPool::<f64>::new(1000);
         let buffer = shared_pool.acquire(100);
-        
+
         assert_eq!(buffer.len(), 100);
-        
+
         let stats = shared_pool.statistics();
         assert_eq!(stats.in_use_count, 1);
     }
