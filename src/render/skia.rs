@@ -1936,9 +1936,10 @@ impl SkiaRenderer {
                 // Draw handle
                 self.draw_legend_handle(item, col_x, row_y, &spacing)?;
 
-                // Draw label
+                // Draw label - vertically centered with handle
                 let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
-                self.draw_text(&item.label, text_x, row_y + legend.font_size * 0.35, legend.font_size, legend.text_color)?;
+                // Use 0.3 multiplier for better vertical centering with marker/line handles
+                self.draw_text(&item.label, text_x, row_y + legend.font_size * 0.3, legend.font_size, legend.text_color)?;
 
                 row_y += legend.font_size + spacing.label_spacing;
             }

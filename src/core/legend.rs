@@ -331,13 +331,13 @@ pub struct LegendSpacing {
 impl Default for LegendSpacing {
     fn default() -> Self {
         Self {
-            handle_length: 2.0,
-            handle_height: 0.7,
-            handle_text_pad: 0.8,
-            label_spacing: 0.5,
-            border_pad: 0.4,
-            border_axes_pad: 0.5,
-            column_spacing: 2.0,
+            handle_length: 2.0,      // 20px at 10pt - good handle length
+            handle_height: 0.7,      // 7px at 10pt - marker/line height
+            handle_text_pad: 1.0,    // 10px at 10pt - gap between handle and text
+            label_spacing: 0.7,      // 7px at 10pt - vertical gap between items
+            border_pad: 0.6,         // 6px at 10pt - padding inside frame
+            border_axes_pad: 1.0,    // 10px at 10pt - gap from plot axes
+            column_spacing: 2.0,     // 20px at 10pt - gap between columns
         }
     }
 }
@@ -398,7 +398,7 @@ impl Default for LegendFrame {
     fn default() -> Self {
         Self {
             visible: true,
-            background: Color::new_rgba(255, 255, 255, 230), // 90% opaque white
+            background: Color::WHITE, // Fully opaque white (users can set transparency if needed)
             border_color: Some(Color::new_rgba(128, 128, 128, 200)),
             border_width: 0.8,
             corner_radius: 0.0,
@@ -572,11 +572,14 @@ impl Legend {
 
         // Calculate dimensions based on columns
         let items_per_col = (items.len() + self.columns - 1) / self.columns;
-        let item_height = self.font_size + spacing_px.label_spacing;
 
         let content_width = item_width * self.columns as f32
             + (self.columns.saturating_sub(1)) as f32 * spacing_px.column_spacing;
-        let content_height = items_per_col as f32 * item_height;
+
+        // Content height: n rows with spacing BETWEEN items (not after the last one)
+        // This ensures equal top and bottom padding inside the frame
+        let content_height = items_per_col as f32 * self.font_size
+            + (items_per_col.saturating_sub(1)) as f32 * spacing_px.label_spacing;
 
         // Add title height if present
         let title_height = if self.title.is_some() {
@@ -785,9 +788,11 @@ mod tests {
         let spacing = LegendSpacing::default();
         let pixels = spacing.to_pixels(10.0);
 
-        assert!((pixels.handle_length - 20.0).abs() < 0.001);
-        assert!((pixels.label_spacing - 5.0).abs() < 0.001);
-        assert!((pixels.border_pad - 4.0).abs() < 0.001);
+        assert!((pixels.handle_length - 20.0).abs() < 0.001);  // 2.0 * 10
+        assert!((pixels.label_spacing - 7.0).abs() < 0.001);   // 0.7 * 10
+        assert!((pixels.border_pad - 6.0).abs() < 0.001);      // 0.6 * 10
+        assert!((pixels.handle_text_pad - 10.0).abs() < 0.001); // 1.0 * 10
+        assert!((pixels.border_axes_pad - 10.0).abs() < 0.001); // 1.0 * 10
     }
 
     #[test]
