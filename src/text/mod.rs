@@ -1,6 +1,4 @@
 //! Text rendering and layout
-
-pub mod render;
-pub mod layout;
-
-// Future implementations will export text types here
+//!
+//! Text rendering is handled by `render::text` and `render::cosmic_text_renderer`.
+//! This module is reserved for future text-specific utilities.

@@ -1,12 +1,12 @@
 //! GPU compute shader support for accelerated data processing
-//! 
+//!
 //! This module provides compute pipeline management for GPU-accelerated operations
 //! such as coordinate transformations, aggregations, and filtering.
 
 use crate::core::error::{PlottingError, Result};
 use std::sync::Arc;
-use wgpu::*;
 use wgpu::util::DeviceExt;
+use wgpu::*;
 
 /// Compute shader manager for GPU-accelerated operations
 pub struct ComputeManager {
@@ -23,12 +23,12 @@ impl ComputeManager {
             queue,
             compute_pipelines: std::collections::HashMap::new(),
         };
-        
+
         // Initialize transform pipeline
         if let Err(e) = manager.create_transform_pipeline() {
             log::warn!("Failed to initialize transform pipeline: {}", e);
         }
-        
+
         manager
     }
 
@@ -40,61 +40,68 @@ impl ComputeManager {
             source: ShaderSource::Wgsl(shader_source.into()),
         });
 
-        let bind_group_layout = self.device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Transform Bind Group Layout"),
-            entries: &[
-                // Input data buffer
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let bind_group_layout = self
+            .device
+            .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Transform Bind Group Layout"),
+                entries: &[
+                    // Input data buffer
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Output buffer
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Output buffer
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Transform parameters
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Transform parameters
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
-        let pipeline_layout = self.device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("Transform Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("Transform Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let pipeline = self.device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Transform Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader_module,
-            entry_point: "main",
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("Transform Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: "main",
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
-        self.compute_pipelines.insert("transform".to_string(), pipeline);
+        self.compute_pipelines
+            .insert("transform".to_string(), pipeline);
         Ok(())
     }
 
@@ -106,61 +113,68 @@ impl ComputeManager {
             source: ShaderSource::Wgsl(shader_source.into()),
         });
 
-        let bind_group_layout = self.device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Aggregation Bind Group Layout"),
-            entries: &[
-                // Input points buffer
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let bind_group_layout = self
+            .device
+            .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Aggregation Bind Group Layout"),
+                entries: &[
+                    // Input points buffer
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Canvas output buffer
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Canvas output buffer
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Aggregation parameters
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Aggregation parameters
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
-        let pipeline_layout = self.device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("Aggregation Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("Aggregation Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let pipeline = self.device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Aggregation Pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader_module,
-            entry_point: "main",
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("Aggregation Pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: "main",
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            });
 
-        self.compute_pipelines.insert("aggregate".to_string(), pipeline);
+        self.compute_pipelines
+            .insert("aggregate".to_string(), pipeline);
         Ok(())
     }
 
@@ -172,11 +186,13 @@ impl ComputeManager {
         transform_params: &Buffer,
         point_count: u32,
     ) -> Result<()> {
-        let pipeline = self.compute_pipelines.get("transform")
-            .ok_or_else(|| PlottingError::GpuInitError {
-                backend: "wgpu".to_string(),
-                error: "Transform pipeline not initialized".to_string(),
-            })?;
+        let pipeline =
+            self.compute_pipelines
+                .get("transform")
+                .ok_or_else(|| PlottingError::GpuInitError {
+                    backend: "wgpu".to_string(),
+                    error: "Transform pipeline not initialized".to_string(),
+                })?;
 
         let bind_group_layout = pipeline.get_bind_group_layout(0);
         let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
@@ -198,9 +214,11 @@ impl ComputeManager {
             ],
         });
 
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("Transform Command Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("Transform Command Encoder"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -210,7 +228,7 @@ impl ComputeManager {
 
             compute_pass.set_pipeline(pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            
+
             // Use workgroups of 64 for optimal GPU utilization
             let workgroup_size = 64;
             let num_workgroups = (point_count + workgroup_size - 1) / workgroup_size;
@@ -234,11 +252,13 @@ impl ComputeManager {
         params_buffer: &Buffer,
         point_count: u32,
     ) -> Result<()> {
-        let pipeline = self.compute_pipelines.get("aggregate")
-            .ok_or_else(|| PlottingError::GpuInitError {
-                backend: "wgpu".to_string(),
-                error: "Aggregation pipeline not initialized".to_string(),
-            })?;
+        let pipeline =
+            self.compute_pipelines
+                .get("aggregate")
+                .ok_or_else(|| PlottingError::GpuInitError {
+                    backend: "wgpu".to_string(),
+                    error: "Aggregation pipeline not initialized".to_string(),
+                })?;
 
         let bind_group_layout = pipeline.get_bind_group_layout(0);
         let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
@@ -260,9 +280,11 @@ impl ComputeManager {
             ],
         });
 
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("Aggregation Command Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("Aggregation Command Encoder"),
+            });
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -272,7 +294,7 @@ impl ComputeManager {
 
             compute_pass.set_pipeline(pipeline);
             compute_pass.set_bind_group(0, &bind_group, &[]);
-            
+
             // Use workgroups of 64 for optimal GPU utilization
             let workgroup_size = 64;
             let num_workgroups = (point_count + workgroup_size - 1) / workgroup_size;
@@ -297,11 +319,13 @@ impl ComputeManager {
         point_count: u32,
     ) -> Result<()> {
         // Create parameters buffer
-        let params_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Transform Parameters"),
-            contents: bytemuck::cast_slice(&[*params]),
-            usage: BufferUsages::UNIFORM,
-        });
+        let params_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Transform Parameters"),
+                contents: bytemuck::cast_slice(&[*params]),
+                usage: BufferUsages::UNIFORM,
+            });
 
         // Use async runtime for the transform operation
         let future = self.transform_coordinates(
@@ -335,12 +359,12 @@ pub struct ComputeStats {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TransformParams {
-    pub scale_x: f32,      // 4 bytes
-    pub scale_y: f32,      // 4 bytes
-    pub offset_x: f32,     // 4 bytes
-    pub offset_y: f32,     // 4 bytes - total 16 bytes (aligned)
-    pub width: u32,        // 4 bytes
-    pub height: u32,       // 4 bytes
+    pub scale_x: f32,       // 4 bytes
+    pub scale_y: f32,       // 4 bytes
+    pub offset_x: f32,      // 4 bytes
+    pub offset_y: f32,      // 4 bytes - total 16 bytes (aligned)
+    pub width: u32,         // 4 bytes
+    pub height: u32,        // 4 bytes
     pub _padding: [u32; 2], // 8 bytes - total 16 bytes (aligned)
 }
 

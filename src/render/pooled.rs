@@ -1,31 +1,25 @@
-#[cfg(feature = "simd")]
-use std::simd::{f32x4, SimdFloat};
-use crate::data::{SharedMemoryPool, PooledVec};
-use crate::core::{Position, PlottingError, Result};
-use super::style::LineStyle;
 use super::color::Color;
+use super::style::LineStyle;
+use crate::core::types::Point2f;
+use crate::core::Result;
+use crate::data::{PooledVec, SharedMemoryPool};
+#[cfg(feature = "simd")]
+use wide::f32x4;
+
+// Re-export LineSegment from data module as canonical definition
+pub use crate::data::elements::LineSegment;
 
 /// Pooled rendering operations that reuse memory for performance
-/// 
+///
 /// This module provides drop-in replacements for allocation-heavy rendering operations
 /// using memory pools to reduce allocation overhead by 30-50%.
 pub struct PooledRenderer {
     /// Memory pool for f32 coordinates (most common)
     f32_pool: SharedMemoryPool<f32>,
-    /// Memory pool for Position structs
-    position_pool: SharedMemoryPool<Position>,
+    /// Memory pool for Point2f coordinates
+    point_pool: SharedMemoryPool<Point2f>,
     /// Pool for line segments and other rendering primitives
     segment_pool: SharedMemoryPool<LineSegment>,
-}
-
-/// Line segment structure for rendering operations
-#[derive(Debug, Clone)]
-pub struct LineSegment {
-    pub start: Position,
-    pub end: Position,
-    pub style: LineStyle,
-    pub color: Color,
-    pub line_width: f32,
 }
 
 impl Default for PooledRenderer {
@@ -40,25 +34,32 @@ impl PooledRenderer {
         Self {
             // Start with 1000 element pools, will grow as needed
             f32_pool: SharedMemoryPool::new(1000),
-            position_pool: SharedMemoryPool::new(500),
+            point_pool: SharedMemoryPool::new(500),
             segment_pool: SharedMemoryPool::new(500),
         }
     }
 
     /// Create pooled renderer with custom pool sizes for specific workloads
-    pub fn with_pool_sizes(f32_size: usize, position_size: usize, segment_size: usize) -> Self {
+    pub fn with_pool_sizes(f32_size: usize, point_size: usize, segment_size: usize) -> Self {
         Self {
             f32_pool: SharedMemoryPool::new(f32_size),
-            position_pool: SharedMemoryPool::new(position_size),
+            point_pool: SharedMemoryPool::new(point_size),
             segment_pool: SharedMemoryPool::new(segment_size),
         }
     }
 
     /// Transform X coordinates using SIMD with memory pooling
-    /// 
+    ///
     /// This replaces the allocation-heavy coordinate transformation with
     /// pooled memory reuse for significant performance improvements.
-    pub fn transform_x_coordinates_pooled<T>(&self, x_data: &T, min: f64, max: f64, left: f32, right: f32) -> Result<PooledVec<f32>>
+    pub fn transform_x_coordinates_pooled<T>(
+        &self,
+        x_data: &T,
+        min: f64,
+        max: f64,
+        left: f32,
+        right: f32,
+    ) -> Result<PooledVec<f32>>
     where
         T: crate::data::Data1D<f64>,
     {
@@ -97,19 +98,19 @@ impl PooledRenderer {
                         x_data.get(i + 2).copied().unwrap_or(0.0) as f32,
                         x_data.get(i + 3).copied().unwrap_or(0.0) as f32,
                     ];
-                    
-                    let x_vec = f32x4::from_array(chunk);
+
+                    let x_vec = f32x4::new(chunk);
                     let transformed = x_vec * scale_vec + offset_vec;
                     let output = transformed.to_array();
-                    
+
                     result.push(output[0]);
                     result.push(output[1]);
                     result.push(output[2]);
                     result.push(output[3]);
-                    
+
                     i += 4;
                 }
-                
+
                 // Handle remaining elements
                 while i < len {
                     if let Some(x) = x_data.get(i) {
@@ -143,7 +144,14 @@ impl PooledRenderer {
     }
 
     /// Transform Y coordinates using SIMD with memory pooling
-    pub fn transform_y_coordinates_pooled<T>(&self, y_data: &T, min: f64, max: f64, top: f32, bottom: f32) -> Result<PooledVec<f32>>
+    pub fn transform_y_coordinates_pooled<T>(
+        &self,
+        y_data: &T,
+        min: f64,
+        max: f64,
+        top: f32,
+        bottom: f32,
+    ) -> Result<PooledVec<f32>>
     where
         T: crate::data::Data1D<f64>,
     {
@@ -183,19 +191,19 @@ impl PooledRenderer {
                         y_data.get(i + 2).copied().unwrap_or(0.0) as f32,
                         y_data.get(i + 3).copied().unwrap_or(0.0) as f32,
                     ];
-                    
-                    let y_vec = f32x4::from_array(chunk);
+
+                    let y_vec = f32x4::new(chunk);
                     let transformed = y_vec * scale_vec + offset_vec;
                     let output = transformed.to_array();
-                    
+
                     result.push(output[0]);
                     result.push(output[1]);
                     result.push(output[2]);
                     result.push(output[3]);
-                    
+
                     i += 4;
                 }
-                
+
                 // Handle remaining elements
                 while i < len {
                     if let Some(y) = y_data.get(i) {
@@ -251,7 +259,7 @@ impl PooledRenderer {
     }
 
     /// Generate tick marks using pooled memory
-    /// 
+    ///
     /// Replaces the frequent small allocations in tick generation with
     /// pooled buffer reuse for better performance.
     pub fn generate_ticks_pooled(&self, min: f64, max: f64, target_count: usize) -> PooledVec<f64> {
@@ -274,11 +282,11 @@ impl PooledRenderer {
 
         let range = max - min;
         let raw_step = range / (target_count - 1) as f64;
-        
+
         // Find nice step size
         let magnitude = 10.0_f64.powf(raw_step.log10().floor());
         let normalized_step = raw_step / magnitude;
-        
+
         let nice_step = if normalized_step <= 1.0 {
             1.0
         } else if normalized_step <= 2.0 {
@@ -292,7 +300,7 @@ impl PooledRenderer {
         // Generate ticks
         let start = (min / nice_step).ceil() * nice_step;
         let mut current = start;
-        
+
         while current <= max + nice_step * 0.001 {
             if current >= min - nice_step * 0.001 {
                 ticks.push(current);
@@ -304,9 +312,15 @@ impl PooledRenderer {
     }
 
     /// Create line segments with pooled memory for parallel rendering
-    pub fn create_line_segments_pooled<T>(&self, points: &T, line_style: LineStyle, color: Color, line_width: f32) -> Result<PooledVec<LineSegment>>
+    pub fn create_line_segments_pooled<T>(
+        &self,
+        points: &T,
+        line_style: LineStyle,
+        color: Color,
+        line_width: f32,
+    ) -> Result<PooledVec<LineSegment>>
     where
-        T: crate::data::Data1D<Position>,
+        T: crate::data::Data1D<Point2f>,
     {
         let len = points.len();
         if len < 2 {
@@ -322,7 +336,7 @@ impl PooledRenderer {
                     end: *end,
                     style: line_style.clone(),
                     color,
-                    line_width,
+                    width: line_width,
                 });
             }
         }
@@ -334,7 +348,7 @@ impl PooledRenderer {
     pub fn get_pool_stats(&self) -> PooledRendererStats {
         PooledRendererStats {
             f32_pool_stats: self.f32_pool.statistics(),
-            position_pool_stats: self.position_pool.statistics(),
+            point_pool_stats: self.point_pool.statistics(),
             segment_pool_stats: self.segment_pool.statistics(),
         }
     }
@@ -342,7 +356,7 @@ impl PooledRenderer {
     /// Shrink all pools to reclaim memory during idle periods
     pub fn shrink_pools(&self) {
         self.f32_pool.shrink();
-        self.position_pool.shrink();
+        self.point_pool.shrink();
         self.segment_pool.shrink();
     }
 }
@@ -351,23 +365,23 @@ impl PooledRenderer {
 #[derive(Debug, Clone)]
 pub struct PooledRendererStats {
     pub f32_pool_stats: crate::data::PoolStatistics,
-    pub position_pool_stats: crate::data::PoolStatistics,
+    pub point_pool_stats: crate::data::PoolStatistics,
     pub segment_pool_stats: crate::data::PoolStatistics,
 }
 
 impl PooledRendererStats {
     /// Get total memory usage across all pools
     pub fn total_capacity(&self) -> usize {
-        self.f32_pool_stats.total_capacity + 
-        self.position_pool_stats.total_capacity +
-        self.segment_pool_stats.total_capacity
+        self.f32_pool_stats.total_capacity
+            + self.point_pool_stats.total_capacity
+            + self.segment_pool_stats.total_capacity
     }
 
     /// Get total number of active allocations
     pub fn total_in_use(&self) -> usize {
-        self.f32_pool_stats.in_use_count +
-        self.position_pool_stats.in_use_count +
-        self.segment_pool_stats.in_use_count
+        self.f32_pool_stats.in_use_count
+            + self.point_pool_stats.in_use_count
+            + self.segment_pool_stats.in_use_count
     }
 
     /// Calculate memory efficiency (0.0 to 1.0)
@@ -386,7 +400,7 @@ use std::sync::OnceLock;
 static GLOBAL_POOLED_RENDERER: OnceLock<PooledRenderer> = OnceLock::new();
 
 /// Get the global pooled renderer instance
-/// 
+///
 /// This provides a convenient singleton for integrating pooled rendering
 /// throughout the application without manual pool management.
 pub fn get_pooled_renderer() -> &'static PooledRenderer {
@@ -398,7 +412,7 @@ impl std::fmt::Debug for PooledRenderer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PooledRenderer")
             .field("f32_pool", &"SharedMemoryPool<f32>")
-            .field("position_pool", &"SharedMemoryPool<Position>")
+            .field("point_pool", &"SharedMemoryPool<Point2f>")
             .field("segment_pool", &"SharedMemoryPool<LineSegment>")
             .finish()
     }
@@ -408,7 +422,7 @@ impl Clone for PooledRenderer {
     fn clone(&self) -> Self {
         Self {
             f32_pool: self.f32_pool.clone(),
-            position_pool: self.position_pool.clone(),
+            point_pool: self.point_pool.clone(),
             segment_pool: self.segment_pool.clone(),
         }
     }
@@ -422,19 +436,21 @@ mod tests {
     fn test_pooled_coordinate_transform() {
         let renderer = PooledRenderer::new();
         let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        
-        let result = renderer.transform_x_coordinates_pooled(&x_data, 1.0, 5.0, 0.0, 100.0).unwrap();
-        
+
+        let result = renderer
+            .transform_x_coordinates_pooled(&x_data, 1.0, 5.0, 0.0, 100.0)
+            .unwrap();
+
         assert_eq!(result.len(), 5);
-        assert!((result[0] - 0.0).abs() < 0.001);      // 1.0 -> 0.0
-        assert!((result[4] - 100.0).abs() < 0.001);    // 5.0 -> 100.0
+        assert!((result[0] - 0.0).abs() < 0.001); // 1.0 -> 0.0
+        assert!((result[4] - 100.0).abs() < 0.001); // 5.0 -> 100.0
     }
 
     #[test]
     fn test_pooled_tick_generation() {
         let renderer = PooledRenderer::new();
         let ticks = renderer.generate_ticks_pooled(0.0, 10.0, 6);
-        
+
         assert!(ticks.len() >= 2); // At least min and max
         assert!(ticks[0] >= 0.0);
         assert!(ticks[ticks.len() - 1] <= 10.0);
@@ -444,17 +460,21 @@ mod tests {
     fn test_memory_pool_reuse() {
         let renderer = PooledRenderer::new();
         let x_data = vec![1.0, 2.0, 3.0];
-        
+
         // First allocation
-        let result1 = renderer.transform_x_coordinates_pooled(&x_data, 0.0, 3.0, 0.0, 10.0).unwrap();
+        let result1 = renderer
+            .transform_x_coordinates_pooled(&x_data, 0.0, 3.0, 0.0, 10.0)
+            .unwrap();
         drop(result1); // Return to pool
-        
+
         // Second allocation should reuse memory
-        let result2 = renderer.transform_x_coordinates_pooled(&x_data, 0.0, 3.0, 0.0, 10.0).unwrap();
-        
+        let result2 = renderer
+            .transform_x_coordinates_pooled(&x_data, 0.0, 3.0, 0.0, 10.0)
+            .unwrap();
+
         // Verify functionality is correct
         assert_eq!(result2.len(), 3);
-        
+
         let stats = renderer.get_pool_stats();
         assert!(stats.f32_pool_stats.total_capacity > 0);
     }
@@ -462,15 +482,19 @@ mod tests {
     #[test]
     fn test_simd_vs_scalar_consistency() {
         let renderer = PooledRenderer::new();
-        
+
         // Test with SIMD-sized data
         let large_data: Vec<f64> = (0..100).map(|i| i as f64).collect();
-        let result_large = renderer.transform_x_coordinates_pooled(&large_data, 0.0, 99.0, 0.0, 100.0).unwrap();
-        
+        let result_large = renderer
+            .transform_x_coordinates_pooled(&large_data, 0.0, 99.0, 0.0, 100.0)
+            .unwrap();
+
         // Test with small data (no SIMD)
         let small_data = vec![0.0, 50.0, 99.0];
-        let result_small = renderer.transform_x_coordinates_pooled(&small_data, 0.0, 99.0, 0.0, 100.0).unwrap();
-        
+        let result_small = renderer
+            .transform_x_coordinates_pooled(&small_data, 0.0, 99.0, 0.0, 100.0)
+            .unwrap();
+
         // Results should be consistent
         assert!((result_large[0] - result_small[0]).abs() < 0.001);
         assert!((result_large[99] - 100.0).abs() < 0.001);

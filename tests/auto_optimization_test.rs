@@ -9,9 +9,7 @@ fn test_small_dataset_uses_skia() {
     let x: Vec<f64> = (0..500).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
 
-    let plot = Plot::new()
-        .line(&x, &y)
-        .auto_optimize();
+    let plot = Plot::new().line(&x, &y).auto_optimize();
 
     // THEN: Should select Skia backend
     assert_eq!(plot.get_backend_name(), "skia");
@@ -23,9 +21,7 @@ fn test_medium_dataset_uses_parallel() {
     let x: Vec<f64> = (0..50_000).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
 
-    let plot = Plot::new()
-        .line(&x, &y)
-        .auto_optimize();
+    let plot = Plot::new().line(&x, &y).auto_optimize();
 
     // THEN: Should select Parallel backend (if available) or Skia (fallback)
     #[cfg(feature = "parallel")]
@@ -73,9 +69,7 @@ fn test_very_small_dataset_optimization() {
     let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     let y = vec![1.0, 4.0, 9.0, 16.0, 25.0];
 
-    let plot = Plot::new()
-        .line(&x, &y)
-        .auto_optimize();
+    let plot = Plot::new().line(&x, &y).auto_optimize();
 
     // THEN: Should use simple Skia backend
     assert_eq!(plot.get_backend_name(), "skia");
@@ -88,10 +82,7 @@ fn test_auto_optimize_with_multiple_series() {
     let y1 = vec![1.0, 4.0, 9.0, 16.0];
     let y2 = vec![2.0, 5.0, 10.0, 17.0];
 
-    let plot = Plot::new()
-        .line(&x, &y1)
-        .line(&x, &y2)
-        .auto_optimize();
+    let plot = Plot::new().line(&x, &y1).line(&x, &y2).auto_optimize();
 
     // THEN: Should work with multiple series
     assert_eq!(plot.get_backend_name(), "skia");

@@ -72,7 +72,7 @@ impl PlatformOptimizer {
         let optimization_config = create_optimization_config(&platform_info);
         let memory_limits = calculate_memory_limits(&platform_info);
         let performance_hints = generate_performance_hints(&platform_info);
-        
+
         Ok(Self {
             platform_info,
             optimization_config,
@@ -80,17 +80,18 @@ impl PlatformOptimizer {
             performance_hints: Arc::new(RwLock::new(performance_hints)),
         })
     }
-    
+
     pub fn optimize_config(&self, base_config: &MemoryConfig) -> MemoryConfig {
         let mut optimized = base_config.clone();
-        
-        let memory_ratio = (self.platform_info.available_memory as f64) / (8u64 * 1024 * 1024 * 1024) as f64;
+
+        let memory_ratio =
+            (self.platform_info.available_memory as f64) / (8u64 * 1024 * 1024 * 1024) as f64;
         // Adjust max pool size based on available memory
         optimized.max_pool_size = (optimized.max_pool_size as f64 * memory_ratio.min(8.0)) as usize;
-        
+
         optimized
     }
-    
+
     pub fn get_performance_hints(&self) -> PerformanceHints {
         self.performance_hints.read().unwrap().clone()
     }
@@ -104,7 +105,7 @@ fn detect_platform_info() -> Result<PlatformInfo, crate::core::error::PlottingEr
     let numa_nodes = platform::get_numa_nodes();
     let supports_hugepages = platform::check_hugepage_support();
     let supports_memory_mapping = platform::check_memory_mapping_support()?;
-    
+
     Ok(PlatformInfo {
         os_type,
         total_memory,
@@ -121,13 +122,13 @@ fn detect_platform_info() -> Result<PlatformInfo, crate::core::error::PlottingEr
 fn detect_os_type() -> OSType {
     #[cfg(target_os = "linux")]
     return OSType::Linux;
-    
+
     #[cfg(target_os = "macos")]
     return OSType::MacOS;
-    
+
     #[cfg(target_os = "windows")]
     return OSType::Windows;
-    
+
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     return OSType::Other(std::env::consts::OS.to_string());
 }
@@ -145,7 +146,7 @@ fn create_optimization_config(platform_info: &PlatformInfo) -> OptimizationConfi
 
 fn calculate_memory_limits(platform_info: &PlatformInfo) -> MemoryLimits {
     let total_gb = platform_info.total_memory as f32 / (1024.0 * 1024.0 * 1024.0);
-    
+
     MemoryLimits {
         max_heap_size: Some((platform_info.total_memory as f32 * 0.8) as u64),
         warning_threshold: if total_gb > 16.0 { 0.7 } else { 0.6 },
@@ -157,9 +158,13 @@ fn calculate_memory_limits(platform_info: &PlatformInfo) -> MemoryLimits {
 
 fn generate_performance_hints(platform_info: &PlatformInfo) -> PerformanceHints {
     let total_gb = platform_info.total_memory as f32 / (1024.0 * 1024.0 * 1024.0);
-    
+
     PerformanceHints {
-        optimal_chunk_size: if total_gb > 16.0 { 64 * 1024 } else { 32 * 1024 },
+        optimal_chunk_size: if total_gb > 16.0 {
+            64 * 1024
+        } else {
+            32 * 1024
+        },
         recommended_alignment: platform_info.cache_line_size,
         prefetch_distance: platform_info.cache_line_size * 8,
         concurrent_allocations: platform_info.cpu_cores.min(8),
@@ -172,43 +177,41 @@ static PLATFORM_OPTIMIZER: std::sync::OnceLock<PlatformOptimizer> = std::sync::O
 
 pub fn get_platform_optimizer() -> &'static PlatformOptimizer {
     PLATFORM_OPTIMIZER.get_or_init(|| {
-        PlatformOptimizer::new().unwrap_or_else(|_| {
-            PlatformOptimizer {
-                platform_info: PlatformInfo {
-                    os_type: detect_os_type(),
-                    total_memory: 8 * 1024 * 1024 * 1024,
-                    available_memory: 4 * 1024 * 1024 * 1024,
-                    cpu_cores: num_cpus::get(),
-                    cache_line_size: 64,
-                    page_size: 4096,
-                    numa_nodes: 1,
-                    supports_hugepages: false,
-                    supports_memory_mapping: true,
-                },
-                optimization_config: OptimizationConfig {
-                    use_hugepages: false,
-                    use_memory_mapping: true,
-                    prefer_numa_local: false,
-                    align_to_cache_lines: true,
-                    use_transparent_hugepages: false,
-                    memory_prefault: false,
-                },
-                memory_limits: MemoryLimits {
-                    max_heap_size: Some(6 * 1024 * 1024 * 1024),
-                    warning_threshold: 0.7,
-                    critical_threshold: 0.85,
-                    swap_threshold: 0.9,
-                    gc_trigger_threshold: 0.75,
-                },
-                performance_hints: Arc::new(RwLock::new(PerformanceHints {
-                    optimal_chunk_size: 32 * 1024,
-                    recommended_alignment: 64,
-                    prefetch_distance: 512,
-                    concurrent_allocations: 4,
-                    memory_bandwidth: None,
-                    latency_sensitive: false,
-                })),
-            }
+        PlatformOptimizer::new().unwrap_or_else(|_| PlatformOptimizer {
+            platform_info: PlatformInfo {
+                os_type: detect_os_type(),
+                total_memory: 8 * 1024 * 1024 * 1024,
+                available_memory: 4 * 1024 * 1024 * 1024,
+                cpu_cores: num_cpus::get(),
+                cache_line_size: 64,
+                page_size: 4096,
+                numa_nodes: 1,
+                supports_hugepages: false,
+                supports_memory_mapping: true,
+            },
+            optimization_config: OptimizationConfig {
+                use_hugepages: false,
+                use_memory_mapping: true,
+                prefer_numa_local: false,
+                align_to_cache_lines: true,
+                use_transparent_hugepages: false,
+                memory_prefault: false,
+            },
+            memory_limits: MemoryLimits {
+                max_heap_size: Some(6 * 1024 * 1024 * 1024),
+                warning_threshold: 0.7,
+                critical_threshold: 0.85,
+                swap_threshold: 0.9,
+                gc_trigger_threshold: 0.75,
+            },
+            performance_hints: Arc::new(RwLock::new(PerformanceHints {
+                optimal_chunk_size: 32 * 1024,
+                recommended_alignment: 64,
+                prefetch_distance: 512,
+                concurrent_allocations: 4,
+                memory_bandwidth: None,
+                latency_sensitive: false,
+            })),
         })
     })
 }
@@ -233,27 +236,27 @@ mod platform;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod platform {
     use crate::core::error::PlottingError;
-    
+
     pub fn get_total_memory() -> Result<u64, RuvizError> {
         Ok(8 * 1024 * 1024 * 1024) // 8GB default
     }
-    
+
     pub fn get_available_memory() -> Result<u64, RuvizError> {
         Ok(4 * 1024 * 1024 * 1024) // 4GB default
     }
-    
+
     pub fn get_numa_nodes() -> usize {
         1
     }
-    
+
     pub fn check_hugepage_support() -> bool {
         false
     }
-    
+
     pub fn check_large_page_support() -> bool {
         false
     }
-    
+
     pub fn check_memory_mapping_support() -> Result<bool, RuvizError> {
         Ok(false)
     }

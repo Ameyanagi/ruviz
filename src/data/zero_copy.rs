@@ -17,14 +17,15 @@ pub struct DataView<T> {
 
 impl<T> DataView<T> {
     /// Create a new DataView from a raw pointer and length
-    /// 
+    ///
     /// # Safety
     /// - `data` must be valid for reads for `len * std::mem::size_of::<T>()` bytes
     /// - The data must remain valid for the lifetime of this DataView
     /// - The memory referenced by `data` must not be mutated while this DataView exists
     pub unsafe fn from_raw_parts(data: *const T, len: usize) -> Self {
         Self {
-            data: NonNull::new(data as *mut T).expect("DataView cannot be created from null pointer"),
+            data: NonNull::new(data as *mut T)
+                .expect("DataView cannot be created from null pointer"),
             len,
             _phantom: PhantomData,
         }
@@ -33,9 +34,7 @@ impl<T> DataView<T> {
     /// Create a zero-copy DataView from a slice
     /// The DataView will live as long as the slice
     pub fn from_slice(slice: &[T]) -> DataView<T> {
-        unsafe {
-            Self::from_raw_parts(slice.as_ptr(), slice.len())
-        }
+        unsafe { Self::from_raw_parts(slice.as_ptr(), slice.len()) }
     }
 
     /// Create a zero-copy DataView from a PooledVec
@@ -65,13 +64,11 @@ impl<T> DataView<T> {
     }
 
     /// Convert to a slice with the same lifetime as the original data
-    /// 
+    ///
     /// # Safety
     /// The returned slice is only valid as long as the original data remains valid
     pub fn as_slice(&self) -> &[T] {
-        unsafe {
-            slice::from_raw_parts(self.data.as_ptr(), self.len)
-        }
+        unsafe { slice::from_raw_parts(self.data.as_ptr(), self.len) }
     }
 
     /// Get an element at the specified index
@@ -109,16 +106,14 @@ impl<T> DataView<T> {
     /// Create a sub-view of this DataView
     pub fn sub_view(&self, start: usize, len: usize) -> Option<DataView<T>> {
         if start + len <= self.len {
-            Some(unsafe {
-                Self::from_raw_parts(self.data.as_ptr().add(start), len)
-            })
+            Some(unsafe { Self::from_raw_parts(self.data.as_ptr().add(start), len) })
         } else {
             None
         }
     }
 }
 
-// Implement Data1D for DataView 
+// Implement Data1D for DataView
 impl<T> Data1D<T> for DataView<T> {
     fn len(&self) -> usize {
         self.len
@@ -261,7 +256,8 @@ impl<'a, T, U, F> ExactSizeIterator for MappedDataViewIter<'a, T, U, F>
 where
     T: Copy,
     F: Fn(&T) -> U,
-{}
+{
+}
 
 /// Utility functions for creating DataViews from common data sources
 impl<T> DataView<T> {
@@ -277,7 +273,7 @@ impl<T> DataView<T> {
 
     /// Create a DataView from a range iterator (materialized into a temporary allocation)
     /// Note: This is not zero-copy but provides a consistent interface
-    pub fn from_range<R>(range: R) -> DataView<T> 
+    pub fn from_range<R>(range: R) -> DataView<T>
     where
         R: Iterator<Item = T>,
         T: Clone,
@@ -289,10 +285,8 @@ impl<T> DataView<T> {
         let ptr = boxed.as_ptr();
         let len = boxed.len();
         std::mem::forget(boxed); // Leak the memory to maintain pointer validity
-        
-        unsafe {
-            Self::from_raw_parts(ptr, len)
-        }
+
+        unsafe { Self::from_raw_parts(ptr, len) }
     }
 }
 
@@ -305,7 +299,7 @@ mod tests {
     fn test_data_view_from_slice() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let view = DataView::from_slice(&data);
-        
+
         assert_eq!(view.len(), 5);
         assert_eq!(view.get(0), Some(&1.0));
         assert_eq!(view.get(4), Some(&5.0));
@@ -316,14 +310,14 @@ mod tests {
     fn test_data_view_data1d_impl() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let view = DataView::from_slice(&data);
-        
+
         // Test Data1D implementation
         use crate::data::Data1D;
         assert_eq!(view.len(), 5);
         assert_eq!(*view.get(0).unwrap(), 1.0);
         assert_eq!(*view.get(4).unwrap(), 5.0);
         assert!(view.get(5).is_none());
-        
+
         // Test iterator from Data1D trait
         let collected: Vec<f64> = view.iter().collect();
         assert_eq!(collected.len(), 5);
@@ -336,12 +330,12 @@ mod tests {
         let pool = SharedMemoryPool::new(100);
         let mut pooled_vec = PooledVec::new(pool);
         pooled_vec.extend_from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0]);
-        
+
         let view = DataView::from_pooled_vec(&pooled_vec);
-        
+
         assert_eq!(view.len(), 5);
         assert_eq!(view.as_ptr(), pooled_vec.as_ptr());
-        
+
         // Verify zero-copy (same memory address)
         assert_eq!(view.as_ptr(), pooled_vec.as_ptr());
     }
@@ -350,10 +344,10 @@ mod tests {
     fn test_data_view_iteration() {
         let data = vec![1, 2, 3, 4, 5];
         let view = DataView::from_slice(&data);
-        
+
         let collected: Vec<i32> = view.iter().collect();
         assert_eq!(collected, vec![1, 2, 3, 4, 5]);
-        
+
         let sum: i32 = view.iter().sum();
         assert_eq!(sum, 15);
     }
@@ -362,13 +356,13 @@ mod tests {
     fn test_mapped_data_view() {
         let data = vec![1, 2, 3, 4, 5];
         let view = DataView::from_slice(&data);
-        
+
         let mapped = view.map(|x| *x as f64 * 2.0);
-        
+
         assert_eq!(mapped.len(), 5);
         assert_eq!(mapped.get(0), Some(2.0));
         assert_eq!(mapped.get(4), Some(10.0));
-        
+
         // Test Data1D implementation on mapped view
         assert_eq!(mapped.get(0).unwrap(), 2.0);
         assert_eq!(mapped.get(4).unwrap(), 10.0);
@@ -378,12 +372,12 @@ mod tests {
     fn test_data_view_sub_view() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let view = DataView::from_slice(&data);
-        
+
         let sub_view = view.sub_view(1, 3).unwrap();
         assert_eq!(sub_view.len(), 3);
         assert_eq!(sub_view.get(0), Some(&2.0));
         assert_eq!(sub_view.get(2), Some(&4.0));
-        
+
         // Test bounds checking
         assert!(view.sub_view(3, 5).is_none());
     }
@@ -392,7 +386,7 @@ mod tests {
     fn test_data_view_from_array() {
         let array = [1.0, 2.0, 3.0, 4.0, 5.0];
         let view = DataView::from_array(&array);
-        
+
         assert_eq!(view.len(), 5);
         assert_eq!(view.get(0), Some(&1.0));
         assert_eq!(view.get(4), Some(&5.0));
@@ -403,9 +397,9 @@ mod tests {
         let data1 = vec![1.0, 2.0, 3.0];
         let data2 = vec![4.0, 5.0, 6.0];
         let slices = vec![data1.as_slice(), data2.as_slice()];
-        
+
         let views = DataView::from_multi_slice(&slices);
-        
+
         assert_eq!(views.len(), 2);
         assert_eq!(views[0].len(), 3);
         assert_eq!(views[1].len(), 3);
@@ -417,13 +411,13 @@ mod tests {
     fn test_data_view_thread_safety() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let view = DataView::from_slice(&data);
-        
+
         // Test that DataView can be sent between threads
         let handle = std::thread::spawn(move || {
             let sum: f64 = view.iter().sum();
             sum
         });
-        
+
         let result = handle.join().unwrap();
         assert_eq!(result, 15.0);
     }
@@ -434,7 +428,7 @@ mod tests {
         let view1 = DataView::from_slice(&data);
         let view2 = view1; // Copy
         let view3 = view1.clone(); // Clone
-        
+
         assert_eq!(view1.len(), view2.len());
         assert_eq!(view2.len(), view3.len());
         assert_eq!(view1.as_ptr(), view2.as_ptr());

@@ -1,16 +1,16 @@
 use crate::{
-    core::{Result, PlottingError, types::Point2f},
+    core::{PlottingError, Result, types::Point2f},
+    data::{get_memory_manager, elements::LineSegment},
     render::{Color, LineStyle, MarkerStyle},
-    data::get_memory_manager,
 };
 
 #[cfg(feature = "simd")]
-use crate::render::simd::{SIMDTransformer, CoordinateBounds, PixelViewport};
+use crate::render::simd::{CoordinateBounds, PixelViewport, SIMDTransformer};
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
 /// Parallel rendering engine for high-performance plot rendering
-/// 
+///
 /// Provides series-level parallelization using rayon for concurrent processing
 /// of multiple data series, coordinate transformations, and rendering operations.
 #[derive(Debug, Clone)]
@@ -40,34 +40,34 @@ impl ParallelRenderer {
             simd_transformer: SIMDTransformer::new(),
         }
     }
-    
+
     /// Create parallel renderer with custom thread count
     pub fn with_threads(threads: usize) -> Self {
         let mut renderer = Self::new();
         renderer.max_threads = threads.max(1);
         renderer
     }
-    
+
     /// Create parallel renderer with SIMD configuration
     #[cfg(feature = "simd")]
     pub fn with_simd(mut self, simd_threshold: usize) -> Self {
         self.simd_transformer = SIMDTransformer::with_threshold(simd_threshold);
         self
     }
-    
+
     /// Set parallel processing threshold
     pub fn with_threshold(mut self, threshold: usize) -> Self {
         self.parallel_threshold = threshold.max(1);
         self
     }
-    
+
     /// Enable/disable chunked processing for large datasets
     pub fn with_chunking(mut self, enabled: bool, chunk_size: usize) -> Self {
         self.chunked_processing = enabled;
         self.chunk_size = chunk_size.max(1000);
         self
     }
-    
+
     /// Get current thread pool configuration
     pub fn thread_config(&self) -> ParallelConfig {
         ParallelConfig {
@@ -78,13 +78,13 @@ impl ParallelRenderer {
             chunk_size: self.chunk_size,
         }
     }
-    
+
     /// Check if parallel processing should be activated
     pub fn should_use_parallel(&self, series_count: usize, total_points: usize) -> bool {
-        series_count >= self.parallel_threshold || 
-        (self.chunked_processing && total_points > self.chunk_size * 2)
+        series_count >= self.parallel_threshold
+            || (self.chunked_processing && total_points > self.chunk_size * 2)
     }
-    
+
     /// Process multiple series in parallel with coordinate transformation
     pub fn process_series_parallel<T, F>(
         &self,
@@ -103,7 +103,7 @@ impl ParallelRenderer {
                 .map(|(i, data)| processor(data, i))
                 .collect();
         }
-        
+
         // Configure thread pool if needed
         let pool_result = if rayon::current_num_threads() != self.max_threads {
             rayon::ThreadPoolBuilder::new()
@@ -112,7 +112,7 @@ impl ParallelRenderer {
         } else {
             Ok(())
         };
-        
+
         let results: Result<Vec<SeriesRenderData>> = match pool_result {
             Ok(_) => {
                 // Use parallel processing
@@ -131,10 +131,10 @@ impl ParallelRenderer {
                     .collect()
             }
         };
-        
+
         results
     }
-    
+
     /// Transform coordinates in parallel chunks with SIMD acceleration and memory pooling
     pub fn transform_coordinates_parallel(
         &self,
@@ -145,7 +145,7 @@ impl ParallelRenderer {
     ) -> Result<Vec<Point2f>> {
         self.transform_coordinates_parallel_pooled(x_data, y_data, bounds, plot_area)
     }
-    
+
     /// Memory-optimized coordinate transformation using buffer pools
     pub fn transform_coordinates_parallel_pooled(
         &self,
@@ -160,16 +160,16 @@ impl ParallelRenderer {
                 y_len: y_data.len(),
             });
         }
-        
+
         let point_count = x_data.len();
         let memory_manager = get_memory_manager();
-        
+
         // Get managed buffer for output points (use memory Point2f type)
         let mut output_buffer = memory_manager.get_point_buffer(point_count);
         let output_vec = output_buffer.get_mut();
         output_vec.clear();
         output_vec.reserve(point_count);
-        
+
         #[cfg(feature = "simd")]
         {
             // Convert to SIMD-compatible types
@@ -179,68 +179,74 @@ impl ParallelRenderer {
                 y_min: bounds.y_min,
                 y_max: bounds.y_max,
             };
-            
+
             let viewport = PixelViewport {
                 left: plot_area.left,
                 right: plot_area.right,
                 top: plot_area.top,
                 bottom: plot_area.bottom,
             };
-        }
-        
-        #[cfg(feature = "simd")]
-        if !self.chunked_processing || point_count < self.chunk_size {
-            // Use SIMD for small datasets (sequential) with memory pooling
-            let simd_points = self.simd_transformer.transform_coordinates_simd(x_data, y_data, simd_bounds, viewport)?;
-            
-            // Add SIMD points directly to managed buffer (same type now)
-            output_vec.extend(simd_points);
-            
-            return Ok(output_buffer.into_inner());
-        }
-        
-        #[cfg(feature = "simd")]
-        {
-            // Parallel chunked processing with SIMD and memory management
-            let chunks: Vec<&[f64]> = x_data.chunks(self.chunk_size).collect();
-            let y_chunks: Vec<&[f64]> = y_data.chunks(self.chunk_size).collect();
-            
-            // Process chunks in parallel, each using memory-optimized SIMD
-            let chunk_results: Result<Vec<Vec<Point2f>>> = chunks
-                .par_iter()
-                .zip(y_chunks.par_iter())
-                .map(|(x_chunk, y_chunk)| {
-                    // Each thread gets its own memory manager access
-                    self.simd_transformer.transform_coordinates_simd(x_chunk, y_chunk, simd_bounds.clone(), viewport.clone())
-                })
-                .collect();
-            
-            match chunk_results {
-                Ok(results) => {
-                    // Efficiently collect results using pre-allocated buffer
-                    for chunk_result in results {
-                        output_vec.extend(chunk_result);
+
+            if !self.chunked_processing || point_count < self.chunk_size {
+                // Use SIMD for small datasets (sequential) with memory pooling
+                let simd_points = self.simd_transformer.transform_coordinates_simd(
+                    x_data,
+                    y_data,
+                    simd_bounds,
+                    viewport,
+                )?;
+
+                // Add SIMD points directly to managed buffer (same type now)
+                output_vec.extend(simd_points);
+
+                return Ok(output_buffer.into_inner());
+            } else {
+                // Parallel chunked processing with SIMD and memory management
+                let chunks: Vec<&[f64]> = x_data.chunks(self.chunk_size).collect();
+                let y_chunks: Vec<&[f64]> = y_data.chunks(self.chunk_size).collect();
+
+                // Process chunks in parallel, each using memory-optimized SIMD
+                let chunk_results: Result<Vec<Vec<Point2f>>> = chunks
+                    .par_iter()
+                    .zip(y_chunks.par_iter())
+                    .map(|(x_chunk, y_chunk)| {
+                        // Each thread gets its own memory manager access
+                        self.simd_transformer.transform_coordinates_simd(
+                            x_chunk,
+                            y_chunk,
+                            simd_bounds.clone(),
+                            viewport.clone(),
+                        )
+                    })
+                    .collect();
+
+                match chunk_results {
+                    Ok(results) => {
+                        // Efficiently collect results using pre-allocated buffer
+                        for chunk_result in results {
+                            output_vec.extend(chunk_result);
+                        }
+                        return Ok(output_buffer.into_inner());
                     }
-                    return Ok(output_buffer.into_inner());
-                },
-                Err(e) => return Err(e),
+                    Err(e) => return Err(e),
+                }
             }
         }
-        
+
         // Fallback: simple coordinate transformation without SIMD
         for i in 0..point_count {
             let x_norm = (x_data[i] - bounds.x_min as f64) / (bounds.x_max - bounds.x_min) as f64;
             let y_norm = (y_data[i] - bounds.y_min as f64) / (bounds.y_max - bounds.y_min) as f64;
-            
+
             let pixel_x = plot_area.left + x_norm as f32 * (plot_area.right - plot_area.left);
             let pixel_y = plot_area.bottom - y_norm as f32 * (plot_area.bottom - plot_area.top);
-            
+
             output_vec.push(Point2f::new(pixel_x, pixel_y));
         }
-        
+
         Ok(output_buffer.into_inner())
     }
-    
+
     /// Process polyline segments in parallel for large line plots
     pub fn process_polyline_parallel(
         &self,
@@ -252,7 +258,7 @@ impl ParallelRenderer {
         if points.len() < 2 {
             return Ok(Vec::new());
         }
-        
+
         if !self.chunked_processing || points.len() < self.chunk_size {
             // Sequential processing for small datasets
             return Ok(points
@@ -266,21 +272,21 @@ impl ParallelRenderer {
                 })
                 .collect());
         }
-        
+
         // Parallel processing with overlapping chunks
         let chunk_size = self.chunk_size;
         let chunk_count = (points.len() + chunk_size - 1) / chunk_size;
-        
+
         let segments: Vec<LineSegment> = (0..chunk_count)
             .into_par_iter()
             .map(|chunk_idx| {
                 let start_idx = chunk_idx * chunk_size;
                 let end_idx = ((chunk_idx + 1) * chunk_size + 1).min(points.len());
-                
+
                 if start_idx >= points.len() - 1 {
                     return Vec::new();
                 }
-                
+
                 let chunk = &points[start_idx..end_idx];
                 chunk
                     .windows(2)
@@ -295,10 +301,10 @@ impl ParallelRenderer {
             })
             .flatten()
             .collect();
-        
+
         Ok(segments)
     }
-    
+
     /// Process scatter markers in parallel
     pub fn process_markers_parallel(
         &self,
@@ -319,7 +325,7 @@ impl ParallelRenderer {
                 })
                 .collect());
         }
-        
+
         // Parallel processing
         let markers: Vec<MarkerInstance> = points
             .par_chunks(self.chunk_size)
@@ -336,23 +342,23 @@ impl ParallelRenderer {
             })
             .flatten()
             .collect();
-        
+
         Ok(markers)
     }
-    
+
     /// Get performance statistics for the current configuration
     pub fn performance_stats(&self) -> PerformanceStats {
         let parallel_speedup = self.estimate_speedup();
-        
+
         #[cfg(feature = "simd")]
         let combined_speedup = {
             let simd_info = self.simd_transformer.performance_info();
             parallel_speedup * simd_info.estimated_speedup
         };
-        
+
         #[cfg(not(feature = "simd"))]
         let combined_speedup = parallel_speedup;
-        
+
         PerformanceStats {
             available_threads: num_cpus::get(),
             configured_threads: self.max_threads,
@@ -363,20 +369,20 @@ impl ParallelRenderer {
             estimated_speedup: combined_speedup,
         }
     }
-    
+
     /// Get detailed performance information including SIMD
     #[cfg(feature = "simd")]
     pub fn detailed_performance_info(&self) -> DetailedPerformanceInfo {
         let simd_info = self.simd_transformer.performance_info();
         let combined_speedup = self.estimate_speedup() * simd_info.estimated_speedup;
-        
+
         DetailedPerformanceInfo {
             parallel_info: self.performance_stats(),
             simd_info,
             combined_speedup,
         }
     }
-    
+
     /// Estimate potential speedup for parallel processing
     fn estimate_speedup(&self) -> f32 {
         // Simple Amdahl's law approximation
@@ -455,15 +461,7 @@ pub enum RenderSeriesType {
     },
 }
 
-/// Line segment for parallel line rendering
-#[derive(Debug, Clone)]
-pub struct LineSegment {
-    pub start: Point2f,
-    pub end: Point2f,
-    pub style: LineStyle,
-    pub color: Color,
-    pub width: f32,
-}
+// LineSegment imported from crate::data::elements (canonical definition)
 
 /// Marker instance for parallel scatter rendering
 #[derive(Debug, Clone, Copy)]
@@ -501,7 +499,6 @@ pub struct BoxPlotRenderData {
     pub outlier_color: Color,
 }
 
-
 /// Data bounds for coordinate transformation
 #[derive(Debug, Clone)]
 pub struct DataBounds {
@@ -524,7 +521,7 @@ impl PlotArea {
     pub fn width(&self) -> f32 {
         self.right - self.left
     }
-    
+
     pub fn height(&self) -> f32 {
         self.bottom - self.top
     }
@@ -561,26 +558,37 @@ impl RenderStats {
             parallel_efficiency: Arc::new(Mutex::new(1.0)),
         }
     }
-    
-    pub fn record_series(&self, series_count: usize, point_count: usize, duration: std::time::Duration) {
-        if let (Ok(mut series), Ok(mut points), Ok(mut time)) = 
-            (self.series_processed.lock(), self.points_processed.lock(), self.processing_time.lock()) {
+
+    pub fn record_series(
+        &self,
+        series_count: usize,
+        point_count: usize,
+        duration: std::time::Duration,
+    ) {
+        if let (Ok(mut series), Ok(mut points), Ok(mut time)) = (
+            self.series_processed.lock(),
+            self.points_processed.lock(),
+            self.processing_time.lock(),
+        ) {
             *series += series_count;
             *points += point_count;
             *time += duration;
         }
     }
-    
+
     pub fn get_stats(&self) -> (usize, usize, std::time::Duration) {
-        let series = *self.series_processed.lock().unwrap_or_else(|_| {
-            panic!("Mutex poisoned")
-        });
-        let points = *self.points_processed.lock().unwrap_or_else(|_| {
-            panic!("Mutex poisoned")
-        });
-        let time = *self.processing_time.lock().unwrap_or_else(|_| {
-            panic!("Mutex poisoned")
-        });
+        let series = *self
+            .series_processed
+            .lock()
+            .unwrap_or_else(|_| panic!("Mutex poisoned"));
+        let points = *self
+            .points_processed
+            .lock()
+            .unwrap_or_else(|_| panic!("Mutex poisoned"));
+        let time = *self
+            .processing_time
+            .lock()
+            .unwrap_or_else(|_| panic!("Mutex poisoned"));
         (series, points, time)
     }
 }
@@ -623,27 +631,27 @@ mod tests {
         let renderer = ParallelRenderer::new();
         let x_data = vec![1.0, 2.0, 3.0];
         let y_data = vec![10.0, 20.0, 30.0];
-        
+
         let bounds = DataBounds {
             x_min: 1.0,
             x_max: 3.0,
             y_min: 10.0,
             y_max: 30.0,
         };
-        
+
         let plot_area = PlotArea {
             left: 0.0,
             right: 100.0,
             top: 0.0,
             bottom: 100.0,
         };
-        
+
         let result = renderer.transform_coordinates_parallel(&x_data, &y_data, bounds, plot_area);
         assert!(result.is_ok());
-        
+
         let points = result.unwrap();
         assert_eq!(points.len(), 3);
-        assert_eq!(points[0].x, 0.0);   // x=1 maps to left edge
+        assert_eq!(points[0].x, 0.0); // x=1 maps to left edge
         assert_eq!(points[2].x, 100.0); // x=3 maps to right edge
     }
 
@@ -651,7 +659,7 @@ mod tests {
     fn test_performance_stats() {
         let renderer = ParallelRenderer::new();
         let stats = renderer.performance_stats();
-        
+
         assert!(stats.available_threads > 0);
         assert!(stats.configured_threads > 0);
         assert!(stats.estimated_speedup >= 1.0);
@@ -661,10 +669,10 @@ mod tests {
     fn test_render_stats() {
         let stats = RenderStats::new();
         let duration = std::time::Duration::from_millis(100);
-        
+
         stats.record_series(3, 1000, duration);
         let (series, points, time) = stats.get_stats();
-        
+
         assert_eq!(series, 3);
         assert_eq!(points, 1000);
         assert_eq!(time, duration);

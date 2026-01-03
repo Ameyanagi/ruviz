@@ -30,30 +30,35 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub mod axes;
 pub mod core;
 pub mod data;
-pub mod render;
-pub mod plots;
-pub mod axes;
-pub mod layout;
-pub mod text;
 pub mod export;
+pub mod layout;
+pub mod plots;
+pub mod render;
 pub mod simple;
+pub mod text;
 
 #[cfg(feature = "interactive")]
 pub mod interactive;
 
 /// Convenience re-exports for common usage
 pub mod prelude {
-    pub use crate::core::{Plot, Position, SubplotFigure, GridSpec, subplots, subplots_default, Result, BackendType};
+    pub use crate::core::{
+        BackendType, GridSpec, Plot, Position, Result, SubplotFigure, subplots, subplots_default,
+    };
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
-    pub use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme, FontFamily, FontConfig, FontWeight, FontStyle};
-    
+    pub use crate::render::{
+        Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,
+        Theme,
+    };
+
     #[cfg(feature = "interactive")]
     pub use crate::interactive::{
-        event::{InteractionEvent, Point2D, Vector2D, Rectangle},
-        state::InteractionState,
+        event::{InteractionEvent, Point2D, Rectangle, Vector2D},
         renderer::RealTimeRenderer,
+        state::InteractionState,
         window::{InteractiveWindow, InteractiveWindowBuilder, show_interactive},
     };
 }

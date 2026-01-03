@@ -1,12 +1,12 @@
-use std::sync::{Arc, Mutex};
 use crate::{
-    core::types::{Point2f, BoundingBox},
+    core::types::{BoundingBox, Point2f},
+    data::{ManagedBuffer, get_memory_manager},
     render::{Color, LineStyle, MarkerStyle},
-    data::{get_memory_manager, ManagedBuffer},
 };
+use std::sync::{Arc, Mutex};
 
 /// Memory-optimized storage for plot elements with object pooling
-/// 
+///
 /// Provides efficient storage and reuse of plot primitives like line segments,
 /// markers, and polygons through specialized memory pools.
 #[derive(Debug)]
@@ -34,42 +34,42 @@ impl PlotElementStorage {
             error_bar_pool: Arc::new(Mutex::new(ElementPool::new(1000))),
         }
     }
-    
+
     /// Get managed storage for line segments
     pub fn get_line_storage(&self, capacity: usize) -> ManagedElementStorage<LineSegment> {
         let mut pool = self.line_pool.lock().unwrap();
         let storage = pool.get_storage(capacity);
         ManagedElementStorage::new(storage, self.line_pool.clone())
     }
-    
+
     /// Get managed storage for markers
     pub fn get_marker_storage(&self, capacity: usize) -> ManagedElementStorage<MarkerInstance> {
         let mut pool = self.marker_pool.lock().unwrap();
         let storage = pool.get_storage(capacity);
         ManagedElementStorage::new(storage, self.marker_pool.clone())
     }
-    
+
     /// Get managed storage for polygons
     pub fn get_polygon_storage(&self, capacity: usize) -> ManagedElementStorage<Polygon> {
         let mut pool = self.polygon_pool.lock().unwrap();
         let storage = pool.get_storage(capacity);
         ManagedElementStorage::new(storage, self.polygon_pool.clone())
     }
-    
+
     /// Get managed storage for text elements
     pub fn get_text_storage(&self, capacity: usize) -> ManagedElementStorage<TextElement> {
         let mut pool = self.text_pool.lock().unwrap();
         let storage = pool.get_storage(capacity);
         ManagedElementStorage::new(storage, self.text_pool.clone())
     }
-    
+
     /// Get managed storage for error bars
     pub fn get_error_bar_storage(&self, capacity: usize) -> ManagedElementStorage<ErrorBar> {
         let mut pool = self.error_bar_pool.lock().unwrap();
         let storage = pool.get_storage(capacity);
         ManagedElementStorage::new(storage, self.error_bar_pool.clone())
     }
-    
+
     /// Get memory usage statistics for all pools
     pub fn get_pool_stats(&self) -> PlotElementStats {
         PlotElementStats {
@@ -107,7 +107,7 @@ impl<T> ElementPool<T> {
             stats: PoolStats::default(),
         }
     }
-    
+
     fn get_storage(&mut self, min_capacity: usize) -> Vec<T> {
         // Try to find a suitable existing collection
         for (i, storage) in self.available.iter().enumerate() {
@@ -118,14 +118,14 @@ impl<T> ElementPool<T> {
                 return storage;
             }
         }
-        
+
         // Create new collection if none suitable found
         let capacity = min_capacity.max(self.target_capacity);
         self.stats.misses += 1;
         self.stats.total_allocated += 1;
         Vec::with_capacity(capacity)
     }
-    
+
     fn return_storage(&mut self, mut storage: Vec<T>) {
         // Only keep collections that aren't too large
         if storage.capacity() <= self.target_capacity * 4 {
@@ -134,7 +134,7 @@ impl<T> ElementPool<T> {
         }
         // Large collections are dropped to prevent memory bloat
     }
-    
+
     fn stats(&self) -> PoolStats {
         self.stats.clone()
     }
@@ -161,17 +161,17 @@ impl<T> ManagedElementStorage<T> {
             pool,
         }
     }
-    
+
     /// Get mutable reference to the storage
     pub fn get_mut(&mut self) -> &mut Vec<T> {
         self.storage.as_mut().unwrap()
     }
-    
+
     /// Get immutable reference to the storage
     pub fn get(&self) -> &Vec<T> {
         self.storage.as_ref().unwrap()
     }
-    
+
     /// Take ownership of the storage (prevents return to pool)
     pub fn into_inner(mut self) -> Vec<T> {
         self.storage.take().unwrap()
@@ -205,16 +205,22 @@ pub struct LineSegment {
 
 impl LineSegment {
     pub fn new(start: Point2f, end: Point2f, style: LineStyle, color: Color, width: f32) -> Self {
-        Self { start, end, style, color, width }
+        Self {
+            start,
+            end,
+            style,
+            color,
+            width,
+        }
     }
-    
+
     /// Calculate the length of the line segment
     pub fn length(&self) -> f32 {
         let dx = self.end.x - self.start.x;
         let dy = self.end.y - self.start.y;
         (dx * dx + dy * dy).sqrt()
     }
-    
+
     /// Get bounding box for the line segment
     pub fn bounds(&self) -> BoundingBox {
         BoundingBox::new(
@@ -241,9 +247,14 @@ pub struct MarkerInstance {
 
 impl MarkerInstance {
     pub fn new(position: Point2f, style: MarkerStyle, color: Color, size: f32) -> Self {
-        Self { position, style, color, size }
+        Self {
+            position,
+            style,
+            color,
+            size,
+        }
     }
-    
+
     /// Get bounding box for the marker
     pub fn bounds(&self) -> BoundingBox {
         let half_size = self.size * 0.5;
@@ -280,41 +291,41 @@ impl Polygon {
             stroke_width,
         }
     }
-    
+
     /// Add vertex to polygon
     pub fn add_vertex(&mut self, point: Point2f) {
         self.vertices.get_mut().push(point);
     }
-    
+
     /// Get vertices
     pub fn vertices(&self) -> &[Point2f] {
         self.vertices.get()
     }
-    
+
     /// Get mutable vertices
     pub fn vertices_mut(&mut self) -> &mut Vec<Point2f> {
         self.vertices.get_mut()
     }
-    
+
     /// Calculate bounding box
     pub fn bounds(&self) -> BoundingBox {
         let vertices = self.vertices();
         if vertices.is_empty() {
             return BoundingBox::new(0.0, 0.0, 0.0, 0.0);
         }
-        
+
         let mut min_x = vertices[0].x;
         let mut max_x = vertices[0].x;
         let mut min_y = vertices[0].y;
         let mut max_y = vertices[0].y;
-        
+
         for vertex in vertices.iter().skip(1) {
             min_x = min_x.min(vertex.x);
             max_x = max_x.max(vertex.x);
             min_y = min_y.min(vertex.y);
             max_y = max_y.max(vertex.y);
         }
-        
+
         BoundingBox::new(min_x, max_x, min_y, max_y)
     }
 }
@@ -347,13 +358,13 @@ impl TextElement {
             rotation: 0.0,
         }
     }
-    
+
     /// Estimate bounding box (approximate)
     pub fn bounds(&self) -> BoundingBox {
         let char_width = self.font_size * 0.6; // Rough estimate
         let text_width = self.text.len() as f32 * char_width;
         let text_height = self.font_size;
-        
+
         BoundingBox::new(
             self.position.x,
             self.position.x + text_width,
@@ -393,7 +404,13 @@ pub struct ErrorBar {
 }
 
 impl ErrorBar {
-    pub fn symmetric(center: Point2f, x_error: f32, y_error: f32, color: Color, width: f32) -> Self {
+    pub fn symmetric(
+        center: Point2f,
+        x_error: f32,
+        y_error: f32,
+        color: Color,
+        width: f32,
+    ) -> Self {
         Self {
             center,
             error_x_pos: x_error,
@@ -405,11 +422,13 @@ impl ErrorBar {
             cap_size: width * 2.0,
         }
     }
-    
+
     pub fn asymmetric(
         center: Point2f,
-        x_pos: f32, x_neg: f32,
-        y_pos: f32, y_neg: f32,
+        x_pos: f32,
+        x_neg: f32,
+        y_pos: f32,
+        y_neg: f32,
         color: Color,
         width: f32,
     ) -> Self {
@@ -424,7 +443,7 @@ impl ErrorBar {
             cap_size: width * 2.0,
         }
     }
-    
+
     /// Get bounding box including error bars
     pub fn bounds(&self) -> BoundingBox {
         BoundingBox::new(
@@ -449,23 +468,32 @@ pub struct PlotElementStats {
 impl PlotElementStats {
     /// Calculate total pool efficiency across all element types
     pub fn total_efficiency(&self) -> f32 {
-        let total_hits = self.line_segments.hits + self.markers.hits + 
-                        self.polygons.hits + self.text_elements.hits + self.error_bars.hits;
-        let total_requests = total_hits + 
-                           self.line_segments.misses + self.markers.misses +
-                           self.polygons.misses + self.text_elements.misses + self.error_bars.misses;
-        
+        let total_hits = self.line_segments.hits
+            + self.markers.hits
+            + self.polygons.hits
+            + self.text_elements.hits
+            + self.error_bars.hits;
+        let total_requests = total_hits
+            + self.line_segments.misses
+            + self.markers.misses
+            + self.polygons.misses
+            + self.text_elements.misses
+            + self.error_bars.misses;
+
         if total_requests > 0 {
             total_hits as f32 / total_requests as f32
         } else {
             0.0
         }
     }
-    
+
     /// Get total memory allocations across all pools
     pub fn total_allocations(&self) -> usize {
-        self.line_segments.total_allocated + self.markers.total_allocated +
-        self.polygons.total_allocated + self.text_elements.total_allocated + self.error_bars.total_allocated
+        self.line_segments.total_allocated
+            + self.markers.total_allocated
+            + self.polygons.total_allocated
+            + self.text_elements.total_allocated
+            + self.error_bars.total_allocated
     }
 }
 
@@ -486,7 +514,7 @@ mod tests {
         let start = Point2f::new(0.0, 0.0);
         let end = Point2f::new(3.0, 4.0);
         let line = LineSegment::new(start, end, LineStyle::Solid, Color::BLACK, 1.0);
-        
+
         assert_eq!(line.length(), 5.0); // 3-4-5 triangle
         let bounds = line.bounds();
         assert_eq!(bounds.min_x, 0.0);
@@ -496,21 +524,24 @@ mod tests {
     #[test]
     fn test_element_storage_pooling() {
         let storage = PlotElementStorage::new();
-        
+
         // Get line storage twice to test pooling
         {
             let mut lines1 = storage.get_line_storage(100);
             lines1.get_mut().push(LineSegment::new(
-                Point2f::zero(), Point2f::new(1.0, 1.0), 
-                LineStyle::Solid, Color::RED, 1.0
+                Point2f::zero(),
+                Point2f::new(1.0, 1.0),
+                LineStyle::Solid,
+                Color::RED,
+                1.0,
             ));
         } // Dropped, returns to pool
-        
+
         {
             let lines2 = storage.get_line_storage(50);
             assert!(lines2.get().capacity() >= 50);
         }
-        
+
         let stats = storage.get_pool_stats();
         assert!(stats.line_segments.hits > 0 || stats.line_segments.misses > 0);
     }
@@ -521,7 +552,7 @@ mod tests {
         polygon.add_vertex(Point2f::new(0.0, 0.0));
         polygon.add_vertex(Point2f::new(5.0, 0.0));
         polygon.add_vertex(Point2f::new(2.5, 5.0));
-        
+
         let bounds = polygon.bounds();
         assert_eq!(bounds.min_x, 0.0);
         assert_eq!(bounds.max_x, 5.0);
@@ -533,7 +564,7 @@ mod tests {
     fn test_error_bar_creation() {
         let center = Point2f::new(5.0, 10.0);
         let error_bar = ErrorBar::symmetric(center, 1.0, 2.0, Color::BLUE, 0.5);
-        
+
         let bounds = error_bar.bounds();
         assert_eq!(bounds.min_x, 4.0); // center.x - error_x_neg
         assert_eq!(bounds.max_x, 6.0); // center.x + error_x_pos

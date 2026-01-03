@@ -54,7 +54,11 @@ fn test_multi_series_pipeline() {
         .save("test_output/integration_multi_series.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok(), "Multi-series plot failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Multi-series plot failed: {:?}",
+        result.err()
+    );
 
     // AND: File should be created
     assert!(Path::new("test_output/integration_multi_series.png").exists());
@@ -101,8 +105,7 @@ fn test_bar_chart_pipeline() {
 fn test_histogram_pipeline() {
     // GIVEN: Distribution data
     let data = vec![
-        1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0,
-        1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5, 4.5, 5.5,
+        1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0, 1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5, 4.5, 5.5,
     ];
 
     // WHEN: Creating histogram
@@ -146,10 +149,7 @@ fn test_subplot_composition() {
     let hist_data = vec![1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0];
 
     // WHEN: Creating individual plots
-    let plot1 = Plot::new()
-        .line(&x, &y_linear)
-        .title("Linear")
-        .end_series();
+    let plot1 = Plot::new().line(&x, &y_linear).title("Linear").end_series();
 
     let plot2 = Plot::new()
         .scatter(&x, &y_scatter)
@@ -170,16 +170,25 @@ fn test_subplot_composition() {
     let result = subplots(2, 2, 1200, 900);
     assert!(result.is_ok(), "Failed to create subplot grid");
 
-    let save_result = result.unwrap()
-        .subplot(0, 0, plot1).unwrap()
-        .subplot(0, 1, plot2).unwrap()
-        .subplot(1, 0, plot3).unwrap()
-        .subplot(1, 1, plot4).unwrap()
+    let save_result = result
+        .unwrap()
+        .subplot(0, 0, plot1)
+        .unwrap()
+        .subplot(0, 1, plot2)
+        .unwrap()
+        .subplot(1, 0, plot3)
+        .unwrap()
+        .subplot(1, 1, plot4)
+        .unwrap()
         .suptitle("Integration Subplot Test")
         .save("test_output/integration_subplots.png");
 
     // THEN: Should succeed
-    assert!(save_result.is_ok(), "Subplot save failed: {:?}", save_result.err());
+    assert!(
+        save_result.is_ok(),
+        "Subplot save failed: {:?}",
+        save_result.err()
+    );
     assert!(Path::new("test_output/integration_subplots.png").exists());
 }
 

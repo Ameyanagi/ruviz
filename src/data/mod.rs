@@ -1,41 +1,30 @@
 //! Data handling and trait definitions
 
-pub mod traits;
-pub mod impls;
-pub mod transform;
-pub mod datashader;
 pub mod datashader_simple;
+pub mod elements;
+pub mod impls;
 pub mod memory;
 pub mod memory_pool;
-pub mod pooled_vec;
-pub mod zero_copy;
-pub mod elements;
-pub mod adaptive;
-pub mod profiler;
 pub mod platform;
+pub mod pooled_vec;
+pub mod traits;
+pub mod transform;
+pub mod zero_copy;
 
 pub use traits::Data1D;
-// Use simple DataShader temporarily to fix compilation
 pub use datashader_simple::{DataShader, DataShaderCanvas, DataShaderImage, DataShaderStats};
-pub use memory::{MemoryManager, MemoryConfig, MemoryStats, ManagedBuffer, get_memory_manager, initialize_memory_manager};
-pub use memory_pool::{MemoryPool, PooledBuffer, SharedMemoryPool, PoolStatistics};
+pub use elements::{
+    ErrorBar, LineSegment, MarkerInstance, PlotElementStats, PlotElementStorage, Polygon,
+    PoolStats, TextAlignment, TextElement, get_plot_element_storage,
+};
+pub use memory::{
+    ManagedBuffer, MemoryConfig, MemoryManager, MemoryStats, get_memory_manager,
+    initialize_memory_manager,
+};
+pub use memory_pool::{MemoryPool, PoolStatistics, PooledBuffer, SharedMemoryPool};
+pub use platform::{
+    MemoryLimits, OptimizationConfig, PerformanceHints, PlatformInfo, PlatformOptimizer,
+    get_platform_optimizer, initialize_platform_optimization,
+};
 pub use pooled_vec::{PooledVec, PooledVecIntoIter};
 pub use zero_copy::{DataView, DataViewIter, MappedDataView, MappedDataViewIter};
-pub use elements::{
-    PlotElementStorage, LineSegment, MarkerInstance, Polygon, TextElement, ErrorBar,
-    TextAlignment, PlotElementStats, PoolStats, get_plot_element_storage
-};
-pub use adaptive::{
-    AdaptiveMemoryStrategy, AdaptiveConfig, AdaptationResult, PoolAdaptation,
-    AdaptationAction, AdaptationReason, MemoryPressureLevel, BufferType,
-    BufferUsage, AdaptiveStats, get_adaptive_strategy, initialize_adaptive_strategy
-};
-pub use profiler::{
-    MemoryProfiler, AllocationTracker, LeakDetector, UsagePatternAnalyzer,
-    AllocationRecord, get_memory_profiler
-};
-pub use platform::{
-    PlatformOptimizer, PlatformInfo, OptimizationConfig, MemoryLimits, PerformanceHints,
-    get_platform_optimizer, initialize_platform_optimization
-};
-// Future implementations will add more data types

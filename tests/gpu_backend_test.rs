@@ -12,10 +12,10 @@ mod gpu_tests {
             Ok(backend) => {
                 println!("✅ GPU backend initialized successfully");
                 println!("Device: {}", backend.capabilities().max_texture_size);
-                
+
                 // Test basic functionality
                 assert!(backend.is_available());
-                
+
                 let stats = backend.get_stats();
                 println!("GPU Stats: {:?}", stats.device_info);
             }
@@ -34,16 +34,16 @@ mod gpu_tests {
                     match backend.create_compute_manager() {
                         Ok(mut compute) => {
                             println!("✅ Compute manager created");
-                            
+
                             // Test pipeline creation
                             if let Err(e) = compute.create_transform_pipeline() {
                                 println!("⚠️  Transform pipeline failed: {}", e);
                             }
-                            
+
                             if let Err(e) = compute.create_aggregation_pipeline() {
                                 println!("⚠️  Aggregation pipeline failed: {}", e);
                             }
-                            
+
                             let stats = compute.get_stats();
                             println!("Compute stats: {:?}", stats);
                         }
@@ -59,7 +59,7 @@ mod gpu_tests {
         }
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_buffer_management() {
         match GpuBackend::new().await {
             Ok(backend) => {
@@ -68,11 +68,13 @@ mod gpu_tests {
                     let manager = buffer_manager.lock().unwrap();
                     manager.get_stats()
                 };
-                
+
                 println!("✅ Buffer manager accessible");
-                println!("Buffer stats: total_memory={}, active_buffers={}", 
-                    stats.total_memory, stats.active_buffers);
-                
+                println!(
+                    "Buffer stats: total_memory={}, active_buffers={}",
+                    stats.total_memory, stats.active_buffers
+                );
+
                 assert_eq!(stats.active_buffers, 0); // Should start empty
             }
             Err(e) => {
@@ -84,16 +86,16 @@ mod gpu_tests {
     #[test]
     fn test_buffer_usage_conversion() {
         use ruviz::render::gpu::BufferUsage;
-        
+
         // Test buffer usage to wgpu usage conversion
         let static_usage = BufferUsage::Static.to_wgpu_usage();
-        let dynamic_usage = BufferUsage::Dynamic.to_wgpu_usage(); 
+        let dynamic_usage = BufferUsage::Dynamic.to_wgpu_usage();
         let compute_usage = BufferUsage::Compute.to_wgpu_usage();
-        
+
         assert!(static_usage.contains(wgpu::BufferUsages::VERTEX));
         assert!(dynamic_usage.contains(wgpu::BufferUsages::UNIFORM));
         assert!(compute_usage.contains(wgpu::BufferUsages::STORAGE));
-        
+
         println!("✅ Buffer usage conversions work correctly");
     }
 

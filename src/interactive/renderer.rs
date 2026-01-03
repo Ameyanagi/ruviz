@@ -4,12 +4,12 @@
 //! existing GPU acceleration while maintaining 60fps during interactions.
 
 use crate::{
-    core::{Plot, Result, PlottingError},
-    render::{gpu::GpuRenderer, skia::SkiaRenderer, Color},
+    core::{Plot, PlottingError, Result},
     interactive::{
-        state::{InteractionState, DataPoint, DataPointId},
-        event::{Point2D, Rectangle, Annotation},
+        event::{Annotation, Point2D, Rectangle},
+        state::{DataPoint, DataPointId, InteractionState},
     },
+    render::{Color, gpu::GpuRenderer, skia::SkiaRenderer},
 };
 use std::{
     collections::HashMap,
@@ -21,18 +21,18 @@ pub struct RealTimeRenderer {
     // Core rendering components
     gpu_renderer: Option<GpuRenderer>,
     cpu_renderer: SkiaRenderer,
-    
+
     // Rendering state
     current_plot: Option<Plot>,
     render_cache: RenderCache,
     performance_monitor: PerformanceMonitor,
-    
+
     // Interactive elements
     hover_highlight_color: Color,
     selection_highlight_color: Color,
     brush_color: Color,
     annotation_renderer: AnnotationRenderer,
-    
+
     // Optimization settings
     quality_mode: RenderQuality,
     adaptive_quality: bool,
@@ -43,16 +43,14 @@ impl RealTimeRenderer {
     /// Create new real-time renderer
     pub async fn new() -> Result<Self> {
         let gpu_renderer = match crate::render::gpu::initialize_gpu_backend().await {
-            Ok(_) => {
-                match GpuRenderer::new().await {
-                    Ok(renderer) => {
-                        println!("✅ Interactive GPU renderer initialized");
-                        Some(renderer)
-                    },
-                    Err(e) => {
-                        println!("⚠️ GPU not available for interactive mode: {}", e);
-                        None
-                    }
+            Ok(_) => match GpuRenderer::new().await {
+                Ok(renderer) => {
+                    println!("✅ Interactive GPU renderer initialized");
+                    Some(renderer)
+                }
+                Err(e) => {
+                    println!("⚠️ GPU not available for interactive mode: {}", e);
+                    None
                 }
             },
             Err(e) => {
@@ -60,134 +58,146 @@ impl RealTimeRenderer {
                 None
             }
         };
-        
+
         let cpu_renderer = SkiaRenderer::new(800, 600, 96.0)?;
-        
+
         Ok(Self {
             gpu_renderer,
             cpu_renderer,
             current_plot: None,
             render_cache: RenderCache::new(),
             performance_monitor: PerformanceMonitor::new(),
-            
+
             hover_highlight_color: Color::new(255, 165, 0, 180), // Orange with transparency
             selection_highlight_color: Color::new(255, 0, 0, 120), // Red with transparency
-            brush_color: Color::new(0, 100, 255, 60), // Blue with high transparency
+            brush_color: Color::new(0, 100, 255, 60),            // Blue with high transparency
             annotation_renderer: AnnotationRenderer::new(),
-            
+
             quality_mode: RenderQuality::Interactive,
             adaptive_quality: true,
             target_fps: 60.0,
         })
     }
-    
+
     /// Set the current plot for rendering
     pub fn set_plot(&mut self, plot: Plot) {
         self.current_plot = Some(plot);
         self.render_cache.invalidate_all();
     }
-    
+
     /// Render frame with current interaction state
     pub fn render_interactive(
-        &mut self, 
+        &mut self,
         state: &InteractionState,
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>> {
         let frame_start = Instant::now();
-        
+
         // Update renderer dimensions if needed
         self.update_dimensions(width, height)?;
-        
+
         // Adaptive quality based on performance
         if self.adaptive_quality {
             self.update_quality_mode(state);
         }
-        
+
         // Render base plot (cached when possible)
         let mut pixel_data = self.render_base_plot(state, width, height)?;
-        
+
         // Render interactive elements on top
         self.render_hover_highlight(state, &mut pixel_data)?;
         self.render_selection_highlight(state, &mut pixel_data)?;
         self.render_brush_region(state, &mut pixel_data)?;
         self.render_annotations(state, &mut pixel_data)?;
         self.render_tooltip(state, &mut pixel_data)?;
-        
+
         // Update performance metrics
         self.performance_monitor.record_frame(frame_start.elapsed());
-        
+
         Ok(pixel_data)
     }
-    
+
     /// Render high-quality static version for export
-    pub fn render_publication(&mut self, plot: &Plot, width: u32, height: u32, dpi: f32) -> Result<Vec<u8>> {
+    pub fn render_publication(
+        &mut self,
+        plot: &Plot,
+        width: u32,
+        height: u32,
+        dpi: f32,
+    ) -> Result<Vec<u8>> {
         // Temporarily switch to high quality mode
         let old_quality = self.quality_mode;
         self.quality_mode = RenderQuality::Publication;
-        
+
         // Update renderer for high-quality output
         self.cpu_renderer = SkiaRenderer::new(width, height, dpi)?;
-        
+
         // Render without interactive elements
         let result = self.cpu_renderer.render_plot(plot);
-        
+
         // Restore previous quality mode
         self.quality_mode = old_quality;
-        
+
         result
     }
-    
+
     /// Get data point at screen coordinates
-    pub fn get_data_point_at(&self, screen_pos: Point2D, state: &InteractionState) -> Option<DataPoint> {
+    pub fn get_data_point_at(
+        &self,
+        screen_pos: Point2D,
+        state: &InteractionState,
+    ) -> Option<DataPoint> {
         let data_pos = state.screen_to_data(screen_pos);
-        
+
         // In real implementation, this would spatial search through plot data
         // For now, simulate finding a nearby point
         if let Some(ref plot) = self.current_plot {
             // Simulate hit testing - in reality would use spatial indexing
             let tolerance = 10.0 / state.zoom_level; // Zoom-adjusted tolerance
-            
+
             // Mock implementation - would actually search plot data
             if data_pos.x > 10.0 && data_pos.x < 90.0 && data_pos.y > 10.0 && data_pos.y < 90.0 {
-                return Some(DataPoint::new(
-                    42, // Mock ID
-                    data_pos.x,
-                    data_pos.y,
-                    data_pos.y, // Mock value
-                    0, // Series index
-                ).with_metadata("type".to_string(), "simulated".to_string()));
+                return Some(
+                    DataPoint::new(
+                        42, // Mock ID
+                        data_pos.x, data_pos.y, data_pos.y, // Mock value
+                        0,          // Series index
+                    )
+                    .with_metadata("type".to_string(), "simulated".to_string()),
+                );
             }
         }
-        
+
         None
     }
-    
+
     /// Get all data points in selection region
-    pub fn get_points_in_region(&self, region: Rectangle, state: &InteractionState) -> Vec<DataPointId> {
+    pub fn get_points_in_region(
+        &self,
+        region: Rectangle,
+        state: &InteractionState,
+    ) -> Vec<DataPointId> {
         let mut points = Vec::new();
-        
+
         // Convert screen region to data region
         let data_min = state.screen_to_data(region.min);
         let data_max = state.screen_to_data(region.max);
         let data_region = Rectangle::from_points(data_min, data_max);
-        
+
         // In real implementation, would use spatial indexing to find points efficiently
         // For now, simulate selecting some points
         for i in 0..100 {
-            let test_point = Point2D::new(
-                i as f64 % 100.0,
-                (i as f64 * 0.5) % 100.0,
-            );
-            
+            let test_point = Point2D::new(i as f64 % 100.0, (i as f64 * 0.5) % 100.0);
+
             if data_region.contains(test_point) {
                 points.push(DataPointId(i));
             }
         }
-        
+
         points
     }
-    
+
     /// Update renderer dimensions
     fn update_dimensions(&mut self, width: u32, height: u32) -> Result<()> {
         if self.cpu_renderer.width != width || self.cpu_renderer.height != height {
@@ -196,28 +206,39 @@ impl RealTimeRenderer {
         }
         Ok(())
     }
-    
+
     /// Update quality mode based on performance
     fn update_quality_mode(&mut self, state: &InteractionState) {
         let current_fps = self.performance_monitor.get_current_fps();
-        let is_animating = !matches!(state.animation_state, crate::interactive::state::AnimationState::Idle);
-        
+        let is_animating = !matches!(
+            state.animation_state,
+            crate::interactive::state::AnimationState::Idle
+        );
+
         if is_animating || current_fps < self.target_fps * 0.8 {
             self.quality_mode = RenderQuality::Interactive;
         } else if current_fps > self.target_fps * 0.95 {
             self.quality_mode = RenderQuality::Balanced;
         }
     }
-    
+
     /// Render base plot with caching
-    fn render_base_plot(&mut self, state: &InteractionState, width: u32, height: u32) -> Result<Vec<u8>> {
+    fn render_base_plot(
+        &mut self,
+        state: &InteractionState,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>> {
         // Check if we can use cached render
         if !state.needs_redraw && !state.viewport_dirty {
-            if let Some(cached) = self.render_cache.get_base_render(state.zoom_level, state.pan_offset) {
+            if let Some(cached) = self
+                .render_cache
+                .get_base_render(state.zoom_level, state.pan_offset)
+            {
                 return Ok(cached);
             }
         }
-        
+
         // Render fresh base plot
         let pixel_data = if let Some(ref plot) = self.current_plot {
             match self.quality_mode {
@@ -238,15 +259,22 @@ impl RealTimeRenderer {
             // No plot set, render empty canvas
             vec![255u8; (width * height * 4) as usize] // White background
         };
-        
+
         // Cache the render
-        self.render_cache.store_base_render(state.zoom_level, state.pan_offset, pixel_data.clone());
-        
+        self.render_cache
+            .store_base_render(state.zoom_level, state.pan_offset, pixel_data.clone());
+
         Ok(pixel_data)
     }
-    
+
     /// Render with interactive quality (optimized for speed)
-    fn render_interactive_quality(&mut self, plot: &Plot, state: &InteractionState, width: u32, height: u32) -> Result<Vec<u8>> {
+    fn render_interactive_quality(
+        &mut self,
+        plot: &Plot,
+        state: &InteractionState,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>> {
         // Use GPU renderer if available for coordinate transformation
         if let Some(ref mut gpu_renderer) = self.gpu_renderer {
             // GPU-accelerated coordinate transformation
@@ -257,111 +285,147 @@ impl RealTimeRenderer {
             self.cpu_renderer.render_plot(plot)
         }
     }
-    
+
     /// Render with balanced quality
-    fn render_balanced_quality(&mut self, plot: &Plot, state: &InteractionState, width: u32, height: u32) -> Result<Vec<u8>> {
+    fn render_balanced_quality(
+        &mut self,
+        plot: &Plot,
+        state: &InteractionState,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>> {
         self.cpu_renderer.render_plot(plot)
     }
-    
+
     /// Render hover highlight
-    fn render_hover_highlight(&mut self, state: &InteractionState, pixel_data: &mut Vec<u8>) -> Result<()> {
+    fn render_hover_highlight(
+        &mut self,
+        state: &InteractionState,
+        pixel_data: &mut Vec<u8>,
+    ) -> Result<()> {
         if let Some(ref hover_point) = state.hover_point {
             let screen_pos = state.data_to_screen(hover_point.position);
             self.draw_highlight_circle(pixel_data, screen_pos, 8.0, self.hover_highlight_color)?;
         }
         Ok(())
     }
-    
+
     /// Render selection highlights
-    fn render_selection_highlight(&mut self, state: &InteractionState, pixel_data: &mut Vec<u8>) -> Result<()> {
+    fn render_selection_highlight(
+        &mut self,
+        state: &InteractionState,
+        pixel_data: &mut Vec<u8>,
+    ) -> Result<()> {
         for point_id in &state.selected_points {
             // In real implementation, would look up actual point coordinates
             // For now, simulate highlighting at fixed positions
             let screen_pos = Point2D::new(100.0 + point_id.0 as f64 * 50.0, 100.0);
-            self.draw_highlight_circle(pixel_data, screen_pos, 6.0, self.selection_highlight_color)?;
+            self.draw_highlight_circle(
+                pixel_data,
+                screen_pos,
+                6.0,
+                self.selection_highlight_color,
+            )?;
         }
         Ok(())
     }
-    
+
     /// Render brush selection region
-    fn render_brush_region(&mut self, state: &InteractionState, pixel_data: &mut Vec<u8>) -> Result<()> {
+    fn render_brush_region(
+        &mut self,
+        state: &InteractionState,
+        pixel_data: &mut Vec<u8>,
+    ) -> Result<()> {
         if let Some(region) = state.brushed_region {
             self.draw_selection_rectangle(pixel_data, region, self.brush_color)?;
         }
         Ok(())
     }
-    
+
     /// Render custom annotations
-    fn render_annotations(&mut self, state: &InteractionState, pixel_data: &mut Vec<u8>) -> Result<()> {
+    fn render_annotations(
+        &mut self,
+        state: &InteractionState,
+        pixel_data: &mut Vec<u8>,
+    ) -> Result<()> {
         for annotation in &state.annotations {
             self.annotation_renderer.render_annotation(
-                annotation, 
-                state, 
-                pixel_data, 
-                self.cpu_renderer.width, 
-                self.cpu_renderer.height
+                annotation,
+                state,
+                pixel_data,
+                self.cpu_renderer.width,
+                self.cpu_renderer.height,
             )?;
         }
         Ok(())
     }
-    
+
     /// Render tooltip
     fn render_tooltip(&mut self, state: &InteractionState, pixel_data: &mut Vec<u8>) -> Result<()> {
         if state.tooltip_visible && !state.tooltip_content.is_empty() {
-            self.draw_tooltip(
-                pixel_data,
-                &state.tooltip_content,
-                state.tooltip_position,
-            )?;
+            self.draw_tooltip(pixel_data, &state.tooltip_content, state.tooltip_position)?;
         }
         Ok(())
     }
-    
+
     /// Draw highlight circle at screen position
-    fn draw_highlight_circle(&self, pixel_data: &mut Vec<u8>, center: Point2D, radius: f32, color: Color) -> Result<()> {
+    fn draw_highlight_circle(
+        &self,
+        pixel_data: &mut Vec<u8>,
+        center: Point2D,
+        radius: f32,
+        color: Color,
+    ) -> Result<()> {
         // Simple circle drawing - in production would use proper graphics primitives
         let width = self.cpu_renderer.width as i32;
         let height = self.cpu_renderer.height as i32;
         let r_sq = (radius * radius) as i32;
-        
+
         let cx = center.x as i32;
         let cy = center.y as i32;
-        
+
         for dy in -(radius as i32)..=(radius as i32) {
             for dx in -(radius as i32)..=(radius as i32) {
                 if dx * dx + dy * dy <= r_sq {
                     let x = cx + dx;
                     let y = cy + dy;
-                    
+
                     if x >= 0 && x < width && y >= 0 && y < height {
                         let index = ((y * width + x) * 4) as usize;
                         if index + 3 < pixel_data.len() {
                             // Alpha blend with existing pixel
                             let alpha = color.a as f32 / 255.0;
                             pixel_data[index] = blend_channel(pixel_data[index], color.r, alpha);
-                            pixel_data[index + 1] = blend_channel(pixel_data[index + 1], color.g, alpha);
-                            pixel_data[index + 2] = blend_channel(pixel_data[index + 2], color.b, alpha);
+                            pixel_data[index + 1] =
+                                blend_channel(pixel_data[index + 1], color.g, alpha);
+                            pixel_data[index + 2] =
+                                blend_channel(pixel_data[index + 2], color.b, alpha);
                         }
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Draw selection rectangle
-    fn draw_selection_rectangle(&self, pixel_data: &mut Vec<u8>, region: Rectangle, color: Color) -> Result<()> {
+    fn draw_selection_rectangle(
+        &self,
+        pixel_data: &mut Vec<u8>,
+        region: Rectangle,
+        color: Color,
+    ) -> Result<()> {
         let width = self.cpu_renderer.width as i32;
         let height = self.cpu_renderer.height as i32;
-        
+
         let x1 = region.min.x as i32;
         let y1 = region.min.y as i32;
         let x2 = region.max.x as i32;
         let y2 = region.max.y as i32;
-        
+
         let alpha = color.a as f32 / 255.0;
-        
+
         // Fill rectangle with alpha blending
         for y in y1.max(0)..=y2.min(height - 1) {
             for x in x1.max(0)..=x2.min(width - 1) {
@@ -373,30 +437,35 @@ impl RealTimeRenderer {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Draw tooltip
-    fn draw_tooltip(&self, pixel_data: &mut Vec<u8>, content: &str, position: Point2D) -> Result<()> {
+    fn draw_tooltip(
+        &self,
+        pixel_data: &mut Vec<u8>,
+        content: &str,
+        position: Point2D,
+    ) -> Result<()> {
         // Simple tooltip rendering - in production would use proper text rendering
         // For now, just draw a simple colored rectangle as placeholder
         let tooltip_width = content.len() as f64 * 8.0 + 20.0;
         let tooltip_height = 30.0;
-        
+
         let tooltip_rect = Rectangle::new(
             position.x,
             position.y - tooltip_height,
             position.x + tooltip_width,
             position.y,
         );
-        
+
         let tooltip_color = Color::new(255, 255, 220, 200); // Light yellow
         self.draw_selection_rectangle(pixel_data, tooltip_rect, tooltip_color)?;
-        
+
         Ok(())
     }
-    
+
     /// Get performance statistics
     pub fn get_performance_stats(&self) -> PerformanceStats {
         self.performance_monitor.get_stats()
@@ -431,28 +500,37 @@ impl RenderCache {
             max_entries: 10,
         }
     }
-    
-    fn get_base_render(&self, zoom_level: f64, pan_offset: crate::interactive::event::Vector2D) -> Option<Vec<u8>> {
+
+    fn get_base_render(
+        &self,
+        zoom_level: f64,
+        pan_offset: crate::interactive::event::Vector2D,
+    ) -> Option<Vec<u8>> {
         let key = Self::make_key(zoom_level, pan_offset);
         self.base_renders.get(&key).cloned()
     }
-    
-    fn store_base_render(&mut self, zoom_level: f64, pan_offset: crate::interactive::event::Vector2D, pixel_data: Vec<u8>) {
+
+    fn store_base_render(
+        &mut self,
+        zoom_level: f64,
+        pan_offset: crate::interactive::event::Vector2D,
+        pixel_data: Vec<u8>,
+    ) {
         if self.base_renders.len() >= self.max_entries {
             // Simple LRU - remove first entry
             if let Some(first_key) = self.base_renders.keys().next().cloned() {
                 self.base_renders.remove(&first_key);
             }
         }
-        
+
         let key = Self::make_key(zoom_level, pan_offset);
         self.base_renders.insert(key, pixel_data);
     }
-    
+
     fn invalidate_all(&mut self) {
         self.base_renders.clear();
     }
-    
+
     fn make_key(zoom_level: f64, pan_offset: crate::interactive::event::Vector2D) -> CacheKey {
         CacheKey {
             zoom_level_bits: (zoom_level * 100.0) as u64, // Quantize to avoid floating point issues
@@ -465,9 +543,9 @@ impl RenderCache {
 /// Render quality modes
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RenderQuality {
-    Interactive,  // Fast rendering for smooth interaction
-    Balanced,     // Balance between quality and performance
-    Publication,  // High quality for static output
+    Interactive, // Fast rendering for smooth interaction
+    Balanced,    // Balance between quality and performance
+    Publication, // High quality for static output
 }
 
 /// Performance monitoring
@@ -487,26 +565,27 @@ impl PerformanceMonitor {
             target_frame_time: Duration::from_nanos(16_666_667), // ~60fps
         }
     }
-    
+
     fn record_frame(&mut self, frame_time: Duration) {
         self.frame_times.push(frame_time);
         self.frame_count += 1;
-        
+
         // Keep only recent frame times
         if self.frame_times.len() > 60 {
             self.frame_times.remove(0);
         }
     }
-    
+
     fn get_current_fps(&self) -> f64 {
         if self.frame_times.is_empty() {
             return 0.0;
         }
-        
-        let avg_frame_time: Duration = self.frame_times.iter().sum::<Duration>() / self.frame_times.len() as u32;
+
+        let avg_frame_time: Duration =
+            self.frame_times.iter().sum::<Duration>() / self.frame_times.len() as u32;
         1.0 / avg_frame_time.as_secs_f64()
     }
-    
+
     fn get_stats(&self) -> PerformanceStats {
         PerformanceStats {
             current_fps: self.get_current_fps(),
@@ -535,7 +614,7 @@ impl AnnotationRenderer {
     fn new() -> Self {
         Self
     }
-    
+
     fn render_annotation(
         &self,
         annotation: &Annotation,
@@ -545,31 +624,49 @@ impl AnnotationRenderer {
         height: u32,
     ) -> Result<()> {
         match annotation {
-            Annotation::Text { content, position, style: _ } => {
+            Annotation::Text {
+                content,
+                position,
+                style: _,
+            } => {
                 let screen_pos = state.data_to_screen(*position);
                 // In real implementation, would render text using cosmic-text
-                println!("Rendering text annotation: '{}' at {:?}", content, screen_pos);
+                println!(
+                    "Rendering text annotation: '{}' at {:?}",
+                    content, screen_pos
+                );
             }
-            
-            Annotation::Arrow { start, end, style: _ } => {
+
+            Annotation::Arrow {
+                start,
+                end,
+                style: _,
+            } => {
                 let screen_start = state.data_to_screen(*start);
                 let screen_end = state.data_to_screen(*end);
                 // In real implementation, would draw arrow line
-                println!("Rendering arrow from {:?} to {:?}", screen_start, screen_end);
+                println!(
+                    "Rendering arrow from {:?} to {:?}",
+                    screen_start, screen_end
+                );
             }
-            
+
             Annotation::Shape { geometry, style: _ } => {
                 // In real implementation, would render geometric shapes
                 println!("Rendering shape annotation: {:?}", geometry);
             }
-            
-            Annotation::Equation { latex, position, style: _ } => {
+
+            Annotation::Equation {
+                latex,
+                position,
+                style: _,
+            } => {
                 let screen_pos = state.data_to_screen(*position);
                 // In real implementation, would render LaTeX equation
                 println!("Rendering equation '{}' at {:?}", latex, screen_pos);
             }
         }
-        
+
         Ok(())
     }
 }
@@ -587,17 +684,17 @@ mod tests {
     #[test]
     fn test_render_cache() {
         let mut cache = RenderCache::new();
-        
+
         let zoom = 1.5;
         let pan = crate::interactive::event::Vector2D::new(10.0, 20.0);
         let test_data = vec![255u8; 100];
-        
+
         // Store and retrieve
         cache.store_base_render(zoom, pan, test_data.clone());
         let retrieved = cache.get_base_render(zoom, pan);
-        
+
         assert_eq!(retrieved, Some(test_data));
-        
+
         // Test cache invalidation
         cache.invalidate_all();
         let retrieved_after_clear = cache.get_base_render(zoom, pan);
@@ -607,12 +704,12 @@ mod tests {
     #[test]
     fn test_performance_monitor() {
         let mut monitor = PerformanceMonitor::new();
-        
+
         // Record some frame times
         monitor.record_frame(Duration::from_millis(16)); // ~60fps
         monitor.record_frame(Duration::from_millis(17));
         monitor.record_frame(Duration::from_millis(15));
-        
+
         let stats = monitor.get_stats();
         assert!(stats.current_fps > 50.0 && stats.current_fps < 70.0);
         assert_eq!(stats.frame_count, 3);
@@ -623,10 +720,10 @@ mod tests {
         let background = 100u8;
         let foreground = 200u8;
         let alpha = 0.5;
-        
+
         let result = blend_channel(background, foreground, alpha);
         let expected = ((100.0 * 0.5 + 200.0 * 0.5) as u8);
-        
+
         assert_eq!(result, expected);
     }
 }

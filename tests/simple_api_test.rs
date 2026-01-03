@@ -67,9 +67,10 @@ fn test_line_plot_with_title() {
 
     // WHEN: Using titled variant
     let result = line_plot_with_title(
-        &x, &y,
+        &x,
+        &y,
         "Test Line Plot",
-        "test_output/simple_line_titled.png"
+        "test_output/simple_line_titled.png",
     );
 
     // THEN: Should succeed
@@ -85,9 +86,10 @@ fn test_scatter_plot_with_title() {
 
     // WHEN: Using titled variant
     let result = scatter_plot_with_title(
-        &x, &y,
+        &x,
+        &y,
         "Test Scatter",
-        "test_output/simple_scatter_titled.png"
+        "test_output/simple_scatter_titled.png",
     );
 
     // THEN: Should succeed
@@ -102,9 +104,10 @@ fn test_bar_chart_with_title() {
 
     // WHEN: Using titled variant
     let result = bar_chart_with_title(
-        &categories, &values,
+        &categories,
+        &values,
         "Test Bar Chart",
-        "test_output/simple_bar_titled.png"
+        "test_output/simple_bar_titled.png",
     );
 
     // THEN: Should succeed
@@ -120,7 +123,7 @@ fn test_histogram_with_title() {
     let result = histogram_with_title(
         &data,
         "Test Histogram",
-        "test_output/simple_histogram_titled.png"
+        "test_output/simple_histogram_titled.png",
     );
 
     // THEN: Should succeed

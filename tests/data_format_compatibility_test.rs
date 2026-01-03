@@ -36,7 +36,11 @@ fn test_vec_f32() {
         .save("test_output/data_vec_f32.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok(), "Vec<f32> conversion failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Vec<f32> conversion failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -110,7 +114,11 @@ fn test_string_categories() {
         .save("test_output/data_string_categories.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok(), "String categories failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "String categories failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -230,7 +238,9 @@ fn test_small_values() {
 fn test_negative_values() {
     // GIVEN: Negative values
     let x = vec![-5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-    let y = vec![-25.0, -16.0, -9.0, -4.0, -1.0, 0.0, 1.0, 4.0, 9.0, 16.0, 25.0];
+    let y = vec![
+        -25.0, -16.0, -9.0, -4.0, -1.0, 0.0, 1.0, 4.0, 9.0, 16.0, 25.0,
+    ];
 
     // WHEN: Plotting negative values
     let result = Plot::new()
@@ -324,7 +334,11 @@ fn test_unicode_categories() {
         .save("test_output/data_unicode_categories.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok(), "Unicode categories failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Unicode categories failed: {:?}",
+        result.err()
+    );
 }
 
 #[test]

@@ -3,58 +3,34 @@
 //! Provides a unified event system for handling user interactions like
 //! zoom, pan, selection, and custom annotations.
 
-use crate::core::{Result, PlottingError};
+use crate::core::{PlottingError, Result};
 use std::time::Duration;
 
 /// High-level interaction events
 #[derive(Debug, Clone, PartialEq)]
 pub enum InteractionEvent {
     // Navigation events
-    Zoom {
-        factor: f64,
-        center: Point2D,
-    },
-    Pan {
-        delta: Vector2D,
-    },
+    Zoom { factor: f64, center: Point2D },
+    Pan { delta: Vector2D },
     Reset,
-    
+
     // Selection events
-    Select {
-        region: Rectangle,
-    },
-    SelectPoint {
-        point: Point2D,
-    },
+    Select { region: Rectangle },
+    SelectPoint { point: Point2D },
     ClearSelection,
-    
+
     // Data brushing events
-    Brush {
-        start: Point2D,
-        end: Point2D,
-    },
-    LinkPlots {
-        plot_ids: Vec<PlotId>,
-    },
-    
+    Brush { start: Point2D, end: Point2D },
+    LinkPlots { plot_ids: Vec<PlotId> },
+
     // Information events
-    Hover {
-        point: Point2D,
-    },
-    ShowTooltip {
-        content: String,
-        position: Point2D,
-    },
+    Hover { point: Point2D },
+    ShowTooltip { content: String, position: Point2D },
     HideTooltip,
-    
+
     // Customization events
-    AddAnnotation {
-        annotation: Annotation,
-    },
-    ModifyStyle {
-        element: StyleElement,
-        style: Style,
-    },
+    AddAnnotation { annotation: Annotation },
+    ModifyStyle { element: StyleElement, style: Style },
 }
 
 /// 2D point in screen or data coordinates
@@ -68,11 +44,11 @@ impl Point2D {
     pub fn new(x: f64, y: f64) -> Self {
         Self { x, y }
     }
-    
+
     pub fn zero() -> Self {
         Self { x: 0.0, y: 0.0 }
     }
-    
+
     pub fn distance_to(&self, other: Point2D) -> f64 {
         ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
     }
@@ -89,11 +65,11 @@ impl Vector2D {
     pub fn new(x: f64, y: f64) -> Self {
         Self { x, y }
     }
-    
+
     pub fn zero() -> Self {
         Self { x: 0.0, y: 0.0 }
     }
-    
+
     pub fn magnitude(&self) -> f64 {
         (self.x.powi(2) + self.y.powi(2)).sqrt()
     }
@@ -113,27 +89,29 @@ impl Rectangle {
             max: Point2D::new(max_x, max_y),
         }
     }
-    
+
     pub fn from_points(p1: Point2D, p2: Point2D) -> Self {
         Self {
             min: Point2D::new(p1.x.min(p2.x), p1.y.min(p2.y)),
             max: Point2D::new(p1.x.max(p2.x), p1.y.max(p2.y)),
         }
     }
-    
+
     pub fn contains(&self, point: Point2D) -> bool {
-        point.x >= self.min.x && point.x <= self.max.x &&
-        point.y >= self.min.y && point.y <= self.max.y
+        point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
     }
-    
+
     pub fn width(&self) -> f64 {
         self.max.x - self.min.x
     }
-    
+
     pub fn height(&self) -> f64 {
         self.max.y - self.min.y
     }
-    
+
     pub fn center(&self) -> Point2D {
         Point2D::new(
             (self.min.x + self.max.x) * 0.5,
@@ -221,14 +199,9 @@ impl Default for ArrowStyle {
 /// Shape geometry for geometric annotations
 #[derive(Debug, Clone, PartialEq)]
 pub enum ShapeGeometry {
-    Circle {
-        center: Point2D,
-        radius: f64,
-    },
+    Circle { center: Point2D, radius: f64 },
     Rectangle(Rectangle),
-    Polygon {
-        points: Vec<Point2D>,
-    },
+    Polygon { points: Vec<Point2D> },
 }
 
 /// Shape styling
@@ -297,13 +270,13 @@ pub enum EventResponse {
 pub trait EventHandler {
     /// Process a single interaction event
     fn handle_event(&mut self, event: InteractionEvent) -> Result<EventResponse>;
-    
+
     /// Update state for animations and transitions
     fn update(&mut self, dt: Duration) -> Result<()>;
-    
+
     /// Check if a redraw is needed
     fn needs_redraw(&self) -> bool;
-    
+
     /// Reset handler to initial state
     fn reset(&mut self);
 }
@@ -325,8 +298,11 @@ impl EventProcessor {
                     center: Point2D::new(position.0, position.1),
                 })
             }
-            
-            RawInputEvent::MouseMove { position, button_pressed } => {
+
+            RawInputEvent::MouseMove {
+                position,
+                button_pressed,
+            } => {
                 if button_pressed {
                     // Calculate pan delta from last position
                     let delta = Vector2D::new(
@@ -340,45 +316,45 @@ impl EventProcessor {
                     })
                 }
             }
-            
-            RawInputEvent::MouseClick { position, button } => {
-                match button {
-                    MouseButton::Left => Some(InteractionEvent::SelectPoint {
-                        point: Point2D::new(position.0, position.1),
-                    }),
-                    MouseButton::Right => Some(InteractionEvent::ShowTooltip {
-                        content: "Right-click menu".to_string(),
-                        position: Point2D::new(position.0, position.1),
-                    }),
-                    _ => None,
-                }
-            }
-            
-            RawInputEvent::KeyPress { key } => {
-                match key.as_str() {
-                    "Escape" => Some(InteractionEvent::Reset),
-                    "Delete" => Some(InteractionEvent::ClearSelection),
-                    _ => None,
-                }
-            }
+
+            RawInputEvent::MouseClick { position, button } => match button {
+                MouseButton::Left => Some(InteractionEvent::SelectPoint {
+                    point: Point2D::new(position.0, position.1),
+                }),
+                MouseButton::Right => Some(InteractionEvent::ShowTooltip {
+                    content: "Right-click menu".to_string(),
+                    position: Point2D::new(position.0, position.1),
+                }),
+                _ => None,
+            },
+
+            RawInputEvent::KeyPress { key } => match key.as_str() {
+                "Escape" => Some(InteractionEvent::Reset),
+                "Delete" => Some(InteractionEvent::ClearSelection),
+                _ => None,
+            },
         }
     }
-    
+
     /// Validate event parameters
     pub fn validate_event(event: &InteractionEvent) -> Result<()> {
         match event {
             InteractionEvent::Zoom { factor, .. } => {
                 if *factor <= 0.0 || factor.is_infinite() || factor.is_nan() {
-                    return Err(PlottingError::InvalidParameter(
-                        format!("Invalid zoom factor: {}", factor)
-                    ));
+                    return Err(PlottingError::InvalidParameter(format!(
+                        "Invalid zoom factor: {}",
+                        factor
+                    )));
                 }
             }
             InteractionEvent::Pan { delta } => {
-                if delta.x.is_infinite() || delta.x.is_nan() || 
-                   delta.y.is_infinite() || delta.y.is_nan() {
+                if delta.x.is_infinite()
+                    || delta.x.is_nan()
+                    || delta.y.is_infinite()
+                    || delta.y.is_nan()
+                {
                     return Err(PlottingError::InvalidParameter(
-                        "Invalid pan delta".to_string()
+                        "Invalid pan delta".to_string(),
                     ));
                 }
             }
@@ -427,14 +403,14 @@ mod tests {
     fn test_point2d_operations() {
         let p1 = Point2D::new(3.0, 4.0);
         let p2 = Point2D::new(0.0, 0.0);
-        
+
         assert_eq!(p1.distance_to(p2), 5.0); // 3-4-5 triangle
     }
 
     #[test]
     fn test_rectangle_operations() {
         let rect = Rectangle::new(0.0, 0.0, 10.0, 10.0);
-        
+
         assert!(rect.contains(Point2D::new(5.0, 5.0)));
         assert!(!rect.contains(Point2D::new(15.0, 5.0)));
         assert_eq!(rect.width(), 10.0);
@@ -469,7 +445,7 @@ mod tests {
     fn test_plot_id_generation() {
         let id1 = PlotId::new();
         let id2 = PlotId::new();
-        
+
         assert_ne!(id1, id2);
         assert!(id1.0 < id2.0); // IDs should be increasing
     }
@@ -477,14 +453,14 @@ mod tests {
     #[test]
     fn test_raw_event_processing() {
         let state = InteractionState::default(); // We'll define this in state.rs
-        
+
         let mouse_wheel = RawInputEvent::MouseWheel {
             delta: 1.0,
             position: (50.0, 50.0),
         };
-        
+
         let processed = EventProcessor::process_raw_event(mouse_wheel, &state);
-        
+
         match processed {
             Some(InteractionEvent::Zoom { factor, center }) => {
                 assert_eq!(factor, 1.2);

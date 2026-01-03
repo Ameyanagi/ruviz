@@ -4,9 +4,9 @@
 //! various Unicode scripts including CJK, Arabic, Hebrew, and emoji.
 
 use ruviz::prelude::*;
-use ruviz::render::{TextRenderer, FontConfig, FontFamily, Color};
-use tiny_skia::Pixmap;
+use ruviz::render::{Color, FontConfig, FontFamily, TextRenderer};
 use std::path::Path;
+use tiny_skia::Pixmap;
 
 /// Test basic ASCII text rendering
 #[test]
@@ -19,7 +19,8 @@ fn test_ascii_text_rendering() {
     let result = renderer.render_text(
         &mut pixmap,
         "Hello, World!",
-        10.0, 50.0,
+        10.0,
+        50.0,
         &config,
         Color::BLACK,
     );
@@ -40,7 +41,8 @@ fn test_cjk_text_rendering() {
     let result = renderer.render_text(
         &mut pixmap,
         "日本語テスト",
-        10.0, 50.0,
+        10.0,
+        50.0,
         &config,
         Color::BLACK,
     );
@@ -57,13 +59,7 @@ fn test_chinese_text_rendering() {
     let config = FontConfig::new(FontFamily::SansSerif, 24.0);
 
     // Simplified Chinese
-    let result = renderer.render_text(
-        &mut pixmap,
-        "中文测试",
-        10.0, 50.0,
-        &config,
-        Color::BLACK,
-    );
+    let result = renderer.render_text(&mut pixmap, "中文测试", 10.0, 50.0, &config, Color::BLACK);
     assert!(result.is_ok(), "Chinese text rendering should succeed");
 }
 
@@ -80,7 +76,8 @@ fn test_korean_text_rendering() {
     let result = renderer.render_text(
         &mut pixmap,
         "한국어 테스트",
-        10.0, 50.0,
+        10.0,
+        50.0,
         &config,
         Color::BLACK,
     );
@@ -100,7 +97,8 @@ fn test_mixed_script_rendering() {
     let result = renderer.render_text(
         &mut pixmap,
         "Hello 日本語 World",
-        10.0, 50.0,
+        10.0,
+        50.0,
         &config,
         Color::BLACK,
     );
@@ -117,13 +115,7 @@ fn test_emoji_rendering() {
     let config = FontConfig::new(FontFamily::SansSerif, 24.0);
 
     // Emoji characters
-    let result = renderer.render_text(
-        &mut pixmap,
-        "📊📈🎨",
-        10.0, 50.0,
-        &config,
-        Color::BLACK,
-    );
+    let result = renderer.render_text(&mut pixmap, "📊📈🎨", 10.0, 50.0, &config, Color::BLACK);
     // Emoji may not render if fonts are not available, but should not error
     assert!(result.is_ok(), "Emoji rendering should not error");
 }
@@ -135,13 +127,15 @@ fn test_international_text_measurement() {
     let config = FontConfig::new(FontFamily::SansSerif, 24.0);
 
     // ASCII should have positive width
-    let (ascii_width, ascii_height) = renderer.measure_text("Hello", &config)
+    let (ascii_width, ascii_height) = renderer
+        .measure_text("Hello", &config)
         .expect("ASCII measurement should succeed");
     assert!(ascii_width > 0.0, "ASCII text should have positive width");
     assert!(ascii_height > 0.0, "ASCII text should have positive height");
 
     // CJK should also have positive width
-    let (cjk_width, cjk_height) = renderer.measure_text("日本語", &config)
+    let (cjk_width, cjk_height) = renderer
+        .measure_text("日本語", &config)
         .expect("CJK measurement should succeed");
     assert!(cjk_width > 0.0, "CJK text should have positive width");
     assert!(cjk_height > 0.0, "CJK text should have positive height");
@@ -160,7 +154,8 @@ fn test_rotated_international_text() {
     let result = renderer.render_text_rotated(
         &mut pixmap,
         "縦書きテスト",
-        50.0, 200.0,
+        50.0,
+        200.0,
         &config,
         Color::BLACK,
     );
@@ -204,6 +199,8 @@ fn test_international_plot_generation() {
     assert!(result.is_ok(), "Japanese plot generation should succeed");
 
     // Verify file was created
-    assert!(Path::new("test_output/japanese_test.png").exists(),
-            "Japanese output file should exist");
+    assert!(
+        Path::new("test_output/japanese_test.png").exists(),
+        "Japanese output file should exist"
+    );
 }

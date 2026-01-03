@@ -6,9 +6,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create test data with a good range to test centering and overflow
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
-    let y_data: Vec<f64> = x_data.iter().map(|&x| {
-        2.5 * x.sin() * (x * 0.3).cos() + 1.5 * (x * 0.7).sin()
-    }).collect();
+    let y_data: Vec<f64> = x_data
+        .iter()
+        .map(|&x| 2.5 * x.sin() * (x * 0.3).cos() + 1.5 * (x * 0.7).sin())
+        .collect();
 
     println!("📊 Creating demonstration plots...\n");
 
@@ -20,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .xlabel("X-axis with longer label to test positioning")
         .ylabel("Y-axis values testing overflow prevention")
         .dpi(96);
-    
+
     plot.save("fixes_demo_96dpi.png")?;
     println!("   ✅ Generated: fixes_demo_96dpi.png");
 
@@ -32,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .xlabel("X-axis label testing")
         .ylabel("Y-axis label testing")
         .dpi(300);
-    
+
     plot.save("fixes_demo_300dpi.png")?;
     println!("   ✅ Generated: fixes_demo_300dpi.png");
 
@@ -44,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .xlabel("Publication-ready X-axis")
         .ylabel("Publication-ready Y-axis")
         .dpi(600);
-    
+
     plot.save("fixes_demo_600dpi.png")?;
     println!("   ✅ Generated: fixes_demo_600dpi.png");
 

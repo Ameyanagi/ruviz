@@ -51,14 +51,18 @@ fn main() -> Result<()> {
     println!("  Target:  < 10ms");
 
     if avg.as_millis() > 10 {
-        println!("  Status:  ❌ NEEDS OPTIMIZATION ({:.1}x slower than target)",
-                 avg.as_millis() as f64 / 10.0);
+        println!(
+            "  Status:  ❌ NEEDS OPTIMIZATION ({:.1}x slower than target)",
+            avg.as_millis() as f64 / 10.0
+        );
     } else {
         println!("  Status:  ✅ Meets target");
     }
 
     println!("\nBottleneck analysis:");
-    println!("  - Run with 'cargo flamegraph --example profile_small_dataset' for detailed profiling");
+    println!(
+        "  - Run with 'cargo flamegraph --example profile_small_dataset' for detailed profiling"
+    );
     println!("  - Key areas to investigate:");
     println!("    1. Font loading and caching");
     println!("    2. Canvas allocation");

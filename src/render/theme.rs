@@ -1,7 +1,7 @@
 use crate::render::{Color, LineStyle};
 
 /// Comprehensive theme system for consistent plot styling
-/// 
+///
 /// Themes control the visual appearance of all plot elements including colors,
 /// fonts, spacing, and other visual properties
 #[derive(Debug, Clone)]
@@ -12,27 +12,27 @@ pub struct Theme {
     pub foreground: Color,
     /// Grid line color
     pub grid_color: Color,
-    /// Default line width for plot elements
+    /// Default line width for plot elements (in points, 1pt = 1/72 inch)
     pub line_width: f32,
     /// Default line style
     pub line_style: LineStyle,
     /// Primary font family name
     pub font_family: String,
-    /// Default font size for labels and text
+    /// Default font size for labels and text (in points)
     pub font_size: f32,
-    /// Title font size
+    /// Title font size (in points)
     pub title_font_size: f32,
-    /// Legend font size
+    /// Legend font size (in points)
     pub legend_font_size: f32,
-    /// Axis label font size
+    /// Axis label font size (in points)
     pub axis_label_font_size: f32,
-    /// Tick label font size
+    /// Tick label font size (in points)
     pub tick_label_font_size: f32,
     /// Default color palette for automatic color cycling
     pub color_palette: Vec<Color>,
     /// Margin around the plot (as fraction of canvas size)
     pub margin: f32,
-    /// Padding between plot elements
+    /// Padding between plot elements (in points)
     pub padding: f32,
     /// Use colorblind-friendly palette
     pub colorblind_friendly: bool,
@@ -43,49 +43,49 @@ impl Theme {
     pub fn builder() -> ThemeBuilder {
         ThemeBuilder::default()
     }
-    
+
     /// Create default light theme
     pub fn light() -> Self {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
             grid_color: Color::LIGHT_GRAY,
-            line_width: 2.0,
+            line_width: 1.5, // matplotlib default: 1.5pt
             line_style: LineStyle::Solid,
-            font_family: "Arial".to_string(),
-            font_size: 12.0,
-            title_font_size: 16.0,
-            legend_font_size: 10.0,
-            axis_label_font_size: 12.0,
-            tick_label_font_size: 10.0,
+            font_family: "sans-serif".to_string(),
+            font_size: 10.0,            // matplotlib default: 10pt
+            title_font_size: 14.0,      // 1.4x base
+            legend_font_size: 9.0,      // 0.9x base
+            axis_label_font_size: 10.0, // 1.0x base
+            tick_label_font_size: 9.0,  // 0.9x base
             color_palette: Color::default_palette().to_vec(),
             margin: 0.1,
             padding: 8.0,
             colorblind_friendly: false,
         }
     }
-    
+
     /// Create dark theme
     pub fn dark() -> Self {
         Self {
             background: Color::from_hex("#1e1e1e").unwrap(),
             foreground: Color::WHITE,
             grid_color: Color::DARK_GRAY,
-            line_width: 2.0,
+            line_width: 1.5, // matplotlib default: 1.5pt
             line_style: LineStyle::Solid,
-            font_family: "Arial".to_string(),
-            font_size: 12.0,
-            title_font_size: 16.0,
-            legend_font_size: 10.0,
-            axis_label_font_size: 12.0,
-            tick_label_font_size: 10.0,
+            font_family: "sans-serif".to_string(),
+            font_size: 10.0,            // matplotlib default: 10pt
+            title_font_size: 14.0,      // 1.4x base
+            legend_font_size: 9.0,      // 0.9x base
+            axis_label_font_size: 10.0, // 1.0x base
+            tick_label_font_size: 9.0,  // 0.9x base
             color_palette: Self::dark_palette(),
             margin: 0.1,
             padding: 8.0,
             colorblind_friendly: false,
         }
     }
-    
+
     /// Create publication-ready theme (high contrast, clean)
     pub fn publication() -> Self {
         Self {
@@ -106,7 +106,7 @@ impl Theme {
             colorblind_friendly: false,
         }
     }
-    
+
     /// Create minimal theme (minimal visual elements)
     pub fn minimal() -> Self {
         Self {
@@ -127,7 +127,7 @@ impl Theme {
             colorblind_friendly: false,
         }
     }
-    
+
     /// Create colorblind-friendly theme
     pub fn colorblind_friendly() -> Self {
         let mut theme = Self::light();
@@ -141,7 +141,7 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::from_hex("#262626").unwrap(), // Dark gray instead of pure black
-            grid_color: Color::from_hex("#F0F0F0").unwrap(),  // Light gray grid
+            grid_color: Color::from_hex("#F0F0F0").unwrap(), // Light gray grid
             line_width: 1.5,
             line_style: LineStyle::Solid,
             font_family: "DejaVu Sans".to_string(), // Seaborn's preferred font
@@ -163,17 +163,17 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
-            grid_color: Color::from_hex("#E5E5E5").unwrap(),  // Subtle grid for print
-            line_width: 0.5,                    // Thin lines for print quality
+            grid_color: Color::from_hex("#E5E5E5").unwrap(), // Subtle grid for print
+            line_width: 0.75,                                // Match PlotStyle::IEEE data_width
             line_style: LineStyle::Solid,
-            font_family: "Times New Roman".to_string(), // IEEE standard serif font
-            font_size: 8.0,                     // Small size for column constraints
-            title_font_size: 9.0,               // IEEE title sizing
-            legend_font_size: 7.0,              // Compact legend
-            axis_label_font_size: 8.0,
-            tick_label_font_size: 7.0,
+            font_family: "serif".to_string(), // IEEE standard serif font
+            font_size: 8.0,                   // Small size for column constraints
+            title_font_size: 9.0,             // IEEE title sizing (1.125x base)
+            legend_font_size: 6.0,            // Compact legend (0.75x base)
+            axis_label_font_size: 8.0,        // 1.0x base
+            tick_label_font_size: 7.0,        // 0.875x base
             color_palette: Self::wong_palette(), // Accessibility-first colorblind friendly
-            margin: 0.12,                       // IEEE standard margins
+            margin: 0.12,                     // IEEE standard margins
             padding: 6.0,
             colorblind_friendly: true,
         }
@@ -185,17 +185,17 @@ impl Theme {
         Self {
             background: Color::WHITE,
             foreground: Color::BLACK,
-            grid_color: Color::TRANSPARENT,      // Nature style: no grid
-            line_width: 0.75,                   // Medium thickness for clarity
+            grid_color: Color::TRANSPARENT, // Nature style: no grid
+            line_width: 0.75,               // Match PlotStyle::Nature data_width
             line_style: LineStyle::Solid,
-            font_family: "Arial".to_string(),   // Nature standard sans-serif
-            font_size: 7.0,                     // Small for multi-panel figures
-            title_font_size: 8.0,               // Subtle title hierarchy
-            legend_font_size: 6.5,              // Compact legend
-            axis_label_font_size: 7.0,
-            tick_label_font_size: 6.0,
+            font_family: "sans-serif".to_string(), // Nature standard sans-serif
+            font_size: 7.0,                        // Small for multi-panel figures
+            title_font_size: 8.05,                 // 1.15x base
+            legend_font_size: 5.95,                // 0.85x base
+            axis_label_font_size: 7.0,             // 1.0x base
+            tick_label_font_size: 5.95,            // 0.85x base
             color_palette: Self::scientific_palette(), // Scientific standard colors
-            margin: 0.08,                       // Tight margins for space efficiency
+            margin: 0.08,                          // Tight margins for space efficiency
             padding: 4.0,
             colorblind_friendly: false,
         }
@@ -208,16 +208,16 @@ impl Theme {
             background: Color::WHITE,
             foreground: Color::BLACK,
             grid_color: Color::from_hex("#CCCCCC").unwrap(), // Visible but not dominant grid
-            line_width: 3.0,                    // Thick lines for visibility
+            line_width: 2.5, // Thick lines for visibility (same as PlotStyle::Presentation)
             line_style: LineStyle::Solid,
-            font_family: "Arial".to_string(),   // High legibility sans-serif
-            font_size: 14.0,                    // Large for distance viewing
-            title_font_size: 18.0,              // Prominent titles
-            legend_font_size: 12.0,             // Readable legend
-            axis_label_font_size: 14.0,
-            tick_label_font_size: 11.0,
+            font_family: "sans-serif".to_string(), // High legibility sans-serif
+            font_size: 14.0, // Large for distance viewing (same as PlotStyle::Presentation)
+            title_font_size: 19.6, // 1.4x base
+            legend_font_size: 11.9, // 0.85x base
+            axis_label_font_size: 14.0, // 1.0x base
+            tick_label_font_size: 11.9, // 0.85x base
             color_palette: Self::presentation_palette(), // High contrast colors
-            margin: 0.15,                       // Extra spacing for clean look
+            margin: 0.15,    // Extra spacing for clean look
             padding: 12.0,
             colorblind_friendly: false,
         }
@@ -244,7 +244,7 @@ impl Theme {
             colorblind_friendly: true,
         }
     }
-    
+
     /// Get a color from the theme's palette by index (cycles if needed)
     pub fn get_color(&self, index: usize) -> Color {
         if self.color_palette.is_empty() {
@@ -253,14 +253,14 @@ impl Theme {
             self.color_palette[index % self.color_palette.len()]
         }
     }
-    
+
     /// Get the effective grid color (returns transparent if grid should be hidden)
     pub fn effective_grid_color(&self) -> Color {
         self.grid_color
     }
-    
+
     // Color palettes for different themes
-    
+
     fn dark_palette() -> Vec<Color> {
         vec![
             Color::from_hex("#8dd3c7").unwrap(), // Light cyan
@@ -273,7 +273,7 @@ impl Theme {
             Color::from_hex("#fccde5").unwrap(), // Light pink
         ]
     }
-    
+
     fn publication_palette() -> Vec<Color> {
         vec![
             Color::BLACK,
@@ -284,7 +284,7 @@ impl Theme {
             Color::from_hex("#A0A0A0").unwrap(),
         ]
     }
-    
+
     fn minimal_palette() -> Vec<Color> {
         vec![
             Color::BLACK,
@@ -293,7 +293,7 @@ impl Theme {
             Color::from_hex("#CCCCCC").unwrap(),
         ]
     }
-    
+
     fn colorblind_palette() -> Vec<Color> {
         // Optimized for deuteranopia/protanopia (most common color blindness)
         vec![
@@ -343,7 +343,7 @@ impl Theme {
     fn scientific_palette() -> Vec<Color> {
         vec![
             Color::from_hex("#1f77b4").unwrap(), // Blue
-            Color::from_hex("#ff7f0e").unwrap(), // Orange  
+            Color::from_hex("#ff7f0e").unwrap(), // Orange
             Color::from_hex("#2ca02c").unwrap(), // Green
             Color::from_hex("#d62728").unwrap(), // Red
             Color::from_hex("#9467bd").unwrap(), // Purple
@@ -367,7 +367,6 @@ impl Theme {
         ]
     }
 
-    
     fn seaborn_palette() -> Vec<Color> {
         // Seaborn's default color palette (muted colors, professional)
         vec![
@@ -382,6 +381,57 @@ impl Theme {
             Color::from_hex("#bcbd22").unwrap(), // Muted olive
             Color::from_hex("#17becf").unwrap(), // Muted cyan
         ]
+    }
+
+    /// Convert theme typography settings to a TypographyConfig
+    ///
+    /// This allows Theme to be used with the new PlotConfig system.
+    /// All font sizes in Theme are in points.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let theme = Theme::presentation();
+    /// let typography = theme.to_typography_config();
+    /// ```
+    pub fn to_typography_config(&self) -> crate::core::config::TypographyConfig {
+        use super::FontFamily;
+        use crate::core::config::TypographyConfig;
+
+        // Determine FontFamily from font_family string
+        let family = match self.font_family.to_lowercase().as_str() {
+            s if s.contains("serif") && !s.contains("sans") => FontFamily::Serif,
+            s if s.contains("mono") || s.contains("courier") || s.contains("consolas") => {
+                FontFamily::Monospace
+            }
+            _ => FontFamily::SansSerif,
+        };
+
+        TypographyConfig {
+            base_size: self.font_size,
+            title_scale: self.title_font_size / self.font_size,
+            label_scale: self.axis_label_font_size / self.font_size,
+            tick_scale: self.tick_label_font_size / self.font_size,
+            legend_scale: self.legend_font_size / self.font_size,
+            family,
+            title_weight: super::FontWeight::Normal,
+        }
+    }
+
+    /// Convert theme line settings to a LineConfig
+    ///
+    /// This allows Theme to be used with the new PlotConfig system.
+    /// Line widths in Theme are in points.
+    pub fn to_line_config(&self) -> crate::core::config::LineConfig {
+        use crate::core::config::LineConfig;
+
+        LineConfig {
+            data_width: self.line_width,
+            axis_width: self.line_width * 0.5,
+            grid_width: self.line_width * 0.3,
+            tick_width: self.line_width * 0.4,
+            tick_length: 4.0, // Standard tick length
+        }
     }
 }
 
@@ -404,64 +454,64 @@ impl ThemeBuilder {
         self.theme.background = color;
         self
     }
-    
+
     /// Set foreground color
     pub fn foreground(mut self, color: Color) -> Self {
         self.theme.foreground = color;
         self
     }
-    
+
     /// Set grid color
     pub fn grid_color(mut self, color: Color) -> Self {
         self.theme.grid_color = color;
         self
     }
-    
+
     /// Set default line width
     pub fn line_width(mut self, width: f32) -> Self {
         self.theme.line_width = width.max(0.1);
         self
     }
-    
+
     /// Set default line style
     pub fn line_style(mut self, style: LineStyle) -> Self {
         self.theme.line_style = style;
         self
     }
-    
+
     /// Set font family
     pub fn font<S: Into<String>>(mut self, font_family: S) -> Self {
         self.theme.font_family = font_family.into();
         self
     }
-    
+
     /// Set default font size
     pub fn font_size(mut self, size: f32) -> Self {
         self.theme.font_size = size.max(6.0);
         self
     }
-    
+
     /// Set title font size
     pub fn title_font_size(mut self, size: f32) -> Self {
         self.theme.title_font_size = size.max(6.0);
         self
     }
-    
+
     /// Set legend font size
     pub fn legend_font_size(mut self, size: f32) -> Self {
         self.theme.legend_font_size = size.max(6.0);
         self
     }
-    
+
     /// Set color palette
-    pub fn palette<I>(mut self, colors: I) -> Self 
-    where 
-        I: IntoIterator<Item = Color>
+    pub fn palette<I>(mut self, colors: I) -> Self
+    where
+        I: IntoIterator<Item = Color>,
     {
         self.theme.color_palette = colors.into_iter().collect();
         self
     }
-    
+
     /// Enable colorblind-friendly palette
     pub fn colorblind_palette(mut self, enabled: bool) -> Self {
         self.theme.colorblind_friendly = enabled;
@@ -470,19 +520,19 @@ impl ThemeBuilder {
         }
         self
     }
-    
+
     /// Set margin
     pub fn margin(mut self, margin: f32) -> Self {
         self.theme.margin = margin.clamp(0.0, 0.5);
         self
     }
-    
+
     /// Set padding
     pub fn padding(mut self, padding: f32) -> Self {
         self.theme.padding = padding.max(0.0);
         self
     }
-    
+
     /// Build the theme
     pub fn build(self) -> Theme {
         self.theme
@@ -549,7 +599,7 @@ mod tests {
         let publication = Theme::publication();
         let minimal = Theme::minimal();
         let colorblind = Theme::colorblind_friendly();
-        
+
         assert_eq!(light.background, Color::WHITE);
         assert_eq!(dark.background, Color::from_hex("#1e1e1e").unwrap());
         assert_eq!(publication.font_family, "Times New Roman");
@@ -563,23 +613,23 @@ mod tests {
         let nature = Theme::nature();
         let presentation = Theme::presentation();
         let paul_tol = Theme::paul_tol();
-        
-        // IEEE theme tests
-        assert_eq!(ieee.font_family, "Times New Roman");
+
+        // IEEE theme tests - uses serif font, 8pt base, 0.75pt lines
+        assert_eq!(ieee.font_family, "serif");
         assert_eq!(ieee.font_size, 8.0);
         assert!(ieee.colorblind_friendly);
-        assert_eq!(ieee.line_width, 0.5);
-        
-        // Nature theme tests  
-        assert_eq!(nature.font_family, "Arial");
+        assert!((ieee.line_width - 0.75).abs() < 0.01);
+
+        // Nature theme tests - uses sans-serif, 7pt base, no grid
+        assert_eq!(nature.font_family, "sans-serif");
         assert_eq!(nature.font_size, 7.0);
         assert_eq!(nature.grid_color, Color::TRANSPARENT);
-        
-        // Presentation theme tests
+
+        // Presentation theme tests - 14pt base, 2.5pt lines
         assert_eq!(presentation.font_size, 14.0);
-        assert_eq!(presentation.line_width, 3.0);
-        assert_eq!(presentation.title_font_size, 18.0);
-        
+        assert!((presentation.line_width - 2.5).abs() < 0.01);
+        assert!((presentation.title_font_size - 19.6).abs() < 0.01);
+
         // Paul Tol theme tests
         assert!(paul_tol.colorblind_friendly);
         assert_eq!(paul_tol.color_palette.len(), 8);
@@ -591,18 +641,18 @@ mod tests {
         let paul_tol = Theme::paul_tol_palette();
         let scientific = Theme::scientific_palette();
         let presentation = Theme::presentation_palette();
-        
+
         // Wong palette should have 8 colors
         assert_eq!(wong.len(), 8);
         assert_eq!(wong[0], Color::from_hex("#000000").unwrap()); // Black
-        
+
         // Paul Tol palette should have 8 colors
         assert_eq!(paul_tol.len(), 8);
         assert_eq!(paul_tol[0], Color::from_hex("#004488").unwrap()); // Dark blue
-        
+
         // Scientific palette should have 10 colors
         assert_eq!(scientific.len(), 10);
-        
+
         // Presentation palette should have 6 high-contrast colors
         assert_eq!(presentation.len(), 6);
     }
@@ -618,7 +668,7 @@ mod tests {
             .margin(0.05)
             .colorblind_palette(true)
             .build();
-        
+
         assert_eq!(theme.background, Color::BLUE);
         assert_eq!(theme.foreground, Color::WHITE);
         assert_eq!(theme.font_family, "Helvetica");
@@ -634,7 +684,7 @@ mod tests {
         let color0 = theme.get_color(0);
         let color1 = theme.get_color(1);
         let color_cycle = theme.get_color(theme.color_palette.len());
-        
+
         assert_eq!(color0, color_cycle); // Should cycle back to first color
         assert_ne!(color0, color1); // Different colors
     }
@@ -646,7 +696,7 @@ mod tests {
             .line_width(-1.0) // Invalid, should be clamped
             .margin(-0.1) // Invalid, should be clamped
             .build();
-        
+
         assert!(theme.font_size >= 6.0); // Minimum font size
         assert!(theme.line_width >= 0.1); // Minimum line width
         assert!(theme.margin >= 0.0); // Minimum margin
@@ -660,12 +710,12 @@ mod tests {
         let nature = ThemeVariant::Nature.to_theme();
         let presentation = ThemeVariant::Presentation.to_theme();
         let paul_tol = ThemeVariant::PaulTol.to_theme();
-        
+
         assert_eq!(light.background, Color::WHITE);
         assert_ne!(dark.background, Color::WHITE);
-        
+
         // Test scientific theme variants
-        assert_eq!(ieee.font_family, "Times New Roman");
+        assert_eq!(ieee.font_family, "serif");
         assert_eq!(nature.grid_color, Color::TRANSPARENT);
         assert_eq!(presentation.font_size, 14.0);
         assert!(paul_tol.colorblind_friendly);
@@ -675,7 +725,7 @@ mod tests {
     fn test_empty_palette() {
         let mut theme = Theme::light();
         theme.color_palette.clear();
-        
+
         // Should return black for empty palette
         assert_eq!(theme.get_color(0), Color::BLACK);
         assert_eq!(theme.get_color(5), Color::BLACK);

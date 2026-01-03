@@ -69,8 +69,7 @@ fn main() -> Result<()> {
     // 5. Histogram
     println!("[{}/25] Generating histogram...", count + 1);
     let data = vec![
-        1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0,
-        1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5, 4.5, 5.5,
+        1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0, 1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5, 4.5, 5.5,
     ];
     Plot::new()
         .histogram(&data, None)
@@ -107,7 +106,11 @@ fn main() -> Result<()> {
             .title(&format!("{} Theme", name.to_uppercase()))
             .xlabel("X")
             .ylabel("Y")
-            .save(&format!("tests/golden_images/0{}_theme_{}.png", count + 1, name))?;
+            .save(&format!(
+                "tests/golden_images/0{}_theme_{}.png",
+                count + 1,
+                name
+            ))?;
         count += 1;
     }
 
@@ -118,7 +121,11 @@ fn main() -> Result<()> {
             .line(&x, &y)
             .dpi(dpi)
             .title(&format!("{} DPI", dpi))
-            .save(&format!("tests/golden_images/{}_dpi_{}.png", count + 1, dpi))?;
+            .save(&format!(
+                "tests/golden_images/{}_dpi_{}.png",
+                count + 1,
+                dpi
+            ))?;
         count += 1;
     }
 
@@ -133,14 +140,8 @@ fn main() -> Result<()> {
 
     // 15. Subplots
     println!("[{}/25] Generating subplots...", count + 1);
-    let plot1 = Plot::new()
-        .line(&x, &y)
-        .title("Linear")
-        .end_series();
-    let plot2 = Plot::new()
-        .scatter(&x, &y)
-        .title("Scatter")
-        .end_series();
+    let plot1 = Plot::new().line(&x, &y).title("Linear").end_series();
+    let plot2 = Plot::new().scatter(&x, &y).title("Scatter").end_series();
     let cats_sub = vec!["A", "B", "C"];
     let vals_sub = vec![25.0, 40.0, 30.0];
     let plot3 = Plot::new()
@@ -220,7 +221,9 @@ fn main() -> Result<()> {
     // 21. Wide bar chart
     println!("[{}/25] Generating wide bar chart...", count + 1);
     let cats: Vec<String> = (0..20).map(|i| format!("C{}", i)).collect();
-    let vals: Vec<f64> = (0..20).map(|i| (i as f64 * 1.5).sin() * 50.0 + 50.0).collect();
+    let vals: Vec<f64> = (0..20)
+        .map(|i| (i as f64 * 1.5).sin() * 50.0 + 50.0)
+        .collect();
     let cats_str: Vec<&str> = cats.iter().map(|s| s.as_str()).collect();
     Plot::new()
         .bar(&cats_str, &vals)
@@ -261,11 +264,20 @@ fn main() -> Result<()> {
     println!("[{}/25] Generating complex multi-series...", count + 1);
     let x_comp: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     Plot::new()
-        .line(&x_comp, &x_comp.iter().map(|&x| x.sin()).collect::<Vec<_>>())
+        .line(
+            &x_comp,
+            &x_comp.iter().map(|&x| x.sin()).collect::<Vec<_>>(),
+        )
         .label("sin(x)")
-        .line(&x_comp, &x_comp.iter().map(|&x| x.cos()).collect::<Vec<_>>())
+        .line(
+            &x_comp,
+            &x_comp.iter().map(|&x| x.cos()).collect::<Vec<_>>(),
+        )
         .label("cos(x)")
-        .line(&x_comp, &x_comp.iter().map(|&x| (x * 0.5).sin()).collect::<Vec<_>>())
+        .line(
+            &x_comp,
+            &x_comp.iter().map(|&x| (x * 0.5).sin()).collect::<Vec<_>>(),
+        )
         .label("sin(x/2)")
         .title("Complex Multi-Series")
         .legend(Position::TopRight)

@@ -48,7 +48,10 @@ fn discover_examples(dir: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Erro
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rs") {
             // Skip test files and internal utilities
             let filename = path.file_name().unwrap().to_str().unwrap();
-            if !filename.contains("test") && !filename.contains("debug") && !filename.starts_with("generate_") {
+            if !filename.contains("test")
+                && !filename.contains("debug")
+                && !filename.starts_with("generate_")
+            {
                 examples.push(path);
             }
         }
@@ -81,7 +84,11 @@ fn categorize_filename(filename: &str) -> Option<&'static str> {
     }
 
     // Statistical patterns
-    if name.contains("histogram") || name.contains("boxplot") || name.contains("distribution") || name.contains("statistical") {
+    if name.contains("histogram")
+        || name.contains("boxplot")
+        || name.contains("distribution")
+        || name.contains("statistical")
+    {
         return Some("statistical");
     }
 
@@ -91,12 +98,21 @@ fn categorize_filename(filename: &str) -> Option<&'static str> {
     }
 
     // Performance patterns
-    if name.contains("parallel") || name.contains("memory_optimization") || name.contains("performance") || name.contains("benchmark") {
+    if name.contains("parallel")
+        || name.contains("memory_optimization")
+        || name.contains("performance")
+        || name.contains("benchmark")
+    {
         return Some("performance");
     }
 
     // Advanced patterns
-    if name.contains("font") || name.contains("seaborn") || name.contains("subplot") || name.contains("theme") || name.contains("advanced") {
+    if name.contains("font")
+        || name.contains("seaborn")
+        || name.contains("subplot")
+        || name.contains("theme")
+        || name.contains("advanced")
+    {
         return Some("advanced");
     }
 
@@ -105,7 +121,13 @@ fn categorize_filename(filename: &str) -> Option<&'static str> {
 
 fn print_categorization_summary(map: &CategoryMap) {
     println!("\n📊 Categorization Summary:");
-    for category in &["basic", "statistical", "publication", "performance", "advanced"] {
+    for category in &[
+        "basic",
+        "statistical",
+        "publication",
+        "performance",
+        "advanced",
+    ] {
         let count = map.get(category).map(|v| v.len()).unwrap_or(0);
         println!("   {} {} example(s)", category, count);
     }
@@ -153,7 +175,9 @@ fn update_category_readmes(map: &CategoryMap) -> Result<(), Box<dyn std::error::
         let description = match category.as_str() {
             "basic" => "Fundamental plot types for everyday data visualization.",
             "statistical" => "Statistical analysis and distribution visualization.",
-            "publication" => "Professional figures meeting journal standards (IEEE, Nature, Science).",
+            "publication" => {
+                "Professional figures meeting journal standards (IEEE, Nature, Science)."
+            }
             "performance" => "Large dataset handling with parallel rendering and optimization.",
             "advanced" => "Complex visualizations and advanced customization.",
             _ => "",
@@ -193,25 +217,55 @@ fn update_main_index(map: &CategoryMap) -> Result<(), Box<dyn std::error::Error>
     content.push_str("## Gallery Categories\n\n");
 
     // Add each category
-    for category in &["basic", "statistical", "publication", "performance", "advanced"] {
+    for category in &[
+        "basic",
+        "statistical",
+        "publication",
+        "performance",
+        "advanced",
+    ] {
         let count = map.get(*category).map(|v| v.len()).unwrap_or(0);
 
         let (title, desc, icon) = match *category {
-            "basic" => ("Basic Plots", "Fundamental plot types for everyday visualization", "📊"),
-            "statistical" => ("Statistical Plots", "Statistical analysis and distributions", "📈"),
-            "publication" => ("Publication Quality", "Professional figures for journals", "📄"),
-            "performance" => ("Performance", "Large dataset handling and optimization", "⚡"),
-            "advanced" => ("Advanced Techniques", "Complex visualizations and customization", "🎨"),
+            "basic" => (
+                "Basic Plots",
+                "Fundamental plot types for everyday visualization",
+                "📊",
+            ),
+            "statistical" => (
+                "Statistical Plots",
+                "Statistical analysis and distributions",
+                "📈",
+            ),
+            "publication" => (
+                "Publication Quality",
+                "Professional figures for journals",
+                "📄",
+            ),
+            "performance" => (
+                "Performance",
+                "Large dataset handling and optimization",
+                "⚡",
+            ),
+            "advanced" => (
+                "Advanced Techniques",
+                "Complex visualizations and customization",
+                "🎨",
+            ),
             _ => (*category, "", "📁"),
         };
 
         content.push_str(&format!("### {} {} ({} examples)\n\n", icon, title, count));
         content.push_str(&format!("{}\n\n", desc));
-        content.push_str(&format!("[View {} Examples →]({}/README.md)\n\n", title, category));
+        content.push_str(&format!(
+            "[View {} Examples →]({}/README.md)\n\n",
+            title, category
+        ));
     }
 
     content.push_str("---\n\n");
-    content.push_str("All examples are automatically generated from the `examples/` directory.\n\n");
+    content
+        .push_str("All examples are automatically generated from the `examples/` directory.\n\n");
     content.push_str("To regenerate the gallery:\n\n");
     content.push_str("```bash\n");
     content.push_str("cargo run --bin generate_gallery\n");

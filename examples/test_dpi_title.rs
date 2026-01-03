@@ -16,9 +16,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (dpi, description) in &dpi_values {
         println!("📊 Testing DPI: {} - {}", dpi, description);
-        
+
         let filename = format!("dpi_title_test_{}.png", dpi);
-        
+
         // Create plot with current DPI
         let plot = Plot::new()
             .line(&x_data, &y_data)
@@ -26,9 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .xlabel("X Values")
             .ylabel("Y Values")
             .dpi(*dpi);
-            
+
         let result = plot.save(&filename);
-        
+
         result?;
         println!("   ✅ Generated: {}", filename);
     }
@@ -39,6 +39,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("• Title should be proportionally larger at higher DPI");
     println!("• Title should remain centered at all DPI values");
     println!("• No double scaling artifacts should be visible");
-    
+
     Ok(())
 }

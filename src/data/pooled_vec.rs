@@ -1,7 +1,7 @@
-use std::ops::{Deref, DerefMut, Index, IndexMut};
-use std::sync::{Arc, Mutex};
-use std::slice::{Iter, IterMut};
 use std::fmt;
+use std::ops::{Deref, DerefMut, Index, IndexMut};
+use std::slice::{Iter, IterMut};
+use std::sync::{Arc, Mutex};
 
 use super::memory_pool::{MemoryPool, PooledBuffer, SharedMemoryPool};
 
@@ -38,9 +38,9 @@ impl<T> PooledVec<T> {
     }
 
     /// Create a PooledVec from existing data
-    pub fn from_slice(data: &[T], pool: SharedMemoryPool<T>) -> Self 
-    where 
-        T: Clone 
+    pub fn from_slice(data: &[T], pool: SharedMemoryPool<T>) -> Self
+    where
+        T: Clone,
     {
         let mut vec = Self::with_capacity(data.len(), pool);
         vec.extend_from_slice(data);
@@ -67,7 +67,7 @@ impl<T> PooledVec<T> {
         if self.len >= self.capacity() {
             self.grow();
         }
-        
+
         unsafe {
             std::ptr::write(self.buffer.as_mut_ptr().add(self.len), value);
         }
@@ -80,16 +80,14 @@ impl<T> PooledVec<T> {
             None
         } else {
             self.len -= 1;
-            Some(unsafe {
-                std::ptr::read(self.buffer.as_ptr().add(self.len))
-            })
+            Some(unsafe { std::ptr::read(self.buffer.as_ptr().add(self.len)) })
         }
     }
 
     /// Extend the vector with elements from a slice
-    pub fn extend_from_slice(&mut self, other: &[T]) 
-    where 
-        T: Clone 
+    pub fn extend_from_slice(&mut self, other: &[T])
+    where
+        T: Clone,
     {
         self.reserve(other.len());
         for item in other {
@@ -113,16 +111,12 @@ impl<T> PooledVec<T> {
 
     /// Get a slice of all elements
     pub fn as_slice(&self) -> &[T] {
-        unsafe {
-            std::slice::from_raw_parts(self.buffer.as_ptr(), self.len)
-        }
+        unsafe { std::slice::from_raw_parts(self.buffer.as_ptr(), self.len) }
     }
 
     /// Get a mutable slice of all elements  
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe {
-            std::slice::from_raw_parts_mut(self.buffer.as_mut_ptr(), self.len)
-        }
+        unsafe { std::slice::from_raw_parts_mut(self.buffer.as_mut_ptr(), self.len) }
     }
 
     /// Get a raw pointer to the underlying data
@@ -138,7 +132,7 @@ impl<T> PooledVec<T> {
     /// Insert an element at the specified index
     pub fn insert(&mut self, index: usize, element: T) {
         assert!(index <= self.len, "Index out of bounds");
-        
+
         if self.len >= self.capacity() {
             self.grow();
         }
@@ -156,23 +150,23 @@ impl<T> PooledVec<T> {
     /// Remove and return the element at the specified index
     pub fn remove(&mut self, index: usize) -> T {
         assert!(index < self.len, "Index out of bounds");
-        
+
         unsafe {
             let ptr = self.buffer.as_mut_ptr().add(index);
             let element = std::ptr::read(ptr);
-            
+
             // Shift elements to the left
             std::ptr::copy(ptr.add(1), ptr, self.len - index - 1);
-            
+
             self.len -= 1;
             element
         }
     }
 
     /// Resize the vector to the specified length
-    pub fn resize(&mut self, new_len: usize, value: T) 
-    where 
-        T: Clone 
+    pub fn resize(&mut self, new_len: usize, value: T)
+    where
+        T: Clone,
     {
         if new_len > self.len {
             self.reserve(new_len - self.len);
@@ -216,19 +210,15 @@ impl<T> PooledVec<T> {
     /// Grow the buffer to at least the specified capacity
     fn grow_to(&mut self, min_capacity: usize) {
         let new_capacity = min_capacity.max(self.capacity() * 2);
-        
+
         // Get a new larger buffer from the pool
         let mut new_buffer = self.pool.acquire(new_capacity);
-        
+
         // Copy existing elements to the new buffer
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                self.buffer.as_ptr(),
-                new_buffer.as_mut_ptr(),
-                self.len
-            );
+            std::ptr::copy_nonoverlapping(self.buffer.as_ptr(), new_buffer.as_mut_ptr(), self.len);
         }
-        
+
         // Replace the old buffer with the new one
         self.buffer = new_buffer;
     }
@@ -333,9 +323,7 @@ impl<T> Iterator for PooledVecIntoIter<T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.vec.len() {
-            let item = unsafe {
-                std::ptr::read(self.vec.buffer.as_ptr().add(self.index))
-            };
+            let item = unsafe { std::ptr::read(self.vec.buffer.as_ptr().add(self.index)) };
             self.index += 1;
             Some(item)
         } else {
@@ -364,7 +352,7 @@ impl<T> From<Vec<T>> for PooledVec<T> {
         // This creates a new pool for the conversion
         let pool = SharedMemoryPool::new(vec.len().max(16));
         let mut pooled = Self::with_capacity(vec.len(), pool);
-        
+
         // Move elements from Vec to PooledVec
         for item in vec {
             pooled.push(item);
@@ -388,57 +376,57 @@ mod tests {
     fn test_pooled_vec_basic_operations() {
         let pool = SharedMemoryPool::new(100);
         let mut vec = PooledVec::new(pool);
-        
+
         assert_eq!(vec.len(), 0);
         assert!(vec.is_empty());
-        
+
         vec.push(1);
         vec.push(2);
         vec.push(3);
-        
+
         assert_eq!(vec.len(), 3);
         assert_eq!(vec[0], 1);
         assert_eq!(vec[1], 2);
         assert_eq!(vec[2], 3);
-        
+
         assert_eq!(vec.pop(), Some(3));
         assert_eq!(vec.len(), 2);
     }
 
-    #[test] 
+    #[test]
     fn test_pooled_vec_growth() {
         let pool = SharedMemoryPool::new(2); // Pool with small chunks
         let mut vec = PooledVec::with_capacity(2, pool);
-        
+
         vec.push(1);
         vec.push(2);
         let initial_capacity = vec.capacity();
-        
+
         vec.push(3); // Should trigger growth
         assert!(vec.capacity() >= initial_capacity);
         assert_eq!(vec.len(), 3);
         assert_eq!(vec[2], 3);
     }
-    
+
     #[test]
     fn test_pooled_vec_extend() {
         let pool = SharedMemoryPool::new(100);
         let mut vec = PooledVec::new(pool);
-        
+
         vec.extend_from_slice(&[1, 2, 3, 4, 5]);
         assert_eq!(vec.len(), 5);
         assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5]);
     }
-    
+
     #[test]
     fn test_pooled_vec_iteration() {
         let pool = SharedMemoryPool::new(100);
         let mut vec = PooledVec::new(pool);
         vec.extend_from_slice(&[1, 2, 3, 4, 5]);
-        
+
         let sum: i32 = vec.iter().sum();
         assert_eq!(sum, 15);
-        
+
         for item in &mut vec {
             *item *= 2;
         }
@@ -450,35 +438,35 @@ mod tests {
         let pool = SharedMemoryPool::new(100);
         let mut vec = PooledVec::new(pool);
         vec.extend_from_slice(&[1, 2, 4, 5]);
-        
+
         vec.insert(2, 3);
         assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5]);
-        
+
         let removed = vec.remove(2);
         assert_eq!(removed, 3);
         assert_eq!(vec.as_slice(), &[1, 2, 4, 5]);
     }
-    
+
     #[test]
     fn test_pooled_vec_resize() {
         let pool = SharedMemoryPool::new(100);
         let mut vec = PooledVec::new(pool);
         vec.extend_from_slice(&[1, 2, 3]);
-        
+
         vec.resize(5, 99);
         assert_eq!(vec.as_slice(), &[1, 2, 3, 99, 99]);
-        
+
         vec.resize(2, 0);
         assert_eq!(vec.as_slice(), &[1, 2]);
     }
-    
+
     #[test]
     fn test_pooled_vec_conversion() {
         let regular_vec = vec![1, 2, 3, 4, 5];
         let pooled_vec: PooledVec<i32> = regular_vec.into();
-        
+
         assert_eq!(pooled_vec.as_slice(), &[1, 2, 3, 4, 5]);
-        
+
         let back_to_vec: Vec<i32> = pooled_vec.into();
         assert_eq!(back_to_vec, vec![1, 2, 3, 4, 5]);
     }

@@ -34,15 +34,8 @@ use std::path::Path;
 /// line_plot(&x, &y, "output.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn line_plot<P: AsRef<Path>>(
-    x: &[f64],
-    y: &[f64],
-    path: P,
-) -> Result<()> {
-    Plot::new()
-        .line(&x, &y)
-        .auto_optimize()
-        .save(path)
+pub fn line_plot<P: AsRef<Path>>(x: &[f64], y: &[f64], path: P) -> Result<()> {
+    Plot::new().line(&x, &y).auto_optimize().save(path)
 }
 
 /// Create a line plot with a title
@@ -82,15 +75,8 @@ pub fn line_plot_with_title<P: AsRef<Path>>(
 /// scatter_plot(&x, &y, "scatter.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn scatter_plot<P: AsRef<Path>>(
-    x: &[f64],
-    y: &[f64],
-    path: P,
-) -> Result<()> {
-    Plot::new()
-        .scatter(&x, &y)
-        .auto_optimize()
-        .save(path)
+pub fn scatter_plot<P: AsRef<Path>>(x: &[f64], y: &[f64], path: P) -> Result<()> {
+    Plot::new().scatter(&x, &y).auto_optimize().save(path)
 }
 
 /// Create a scatter plot with a title
@@ -130,11 +116,7 @@ pub fn scatter_plot_with_title<P: AsRef<Path>>(
 /// bar_chart(&categories, &values, "bar.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn bar_chart<P: AsRef<Path>>(
-    categories: &[&str],
-    values: &[f64],
-    path: P,
-) -> Result<()> {
+pub fn bar_chart<P: AsRef<Path>>(categories: &[&str], values: &[f64], path: P) -> Result<()> {
     Plot::new()
         .bar(&categories, &values)
         .auto_optimize()
@@ -177,10 +159,7 @@ pub fn bar_chart_with_title<P: AsRef<Path>>(
 /// histogram(&data, "histogram.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn histogram<P: AsRef<Path>>(
-    data: &[f64],
-    path: P,
-) -> Result<()> {
+pub fn histogram<P: AsRef<Path>>(data: &[f64], path: P) -> Result<()> {
     Plot::new()
         .histogram(&data, None)
         .auto_optimize()
@@ -197,11 +176,7 @@ pub fn histogram<P: AsRef<Path>>(
 /// histogram_with_title(&data, "Distribution", "output.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn histogram_with_title<P: AsRef<Path>>(
-    data: &[f64],
-    title: &str,
-    path: P,
-) -> Result<()> {
+pub fn histogram_with_title<P: AsRef<Path>>(data: &[f64], title: &str, path: P) -> Result<()> {
     Plot::new()
         .histogram(&data, None)
         .title(title)

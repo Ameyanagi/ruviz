@@ -62,52 +62,51 @@ pub struct RenderPipeline {
 
 impl RenderPipeline {
     /// Create new render pipeline
-    pub fn new(
-        device: &GpuDevice,
-        config: RenderPipelineConfig,
-    ) -> Result<Self, PlottingError> {
+    pub fn new(device: &GpuDevice, config: RenderPipelineConfig) -> Result<Self, PlottingError> {
         // Create vertex buffer layout
         let vertex_buffer_layout = wgpu::VertexBufferLayout {
-            array_stride: config.vertex_attributes.iter().map(|attr| attr.format.size()).sum(),
+            array_stride: config
+                .vertex_attributes
+                .iter()
+                .map(|attr| attr.format.size())
+                .sum(),
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &config.vertex_attributes,
         };
-        
+
         // Create bind group layout (basic uniform layout)
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Render Pipeline Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-            ],
+                count: None,
+            }],
         });
-        
+
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
-        
+
         // Create shaders
         let vertex_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Vertex Shader"),
             source: wgpu::ShaderSource::Wgsl(config.vertex_shader.as_str().into()),
         });
-        
+
         let fragment_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Fragment Shader"),
             source: wgpu::ShaderSource::Wgsl(config.fragment_shader.as_str().into()),
         });
-        
+
         // Create render pipeline
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -152,7 +151,7 @@ impl RenderPipeline {
             multiview: None,
             cache: None,
         });
-        
+
         Ok(Self {
             pipeline,
             config,
@@ -161,32 +160,32 @@ impl RenderPipeline {
             use_count: 0,
         })
     }
-    
+
     /// Get wgpu render pipeline
     pub fn pipeline(&self) -> &wgpu::RenderPipeline {
         &self.pipeline
     }
-    
+
     /// Get bind group layout
     pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.bind_group_layout
     }
-    
+
     /// Get configuration
     pub fn config(&self) -> &RenderPipelineConfig {
         &self.config
     }
-    
+
     /// Increment use count
     pub fn use_pipeline(&mut self) {
         self.use_count += 1;
     }
-    
+
     /// Get use count
     pub fn use_count(&self) -> usize {
         self.use_count
     }
-    
+
     /// Get age since creation
     pub fn age(&self) -> std::time::Duration {
         self.created_at.elapsed()
@@ -204,10 +203,7 @@ pub struct ComputePipeline {
 
 impl ComputePipeline {
     /// Create new compute pipeline
-    pub fn new(
-        device: &GpuDevice,
-        config: ComputePipelineConfig,
-    ) -> Result<Self, PlottingError> {
+    pub fn new(device: &GpuDevice, config: ComputePipelineConfig) -> Result<Self, PlottingError> {
         // Create bind group layout for compute operations
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Compute Pipeline Bind Group Layout"),
@@ -247,20 +243,20 @@ impl ComputePipeline {
                 },
             ],
         });
-        
+
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Compute Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
-        
+
         // Create compute shader
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Compute Shader"),
             source: wgpu::ShaderSource::Wgsl(config.compute_shader.as_str().into()),
         });
-        
+
         // Create compute pipeline
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Compute Pipeline"),
@@ -270,7 +266,7 @@ impl ComputePipeline {
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
-        
+
         Ok(Self {
             pipeline,
             config,
@@ -279,32 +275,32 @@ impl ComputePipeline {
             use_count: 0,
         })
     }
-    
+
     /// Get wgpu compute pipeline
     pub fn pipeline(&self) -> &wgpu::ComputePipeline {
         &self.pipeline
     }
-    
+
     /// Get bind group layout
     pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.bind_group_layout
     }
-    
+
     /// Get configuration
     pub fn config(&self) -> &ComputePipelineConfig {
         &self.config
     }
-    
+
     /// Increment use count
     pub fn use_pipeline(&mut self) {
         self.use_count += 1;
     }
-    
+
     /// Get use count
     pub fn use_count(&self) -> usize {
         self.use_count
     }
-    
+
     /// Get age since creation
     pub fn age(&self) -> std::time::Duration {
         self.created_at.elapsed()
@@ -331,7 +327,7 @@ impl PipelineCache {
             max_cache_size: 32, // Reasonable limit for pipeline cache
         }
     }
-    
+
     /// Get or create render pipeline
     pub fn get_render_pipeline(
         &mut self,
@@ -345,21 +341,21 @@ impl PipelineCache {
             Ok(pipeline)
         } else {
             self.cache_misses += 1;
-            
+
             // Check cache size limit
             if self.render_pipelines.len() >= self.max_cache_size {
                 self.evict_old_render_pipelines();
             }
-            
+
             let pipeline = RenderPipeline::new(device, config.clone())?;
             self.render_pipelines.insert(config.clone(), pipeline);
-            
+
             let pipeline = self.render_pipelines.get_mut(&config).unwrap();
             pipeline.use_pipeline();
             Ok(pipeline)
         }
     }
-    
+
     /// Get or create compute pipeline
     pub fn get_compute_pipeline(
         &mut self,
@@ -373,69 +369,67 @@ impl PipelineCache {
             Ok(pipeline)
         } else {
             self.cache_misses += 1;
-            
+
             // Check cache size limit
             if self.compute_pipelines.len() >= self.max_cache_size {
                 self.evict_old_compute_pipelines();
             }
-            
+
             let pipeline = ComputePipeline::new(device, config.clone())?;
             self.compute_pipelines.insert(config.clone(), pipeline);
-            
+
             let pipeline = self.compute_pipelines.get_mut(&config).unwrap();
             pipeline.use_pipeline();
             Ok(pipeline)
         }
     }
-    
+
     /// Evict old render pipelines
     fn evict_old_render_pipelines(&mut self) {
         if self.render_pipelines.len() <= self.max_cache_size / 2 {
             return;
         }
-        
+
         // Find least recently used pipelines
-        let mut pipelines_by_usage: Vec<_> = self.render_pipelines
+        let mut pipelines_by_usage: Vec<_> = self
+            .render_pipelines
             .iter()
             .map(|(config, pipeline)| (config.clone(), pipeline.use_count(), pipeline.age()))
             .collect();
-        
+
         // Sort by use count (ascending) then by age (descending)
-        pipelines_by_usage.sort_by(|a, b| {
-            a.1.cmp(&b.1).then(b.2.cmp(&a.2))
-        });
-        
+        pipelines_by_usage.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)));
+
         // Remove least used pipelines
         let to_remove = pipelines_by_usage.len() / 4; // Remove 25%
         for (config, _, _) in pipelines_by_usage.into_iter().take(to_remove) {
             self.render_pipelines.remove(&config);
         }
     }
-    
+
     /// Evict old compute pipelines
     fn evict_old_compute_pipelines(&mut self) {
         if self.compute_pipelines.len() <= self.max_cache_size / 2 {
             return;
         }
-        
+
         // Find least recently used pipelines
-        let mut pipelines_by_usage: Vec<_> = self.compute_pipelines
+        let mut pipelines_by_usage: Vec<_> = self
+            .compute_pipelines
             .iter()
             .map(|(config, pipeline)| (config.clone(), pipeline.use_count(), pipeline.age()))
             .collect();
-        
+
         // Sort by use count (ascending) then by age (descending)
-        pipelines_by_usage.sort_by(|a, b| {
-            a.1.cmp(&b.1).then(b.2.cmp(&a.2))
-        });
-        
+        pipelines_by_usage.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.cmp(&a.2)));
+
         // Remove least used pipelines
         let to_remove = pipelines_by_usage.len() / 4; // Remove 25%
         for (config, _, _) in pipelines_by_usage.into_iter().take(to_remove) {
             self.compute_pipelines.remove(&config);
         }
     }
-    
+
     /// Clear all cached pipelines
     pub fn clear(&mut self) {
         self.render_pipelines.clear();
@@ -443,7 +437,7 @@ impl PipelineCache {
         self.cache_hits = 0;
         self.cache_misses = 0;
     }
-    
+
     /// Get cache statistics
     pub fn get_stats(&self) -> PipelineStats {
         PipelineStats {
@@ -452,7 +446,7 @@ impl PipelineCache {
             cache_misses: self.cache_misses,
         }
     }
-    
+
     /// Get cache efficiency (hit rate)
     pub fn cache_efficiency(&self) -> f32 {
         let total_requests = self.cache_hits + self.cache_misses;

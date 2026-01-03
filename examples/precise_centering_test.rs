@@ -14,20 +14,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("ABC", "ABC three chars"),
         ("CENTERED", "CENTERED test"),
         ("Hello World Test", "Hello World Test medium"),
-        ("This Is A Very Long Title That Should Be Perfectly Centered", "This Is A Very Long Title That Should Be Perfectly Centered long"),
+        (
+            "This Is A Very Long Title That Should Be Perfectly Centered",
+            "This Is A Very Long Title That Should Be Perfectly Centered long",
+        ),
     ];
 
     for (title, filename) in test_cases {
         println!("📊 Testing title centering: '{}'", title);
-        
+
         let plot = Plot::new()
             .line(&x_data, &y_data)
             .title(title)
             .xlabel("X axis")
             .ylabel("Y axis")
             .dpi(96);
-        
-        let output_filename = format!("precise_center_{}.png", filename.replace(" ", "_").replace(",", "").to_lowercase());
+
+        let output_filename = format!(
+            "precise_center_{}.png",
+            filename.replace(" ", "_").replace(",", "").to_lowercase()
+        );
         plot.save(&output_filename)?;
         println!("   ✅ Generated: {}", output_filename);
     }
@@ -38,6 +44,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("• Check if titles are perfectly centered over the entire canvas");
     println!("• Note any visual asymmetry in spacing");
     println!("• Compare short vs long titles for consistency");
-    
+
     Ok(())
 }

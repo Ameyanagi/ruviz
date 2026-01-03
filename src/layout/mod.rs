@@ -1,7 +1,4 @@
 //! Layout and positioning
-
-pub mod grid;
-pub mod legend;
-pub mod margin;
-
-// Future implementations will export layout types here
+//!
+//! This module will contain layout utilities for arranging plot elements.
+//! For now, layout is handled in `core::layout`.

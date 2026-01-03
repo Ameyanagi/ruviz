@@ -8,7 +8,10 @@
 
 use crate::{
     core::error::{PlottingError, Result},
-    render::{Color, text::{get_font_system, get_swash_cache}},
+    render::{
+        Color,
+        text::{get_font_system, get_swash_cache},
+    },
 };
 use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, Metrics, Shaping, Stretch, Style, Weight,
@@ -110,9 +113,9 @@ impl CosmicTextRenderer {
                                     + background.blue() as f32 * inv_alpha)
                                     as u8;
 
-                                if let Some(blended) =
-                                    PremultipliedColorU8::from_rgba(blended_r, blended_g, blended_b, 255)
-                                {
+                                if let Some(blended) = PremultipliedColorU8::from_rgba(
+                                    blended_r, blended_g, blended_b, 255,
+                                ) {
                                     pixmap.pixels_mut()[pixmap_idx] = blended;
                                 }
                             }
@@ -198,8 +201,9 @@ impl CosmicTextRenderer {
         let text_height = (max_y - min_y).ceil().max(1.0) as u32;
 
         // Create temporary pixmap for horizontal text
-        let mut temp_pixmap = Pixmap::new(text_width, text_height)
-            .ok_or_else(|| PlottingError::RenderError("Failed to create temp pixmap".to_string()))?;
+        let mut temp_pixmap = Pixmap::new(text_width, text_height).ok_or_else(|| {
+            PlottingError::RenderError("Failed to create temp pixmap".to_string())
+        })?;
         temp_pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
         let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);

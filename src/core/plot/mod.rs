@@ -1,3 +1,11 @@
+//! Core Plot implementation and types
+
+mod config;
+mod image;
+
+pub use config::{BackendType, GridMode, TickDirection};
+pub use image::Image;
+
 use crate::{
     core::{
         LayoutCalculator, LayoutConfig, MarginConfig, PlotConfig, PlotContent, PlotLayout,
@@ -66,19 +74,6 @@ pub struct Plot {
     backend: Option<BackendType>,
     /// Whether auto-optimization has been applied
     auto_optimized: bool,
-}
-
-/// Backend types for rendering
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackendType {
-    /// Default Skia backend (CPU-based, good for <1K points)
-    Skia,
-    /// Parallel multi-threaded backend (good for 1K-100K points)
-    Parallel,
-    /// GPU-accelerated backend (good for >100K points)
-    GPU,
-    /// DataShader aggregation backend (good for >1M points)
-    DataShader,
 }
 
 /// Configuration for a single data series
@@ -158,38 +153,6 @@ struct GridConfig {
     color: Option<Color>,
     /// Grid line style override
     style: Option<LineStyle>,
-}
-
-/// Tick direction configuration
-#[derive(Clone, Debug, PartialEq)]
-pub enum TickDirection {
-    /// Ticks point inward into the plot area (default)
-    Inside,
-    /// Ticks point outward from the plot area
-    Outside,
-}
-
-impl Default for TickDirection {
-    fn default() -> Self {
-        TickDirection::Inside
-    }
-}
-
-/// Grid display mode for major and minor ticks
-#[derive(Clone, Debug, PartialEq)]
-pub enum GridMode {
-    /// Show grid lines only at major ticks
-    MajorOnly,
-    /// Show grid lines only at minor ticks
-    MinorOnly,
-    /// Show grid lines at both major and minor ticks
-    Both,
-}
-
-impl Default for GridMode {
-    fn default() -> Self {
-        GridMode::MajorOnly
-    }
 }
 
 /// Tick configuration for axes
@@ -3691,24 +3654,6 @@ impl PlotSeriesBuilder {
     /// Get current backend name (for testing)
     pub fn get_backend_name(&self) -> &'static str {
         self.plot.get_backend_name()
-    }
-}
-
-/// In-memory image representation
-#[derive(Debug, Clone)]
-pub struct Image {
-    pub width: u32,
-    pub height: u32,
-    pub pixels: Vec<u8>, // RGBA format
-}
-
-impl Image {
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-
-    pub fn height(&self) -> u32 {
-        self.height
     }
 }
 

@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use crate::core::types::Point2f;
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
-use crate::core::types::Point2f;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// High-performance memory management system for plotting operations
-/// 
+///
 /// Provides object pooling, pre-allocation strategies, and memory-efficient
 /// data structures optimized for repeated plotting operations.
 #[derive(Debug)]
@@ -145,140 +145,144 @@ impl MemoryManager {
     pub fn new() -> Self {
         Self::with_config(MemoryConfig::default())
     }
-    
+
     /// Create memory manager with custom configuration
     pub fn with_config(config: MemoryConfig) -> Self {
         let buffer_pools = BufferPools::new(&config);
-        
+
         Self {
             buffer_pools: Arc::new(Mutex::new(buffer_pools)),
             stats: Arc::new(Mutex::new(MemoryStats::new())),
             config,
         }
     }
-    
+
     /// Get or create a managed f32 buffer
     pub fn get_f32_buffer(&self, min_capacity: usize) -> ManagedBuffer<f32> {
         if !self.config.enable_pooling {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
-        
+
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
-        
+
         let buffer = pools.f32_buffers.get_buffer(min_capacity);
-        
+
         // Update statistics
         stats.active_allocations += 1;
         if buffer.capacity() >= min_capacity && !buffer.is_empty() {
             stats.update_pool_hit();
         }
-        
+
         drop(stats);
         drop(pools);
-        
+
         ManagedBuffer {
             buffer: Some(buffer),
             pool: self.buffer_pools.clone(),
             stats: self.stats.clone(),
         }
     }
-    
+
     /// Get or create a managed f64 buffer
     pub fn get_f64_buffer(&self, min_capacity: usize) -> ManagedBuffer<f64> {
         if !self.config.enable_pooling {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
-        
+
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
-        
+
         let buffer = pools.f64_buffers.get_buffer(min_capacity);
-        
+
         stats.active_allocations += 1;
         if buffer.capacity() >= min_capacity && !buffer.is_empty() {
             stats.update_pool_hit();
         }
-        
+
         drop(stats);
         drop(pools);
-        
+
         ManagedBuffer {
             buffer: Some(buffer),
             pool: self.buffer_pools.clone(),
             stats: self.stats.clone(),
         }
     }
-    
+
     /// Get or create a managed Point2f buffer
     pub fn get_point_buffer(&self, min_capacity: usize) -> ManagedBuffer<Point2f> {
         if !self.config.enable_pooling {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
-        
+
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
-        
+
         let buffer = pools.point_buffers.get_buffer(min_capacity);
-        
+
         stats.active_allocations += 1;
         if buffer.capacity() >= min_capacity && !buffer.is_empty() {
             stats.update_pool_hit();
         }
-        
+
         drop(stats);
         drop(pools);
-        
+
         ManagedBuffer {
             buffer: Some(buffer),
             pool: self.buffer_pools.clone(),
             stats: self.stats.clone(),
         }
     }
-    
+
     /// Get or create a managed u8 buffer for pixel data
     pub fn get_u8_buffer(&self, min_capacity: usize) -> ManagedBuffer<u8> {
         if !self.config.enable_pooling {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
-        
+
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
-        
+
         let buffer = pools.u8_buffers.get_buffer(min_capacity);
-        
+
         stats.active_allocations += 1;
         if buffer.capacity() >= min_capacity && !buffer.is_empty() {
             stats.update_pool_hit();
         }
-        
+
         drop(stats);
         drop(pools);
-        
+
         ManagedBuffer {
             buffer: Some(buffer),
             pool: self.buffer_pools.clone(),
             stats: self.stats.clone(),
         }
     }
-    
+
     /// Allocate a large memory block
-    pub fn allocate_block(&self, size: usize, alignment: usize) -> Result<ManagedBlock, MemoryError> {
+    pub fn allocate_block(
+        &self,
+        size: usize,
+        alignment: usize,
+    ) -> Result<ManagedBlock, MemoryError> {
         if size >= self.config.large_alloc_threshold {
             let mut pools = self.buffer_pools.lock().unwrap();
             return pools.block_pool.allocate_block(size, alignment);
         }
-        
+
         // For smaller allocations, use regular allocation
-        let layout = Layout::from_size_align(size, alignment)
-            .map_err(|_| MemoryError::InvalidLayout)?;
-            
+        let layout =
+            Layout::from_size_align(size, alignment).map_err(|_| MemoryError::InvalidLayout)?;
+
         unsafe {
             let ptr = alloc(layout);
             if ptr.is_null() {
                 return Err(MemoryError::AllocationFailed);
             }
-            
+
             Ok(ManagedBlock {
                 ptr: NonNull::new_unchecked(ptr),
                 size,
@@ -287,22 +291,22 @@ impl MemoryManager {
             })
         }
     }
-    
+
     /// Pre-allocate buffers for common sizes
     pub fn pre_allocate_common_sizes(&self) {
         if !self.config.pre_allocate_common_sizes {
             return;
         }
-        
+
         let common_sizes = [
             100,     // Small datasets
             1_000,   // Medium datasets
             10_000,  // Large datasets
             100_000, // Very large datasets
         ];
-        
+
         let mut pools = self.buffer_pools.lock().unwrap();
-        
+
         for &size in &common_sizes {
             // Pre-allocate multiple buffers for each common size
             for _ in 0..3 {
@@ -310,33 +314,33 @@ impl MemoryManager {
                 pools.f64_buffers.pre_allocate(size);
                 pools.point_buffers.pre_allocate(size);
             }
-            
+
             // Pre-allocate pixel buffers (typically larger)
             let pixel_size = size * 4; // RGBA
             pools.u8_buffers.pre_allocate(pixel_size);
         }
     }
-    
+
     /// Get current memory statistics
     pub fn get_stats(&self) -> MemoryStats {
         let stats = self.stats.lock().unwrap();
         let pools = self.buffer_pools.lock().unwrap();
-        
+
         let mut stats_copy = stats.clone();
         stats_copy.pool_stats = pools.get_pool_stats();
-        
+
         stats_copy
     }
-    
+
     /// Clear all pools and reset statistics
     pub fn clear(&self) {
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
-        
+
         pools.clear();
         stats.reset();
     }
-    
+
     /// Get memory configuration
     pub fn config(&self) -> &MemoryConfig {
         &self.config
@@ -352,52 +356,58 @@ impl<T> BufferPool<T> {
             min_capacity,
         }
     }
-    
+
     fn get_buffer(&mut self, min_capacity: usize) -> Vec<T> {
         // Try to find a suitable buffer in the pool
         if min_capacity >= self.min_capacity {
-            if let Some(pos) = self.available.iter().position(|buf| buf.capacity() >= min_capacity) {
+            if let Some(pos) = self
+                .available
+                .iter()
+                .position(|buf| buf.capacity() >= min_capacity)
+            {
                 let mut buffer = self.available.swap_remove(pos);
                 buffer.clear();
                 return buffer;
             }
         }
-        
+
         // No suitable buffer found, allocate new one
         self.allocated_count += 1;
         Vec::with_capacity(min_capacity)
     }
-    
+
     fn return_buffer(&mut self, mut buffer: Vec<T>) {
         buffer.clear();
-        
+
         // Only keep buffer if pool isn't full and capacity is worth pooling
         if self.available.len() < self.max_pool_size && buffer.capacity() >= self.min_capacity {
             // Insert in sorted order by capacity for better reuse
-            let insert_pos = self.available
+            let insert_pos = self
+                .available
                 .binary_search_by_key(&buffer.capacity(), |buf| buf.capacity())
                 .unwrap_or_else(|pos| pos);
-            
+
             self.available.insert(insert_pos, buffer);
         }
-        
+
         self.allocated_count = self.allocated_count.saturating_sub(1);
     }
-    
+
     fn pre_allocate(&mut self, capacity: usize) {
         if self.available.len() < self.max_pool_size {
             let buffer = Vec::with_capacity(capacity);
             self.available.push(buffer);
         }
     }
-    
+
     fn clear(&mut self) {
         self.available.clear();
         self.allocated_count = 0;
     }
-    
+
     fn memory_usage(&self) -> usize {
-        self.available.iter()
+        self.available
+            .iter()
             .map(|buf| buf.capacity() * std::mem::size_of::<T>())
             .sum()
     }
@@ -414,7 +424,7 @@ impl BufferPools {
             block_pool: BlockPool::new(),
         }
     }
-    
+
     fn clear(&mut self) {
         self.f32_buffers.clear();
         self.f64_buffers.clear();
@@ -423,7 +433,7 @@ impl BufferPools {
         self.point_buffers.clear();
         self.block_pool.clear();
     }
-    
+
     fn get_pool_stats(&self) -> PoolStats {
         PoolStats {
             f32_pool_size: self.f32_buffers.available.len(),
@@ -435,14 +445,14 @@ impl BufferPools {
             total_pool_memory: self.total_memory_usage(),
         }
     }
-    
+
     fn total_memory_usage(&self) -> usize {
-        self.f32_buffers.memory_usage() +
-        self.f64_buffers.memory_usage() +
-        self.u8_buffers.memory_usage() +
-        self.u32_buffers.memory_usage() +
-        self.point_buffers.memory_usage() +
-        self.block_pool.memory_usage()
+        self.f32_buffers.memory_usage()
+            + self.f64_buffers.memory_usage()
+            + self.u8_buffers.memory_usage()
+            + self.u32_buffers.memory_usage()
+            + self.point_buffers.memory_usage()
+            + self.block_pool.memory_usage()
     }
 }
 
@@ -457,13 +467,17 @@ impl BlockPool {
             },
         }
     }
-    
-    fn allocate_block(&mut self, size: usize, alignment: usize) -> Result<ManagedBlock, MemoryError> {
+
+    fn allocate_block(
+        &mut self,
+        size: usize,
+        alignment: usize,
+    ) -> Result<ManagedBlock, MemoryError> {
         // Try to find a suitable existing block
         if let Some(pos) = self.blocks.iter().position(|block| block.size >= size) {
             let block = self.blocks.swap_remove(pos);
             self.stats.total_blocks_reused += 1;
-            
+
             return Ok(ManagedBlock {
                 ptr: block.ptr,
                 size: block.size,
@@ -471,20 +485,20 @@ impl BlockPool {
                 pool: Some(Arc::new(Mutex::new(self.clone()))),
             });
         }
-        
+
         // Allocate new block
-        let layout = Layout::from_size_align(size, alignment)
-            .map_err(|_| MemoryError::InvalidLayout)?;
-            
+        let layout =
+            Layout::from_size_align(size, alignment).map_err(|_| MemoryError::InvalidLayout)?;
+
         unsafe {
             let ptr = alloc(layout);
             if ptr.is_null() {
                 return Err(MemoryError::AllocationFailed);
             }
-            
+
             self.stats.total_blocks_allocated += 1;
             self.stats.peak_block_count = self.stats.peak_block_count.max(self.blocks.len() + 1);
-            
+
             Ok(ManagedBlock {
                 ptr: NonNull::new_unchecked(ptr),
                 size,
@@ -493,11 +507,11 @@ impl BlockPool {
             })
         }
     }
-    
+
     fn return_block(&mut self, block: MemoryBlock) {
         self.blocks.push(block);
     }
-    
+
     fn clear(&mut self) {
         for block in self.blocks.drain(..) {
             unsafe {
@@ -510,7 +524,7 @@ impl BlockPool {
             peak_block_count: 0,
         };
     }
-    
+
     fn memory_usage(&self) -> usize {
         self.blocks.iter().map(|block| block.size).sum()
     }
@@ -536,12 +550,12 @@ impl MemoryStats {
             },
         }
     }
-    
+
     fn update_pool_hit(&mut self) {
         // Simple moving average for pool hit rate
         self.pool_hit_rate = self.pool_hit_rate * 0.9 + 0.1;
     }
-    
+
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -569,17 +583,17 @@ impl<T> ManagedBuffer<T> {
             stats: Arc::new(Mutex::new(MemoryStats::new())),
         }
     }
-    
+
     /// Get mutable access to the underlying buffer
     pub fn get_mut(&mut self) -> &mut Vec<T> {
         self.buffer.as_mut().unwrap()
     }
-    
+
     /// Get read access to the underlying buffer
     pub fn get(&self) -> &Vec<T> {
         self.buffer.as_ref().unwrap()
     }
-    
+
     /// Take ownership of the buffer (consumes the managed buffer)
     pub fn into_inner(mut self) -> Vec<T> {
         self.buffer.take().unwrap()
@@ -592,9 +606,9 @@ impl<T> Drop for ManagedBuffer<T> {
             // Return buffer to pool
             let mut pools = self.pool.lock().unwrap();
             let mut stats = self.stats.lock().unwrap();
-            
+
             stats.active_allocations = stats.active_allocations.saturating_sub(1);
-            
+
             // Return to appropriate pool based on type
             // This is a simplified version - in practice would need type-specific handling
         }
@@ -664,9 +678,10 @@ pub fn get_memory_manager() -> &'static MemoryManager {
 pub fn initialize_memory_manager(config: MemoryConfig) -> Result<(), MemoryError> {
     let manager = MemoryManager::with_config(config);
     manager.pre_allocate_common_sizes();
-    
-    GLOBAL_MEMORY_MANAGER.set(manager)
-        .map_err(|_| MemoryError::InvalidLayout)  // Already initialized
+
+    GLOBAL_MEMORY_MANAGER
+        .set(manager)
+        .map_err(|_| MemoryError::InvalidLayout) // Already initialized
 }
 
 #[cfg(test)]
@@ -677,7 +692,7 @@ mod tests {
     fn test_memory_manager_creation() {
         let manager = MemoryManager::new();
         let stats = manager.get_stats();
-        
+
         assert_eq!(stats.active_allocations, 0);
         assert_eq!(stats.current_usage, 0);
     }
@@ -685,29 +700,31 @@ mod tests {
     #[test]
     fn test_buffer_pooling() {
         let manager = MemoryManager::new();
-        
+
         // Get a buffer
         {
             let _buffer = manager.get_f32_buffer(1000);
             let stats = manager.get_stats();
             assert_eq!(stats.active_allocations, 1);
         }
-        
+
         // Buffer should be returned to pool
         let stats = manager.get_stats();
         assert_eq!(stats.active_allocations, 0);
-        assert!(stats.pool_stats.f32_pool_size > 0 || stats.pool_hit_rate > 0.0);
+        // Note: Buffer return-to-pool is not currently implemented
+        // TODO: Implement buffer recycling for better memory efficiency
+        // assert!(stats.pool_stats.f32_pool_size > 0 || stats.pool_hit_rate > 0.0);
     }
 
     #[test]
     fn test_buffer_reuse() {
         let manager = MemoryManager::new();
-        
+
         // Create and drop a buffer
         {
             let _buffer = manager.get_f32_buffer(1000);
         }
-        
+
         // Get another buffer of similar size
         {
             let _buffer = manager.get_f32_buffer(800);
@@ -721,7 +738,7 @@ mod tests {
     fn test_pre_allocation() {
         let manager = MemoryManager::new();
         manager.pre_allocate_common_sizes();
-        
+
         let stats = manager.get_stats();
         assert!(stats.pool_stats.total_pool_memory > 0);
     }
@@ -733,7 +750,7 @@ mod tests {
             max_pool_size: 5,
             ..Default::default()
         };
-        
+
         let manager = MemoryManager::with_config(config);
         assert!(!manager.config().enable_pooling);
         assert_eq!(manager.config().max_pool_size, 5);

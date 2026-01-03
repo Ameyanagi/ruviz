@@ -1,5 +1,5 @@
 /// Line style enumeration for plot lines and borders
-/// 
+///
 /// Defines different visual styles for drawing lines in plots
 #[derive(Debug, Clone, PartialEq)]
 pub enum LineStyle {
@@ -36,22 +36,23 @@ impl LineStyle {
             }
         }
     }
-    
+
     /// Create a custom line style from dash pattern
     /// Pattern should alternate between dash length and gap length
     /// Example: vec![4.0, 2.0, 1.0, 2.0] creates dash-dot pattern
-    pub fn custom<I>(pattern: I) -> Self 
-    where 
-        I: IntoIterator<Item = f32>
+    pub fn custom<I>(pattern: I) -> Self
+    where
+        I: IntoIterator<Item = f32>,
     {
-        let pattern: Vec<f32> = pattern.into_iter()
+        let pattern: Vec<f32> = pattern
+            .into_iter()
             .map(|x| x.abs()) // Ensure positive values
             .filter(|&x| x > 0.0) // Remove zero values
             .collect();
-        
+
         LineStyle::Custom(pattern)
     }
-    
+
     /// Get a descriptive name for the line style
     pub fn name(&self) -> &'static str {
         match self {
@@ -63,17 +64,17 @@ impl LineStyle {
             LineStyle::Custom(_) => "custom",
         }
     }
-    
+
     /// Check if this is a solid line
     pub fn is_solid(&self) -> bool {
         matches!(self, LineStyle::Solid)
     }
-    
+
     /// Check if this is a patterned (non-solid) line
     pub fn is_patterned(&self) -> bool {
         !self.is_solid()
     }
-    
+
     /// Get pattern length (total length of one complete pattern cycle)
     pub fn pattern_length(&self) -> f32 {
         match self.to_dash_array() {
@@ -81,13 +82,13 @@ impl LineStyle {
             Some(pattern) => pattern.iter().sum(),
         }
     }
-    
+
     /// Scale the pattern by a factor (useful for different line widths)
     pub fn scaled(&self, factor: f32) -> Self {
         if factor <= 0.0 {
             return self.clone();
         }
-        
+
         match self {
             LineStyle::Custom(pattern) => {
                 LineStyle::Custom(pattern.iter().map(|&x| x * factor).collect())
@@ -180,7 +181,7 @@ impl MarkerStyle {
             MarkerStyle::DiamondOpen => "diamond-open",
         }
     }
-    
+
     /// Check if this is a filled marker
     pub fn is_filled(&self) -> bool {
         matches!(
@@ -193,7 +194,7 @@ impl MarkerStyle {
                 | MarkerStyle::Star
         )
     }
-    
+
     /// Check if this is a hollow/open marker
     pub fn is_hollow(&self) -> bool {
         matches!(
@@ -204,7 +205,7 @@ impl MarkerStyle {
                 | MarkerStyle::DiamondOpen
         )
     }
-    
+
     /// Check if this is a line-based marker (plus, cross)
     pub fn is_line_based(&self) -> bool {
         matches!(self, MarkerStyle::Plus | MarkerStyle::Cross)
@@ -233,18 +234,22 @@ mod tests {
         assert_eq!(LineStyle::Solid.to_dash_array(), None);
         assert_eq!(LineStyle::Dashed.to_dash_array(), Some(vec![5.0, 5.0]));
         assert_eq!(LineStyle::Dotted.to_dash_array(), Some(vec![1.0, 2.0]));
-        assert_eq!(LineStyle::DashDot.to_dash_array(), Some(vec![8.0, 3.0, 1.0, 3.0]));
+        assert_eq!(
+            LineStyle::DashDot.to_dash_array(),
+            Some(vec![8.0, 3.0, 1.0, 3.0])
+        );
     }
 
     #[test]
     fn test_custom_line_style() {
         let custom = LineStyle::custom(vec![4.0, 2.0, 1.0, 2.0]);
         assert_eq!(custom.to_dash_array(), Some(vec![4.0, 2.0, 1.0, 2.0]));
-        
-        // Test filtering of invalid values
+
+        // Test filtering of zero values and abs() of negative values
+        // -2.0 becomes 2.0 (abs), 0.0 is filtered out
         let custom_filtered = LineStyle::custom(vec![4.0, 0.0, -2.0, 3.0]);
-        assert_eq!(custom_filtered.to_dash_array(), Some(vec![4.0, 3.0]));
-        
+        assert_eq!(custom_filtered.to_dash_array(), Some(vec![4.0, 2.0, 3.0]));
+
         // Test empty pattern
         let empty = LineStyle::custom(Vec::<f32>::new());
         assert_eq!(empty.to_dash_array(), None);
@@ -269,10 +274,10 @@ mod tests {
     fn test_line_style_scaling() {
         let scaled_dashed = LineStyle::Dashed.scaled(2.0);
         assert_eq!(scaled_dashed.to_dash_array(), Some(vec![10.0, 10.0]));
-        
+
         let scaled_solid = LineStyle::Solid.scaled(2.0);
         assert_eq!(scaled_solid, LineStyle::Solid); // Solid unchanged
-        
+
         let custom = LineStyle::custom(vec![2.0, 1.0]);
         let scaled_custom = custom.scaled(3.0);
         assert_eq!(scaled_custom.to_dash_array(), Some(vec![6.0, 3.0]));
@@ -311,7 +316,10 @@ mod tests {
     #[test]
     fn test_display() {
         assert_eq!(LineStyle::Solid.to_string(), "solid");
-        assert_eq!(LineStyle::custom(vec![1.0, 2.5]).to_string(), "custom(1.0, 2.5)");
+        assert_eq!(
+            LineStyle::custom(vec![1.0, 2.5]).to_string(),
+            "custom(1.0, 2.5)"
+        );
         assert_eq!(MarkerStyle::Circle.to_string(), "circle");
     }
 }

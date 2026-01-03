@@ -11,19 +11,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let test_cases = vec![
         ("Short", "title_center_short.png"),
         ("Medium Length Title", "title_center_medium.png"),
-        ("Very Long Title That Should Still Be Centered Properly", "title_center_long.png"),
-        ("Title with Numbers 12345 and Symbols !@#$%", "title_center_mixed.png"),
+        (
+            "Very Long Title That Should Still Be Centered Properly",
+            "title_center_long.png",
+        ),
+        (
+            "Title with Numbers 12345 and Symbols !@#$%",
+            "title_center_mixed.png",
+        ),
     ];
 
     for (title, filename) in test_cases {
         println!("📊 Testing title: '{}'", title);
-        
+
         let plot = Plot::new()
             .line(&x_data, &y_data)
             .title(title)
             .xlabel("X Values")
             .ylabel("Y Values");
-        
+
         plot.save(filename)?;
         println!("   ✅ Generated: {}", filename);
     }
@@ -34,6 +40,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("• No more estimation errors - using actual text width measurement");
     println!("• Works correctly for titles of any length and character mix");
     println!("• Centering is independent of plot area margins");
-    
+
     Ok(())
 }

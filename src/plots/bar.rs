@@ -1,1 +1,0 @@
-// Bar plot implementation (future)

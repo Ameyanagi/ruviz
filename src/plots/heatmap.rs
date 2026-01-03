@@ -1,1 +1,0 @@
-// Heatmap implementation (future)

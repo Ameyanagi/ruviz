@@ -1,8 +1,9 @@
 //! Axis management and scaling
+//!
+//! This module provides axis configuration, tick generation, and scale transformations.
 
-pub mod axis;
-pub mod ticks;
 pub mod scale;
-pub mod labels;
+pub mod ticks;
 
-// Future implementations will export axis types here
+pub use scale::{LinearScale, LogScale, Scale};
+pub use ticks::{generate_minor_ticks, generate_ticks};

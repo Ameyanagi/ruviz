@@ -100,8 +100,7 @@ fn test_backend_consistency_bar() {
 fn test_backend_consistency_histogram() {
     // GIVEN: Distribution data
     let data = vec![
-        1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0, 1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5, 4.5,
-        5.5,
+        1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0, 1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5, 4.5, 5.5,
     ];
 
     // WHEN: Rendering histogram
@@ -218,12 +217,18 @@ fn test_backend_consistency_dpi() {
         assert!(
             width_diff <= 1,
             "{} DPI width mismatch: {} vs {} (diff: {})",
-            dpi, img.width(), expected_width, width_diff
+            dpi,
+            img.width(),
+            expected_width,
+            width_diff
         );
         assert!(
             height_diff <= 1,
             "{} DPI height mismatch: {} vs {} (diff: {})",
-            dpi, img.height(), expected_height, height_diff
+            dpi,
+            img.height(),
+            expected_height,
+            height_diff
         );
     }
 }
@@ -245,8 +250,7 @@ fn test_backend_consistency_dimensions() {
         // THEN: Should produce correct dimensions
         assert!(result.is_ok(), "{}x{} failed", width, height);
 
-        let img = image::open(format!("test_output/backend_dim_{}x{}.png", width, height))
-            .unwrap();
+        let img = image::open(format!("test_output/backend_dim_{}x{}.png", width, height)).unwrap();
         assert_eq!(img.width(), width);
         assert_eq!(img.height(), height);
     }

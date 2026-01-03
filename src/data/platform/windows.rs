@@ -62,12 +62,25 @@ struct PERFORMANCE_INFORMATION {
 extern "system" {
     fn GlobalMemoryStatusEx(lpBuffer: *mut MEMORYSTATUSEX) -> BOOL;
     fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO) -> ();
-    fn GetPerformanceInfo(pPerformanceInformation: *mut PERFORMANCE_INFORMATION, cb: DWORD) -> BOOL;
+    fn GetPerformanceInfo(pPerformanceInformation: *mut PERFORMANCE_INFORMATION, cb: DWORD)
+    -> BOOL;
     fn GetCurrentProcess() -> HANDLE;
-    fn SetProcessWorkingSetSize(hProcess: HANDLE, dwMinimumWorkingSetSize: usize, dwMaximumWorkingSetSize: usize) -> BOOL;
-    fn GetLogicalProcessorInformation(Buffer: *mut std::ffi::c_void, ReturnedLength: *mut DWORD) -> BOOL;
+    fn SetProcessWorkingSetSize(
+        hProcess: HANDLE,
+        dwMinimumWorkingSetSize: usize,
+        dwMaximumWorkingSetSize: usize,
+    ) -> BOOL;
+    fn GetLogicalProcessorInformation(
+        Buffer: *mut std::ffi::c_void,
+        ReturnedLength: *mut DWORD,
+    ) -> BOOL;
     fn GetLargePageMinimum() -> usize;
-    fn VirtualAlloc(lpAddress: *mut std::ffi::c_void, dwSize: usize, flAllocationType: DWORD, flProtect: DWORD) -> *mut std::ffi::c_void;
+    fn VirtualAlloc(
+        lpAddress: *mut std::ffi::c_void,
+        dwSize: usize,
+        flAllocationType: DWORD,
+        flProtect: DWORD,
+    ) -> *mut std::ffi::c_void;
     fn VirtualFree(lpAddress: *mut std::ffi::c_void, dwSize: usize, dwFreeType: DWORD) -> BOOL;
 }
 
@@ -83,12 +96,14 @@ pub fn get_total_memory() -> Result<u64, PlottingError> {
     unsafe {
         let mut memory_status: MEMORYSTATUSEX = mem::zeroed();
         memory_status.dwLength = mem::size_of::<MEMORYSTATUSEX>() as DWORD;
-        
+
         let result = GlobalMemoryStatusEx(&mut memory_status);
         if result != FALSE {
             Ok(memory_status.ullTotalPhys)
         } else {
-            Err(PlottingError::SystemError("Failed to get total memory".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get total memory".to_string(),
+            ))
         }
     }
 }
@@ -98,12 +113,14 @@ pub fn get_available_memory() -> Result<u64, PlottingError> {
     unsafe {
         let mut memory_status: MEMORYSTATUSEX = mem::zeroed();
         memory_status.dwLength = mem::size_of::<MEMORYSTATUSEX>() as DWORD;
-        
+
         let result = GlobalMemoryStatusEx(&mut memory_status);
         if result != FALSE {
             Ok(memory_status.ullAvailPhys)
         } else {
-            Err(PlottingError::SystemError("Failed to get available memory".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get available memory".to_string(),
+            ))
         }
     }
 }
@@ -113,7 +130,7 @@ pub fn get_memory_status() -> Result<WindowsMemoryStatus, PlottingError> {
     unsafe {
         let mut memory_status: MEMORYSTATUSEX = mem::zeroed();
         memory_status.dwLength = mem::size_of::<MEMORYSTATUSEX>() as DWORD;
-        
+
         let result = GlobalMemoryStatusEx(&mut memory_status);
         if result != FALSE {
             Ok(WindowsMemoryStatus {
@@ -127,7 +144,9 @@ pub fn get_memory_status() -> Result<WindowsMemoryStatus, PlottingError> {
                 available_extended_virtual: memory_status.ullAvailExtendedVirtual,
             })
         } else {
-            Err(PlottingError::SystemError("Failed to get memory status".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get memory status".to_string(),
+            ))
         }
     }
 }
@@ -137,7 +156,7 @@ pub fn get_performance_info() -> Result<WindowsPerformanceInfo, PlottingError> {
     unsafe {
         let mut perf_info: PERFORMANCE_INFORMATION = mem::zeroed();
         perf_info.cb = mem::size_of::<PERFORMANCE_INFORMATION>() as DWORD;
-        
+
         let result = GetPerformanceInfo(&mut perf_info, perf_info.cb);
         if result != FALSE {
             Ok(WindowsPerformanceInfo {
@@ -156,7 +175,9 @@ pub fn get_performance_info() -> Result<WindowsPerformanceInfo, PlottingError> {
                 thread_count: perf_info.ThreadCount,
             })
         } else {
-            Err(PlottingError::SystemError("Failed to get performance info".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get performance info".to_string(),
+            ))
         }
     }
 }
@@ -166,7 +187,7 @@ pub fn get_system_info() -> Result<WindowsSystemInfo, PlottingError> {
     unsafe {
         let mut sys_info: SYSTEM_INFO = mem::zeroed();
         GetSystemInfo(&mut sys_info);
-        
+
         Ok(WindowsSystemInfo {
             processor_architecture: sys_info.wProcessorArchitecture,
             page_size: sys_info.dwPageSize as usize,
@@ -196,17 +217,22 @@ pub fn get_large_page_minimum() -> usize {
 }
 
 /// Configure working set size for the current process
-pub fn configure_working_set(min_size: Option<usize>, max_size: Option<usize>) -> Result<(), PlottingError> {
+pub fn configure_working_set(
+    min_size: Option<usize>,
+    max_size: Option<usize>,
+) -> Result<(), PlottingError> {
     unsafe {
         let process = GetCurrentProcess();
         let min_ws = min_size.unwrap_or(0);
         let max_ws = max_size.unwrap_or(0);
-        
+
         let result = SetProcessWorkingSetSize(process, min_ws, max_ws);
         if result != FALSE {
             Ok(())
         } else {
-            Err(PlottingError::SystemError("Failed to configure working set size".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to configure working set size".to_string(),
+            ))
         }
     }
 }
@@ -217,20 +243,20 @@ pub fn get_numa_nodes() -> usize {
     // A full implementation would use GetLogicalProcessorInformationEx
     unsafe {
         let mut buffer_length: DWORD = 0;
-        
+
         // First call to get required buffer size
         GetLogicalProcessorInformation(ptr::null_mut(), &mut buffer_length);
-        
+
         if buffer_length == 0 {
             return 1; // Default to single NUMA node
         }
-        
+
         let mut buffer = vec![0u8; buffer_length as usize];
         let result = GetLogicalProcessorInformation(
             buffer.as_mut_ptr() as *mut std::ffi::c_void,
             &mut buffer_length,
         );
-        
+
         if result != FALSE {
             // Parse the processor information to count NUMA nodes
             // This is simplified - in practice you'd parse SYSTEM_LOGICAL_PROCESSOR_INFORMATION
@@ -246,9 +272,11 @@ pub fn get_numa_nodes() -> usize {
 /// Allocate large page memory on Windows
 pub fn allocate_large_pages(size: usize) -> Result<*mut std::ffi::c_void, PlottingError> {
     if !check_large_page_support() {
-        return Err(PlottingError::SystemError("Large pages not supported".to_string()));
+        return Err(PlottingError::SystemError(
+            "Large pages not supported".to_string(),
+        ));
     }
-    
+
     unsafe {
         let ptr = VirtualAlloc(
             ptr::null_mut(),
@@ -256,9 +284,11 @@ pub fn allocate_large_pages(size: usize) -> Result<*mut std::ffi::c_void, Plotti
             MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES,
             PAGE_READWRITE,
         );
-        
+
         if ptr.is_null() {
-            Err(PlottingError::SystemError("Failed to allocate large pages".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to allocate large pages".to_string(),
+            ))
         } else {
             Ok(ptr)
         }
@@ -272,7 +302,9 @@ pub fn free_large_pages(ptr: *mut std::ffi::c_void) -> Result<(), PlottingError>
         if result != FALSE {
             Ok(())
         } else {
-            Err(PlottingError::SystemError("Failed to free large pages".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to free large pages".to_string(),
+            ))
         }
     }
 }
@@ -281,13 +313,13 @@ pub fn free_large_pages(ptr: *mut std::ffi::c_void) -> Result<(), PlottingError>
 pub fn get_memory_pressure() -> Result<MemoryPressureLevel, PlottingError> {
     let memory_status = get_memory_status()?;
     let perf_info = get_performance_info()?;
-    
+
     // Calculate memory pressure based on multiple factors
     let physical_pressure = memory_status.memory_load as f64 / 100.0;
     let commit_pressure = perf_info.commit_total as f64 / perf_info.commit_limit as f64;
-    
+
     let overall_pressure = physical_pressure.max(commit_pressure);
-    
+
     let pressure_level = if overall_pressure > 0.95 {
         MemoryPressureLevel::Critical
     } else if overall_pressure > 0.85 {
@@ -297,37 +329,37 @@ pub fn get_memory_pressure() -> Result<MemoryPressureLevel, PlottingError> {
     } else {
         MemoryPressureLevel::Low
     };
-    
+
     Ok(pressure_level)
 }
 
 #[derive(Debug, Clone)]
 pub struct WindowsMemoryStatus {
-    pub memory_load: u32,               // Percent of memory in use
-    pub total_physical: u64,            // Total physical memory
-    pub available_physical: u64,        // Available physical memory
-    pub total_page_file: u64,           // Total page file size
-    pub available_page_file: u64,       // Available page file
-    pub total_virtual: u64,             // Total virtual address space
-    pub available_virtual: u64,         // Available virtual address space
+    pub memory_load: u32,                // Percent of memory in use
+    pub total_physical: u64,             // Total physical memory
+    pub available_physical: u64,         // Available physical memory
+    pub total_page_file: u64,            // Total page file size
+    pub available_page_file: u64,        // Available page file
+    pub total_virtual: u64,              // Total virtual address space
+    pub available_virtual: u64,          // Available virtual address space
     pub available_extended_virtual: u64, // Available extended virtual
 }
 
 #[derive(Debug, Clone)]
 pub struct WindowsPerformanceInfo {
-    pub commit_total: usize,     // Current committed memory
-    pub commit_limit: usize,     // Maximum committed memory
-    pub commit_peak: usize,      // Peak committed memory
-    pub physical_total: usize,   // Total physical memory
+    pub commit_total: usize,       // Current committed memory
+    pub commit_limit: usize,       // Maximum committed memory
+    pub commit_peak: usize,        // Peak committed memory
+    pub physical_total: usize,     // Total physical memory
     pub physical_available: usize, // Available physical memory
-    pub system_cache: usize,     // System cache memory
-    pub kernel_total: usize,     // Total kernel memory
-    pub kernel_paged: usize,     // Paged kernel memory
-    pub kernel_nonpaged: usize,  // Non-paged kernel memory
-    pub page_size: usize,        // System page size
-    pub handle_count: u32,       // System handle count
-    pub process_count: u32,      // Process count
-    pub thread_count: u32,       // Thread count
+    pub system_cache: usize,       // System cache memory
+    pub kernel_total: usize,       // Total kernel memory
+    pub kernel_paged: usize,       // Paged kernel memory
+    pub kernel_nonpaged: usize,    // Non-paged kernel memory
+    pub page_size: usize,          // System page size
+    pub handle_count: u32,         // System handle count
+    pub process_count: u32,        // Process count
+    pub thread_count: u32,         // Thread count
 }
 
 #[derive(Debug, Clone)]
@@ -358,35 +390,46 @@ pub fn get_windows_optimization_recommendations(
     perf_info: &WindowsPerformanceInfo,
 ) -> Vec<String> {
     let mut recommendations = Vec::new();
-    
+
     // High memory usage
     if memory_status.memory_load > 85 {
-        recommendations.push("High memory usage detected. Consider reducing memory consumption.".to_string());
+        recommendations
+            .push("High memory usage detected. Consider reducing memory consumption.".to_string());
     }
-    
+
     // Page file pressure
     let page_file_usage = (perf_info.commit_total as f64) / (perf_info.commit_limit as f64);
     if page_file_usage > 0.8 {
-        recommendations.push("High page file usage. Consider increasing page file size or adding more RAM.".to_string());
+        recommendations.push(
+            "High page file usage. Consider increasing page file size or adding more RAM."
+                .to_string(),
+        );
     }
-    
+
     // Fragmentation indicators
-    let virtual_fragmentation = (memory_status.total_virtual - memory_status.available_virtual) as f64 
+    let virtual_fragmentation = (memory_status.total_virtual - memory_status.available_virtual)
+        as f64
         / memory_status.total_virtual as f64;
     if virtual_fragmentation > 0.7 {
-        recommendations.push("Virtual address space fragmentation detected. Consider process restart.".to_string());
+        recommendations.push(
+            "Virtual address space fragmentation detected. Consider process restart.".to_string(),
+        );
     }
-    
+
     // Large page recommendations
     if check_large_page_support() && memory_status.total_physical > 8 * 1024 * 1024 * 1024 {
-        recommendations.push("Large pages supported. Consider using large pages for large allocations.".to_string());
+        recommendations.push(
+            "Large pages supported. Consider using large pages for large allocations.".to_string(),
+        );
     }
-    
+
     // Working set optimization
     if perf_info.physical_available < perf_info.physical_total / 10 {
-        recommendations.push("Low available physical memory. Consider optimizing working set size.".to_string());
+        recommendations.push(
+            "Low available physical memory. Consider optimizing working set size.".to_string(),
+        );
     }
-    
+
     recommendations
 }
 

@@ -23,7 +23,10 @@ fn test_1k_points_target() {
 
     // Log performance (informational, not fail on CI)
     let ms = duration.as_millis();
-    println!("1K points rendered in {}ms (target: <5ms + {}ms tolerance)", ms, TOLERANCE_MS);
+    println!(
+        "1K points rendered in {}ms (target: <5ms + {}ms tolerance)",
+        ms, TOLERANCE_MS
+    );
 
     // Lenient check for CI - verify reasonable performance with cosmic-text overhead
     assert!(ms < 2000, "1K points took {}ms (max 2s allowed)", ms);
@@ -45,7 +48,10 @@ fn test_10k_points_target() {
     assert!(result.is_ok(), "Failed to create 10K point plot");
 
     let ms = duration.as_millis();
-    println!("10K points rendered in {}ms (target: <18ms + {}ms tolerance)", ms, TOLERANCE_MS);
+    println!(
+        "10K points rendered in {}ms (target: <18ms + {}ms tolerance)",
+        ms, TOLERANCE_MS
+    );
 
     // Lenient check - verify reasonable performance with text rendering overhead
     assert!(ms < 2000, "10K points took {}ms (max 2s allowed)", ms);
@@ -68,10 +74,17 @@ fn test_100k_points_parallel() {
     assert!(result.is_ok(), "Failed to create 100K point plot");
 
     let ms = duration.as_millis();
-    println!("100K points (parallel) rendered in {}ms (target: <100ms)", ms);
+    println!(
+        "100K points (parallel) rendered in {}ms (target: <100ms)",
+        ms
+    );
 
     // More lenient for CI - parallel performance varies significantly by system
-    assert!(ms < 10_000, "100K points (parallel) took {}ms (max 10s allowed)", ms);
+    assert!(
+        ms < 10_000,
+        "100K points (parallel) took {}ms (max 10s allowed)",
+        ms
+    );
 }
 
 #[test]
@@ -91,10 +104,17 @@ fn test_1m_points_parallel_simd() {
     assert!(result.is_ok(), "Failed to create 1M point plot");
 
     let ms = duration.as_millis();
-    println!("1M points (parallel+SIMD) rendered in {}ms (target: <1000ms)", ms);
+    println!(
+        "1M points (parallel+SIMD) rendered in {}ms (target: <1000ms)",
+        ms
+    );
 
     // Very lenient - just verify it completes reasonably
-    assert!(ms < 10_000, "1M points (parallel+SIMD) took {}ms (max 10s allowed)", ms);
+    assert!(
+        ms < 10_000,
+        "1M points (parallel+SIMD) took {}ms (max 10s allowed)",
+        ms
+    );
 }
 
 #[test]
@@ -107,9 +127,12 @@ fn test_multi_series_performance() {
 
     let start = Instant::now();
     let result = Plot::new()
-        .line(&x, &y1).label("sin")
-        .line(&x, &y2).label("cos")
-        .line(&x, &y3).label("tan")
+        .line(&x, &y1)
+        .label("sin")
+        .line(&x, &y2)
+        .label("cos")
+        .line(&x, &y3)
+        .label("tan")
         .title("Multi-Series Performance Test")
         .save("test_output/perf_multi_series.png");
     let duration = start.elapsed();
@@ -120,7 +143,11 @@ fn test_multi_series_performance() {
     println!("3 series x 5K points rendered in {}ms", ms);
 
     // Should complete in reasonable time with text overhead
-    assert!(ms < 3000, "Multi-series plot took {}ms (max 3s allowed)", ms);
+    assert!(
+        ms < 3000,
+        "Multi-series plot took {}ms (max 3s allowed)",
+        ms
+    );
 }
 
 #[test]
@@ -216,7 +243,10 @@ fn test_dpi_performance_impact() {
     let ms_96 = duration_96.as_millis();
     let ms_300 = duration_300.as_millis();
 
-    println!("DPI performance: 96 DPI = {}ms, 300 DPI = {}ms", ms_96, ms_300);
+    println!(
+        "DPI performance: 96 DPI = {}ms, 300 DPI = {}ms",
+        ms_96, ms_300
+    );
 
     // Both should complete reasonably fast (cosmic-text overhead considered)
     assert!(ms_96 < 2000, "96 DPI took {}ms (max 2s)", ms_96);

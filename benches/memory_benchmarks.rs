@@ -1,7 +1,7 @@
 // Memory allocation tracking benchmarks - TDD approach
 // These benchmarks validate memory efficiency targets
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use ruviz::prelude::*;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -28,7 +28,7 @@ extern "C" {
         newp: *mut std::ffi::c_void,
         newlen: usize,
     ) -> i32;
-    
+
     fn sysctlbyname(
         name: *const i8,
         oldp: *mut std::ffi::c_void,
@@ -36,7 +36,7 @@ extern "C" {
         newp: *mut std::ffi::c_void,
         newlen: usize,
     ) -> i32;
-    
+
     fn mach_host_self() -> u32;
     fn host_statistics64(
         host_priv: u32,
@@ -84,7 +84,7 @@ pub fn get_total_memory() -> Result<u64, PlottingError> {
         let mut mem_size: u64 = 0;
         let mut size = mem::size_of::<u64>();
         let mut mib = [CTL_HW, HW_MEMSIZE];
-        
+
         let result = sysctl(
             mib.as_ptr(),
             2,
@@ -93,11 +93,13 @@ pub fn get_total_memory() -> Result<u64, PlottingError> {
             ptr::null_mut(),
             0,
         );
-        
+
         if result == 0 {
             Ok(mem_size)
         } else {
-            Err(PlottingError::SystemError("Failed to get total memory via sysctl".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get total memory via sysctl".to_string(),
+            ))
         }
     }
 }
@@ -107,26 +109,28 @@ pub fn get_available_memory() -> Result<u64, PlottingError> {
     unsafe {
         let mut vm_stat: VMStatistics64 = mem::zeroed();
         let mut count = HOST_VM_INFO64_COUNT;
-        
+
         let result = host_statistics64(
             mach_host_self(),
             HOST_VM_INFO64,
             &mut vm_stat as *mut VMStatistics64 as *mut std::ffi::c_void,
             &mut count,
         );
-        
+
         if result == 0 {
             let page_size = get_page_size() as u64;
-            
+
             // Available = free + inactive + speculative + purgeable - compressor
             let available_pages = vm_stat.free_count as u64
                 + vm_stat.inactive_count as u64
                 + vm_stat.speculative_count as u64
                 + vm_stat.purgeable_count as u64;
-            
+
             Ok(available_pages * page_size)
         } else {
-            Err(PlottingError::SystemError("Failed to get VM statistics".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get VM statistics".to_string(),
+            ))
         }
     }
 }
@@ -136,17 +140,17 @@ pub fn get_vm_statistics() -> Result<MacOSVMStats, PlottingError> {
     unsafe {
         let mut vm_stat: VMStatistics64 = mem::zeroed();
         let mut count = HOST_VM_INFO64_COUNT;
-        
+
         let result = host_statistics64(
             mach_host_self(),
             HOST_VM_INFO64,
             &mut vm_stat as *mut VMStatistics64 as *mut std::ffi::c_void,
             &mut count,
         );
-        
+
         if result == 0 {
             let page_size = get_page_size() as u64;
-            
+
             Ok(MacOSVMStats {
                 free_pages: vm_stat.free_count as u64,
                 active_pages: vm_stat.active_count as u64,
@@ -157,7 +161,8 @@ pub fn get_vm_statistics() -> Result<MacOSVMStats, PlottingError> {
                 purgeable_pages: vm_stat.purgeable_count as u64,
                 external_pages: vm_stat.external_page_count as u64,
                 internal_pages: vm_stat.internal_page_count as u64,
-                total_uncompressed_pages_in_compressor: vm_stat.total_uncompressed_pages_in_compressor,
+                total_uncompressed_pages_in_compressor: vm_stat
+                    .total_uncompressed_pages_in_compressor,
                 page_size,
                 compressions: vm_stat.compressions,
                 decompressions: vm_stat.decompressions,
@@ -165,7 +170,9 @@ pub fn get_vm_statistics() -> Result<MacOSVMStats, PlottingError> {
                 swapouts: vm_stat.swapouts,
             })
         } else {
-            Err(PlottingError::SystemError("Failed to get VM statistics".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get VM statistics".to_string(),
+            ))
         }
     }
 }
@@ -176,7 +183,7 @@ pub fn get_swap_usage() -> Result<SwapUsage, PlottingError> {
         let mut swap_usage: VMSwapUsage = mem::zeroed();
         let mut size = mem::size_of::<VMSwapUsage>();
         let mut mib = [CTL_VM, VM_SWAPUSAGE];
-        
+
         let result = sysctl(
             mib.as_ptr(),
             2,
@@ -185,7 +192,7 @@ pub fn get_swap_usage() -> Result<SwapUsage, PlottingError> {
             ptr::null_mut(),
             0,
         );
-        
+
         if result == 0 {
             Ok(SwapUsage {
                 used: swap_usage.used,
@@ -193,7 +200,9 @@ pub fn get_swap_usage() -> Result<SwapUsage, PlottingError> {
                 encrypted: swap_usage.encrypted != 0,
             })
         } else {
-            Err(PlottingError::SystemError("Failed to get swap usage".to_string()))
+            Err(PlottingError::SystemError(
+                "Failed to get swap usage".to_string(),
+            ))
         }
     }
 }
@@ -204,18 +213,18 @@ pub fn get_memory_pressure() -> Result<MemoryPressureLevel, PlottingError> {
     // it by looking at VM statistics
     let vm_stats = get_vm_statistics()?;
     let swap_usage = get_swap_usage().unwrap_or_default();
-    
+
     let total_memory = get_total_memory()?;
     let available = vm_stats.free_pages * vm_stats.page_size;
     let memory_usage_ratio = 1.0 - (available as f64 / total_memory as f64);
-    
+
     // Consider swap usage and compression activity
     let compression_ratio = if vm_stats.compressions > 0 {
         vm_stats.decompressions as f64 / vm_stats.compressions as f64
     } else {
         0.0
     };
-    
+
     let pressure_level = if memory_usage_ratio > 0.95 || swap_usage.used > swap_usage.total / 2 {
         MemoryPressureLevel::Critical
     } else if memory_usage_ratio > 0.8 || compression_ratio > 2.0 {
@@ -225,7 +234,7 @@ pub fn get_memory_pressure() -> Result<MemoryPressureLevel, PlottingError> {
     } else {
         MemoryPressureLevel::Low
     };
-    
+
     Ok(pressure_level)
 }
 
@@ -234,7 +243,7 @@ pub fn get_page_size() -> usize {
     unsafe {
         let mut page_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
-        
+
         let name = CStr::from_bytes_with_nul(b"hw.pagesize\0").unwrap();
         let result = sysctlbyname(
             name.as_ptr(),
@@ -243,7 +252,7 @@ pub fn get_page_size() -> usize {
             ptr::null_mut(),
             0,
         );
-        
+
         if result == 0 && page_size > 0 {
             page_size as usize
         } else {
@@ -257,7 +266,7 @@ pub fn check_large_page_support() -> bool {
     unsafe {
         let mut super_page_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
-        
+
         let name = CStr::from_bytes_with_nul(b"vm.superpages_size\0").unwrap();
         let result = sysctlbyname(
             name.as_ptr(),
@@ -266,7 +275,7 @@ pub fn check_large_page_support() -> bool {
             ptr::null_mut(),
             0,
         );
-        
+
         result == 0 && super_page_size > 0
     }
 }
@@ -285,14 +294,26 @@ pub fn get_cache_info() -> Result<CacheInfo, PlottingError> {
         let mut l3_cache_size: i32 = 0;
         let mut cache_line_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
-        
+
         let names = [
-            (CStr::from_bytes_with_nul(b"hw.l1dcachesize\0").unwrap(), &mut l1_cache_size),
-            (CStr::from_bytes_with_nul(b"hw.l2cachesize\0").unwrap(), &mut l2_cache_size),
-            (CStr::from_bytes_with_nul(b"hw.l3cachesize\0").unwrap(), &mut l3_cache_size),
-            (CStr::from_bytes_with_nul(b"hw.cachelinesize\0").unwrap(), &mut cache_line_size),
+            (
+                CStr::from_bytes_with_nul(b"hw.l1dcachesize\0").unwrap(),
+                &mut l1_cache_size,
+            ),
+            (
+                CStr::from_bytes_with_nul(b"hw.l2cachesize\0").unwrap(),
+                &mut l2_cache_size,
+            ),
+            (
+                CStr::from_bytes_with_nul(b"hw.l3cachesize\0").unwrap(),
+                &mut l3_cache_size,
+            ),
+            (
+                CStr::from_bytes_with_nul(b"hw.cachelinesize\0").unwrap(),
+                &mut cache_line_size,
+            ),
         ];
-        
+
         for (name, value) in names.iter() {
             sysctlbyname(
                 name.as_ptr(),
@@ -302,12 +323,28 @@ pub fn get_cache_info() -> Result<CacheInfo, PlottingError> {
                 0,
             );
         }
-        
+
         Ok(CacheInfo {
-            l1_size: if l1_cache_size > 0 { Some(l1_cache_size as usize) } else { None },
-            l2_size: if l2_cache_size > 0 { Some(l2_cache_size as usize) } else { None },
-            l3_size: if l3_cache_size > 0 { Some(l3_cache_size as usize) } else { None },
-            line_size: if cache_line_size > 0 { cache_line_size as usize } else { 64 },
+            l1_size: if l1_cache_size > 0 {
+                Some(l1_cache_size as usize)
+            } else {
+                None
+            },
+            l2_size: if l2_cache_size > 0 {
+                Some(l2_cache_size as usize)
+            } else {
+                None
+            },
+            l3_size: if l3_cache_size > 0 {
+                Some(l3_cache_size as usize)
+            } else {
+                None
+            },
+            line_size: if cache_line_size > 0 {
+                cache_line_size as usize
+            } else {
+                64
+            },
         })
     }
 }
@@ -321,7 +358,7 @@ pub fn configure_memory_pressure_handling(enable_swap: bool) -> Result<(), Plott
         // This would typically be done at the application level
         return Ok(());
     }
-    
+
     Ok(())
 }
 
@@ -372,7 +409,7 @@ pub fn get_thermal_state() -> Result<ThermalState, PlottingError> {
     unsafe {
         let mut thermal_state: i32 = 0;
         let mut size = mem::size_of::<i32>();
-        
+
         let name = CStr::from_bytes_with_nul(b"machdep.xcpm.cpu_thermal_level\0").unwrap();
         let result = sysctlbyname(
             name.as_ptr(),
@@ -381,7 +418,7 @@ pub fn get_thermal_state() -> Result<ThermalState, PlottingError> {
             ptr::null_mut(),
             0,
         );
-        
+
         if result == 0 {
             match thermal_state {
                 0 => Ok(ThermalState::Normal),
@@ -408,37 +445,46 @@ pub enum ThermalState {
 /// macOS-specific memory optimization recommendations
 pub fn get_macos_optimization_recommendations(vm_stats: &MacOSVMStats) -> Vec<String> {
     let mut recommendations = Vec::new();
-    
-    let total_pages = vm_stats.free_pages + vm_stats.active_pages + 
-                     vm_stats.inactive_pages + vm_stats.wired_pages;
-    
+
+    let total_pages = vm_stats.free_pages
+        + vm_stats.active_pages
+        + vm_stats.inactive_pages
+        + vm_stats.wired_pages;
+
     if total_pages == 0 {
         return recommendations;
     }
-    
-    let memory_pressure = (vm_stats.active_pages + vm_stats.wired_pages) as f64 / total_pages as f64;
-    
+
+    let memory_pressure =
+        (vm_stats.active_pages + vm_stats.wired_pages) as f64 / total_pages as f64;
+
     if memory_pressure > 0.8 {
-        recommendations.push("High memory pressure detected. Consider reducing memory usage.".to_string());
+        recommendations
+            .push("High memory pressure detected. Consider reducing memory usage.".to_string());
     }
-    
+
     let compression_ratio = if vm_stats.compressions > 0 {
         vm_stats.decompressions as f64 / vm_stats.compressions as f64
     } else {
         0.0
     };
-    
+
     if compression_ratio > 2.0 {
-        recommendations.push("High memory compression activity. Consider increasing available memory.".to_string());
+        recommendations.push(
+            "High memory compression activity. Consider increasing available memory.".to_string(),
+        );
     }
-    
+
     if vm_stats.swapouts > vm_stats.swapins * 2 {
-        recommendations.push("Excessive swap activity detected. System may be memory constrained.".to_string());
+        recommendations.push(
+            "Excessive swap activity detected. System may be memory constrained.".to_string(),
+        );
     }
-    
+
     if vm_stats.purgeable_pages > total_pages / 10 {
-        recommendations.push("Large amount of purgeable memory available for reclamation.".to_string());
+        recommendations
+            .push("Large amount of purgeable memory available for reclamation.".to_string());
     }
-    
+
     recommendations
 }

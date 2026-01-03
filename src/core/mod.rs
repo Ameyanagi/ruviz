@@ -1,6 +1,5 @@
 //! Core plotting functionality and main API
 
-pub mod builder;
 pub mod config;
 pub mod error;
 pub mod layout;

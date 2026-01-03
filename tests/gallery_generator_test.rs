@@ -13,21 +13,42 @@ fn test_example_categorization() {
     assert_eq!(categorize_example("bar_chart.rs"), Some("basic"));
 
     // Statistical examples
-    assert_eq!(categorize_example("histogram_example.rs"), Some("statistical"));
-    assert_eq!(categorize_example("boxplot_example.rs"), Some("statistical"));
+    assert_eq!(
+        categorize_example("histogram_example.rs"),
+        Some("statistical")
+    );
+    assert_eq!(
+        categorize_example("boxplot_example.rs"),
+        Some("statistical")
+    );
 
     // Publication quality
-    assert_eq!(categorize_example("scientific_plotting.rs"), Some("publication"));
-    assert_eq!(categorize_example("simple_publication_test.rs"), Some("publication"));
-    assert_eq!(categorize_example("scientific_showcase.rs"), Some("publication"));
+    assert_eq!(
+        categorize_example("scientific_plotting.rs"),
+        Some("publication")
+    );
+    assert_eq!(
+        categorize_example("simple_publication_test.rs"),
+        Some("publication")
+    );
+    assert_eq!(
+        categorize_example("scientific_showcase.rs"),
+        Some("publication")
+    );
 
     // Performance demonstrations
     assert_eq!(categorize_example("parallel_demo.rs"), Some("performance"));
-    assert_eq!(categorize_example("memory_optimization_demo.rs"), Some("performance"));
+    assert_eq!(
+        categorize_example("memory_optimization_demo.rs"),
+        Some("performance")
+    );
 
     // Advanced techniques
     assert_eq!(categorize_example("font_demo.rs"), Some("advanced"));
-    assert_eq!(categorize_example("seaborn_style_example.rs"), Some("advanced"));
+    assert_eq!(
+        categorize_example("seaborn_style_example.rs"),
+        Some("advanced")
+    );
     assert_eq!(categorize_example("subplot_example.rs"), Some("advanced"));
 }
 
@@ -159,12 +180,19 @@ fn categorize_example(filename: &str) -> Option<&'static str> {
     }
 
     // Performance patterns
-    if name.contains("parallel") || name.contains("memory_optimization") || name.contains("performance") {
+    if name.contains("parallel")
+        || name.contains("memory_optimization")
+        || name.contains("performance")
+    {
         return Some("performance");
     }
 
     // Advanced patterns
-    if name.contains("font") || name.contains("seaborn") || name.contains("subplot") || name.contains("theme") {
+    if name.contains("font")
+        || name.contains("seaborn")
+        || name.contains("subplot")
+        || name.contains("theme")
+    {
         return Some("advanced");
     }
 
@@ -191,7 +219,10 @@ fn generate_category_readme(category: &str, examples: &[ExampleMetadata]) -> Str
     let mut readme = format!("# {} Plots\n\n", title);
 
     for example in examples {
-        readme.push_str(&format!("## {}\n\n{}\n\n", example.title, example.description));
+        readme.push_str(&format!(
+            "## {}\n\n{}\n\n",
+            example.title, example.description
+        ));
     }
 
     readme

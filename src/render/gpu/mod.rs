@@ -22,18 +22,18 @@ pub enum GpuError {
 /// GPU operation result type
 pub type GpuResult<T> = Result<T, GpuError>;
 
-pub mod device;
 pub mod buffer;
-pub mod pipeline;
 pub mod compute;
+pub mod device;
 pub mod memory;
+pub mod pipeline;
 pub mod renderer;
 
-pub use device::{GpuDevice, GpuDeviceInfo, DeviceSelector};
-pub use buffer::{GpuBuffer, BufferUsage, BufferManager};
-pub use pipeline::{RenderPipeline, ComputePipeline, PipelineCache};
-pub use compute::{ComputeManager, ComputeStats, TransformParams, AggregationParams};
+pub use buffer::{BufferManager, BufferUsage, GpuBuffer};
+pub use compute::{AggregationParams, ComputeManager, ComputeStats, TransformParams};
+pub use device::{DeviceSelector, GpuDevice, GpuDeviceInfo};
 pub use memory::{GpuMemoryPool, GpuMemoryStats, PooledGpuBuffer};
+pub use pipeline::{ComputePipeline, PipelineCache, RenderPipeline};
 pub use renderer::{GpuRenderer, GpuRendererStats, GpuVertex};
 
 // Error types are already defined in this module, no need to re-export
@@ -96,7 +96,7 @@ impl Default for GpuConfig {
     fn default() -> Self {
         Self {
             enable_gpu: true,
-            preferred_backend: None, // Auto-detect best backend
+            preferred_backend: None,    // Auto-detect best backend
             memory_limit_fraction: 0.8, // Use 80% of GPU memory
             enable_validation: cfg!(debug_assertions),
             enable_profiling: false,
@@ -112,7 +112,7 @@ impl GpuBackend {
     pub async fn new() -> Result<Self, PlottingError> {
         Self::with_config(GpuConfig::default()).await
     }
-    
+
     /// Initialize GPU backend with custom configuration
     pub async fn with_config(config: GpuConfig) -> Result<Self, PlottingError> {
         if !config.enable_gpu {
@@ -121,25 +121,25 @@ impl GpuBackend {
                 operation: "GPU backend initialization".to_string(),
             });
         }
-        
+
         // Create wgpu instance with appropriate backends
         let instance = Self::create_instance(&config)?;
-        
+
         // Select and initialize device
         let device = GpuDevice::new(&instance, &config).await?;
         let capabilities = Self::detect_capabilities(&device)?;
-        
+
         // Validate minimum requirements
         Self::validate_capabilities(&capabilities, &config)?;
-        
+
         // Initialize buffer manager with platform-optimized settings
         let platform_optimizer = get_platform_optimizer();
         let hints = platform_optimizer.get_performance_hints();
         let buffer_manager = BufferManager::new(&device, &capabilities, &hints)?;
-        
+
         // Initialize pipeline cache
         let pipeline_cache = PipelineCache::new();
-        
+
         Ok(Self {
             device: Arc::new(device),
             buffer_manager: Arc::new(Mutex::new(buffer_manager)),
@@ -148,24 +148,24 @@ impl GpuBackend {
             config,
         })
     }
-    
+
     /// Create wgpu instance with platform-appropriate backends
     fn create_instance(config: &GpuConfig) -> Result<wgpu::Instance, PlottingError> {
         let backends = config.preferred_backend.unwrap_or_else(|| {
             // Select best backend for platform
             #[cfg(target_os = "windows")]
             return wgpu::Backends::DX12 | wgpu::Backends::VULKAN;
-            
+
             #[cfg(target_os = "macos")]
             return wgpu::Backends::METAL;
-            
+
             #[cfg(target_os = "linux")]
             return wgpu::Backends::VULKAN | wgpu::Backends::GL;
-            
+
             #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
             return wgpu::Backends::all();
         });
-        
+
         let instance_desc = wgpu::InstanceDescriptor {
             backends,
             flags: if config.enable_validation {
@@ -176,15 +176,15 @@ impl GpuBackend {
             dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
             gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
         };
-        
+
         Ok(wgpu::Instance::new(instance_desc))
     }
-    
+
     /// Detect GPU capabilities
     fn detect_capabilities(device: &GpuDevice) -> Result<GpuCapabilities, PlottingError> {
         let limits = device.limits();
         let features = device.features();
-        
+
         Ok(GpuCapabilities {
             max_texture_size: limits.max_texture_dimension_2d,
             max_buffer_size: limits.max_buffer_size,
@@ -193,15 +193,16 @@ impl GpuBackend {
                 limits.max_compute_workgroups_per_dimension,
                 limits.max_compute_workgroups_per_dimension,
             ],
-            memory_size: None, // wgpu doesn't expose memory info directly
+            memory_size: None,      // wgpu doesn't expose memory info directly
             supports_compute: true, // Assume compute shader support for now
-            supports_storage_textures: features.contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY),
+            supports_storage_textures: features
+                .contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY),
             supports_timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
             max_render_targets: limits.max_color_attachments,
             supported_formats: Self::get_supported_formats(device),
         })
     }
-    
+
     /// Get list of supported texture formats
     fn get_supported_formats(device: &GpuDevice) -> Vec<wgpu::TextureFormat> {
         let common_formats = [
@@ -218,17 +219,22 @@ impl GpuBackend {
             wgpu::TextureFormat::Bgra8Unorm,
             wgpu::TextureFormat::Bgra8UnormSrgb,
         ];
-        
+
         common_formats
             .into_iter()
             .filter(|&format| {
-                device.adapter().get_texture_format_features(format).allowed_usages.contains(
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-                )
+                device
+                    .adapter()
+                    .get_texture_format_features(format)
+                    .allowed_usages
+                    .contains(
+                        wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                    )
             })
             .collect()
     }
-    
+
     /// Validate that GPU meets minimum requirements
     fn validate_capabilities(
         capabilities: &GpuCapabilities,
@@ -236,60 +242,63 @@ impl GpuBackend {
     ) -> Result<(), PlottingError> {
         // Check minimum texture size (need at least 4K for reasonable plots)
         if capabilities.max_texture_size < 4096 {
-            return Err(PlottingError::UnsupportedGpuFeature(
-                format!("Maximum texture size {} is too small (minimum 4096)", capabilities.max_texture_size)
-            ));
+            return Err(PlottingError::UnsupportedGpuFeature(format!(
+                "Maximum texture size {} is too small (minimum 4096)",
+                capabilities.max_texture_size
+            )));
         }
-        
+
         // Check compute shader support if required
-        if !capabilities.supports_compute && config.required_features.contains(wgpu::Features::empty()) {
+        if !capabilities.supports_compute
+            && config.required_features.contains(wgpu::Features::empty())
+        {
             return Err(PlottingError::UnsupportedGpuFeature(
-                "Compute shaders required but not supported".to_string()
+                "Compute shaders required but not supported".to_string(),
             ));
         }
-        
+
         // Check minimum buffer size (need at least 256MB for large datasets)
         const MIN_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
         if capabilities.max_buffer_size < MIN_BUFFER_SIZE {
-            return Err(PlottingError::UnsupportedGpuFeature(
-                format!("Maximum buffer size {} is too small (minimum {})", 
-                    capabilities.max_buffer_size, MIN_BUFFER_SIZE)
-            ));
+            return Err(PlottingError::UnsupportedGpuFeature(format!(
+                "Maximum buffer size {} is too small (minimum {})",
+                capabilities.max_buffer_size, MIN_BUFFER_SIZE
+            )));
         }
-        
+
         Ok(())
     }
-    
+
     /// Get GPU device reference
     pub fn device(&self) -> &Arc<GpuDevice> {
         &self.device
     }
-    
+
     /// Get GPU queue
     pub fn queue(&self) -> &Arc<wgpu::Queue> {
         self.device.queue()
     }
-    
+
     /// Get GPU capabilities
     pub fn capabilities(&self) -> &GpuCapabilities {
         &self.capabilities
     }
-    
+
     /// Get GPU configuration
     pub fn config(&self) -> &GpuConfig {
         &self.config
     }
-    
+
     /// Get buffer manager
     pub fn buffer_manager(&self) -> Arc<Mutex<BufferManager>> {
         Arc::clone(&self.buffer_manager)
     }
-    
+
     /// Get pipeline cache
     pub fn pipeline_cache(&self) -> Arc<Mutex<PipelineCache>> {
         Arc::clone(&self.pipeline_cache)
     }
-    
+
     /// Create render pass for plotting operations
     pub fn create_render_pass(
         &self,
@@ -299,31 +308,31 @@ impl GpuBackend {
     ) -> Result<GpuRenderPass, PlottingError> {
         GpuRenderPass::new(&self.device, width, height, format, &self.capabilities)
     }
-    
+
     /// Create compute manager for data processing
     pub fn create_compute_manager(&self) -> Result<ComputeManager, PlottingError> {
         if !self.capabilities.supports_compute {
             return Err(PlottingError::UnsupportedGpuFeature(
-                "Compute shaders not supported".to_string()
+                "Compute shaders not supported".to_string(),
             ));
         }
-        
+
         Ok(ComputeManager::new(
             Arc::clone(self.device.device()),
             Arc::clone(self.device.queue()),
         ))
     }
-    
+
     /// Check if GPU backend is available and functional
     pub fn is_available(&self) -> bool {
         self.device.is_valid()
     }
-    
+
     /// Get performance statistics
     pub fn get_stats(&self) -> GpuStats {
         let buffer_manager = self.buffer_manager.lock().unwrap();
         let pipeline_cache = self.pipeline_cache.lock().unwrap();
-        
+
         GpuStats {
             device_info: self.device.info().clone(),
             buffer_stats: buffer_manager.get_stats(),
@@ -357,14 +366,20 @@ impl GpuRenderPass {
         if width > capabilities.max_texture_size || height > capabilities.max_texture_size {
             return Err(PlottingError::GpuMemoryError {
                 requested: (width * height * 4) as usize, // Assume RGBA format
-                available: Some((capabilities.max_texture_size * capabilities.max_texture_size * 4) as usize),
+                available: Some(
+                    (capabilities.max_texture_size * capabilities.max_texture_size * 4) as usize,
+                ),
             });
         }
-        
+
         // Create main render texture
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Render Target"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -372,14 +387,21 @@ impl GpuRenderPass {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        
+
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
+
         // Create depth buffer if supported
-        let (depth_texture, depth_view) = if capabilities.supported_formats.contains(&wgpu::TextureFormat::Depth32Float) {
+        let (depth_texture, depth_view) = if capabilities
+            .supported_formats
+            .contains(&wgpu::TextureFormat::Depth32Float)
+        {
             let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Depth Buffer"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -387,13 +409,13 @@ impl GpuRenderPass {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
-            
+
             let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
             (Some(depth_texture), Some(depth_view))
         } else {
             (None, None)
         };
-        
+
         Ok(Self {
             texture,
             view,
@@ -404,19 +426,19 @@ impl GpuRenderPass {
             depth_view,
         })
     }
-    
+
     pub fn color_view(&self) -> &wgpu::TextureView {
         &self.view
     }
-    
+
     pub fn depth_view(&self) -> Option<&wgpu::TextureView> {
         self.depth_view.as_ref()
     }
-    
+
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
     }
-    
+
     pub fn format(&self) -> wgpu::TextureFormat {
         self.format
     }
@@ -459,14 +481,14 @@ pub async fn initialize_gpu_backend() -> Result<(), PlottingError> {
             None
         }
     };
-    
-    GPU_BACKEND.set(backend).map_err(|_| {
-        PlottingError::GpuInitError {
+
+    GPU_BACKEND
+        .set(backend)
+        .map_err(|_| PlottingError::GpuInitError {
             backend: "wgpu".to_string(),
             error: "Backend already initialized".to_string(),
-        }
-    })?;
-    
+        })?;
+
     Ok(())
 }
 

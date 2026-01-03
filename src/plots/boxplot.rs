@@ -91,27 +91,27 @@ impl BoxPlotConfig {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn outlier_method(mut self, method: OutlierMethod) -> Self {
         self.outlier_method = method;
         self
     }
-    
+
     pub fn show_outliers(mut self, show: bool) -> Self {
         self.show_outliers = show;
         self
     }
-    
+
     pub fn show_mean(mut self, show: bool) -> Self {
         self.show_mean = show;
         self
     }
-    
+
     pub fn orientation(mut self, orientation: BoxOrientation) -> Self {
         self.orientation = orientation;
         self
     }
-    
+
     pub fn whisker_method(mut self, method: WhiskerMethod) -> Self {
         self.whisker_method = method;
         self
@@ -119,7 +119,7 @@ impl BoxPlotConfig {
 }
 
 /// Calculate box plot statistics from data
-pub fn calculate_box_plot<T, D: Data1D<T>>(data: &D, config: &BoxPlotConfig) -> Result<BoxPlotData> 
+pub fn calculate_box_plot<T, D: Data1D<T>>(data: &D, config: &BoxPlotConfig) -> Result<BoxPlotData>
 where
     T: Into<f64> + Copy,
 {
@@ -153,16 +153,17 @@ where
     let median = calculate_percentile(&values, 50.0);
     let q3 = calculate_percentile(&values, 75.0);
     let iqr = q3 - q1;
-    
+
     // Calculate mean if requested
     let mean = if config.show_mean {
         Some(values.iter().sum::<f64>() / n_samples as f64)
     } else {
         None
     };
-    
+
     // Calculate whiskers and outliers
-    let (whisker_min, whisker_max, outliers) = calculate_whiskers_and_outliers(&values, q1, q3, iqr, config);
+    let (whisker_min, whisker_max, outliers) =
+        calculate_whiskers_and_outliers(&values, q1, q3, iqr, config);
 
     Ok(BoxPlotData {
         min: whisker_min,
@@ -177,23 +178,8 @@ where
     })
 }
 
-fn calculate_percentile(sorted_data: &[f64], percentile: f64) -> f64 {
-    if sorted_data.is_empty() {
-        return 0.0;
-    }
-    
-    let n = sorted_data.len();
-    let pos = percentile / 100.0 * (n - 1) as f64;
-    let lower = pos.floor() as usize;
-    let upper = pos.ceil() as usize;
-    
-    if lower == upper {
-        sorted_data[lower]
-    } else {
-        let weight = pos - lower as f64;
-        sorted_data[lower] * (1.0 - weight) + sorted_data[upper] * weight
-    }
-}
+// Use shared statistical utilities
+use super::statistics::percentile as calculate_percentile;
 
 fn calculate_whiskers_and_outliers(
     values: &[f64],
@@ -203,36 +189,43 @@ fn calculate_whiskers_and_outliers(
     config: &BoxPlotConfig,
 ) -> (f64, f64, Vec<f64>) {
     let mut outliers = Vec::new();
-    
-    let (whisker_min, whisker_max) = match config.whisker_method {
-        WhiskerMethod::Tukey => {
-            let lower_bound = q1 - 1.5 * iqr;
-            let upper_bound = q3 + 1.5 * iqr;
-            
-            // Find whiskers as furthest non-outlier points
-            let whisker_min = values.iter()
-                .find(|&&x| x >= lower_bound)
-                .copied()
-                .unwrap_or(values[0]);
-            let whisker_max = values.iter()
-                .rev()
-                .find(|&&x| x <= upper_bound)
-                .copied()
-                .unwrap_or(values[values.len() - 1]);
-                
-            (whisker_min, whisker_max)
-        },
-        WhiskerMethod::MinMax => {
-            (values[0], values[values.len() - 1])
-        },
-        WhiskerMethod::Percentile5_95 => {
-            (calculate_percentile(values, 5.0), calculate_percentile(values, 95.0))
-        },
-        WhiskerMethod::Percentile10_90 => {
-            (calculate_percentile(values, 10.0), calculate_percentile(values, 90.0))
-        },
+
+    // When OutlierMethod::None, whiskers should extend to min/max regardless of whisker_method
+    let (whisker_min, whisker_max) = if matches!(config.outlier_method, OutlierMethod::None) {
+        (values[0], values[values.len() - 1])
+    } else {
+        match config.whisker_method {
+            WhiskerMethod::Tukey => {
+                let lower_bound = q1 - 1.5 * iqr;
+                let upper_bound = q3 + 1.5 * iqr;
+
+                // Find whiskers as furthest non-outlier points
+                let whisker_min = values
+                    .iter()
+                    .find(|&&x| x >= lower_bound)
+                    .copied()
+                    .unwrap_or(values[0]);
+                let whisker_max = values
+                    .iter()
+                    .rev()
+                    .find(|&&x| x <= upper_bound)
+                    .copied()
+                    .unwrap_or(values[values.len() - 1]);
+
+                (whisker_min, whisker_max)
+            }
+            WhiskerMethod::MinMax => (values[0], values[values.len() - 1]),
+            WhiskerMethod::Percentile5_95 => (
+                calculate_percentile(values, 5.0),
+                calculate_percentile(values, 95.0),
+            ),
+            WhiskerMethod::Percentile10_90 => (
+                calculate_percentile(values, 10.0),
+                calculate_percentile(values, 90.0),
+            ),
+        }
     };
-    
+
     // Detect outliers based on configuration
     if config.show_outliers {
         let (lower_threshold, upper_threshold) = match config.outlier_method {
@@ -240,19 +233,21 @@ fn calculate_whiskers_and_outliers(
             OutlierMethod::ModifiedIQR => (q1 - 2.5 * iqr, q3 + 2.5 * iqr),
             OutlierMethod::StandardDeviation(n_std) => {
                 let mean = values.iter().sum::<f64>() / values.len() as f64;
-                let std_dev = (values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64).sqrt();
+                let std_dev = (values.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
+                    / values.len() as f64)
+                    .sqrt();
                 (mean - n_std * std_dev, mean + n_std * std_dev)
-            },
+            }
             OutlierMethod::None => (f64::NEG_INFINITY, f64::INFINITY),
         };
-        
+
         for &value in values {
             if value < lower_threshold || value > upper_threshold {
                 outliers.push(value);
             }
         }
     }
-    
+
     (whisker_min, whisker_max, outliers)
 }
 
@@ -264,14 +259,14 @@ mod tests {
     fn test_box_plot_basic_functionality() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         let config = BoxPlotConfig::new();
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         assert_eq!(result.n_samples, 10);
         assert_eq!(result.median, 5.5); // Median of 1-10
-        assert_eq!(result.q1, 3.25);    // Q1
-        assert_eq!(result.q3, 7.75);    // Q3  
-        assert_eq!(result.iqr, 4.5);    // Q3 - Q1
+        assert_eq!(result.q1, 3.25); // Q1
+        assert_eq!(result.q3, 7.75); // Q3  
+        assert_eq!(result.iqr, 4.5); // Q3 - Q1
         assert!(result.outliers.is_empty()); // No outliers in uniform data
     }
 
@@ -279,12 +274,12 @@ mod tests {
     fn test_box_plot_empty_data() {
         let data: Vec<f64> = vec![];
         let config = BoxPlotConfig::new();
-        
+
         let result = calculate_box_plot(&data, &config);
         assert!(result.is_err());
-        
+
         match result.unwrap_err() {
-            PlottingError::EmptyDataSet => {},
+            PlottingError::EmptyDataSet => {}
             _ => panic!("Expected EmptyDataSet error"),
         }
     }
@@ -293,9 +288,9 @@ mod tests {
     fn test_box_plot_with_outliers() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 100.0]; // 100 is outlier
         let config = BoxPlotConfig::new();
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         assert_eq!(result.n_samples, 10);
         assert!(!result.outliers.is_empty());
         assert!(result.outliers.contains(&100.0));
@@ -306,9 +301,9 @@ mod tests {
     fn test_box_plot_no_outliers_config() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 100.0]; // 100 would be outlier
         let config = BoxPlotConfig::new().outlier_method(OutlierMethod::None);
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         assert!(result.outliers.is_empty()); // No outliers detected
         assert_eq!(result.max, 100.0); // Max includes extreme value
     }
@@ -317,9 +312,9 @@ mod tests {
     fn test_box_plot_with_mean() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let config = BoxPlotConfig::new().show_mean(true);
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         assert!(result.mean.is_some());
         assert_eq!(result.mean.unwrap(), 3.0); // Mean of 1-5
     }
@@ -328,9 +323,9 @@ mod tests {
     fn test_box_plot_without_mean() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let config = BoxPlotConfig::new().show_mean(false);
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         assert!(result.mean.is_none());
     }
 
@@ -338,9 +333,9 @@ mod tests {
     fn test_box_plot_single_value() {
         let data = vec![5.0];
         let config = BoxPlotConfig::new();
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         assert_eq!(result.median, 5.0);
         assert_eq!(result.q1, 5.0);
         assert_eq!(result.q3, 5.0);
@@ -353,9 +348,9 @@ mod tests {
     fn test_box_plot_identical_values() {
         let data = vec![5.0; 100]; // 100 identical values
         let config = BoxPlotConfig::new();
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         assert_eq!(result.median, 5.0);
         assert_eq!(result.q1, 5.0);
         assert_eq!(result.q3, 5.0);
@@ -366,18 +361,18 @@ mod tests {
     #[test]
     fn test_box_plot_whisker_methods() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
-        
+
         // Test Tukey method (default)
         let tukey_config = BoxPlotConfig::new().whisker_method(WhiskerMethod::Tukey);
         let tukey_result = calculate_box_plot(&data, &tukey_config).unwrap();
-        
+
         // Test MinMax method
         let minmax_config = BoxPlotConfig::new().whisker_method(WhiskerMethod::MinMax);
         let minmax_result = calculate_box_plot(&data, &minmax_config).unwrap();
-        
+
         assert_eq!(minmax_result.min, 1.0);
         assert_eq!(minmax_result.max, 10.0);
-        
+
         // MinMax whiskers should extend further than or equal to Tukey
         assert!(minmax_result.min <= tukey_result.min);
         assert!(minmax_result.max >= tukey_result.max);
@@ -386,10 +381,10 @@ mod tests {
     #[test]
     fn test_box_plot_percentile_whiskers() {
         let data: Vec<f64> = (1..=100).map(|x| x as f64).collect();
-        
+
         let config = BoxPlotConfig::new().whisker_method(WhiskerMethod::Percentile5_95);
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         // For data 1-100, 5th percentile should be around 5 and 95th around 95
         assert!((result.min - 5.0).abs() < 1.0);
         assert!((result.max - 95.0).abs() < 1.0);
@@ -399,24 +394,24 @@ mod tests {
     fn test_box_plot_with_nan_values() {
         let data = vec![1.0, 2.0, f64::NAN, 4.0, 5.0];
         let config = BoxPlotConfig::new();
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         // NaN values should be filtered out
         assert_eq!(result.n_samples, 4); // Only finite values counted
-        assert_eq!(result.median, 2.5); // Median of [1,2,4,5]
+        assert_eq!(result.median, 3.0); // Median of [1,2,4,5] = (2+4)/2 = 3.0
     }
 
     #[test]
     fn test_box_plot_modified_iqr_outliers() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 15.0]; // 15 might be outlier
-        
+
         let standard_config = BoxPlotConfig::new().outlier_method(OutlierMethod::IQR);
         let modified_config = BoxPlotConfig::new().outlier_method(OutlierMethod::ModifiedIQR);
-        
+
         let standard_result = calculate_box_plot(&data, &standard_config).unwrap();
         let modified_result = calculate_box_plot(&data, &modified_config).unwrap();
-        
+
         // Modified IQR should be more lenient, potentially fewer outliers
         assert!(modified_result.outliers.len() <= standard_result.outliers.len());
     }
@@ -425,9 +420,9 @@ mod tests {
     fn test_box_plot_standard_deviation_outliers() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 20.0]; // 20 is outlier
         let config = BoxPlotConfig::new().outlier_method(OutlierMethod::StandardDeviation(2.0));
-        
+
         let result = calculate_box_plot(&data, &config).unwrap();
-        
+
         // Should detect outliers beyond 2 standard deviations
         assert!(!result.outliers.is_empty());
     }
@@ -435,12 +430,12 @@ mod tests {
     #[test]
     fn test_percentile_calculation() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        
-        assert_eq!(calculate_percentile(&data, 0.0), 1.0);   // Min
-        assert_eq!(calculate_percentile(&data, 50.0), 3.0);  // Median
+
+        assert_eq!(calculate_percentile(&data, 0.0), 1.0); // Min
+        assert_eq!(calculate_percentile(&data, 50.0), 3.0); // Median
         assert_eq!(calculate_percentile(&data, 100.0), 5.0); // Max
-        assert_eq!(calculate_percentile(&data, 25.0), 2.0);  // Q1
-        assert_eq!(calculate_percentile(&data, 75.0), 4.0);  // Q3
+        assert_eq!(calculate_percentile(&data, 25.0), 2.0); // Q1
+        assert_eq!(calculate_percentile(&data, 75.0), 4.0); // Q3
     }
 
     #[test]
@@ -451,19 +446,19 @@ mod tests {
             .show_mean(true)
             .orientation(BoxOrientation::Horizontal)
             .whisker_method(WhiskerMethod::Percentile10_90);
-        
+
         match config.outlier_method {
-            OutlierMethod::ModifiedIQR => {},
+            OutlierMethod::ModifiedIQR => {}
             _ => panic!("Expected ModifiedIQR"),
         }
         assert!(!config.show_outliers);
         assert!(config.show_mean);
         match config.orientation {
-            BoxOrientation::Horizontal => {},
+            BoxOrientation::Horizontal => {}
             _ => panic!("Expected Horizontal"),
         }
         match config.whisker_method {
-            WhiskerMethod::Percentile10_90 => {},
+            WhiskerMethod::Percentile10_90 => {}
             _ => panic!("Expected Percentile10_90"),
         }
     }

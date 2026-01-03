@@ -13,10 +13,7 @@ fn test_gallery_root_exists() {
         gallery_path.exists(),
         "Gallery root directory should exist at docs/gallery"
     );
-    assert!(
-        gallery_path.is_dir(),
-        "docs/gallery should be a directory"
-    );
+    assert!(gallery_path.is_dir(), "docs/gallery should be a directory");
 }
 
 #[test]
@@ -24,7 +21,13 @@ fn test_gallery_category_structure() {
     // GIVEN: Gallery should have organized categories
     let gallery_path = Path::new("docs/gallery");
 
-    let categories = vec!["basic", "statistical", "publication", "performance", "advanced"];
+    let categories = vec![
+        "basic",
+        "statistical",
+        "publication",
+        "performance",
+        "advanced",
+    ];
 
     // THEN: All category directories exist
     for category in categories {
@@ -54,8 +57,8 @@ fn test_gallery_main_index_exists() {
     );
 
     // AND: Contains expected content
-    let content = std::fs::read_to_string(index_path)
-        .expect("Should be able to read gallery index");
+    let content =
+        std::fs::read_to_string(index_path).expect("Should be able to read gallery index");
 
     assert!(
         content.contains("# ruviz Gallery"),
@@ -70,13 +73,17 @@ fn test_gallery_main_index_exists() {
 #[test]
 fn test_gallery_category_indexes_exist() {
     // GIVEN: Each category should have its own index
-    let categories = vec!["basic", "statistical", "publication", "performance", "advanced"];
+    let categories = vec![
+        "basic",
+        "statistical",
+        "publication",
+        "performance",
+        "advanced",
+    ];
 
     // THEN: Each category has README.md
     for category in categories {
-        let category_index = Path::new("docs/gallery")
-            .join(category)
-            .join("README.md");
+        let category_index = Path::new("docs/gallery").join(category).join("README.md");
 
         assert!(
             category_index.exists(),
@@ -98,7 +105,13 @@ fn test_gallery_category_indexes_exist() {
 #[test]
 fn test_gallery_has_images() {
     // GIVEN: Gallery categories should contain PNG images
-    let categories = vec!["basic", "statistical", "publication", "performance", "advanced"];
+    let categories = vec![
+        "basic",
+        "statistical",
+        "publication",
+        "performance",
+        "advanced",
+    ];
 
     // THEN: At least one category has PNG files
     let mut total_images = 0;
@@ -127,7 +140,13 @@ fn test_gallery_has_images() {
 #[test]
 fn test_thumbnails_directory_structure() {
     // GIVEN: Categories with images should have thumbnails subdirectory
-    let categories = vec!["basic", "statistical", "publication", "performance", "advanced"];
+    let categories = vec![
+        "basic",
+        "statistical",
+        "publication",
+        "performance",
+        "advanced",
+    ];
 
     // THEN: Check for thumbnails subdirectories where needed
     for category in categories {
@@ -199,7 +218,9 @@ fn test_basic_category_has_expected_examples() {
             .collect();
 
         for pattern in expected_patterns {
-            let has_pattern = filenames.iter().any(|name| name.to_lowercase().contains(pattern));
+            let has_pattern = filenames
+                .iter()
+                .any(|name| name.to_lowercase().contains(pattern));
 
             // Lenient check - we expect these but don't fail if missing yet
             if !has_pattern {

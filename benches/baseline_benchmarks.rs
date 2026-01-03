@@ -1,7 +1,7 @@
 // Baseline performance benchmarks - TDD approach
 // These benchmarks define expected performance targets before optimization
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use ruviz::prelude::*;
 
 /// Benchmark: Line plot with 1K points
