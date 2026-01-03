@@ -1469,6 +1469,15 @@ impl Plot {
             y_max += 1.0;
         }
 
+        // Extract bar chart categories if present (for categorical x-axis labels)
+        let bar_categories: Option<Vec<String>> = self.series.iter().find_map(|s| {
+            if let SeriesType::Bar { categories, .. } = &s.series_type {
+                Some(categories.clone())
+            } else {
+                None
+            }
+        });
+
         // Choose layout method based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
             match &self.config.margins {
@@ -1549,18 +1558,33 @@ impl Plot {
             let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
 
             // Draw tick labels using layout positions
-            renderer.draw_axis_labels_at(
-                &layout.plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.theme.foreground,
-                dpi,
-            )?;
+            // Use categorical labels for bar charts, numeric for others
+            if let Some(ref categories) = bar_categories {
+                renderer.draw_axis_labels_at_categorical(
+                    &layout.plot_area,
+                    categories,
+                    y_min,
+                    y_max,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.theme.foreground,
+                    dpi,
+                )?;
+            } else {
+                renderer.draw_axis_labels_at(
+                    &layout.plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.theme.foreground,
+                    dpi,
+                )?;
+            }
 
             // Draw title if present
             if let Some(ref pos) = layout.title_pos {
@@ -1849,6 +1873,15 @@ impl Plot {
         // Calculate data bounds across all series
         let (x_min, x_max, y_min, y_max) = self.calculate_data_bounds()?;
 
+        // Extract bar chart categories if present (for categorical x-axis labels)
+        let bar_categories: Option<Vec<String>> = self.series.iter().find_map(|s| {
+            if let SeriesType::Bar { categories, .. } = &s.series_type {
+                Some(categories.clone())
+            } else {
+                None
+            }
+        });
+
         // Choose layout method based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) = match &self
             .config
@@ -1931,18 +1964,33 @@ impl Plot {
             let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
 
             // Draw tick labels using layout positions
-            renderer.draw_axis_labels_at(
-                &layout.plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.theme.foreground,
-                dpi,
-            )?;
+            // Use categorical labels for bar charts, numeric for others
+            if let Some(ref categories) = bar_categories {
+                renderer.draw_axis_labels_at_categorical(
+                    &layout.plot_area,
+                    categories,
+                    y_min,
+                    y_max,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.theme.foreground,
+                    dpi,
+                )?;
+            } else {
+                renderer.draw_axis_labels_at(
+                    &layout.plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.theme.foreground,
+                    dpi,
+                )?;
+            }
 
             // Draw title if present
             if let Some(ref pos) = layout.title_pos {
@@ -3092,6 +3140,15 @@ impl Plot {
         y_min -= y_range * 0.05;
         y_max += y_range * 0.05;
 
+        // Extract bar chart categories if present (for categorical x-axis labels)
+        let bar_categories: Option<Vec<String>> = self.series.iter().find_map(|s| {
+            if let SeriesType::Bar { categories, .. } = &s.series_type {
+                Some(categories.clone())
+            } else {
+                None
+            }
+        });
+
         let dpi = self.dpi as f32;
 
         // Calculate plot area based on MarginConfig
@@ -3254,18 +3311,33 @@ impl Plot {
             let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
 
             // Draw tick labels using layout positions
-            renderer.draw_axis_labels_at(
-                &layout.plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.theme.foreground,
-                dpi,
-            )?;
+            // Use categorical labels for bar charts, numeric for others
+            if let Some(ref categories) = bar_categories {
+                renderer.draw_axis_labels_at_categorical(
+                    &layout.plot_area,
+                    categories,
+                    y_min,
+                    y_max,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.theme.foreground,
+                    dpi,
+                )?;
+            } else {
+                renderer.draw_axis_labels_at(
+                    &layout.plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.theme.foreground,
+                    dpi,
+                )?;
+            }
 
             // Draw title if present
             if let Some(ref pos) = layout.title_pos {
@@ -3291,20 +3363,37 @@ impl Plot {
             // Legacy layout: use old methods
             let x_label = self.xlabel.as_deref().unwrap_or("X");
             let y_label = self.ylabel.as_deref().unwrap_or("Y");
-            renderer.draw_axis_labels_with_ticks(
-                plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                &x_major_ticks,
-                &y_major_ticks,
-                x_label,
-                y_label,
-                self.theme.foreground,
-                self.dpi_scaled_font_size(14.0),
-                self.dpi_scale(),
-            )?;
+
+            // Use categorical labels for bar charts, numeric for others
+            if let Some(ref categories) = bar_categories {
+                renderer.draw_axis_labels_with_categories(
+                    plot_area,
+                    categories,
+                    y_min,
+                    y_max,
+                    &y_major_ticks,
+                    x_label,
+                    y_label,
+                    self.theme.foreground,
+                    self.dpi_scaled_font_size(14.0),
+                    self.dpi_scale(),
+                )?;
+            } else {
+                renderer.draw_axis_labels_with_ticks(
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &x_major_ticks,
+                    &y_major_ticks,
+                    x_label,
+                    y_label,
+                    self.theme.foreground,
+                    self.dpi_scaled_font_size(14.0),
+                    self.dpi_scale(),
+                )?;
+            }
 
             // Draw title if present
             if let Some(ref title) = self.title {

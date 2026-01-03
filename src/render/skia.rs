@@ -916,6 +916,93 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Draw axis labels with categorical x-axis labels for bar charts (legacy style)
+    ///
+    /// Similar to `draw_axis_labels_with_ticks` but uses category names on x-axis
+    /// instead of numeric tick values.
+    pub fn draw_axis_labels_with_categories(
+        &mut self,
+        plot_area: Rect,
+        categories: &[String],
+        y_min: f64,
+        y_max: f64,
+        y_major_ticks: &[f64],
+        x_label: &str,
+        y_label: &str,
+        color: Color,
+        label_size: f32,
+        dpi_scale: f32,
+    ) -> Result<()> {
+        let tick_size = label_size * 0.7;
+        let tick_offset_y = 25.0 * dpi_scale;
+        let x_label_offset = 55.0 * dpi_scale;
+        let y_label_offset = 50.0 * dpi_scale;
+        let y_tick_offset = 15.0 * dpi_scale;
+        let char_width_estimate = 4.0 * dpi_scale;
+
+        // Draw X-axis category labels centered under each bar
+        let n_categories = categories.len();
+        if n_categories > 0 {
+            let category_width = plot_area.width() / n_categories as f32;
+
+            for (i, category) in categories.iter().enumerate() {
+                // Position each label at the center of its bar
+                let x_center = plot_area.left() + category_width * (i as f32 + 0.5);
+
+                // Estimate text width for centering
+                let text_width_estimate = category.len() as f32 * char_width_estimate / 2.0;
+                let label_x = (x_center - text_width_estimate)
+                    .max(0.0)
+                    .min(self.width() as f32 - text_width_estimate * 2.0);
+                let label_y = (plot_area.bottom() + tick_offset_y)
+                    .min(self.height() as f32 - tick_size - 5.0);
+
+                self.draw_text(category, label_x, label_y, tick_size, color)?;
+            }
+        }
+
+        // Draw Y-axis tick labels (same as numeric version)
+        for &tick_value in y_major_ticks {
+            let y_pixel = plot_area.bottom()
+                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+            let label_text = if tick_value.abs() < 0.001 {
+                "0".to_string()
+            } else if tick_value.abs() > 1000.0 {
+                format!("{:.0e}", tick_value)
+            } else {
+                format!("{:.1}", tick_value)
+            };
+
+            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0);
+            self.draw_text(
+                &label_text,
+                label_x,
+                y_pixel + tick_size * 0.3,
+                tick_size,
+                color,
+            )?;
+        }
+
+        // Draw X-axis label
+        let x_label_x =
+            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
+        let x_label_y = plot_area.bottom() + x_label_offset;
+        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
+
+        // Draw Y-axis label (rotated)
+        let estimated_text_width = y_label.len() as f32 * label_size * 0.8;
+        let improved_y_label_offset = (estimated_text_width * 0.6).max(y_label_offset);
+        let y_label_x = plot_area.left() - improved_y_label_offset;
+        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
+        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
+
+        // Draw border around plot area
+        self.draw_plot_border(plot_area, color, dpi_scale)?;
+
+        Ok(())
+    }
+
     /// Draw border around plot area
     pub fn draw_plot_border(
         &mut self,
@@ -1067,6 +1154,89 @@ impl SkiaRenderer {
                 &label_text,
                 label_x,
                 y_pixel + tick_size * 0.35, // Center vertically on tick
+                tick_size,
+                color,
+            )?;
+        }
+
+        // Draw border around plot area
+        self.draw_plot_border(skia_plot_area, color, dpi_scale)?;
+
+        Ok(())
+    }
+
+    /// Draw axis tick labels with categorical x-axis labels for bar charts
+    ///
+    /// Similar to `draw_axis_labels_at` but uses category names instead of numeric ticks
+    /// on the x-axis. Categories are positioned at the center of each bar.
+    pub fn draw_axis_labels_at_categorical(
+        &mut self,
+        plot_area: &LayoutRect,
+        categories: &[String],
+        y_min: f64,
+        y_max: f64,
+        xtick_baseline_y: f32,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+        dpi: f32,
+    ) -> Result<()> {
+        let dpi_scale = dpi / 100.0;
+        let char_width_estimate = tick_size * 0.6;
+
+        // Convert LayoutRect to tiny_skia Rect for border drawing
+        let skia_plot_area = Rect::from_ltrb(
+            plot_area.left,
+            plot_area.top,
+            plot_area.right,
+            plot_area.bottom,
+        )
+        .ok_or(PlottingError::InvalidData {
+            message: "Invalid plot area dimensions".to_string(),
+            position: None,
+        })?;
+
+        // Draw X-axis category labels centered under each bar
+        let n_categories = categories.len();
+        if n_categories > 0 {
+            // Calculate the width allocated to each category
+            let category_width = plot_area.width() / n_categories as f32;
+
+            for (i, category) in categories.iter().enumerate() {
+                // Position each label at the center of its bar
+                let x_center = plot_area.left + category_width * (i as f32 + 0.5);
+
+                // Estimate text width for centering
+                let text_width_estimate = category.len() as f32 * char_width_estimate;
+                let label_x = (x_center - text_width_estimate / 2.0)
+                    .max(0.0)
+                    .min(self.width() as f32 - text_width_estimate);
+
+                self.draw_text(category, label_x, xtick_baseline_y, tick_size, color)?;
+            }
+        }
+
+        // Generate and draw Y-axis tick labels (same as numeric version)
+        let y_ticks = generate_ticks(y_min, y_max, 5);
+        for &tick_value in y_ticks.iter() {
+            let y_pixel = plot_area.bottom
+                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+            let label_text = if tick_value.abs() < 0.001 {
+                "0".to_string()
+            } else if tick_value.abs() > 1000.0 {
+                format!("{:.0e}", tick_value)
+            } else {
+                format!("{:.1}", tick_value)
+            };
+
+            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            let gap = tick_size * 0.5;
+            let min_x = tick_size * 0.5;
+            let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
+            self.draw_text(
+                &label_text,
+                label_x,
+                y_pixel + tick_size * 0.35,
                 tick_size,
                 color,
             )?;
