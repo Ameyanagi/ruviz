@@ -3,6 +3,8 @@
 /// Supports common positioning options for legends, labels, and other UI elements
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Position {
+    /// Automatic best position (minimizes data overlap) - matplotlib loc=0
+    Best,
     /// Top-left corner
     TopLeft,
     /// Top-center
@@ -30,6 +32,7 @@ impl Position {
     /// Returns (x, y) where (0,0) is top-left and (1,1) is bottom-right
     pub fn to_normalized_coords(self) -> (f32, f32) {
         match self {
+            Position::Best => (1.0, 0.0), // Fallback to upper-right; actual position computed at render time
             Position::TopLeft => (0.0, 0.0),
             Position::TopCenter => (0.5, 0.0),
             Position::TopRight => (1.0, 0.0),
@@ -56,6 +59,7 @@ impl Position {
     /// - vertical: 0.0 = top-aligned, 0.5 = center-aligned, 1.0 = bottom-aligned
     pub fn get_anchor(self) -> (f32, f32) {
         match self {
+            Position::Best => (1.0, 0.0), // Fallback to upper-right anchor
             Position::TopLeft => (0.0, 0.0),
             Position::TopCenter => (0.5, 0.0),
             Position::TopRight => (1.0, 0.0),
@@ -104,6 +108,7 @@ impl Position {
     /// Get the opposite position (useful for automatic legend placement)
     pub fn opposite(self) -> Self {
         match self {
+            Position::Best => Position::Best, // Best remains best
             Position::TopLeft => Position::BottomRight,
             Position::TopCenter => Position::BottomCenter,
             Position::TopRight => Position::BottomLeft,
@@ -128,6 +133,7 @@ impl Position {
         const CENTER_MARGIN: f32 = 0.0; // No margin for center
 
         match self {
+            Position::Best => (CORNER_MARGIN, CORNER_MARGIN), // Use corner margin as fallback
             Position::TopLeft
             | Position::TopRight
             | Position::BottomLeft
@@ -141,15 +147,16 @@ impl Position {
 }
 
 impl Default for Position {
-    /// Default position is TopRight (common for legends)
+    /// Default position is Best (automatic optimal positioning)
     fn default() -> Self {
-        Position::TopRight
+        Position::Best
     }
 }
 
 impl std::fmt::Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Position::Best => write!(f, "best"),
             Position::TopLeft => write!(f, "top-left"),
             Position::TopCenter => write!(f, "top-center"),
             Position::TopRight => write!(f, "top-right"),
@@ -239,7 +246,8 @@ mod tests {
 
     #[test]
     fn test_default_position() {
-        assert_eq!(Position::default(), Position::TopRight);
+        // Default is Best (auto-positioning) for optimal data visibility
+        assert_eq!(Position::default(), Position::Best);
     }
 
     #[test]

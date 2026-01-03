@@ -1,7 +1,8 @@
 use crate::{
     core::{
-        ComputedMargins, LayoutRect, PlottingError, Result, SpacingConfig, TextPosition,
-        plot::Image, pt_to_px,
+        ComputedMargins, LayoutRect, Legend, LegendFrame, LegendItem, LegendItemType,
+        LegendPosition, LegendSpacingPixels, PlottingError, Result, SpacingConfig, TextPosition,
+        find_best_position, plot::Image, pt_to_px,
     },
     render::{Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme},
 };
@@ -242,6 +243,89 @@ impl SkiaRenderer {
 
             self.pixmap
                 .stroke_path(&path, &border_paint, &stroke, Transform::identity(), None);
+        } else {
+            // Outline only
+            let mut paint = Paint::default();
+            paint.set_color(color.to_tiny_skia_color());
+            paint.anti_alias = true;
+
+            let stroke = Stroke::default();
+            self.pixmap
+                .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
+
+        Ok(())
+    }
+
+    /// Draw a rounded rectangle with the given corner radius
+    pub fn draw_rounded_rectangle(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        corner_radius: f32,
+        color: Color,
+        filled: bool,
+    ) -> Result<()> {
+        // Clamp radius to half of the smaller dimension
+        let max_radius = (width.min(height) / 2.0).max(0.0);
+        let radius = corner_radius.min(max_radius);
+
+        // If radius is effectively zero, use regular rectangle
+        if radius < 0.1 {
+            return self.draw_rectangle(x, y, width, height, color, filled);
+        }
+
+        // Build rounded rectangle path manually
+        let mut pb = PathBuilder::new();
+
+        // Start at top-left, after the corner arc
+        pb.move_to(x + radius, y);
+
+        // Top edge
+        pb.line_to(x + width - radius, y);
+        // Top-right corner
+        pb.quad_to(x + width, y, x + width, y + radius);
+
+        // Right edge
+        pb.line_to(x + width, y + height - radius);
+        // Bottom-right corner
+        pb.quad_to(x + width, y + height, x + width - radius, y + height);
+
+        // Bottom edge
+        pb.line_to(x + radius, y + height);
+        // Bottom-left corner
+        pb.quad_to(x, y + height, x, y + height - radius);
+
+        // Left edge
+        pb.line_to(x, y + radius);
+        // Top-left corner
+        pb.quad_to(x, y, x + radius, y);
+
+        pb.close();
+
+        let path = pb.finish().ok_or(PlottingError::RenderError(
+            "Failed to create rounded rectangle path".to_string(),
+        ))?;
+
+        if filled {
+            let mut fill_paint = Paint::default();
+            let (r, g, b, a) = color.to_rgba_f32();
+            let fill_color = tiny_skia::Color::from_rgba(r, g, b, a).ok_or(
+                PlottingError::RenderError("Invalid color for rounded rectangle fill".to_string()),
+            )?;
+
+            fill_paint.set_color(fill_color);
+            fill_paint.anti_alias = true;
+
+            self.pixmap.fill_path(
+                &path,
+                &fill_paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         } else {
             // Outline only
             let mut paint = Paint::default();
@@ -1352,14 +1436,15 @@ impl SkiaRenderer {
         let center_y = plot_area.top() + plot_area.height() / 2.0;
 
         let (legend_x, legend_y) = match position {
+            // Best defaults to TopRight in legacy method; full best positioning in draw_legend_full
+            crate::core::Position::Best | crate::core::Position::TopRight => (
+                plot_area.right() - legend_width - 10.0,
+                plot_area.top() + 10.0,
+            ),
             crate::core::Position::TopLeft => (plot_area.left() + 10.0, plot_area.top() + 10.0),
             crate::core::Position::TopCenter => {
                 (center_x - legend_width / 2.0, plot_area.top() + 10.0)
             }
-            crate::core::Position::TopRight => (
-                plot_area.right() - legend_width - 10.0,
-                plot_area.top() + 10.0,
-            ),
             crate::core::Position::CenterLeft => {
                 (plot_area.left() + 10.0, center_y - legend_height / 2.0)
             }
@@ -1433,6 +1518,515 @@ impl SkiaRenderer {
             )?;
 
             item_y += legend_spacing;
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // New Legend System with proper handle rendering
+    // =========================================================================
+
+    /// Draw a line handle in the legend (for line series)
+    ///
+    /// Draws a horizontal line segment with the specified style, color, and width.
+    fn draw_legend_line_handle(
+        &mut self,
+        x: f32,
+        y: f32,
+        length: f32,
+        color: Color,
+        style: &LineStyle,
+        width: f32,
+    ) -> Result<()> {
+        // Draw horizontal line at vertical center
+        self.draw_line(x, y, x + length, y, color, width, style.clone())
+    }
+
+    /// Draw a scatter/marker handle in the legend
+    ///
+    /// Draws a single marker symbol centered in the handle area.
+    fn draw_legend_scatter_handle(
+        &mut self,
+        x: f32,
+        y: f32,
+        length: f32,
+        color: Color,
+        marker: &MarkerStyle,
+        size: f32,
+    ) -> Result<()> {
+        // Draw marker at center of handle area
+        let center_x = x + length / 2.0;
+        self.draw_marker(center_x, y, size, marker.clone(), color)
+    }
+
+    /// Draw a bar handle in the legend
+    ///
+    /// Draws a filled rectangle to represent bar/histogram series.
+    fn draw_legend_bar_handle(
+        &mut self,
+        x: f32,
+        y: f32,
+        length: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        // Draw filled rectangle centered vertically
+        let rect_y = y - height / 2.0;
+        self.draw_rectangle(x, rect_y, length, height, color, true)
+    }
+
+    /// Draw a line+marker handle in the legend
+    ///
+    /// Draws a line segment with a marker symbol at the center.
+    fn draw_legend_line_marker_handle(
+        &mut self,
+        x: f32,
+        y: f32,
+        length: f32,
+        color: Color,
+        line_style: &LineStyle,
+        line_width: f32,
+        marker: &MarkerStyle,
+        marker_size: f32,
+    ) -> Result<()> {
+        // Draw line first
+        self.draw_legend_line_handle(x, y, length, color, line_style, line_width)?;
+        // Draw marker on top at center
+        self.draw_legend_scatter_handle(x, y, length, color, marker, marker_size)
+    }
+
+    /// Draw a legend handle based on the item type
+    fn draw_legend_handle(
+        &mut self,
+        item: &LegendItem,
+        x: f32,
+        y: f32,
+        spacing: &LegendSpacingPixels,
+    ) -> Result<()> {
+        let handle_length = spacing.handle_length;
+        let handle_height = spacing.handle_height;
+
+        match &item.item_type {
+            LegendItemType::Line { style, width } => {
+                self.draw_legend_line_handle(x, y, handle_length, item.color, style, *width)
+            }
+            LegendItemType::Scatter { marker, size } => {
+                self.draw_legend_scatter_handle(x, y, handle_length, item.color, marker, *size)
+            }
+            LegendItemType::LineMarker {
+                line_style,
+                line_width,
+                marker,
+                marker_size,
+            } => self.draw_legend_line_marker_handle(
+                x,
+                y,
+                handle_length,
+                item.color,
+                line_style,
+                *line_width,
+                marker,
+                *marker_size,
+            ),
+            LegendItemType::Bar | LegendItemType::Histogram => {
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)
+            }
+            LegendItemType::Area { edge_color } => {
+                // Draw filled rectangle with optional edge
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)?;
+                if let Some(edge) = edge_color {
+                    // Draw edge around the rectangle
+                    let rect_y = y - handle_height / 2.0;
+                    self.draw_rectangle_outline(
+                        x,
+                        rect_y,
+                        handle_length,
+                        handle_height,
+                        *edge,
+                        1.0,
+                    )?;
+                }
+                Ok(())
+            }
+            LegendItemType::ErrorBar => {
+                // Draw line with caps at both ends
+                let cap_size = handle_height * 0.4;
+                self.draw_legend_line_handle(
+                    x,
+                    y,
+                    handle_length,
+                    item.color,
+                    &LineStyle::Solid,
+                    1.5,
+                )?;
+                // Left cap
+                self.draw_line(
+                    x,
+                    y - cap_size,
+                    x,
+                    y + cap_size,
+                    item.color,
+                    1.5,
+                    LineStyle::Solid,
+                )?;
+                // Right cap
+                self.draw_line(
+                    x + handle_length,
+                    y - cap_size,
+                    x + handle_length,
+                    y + cap_size,
+                    item.color,
+                    1.5,
+                    LineStyle::Solid,
+                )
+            }
+        }
+    }
+
+    /// Draw rectangle outline (stroke only, no fill)
+    fn draw_rectangle_outline(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        line_width: f32,
+    ) -> Result<()> {
+        // Draw 4 lines forming a rectangle
+        let x2 = x + width;
+        let y2 = y + height;
+        self.draw_line(x, y, x2, y, color, line_width, LineStyle::Solid)?;
+        self.draw_line(x2, y, x2, y2, color, line_width, LineStyle::Solid)?;
+        self.draw_line(x2, y2, x, y2, color, line_width, LineStyle::Solid)?;
+        self.draw_line(x, y2, x, y, color, line_width, LineStyle::Solid)
+    }
+
+    /// Draw rounded rectangle outline (stroke only, no fill)
+    fn draw_rounded_rectangle_outline(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        corner_radius: f32,
+        color: Color,
+        line_width: f32,
+    ) -> Result<()> {
+        // Clamp radius to half of the smaller dimension
+        let max_radius = (width.min(height) / 2.0).max(0.0);
+        let radius = corner_radius.min(max_radius);
+
+        // If radius is effectively zero, use regular rectangle outline
+        if radius < 0.1 {
+            return self.draw_rectangle_outline(x, y, width, height, color, line_width);
+        }
+
+        // Build rounded rectangle path
+        let mut pb = PathBuilder::new();
+
+        pb.move_to(x + radius, y);
+        pb.line_to(x + width - radius, y);
+        pb.quad_to(x + width, y, x + width, y + radius);
+        pb.line_to(x + width, y + height - radius);
+        pb.quad_to(x + width, y + height, x + width - radius, y + height);
+        pb.line_to(x + radius, y + height);
+        pb.quad_to(x, y + height, x, y + height - radius);
+        pb.line_to(x, y + radius);
+        pb.quad_to(x, y, x + radius, y);
+        pb.close();
+
+        let path = pb.finish().ok_or(PlottingError::RenderError(
+            "Failed to create rounded rectangle outline path".to_string(),
+        ))?;
+
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+
+        let mut stroke = Stroke::default();
+        stroke.width = line_width;
+        stroke.line_cap = LineCap::Round;
+        stroke.line_join = LineJoin::Round;
+
+        self.pixmap
+            .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+
+        Ok(())
+    }
+
+    /// Draw legend frame with background and optional border
+    fn draw_legend_frame(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        frame: &LegendFrame,
+    ) -> Result<()> {
+        if !frame.visible {
+            return Ok(());
+        }
+
+        let radius = frame.corner_radius;
+
+        // Draw shadow if enabled
+        if frame.shadow {
+            let (shadow_dx, shadow_dy) = frame.shadow_offset;
+            if radius > 0.0 {
+                self.draw_rounded_rectangle(
+                    x + shadow_dx,
+                    y + shadow_dy,
+                    width,
+                    height,
+                    radius,
+                    frame.shadow_color,
+                    true,
+                )?;
+            } else {
+                self.draw_rectangle(
+                    x + shadow_dx,
+                    y + shadow_dy,
+                    width,
+                    height,
+                    frame.shadow_color,
+                    true,
+                )?;
+            }
+        }
+
+        // Draw background
+        if radius > 0.0 {
+            self.draw_rounded_rectangle(x, y, width, height, radius, frame.background, true)?;
+        } else {
+            self.draw_rectangle(x, y, width, height, frame.background, true)?;
+        }
+
+        // Draw border if specified
+        if let Some(border_color) = frame.border_color {
+            if radius > 0.0 {
+                self.draw_rounded_rectangle_outline(
+                    x,
+                    y,
+                    width,
+                    height,
+                    radius,
+                    border_color,
+                    frame.border_width,
+                )?;
+            } else {
+                self.draw_rectangle_outline(x, y, width, height, border_color, frame.border_width)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Calculate legend dimensions from items
+    fn calculate_legend_dimensions(
+        &self,
+        items: &[LegendItem],
+        legend: &Legend,
+        char_width: f32,
+    ) -> (f32, f32) {
+        legend.calculate_size(items, char_width)
+    }
+
+    /// Draw legend with full LegendItem support
+    ///
+    /// This is the new legend drawing method that properly renders different
+    /// series types with their correct visual handles.
+    pub fn draw_legend_full(
+        &mut self,
+        items: &[LegendItem],
+        legend: &Legend,
+        plot_area: Rect,
+        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+    ) -> Result<()> {
+        if items.is_empty() || !legend.enabled {
+            return Ok(());
+        }
+
+        let spacing = legend.spacing.to_pixels(legend.font_size);
+
+        // Estimate character width for size calculation
+        let char_width = legend.font_size * 0.6;
+
+        // Calculate legend size
+        let (legend_width, legend_height) = self.calculate_legend_dimensions(items, legend, char_width);
+
+        // Determine position
+        let plot_bounds = (
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.bottom(),
+        );
+
+        let position = if matches!(legend.position, LegendPosition::Best) {
+            // Use best position algorithm
+            let bboxes = data_bboxes.unwrap_or(&[]);
+            if bboxes.iter().map(|b| 1).sum::<usize>() > 100000 {
+                // Performance guard: skip for very large datasets
+                LegendPosition::UpperRight
+            } else {
+                find_best_position(
+                    (legend_width, legend_height),
+                    plot_bounds,
+                    bboxes,
+                    &legend.spacing,
+                    legend.font_size,
+                )
+            }
+        } else {
+            legend.position
+        };
+
+        // Create a temporary legend with the resolved position to calculate coordinates
+        let resolved_legend = Legend {
+            position,
+            ..legend.clone()
+        };
+
+        let (legend_x, legend_y) = resolved_legend.calculate_position(
+            (legend_width, legend_height),
+            plot_bounds,
+        );
+
+        // Draw frame
+        self.draw_legend_frame(legend_x, legend_y, legend_width, legend_height, &legend.frame)?;
+
+        // Starting position for items (inside padding)
+        let mut item_x = legend_x + spacing.border_pad;
+        let mut item_y = legend_y + spacing.border_pad + legend.font_size / 2.0;
+
+        // Draw title if present
+        if let Some(ref title) = legend.title {
+            let title_x = legend_x + legend_width / 2.0;
+            self.draw_text_centered(title, title_x, item_y, legend.font_size, legend.text_color)?;
+            item_y += legend.font_size + spacing.label_spacing;
+        }
+
+        // Calculate items per column
+        let items_per_col = (items.len() + legend.columns - 1) / legend.columns;
+
+        // Calculate column width
+        let max_label_len = items
+            .iter()
+            .map(|item| item.label.len())
+            .max()
+            .unwrap_or(0);
+        let label_width = max_label_len as f32 * char_width;
+        let col_width = spacing.handle_length + spacing.handle_text_pad + label_width;
+
+        // Draw items column by column
+        for col in 0..legend.columns {
+            let col_x = item_x + col as f32 * (col_width + spacing.column_spacing);
+            let mut row_y = item_y;
+
+            for row in 0..items_per_col {
+                let idx = col * items_per_col + row;
+                if idx >= items.len() {
+                    break;
+                }
+
+                let item = &items[idx];
+
+                // Draw handle
+                self.draw_legend_handle(item, col_x, row_y, &spacing)?;
+
+                // Draw label
+                let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
+                self.draw_text(&item.label, text_x, row_y + legend.font_size * 0.35, legend.font_size, legend.text_color)?;
+
+                row_y += legend.font_size + spacing.label_spacing;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Draw a colorbar for heatmaps
+    ///
+    /// Draws a vertical gradient bar showing the color mapping from vmin to vmax,
+    /// with tick marks and optional label.
+    pub fn draw_colorbar(
+        &mut self,
+        colormap: &crate::render::ColorMap,
+        vmin: f64,
+        vmax: f64,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        label: Option<&str>,
+        foreground_color: Color,
+        font_size: f32,
+    ) -> Result<()> {
+        // Draw the colorbar gradient (vertical, from vmax at top to vmin at bottom)
+        let num_segments = (height as usize).max(50).min(256);
+        let segment_height = height / num_segments as f32;
+
+        for i in 0..num_segments {
+            // Map segment to value (top = vmax, bottom = vmin)
+            let normalized = 1.0 - (i as f64 / (num_segments - 1) as f64);
+            let color = colormap.sample(normalized);
+            let segment_y = y + i as f32 * segment_height;
+
+            self.draw_rectangle(x, segment_y, width, segment_height + 1.0, color, true)?;
+        }
+
+        // Draw border around colorbar
+        let stroke_width = 1.0;
+        self.draw_rectangle(x, y, width, height, foreground_color, false)?;
+
+        // Draw tick marks and values on the right side
+        let num_ticks = 5;
+        let tick_width = width * 0.3;
+        let text_offset = width + font_size * 0.5;
+
+        for i in 0..=num_ticks {
+            let t = i as f64 / num_ticks as f64;
+            let value = vmin + t * (vmax - vmin);
+            let tick_y = y + height * (1.0 - t as f32);
+
+            // Draw tick mark
+            self.draw_line(
+                x + width,
+                tick_y,
+                x + width + tick_width,
+                tick_y,
+                foreground_color,
+                stroke_width,
+                LineStyle::Solid,
+            )?;
+
+            // Draw value label
+            let label_text = if value.abs() < 0.001 && value.abs() > 0.0 {
+                format!("{:.1e}", value)
+            } else if value.abs() >= 1000.0 {
+                format!("{:.0e}", value)
+            } else if value.abs() < 0.01 {
+                format!("{:.2}", value)
+            } else {
+                format!("{:.1}", value)
+            };
+
+            self.draw_text(
+                &label_text,
+                x + text_offset,
+                tick_y + font_size * 0.3,
+                font_size,
+                foreground_color,
+            )?;
+        }
+
+        // Draw colorbar label (rotated 90 degrees) if provided
+        if let Some(label) = label {
+            let label_x = x + width + font_size * 4.0;
+            let label_y = y + height / 2.0;
+            self.draw_text_rotated(label, label_x, label_y, font_size, foreground_color)?;
         }
 
         Ok(())
@@ -1512,6 +2106,450 @@ impl SkiaRenderer {
             tiny_skia::Transform::identity(),
             None,
         );
+
+        Ok(())
+    }
+
+    // ========== Annotation Rendering Methods ==========
+
+    /// Render all annotations for a plot
+    ///
+    /// Annotations are rendered after data series but before legend and title.
+    pub fn draw_annotations(
+        &mut self,
+        annotations: &[crate::core::Annotation],
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        dpi: f32,
+    ) -> Result<()> {
+        for annotation in annotations {
+            self.draw_annotation(annotation, plot_area, x_min, x_max, y_min, y_max, dpi)?;
+        }
+        Ok(())
+    }
+
+    /// Render a single annotation
+    fn draw_annotation(
+        &mut self,
+        annotation: &crate::core::Annotation,
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        dpi: f32,
+    ) -> Result<()> {
+        use crate::core::Annotation;
+
+        match annotation {
+            Annotation::Text { x, y, text, style } => {
+                self.draw_annotation_text(*x, *y, text, style, plot_area, x_min, x_max, y_min, y_max, dpi)
+            }
+            Annotation::Arrow { x1, y1, x2, y2, style } => {
+                self.draw_annotation_arrow(*x1, *y1, *x2, *y2, style, plot_area, x_min, x_max, y_min, y_max, dpi)
+            }
+            Annotation::HLine { y, style, color, width } => {
+                self.draw_annotation_hline(*y, style, *color, *width, plot_area, y_min, y_max, dpi)
+            }
+            Annotation::VLine { x, style, color, width } => {
+                self.draw_annotation_vline(*x, style, *color, *width, plot_area, x_min, x_max, dpi)
+            }
+            Annotation::Rectangle { x, y, width, height, style } => {
+                self.draw_annotation_rect(*x, *y, *width, *height, style, plot_area, x_min, x_max, y_min, y_max)
+            }
+            Annotation::FillBetween { x, y1, y2, style, where_positive } => {
+                self.draw_annotation_fill_between(x, y1, y2, style, *where_positive, plot_area, x_min, x_max, y_min, y_max)
+            }
+            Annotation::HSpan { x_min: xmin, x_max: xmax, style } => {
+                self.draw_annotation_hspan(*xmin, *xmax, style, plot_area, x_min, x_max, y_min, y_max)
+            }
+            Annotation::VSpan { y_min: ymin, y_max: ymax, style } => {
+                self.draw_annotation_vspan(*ymin, *ymax, style, plot_area, x_min, x_max, y_min, y_max)
+            }
+        }
+    }
+
+    /// Draw a text annotation at data coordinates
+    fn draw_annotation_text(
+        &mut self,
+        x: f64,
+        y: f64,
+        text: &str,
+        style: &crate::core::TextStyle,
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        dpi: f32,
+    ) -> Result<()> {
+        let (px, py) = map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
+
+        // Convert font size from points to pixels
+        let font_size_px = pt_to_px(style.font_size, dpi);
+
+        // Draw text at the position (could add background box and rotation in future)
+        self.draw_text(text, px, py, font_size_px, style.color)
+    }
+
+    /// Draw an arrow annotation
+    fn draw_annotation_arrow(
+        &mut self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        style: &crate::core::ArrowStyle,
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        dpi: f32,
+    ) -> Result<()> {
+        let (px1, py1) = map_data_to_pixels(x1, y1, x_min, x_max, y_min, y_max, plot_area);
+        let (px2, py2) = map_data_to_pixels(x2, y2, x_min, x_max, y_min, y_max, plot_area);
+
+        let line_width_px = pt_to_px(style.line_width, dpi);
+
+        // Draw the arrow shaft
+        self.draw_line(px1, py1, px2, py2, style.color, line_width_px, style.line_style.clone())?;
+
+        // Draw arrow head at end point
+        if !matches!(style.head_style, crate::core::ArrowHead::None) {
+            let head_length_px = pt_to_px(style.head_length, dpi);
+            let head_width_px = pt_to_px(style.head_width, dpi);
+            self.draw_arrow_head(px2, py2, px1, py1, head_length_px, head_width_px, style.color)?;
+        }
+
+        // Draw arrow head at start point (for double-headed arrows)
+        if !matches!(style.tail_style, crate::core::ArrowHead::None) {
+            let head_length_px = pt_to_px(style.head_length, dpi);
+            let head_width_px = pt_to_px(style.head_width, dpi);
+            self.draw_arrow_head(px1, py1, px2, py2, head_length_px, head_width_px, style.color)?;
+        }
+
+        Ok(())
+    }
+
+    /// Draw an arrow head pointing from (from_x, from_y) to (tip_x, tip_y)
+    fn draw_arrow_head(
+        &mut self,
+        tip_x: f32,
+        tip_y: f32,
+        from_x: f32,
+        from_y: f32,
+        length: f32,
+        width: f32,
+        color: Color,
+    ) -> Result<()> {
+        // Calculate direction vector
+        let dx = tip_x - from_x;
+        let dy = tip_y - from_y;
+        let len = (dx * dx + dy * dy).sqrt();
+
+        if len < 0.001 {
+            return Ok(());
+        }
+
+        // Normalize direction
+        let ux = dx / len;
+        let uy = dy / len;
+
+        // Perpendicular vector
+        let px = -uy;
+        let py = ux;
+
+        // Calculate arrow head vertices
+        let base_x = tip_x - ux * length;
+        let base_y = tip_y - uy * length;
+
+        let left_x = base_x + px * width / 2.0;
+        let left_y = base_y + py * width / 2.0;
+
+        let right_x = base_x - px * width / 2.0;
+        let right_y = base_y - py * width / 2.0;
+
+        // Draw filled triangle
+        let mut path = PathBuilder::new();
+        path.move_to(tip_x, tip_y);
+        path.line_to(left_x, left_y);
+        path.line_to(right_x, right_y);
+        path.close();
+
+        let path = path.finish().ok_or(PlottingError::RenderError(
+            "Failed to create arrow head path".to_string(),
+        ))?;
+
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+
+        self.pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+
+        Ok(())
+    }
+
+    /// Draw a horizontal reference line
+    fn draw_annotation_hline(
+        &mut self,
+        y: f64,
+        style: &LineStyle,
+        color: Color,
+        width: f32,
+        plot_area: Rect,
+        y_min: f64,
+        y_max: f64,
+        dpi: f32,
+    ) -> Result<()> {
+        // Calculate pixel y position
+        let frac = (y - y_min) / (y_max - y_min);
+        let py = plot_area.bottom() - frac as f32 * plot_area.height();
+
+        let line_width_px = pt_to_px(width, dpi);
+
+        // Draw horizontal line spanning the plot area
+        self.draw_line(
+            plot_area.left(),
+            py,
+            plot_area.right(),
+            py,
+            color,
+            line_width_px,
+            style.clone(),
+        )
+    }
+
+    /// Draw a vertical reference line
+    fn draw_annotation_vline(
+        &mut self,
+        x: f64,
+        style: &LineStyle,
+        color: Color,
+        width: f32,
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        dpi: f32,
+    ) -> Result<()> {
+        // Calculate pixel x position
+        let frac = (x - x_min) / (x_max - x_min);
+        let px = plot_area.left() + frac as f32 * plot_area.width();
+
+        let line_width_px = pt_to_px(width, dpi);
+
+        // Draw vertical line spanning the plot area
+        self.draw_line(
+            px,
+            plot_area.top(),
+            px,
+            plot_area.bottom(),
+            color,
+            line_width_px,
+            style.clone(),
+        )
+    }
+
+    /// Draw a rectangle annotation
+    fn draw_annotation_rect(
+        &mut self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        style: &crate::core::ShapeStyle,
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        let (px1, py1) = map_data_to_pixels(x, y + height, x_min, x_max, y_min, y_max, plot_area);
+        let (px2, py2) = map_data_to_pixels(x + width, y, x_min, x_max, y_min, y_max, plot_area);
+
+        let rect_width = (px2 - px1).abs();
+        let rect_height = (py2 - py1).abs();
+        let rect_x = px1.min(px2);
+        let rect_y = py1.min(py2);
+
+        if let Some(rect) = Rect::from_xywh(rect_x, rect_y, rect_width, rect_height) {
+            // Draw fill if specified
+            if let Some(fill_color) = &style.fill_color {
+                let mut paint = Paint::default();
+                let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
+                paint.set_color(color_with_alpha.to_tiny_skia_color());
+                paint.anti_alias = true;
+
+                self.pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+
+            // Draw edge if specified
+            if let Some(edge_color) = &style.edge_color {
+                let mut paint = Paint::default();
+                paint.set_color(edge_color.to_tiny_skia_color());
+                paint.anti_alias = true;
+
+                let mut stroke = Stroke::default();
+                stroke.width = style.edge_width.max(0.1);
+
+                if let Some(dash_pattern) = style.edge_style.to_dash_array() {
+                    stroke.dash = StrokeDash::new(dash_pattern, 0.0);
+                }
+
+                let mut path = PathBuilder::new();
+                path.push_rect(rect);
+                if let Some(path) = path.finish() {
+                    self.pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Draw a fill between two curves
+    fn draw_annotation_fill_between(
+        &mut self,
+        x: &[f64],
+        y1: &[f64],
+        y2: &[f64],
+        style: &crate::core::FillStyle,
+        where_positive: bool,
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        if x.len() < 2 || x.len() != y1.len() || x.len() != y2.len() {
+            return Ok(()); // Nothing to draw
+        }
+
+        // Build polygon path
+        let mut path = PathBuilder::new();
+
+        // Forward along y1
+        let (start_x, start_y) = map_data_to_pixels(x[0], y1[0], x_min, x_max, y_min, y_max, plot_area);
+        path.move_to(start_x, start_y);
+
+        for i in 1..x.len() {
+            if !where_positive || y1[i] >= y2[i] {
+                let (px, py) = map_data_to_pixels(x[i], y1[i], x_min, x_max, y_min, y_max, plot_area);
+                path.line_to(px, py);
+            } else {
+                let (px, py) = map_data_to_pixels(x[i], y2[i], x_min, x_max, y_min, y_max, plot_area);
+                path.line_to(px, py);
+            }
+        }
+
+        // Backward along y2 (in reverse order)
+        for i in (0..x.len()).rev() {
+            if !where_positive || y1[i] >= y2[i] {
+                let (px, py) = map_data_to_pixels(x[i], y2[i], x_min, x_max, y_min, y_max, plot_area);
+                path.line_to(px, py);
+            }
+        }
+
+        path.close();
+
+        if let Some(path) = path.finish() {
+            // Fill the region
+            let color_with_alpha = style.color.with_alpha(style.alpha);
+            let mut paint = Paint::default();
+            paint.set_color(color_with_alpha.to_tiny_skia_color());
+            paint.anti_alias = true;
+
+            self.pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+
+            // Draw edge if specified
+            if let Some(edge_color) = &style.edge_color {
+                let mut edge_paint = Paint::default();
+                edge_paint.set_color(edge_color.to_tiny_skia_color());
+                edge_paint.anti_alias = true;
+
+                let mut stroke = Stroke::default();
+                stroke.width = style.edge_width.max(0.1);
+
+                self.pixmap.stroke_path(&path, &edge_paint, &stroke, Transform::identity(), None);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Draw a horizontal span (shaded vertical region)
+    fn draw_annotation_hspan(
+        &mut self,
+        span_x_min: f64,
+        span_x_max: f64,
+        style: &crate::core::ShapeStyle,
+        plot_area: Rect,
+        x_min: f64,
+        x_max: f64,
+        _y_min: f64,
+        _y_max: f64,
+    ) -> Result<()> {
+        // Calculate pixel positions
+        let frac_min = ((span_x_min - x_min) / (x_max - x_min)) as f32;
+        let frac_max = ((span_x_max - x_min) / (x_max - x_min)) as f32;
+
+        let px_min = plot_area.left() + frac_min * plot_area.width();
+        let px_max = plot_area.left() + frac_max * plot_area.width();
+
+        // Clamp to plot area
+        let left = px_min.max(plot_area.left()).min(plot_area.right());
+        let right = px_max.max(plot_area.left()).min(plot_area.right());
+
+        if let Some(rect) = Rect::from_xywh(left, plot_area.top(), right - left, plot_area.height()) {
+            if let Some(fill_color) = &style.fill_color {
+                let mut paint = Paint::default();
+                let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
+                paint.set_color(color_with_alpha.to_tiny_skia_color());
+                paint.anti_alias = true;
+
+                self.pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Draw a vertical span (shaded horizontal region)
+    fn draw_annotation_vspan(
+        &mut self,
+        span_y_min: f64,
+        span_y_max: f64,
+        style: &crate::core::ShapeStyle,
+        plot_area: Rect,
+        _x_min: f64,
+        _x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        // Calculate pixel positions (remember Y is flipped)
+        let frac_min = ((span_y_min - y_min) / (y_max - y_min)) as f32;
+        let frac_max = ((span_y_max - y_min) / (y_max - y_min)) as f32;
+
+        let py_max = plot_area.bottom() - frac_min * plot_area.height(); // y_min is at bottom
+        let py_min = plot_area.bottom() - frac_max * plot_area.height(); // y_max is at top
+
+        // Clamp to plot area
+        let top = py_min.max(plot_area.top()).min(plot_area.bottom());
+        let bottom = py_max.max(plot_area.top()).min(plot_area.bottom());
+
+        if let Some(rect) = Rect::from_xywh(plot_area.left(), top, plot_area.width(), bottom - top) {
+            if let Some(fill_color) = &style.fill_color {
+                let mut paint = Paint::default();
+                let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
+                paint.set_color(color_with_alpha.to_tiny_skia_color());
+                paint.anti_alias = true;
+
+                self.pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+            }
+        }
 
         Ok(())
     }
@@ -1654,6 +2692,40 @@ pub fn map_data_to_pixels(
     // Note: Y axis is flipped in screen coordinates
     let pixel_y = plot_area.bottom()
         - ((data_y - data_y_min) / (data_y_max - data_y_min)) as f32 * plot_area.height();
+
+    (pixel_x, pixel_y)
+}
+
+/// Map data coordinates to pixel coordinates with axis scale transformations
+///
+/// This version applies logarithmic or symlog transformations to the data
+/// before mapping to pixel coordinates.
+pub fn map_data_to_pixels_scaled(
+    data_x: f64,
+    data_y: f64,
+    data_x_min: f64,
+    data_x_max: f64,
+    data_y_min: f64,
+    data_y_max: f64,
+    plot_area: Rect,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> (f32, f32) {
+    use crate::axes::Scale;
+
+    // Create scale objects for the data ranges
+    let x_scale_obj = x_scale.create_scale(data_x_min, data_x_max);
+    let y_scale_obj = y_scale.create_scale(data_y_min, data_y_max);
+
+    // Transform data values to normalized [0, 1] space using the scales
+    let normalized_x = x_scale_obj.transform(data_x);
+    let normalized_y = y_scale_obj.transform(data_y);
+
+    // Map normalized values to pixel coordinates
+    let pixel_x = plot_area.left() + normalized_x as f32 * plot_area.width();
+
+    // Note: Y axis is flipped in screen coordinates
+    let pixel_y = plot_area.bottom() - normalized_y as f32 * plot_area.height();
 
     (pixel_x, pixel_y)
 }

@@ -33,6 +33,10 @@ polars = { version = "0.35", optional = true }
 # Image I/O
 image = { version = "0.24", default-features = false, features = ["png"] }
 
+# PDF export (SVG → PDF pipeline)
+printpdf = { version = "0.7", optional = true }
+svg2pdf = { version = "0.12", optional = true }  # Uses usvg 0.43 internally
+
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
@@ -83,8 +87,9 @@ parallel = ["rayon"]
 gpu = ["wgpu", "bytemuck", "wgsl_bindgen", "pollster", "futures-intrusive"]
 simd = ["wide"]
 svg = []
+pdf = ["printpdf", "svg2pdf"]
 performance = ["parallel", "simd"]
-full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "interactive"]
+full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive"]
 
 [profile.release]
 lto = true
@@ -111,6 +116,22 @@ name = "axis_legend_test"
 path = "gallery/basic/axis_legend_test.rs"
 
 [[example]]
+name = "legend_handles_test"
+path = "gallery/basic/legend_handles_test.rs"
+
+[[example]]
+name = "legend_scatter_test"
+path = "gallery/basic/legend_scatter_test.rs"
+
+[[example]]
+name = "legend_rounded_test"
+path = "gallery/basic/legend_rounded_test.rs"
+
+[[example]]
+name = "legend_horizontal_test"
+path = "gallery/basic/legend_horizontal_test.rs"
+
+[[example]]
 name = "font_demo"
 path = "gallery/advanced/font_demo.rs"
 
@@ -119,12 +140,29 @@ name = "simple_publication_test"
 path = "gallery/publication/simple_publication_test.rs"
 
 [[example]]
+name = "legend_features_example"
+path = "gallery/publication/legend_features_example.rs"
+
+[[example]]
 name = "scientific_plotting"
 path = "gallery/scientific/scientific_plotting.rs"
 
 [[example]]
 name = "subplot_example"
 path = "examples/subplot_example.rs"
+
+# Performance examples
+[[example]]
+name = "million_points"
+path = "examples/performance/million_points.rs"
+
+[[example]]
+name = "streaming_demo"
+path = "examples/performance/streaming_demo.rs"
+
+[[example]]
+name = "scaling_benchmark"
+path = "examples/performance/scaling_benchmark.rs"
 
 # Benchmarks
 [[bench]]
