@@ -336,9 +336,10 @@ impl SubplotFigure {
         let mut renderer = SkiaRenderer::new(self.width, self.height, theme)?;
 
         // Render figure title if present
+        // Use fixed pixel sizes since main renderer uses figure dimensions (not DPI-scaled)
         if let Some(title) = &self.suptitle {
-            let title_y = 30.0 * (dpi / 96.0); // DPI-scaled title position
-            let title_size = 16.0 * (dpi / 96.0); // DPI-scaled title size
+            let title_y = 30.0_f32; // Fixed position in pixels
+            let title_size = 16.0_f32; // Fixed size in pixels
 
             renderer.draw_text_centered(
                 title,
@@ -357,16 +358,29 @@ impl SubplotFigure {
                     self.grid
                         .subplot_rect(index, self.width, self.height, self.margin)?;
 
+                // Calculate typography scale factor based on subplot size and DPI
+                // Subplots are rendered to fixed-size canvases, so we need to:
+                // 1. Scale down for small subplot dimensions
+                // 2. Use a normalized DPI (96) to avoid giant fonts at high DPI
+                let reference_dim = 300.0_f32;
+                let subplot_min_dim = subplot_rect.width().min(subplot_rect.height());
+                let size_scale = (subplot_min_dim / reference_dim).clamp(0.35, 1.0);
+
+                // Clone plot and scale typography for small subplots
+                let scaled_plot = plot.clone().scale_typography(size_scale);
+
                 // Create a temporary renderer for this subplot
-                let subplot_theme = plot.get_theme();
+                let subplot_theme = scaled_plot.get_theme();
                 let mut subplot_renderer = SkiaRenderer::new(
                     subplot_rect.width() as u32,
                     subplot_rect.height() as u32,
                     subplot_theme,
                 )?;
 
-                // Render the plot into the subplot area
-                plot.render_to_renderer(&mut subplot_renderer, dpi)?;
+                // Render subplot at normalized DPI (96) since canvas is already sized
+                // This prevents fonts from being scaled up with figure DPI
+                let subplot_dpi = 96.0_f32;
+                scaled_plot.render_to_renderer(&mut subplot_renderer, subplot_dpi)?;
 
                 // Copy subplot renderer to main renderer at correct position
                 renderer.draw_subplot(

@@ -437,6 +437,27 @@ impl Plot {
         self.theme.clone()
     }
 
+    /// Scale typography by a factor
+    ///
+    /// This is useful for rendering plots to smaller canvases (like subplots)
+    /// where the default font sizes would be too large.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::*;
+    ///
+    /// let plot = Plot::new()
+    ///     .line(&[1.0, 2.0], &[1.0, 4.0])
+    ///     .end_series()
+    ///     .title("Scaled Plot")
+    ///     .scale_typography(0.7); // 70% of normal font sizes
+    /// ```
+    pub fn scale_typography(mut self, factor: f32) -> Self {
+        self.config.typography = self.config.typography.scale(factor);
+        self
+    }
+
     /// Configure parallel rendering settings
     #[cfg(feature = "parallel")]
     pub fn with_parallel(mut self, threads: Option<usize>) -> Self {
@@ -2709,9 +2730,12 @@ impl Plot {
                 }
             };
 
-        // Generate nice tick values
-        let x_ticks = generate_ticks(x_min, x_max, 8);
-        let y_ticks = generate_ticks(y_min, y_max, 6);
+        // Generate nice tick values - adapt count to available space
+        // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
+        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
+        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
+        let x_ticks = generate_ticks(x_min, x_max, x_tick_count);
+        let y_ticks = generate_ticks(y_min, y_max, y_tick_count);
 
         // Convert ticks to pixel coordinates
         let x_tick_pixels: Vec<f32> = x_ticks
@@ -3122,9 +3146,12 @@ impl Plot {
             }
         };
 
-        // Generate nice tick values
-        let x_ticks = generate_ticks(x_min, x_max, 8);
-        let y_ticks = generate_ticks(y_min, y_max, 6);
+        // Generate nice tick values - adapt count to available space
+        // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
+        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
+        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
+        let x_ticks = generate_ticks(x_min, x_max, x_tick_count);
+        let y_ticks = generate_ticks(y_min, y_max, y_tick_count);
 
         // Convert ticks to pixel coordinates
         let x_tick_pixels: Vec<f32> = x_ticks
@@ -3616,9 +3643,12 @@ impl Plot {
             y_max: bounds.3,
         };
 
-        // Generate nice tick values
-        let x_ticks = generate_ticks(bounds.0, bounds.1, 8);
-        let y_ticks = generate_ticks(bounds.2, bounds.3, 6);
+        // Generate nice tick values - adapt count to available space
+        // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
+        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
+        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
+        let x_ticks = generate_ticks(bounds.0, bounds.1, x_tick_count);
+        let y_ticks = generate_ticks(bounds.2, bounds.3, y_tick_count);
 
         // Convert ticks to pixel coordinates
         let x_tick_pixels: Vec<f32> = x_ticks
