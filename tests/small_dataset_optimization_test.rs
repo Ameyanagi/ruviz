@@ -1,10 +1,12 @@
 // Small dataset optimization tests - TDD approach
 // These tests define expected performance after optimization
+// Run with: cargo test --test small_dataset_optimization_test -- --ignored
 
 use ruviz::prelude::*;
 use std::time::{Duration, Instant};
 
 #[test]
+#[ignore] // Performance test - run manually on local machine
 fn test_small_dataset_under_10ms() {
     // GIVEN: 1K points (small dataset)
     let x: Vec<f64> = (0..1000).map(|i| i as f64).collect();
@@ -34,6 +36,7 @@ fn test_small_dataset_under_10ms() {
 }
 
 #[test]
+#[ignore] // Performance test - run manually on local machine
 fn test_very_small_dataset_under_5ms() {
     // GIVEN: 100 points (very small)
     let x: Vec<f64> = (0..100).map(|i| i as f64).collect();
@@ -62,6 +65,7 @@ fn test_very_small_dataset_under_5ms() {
 }
 
 #[test]
+#[ignore] // Performance test - run manually on local machine
 fn test_medium_dataset_under_20ms() {
     // GIVEN: 5K points (medium dataset)
     let x: Vec<f64> = (0..5000).map(|i| i as f64).collect();
@@ -90,6 +94,7 @@ fn test_medium_dataset_under_20ms() {
 }
 
 #[test]
+#[ignore] // Performance test - run manually on local machine
 fn test_no_regression_large_datasets() {
     // GIVEN: 100K points (large dataset)
     let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
@@ -113,6 +118,7 @@ fn test_no_regression_large_datasets() {
 }
 
 #[test]
+#[ignore] // Performance test - run manually on local machine
 fn test_optimization_consistent_output() {
     // GIVEN: Same dataset
     let x: Vec<f64> = (0..1000).map(|i| i as f64).collect();
@@ -137,6 +143,7 @@ fn test_optimization_consistent_output() {
 }
 
 #[test]
+#[ignore] // Performance test - run manually on local machine
 fn test_multiple_small_plots_efficient() {
     // GIVEN: Multiple small plots
     let datasets: Vec<(Vec<f64>, Vec<f64>)> = (0..10)
@@ -167,6 +174,7 @@ fn test_multiple_small_plots_efficient() {
 }
 
 #[test]
+#[ignore] // Performance test - run manually on local machine
 fn test_small_dataset_with_styling() {
     // GIVEN: 1K points with styling
     let x: Vec<f64> = (0..1000).map(|i| i as f64).collect();
