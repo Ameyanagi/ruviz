@@ -341,7 +341,7 @@ impl EventProcessor {
         match event {
             InteractionEvent::Zoom { factor, .. } => {
                 if *factor <= 0.0 || factor.is_infinite() || factor.is_nan() {
-                    return Err(PlottingError::InvalidParameter(format!(
+                    return Err(PlottingError::InvalidInput(format!(
                         "Invalid zoom factor: {}",
                         factor
                     )));
@@ -353,9 +353,7 @@ impl EventProcessor {
                     || delta.y.is_infinite()
                     || delta.y.is_nan()
                 {
-                    return Err(PlottingError::InvalidParameter(
-                        "Invalid pan delta".to_string(),
-                    ));
+                    return Err(PlottingError::InvalidInput("Invalid pan delta".to_string()));
                 }
             }
             _ => {} // Other events don't need validation

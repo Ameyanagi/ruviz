@@ -113,19 +113,11 @@ impl Data1D<f64> for polars::series::Series {
         self.len()
     }
 
-    fn get(&self, index: usize) -> Option<&f64> {
-        // Polars Series requires special handling for type casting
-        // This is a simplified implementation - real implementation would
-        // need proper type checking and conversion
-        match self.dtype() {
-            polars::datatypes::DataType::Float64 => self
-                .f64()
-                .ok()
-                .and_then(|ca| ca.get(index))
-                .map(|opt| opt.map(|v| unsafe { std::mem::transmute(&v) }))
-                .flatten(),
-            _ => None,
-        }
+    fn get(&self, _index: usize) -> Option<&f64> {
+        // Polars Series doesn't provide stable references to its data
+        // This would require storing values elsewhere to provide references
+        // TODO: Implement proper polars integration with value storage
+        None
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &f64> + '_> {

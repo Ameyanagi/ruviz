@@ -155,6 +155,11 @@ jobs:
         run: |
           for example in examples/*.rs; do
             name=$(basename "$example" .rs)
+            # Skip utility modules that don't have main functions
+            if [ "$name" = "common" ]; then
+              echo "Skipping utility module: $name"
+              continue
+            fi
             echo "Building example: $name"
             cargo build --example "$name" --release
           done
