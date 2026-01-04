@@ -11,8 +11,9 @@ fn test_backend_parity_basic_line() {
 
     // WHEN: Rendering with default backend
     let result_default = Plot::new()
-        .line(&x, &y)
         .title("Backend Parity Test")
+        .line(&x, &y)
+        .end_series()
         .save("tests/output/backend_default_line.png");
 
     // THEN: Should succeed
@@ -35,8 +36,9 @@ fn test_backend_parity_parallel() {
 
     // WHEN: Rendering with parallel backend (automatically used for large data)
     let result_parallel = Plot::new()
-        .line(&x, &y)
         .title("Parallel Backend Test")
+        .line(&x, &y)
+        .end_series()
         .save("tests/output/backend_parallel_line.png");
 
     // THEN: Should succeed
@@ -62,10 +64,11 @@ fn test_backend_consistency_scatter() {
 
     // WHEN: Rendering scatter plot
     let result = Plot::new()
+        .title("Backend Consistency - Scatter")
         .scatter(&x, &y)
         .marker(MarkerStyle::Circle)
         .marker_size(8.0)
-        .title("Backend Consistency - Scatter")
+        .end_series()
         .save("tests/output/backend_scatter.png");
 
     // THEN: Should produce consistent output
@@ -85,8 +88,9 @@ fn test_backend_consistency_bar() {
 
     // WHEN: Rendering bar chart
     let result = Plot::new()
-        .bar(&categories, &values)
         .title("Backend Consistency - Bar")
+        .bar(&categories, &values)
+        .end_series()
         .save("tests/output/backend_bar.png");
 
     // THEN: Should produce consistent output
@@ -107,8 +111,9 @@ fn test_backend_consistency_histogram() {
 
     // WHEN: Rendering histogram
     let result = Plot::new()
-        .histogram(&data, None)
         .title("Backend Consistency - Histogram")
+        .histogram(&data, None)
+        .end_series()
         .save("tests/output/backend_histogram.png");
 
     // THEN: Should produce consistent output
@@ -127,8 +132,9 @@ fn test_backend_consistency_boxplot() {
 
     // WHEN: Rendering boxplot
     let result = Plot::new()
-        .boxplot(&data, None)
         .title("Backend Consistency - Boxplot")
+        .boxplot(&data, None)
+        .end_series()
         .save("tests/output/backend_boxplot.png");
 
     // THEN: Should produce consistent output
@@ -147,14 +153,15 @@ fn test_backend_consistency_multi_series() {
 
     // WHEN: Rendering with multiple series
     let result = Plot::new()
+        .title("Backend Consistency - Multi-Series")
+        .legend(Position::TopLeft)
         .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
         .label("Quadratic")
         .line(&x, &x.iter().map(|&v| v.powi(3)).collect::<Vec<_>>())
         .label("Cubic")
-        .title("Backend Consistency - Multi-Series")
-        .legend(Position::TopLeft)
+        .end_series()
         .save("tests/output/backend_multi_series.png");
 
     // THEN: Should produce consistent output
@@ -181,8 +188,9 @@ fn test_backend_consistency_themes() {
     ] {
         let result = Plot::new()
             .theme(theme)
-            .line(&x, &y)
             .title(&format!("Backend - {} Theme", name))
+            .line(&x, &y)
+            .end_series()
             .save(&format!("tests/output/backend_theme_{}.png", name));
 
         // THEN: Should produce consistent output for all themes
@@ -204,9 +212,10 @@ fn test_backend_consistency_dpi() {
     // WHEN: Rendering at different DPIs
     for dpi in [72, 96, 150, 300] {
         let result = Plot::new()
-            .line(&x, &y)
             .dpi(dpi)
             .title(&format!("Backend - {} DPI", dpi))
+            .line(&x, &y)
+            .end_series()
             .save(&format!("tests/output/backend_dpi_{}.png", dpi));
 
         // THEN: Should succeed for all DPIs
@@ -241,6 +250,7 @@ fn test_backend_consistency_dpi() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_backend_consistency_dimensions() {
     // GIVEN: Custom dimensions
     let x = vec![0.0, 1.0, 2.0, 3.0];
@@ -250,8 +260,9 @@ fn test_backend_consistency_dimensions() {
     for (width, height) in [(400, 300), (800, 600), (1200, 900), (1600, 1200)] {
         let result = Plot::new()
             .dimensions(width, height)
-            .line(&x, &y)
             .title(&format!("{}x{}", width, height))
+            .line(&x, &y)
+            .end_series()
             .save(&format!(
                 "tests/output/backend_dim_{}x{}.png",
                 width, height
@@ -295,6 +306,7 @@ fn test_backend_error_handling() {
     // WHEN: Attempting to plot empty data
     let result = Plot::new()
         .line(&empty_x, &empty_y)
+        .end_series()
         .save("tests/output/backend_should_not_exist.png");
 
     // THEN: Should fail gracefully across all backends
@@ -306,6 +318,7 @@ fn test_backend_error_handling() {
 
     let result = Plot::new()
         .line(&x, &y)
+        .end_series()
         .save("tests/output/backend_should_not_exist_2.png");
 
     assert!(result.is_err(), "Mismatched data should produce error");
