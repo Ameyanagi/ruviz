@@ -1,5 +1,7 @@
 // Visual regression tests using perceptual diff against golden images
 // These tests ensure that rendering output remains pixel-perfect across changes
+// Run with: cargo test --test visual_regression_test -- --ignored
+// Note: Requires golden images in tests/golden_images/ directory
 
 use image::{GenericImageView, Pixel};
 use std::path::Path;
@@ -80,6 +82,7 @@ fn test_against_golden(
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_basic_line() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -105,6 +108,7 @@ fn test_visual_regression_basic_line() -> std::result::Result<(), Box<dyn std::e
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -135,6 +139,7 @@ fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std:
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_scatter() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -162,6 +167,7 @@ fn test_visual_regression_scatter() -> std::result::Result<(), Box<dyn std::erro
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_bar_chart() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -186,6 +192,7 @@ fn test_visual_regression_bar_chart() -> std::result::Result<(), Box<dyn std::er
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_histogram() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -213,6 +220,7 @@ fn test_visual_regression_histogram() -> std::result::Result<(), Box<dyn std::er
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_boxplot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -236,6 +244,7 @@ fn test_visual_regression_boxplot() -> std::result::Result<(), Box<dyn std::erro
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -270,6 +279,7 @@ fn test_visual_regression_themes() -> std::result::Result<(), Box<dyn std::error
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_unicode() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
@@ -295,6 +305,7 @@ fn test_visual_regression_unicode() -> std::result::Result<(), Box<dyn std::erro
 }
 
 #[test]
+#[ignore] // Requires golden images
 fn test_visual_regression_dimensions() -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::prelude::*;
 
