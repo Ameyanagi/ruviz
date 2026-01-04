@@ -1016,7 +1016,8 @@ impl Plot {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use ruviz::{Plot, data::StreamingXY};
+    /// use ruviz::prelude::*;
+    /// use ruviz::data::StreamingXY;
     ///
     /// let stream = StreamingXY::new(1000);
     ///
@@ -1038,7 +1039,7 @@ impl Plot {
     /// Plot::new()
     ///     .line_streaming(&stream)
     ///     .save("stream_updated.png")?;
-    /// # Ok::<(), ruviz::PlottingError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn line_streaming(mut self, stream: &StreamingXY) -> PlotSeriesBuilder {
         // Read current data from the streaming buffer
@@ -1114,7 +1115,8 @@ impl Plot {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use ruviz::{Plot, data::StreamingXY};
+    /// use ruviz::prelude::*;
+    /// use ruviz::data::StreamingXY;
     ///
     /// let stream = StreamingXY::new(1000);
     /// stream.push_many(vec![(0.0, 0.0), (1.0, 1.0), (2.0, 4.0)]);
@@ -1123,7 +1125,7 @@ impl Plot {
     ///     .scatter_streaming(&stream)
     ///     .title("Streaming Scatter")
     ///     .save("stream_scatter.png")?;
-    /// # Ok::<(), ruviz::PlottingError>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn scatter_streaming(mut self, stream: &StreamingXY) -> PlotSeriesBuilder {
         let x_data = stream.read_x();

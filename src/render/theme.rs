@@ -98,7 +98,7 @@ impl Theme {
     /// use ruviz::prelude::*;
     ///
     /// Plot::new()
-    ///     .with_theme(Theme::light())
+    ///     .theme(Theme::light())
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
     ///     .end_series()
     ///     .save("light_plot.png")?;
@@ -134,7 +134,7 @@ impl Theme {
     /// use ruviz::prelude::*;
     ///
     /// Plot::new()
-    ///     .with_theme(Theme::dark())
+    ///     .theme(Theme::dark())
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
     ///     .end_series()
     ///     .save("dark_plot.png")?;
@@ -170,7 +170,7 @@ impl Theme {
     /// use ruviz::prelude::*;
     ///
     /// Plot::new()
-    ///     .with_theme(Theme::publication())
+    ///     .theme(Theme::publication())
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
     ///     .end_series()
     ///     .save("publication_plot.png")?;
@@ -235,7 +235,7 @@ impl Theme {
     /// use ruviz::prelude::*;
     ///
     /// Plot::new()
-    ///     .with_theme(Theme::seaborn())
+    ///     .theme(Theme::seaborn())
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
     ///     .end_series()
     ///     .save("seaborn_plot.png")?;
