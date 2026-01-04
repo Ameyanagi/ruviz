@@ -6,7 +6,11 @@ pub type Result<T> = std::result::Result<T, PlottingError>;
 #[derive(Debug)]
 pub enum PlottingError {
     /// Data arrays have mismatched lengths
-    DataLengthMismatch { x_len: usize, y_len: usize },
+    DataLengthMismatch {
+        x_len: usize,
+        y_len: usize,
+        series_index: Option<usize>,
+    },
     /// Empty data set provided
     EmptyDataSet,
     /// No data series added to plot
@@ -128,12 +132,24 @@ pub enum PlottingError {
 impl fmt::Display for PlottingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PlottingError::DataLengthMismatch { x_len, y_len } => {
-                write!(
-                    f,
-                    "Data length mismatch: x has {} elements, y has {} elements",
-                    x_len, y_len
-                )
+            PlottingError::DataLengthMismatch {
+                x_len,
+                y_len,
+                series_index,
+            } => {
+                if let Some(idx) = series_index {
+                    write!(
+                        f,
+                        "Data length mismatch in series {}: x has {} elements, y has {} elements",
+                        idx, x_len, y_len
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Data length mismatch: x has {} elements, y has {} elements",
+                        x_len, y_len
+                    )
+                }
             }
             PlottingError::EmptyDataSet => {
                 write!(
@@ -478,7 +494,11 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let err = PlottingError::DataLengthMismatch { x_len: 5, y_len: 3 };
+        let err = PlottingError::DataLengthMismatch {
+            x_len: 5,
+            y_len: 3,
+            series_index: None,
+        };
         assert!(err.to_string().contains("mismatch"));
         assert!(err.to_string().contains("5"));
         assert!(err.to_string().contains("3"));

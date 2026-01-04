@@ -9,7 +9,8 @@ pub mod renderer;
 pub mod state;
 pub mod window;
 
-#[cfg(test)]
+/// Test utilities for interactive mode testing
+#[doc(hidden)]
 pub mod test_utils;
 
 pub use event::{EventHandler, InteractionEvent};

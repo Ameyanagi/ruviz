@@ -1,15 +1,17 @@
 //! Real-time renderer for interactive plotting
 //!
 //! Provides high-performance rendering for interactive features using the
-//! existing GPU acceleration while maintaining 60fps during interactions.
+//! existing GPU acceleration (when available) while maintaining 60fps during interactions.
 
+#[cfg(feature = "gpu")]
+use crate::render::gpu::GpuRenderer;
 use crate::{
     core::{Plot, Result},
     interactive::{
         event::{Annotation, Point2D, Rectangle},
         state::{DataPoint, DataPointId, InteractionState},
     },
-    render::{Color, gpu::GpuRenderer, skia::SkiaRenderer},
+    render::{Color, skia::SkiaRenderer},
 };
 use std::{
     collections::HashMap,
@@ -19,6 +21,7 @@ use std::{
 /// Real-time renderer for interactive plotting
 pub struct RealTimeRenderer {
     // Core rendering components
+    #[cfg(feature = "gpu")]
     gpu_renderer: Option<GpuRenderer>,
     cpu_renderer: SkiaRenderer,
 
@@ -42,19 +45,20 @@ pub struct RealTimeRenderer {
 impl RealTimeRenderer {
     /// Create new real-time renderer
     pub async fn new() -> Result<Self> {
+        #[cfg(feature = "gpu")]
         let gpu_renderer = match crate::render::gpu::initialize_gpu_backend().await {
             Ok(_) => match GpuRenderer::new().await {
                 Ok(renderer) => {
-                    println!("✅ Interactive GPU renderer initialized");
+                    log::info!("Interactive GPU renderer initialized");
                     Some(renderer)
                 }
                 Err(e) => {
-                    println!("⚠️ GPU not available for interactive mode: {}", e);
+                    log::warn!("GPU not available for interactive mode: {}", e);
                     None
                 }
             },
             Err(e) => {
-                println!("⚠️ GPU backend initialization failed: {}", e);
+                log::warn!("GPU backend initialization failed: {}", e);
                 None
             }
         };
@@ -62,6 +66,7 @@ impl RealTimeRenderer {
         let cpu_renderer = SkiaRenderer::new(800, 600, crate::render::Theme::default())?;
 
         Ok(Self {
+            #[cfg(feature = "gpu")]
             gpu_renderer,
             cpu_renderer,
             current_plot: None,
@@ -133,9 +138,21 @@ impl RealTimeRenderer {
         // Update renderer for high-quality output
         self.cpu_renderer = SkiaRenderer::new(width, height, crate::render::Theme::default())?;
 
-        // Render without interactive elements
-        // TODO: Implement proper Plot rendering to pixels
-        let result = vec![255u8; (width * height * 4) as usize]; // Placeholder white
+        // Render the plot at high quality
+        let mut plot_clone = plot.clone();
+
+        // Set size in inches based on requested pixels and DPI
+        let width_inches = width as f32 / dpi;
+        let height_inches = height as f32 / dpi;
+        plot_clone = plot_clone.size(width_inches, height_inches).dpi(dpi as u32);
+
+        let result = match plot_clone.render() {
+            Ok(image) => image.pixels,
+            Err(e) => {
+                log::warn!("Publication render failed: {}, returning white pixels", e);
+                vec![255u8; (width * height * 4) as usize]
+            }
+        };
 
         // Restore previous quality mode
         self.quality_mode = old_quality;
@@ -254,8 +271,7 @@ impl RealTimeRenderer {
                 }
                 RenderQuality::Publication => {
                     // High quality rendering
-                    // TODO: Implement proper Plot rendering to pixels
-                    vec![255u8; (width * height * 4) as usize] // Placeholder white
+                    self.render_plot_to_pixels(width, height)?
                 }
             }
         } else {
@@ -277,9 +293,7 @@ impl RealTimeRenderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>> {
-        // TODO: Implement proper Plot rendering to pixels
-        // For now, return placeholder white pixels
-        Ok(vec![255u8; (width * height * 4) as usize])
+        self.render_plot_to_pixels(width, height)
     }
 
     /// Render with balanced quality
@@ -289,8 +303,44 @@ impl RealTimeRenderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>> {
-        // TODO: Implement proper Plot rendering to pixels
-        Ok(vec![255u8; (width * height * 4) as usize])
+        self.render_plot_to_pixels(width, height)
+    }
+
+    /// Render the current plot to RGBA pixel data
+    fn render_plot_to_pixels(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        if let Some(ref plot) = self.current_plot {
+            // Clone and resize the plot to match requested dimensions
+            let mut plot_clone = plot.clone();
+
+            // Convert pixels to inches (assuming 100 DPI for interactive mode)
+            let dpi = 100.0;
+            let width_inches = width as f32 / dpi;
+            let height_inches = height as f32 / dpi;
+
+            // Update plot size
+            plot_clone = plot_clone.size(width_inches, height_inches);
+
+            // Render the plot
+            match plot_clone.render() {
+                Ok(image) => {
+                    // If dimensions match, return directly
+                    if image.width == width && image.height == height {
+                        Ok(image.pixels)
+                    } else {
+                        // Dimensions might differ slightly, return as-is
+                        // The caller should handle any size mismatch
+                        Ok(image.pixels)
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Plot rendering failed: {}, returning white pixels", e);
+                    Ok(vec![255u8; (width * height * 4) as usize])
+                }
+            }
+        } else {
+            // No plot set, return white background
+            Ok(vec![255u8; (width * height * 4) as usize])
+        }
     }
 
     /// Render hover highlight

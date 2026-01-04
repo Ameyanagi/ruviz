@@ -647,6 +647,12 @@ impl Plot {
     ///
     /// This method automatically scales DPI based on canvas size to maintain
     /// proportional text and element sizes on larger canvases.
+    ///
+    /// # Deprecation
+    ///
+    /// Prefer `size(width, height)` which takes dimensions in inches for
+    /// DPI-independent sizing, or `size_pixels(width, height)` for pixel-based sizing.
+    #[deprecated(since = "0.2.0", note = "Use size() or size_pixels() instead")]
     pub fn dimensions(mut self, width: u32, height: u32) -> Self {
         self.dimensions = (width.max(100), height.max(100));
 
@@ -667,20 +673,34 @@ impl Plot {
     /// Set figure size in inches
     ///
     /// This is the recommended way to set figure size for DPI-independent plots.
-    /// Changing DPI will change resolution but not proportions.
+    /// The final pixel dimensions are calculated as `width × dpi` by `height × dpi`.
+    ///
+    /// # Size and DPI Relationship
+    ///
+    /// | Size (inches) | DPI | Pixel Dimensions |
+    /// |---------------|-----|------------------|
+    /// | 8×6           | 100 | 800×600          |
+    /// | 8×6           | 150 | 1200×900         |
+    /// | 8×6           | 300 | 2400×1800        |
     ///
     /// # Arguments
     ///
-    /// * `width` - Figure width in inches
-    /// * `height` - Figure height in inches
+    /// * `width` - Figure width in inches (minimum 1.0)
+    /// * `height` - Figure height in inches (minimum 1.0)
     ///
     /// # Example
     ///
     /// ```rust,ignore
+    /// // Screen display (100 DPI default)
     /// Plot::new()
-    ///     .size(8.0, 6.0)  // 8×6 inches
-    ///     .dpi(300)        // High resolution for print
-    ///     .save("figure.png")?;
+    ///     .size(8.0, 6.0)  // 800×600 pixels
+    ///     .save("screen.png")?;
+    ///
+    /// // Print quality (300 DPI)
+    /// Plot::new()
+    ///     .size(8.0, 6.0)  // Same size in inches
+    ///     .dpi(300)        // 2400×1800 pixels
+    ///     .save("print.png")?;
     /// ```
     pub fn size(mut self, width: f32, height: f32) -> Self {
         self.config.figure.width = width.max(1.0);
@@ -1438,9 +1458,10 @@ impl Plot {
         PlotSeriesBuilder::new(self, series)
     }
 
-    /// Configure legend with position (legacy API)
+    /// Configure legend with position
     ///
-    /// For more control, use `legend_position()` with `LegendPosition`.
+    /// For matplotlib-compatible position codes, use `legend_position()` with `LegendPosition`.
+    /// For automatic positioning (like matplotlib's `plt.legend()`), use `legend_best()`.
     pub fn legend(mut self, position: Position) -> Self {
         self.legend.enabled = true;
         self.legend.position = position;
@@ -1498,8 +1519,29 @@ impl Plot {
 
     /// Enable legend with "best" automatic positioning
     ///
-    /// The legend will be placed in the position that minimizes
-    /// overlap with data points.
+    /// This is equivalent to matplotlib's `plt.legend()`. The legend will be placed
+    /// in the position that minimizes overlap with data points.
+    ///
+    /// Note: Like matplotlib, legends are NOT shown unless you explicitly call
+    /// `legend_best()` or `legend_position()`, even if series have labels.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+    /// let sin_y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+    /// let cos_y: Vec<f64> = x.iter().map(|&v| v.cos()).collect();
+    ///
+    /// // Labels define legend entries, legend_best() enables the legend
+    /// Plot::new()
+    ///     .line(&x, &sin_y).label("sin(x)")
+    ///     .line(&x, &cos_y).label("cos(x)")
+    ///     .legend_best()  // Like plt.legend() in matplotlib
+    ///     .save("legend.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn legend_best(mut self) -> Self {
         self.legend.enabled = true;
         self.legend.position = Position::TopRight; // Actual best computed at render time
@@ -1986,6 +2028,7 @@ impl Plot {
             return Err(PlottingError::DataLengthMismatch {
                 x_len: x_data.len(),
                 y_len: y_data.len(),
+                series_index: None,
             });
         }
 
@@ -2450,21 +2493,22 @@ impl Plot {
         Ok(())
     }
 
-    /// Render the plot to an in-memory image
-    pub fn render(&self) -> Result<Image> {
+    /// Internal validation logic for series data
+    fn validate_series(&self) -> Result<()> {
         // Validate we have at least one series
         if self.series.is_empty() {
             return Err(PlottingError::NoDataSeries);
         }
 
         // Validate all series data
-        for (i, series) in self.series.iter().enumerate() {
+        for (idx, series) in self.series.iter().enumerate() {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     if x_data.len() != y_data.len() {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: x_data.len(),
                             y_len: y_data.len(),
+                            series_index: Some(idx),
                         });
                     }
                     if x_data.is_empty() {
@@ -2476,6 +2520,7 @@ impl Plot {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: categories.len(),
                             y_len: values.len(),
+                            series_index: Some(idx),
                         });
                     }
                     if categories.is_empty() {
@@ -2491,6 +2536,7 @@ impl Plot {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: x_data.len(),
                             y_len: y_data.len(),
+                            series_index: Some(idx),
                         });
                     }
                 }
@@ -2507,6 +2553,7 @@ impl Plot {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: x_data.len(),
                             y_len: y_data.len(),
+                            series_index: Some(idx),
                         });
                     }
                 }
@@ -2528,8 +2575,26 @@ impl Plot {
             }
         }
 
+        Ok(())
+    }
+
+    /// Render the plot to an in-memory image
+    pub fn render(&self) -> Result<Image> {
+        // Validate all series data
+        self.validate_series()?;
+
         // Check if DataShader optimization should be used
         let total_points = self.calculate_total_points();
+
+        // Warn for very large datasets
+        const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
+        if total_points > LARGE_DATASET_THRESHOLD {
+            log::warn!(
+                "Rendering {} points (>1M). DataShader optimization is available for large datasets.",
+                total_points
+            );
+        }
+
         let use_datashader = DataShader::should_activate(total_points);
 
         if use_datashader {
@@ -2919,13 +2984,14 @@ impl Plot {
         }
 
         // Validate all series data (same validation as render method)
-        for series in self.series.iter() {
+        for (idx, series) in self.series.iter().enumerate() {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     if x_data.len() != y_data.len() {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: x_data.len(),
                             y_len: y_data.len(),
+                            series_index: Some(idx),
                         });
                     }
                     if x_data.is_empty() {
@@ -2937,6 +3003,7 @@ impl Plot {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: categories.len(),
                             y_len: values.len(),
+                            series_index: Some(idx),
                         });
                     }
                     if categories.is_empty() {
@@ -2952,6 +3019,7 @@ impl Plot {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: x_data.len(),
                             y_len: y_data.len(),
+                            series_index: Some(idx),
                         });
                     }
                 }
@@ -2968,6 +3036,7 @@ impl Plot {
                         return Err(PlottingError::DataLengthMismatch {
                             x_len: x_data.len(),
                             y_len: y_data.len(),
+                            series_index: Some(idx),
                         });
                     }
                 }
@@ -4329,6 +4398,7 @@ impl Plot {
                         return Err(crate::core::PlottingError::DataLengthMismatch {
                             x_len: x_data.len(),
                             y_len: y_data.len(),
+                            series_index: None,
                         });
                     }
                 }
@@ -4342,6 +4412,7 @@ impl Plot {
                         return Err(crate::core::PlottingError::DataLengthMismatch {
                             x_len: categories.len(),
                             y_len: values.len(),
+                            series_index: None,
                         });
                     }
                 }
@@ -5400,20 +5471,27 @@ impl PlotSeriesBuilder {
 
     /// Set series label for legend
     ///
-    /// Labels appear in the plot legend when enabled.
+    /// Labels identify this series in the plot legend. **Important**: Labels are only
+    /// displayed when the legend is explicitly enabled using one of:
+    /// - [`Plot::legend_best()`] - auto-positioned legend (matplotlib-style, recommended)
+    /// - [`Plot::legend()`] - legacy positioning
+    /// - [`Plot::legend_position()`] - explicit position control
+    ///
+    /// Without enabling the legend, labels are stored but not rendered.
     ///
     /// # Example
     ///
     /// ```rust,no_run
     /// use ruviz::prelude::*;
     ///
+    /// // Legend with auto-positioning (recommended)
     /// Plot::new()
-    ///     .legend_position(LegendPosition::UpperRight)
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
     ///     .label("Quadratic")
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0])
     ///     .label("Linear")
     ///     .end_series()
+    ///     .legend_best()  // Required to display labels
     ///     .save("labeled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -5646,7 +5724,7 @@ impl PlotSeriesBuilder {
         self
     }
 
-    /// Configure legend
+    /// Configure legend with position
     pub fn legend(mut self, position: Position) -> Self {
         self.plot.legend.enabled = true;
         self.plot.legend.position = position;

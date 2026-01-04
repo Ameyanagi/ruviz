@@ -65,6 +65,137 @@ impl Color {
 
     /// Create a Color from hex string (supports #RGB, #RRGGBB, #RRGGBBAA)
     ///
+    /// Returns `None` for invalid hex strings. This is a convenience wrapper
+    /// around `from_hex()` that returns `Option` instead of `Result`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// // Valid hex colors
+    /// let coral = Color::hex("#FF7F50");
+    /// assert!(coral.is_some());
+    ///
+    /// // Invalid hex returns None (no panic!)
+    /// let invalid = Color::hex("not-a-color");
+    /// assert!(invalid.is_none());
+    /// ```
+    pub fn hex(hex: &str) -> Option<Self> {
+        Self::from_hex(hex).ok()
+    }
+
+    /// Create a Color from a named color string
+    ///
+    /// Supports common color names like "red", "blue", "green", etc.
+    /// Case-insensitive. Returns `None` for unrecognized names.
+    ///
+    /// # Supported Colors
+    ///
+    /// - Primary: "red", "green", "blue"
+    /// - Secondary: "cyan", "magenta", "yellow"
+    /// - Neutral: "black", "white", "gray" (or "grey")
+    /// - Other: "orange", "purple", "pink", "brown"
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// // Valid named colors
+    /// let blue = Color::named("blue");
+    /// assert!(blue.is_some());
+    ///
+    /// // Case insensitive
+    /// let red = Color::named("RED");
+    /// assert!(red.is_some());
+    ///
+    /// // Unknown color returns None (no panic!)
+    /// let unknown = Color::named("notacolor");
+    /// assert!(unknown.is_none());
+    /// ```
+    pub fn named(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "red" => Some(Self::RED),
+            "green" => Some(Self::GREEN),
+            "blue" => Some(Self::BLUE),
+            "yellow" => Some(Self::YELLOW),
+            "orange" => Some(Self::ORANGE),
+            "purple" => Some(Self::PURPLE),
+            "cyan" => Some(Self::CYAN),
+            "magenta" => Some(Self::MAGENTA),
+            "black" => Some(Self::BLACK),
+            "white" => Some(Self::WHITE),
+            "gray" | "grey" => Some(Self::GRAY),
+            "lightgray" | "lightgrey" | "light_gray" | "light_grey" => Some(Self::LIGHT_GRAY),
+            "darkgray" | "darkgrey" | "dark_gray" | "dark_grey" => Some(Self::DARK_GRAY),
+            "pink" => Some(Self::new(255, 192, 203)),
+            "brown" => Some(Self::new(139, 69, 19)),
+            "lime" => Some(Self::new(0, 255, 0)),
+            "navy" => Some(Self::new(0, 0, 128)),
+            "teal" => Some(Self::new(0, 128, 128)),
+            "olive" => Some(Self::new(128, 128, 0)),
+            "maroon" => Some(Self::new(128, 0, 0)),
+            "aqua" => Some(Self::CYAN),
+            "fuchsia" => Some(Self::MAGENTA),
+            "silver" => Some(Self::new(192, 192, 192)),
+            "coral" => Some(Self::new(255, 127, 80)),
+            "salmon" => Some(Self::new(250, 128, 114)),
+            "gold" => Some(Self::new(255, 215, 0)),
+            "indigo" => Some(Self::new(75, 0, 130)),
+            "violet" => Some(Self::new(238, 130, 238)),
+            "crimson" => Some(Self::new(220, 20, 60)),
+            _ => None,
+        }
+    }
+
+    /// Suggest similar color names for typos
+    ///
+    /// Returns a suggestion if the input is close to a known color name.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// let suggestion = Color::suggest_named("blu");
+    /// assert_eq!(suggestion, Some("blue"));
+    /// ```
+    pub fn suggest_named(name: &str) -> Option<&'static str> {
+        let name_lower = name.to_lowercase();
+        let known_colors = [
+            "red", "green", "blue", "yellow", "orange", "purple", "cyan", "magenta", "black",
+            "white", "gray", "grey", "pink", "brown", "lime", "navy", "teal", "olive", "maroon",
+            "aqua", "fuchsia", "silver", "coral", "salmon", "gold", "indigo", "violet", "crimson",
+        ];
+
+        // Check for common typos (simple edit distance heuristic)
+        for color in &known_colors {
+            // Check if input is a prefix (e.g., "blu" -> "blue")
+            if color.starts_with(&name_lower) && color.len() <= name_lower.len() + 2 {
+                return Some(color);
+            }
+            // Check if color is a prefix of input (e.g., "bluee" -> "blue")
+            if name_lower.starts_with(color) && name_lower.len() <= color.len() + 2 {
+                return Some(color);
+            }
+            // Check for single character difference
+            if name_lower.len() == color.len() {
+                let diff_count = name_lower
+                    .chars()
+                    .zip(color.chars())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                if diff_count <= 1 {
+                    return Some(color);
+                }
+            }
+        }
+        None
+    }
+
+    /// Create a Color from hex string (supports #RGB, #RRGGBB, #RRGGBBAA)
+    ///
     /// # Example
     ///
     /// ```rust
@@ -755,5 +886,58 @@ mod tests {
 
         assert_eq!(below, start);
         assert_eq!(above, end);
+    }
+
+    #[test]
+    fn test_named_colors() {
+        // Basic colors
+        assert_eq!(Color::named("red"), Some(Color::RED));
+        assert_eq!(Color::named("blue"), Some(Color::BLUE));
+        assert_eq!(Color::named("green"), Some(Color::GREEN));
+
+        // Case insensitive
+        assert_eq!(Color::named("RED"), Some(Color::RED));
+        assert_eq!(Color::named("Blue"), Some(Color::BLUE));
+
+        // Gray variants
+        assert_eq!(Color::named("gray"), Some(Color::GRAY));
+        assert_eq!(Color::named("grey"), Some(Color::GRAY));
+
+        // Extended colors
+        assert!(Color::named("coral").is_some());
+        assert!(Color::named("salmon").is_some());
+        assert!(Color::named("gold").is_some());
+
+        // Unknown color
+        assert_eq!(Color::named("notacolor"), None);
+    }
+
+    #[test]
+    fn test_hex_convenience() {
+        // Valid hex
+        assert!(Color::hex("#FF0000").is_some());
+        assert_eq!(Color::hex("#FF0000"), Some(Color::RED));
+
+        // Invalid hex returns None instead of panicking
+        assert_eq!(Color::hex("invalid"), None);
+        assert_eq!(Color::hex("#GGGGGG"), None);
+    }
+
+    #[test]
+    fn test_color_suggestions() {
+        // Common typos - prefix matching
+        assert_eq!(Color::suggest_named("blu"), Some("blue"));
+        assert_eq!(Color::suggest_named("re"), Some("red"));
+        assert_eq!(Color::suggest_named("gree"), Some("green"));
+
+        // Extra character
+        assert_eq!(Color::suggest_named("bluee"), Some("blue"));
+
+        // Single character difference
+        assert_eq!(Color::suggest_named("blua"), Some("blue"));
+        assert_eq!(Color::suggest_named("rad"), Some("red"));
+
+        // No suggestion for very different strings
+        assert_eq!(Color::suggest_named("xyz"), None);
     }
 }

@@ -2,6 +2,7 @@
 
 use ruviz::core::*;
 use ruviz::data::*;
+use ruviz::prelude::{Plot, Position};
 use ruviz::render::gpu::{GpuRenderer, initialize_gpu_backend};
 use ruviz::render::pooled::PooledRenderer;
 use std::time::Instant;
@@ -240,8 +241,6 @@ async fn main() -> Result<()> {
 }
 
 fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
-    use ruviz::Plot;
-
     // Extract data for plotting
     let point_counts: Vec<f64> = results.iter().map(|r| r.point_count as f64).collect();
     let cpu_throughput: Vec<f64> = results
@@ -265,15 +264,17 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
 
     // Create throughput comparison plot
     Plot::new()
-        .line(&point_counts, &cpu_throughput)
-        .line(&point_counts, &gpu_throughput)
         .title("GPU vs CPU Performance Scaling")
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
-        .legend(&["CPU", "GPU"])
-        .width(1200.0)
+        .legend(Position::TopLeft)
+        .size(12.0, 6.0)
         .dpi(150)
-        .build()
+        .line(&point_counts, &cpu_throughput)
+        .label("CPU")
+        .line(&point_counts, &gpu_throughput)
+        .label("GPU")
+        .end_series()
         .save("examples/output/gpu_throughput_scaling.png")?;
 
     // Create speedup plot
@@ -287,13 +288,13 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         let speedup_values: Vec<f64> = valid_speedups.iter().map(|r| r.gpu_speedup).collect();
 
         Plot::new()
-            .scatter(&speedup_points, &speedup_values)
             .title("GPU Speedup vs Dataset Size")
             .xlabel("Dataset Size (points)")
             .ylabel("GPU Speedup (x)")
-            .width(1200.0)
+            .size(12.0, 6.0)
             .dpi(150)
-            .build()
+            .scatter(&speedup_points, &speedup_values)
+            .end_series()
             .save("examples/output/gpu_speedup_scaling.png")?;
     }
 

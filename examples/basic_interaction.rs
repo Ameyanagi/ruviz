@@ -29,11 +29,12 @@ async fn main() -> Result<()> {
 
     // Create plot
     let plot = Plot::new()
-        .line(&x_data, &y_data)
         .title("Interactive Sine Wave - Basic Example")
         .xlabel("Time (s)")
         .ylabel("Amplitude")
-        .legend(Position::TopRight);
+        .legend(Position::TopRight)
+        .line(&x_data, &y_data)
+        .end_series();
 
     println!("📊 Plot created with {} data points", n_points);
 

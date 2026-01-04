@@ -256,6 +256,7 @@ impl SIMDTransformer {
             return Err(crate::core::PlottingError::DataLengthMismatch {
                 x_len: x_data.len(),
                 y_len: y_data.len(),
+                series_index: None,
             });
         }
 

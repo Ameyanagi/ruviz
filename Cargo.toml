@@ -78,18 +78,31 @@ proptest = "1.4"
 
 [features]
 default = ["ndarray", "parallel"]
+
+# Display and window features
 window = ["winit", "raw-window-handle"]
-interactive = ["window", "gpu"]
+interactive = ["window"]  # Interactive mode WITHOUT GPU (decoupled)
+interactive-gpu = ["interactive", "gpu"]  # Interactive mode WITH GPU acceleration
+
+# Serialization
 serde = ["dep:serde", "serde_json", "palette/serde"]
+
+# Data format support
 ndarray_support = ["ndarray"]
-polars_support = ["polars"]  
+polars_support = ["polars"]
+
+# Performance optimization features
 parallel = ["rayon"]
 gpu = ["wgpu", "bytemuck", "wgsl_bindgen", "pollster", "futures-intrusive"]
 simd = ["wide"]
+performance = ["parallel", "simd"]
+
+# Export format features
 svg = []
 pdf = ["printpdf", "svg2pdf"]
-performance = ["parallel", "simd"]
-full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive"]
+
+# Full feature set
+full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive-gpu"]
 
 [profile.release]
 lto = true

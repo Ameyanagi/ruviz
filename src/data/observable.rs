@@ -30,8 +30,9 @@
 //! }
 //! ```
 
+use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, RwLock, RwLockReadGuard, Weak};
 
 /// Type alias for subscriber callback functions
 pub type SubscriberCallback = Box<dyn Fn() + Send + Sync>;
@@ -769,6 +770,47 @@ impl<T: Clone, const N: usize> IntoObservable<Vec<T>> for [T; N] {
 // StreamingBuffer - O(1) ring buffer for high-performance streaming data
 // ============================================================================
 
+/// Zero-copy view into StreamingBuffer data
+///
+/// This struct holds a read lock on the underlying data and provides
+/// zero-copy access to the buffer contents. The view is valid for the
+/// lifetime of the guard.
+///
+/// # Lifetime
+///
+/// The returned reference is tied to the lifetime of this view. Do not
+/// store references extracted from this view beyond the view's lifetime.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::data::StreamingBuffer;
+///
+/// let buffer = StreamingBuffer::<f64>::new(100);
+/// buffer.push(1.0);
+/// buffer.push(2.0);
+///
+/// // Zero-copy access - no cloning
+/// let view = buffer.read_view();
+/// for item in view.iter() {
+///     if let Some(value) = item {
+///         println!("{}", value);
+///     }
+/// }
+/// // Lock released when view is dropped
+/// ```
+pub struct StreamingBufferView<'a, T> {
+    guard: RwLockReadGuard<'a, Vec<Option<T>>>,
+}
+
+impl<T> Deref for StreamingBufferView<'_, T> {
+    type Target = [Option<T>];
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
 /// High-performance ring buffer for streaming time-series data
 ///
 /// Unlike `SlidingWindowObservable`, `StreamingBuffer` uses a true circular
@@ -907,6 +949,37 @@ impl<T: Clone> StreamingBuffer<T> {
         }
 
         result
+    }
+
+    /// Zero-copy view into the buffer data
+    ///
+    /// Unlike `read()`, this method does not clone the data. Instead, it returns
+    /// a view that holds a read lock on the underlying buffer. This is useful
+    /// for high-performance scenarios where you need to iterate over the data
+    /// without copying.
+    ///
+    /// # Note
+    ///
+    /// The data is returned in storage order (not oldest-to-newest like `read()`).
+    /// Use the buffer's `total_written` and `write_pos` to determine the actual
+    /// data order if needed.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::data::StreamingBuffer;
+    ///
+    /// let buffer = StreamingBuffer::<f64>::new(100);
+    /// buffer.push(1.0);
+    ///
+    /// // Zero-copy access
+    /// let view = buffer.read_view();
+    /// let first = view.iter().find_map(|opt| opt.as_ref());
+    /// ```
+    pub fn read_view(&self) -> StreamingBufferView<'_, T> {
+        StreamingBufferView {
+            guard: self.data.read().expect("Lock poisoned"),
+        }
     }
 
     /// Get only the data appended since last mark_rendered() call
@@ -1102,6 +1175,28 @@ impl StreamingXY {
     /// Read all Y data
     pub fn read_y(&self) -> Vec<f64> {
         self.y.read()
+    }
+
+    /// Zero-copy view into X buffer
+    ///
+    /// Returns a view that holds a read lock on the X data without cloning.
+    pub fn read_view_x(&self) -> StreamingBufferView<'_, f64> {
+        self.x.read_view()
+    }
+
+    /// Zero-copy view into Y buffer
+    ///
+    /// Returns a view that holds a read lock on the Y data without cloning.
+    pub fn read_view_y(&self) -> StreamingBufferView<'_, f64> {
+        self.y.read_view()
+    }
+
+    /// Zero-copy views into both X and Y buffers
+    ///
+    /// Returns views for both buffers, useful for iterating over pairs.
+    /// Note: Both locks are held until both views are dropped.
+    pub fn read_view(&self) -> (StreamingBufferView<'_, f64>, StreamingBufferView<'_, f64>) {
+        (self.x.read_view(), self.y.read_view())
     }
 
     /// Read only appended X data since last render

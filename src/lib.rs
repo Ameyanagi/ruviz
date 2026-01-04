@@ -408,6 +408,57 @@
 //!     .save("plot.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! ### With Legend (matplotlib-style)
+//!
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+//! let sin_y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+//! let cos_y: Vec<f64> = x.iter().map(|&v| v.cos()).collect();
+//!
+//! Plot::new()
+//!     .title("Trigonometric Functions")
+//!     .line(&x, &sin_y).label("sin(x)")
+//!     .line(&x, &cos_y).label("cos(x)")
+//!     .legend_best()  // Enable legend (like plt.legend())
+//!     .save("trig.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ### Figure Size and DPI
+//!
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+//! let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+//!
+//! Plot::new()
+//!     .size(8.0, 6.0)  // 8×6 inches
+//!     .dpi(300)        // 300 DPI = 2400×1800 pixels
+//!     .line(&x, &y)
+//!     .save("high_res.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ### Named Colors
+//!
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
+//! let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+//!
+//! // Use named colors (no unwrap needed!)
+//! let color = Color::named("coral").unwrap_or(Color::RED);
+//!
+//! Plot::new()
+//!     .line(&x, &y).color(color)
+//!     .save("colored.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 pub mod axes;
 pub mod core;

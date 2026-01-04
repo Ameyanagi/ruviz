@@ -38,14 +38,15 @@ async fn main() -> Result<()> {
 
     // Create performance demonstration plot
     let plot = Plot::new()
-        .line(&dataset.x_data, &dataset.y_data)
         .title(&format!(
             "Real-time Performance Demo - {} points",
             initial_size
         ))
         .xlabel("Time (s)")
         .ylabel("Signal Amplitude")
-        .legend(Position::TopLeft);
+        .legend(Position::TopLeft)
+        .line(&dataset.x_data, &dataset.y_data)
+        .end_series();
 
     #[cfg(feature = "interactive")]
     {
@@ -154,11 +155,11 @@ fn create_performance_demo_plot(base_plot: Plot, dataset: &PerformanceDataset) -
 
     // Create the enhanced plot
     let plot = Plot::new()
-        .line(&dataset.x_data, &dataset.y_data)
         .title(&enhanced_title)
         .xlabel("Time (s)")
         .ylabel("Multi-frequency Signal")
         .legend(Position::TopLeft)
+        .line(&dataset.x_data, &dataset.y_data)
         .end_series();
 
     Ok(plot)
@@ -169,8 +170,9 @@ fn run_static_performance_benchmark(dataset: &PerformanceDataset) -> Result<()> 
     println!("\n🔬 Running static rendering benchmarks...");
 
     let plot = Plot::new()
+        .title(&format!("Performance Benchmark - {} points", dataset.size))
         .line(&dataset.x_data, &dataset.y_data)
-        .title(&format!("Performance Benchmark - {} points", dataset.size));
+        .end_series();
 
     // Measure rendering time
     let render_start = Instant::now();
@@ -268,8 +270,9 @@ fn test_performance_scaling() -> Result<()> {
         let dataset = generate_large_dataset(size);
 
         let plot = Plot::new()
+            .title(&format!("Scaling Test - {} points", size))
             .line(&dataset.x_data, &dataset.y_data)
-            .title(&format!("Scaling Test - {} points", size));
+            .end_series();
 
         let render_start = Instant::now();
         plot.save(&format!("scaling_test_{}.png", size))?;

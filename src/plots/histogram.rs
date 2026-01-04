@@ -94,29 +94,8 @@ pub fn calculate_histogram<T, D: Data1D<T>>(
 where
     T: Into<f64> + Copy,
 {
-    if data.len() == 0 {
-        return Err(PlottingError::EmptyDataSet);
-    }
-
-    // Collect and validate data
-    let mut values: Vec<f64> = Vec::with_capacity(data.len());
-    for i in 0..data.len() {
-        if let Some(val) = data.get(i) {
-            let val: f64 = (*val).into();
-            if val.is_finite() {
-                values.push(val);
-            }
-        }
-    }
-
-    if values.is_empty() {
-        return Err(PlottingError::InvalidData {
-            message: "No finite values in data".to_string(),
-            position: None,
-        });
-    }
-
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // Collect and validate data using shared utility
+    let values = crate::data::collect_finite_values_sorted(data)?;
     let n_samples = values.len();
 
     // Determine range

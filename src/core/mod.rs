@@ -2,6 +2,7 @@
 
 pub mod annotation;
 pub mod config;
+pub mod constants;
 pub mod error;
 pub mod layout;
 pub mod legend;
@@ -20,6 +21,7 @@ pub use config::{
     ComputedMargins, FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig,
     TypographyConfig,
 };
+pub use constants::{dimensions, dpi, font_scales, font_sizes, line_widths, margins, spacing};
 pub use error::{PlottingError, Result};
 pub use layout::{
     ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, PlotContent, PlotLayout,
