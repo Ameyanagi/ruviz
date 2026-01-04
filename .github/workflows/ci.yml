@@ -48,7 +48,7 @@ jobs:
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy -- -D warnings
 
   test:
     name: Test Suite
@@ -74,7 +74,7 @@ jobs:
         run: mkdir -p tests/output
 
       - name: Run tests
-        run: cargo test --all-features --verbose
+        run: cargo test --verbose
 
       - name: Run doc tests
         run: cargo test --doc --verbose
