@@ -22,6 +22,15 @@ pub struct GridSpec {
 
 impl GridSpec {
     /// Create a new grid specification
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::GridSpec;
+    ///
+    /// let grid = GridSpec::new(2, 3);  // 2 rows, 3 columns
+    /// assert_eq!(grid.total_subplots(), 6);
+    /// ```
     pub fn new(rows: usize, cols: usize) -> Self {
         Self {
             rows,
@@ -32,12 +41,30 @@ impl GridSpec {
     }
 
     /// Set horizontal spacing between subplots
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::GridSpec;
+    ///
+    /// let grid = GridSpec::new(2, 2).with_hspace(0.3);
+    /// assert_eq!(grid.hspace, 0.3);
+    /// ```
     pub fn with_hspace(mut self, hspace: f32) -> Self {
         self.hspace = hspace.clamp(0.0, 1.0);
         self
     }
 
     /// Set vertical spacing between subplots
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::GridSpec;
+    ///
+    /// let grid = GridSpec::new(2, 2).with_wspace(0.4);
+    /// assert_eq!(grid.wspace, 0.4);
+    /// ```
     pub fn with_wspace(mut self, wspace: f32) -> Self {
         self.wspace = wspace.clamp(0.0, 1.0);
         self
@@ -148,6 +175,16 @@ pub struct SubplotFigure {
 
 impl SubplotFigure {
     /// Create a new subplot figure
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::*;
+    ///
+    /// // Create a 2x2 grid of subplots, 800x600 pixels
+    /// let figure = SubplotFigure::new(2, 2, 800, 600)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new(rows: usize, cols: usize, width: u32, height: u32) -> Result<Self> {
         let grid = GridSpec::new(rows, cols);
         grid.validate()?;
@@ -178,6 +215,17 @@ impl SubplotFigure {
     }
 
     /// Set overall figure title
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// subplots(2, 2, 800, 600)?
+    ///     .suptitle("My Figure Title")
+    ///     .save("figure_with_title.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn suptitle<S: Into<String>>(mut self, title: S) -> Self {
         self.suptitle = Some(title.into());
         self
@@ -190,7 +238,23 @@ impl SubplotFigure {
     }
 
     /// Add a plot at the specified subplot position
+    ///
     /// Position is calculated as: index = row * cols + col (0-indexed)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let plot1 = Plot::new().line(&[1.0, 2.0], &[1.0, 4.0]).end_series();
+    /// let plot2 = Plot::new().line(&[1.0, 2.0], &[2.0, 3.0]).end_series();
+    ///
+    /// subplots(2, 2, 800, 600)?
+    ///     .subplot(0, 0, plot1)?  // Top-left
+    ///     .subplot(1, 1, plot2)?  // Bottom-right
+    ///     .save("grid.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn subplot(mut self, row: usize, col: usize, plot: Plot) -> Result<Self> {
         if row >= self.grid.rows || col >= self.grid.cols {
             return Err(PlottingError::InvalidInput(format!(
@@ -205,6 +269,22 @@ impl SubplotFigure {
     }
 
     /// Add a plot at the specified linear index (0-based)
+    ///
+    /// Linear index maps left-to-right, top-to-bottom: index = row * cols + col
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let plot = Plot::new().line(&[1.0, 2.0], &[1.0, 4.0]).end_series();
+    ///
+    /// // In a 2x3 grid: index 0 = (0,0), index 3 = (1,0), index 5 = (1,2)
+    /// subplots(2, 3, 900, 600)?
+    ///     .subplot_at(0, plot)?  // First position
+    ///     .save("indexed.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn subplot_at(mut self, index: usize, plot: Plot) -> Result<Self> {
         if index >= self.plots.len() {
             return Err(PlottingError::InvalidInput(format!(
@@ -229,6 +309,23 @@ impl SubplotFigure {
     }
 
     /// Render all subplots to a single image and save
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0];
+    /// let y = vec![1.0, 4.0, 9.0];
+    ///
+    /// let plot = Plot::new().line(&x, &y).end_series();
+    ///
+    /// subplots(1, 2, 800, 400)?
+    ///     .subplot_at(0, plot.clone())?
+    ///     .subplot_at(1, plot)?
+    ///     .save("subplots.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn save<P: AsRef<std::path::Path>>(self, path: P) -> Result<()> {
         self.save_with_dpi(path, 96.0)
     }
@@ -288,11 +385,52 @@ impl SubplotFigure {
 }
 
 /// Convenience function to create a subplot figure
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let x = vec![1.0, 2.0, 3.0];
+/// let sin_plot = Plot::new()
+///     .line(&x, &x.iter().map(|v| v.sin()).collect::<Vec<_>>())
+///     .end_series()
+///     .title("Sin");
+/// let cos_plot = Plot::new()
+///     .line(&x, &x.iter().map(|v| v.cos()).collect::<Vec<_>>())
+///     .end_series()
+///     .title("Cos");
+///
+/// subplots(1, 2, 800, 400)?
+///     .subplot_at(0, sin_plot)?
+///     .subplot_at(1, cos_plot)?
+///     .suptitle("Trigonometric Functions")
+///     .save("trig.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn subplots(rows: usize, cols: usize, width: u32, height: u32) -> Result<SubplotFigure> {
     SubplotFigure::new(rows, cols, width, height)
 }
 
 /// Convenience function to create a subplot figure with default size
+///
+/// Default size scales based on number of subplots:
+/// - Width: 400 * cols (max 1600)
+/// - Height: 300 * rows (max 1200)
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// // Creates an 800x600 figure (400*2 x 300*2)
+/// let plot = Plot::new().line(&[1.0, 2.0], &[1.0, 4.0]).end_series();
+///
+/// subplots_default(2, 2)?
+///     .subplot_at(0, plot)?
+///     .save("default_size.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn subplots_default(rows: usize, cols: usize) -> Result<SubplotFigure> {
     // Default figure size scales with subplot count
     let base_width = 400;
