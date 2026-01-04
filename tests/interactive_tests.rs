@@ -3,6 +3,8 @@
 //! These tests validate the complete interactive workflow without requiring
 //! actual windowing, using mock objects and test fixtures.
 
+#![cfg(feature = "interactive")]
+
 use ruviz::core::*;
 use ruviz::interactive::test_utils::*;
 use std::time::{Duration, Instant};

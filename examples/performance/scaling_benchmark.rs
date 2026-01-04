@@ -8,7 +8,7 @@
 use std::time::Instant;
 
 // Include the common module for output path
-#[path = "../common.rs"]
+#[path = "../util/mod.rs"]
 mod common;
 
 fn main() {

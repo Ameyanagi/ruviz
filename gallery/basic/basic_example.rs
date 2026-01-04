@@ -1,6 +1,6 @@
 use ruviz::prelude::*;
 
-fn main() -> std::result::std::result::Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Creating a basic plot...");
 
     // Ensure gallery directory exists

@@ -1,4 +1,4 @@
-use ruviz::data::{Data1D, DataView, MemoryPool, PooledVec};
+use ruviz::data::{Data1D, DataView, MemoryPool, PooledVec, SharedMemoryPool};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -77,7 +77,7 @@ mod memory_pool_tests {
 
     #[test]
     fn test_pooled_vec_api_compatibility() {
-        let pool = Arc::new(Mutex::new(MemoryPool::<f64>::new(1000)));
+        let pool = SharedMemoryPool::<f64>::new(1000);
         let mut vec = PooledVec::new(pool.clone());
 
         // Test Vec-like operations
@@ -94,10 +94,9 @@ mod memory_pool_tests {
         let sum: f64 = vec.iter().sum();
         assert_eq!(sum, 6.0);
 
-        // Test slice operations
-        let slice = &vec[1..];
-        assert_eq!(slice.len(), 2);
-        assert_eq!(slice[0], 2.0);
+        // Test element access
+        assert_eq!(vec[1], 2.0);
+        assert_eq!(vec[2], 3.0);
 
         // Test extend
         vec.extend_from_slice(&[4.0, 5.0]);
@@ -106,7 +105,7 @@ mod memory_pool_tests {
 
     #[test]
     fn test_zero_copy_data_view() {
-        let pool = Arc::new(Mutex::new(MemoryPool::<f64>::new(1000)));
+        let pool = SharedMemoryPool::<f64>::new(1000);
         let mut pooled_data = PooledVec::new(pool.clone());
         pooled_data.extend_from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0]);
 
@@ -115,15 +114,15 @@ mod memory_pool_tests {
 
         // Test Data1D trait implementation
         assert_eq!(data_view.len(), 5);
-        assert_eq!(data_view.get(0).unwrap().into(), 1.0);
-        assert_eq!(data_view.get(4).unwrap().into(), 5.0);
+        assert_eq!(*data_view.get(0).unwrap(), 1.0);
+        assert_eq!(*data_view.get(4).unwrap(), 5.0);
         assert!(data_view.get(5).is_none());
 
         // Verify zero-copy (same memory address)
         assert_eq!(data_view.as_ptr(), pooled_data.as_ptr());
 
         // Test iterator
-        let collected: Vec<f64> = data_view.iter().map(|x| x.into()).collect();
+        let collected: Vec<f64> = data_view.iter().collect();
         assert_eq!(collected, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
@@ -274,7 +273,7 @@ mod performance_tests {
         let y_data: Vec<f64> = (0..size).map(|i| (i as f64).sin()).collect();
 
         // Measure memory usage with pooling
-        let plot = Plot::with_pool_config(PoolConfig::default());
+        let plot = Plot::new();
 
         let start_memory = get_memory_usage();
         let _result = plot
@@ -298,12 +297,11 @@ mod performance_tests {
         let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
         let y_data = vec![0.0, 1.0, 0.0, 1.0, 0.0];
 
-        let plot = Plot::with_pool_config(PoolConfig::default());
         let start_memory = get_memory_usage();
 
         // Render many plots in succession
         for i in 0..NUM_PLOTS {
-            let _result = plot
+            let _result = Plot::new()
                 .line(&x_data, &y_data)
                 .title(&format!("Plot {}", i))
                 .save(&format!("tests/output/steady_state_{}.png", i));

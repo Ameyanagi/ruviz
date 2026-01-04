@@ -164,6 +164,94 @@ path = "examples/performance/streaming_demo.rs"
 name = "scaling_benchmark"
 path = "examples/performance/scaling_benchmark.rs"
 
+# GPU examples (require gpu feature)
+[[example]]
+name = "gpu_api_test"
+path = "examples/gpu_api_test.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_benchmark"
+path = "examples/gpu_benchmark.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_debug_test"
+path = "examples/gpu_debug_test.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_integration_test"
+path = "examples/gpu_integration_test.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_memory_test"
+path = "examples/gpu_memory_test.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_performance_plot"
+path = "examples/gpu_performance_plot.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_plot_example"
+path = "examples/gpu_plot_example.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_scaling_benchmark"
+path = "examples/gpu_scaling_benchmark.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "gpu_vs_cpu_benchmark"
+path = "examples/gpu_vs_cpu_benchmark.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "wgpu_test"
+path = "examples/wgpu_test.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "simple_scaling_test"
+path = "examples/simple_scaling_test.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "performance_data_collector"
+path = "examples/performance_data_collector.rs"
+required-features = ["gpu"]
+
+[[example]]
+name = "minimal_gpu_benchmark"
+path = "examples/minimal_gpu_benchmark.rs"
+required-features = ["gpu"]
+
+# PDF examples (require pdf feature)
+[[example]]
+name = "pdf_export_example"
+path = "examples/pdf_export_example.rs"
+required-features = ["pdf"]
+
+# Interactive examples (require interactive feature)
+[[example]]
+name = "basic_interaction"
+path = "examples/basic_interaction.rs"
+required-features = ["interactive"]
+
+[[example]]
+name = "data_brushing"
+path = "examples/data_brushing.rs"
+required-features = ["interactive"]
+
+[[example]]
+name = "reactive_example"
+path = "examples/reactive_example.rs"
+required-features = ["interactive"]
+
 # Benchmarks
 [[bench]]
 name = "memory_pool_benchmarks"

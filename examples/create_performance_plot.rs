@@ -22,15 +22,16 @@ fn main() -> Result<()> {
     // Create throughput comparison plot
     println!("📊 Creating throughput comparison plot...");
     Plot::new()
+        .size(12.0, 8.0)
+        .dpi(150)
         .line(&point_counts, &cpu_mpts)
+        .label("CPU Performance")
         .line(&point_counts, &gpu_mpts)
+        .label("GPU Performance")
         .title("GPU vs CPU Performance Scaling")
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
-        .legend(&["CPU Performance", "GPU Performance"])
-        .width(1200.0)
-        .dpi(150)
-        .build()
+        .legend(Position::TopRight)
         .save("examples/output/gpu_cpu_performance_comparison.png")?;
 
     println!("✅ Saved: examples/output/gpu_cpu_performance_comparison.png");
@@ -38,14 +39,13 @@ fn main() -> Result<()> {
     // Create speedup plot
     println!("📈 Creating speedup analysis plot...");
     Plot::new()
+        .size(12.0, 8.0)
+        .dpi(150)
         .scatter(&point_counts, &speedup)
         .line(&point_counts, &speedup)
         .title("GPU Speedup vs Dataset Size")
         .xlabel("Dataset Size (points)")
         .ylabel("GPU Speedup Factor (x)")
-        .width(1200.0)
-        .dpi(150)
-        .build()
         .save("examples/output/gpu_speedup_scaling.png")?;
 
     println!("✅ Saved: examples/output/gpu_speedup_scaling.png");

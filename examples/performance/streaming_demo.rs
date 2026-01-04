@@ -8,24 +8,24 @@
 use std::time::Instant;
 
 // Include the common module for output path
-#[path = "../common.rs"]
+#[path = "../util/mod.rs"]
 mod common;
 
 fn main() {
     println!("=== Streaming Data Demo ===\n");
 
-    use ruviz::data::streaming::StreamingXY;
+    use ruviz::data::StreamingXY;
     use ruviz::prelude::*;
 
     // Create a streaming buffer with capacity for 10,000 points
-    let stream = StreamingXY::with_capacity(10_000);
+    let stream = StreamingXY::new(10_000);
 
     // Simulate streaming data ingestion
     println!("Simulating data stream...");
     let start = Instant::now();
 
     // Push initial batch
-    let mut time = 0.0;
+    let mut time: f64 = 0.0;
     for _ in 0..1000 {
         let value = (time * 0.1).sin() + (time * 0.05).cos() * 0.5;
         stream.push(time, value);

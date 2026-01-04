@@ -1,8 +1,7 @@
 //! Debug bar chart rendering
-use ruviz::export::SvgRenderer;
 use ruviz::prelude::*;
 
-fn main() -> std::result::std::result::Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let categories = vec!["Rust", "Python", "Go", "TypeScript"];
     let values = vec![95.0, 70.0, 65.0, 80.0];
 
