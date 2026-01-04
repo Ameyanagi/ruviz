@@ -23,6 +23,12 @@ pub enum MockEvent {
     Reset,
 }
 
+impl Default for MockEventHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockEventHandler {
     pub fn new() -> Self {
         Self {
@@ -122,7 +128,7 @@ impl TestPlotBuilder {
             .collect();
 
         Plot::new()
-            .title(&format!("Performance Test - {} points", n_points))
+            .title(format!("Performance Test - {} points", n_points))
             .xlabel("Time")
             .ylabel("Amplitude")
             .line(&x_data, &y_data)
@@ -134,6 +140,12 @@ impl TestPlotBuilder {
 pub struct PerformanceMonitor {
     frame_times: Vec<Duration>,
     start_time: Instant,
+}
+
+impl Default for PerformanceMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PerformanceMonitor {

@@ -22,7 +22,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Create plot with current DPI
         let plot = Plot::new()
             .line(&x_data, &y_data)
-            .title(&format!("DPI {} Title Test - Should Render Correctly", dpi))
+            .title(format!("DPI {} Title Test - Should Render Correctly", dpi))
             .xlabel("X Values")
             .ylabel("Y Values")
             .dpi(*dpi);

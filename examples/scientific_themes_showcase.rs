@@ -115,7 +115,7 @@ fn main() -> Result<()> {
     for (name, theme_variant) in comparison_data {
         Plot::new()
             .theme(theme_variant.to_theme())
-            .title(&format!("{} Theme Comparison", name))
+            .title(format!("{} Theme Comparison", name))
             .xlabel("x")
             .ylabel("y")
             .line(&x, &y_sin)
@@ -125,7 +125,7 @@ fn main() -> Result<()> {
             .end_series()
             .xlim(0.0, 2.0 * PI)
             .legend(Position::TopRight)
-            .save(&format!(
+            .save(format!(
                 "examples/output/{}_theme_comparison.png",
                 name.to_lowercase()
             ))?;

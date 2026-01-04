@@ -427,7 +427,7 @@ mod tests {
         let data = vec![1.0, 2.0, 3.0];
         let view1 = DataView::from_slice(&data);
         let view2 = view1; // Copy
-        let view3 = view1.clone(); // Clone
+        let view3 = view1; // Clone
 
         assert_eq!(view1.len(), view2.len());
         assert_eq!(view2.len(), view3.len());

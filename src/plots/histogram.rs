@@ -304,7 +304,7 @@ mod tests {
         assert!(result.is_density);
 
         // For density, the area under histogram should be 1
-        let bin_width = (result.bin_edges[1] - result.bin_edges[0]);
+        let bin_width = result.bin_edges[1] - result.bin_edges[0];
         let total_area: f64 = result.counts.iter().map(|&c| c * bin_width).sum();
         assert!((total_area - 1.0).abs() < 1e-10);
     }

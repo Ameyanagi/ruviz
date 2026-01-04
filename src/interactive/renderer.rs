@@ -718,7 +718,7 @@ mod tests {
         let alpha = 0.5;
 
         let result = blend_channel(background, foreground, alpha);
-        let expected = ((100.0 * 0.5 + 200.0 * 0.5) as u8);
+        let expected = (100.0 * 0.5 + 200.0 * 0.5) as u8;
 
         assert_eq!(result, expected);
     }

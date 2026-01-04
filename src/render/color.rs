@@ -712,11 +712,11 @@ mod tests {
     fn test_predefined_colormaps() {
         let viridis = ColorMap::viridis();
         assert_eq!(viridis.name(), "viridis");
-        assert!(viridis.len() > 0);
+        assert!(!viridis.is_empty());
 
         let plasma = ColorMap::plasma();
         assert_eq!(plasma.name(), "plasma");
-        assert!(plasma.len() > 0);
+        assert!(!plasma.is_empty());
     }
 
     #[test]

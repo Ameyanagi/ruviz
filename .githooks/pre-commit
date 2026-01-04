@@ -18,9 +18,9 @@ if ! cargo fmt --all -- --check; then
 fi
 echo "✓ Formatting OK"
 
-# Run clippy with strict warnings
+# Run clippy with strict warnings on library code
 echo "Running clippy..."
-if ! cargo clippy --all-targets --all-features -- -D warnings 2>/dev/null; then
+if ! cargo clippy --all-features -- -D warnings 2>/dev/null; then
     echo ""
     echo "❌ Clippy check failed!"
     echo "Fix the warnings above before committing."

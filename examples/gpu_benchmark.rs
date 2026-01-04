@@ -29,8 +29,8 @@ fn benchmark_size(point_count: usize) -> Result<()> {
     Plot::new()
         .backend(ruviz::core::plot::BackendType::Skia)
         .line(&x_data, &y_data)
-        .title(&format!("CPU - {} points", point_count))
-        .save(&format!("/tmp/bench_cpu_{}.png", point_count))?;
+        .title(format!("CPU - {} points", point_count))
+        .save(format!("/tmp/bench_cpu_{}.png", point_count))?;
     let cpu_time = cpu_start.elapsed();
 
     // GPU rendering
@@ -40,8 +40,8 @@ fn benchmark_size(point_count: usize) -> Result<()> {
         let result = Plot::new()
             .gpu(true)
             .line(&x_data, &y_data)
-            .title(&format!("GPU - {} points", point_count))
-            .save(&format!("/tmp/bench_gpu_{}.png", point_count));
+            .title(format!("GPU - {} points", point_count))
+            .save(format!("/tmp/bench_gpu_{}.png", point_count));
 
         match result {
             Ok(_) => Some(gpu_start.elapsed()),

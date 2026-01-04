@@ -41,7 +41,7 @@ mod tests {
 
         assert!(result.is_ok());
         if let Ok(image) = result {
-            assert!(image.pixels.len() > 0);
+            assert!(!image.pixels.is_empty());
         }
     }
 

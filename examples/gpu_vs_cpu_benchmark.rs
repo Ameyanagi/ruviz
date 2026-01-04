@@ -9,7 +9,7 @@ use ruviz::render::pooled::PooledRenderer;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "gpu")]
-use ruviz::render::gpu::{GpuRenderer, initialize_gpu_backend, is_gpu_available};
+use ruviz::render::gpu::{GpuRenderer, initialize_gpu_backend};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     ];
 
     // Initialize CPU renderer (always available)
-    let mut cpu_renderer = PooledRenderer::new();
+    let cpu_renderer = PooledRenderer::new();
     println!("✅ CPU Renderer initialized");
 
     // Try to initialize GPU renderer
@@ -181,7 +181,7 @@ async fn benchmark_line_plot(point_count: usize) -> Result<()> {
     let start = Instant::now();
 
     // Simulate complete rendering pipeline
-    let mut cpu_renderer = PooledRenderer::new();
+    let cpu_renderer = PooledRenderer::new();
     let _result = cpu_renderer.transform_coordinates_pooled(
         &x,
         &y,
@@ -220,14 +220,12 @@ async fn benchmark_scatter_plot(point_count: usize) -> Result<()> {
     );
 
     // Generate random-looking data
-    let x: Vec<f64> = (0..point_count)
-        .map(|i| (i as f64 * 17.0 % 100.0))
-        .collect();
-    let y: Vec<f64> = (0..point_count).map(|i| (i as f64 * 13.0 % 80.0)).collect();
+    let x: Vec<f64> = (0..point_count).map(|i| i as f64 * 17.0 % 100.0).collect();
+    let y: Vec<f64> = (0..point_count).map(|i| i as f64 * 13.0 % 80.0).collect();
 
     let start = Instant::now();
 
-    let mut cpu_renderer = PooledRenderer::new();
+    let cpu_renderer = PooledRenderer::new();
     let _result = cpu_renderer
         .transform_coordinates_pooled(&x, &y, 0.0, 100.0, 0.0, 80.0, 0.0, 0.0, 1920.0, 1080.0)?;
 
@@ -257,7 +255,7 @@ async fn benchmark_multiple_series(points_per_series: usize, series_count: usize
     );
 
     let start = Instant::now();
-    let mut cpu_renderer = PooledRenderer::new();
+    let cpu_renderer = PooledRenderer::new();
 
     // Simulate rendering multiple series
     for series in 0..series_count {
