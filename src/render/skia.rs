@@ -1009,6 +1009,8 @@ impl SkiaRenderer {
     ///
     /// Similar to `draw_axis_labels_with_ticks` but uses category names on x-axis
     /// instead of numeric tick values.
+    ///
+    /// Uses the same data-to-pixel mapping as bar rendering to ensure precise alignment.
     pub fn draw_axis_labels_with_categories(
         &mut self,
         plot_area: Rect,
@@ -1029,14 +1031,19 @@ impl SkiaRenderer {
         let y_tick_offset = 15.0 * dpi_scale;
         let char_width_estimate = 4.0 * dpi_scale;
 
-        // Draw X-axis category labels centered under each bar
+        // Draw X-axis category labels using same data-to-pixel mapping as bars
         let n_categories = categories.len();
         if n_categories > 0 {
-            let category_width = plot_area.width() / n_categories as f32;
+            // X-axis range with matplotlib-compatible padding: [-0.5, n-0.5]
+            let x_min = -0.5_f64;
+            let x_max = n_categories as f64 - 0.5;
+            let x_range = x_max - x_min;
 
             for (i, category) in categories.iter().enumerate() {
-                // Position each label at the center of its bar
-                let x_center = plot_area.left() + category_width * (i as f32 + 0.5);
+                // Position label at category index (same as bar center in data space)
+                let x_data = i as f64;
+                let x_center =
+                    plot_area.left() + ((x_data - x_min) / x_range) as f32 * plot_area.width();
 
                 // Estimate text width for centering
                 let text_width_estimate = category.len() as f32 * char_width_estimate / 2.0;
@@ -1258,6 +1265,9 @@ impl SkiaRenderer {
     ///
     /// Similar to `draw_axis_labels_at` but uses category names instead of numeric ticks
     /// on the x-axis. Categories are positioned at the center of each bar.
+    ///
+    /// Uses the same data-to-pixel mapping as bar rendering to ensure precise alignment.
+    /// With bar chart x-range [-0.5, n-0.5], category i maps to position i in data space.
     pub fn draw_axis_labels_at_categorical(
         &mut self,
         plot_area: &LayoutRect,
@@ -1285,15 +1295,19 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        // Draw X-axis category labels centered under each bar
+        // Draw X-axis category labels using same data-to-pixel mapping as bars
         let n_categories = categories.len();
         if n_categories > 0 {
-            // Calculate the width allocated to each category
-            let category_width = plot_area.width() / n_categories as f32;
+            // X-axis range with matplotlib-compatible padding: [-0.5, n-0.5]
+            let x_min = -0.5_f64;
+            let x_max = n_categories as f64 - 0.5;
+            let x_range = x_max - x_min;
 
             for (i, category) in categories.iter().enumerate() {
-                // Position each label at the center of its bar
-                let x_center = plot_area.left + category_width * (i as f32 + 0.5);
+                // Position label at category index (same as bar center in data space)
+                let x_data = i as f64;
+                let x_center =
+                    plot_area.left + ((x_data - x_min) / x_range) as f32 * plot_area.width();
 
                 // Estimate text width for centering
                 let text_width_estimate = category.len() as f32 * char_width_estimate;

@@ -2100,8 +2100,12 @@ impl Plot {
                 }
             }
             SeriesType::Bar { values, .. } => {
-                // Simple bar rendering
-                let bar_width = plot_area.width() / values.len() as f32 * 0.8;
+                // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
+                let bar_width_fraction = 0.8;
+                let data_range = (x_max - x_min) as f32;
+                let pixels_per_unit = plot_area.width() / data_range;
+                let bar_width = bar_width_fraction * pixels_per_unit;
+
                 for (i, &value) in values.iter().enumerate() {
                     let x = i as f64;
                     let (px, py) = crate::render::skia::map_data_to_pixels(
@@ -2842,13 +2846,11 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { categories, values } => {
-                    // Calculate bar width based on data density
-                    let bar_width = if categories.len() > 1 {
-                        let available_width = plot_area.width() * 0.8;
-                        (available_width / categories.len() as f32).min(40.0)
-                    } else {
-                        40.0 // Default bar width
-                    };
+                    // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
+                    let bar_width_fraction = 0.8;
+                    let data_range = (x_max - x_min) as f32;
+                    let pixels_per_unit = plot_area.width() / data_range;
+                    let bar_width = bar_width_fraction * pixels_per_unit;
 
                     // Draw bars from baseline to data value
                     let baseline =
@@ -3302,13 +3304,11 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { categories, values } => {
-                    // Calculate bar width based on data density
-                    let bar_width = if categories.len() > 1 {
-                        let available_width = plot_area.width() * 0.8;
-                        (available_width / categories.len() as f32).min(pt_to_px(30.0, dpi))
-                    } else {
-                        pt_to_px(30.0, dpi) // Default bar width
-                    };
+                    // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
+                    let bar_width_fraction = 0.8;
+                    let data_range = (x_max - x_min) as f32;
+                    let pixels_per_unit = plot_area.width() / data_range;
+                    let bar_width = bar_width_fraction * pixels_per_unit;
 
                     // Draw bars from baseline to data value
                     let baseline =
@@ -3715,13 +3715,11 @@ impl Plot {
                             parallel_plot_area.clone(),
                         )?;
 
-                        // Create bar instances
-                        let bar_width = if categories.len() > 1 {
-                            let available_width = parallel_plot_area.width() * 0.8;
-                            (available_width / categories.len() as f32).min(40.0)
-                        } else {
-                            40.0
-                        };
+                        // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
+                        let bar_width_fraction = 0.8;
+                        let data_range = (bounds.1 - bounds.0) as f32;
+                        let pixels_per_unit = parallel_plot_area.width() / data_range;
+                        let bar_width = bar_width_fraction * pixels_per_unit;
 
                         let baseline_y = map_data_to_pixels(
                             0.0, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area,
@@ -4146,8 +4144,10 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { categories, values } => {
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max((categories.len() - 1) as f64);
+                    // Add 0.5-unit padding on each side for bar charts (matplotlib-compatible)
+                    // This ensures bars at positions 0 and n-1 are fully visible
+                    x_min = x_min.min(-0.5);
+                    x_max = x_max.max(categories.len() as f64 - 0.5);
 
                     for &val in values {
                         if val.is_finite() {
@@ -4462,10 +4462,11 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { values, .. } => {
-                    for (i, &value) in values.iter().enumerate() {
-                        let x = i as f64;
-                        x_min = x_min.min(x);
-                        x_max = x_max.max(x);
+                    // Add 0.5-unit padding on each side for bar charts (matplotlib-compatible)
+                    let n_categories = values.len();
+                    x_min = x_min.min(-0.5);
+                    x_max = x_max.max(n_categories as f64 - 0.5);
+                    for &value in values.iter() {
                         y_min = y_min.min(0.0).min(value);
                         y_max = y_max.max(value);
                     }
