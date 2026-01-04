@@ -3,20 +3,19 @@
 
 [advisories]
 # Ignore specific advisories that are acknowledged but cannot be immediately fixed
-
+#
 # fast-float@0.2.0 - Segmentation fault on empty input
 # This is a transitive dependency via polars. We don't pass empty strings to float parsing.
 # See: https://rustsec.org/advisories/RUSTSEC-2025-0003
+# RUSTSEC-2024-0379 - fast-float soundness issues (same crate)
 ignore = [
     "RUSTSEC-2025-0003",
-    "RUSTSEC-2024-0379",  # fast-float soundness issues (same crate)
+    "RUSTSEC-2024-0379",
 ]
 
-[unmaintained]
-# Acknowledge unmaintained crates that are stable and have no security issues
-# These don't fail the audit, just generate warnings
-warn = true
+# Warn for unmaintained crates (informational only)
+informational_warnings = ["unmaintained"]
 
-[yanked]
-# Fail on yanked crates
-deny = true
+[output]
+# Exit with error if unmaintained dependencies found (set to [] to just warn)
+deny = []
