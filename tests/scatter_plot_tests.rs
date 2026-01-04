@@ -12,14 +12,14 @@ fn test_basic_scatter_plot() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .scatter(&x_data, &y_data)
-        .save("test_output/basic_scatter.png");
+        .save("tests/output/basic_scatter.png");
 
     assert!(
         result.is_ok(),
         "Basic scatter plot should export successfully"
     );
 
-    let path = std::path::Path::new("test_output/basic_scatter.png");
+    let path = std::path::Path::new("tests/output/basic_scatter.png");
     assert!(path.exists(), "Output file should exist");
 
     let metadata = fs::metadata(path).unwrap();
@@ -50,7 +50,7 @@ fn test_scatter_plot_different_dpi() {
             .xlabel("X Axis")
             .ylabel("Y Axis")
             .scatter(&x_data, &y_data)
-            .save(&format!("test_output/{}", filename));
+            .save(&format!("tests/output/{}", filename));
 
         assert!(
             result.is_ok(),
@@ -58,7 +58,7 @@ fn test_scatter_plot_different_dpi() {
             dpi
         );
 
-        let filepath = format!("test_output/{}", filename);
+        let filepath = format!("tests/output/{}", filename);
         let path = std::path::Path::new(&filepath);
         assert!(path.exists(), "Output file should exist for {} DPI", dpi);
 
@@ -83,7 +83,7 @@ fn test_scatter_plot_with_custom_colors() {
         .ylabel("Y Values")
         .scatter(&x_data, &y_data)
         .color(Color::new(255, 0, 0))
-        .save("test_output/scatter_custom_color.png");
+        .save("tests/output/scatter_custom_color.png");
 
     assert!(
         result.is_ok(),
@@ -107,7 +107,7 @@ fn test_multiple_scatter_series() {
         .color(Color::new(255, 0, 0))
         .scatter(&x2_data, &y2_data)
         .color(Color::new(0, 0, 255))
-        .save("test_output/multiple_scatter_series.png");
+        .save("tests/output/multiple_scatter_series.png");
 
     assert!(
         result.is_ok(),
@@ -131,7 +131,7 @@ fn test_scatter_plot_large_dataset() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .scatter(&x_data, &y_data)
-        .save("test_output/scatter_large_dataset.png");
+        .save("tests/output/scatter_large_dataset.png");
 
     assert!(
         result.is_ok(),
@@ -152,7 +152,7 @@ fn test_scatter_plot_empty_data() {
         .ylabel("Y Values")
         .scatter(&x_data, &y_data);
 
-    let result = plot.save("test_output/scatter_empty.png");
+    let result = plot.save("tests/output/scatter_empty.png");
     assert!(
         result.is_err(),
         "Empty data should return an error when saving"
@@ -167,7 +167,7 @@ fn test_scatter_plot_mismatched_data() {
     // This should work at plot creation but fail at render/save due to validation
     let plot = Plot::new().dimensions(800, 600).scatter(&x_data, &y_data);
 
-    let result = plot.save("test_output/scatter_mismatched.png");
+    let result = plot.save("tests/output/scatter_mismatched.png");
     assert!(
         result.is_err(),
         "Mismatched data lengths should return an error"

@@ -15,6 +15,24 @@ Thumbs.db
 # Test outputs
 test_output/*
 export_test_output/*
+tests/output/*.png
+tests/output/*.pdf
+tests/output/*.svg
+!tests/output/.gitkeep
+
+# Example outputs
+examples/output/*.png
+examples/output/*.pdf
+examples/output/*.svg
+examples/output/**/*.png
+examples/output/**/*.pdf
+examples/output/**/*.svg
+!examples/output/.gitkeep
+
+# Scattered outputs in root (legacy - to be removed)
+/*.png
+/*.pdf
+/*.svg
 
 # Temporary files
 *.tmp

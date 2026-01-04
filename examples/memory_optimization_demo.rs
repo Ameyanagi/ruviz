@@ -46,7 +46,7 @@ fn main() -> Result<()> {
 
     // Render with memory monitoring
     println!("🖼️  Rendering with memory optimization...");
-    plot.save("test_output/memory_optimization_demo.png")?;
+    plot.save("examples/output/memory_optimization_demo.png")?;
 
     let plot_time = plot_start.elapsed();
     let total_time = start_time.elapsed();
@@ -73,7 +73,7 @@ fn main() -> Result<()> {
         .end_series()
         .theme(Theme::seaborn());
 
-    scatter_plot.save("test_output/memory_scatter_demo.png")?;
+    scatter_plot.save("examples/output/memory_scatter_demo.png")?;
 
     let scatter_time = scatter_start.elapsed();
     println!("✅ Scatter plot rendered in {:?}", scatter_time);

@@ -16,7 +16,7 @@ fn test_1k_points_target() {
     let result = Plot::new()
         .line(&x, &y)
         .title("1K Points Performance Test")
-        .save("test_output/perf_1k.png");
+        .save("tests/output/perf_1k.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create 1K point plot");
@@ -42,7 +42,7 @@ fn test_10k_points_target() {
     let result = Plot::new()
         .line(&x, &y)
         .title("10K Points Performance Test")
-        .save("test_output/perf_10k.png");
+        .save("tests/output/perf_10k.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create 10K point plot");
@@ -68,7 +68,7 @@ fn test_100k_points_parallel() {
     let result = Plot::new()
         .line(&x, &y)
         .title("100K Points Parallel Performance Test")
-        .save("test_output/perf_100k_parallel.png");
+        .save("tests/output/perf_100k_parallel.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create 100K point plot");
@@ -98,7 +98,7 @@ fn test_1m_points_parallel_simd() {
     let result = Plot::new()
         .line(&x, &y)
         .title("1M Points Parallel+SIMD Performance Test")
-        .save("test_output/perf_1m_simd.png");
+        .save("tests/output/perf_1m_simd.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create 1M point plot");
@@ -134,7 +134,7 @@ fn test_multi_series_performance() {
         .line(&x, &y3)
         .label("tan")
         .title("Multi-Series Performance Test")
-        .save("test_output/perf_multi_series.png");
+        .save("tests/output/perf_multi_series.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create multi-series plot");
@@ -162,7 +162,7 @@ fn test_scatter_plot_performance() {
         .marker(MarkerStyle::Circle)
         .marker_size(2.0)
         .title("Scatter Performance Test")
-        .save("test_output/perf_scatter.png");
+        .save("tests/output/perf_scatter.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create scatter plot");
@@ -185,7 +185,7 @@ fn test_bar_chart_performance() {
     let result = Plot::new()
         .bar(&categories_str, &values)
         .title("Bar Chart Performance Test")
-        .save("test_output/perf_bar.png");
+        .save("tests/output/perf_bar.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create bar chart");
@@ -205,7 +205,7 @@ fn test_histogram_performance() {
     let result = Plot::new()
         .histogram(&data, None)
         .title("Histogram Performance Test")
-        .save("test_output/perf_histogram.png");
+        .save("tests/output/perf_histogram.png");
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Failed to create histogram");
@@ -227,7 +227,7 @@ fn test_dpi_performance_impact() {
     let result_96 = Plot::new()
         .line(&x, &y)
         .dpi(96)
-        .save("test_output/perf_dpi_96.png");
+        .save("tests/output/perf_dpi_96.png");
     let duration_96 = start.elapsed();
     assert!(result_96.is_ok());
 
@@ -236,7 +236,7 @@ fn test_dpi_performance_impact() {
     let result_300 = Plot::new()
         .line(&x, &y)
         .dpi(300)
-        .save("test_output/perf_dpi_300.png");
+        .save("tests/output/perf_dpi_300.png");
     let duration_300 = start.elapsed();
     assert!(result_300.is_ok());
 
@@ -270,7 +270,7 @@ fn test_theme_performance() {
             .theme(theme)
             .line(&x, &y)
             .title(&format!("{} Theme", name))
-            .save(&format!("test_output/perf_theme_{}.png", name));
+            .save(&format!("tests/output/perf_theme_{}.png", name));
         let duration = start.elapsed();
 
         assert!(result.is_ok(), "{} theme failed", name);
@@ -292,7 +292,7 @@ fn test_memory_efficiency() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Memory Efficiency Test")
-        .save("test_output/perf_memory.png");
+        .save("tests/output/perf_memory.png");
 
     assert!(result.is_ok(), "Memory efficiency test failed");
 

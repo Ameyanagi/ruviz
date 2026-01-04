@@ -6,7 +6,6 @@
 /// - Rounded corners
 /// - Multi-column (horizontal) layout
 /// - Frame styling with background and border
-
 use ruviz::core::Plot;
 use ruviz::core::Position;
 use ruviz::render::{Color, LineStyle, MarkerStyle, Theme};

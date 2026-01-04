@@ -18,7 +18,6 @@ pub mod theme;
 pub use backend::Renderer;
 pub use color::{Color, ColorError, ColorMap};
 pub use cosmic_text_renderer::CosmicTextRenderer;
-pub use text::{FontConfig, FontFamily, FontStyle, FontWeight};
 #[cfg(feature = "gpu")]
 pub use gpu::{GpuBackend, GpuRenderer, initialize_gpu_backend, is_gpu_available};
 #[cfg(feature = "parallel")]
@@ -30,5 +29,6 @@ pub use pooled::{LineSegment, PooledRenderer, PooledRendererStats, get_pooled_re
 pub use simd::{CoordinateBounds, PixelViewport, SIMDPerformanceInfo, SIMDTransformer};
 pub use skia::SkiaRenderer;
 pub use style::{LineStyle, MarkerStyle};
+pub use text::{FontConfig, FontFamily, FontStyle, FontWeight};
 pub use text::{TextRenderer, get_font_system, get_swash_cache, initialize_text_system};
 pub use theme::{Theme, ThemeBuilder, ThemeVariant};

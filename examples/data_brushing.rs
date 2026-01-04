@@ -88,16 +88,16 @@ async fn main() -> Result<()> {
         println!("To enable: cargo run --features interactive --example data_brushing");
 
         // Save static versions
-        time_plot.save("data_brushing_time_series.png")?;
-        phase_plot.save("data_brushing_phase_space.png")?;
-        correlation_plot.save("data_brushing_correlation.png")?;
-        histogram_plot.save("data_brushing_histogram.png")?;
+        time_plot.save("examples/output/data_brushing_time_series.png")?;
+        phase_plot.save("examples/output/data_brushing_phase_space.png")?;
+        correlation_plot.save("examples/output/data_brushing_correlation.png")?;
+        histogram_plot.save("examples/output/data_brushing_histogram.png")?;
 
         println!("💾 Saved static versions:");
-        println!("  - data_brushing_time_series.png");
-        println!("  - data_brushing_phase_space.png");
-        println!("  - data_brushing_correlation.png");
-        println!("  - data_brushing_histogram.png");
+        println!("  - examples/output/data_brushing_time_series.png");
+        println!("  - examples/output/data_brushing_phase_space.png");
+        println!("  - examples/output/data_brushing_correlation.png");
+        println!("  - examples/output/data_brushing_histogram.png");
     }
 
     println!("✅ Data brushing example completed!");

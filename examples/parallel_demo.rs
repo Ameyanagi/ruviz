@@ -55,7 +55,7 @@ fn main() -> Result<()> {
             .end_series()
             .theme(Theme::seaborn());
 
-        let filename = format!("test_output/parallel_demo_{}k.png", size / 1000);
+        let filename = format!("examples/output/parallel_demo_{}k.png", size / 1000);
         plot.save(&filename)?;
 
         let plot_time = plot_start.elapsed();
@@ -101,7 +101,7 @@ fn main() -> Result<()> {
         .end_series()
         .theme(Theme::seaborn());
 
-    plot.save("test_output/parallel_multi_series.png")?;
+    plot.save("examples/output/parallel_multi_series.png")?;
 
     let multi_time = multi_start.elapsed();
     println!("✅ Multi-series plot completed in {:?}", multi_time);
@@ -135,7 +135,7 @@ fn main() -> Result<()> {
         .end_series()
         .theme(Theme::seaborn());
 
-    scatter_plot.save("test_output/parallel_scatter.png")?;
+    scatter_plot.save("examples/output/parallel_scatter.png")?;
 
     let scatter_time = scatter_start.elapsed();
     println!("✅ Scatter plot completed in {:?}", scatter_time);

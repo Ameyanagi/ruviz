@@ -20,7 +20,7 @@ fn main() -> ruviz::core::Result<()> {
         .histogram(&data, Some(HistogramConfig::new()))
         .end_series()
         .theme(Theme::publication())
-        .save("test_output/histogram_example.png");
+        .save("examples/output/histogram_example.png");
 
     match result {
         Ok(_) => println!("✅ Professional histogram saved as test_output/histogram_example.png"),

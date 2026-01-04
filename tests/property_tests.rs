@@ -26,7 +26,7 @@ proptest! {
         // This should never panic
         let result = Plot::new()
             .line(&x, &y)
-            .save("test_output/proptest_line.png");
+            .save("tests/output/proptest_line.png");
 
         // Either succeeds or returns error (but never panics)
         prop_assert!(result.is_ok() || result.is_err());
@@ -72,12 +72,12 @@ proptest! {
         let y: Vec<f64> = y[..min_len].to_vec();
 
         // Render twice with same data
-        Plot::new().line(&x, &y).save("test_output/prop_det_1.png")?;
-        Plot::new().line(&x, &y).save("test_output/prop_det_2.png")?;
+        Plot::new().line(&x, &y).save("tests/output/prop_det_1.png")?;
+        Plot::new().line(&x, &y).save("tests/output/prop_det_2.png")?;
 
         // Should produce identical file sizes (deterministic)
-        let size1 = std::fs::metadata("test_output/prop_det_1.png")?.len();
-        let size2 = std::fs::metadata("test_output/prop_det_2.png")?.len();
+        let size1 = std::fs::metadata("tests/output/prop_det_1.png")?.len();
+        let size2 = std::fs::metadata("tests/output/prop_det_2.png")?.len();
 
         prop_assert_eq!(size1, size2, "Output not deterministic");
     }
@@ -105,7 +105,7 @@ proptest! {
         prop_assert!(y_min <= y_max, "Invalid y bounds");
 
         // Should be able to create plot (bounds calculation doesn't fail)
-        let result = Plot::new().line(&x, &y).save("test_output/prop_bounds.png");
+        let result = Plot::new().line(&x, &y).save("tests/output/prop_bounds.png");
         prop_assert!(result.is_ok());
     }
 }
@@ -125,22 +125,22 @@ proptest! {
         let simple_result = ruviz::simple::line_plot(
             &x,
             &y,
-            "test_output/prop_simple.png"
+            "tests/output/prop_simple.png"
         );
 
         // Full API with auto-optimize
         let full_result = Plot::new()
             .line(&x, &y)
             .auto_optimize()
-            .save("test_output/prop_full.png");
+            .save("tests/output/prop_full.png");
 
         // Both should succeed
         prop_assert!(simple_result.is_ok());
         prop_assert!(full_result.is_ok());
 
         // Should produce similar-sized outputs (within 10% due to compression variance)
-        let simple_size = std::fs::metadata("test_output/prop_simple.png")?.len();
-        let full_size = std::fs::metadata("test_output/prop_full.png")?.len();
+        let simple_size = std::fs::metadata("tests/output/prop_simple.png")?.len();
+        let full_size = std::fs::metadata("tests/output/prop_full.png")?.len();
 
         let ratio = simple_size as f64 / full_size as f64;
         prop_assert!(
@@ -165,7 +165,7 @@ proptest! {
 
         let result = Plot::new()
             .line(&x, &y)
-            .save("test_output/prop_empty.png");
+            .save("tests/output/prop_empty.png");
 
         if x.is_empty() || y.is_empty() {
             // Should return error, not panic
@@ -197,7 +197,7 @@ proptest! {
         // Scatter plot should handle same data as line plot
         let result = Plot::new()
             .scatter(&x, &y)
-            .save("test_output/prop_scatter.png");
+            .save("tests/output/prop_scatter.png");
 
         prop_assert!(result.is_ok(), "Scatter plot should handle valid data");
     }
@@ -221,7 +221,7 @@ proptest! {
 
         let result = Plot::new()
             .bar(&categories, &values)
-            .save("test_output/prop_bar.png");
+            .save("tests/output/prop_bar.png");
 
         prop_assert!(result.is_ok(), "Bar chart should handle positive values");
     }

@@ -5,13 +5,13 @@ pub mod elements;
 pub mod impls;
 pub mod memory;
 pub mod memory_pool;
+pub mod observable;
 pub mod platform;
 pub mod pooled_vec;
 pub mod traits;
 pub mod transform;
 pub mod zero_copy;
 
-pub use traits::Data1D;
 pub use datashader_simple::{DataShader, DataShaderCanvas, DataShaderImage, DataShaderStats};
 pub use elements::{
     ErrorBar, LineSegment, MarkerInstance, PlotElementStats, PlotElementStorage, Polygon,
@@ -22,9 +22,15 @@ pub use memory::{
     initialize_memory_manager,
 };
 pub use memory_pool::{MemoryPool, PoolStatistics, PooledBuffer, SharedMemoryPool};
+pub use observable::{
+    BatchNotifier, BatchUpdate, IntoObservable, Observable, ReactiveDataHandle,
+    SlidingWindowObservable, StreamingBuffer, StreamingXY, SubscriberCallback, SubscriberId,
+    WeakObservable, lift, lift2, map,
+};
 pub use platform::{
     MemoryLimits, OptimizationConfig, PerformanceHints, PlatformInfo, PlatformOptimizer,
     get_platform_optimizer, initialize_platform_optimization,
 };
 pub use pooled_vec::{PooledVec, PooledVecIntoIter};
+pub use traits::Data1D;
 pub use zero_copy::{DataView, DataViewIter, MappedDataView, MappedDataViewIter};

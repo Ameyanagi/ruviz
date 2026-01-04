@@ -22,8 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y-axis values testing overflow prevention")
         .dpi(96);
 
-    plot.save("fixes_demo_96dpi.png")?;
-    println!("   ✅ Generated: fixes_demo_96dpi.png");
+    plot.save("examples/output/fixes_demo_96dpi.png")?;
+    println!("   ✅ Generated: examples/output/fixes_demo_96dpi.png");
 
     // Test 2: High DPI with title rendering fix
     println!("2. High DPI (300) - Testing title rendering without double scaling");
@@ -34,8 +34,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y-axis label testing")
         .dpi(300);
 
-    plot.save("fixes_demo_300dpi.png")?;
-    println!("   ✅ Generated: fixes_demo_300dpi.png");
+    plot.save("examples/output/fixes_demo_300dpi.png")?;
+    println!("   ✅ Generated: examples/output/fixes_demo_300dpi.png");
 
     // Test 3: Very high DPI to really test the scaling
     println!("3. Publication DPI (600) - Testing extreme DPI scaling");
@@ -46,8 +46,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ylabel("Publication-ready Y-axis")
         .dpi(600);
 
-    plot.save("fixes_demo_600dpi.png")?;
-    println!("   ✅ Generated: fixes_demo_600dpi.png");
+    plot.save("examples/output/fixes_demo_600dpi.png")?;
+    println!("   ✅ Generated: examples/output/fixes_demo_600dpi.png");
 
     println!("\n🔍 Fixes Demonstrated:");
     println!("======================");

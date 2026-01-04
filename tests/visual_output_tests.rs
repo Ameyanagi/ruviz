@@ -8,7 +8,7 @@ use std::fs;
 
 /// Setup test output directory
 fn setup_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("test_output")?;
+    fs::create_dir_all("tests/output")?;
     Ok(())
 }
 
@@ -25,7 +25,7 @@ fn test_basic_line_plot() -> std::result::Result<(), Box<dyn std::error::Error>>
         .ylabel("Y Values".to_string())
         .line(&x_data, &y_data)
         .end_series()
-        .save("test_output/01_basic_line_plot.png")?;
+        .save("tests/output/01_basic_line_plot.png")?;
 
     println!("✓ Saved: test_output/01_basic_line_plot.png");
     Ok(())
@@ -44,7 +44,7 @@ fn test_scatter_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y Coordinates".to_string())
         .scatter(&x_data, &y_data)
         .end_series()
-        .save("test_output/02_scatter_plot.png")?;
+        .save("tests/output/02_scatter_plot.png")?;
 
     println!("✓ Saved: test_output/02_scatter_plot.png");
     Ok(())
@@ -63,7 +63,7 @@ fn test_bar_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Sales Count".to_string())
         .bar(&categories, &values)
         .end_series()
-        .save("test_output/03_bar_plot.png")?;
+        .save("tests/output/03_bar_plot.png")?;
 
     println!("✓ Saved: test_output/03_bar_plot.png");
     Ok(())
@@ -86,7 +86,7 @@ fn test_multiple_series() -> std::result::Result<(), Box<dyn std::error::Error>>
         .line(&x_data, &y2_data)
         .label("Series 2".to_string());
 
-    plot.save("test_output/04_multiple_series.png")?;
+    plot.save("tests/output/04_multiple_series.png")?;
 
     println!("✓ Saved: test_output/04_multiple_series.png");
     Ok(())
@@ -105,7 +105,7 @@ fn test_dark_theme() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y = X²".to_string())
         .line(&x_data, &y_data);
 
-    plot.save("test_output/05_dark_theme.png")?;
+    plot.save("tests/output/05_dark_theme.png")?;
 
     println!("✓ Saved: test_output/05_dark_theme.png");
     Ok(())
@@ -124,7 +124,7 @@ fn test_light_theme() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y = X²".to_string())
         .line(&x_data, &y_data);
 
-    plot.save("test_output/06_light_theme.png")?;
+    plot.save("tests/output/06_light_theme.png")?;
 
     println!("✓ Saved: test_output/06_light_theme.png");
     Ok(())
@@ -143,7 +143,7 @@ fn test_publication_theme() -> std::result::Result<(), Box<dyn std::error::Error
         .ylabel("Response (units)".to_string())
         .line(&x_data, &y_data);
 
-    plot.save("test_output/07_publication_theme.png")?;
+    plot.save("tests/output/07_publication_theme.png")?;
 
     println!("✓ Saved: test_output/07_publication_theme.png");
     Ok(())
@@ -162,7 +162,7 @@ fn test_minimal_theme() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Output".to_string())
         .scatter(&x_data, &y_data);
 
-    plot.save("test_output/08_minimal_theme.png")?;
+    plot.save("tests/output/08_minimal_theme.png")?;
 
     println!("✓ Saved: test_output/08_minimal_theme.png");
     Ok(())
@@ -182,7 +182,7 @@ fn test_large_dataset() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Amplitude".to_string())
         .line(&x_data, &y_data);
 
-    plot.save("test_output/09_large_dataset.png")?;
+    plot.save("tests/output/09_large_dataset.png")?;
 
     println!("✓ Saved: test_output/09_large_dataset.png");
     Ok(())
@@ -208,7 +208,7 @@ fn test_mathematical_functions() -> std::result::Result<(), Box<dyn std::error::
         .line(&x_data, &exp_data)
         .label("exp(-0.1x)".to_string());
 
-    plot.save("test_output/10_mathematical_functions.png")?;
+    plot.save("tests/output/10_mathematical_functions.png")?;
 
     println!("✓ Saved: test_output/10_mathematical_functions.png");
     Ok(())
@@ -228,7 +228,7 @@ fn test_grid_enabled() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .grid(true)
         .line(&x_data, &y_data);
 
-    plot.save("test_output/11_grid_enabled.png")?;
+    plot.save("tests/output/11_grid_enabled.png")?;
 
     println!("✓ Saved: test_output/11_grid_enabled.png");
     Ok(())
@@ -248,7 +248,7 @@ fn test_grid_disabled() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .grid(false)
         .line(&x_data, &y_data);
 
-    plot.save("test_output/12_grid_disabled.png")?;
+    plot.save("tests/output/12_grid_disabled.png")?;
 
     println!("✓ Saved: test_output/12_grid_disabled.png");
     Ok(())
@@ -268,7 +268,7 @@ fn test_custom_dimensions() -> std::result::Result<(), Box<dyn std::error::Error
         .ylabel("Values".to_string())
         .bar(&["Q1", "Q2", "Q3", "Q4"], &y_data);
 
-    plot.save("test_output/13_custom_dimensions.png")?;
+    plot.save("tests/output/13_custom_dimensions.png")?;
 
     println!("✓ Saved: test_output/13_custom_dimensions.png");
     Ok(())
@@ -291,7 +291,7 @@ fn test_mixed_plot_types() -> std::result::Result<(), Box<dyn std::error::Error>
         .scatter(&x_data, &scatter_data)
         .label("Data Points".to_string());
 
-    plot.save("test_output/14_mixed_plot_types.png")?;
+    plot.save("tests/output/14_mixed_plot_types.png")?;
 
     println!("✓ Saved: test_output/14_mixed_plot_types.png");
     Ok(())
@@ -311,7 +311,7 @@ fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y".to_string())
         .scatter(&single_x, &single_y);
 
-    plot.save("test_output/15_single_point.png")?;
+    plot.save("tests/output/15_single_point.png")?;
 
     println!("✓ Saved: test_output/15_single_point.png");
 
@@ -325,7 +325,7 @@ fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y".to_string())
         .line(&two_x, &two_y);
 
-    plot2.save("test_output/16_two_points_line.png")?;
+    plot2.save("tests/output/16_two_points_line.png")?;
 
     println!("✓ Saved: test_output/16_two_points_line.png");
     Ok(())

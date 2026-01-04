@@ -7,7 +7,7 @@ use std::fs;
 
 /// Setup test output directory
 fn setup_test_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("test_output")?;
+    fs::create_dir_all("tests/output")?;
     Ok(())
 }
 
@@ -25,7 +25,7 @@ fn test_dpi_fluent_api_basic() -> std::result::Result<(), Box<dyn std::error::Er
         .ylabel("Y Axis")
         .line(&x_data, &y_data)
         .dpi(300) // This should fail initially - method doesn't exist yet
-        .save("test_output/dpi_300_test.png")?;
+        .save("tests/output/dpi_300_test.png")?;
 
     println!("✓ Saved: test_output/dpi_300_test.png at 300 DPI");
     Ok(())
@@ -45,7 +45,7 @@ fn test_ieee_publication_dpi() -> std::result::Result<(), Box<dyn std::error::Er
         .ylabel("Amplitude")
         .line(&x_data, &y_data)
         .dpi(600) // IEEE requirement
-        .save("test_output/ieee_600_dpi_test.png")?;
+        .save("tests/output/ieee_600_dpi_test.png")?;
 
     println!("✓ Saved: test_output/ieee_600_dpi_test.png at 600 DPI (IEEE standard)");
     Ok(())
@@ -68,15 +68,15 @@ fn test_multiple_dpi_outputs() -> std::result::Result<(), Box<dyn std::error::Er
     base_plot
         .clone()
         .dpi(96)
-        .save("test_output/multi_dpi_96_test.png")?;
+        .save("tests/output/multi_dpi_96_test.png")?;
     base_plot
         .clone()
         .dpi(150)
-        .save("test_output/multi_dpi_150_test.png")?;
+        .save("tests/output/multi_dpi_150_test.png")?;
     base_plot
         .clone()
         .dpi(300)
-        .save("test_output/multi_dpi_300_test.png")?;
+        .save("tests/output/multi_dpi_300_test.png")?;
 
     println!("✓ Saved multiple DPI versions: 96, 150, 300 DPI");
     Ok(())
@@ -97,7 +97,7 @@ fn test_dpi_with_theme() -> std::result::Result<(), Box<dyn std::error::Error>> 
         .ylabel("Output")
         .line(&x_data, &y_data)
         .dpi(300)
-        .save("test_output/theme_with_dpi_test.png")?;
+        .save("tests/output/theme_with_dpi_test.png")?;
 
     println!("✓ Saved: test_output/theme_with_dpi_test.png with publication theme at 300 DPI");
     Ok(())
@@ -115,7 +115,7 @@ fn test_dpi_validation() -> std::result::Result<(), Box<dyn std::error::Error>> 
         .title("DPI Validation Test")
         .line(&x_data, &y_data)
         .dpi(50) // Too low, should be clamped to 72
-        .save("test_output/dpi_validation_test.png")?;
+        .save("tests/output/dpi_validation_test.png")?;
 
     println!("✓ Saved: test_output/dpi_validation_test.png with validated DPI");
     Ok(())
@@ -138,22 +138,22 @@ fn test_scientific_dpi_presets() -> std::result::Result<(), Box<dyn std::error::
     // Screen quality (96 DPI)
     plot.clone()
         .dpi(96)
-        .save("test_output/scientific_screen_96_test.png")?;
+        .save("tests/output/scientific_screen_96_test.png")?;
 
     // Web quality (150 DPI)
     plot.clone()
         .dpi(150)
-        .save("test_output/scientific_web_150_test.png")?;
+        .save("tests/output/scientific_web_150_test.png")?;
 
     // Print quality (300 DPI)
     plot.clone()
         .dpi(300)
-        .save("test_output/scientific_print_300_test.png")?;
+        .save("tests/output/scientific_print_300_test.png")?;
 
     // IEEE publication (600 DPI)
     plot.clone()
         .dpi(600)
-        .save("test_output/scientific_ieee_600_test.png")?;
+        .save("tests/output/scientific_ieee_600_test.png")?;
 
     println!("✓ Saved scientific DPI preset tests: 96, 150, 300, 600 DPI");
     Ok(())

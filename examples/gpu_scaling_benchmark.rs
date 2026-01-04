@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
         println!("   Memory: {:.1} MB", data_size as f64 / 1_000_000.0);
 
         // Early exit for very slow operations
-        if cpu_time.as_secs() > 5.0 {
+        if cpu_time.as_secs_f64() > 5.0 {
             println!("   ⏰ CPU time > 5s, skipping larger datasets");
             break;
         }
@@ -274,7 +274,7 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         .width(1200.0)
         .dpi(150)
         .build()
-        .save("gpu_throughput_scaling.png")?;
+        .save("examples/output/gpu_throughput_scaling.png")?;
 
     // Create speedup plot
     let valid_speedups: Vec<_> = results.iter().filter(|r| r.gpu_success).collect();
@@ -294,12 +294,12 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
             .width(1200.0)
             .dpi(150)
             .build()
-            .save("gpu_speedup_scaling.png")?;
+            .save("examples/output/gpu_speedup_scaling.png")?;
     }
 
     println!("📊 Performance plots saved:");
-    println!("  - gpu_throughput_scaling.png (throughput comparison)");
-    println!("  - gpu_speedup_scaling.png (speedup analysis)");
+    println!("  - examples/output/gpu_throughput_scaling.png (throughput comparison)");
+    println!("  - examples/output/gpu_speedup_scaling.png (speedup analysis)");
 
     Ok(())
 }

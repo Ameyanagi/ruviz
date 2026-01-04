@@ -413,8 +413,8 @@ pub mod interactive;
 pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
-        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern,
-        Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot, Position, Result,
+        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern, Legend,
+        LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot, Position, Result,
         ShapeStyle, SubplotFigure, TextAlign, TextStyle, TextVAlign, subplots, subplots_default,
     };
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};

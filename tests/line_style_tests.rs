@@ -15,7 +15,7 @@ fn test_solid_line_style() {
         .ylabel("Y Values")
         .line(&x_data, &y_data)
         .style(LineStyle::Solid)
-        .save("test_output/line_solid.png");
+        .save("tests/output/line_solid.png");
 
     assert!(result.is_ok(), "Solid line style should work");
 }
@@ -33,7 +33,7 @@ fn test_dashed_line_style() {
         .line(&x_data, &y_data)
         .style(LineStyle::Dashed)
         .color(Color::new(255, 0, 0)) // Red dashed line
-        .save("test_output/line_dashed.png");
+        .save("tests/output/line_dashed.png");
 
     assert!(result.is_ok(), "Dashed line style should work");
 }
@@ -51,7 +51,7 @@ fn test_dotted_line_style() {
         .line(&x_data, &y_data)
         .style(LineStyle::Dotted)
         .color(Color::new(0, 128, 255)) // Blue dotted line
-        .save("test_output/line_dotted.png");
+        .save("tests/output/line_dotted.png");
 
     assert!(result.is_ok(), "Dotted line style should work");
 }
@@ -69,7 +69,7 @@ fn test_dash_dot_line_style() {
         .line(&x_data, &y_data)
         .style(LineStyle::DashDot)
         .color(Color::new(0, 200, 0)) // Green dash-dot line
-        .save("test_output/line_dashdot.png");
+        .save("tests/output/line_dashdot.png");
 
     assert!(result.is_ok(), "Dash-dot line style should work");
 }
@@ -87,7 +87,7 @@ fn test_dash_dot_dot_line_style() {
         .line(&x_data, &y_data)
         .style(LineStyle::DashDotDot)
         .color(Color::new(128, 0, 128)) // Purple dash-dot-dot line
-        .save("test_output/line_dashdotdot.png");
+        .save("tests/output/line_dashdotdot.png");
 
     assert!(result.is_ok(), "Dash-dot-dot line style should work");
 }
@@ -108,7 +108,7 @@ fn test_custom_line_style() {
         .line(&x_data, &y_data)
         .style(LineStyle::Custom(custom_pattern))
         .color(Color::new(255, 128, 0)) // Orange custom line
-        .save("test_output/line_custom.png");
+        .save("tests/output/line_custom.png");
 
     assert!(result.is_ok(), "Custom line style should work");
 }
@@ -138,7 +138,7 @@ fn test_multiple_line_styles() {
         .color(Color::new(0, 0, 255))
         .label("Dotted")
         .legend(Position::TopRight)
-        .save("test_output/multiple_line_styles.png");
+        .save("tests/output/multiple_line_styles.png");
 
     assert!(result.is_ok(), "Multiple line styles should work");
 }
@@ -165,7 +165,7 @@ fn test_line_width_with_styles() {
         .color(Color::new(0, 0, 255))
         .label("Medium Dotted")
         .legend(Position::TopRight)
-        .save("test_output/line_styles_with_width.png");
+        .save("tests/output/line_styles_with_width.png");
 
     assert!(
         result.is_ok(),

@@ -1854,7 +1854,8 @@ impl SkiaRenderer {
         let char_width = legend.font_size * 0.6;
 
         // Calculate legend size
-        let (legend_width, legend_height) = self.calculate_legend_dimensions(items, legend, char_width);
+        let (legend_width, legend_height) =
+            self.calculate_legend_dimensions(items, legend, char_width);
 
         // Determine position
         let plot_bounds = (
@@ -1889,13 +1890,17 @@ impl SkiaRenderer {
             ..legend.clone()
         };
 
-        let (legend_x, legend_y) = resolved_legend.calculate_position(
-            (legend_width, legend_height),
-            plot_bounds,
-        );
+        let (legend_x, legend_y) =
+            resolved_legend.calculate_position((legend_width, legend_height), plot_bounds);
 
         // Draw frame
-        self.draw_legend_frame(legend_x, legend_y, legend_width, legend_height, &legend.frame)?;
+        self.draw_legend_frame(
+            legend_x,
+            legend_y,
+            legend_width,
+            legend_height,
+            &legend.frame,
+        )?;
 
         // Starting position for items (inside padding)
         let mut item_x = legend_x + spacing.border_pad;
@@ -1912,11 +1917,7 @@ impl SkiaRenderer {
         let items_per_col = (items.len() + legend.columns - 1) / legend.columns;
 
         // Calculate column width
-        let max_label_len = items
-            .iter()
-            .map(|item| item.label.len())
-            .max()
-            .unwrap_or(0);
+        let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
         let label_width = max_label_len as f32 * char_width;
         let col_width = spacing.handle_length + spacing.handle_text_pad + label_width;
 
@@ -1939,7 +1940,13 @@ impl SkiaRenderer {
                 // Draw label - vertically centered with handle
                 let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
                 // Use 0.3 multiplier for better vertical centering with marker/line handles
-                self.draw_text(&item.label, text_x, row_y + legend.font_size * 0.3, legend.font_size, legend.text_color)?;
+                self.draw_text(
+                    &item.label,
+                    text_x,
+                    row_y + legend.font_size * 0.3,
+                    legend.font_size,
+                    legend.text_color,
+                )?;
 
                 row_y += legend.font_size + spacing.label_spacing;
             }
@@ -2146,30 +2153,73 @@ impl SkiaRenderer {
         use crate::core::Annotation;
 
         match annotation {
-            Annotation::Text { x, y, text, style } => {
-                self.draw_annotation_text(*x, *y, text, style, plot_area, x_min, x_max, y_min, y_max, dpi)
-            }
-            Annotation::Arrow { x1, y1, x2, y2, style } => {
-                self.draw_annotation_arrow(*x1, *y1, *x2, *y2, style, plot_area, x_min, x_max, y_min, y_max, dpi)
-            }
-            Annotation::HLine { y, style, color, width } => {
+            Annotation::Text { x, y, text, style } => self.draw_annotation_text(
+                *x, *y, text, style, plot_area, x_min, x_max, y_min, y_max, dpi,
+            ),
+            Annotation::Arrow {
+                x1,
+                y1,
+                x2,
+                y2,
+                style,
+            } => self.draw_annotation_arrow(
+                *x1, *y1, *x2, *y2, style, plot_area, x_min, x_max, y_min, y_max, dpi,
+            ),
+            Annotation::HLine {
+                y,
+                style,
+                color,
+                width,
+            } => {
                 self.draw_annotation_hline(*y, style, *color, *width, plot_area, y_min, y_max, dpi)
             }
-            Annotation::VLine { x, style, color, width } => {
+            Annotation::VLine {
+                x,
+                style,
+                color,
+                width,
+            } => {
                 self.draw_annotation_vline(*x, style, *color, *width, plot_area, x_min, x_max, dpi)
             }
-            Annotation::Rectangle { x, y, width, height, style } => {
-                self.draw_annotation_rect(*x, *y, *width, *height, style, plot_area, x_min, x_max, y_min, y_max)
-            }
-            Annotation::FillBetween { x, y1, y2, style, where_positive } => {
-                self.draw_annotation_fill_between(x, y1, y2, style, *where_positive, plot_area, x_min, x_max, y_min, y_max)
-            }
-            Annotation::HSpan { x_min: xmin, x_max: xmax, style } => {
-                self.draw_annotation_hspan(*xmin, *xmax, style, plot_area, x_min, x_max, y_min, y_max)
-            }
-            Annotation::VSpan { y_min: ymin, y_max: ymax, style } => {
-                self.draw_annotation_vspan(*ymin, *ymax, style, plot_area, x_min, x_max, y_min, y_max)
-            }
+            Annotation::Rectangle {
+                x,
+                y,
+                width,
+                height,
+                style,
+            } => self.draw_annotation_rect(
+                *x, *y, *width, *height, style, plot_area, x_min, x_max, y_min, y_max,
+            ),
+            Annotation::FillBetween {
+                x,
+                y1,
+                y2,
+                style,
+                where_positive,
+            } => self.draw_annotation_fill_between(
+                x,
+                y1,
+                y2,
+                style,
+                *where_positive,
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+            ),
+            Annotation::HSpan {
+                x_min: xmin,
+                x_max: xmax,
+                style,
+            } => self
+                .draw_annotation_hspan(*xmin, *xmax, style, plot_area, x_min, x_max, y_min, y_max),
+            Annotation::VSpan {
+                y_min: ymin,
+                y_max: ymax,
+                style,
+            } => self
+                .draw_annotation_vspan(*ymin, *ymax, style, plot_area, x_min, x_max, y_min, y_max),
         }
     }
 
@@ -2217,20 +2267,44 @@ impl SkiaRenderer {
         let line_width_px = pt_to_px(style.line_width, dpi);
 
         // Draw the arrow shaft
-        self.draw_line(px1, py1, px2, py2, style.color, line_width_px, style.line_style.clone())?;
+        self.draw_line(
+            px1,
+            py1,
+            px2,
+            py2,
+            style.color,
+            line_width_px,
+            style.line_style.clone(),
+        )?;
 
         // Draw arrow head at end point
         if !matches!(style.head_style, crate::core::ArrowHead::None) {
             let head_length_px = pt_to_px(style.head_length, dpi);
             let head_width_px = pt_to_px(style.head_width, dpi);
-            self.draw_arrow_head(px2, py2, px1, py1, head_length_px, head_width_px, style.color)?;
+            self.draw_arrow_head(
+                px2,
+                py2,
+                px1,
+                py1,
+                head_length_px,
+                head_width_px,
+                style.color,
+            )?;
         }
 
         // Draw arrow head at start point (for double-headed arrows)
         if !matches!(style.tail_style, crate::core::ArrowHead::None) {
             let head_length_px = pt_to_px(style.head_length, dpi);
             let head_width_px = pt_to_px(style.head_width, dpi);
-            self.draw_arrow_head(px1, py1, px2, py2, head_length_px, head_width_px, style.color)?;
+            self.draw_arrow_head(
+                px1,
+                py1,
+                px2,
+                py2,
+                head_length_px,
+                head_width_px,
+                style.color,
+            )?;
         }
 
         Ok(())
@@ -2289,7 +2363,13 @@ impl SkiaRenderer {
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
 
-        self.pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        self.pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
 
         Ok(())
     }
@@ -2384,7 +2464,8 @@ impl SkiaRenderer {
                 paint.set_color(color_with_alpha.to_tiny_skia_color());
                 paint.anti_alias = true;
 
-                self.pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                self.pixmap
+                    .fill_rect(rect, &paint, Transform::identity(), None);
             }
 
             // Draw edge if specified
@@ -2403,7 +2484,8 @@ impl SkiaRenderer {
                 let mut path = PathBuilder::new();
                 path.push_rect(rect);
                 if let Some(path) = path.finish() {
-                    self.pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+                    self.pixmap
+                        .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
                 }
             }
         }
@@ -2433,15 +2515,18 @@ impl SkiaRenderer {
         let mut path = PathBuilder::new();
 
         // Forward along y1
-        let (start_x, start_y) = map_data_to_pixels(x[0], y1[0], x_min, x_max, y_min, y_max, plot_area);
+        let (start_x, start_y) =
+            map_data_to_pixels(x[0], y1[0], x_min, x_max, y_min, y_max, plot_area);
         path.move_to(start_x, start_y);
 
         for i in 1..x.len() {
             if !where_positive || y1[i] >= y2[i] {
-                let (px, py) = map_data_to_pixels(x[i], y1[i], x_min, x_max, y_min, y_max, plot_area);
+                let (px, py) =
+                    map_data_to_pixels(x[i], y1[i], x_min, x_max, y_min, y_max, plot_area);
                 path.line_to(px, py);
             } else {
-                let (px, py) = map_data_to_pixels(x[i], y2[i], x_min, x_max, y_min, y_max, plot_area);
+                let (px, py) =
+                    map_data_to_pixels(x[i], y2[i], x_min, x_max, y_min, y_max, plot_area);
                 path.line_to(px, py);
             }
         }
@@ -2449,7 +2534,8 @@ impl SkiaRenderer {
         // Backward along y2 (in reverse order)
         for i in (0..x.len()).rev() {
             if !where_positive || y1[i] >= y2[i] {
-                let (px, py) = map_data_to_pixels(x[i], y2[i], x_min, x_max, y_min, y_max, plot_area);
+                let (px, py) =
+                    map_data_to_pixels(x[i], y2[i], x_min, x_max, y_min, y_max, plot_area);
                 path.line_to(px, py);
             }
         }
@@ -2463,7 +2549,13 @@ impl SkiaRenderer {
             paint.set_color(color_with_alpha.to_tiny_skia_color());
             paint.anti_alias = true;
 
-            self.pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            self.pixmap.fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
 
             // Draw edge if specified
             if let Some(edge_color) = &style.edge_color {
@@ -2474,7 +2566,8 @@ impl SkiaRenderer {
                 let mut stroke = Stroke::default();
                 stroke.width = style.edge_width.max(0.1);
 
-                self.pixmap.stroke_path(&path, &edge_paint, &stroke, Transform::identity(), None);
+                self.pixmap
+                    .stroke_path(&path, &edge_paint, &stroke, Transform::identity(), None);
             }
         }
 
@@ -2504,14 +2597,16 @@ impl SkiaRenderer {
         let left = px_min.max(plot_area.left()).min(plot_area.right());
         let right = px_max.max(plot_area.left()).min(plot_area.right());
 
-        if let Some(rect) = Rect::from_xywh(left, plot_area.top(), right - left, plot_area.height()) {
+        if let Some(rect) = Rect::from_xywh(left, plot_area.top(), right - left, plot_area.height())
+        {
             if let Some(fill_color) = &style.fill_color {
                 let mut paint = Paint::default();
                 let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
                 paint.set_color(color_with_alpha.to_tiny_skia_color());
                 paint.anti_alias = true;
 
-                self.pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                self.pixmap
+                    .fill_rect(rect, &paint, Transform::identity(), None);
             }
         }
 
@@ -2541,14 +2636,16 @@ impl SkiaRenderer {
         let top = py_min.max(plot_area.top()).min(plot_area.bottom());
         let bottom = py_max.max(plot_area.top()).min(plot_area.bottom());
 
-        if let Some(rect) = Rect::from_xywh(plot_area.left(), top, plot_area.width(), bottom - top) {
+        if let Some(rect) = Rect::from_xywh(plot_area.left(), top, plot_area.width(), bottom - top)
+        {
             if let Some(fill_color) = &style.fill_color {
                 let mut paint = Paint::default();
                 let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
                 paint.set_color(color_with_alpha.to_tiny_skia_color());
                 paint.anti_alias = true;
 
-                self.pixmap.fill_rect(rect, &paint, Transform::identity(), None);
+                self.pixmap
+                    .fill_rect(rect, &paint, Transform::identity(), None);
             }
         }
 

@@ -1,6 +1,6 @@
 use crate::{
     core::{PlottingError, Result, types::Point2f},
-    data::{get_memory_manager, elements::LineSegment},
+    data::{elements::LineSegment, get_memory_manager},
     render::{Color, LineStyle, MarkerStyle},
 };
 
@@ -459,6 +459,21 @@ pub enum RenderSeriesType {
     BoxPlot {
         box_data: BoxPlotRenderData,
     },
+    Heatmap {
+        cells: Vec<HeatmapCell>,
+        n_rows: usize,
+        n_cols: usize,
+    },
+}
+
+/// Heatmap cell for parallel rendering
+#[derive(Debug, Clone, Copy)]
+pub struct HeatmapCell {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub color: Color,
 }
 
 // LineSegment imported from crate::data::elements (canonical definition)

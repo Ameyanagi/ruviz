@@ -11,7 +11,7 @@ use crate::{
     core::{
         Annotation, ArrowStyle, FillStyle, LayoutCalculator, LayoutConfig, Legend, LegendItem,
         LegendItemType, LegendPosition, MarginConfig, PlotConfig, PlotContent, PlotLayout,
-        PlotStyle, PlottingError, Position, Result, ShapeStyle, TextStyle, pt_to_px, REFERENCE_DPI,
+        PlotStyle, PlottingError, Position, REFERENCE_DPI, Result, ShapeStyle, TextStyle, pt_to_px,
     },
     data::{Data1D, DataShader, StreamingXY},
     plots::boxplot::BoxPlotConfig,
@@ -1487,8 +1487,10 @@ impl Plot {
             LegendPosition::UpperCenter => Position::TopCenter,
             LegendPosition::Center => Position::Center,
             LegendPosition::Best => Position::TopRight, // Default, actual best calculated at render time
-            LegendPosition::OutsideRight | LegendPosition::OutsideLeft |
-            LegendPosition::OutsideUpper | LegendPosition::OutsideLower => Position::TopRight,
+            LegendPosition::OutsideRight
+            | LegendPosition::OutsideLeft
+            | LegendPosition::OutsideUpper
+            | LegendPosition::OutsideLower => Position::TopRight,
             LegendPosition::Custom { x, y, .. } => Position::Custom { x, y },
         };
         self
@@ -1748,14 +1750,7 @@ impl Plot {
     ///     .arrow_styled(1.0, 50.0, 2.5, 100.0, style)
     ///     .save("annotated.png")?;
     /// ```
-    pub fn arrow_styled(
-        mut self,
-        x1: f64,
-        y1: f64,
-        x2: f64,
-        y2: f64,
-        style: ArrowStyle,
-    ) -> Self {
+    pub fn arrow_styled(mut self, x1: f64, y1: f64, x2: f64, y2: f64, style: ArrowStyle) -> Self {
         self.annotations
             .push(Annotation::arrow_styled(x1, y1, x2, y2, style));
         self
@@ -1788,13 +1783,7 @@ impl Plot {
     ///     .hline_styled(50.0, Color::RED, 2.0, LineStyle::Solid)
     ///     .save("annotated.png")?;
     /// ```
-    pub fn hline_styled(
-        mut self,
-        y: f64,
-        color: Color,
-        width: f32,
-        style: LineStyle,
-    ) -> Self {
+    pub fn hline_styled(mut self, y: f64, color: Color, width: f32, style: LineStyle) -> Self {
         self.annotations
             .push(Annotation::hline_styled(y, color, width, style));
         self
@@ -1818,13 +1807,7 @@ impl Plot {
     }
 
     /// Add a vertical reference line with custom styling
-    pub fn vline_styled(
-        mut self,
-        x: f64,
-        color: Color,
-        width: f32,
-        style: LineStyle,
-    ) -> Self {
+    pub fn vline_styled(mut self, x: f64, color: Color, width: f32, style: LineStyle) -> Self {
         self.annotations
             .push(Annotation::vline_styled(x, color, width, style));
         self
@@ -1884,8 +1867,11 @@ impl Plot {
     ///     .save("filled.png")?;
     /// ```
     pub fn fill_between(mut self, x: &[f64], y1: &[f64], y2: &[f64]) -> Self {
-        self.annotations
-            .push(Annotation::fill_between(x.to_vec(), y1.to_vec(), y2.to_vec()));
+        self.annotations.push(Annotation::fill_between(
+            x.to_vec(),
+            y1.to_vec(),
+            y2.to_vec(),
+        ));
         self
     }
 
@@ -1900,8 +1886,11 @@ impl Plot {
     ///     .save("filled.png")?;
     /// ```
     pub fn fill_to_baseline(mut self, x: &[f64], y: &[f64], baseline: f64) -> Self {
-        self.annotations
-            .push(Annotation::fill_to_baseline(x.to_vec(), y.to_vec(), baseline));
+        self.annotations.push(Annotation::fill_to_baseline(
+            x.to_vec(),
+            y.to_vec(),
+            baseline,
+        ));
         self
     }
 
@@ -2319,7 +2308,12 @@ impl Plot {
                             plot_area.y() + (data.n_rows - 1 - row_idx) as f32 * cell_height;
 
                         renderer.draw_rectangle(
-                            cell_x, cell_y, cell_width, cell_height, cell_color, true,
+                            cell_x,
+                            cell_y,
+                            cell_width,
+                            cell_height,
+                            cell_color,
+                            true,
                         )?;
 
                         // Draw cell annotation if enabled
@@ -2330,13 +2324,8 @@ impl Plot {
                             let font_size = (cell_height * 0.3).max(8.0).min(20.0);
                             // Center vertically: y position at cell center + half font size
                             let text_y = cell_y + cell_height / 2.0 + font_size / 3.0;
-                            renderer.draw_text_centered(
-                                &text,
-                                text_x,
-                                text_y,
-                                font_size,
-                                text_color,
-                            )?;
+                            renderer
+                                .draw_text_centered(&text, text_x, text_y, font_size, text_color)?;
                         }
                     }
                 }
@@ -2410,7 +2399,9 @@ impl Plot {
                         (y_min, y_max),
                         viewport,
                     )
-                    .map_err(|e| PlottingError::RenderError(format!("GPU transform failed: {}", e)))?;
+                    .map_err(|e| {
+                        PlottingError::RenderError(format!("GPU transform failed: {}", e))
+                    })?;
 
                 // Convert to points for drawing
                 let points: Vec<(f32, f32)> = x_transformed
@@ -2438,7 +2429,9 @@ impl Plot {
                         (y_min, y_max),
                         viewport,
                     )
-                    .map_err(|e| PlottingError::RenderError(format!("GPU transform failed: {}", e)))?;
+                    .map_err(|e| {
+                        PlottingError::RenderError(format!("GPU transform failed: {}", e))
+                    })?;
 
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
@@ -3333,33 +3326,38 @@ impl Plot {
             let legend = self.legend.to_legend();
 
             // Collect data bounding boxes for best position algorithm
-            let data_bboxes: Vec<(f32, f32, f32, f32)> = if matches!(legend.position, LegendPosition::Best) {
-                let marker_radius = 4.0_f32;
-                self.series
-                    .iter()
-                    .flat_map(|series| {
-                        match &series.series_type {
+            let data_bboxes: Vec<(f32, f32, f32, f32)> =
+                if matches!(legend.position, LegendPosition::Best) {
+                    let marker_radius = 4.0_f32;
+                    self.series
+                        .iter()
+                        .flat_map(|series| match &series.series_type {
                             SeriesType::Line { x_data, y_data }
-                            | SeriesType::Scatter { x_data, y_data } => {
-                                x_data.iter().zip(y_data.iter()).filter_map(|(&x, &y)| {
+                            | SeriesType::Scatter { x_data, y_data } => x_data
+                                .iter()
+                                .zip(y_data.iter())
+                                .filter_map(|(&x, &y)| {
                                     if x.is_finite() && y.is_finite() {
                                         let (px, py) = map_data_to_pixels(
                                             x, y, x_min, x_max, y_min, y_max, plot_area,
                                         );
-                                        Some((px - marker_radius, py - marker_radius,
-                                             px + marker_radius, py + marker_radius))
+                                        Some((
+                                            px - marker_radius,
+                                            py - marker_radius,
+                                            px + marker_radius,
+                                            py + marker_radius,
+                                        ))
                                     } else {
                                         None
                                     }
-                                }).collect::<Vec<_>>()
-                            }
+                                })
+                                .collect::<Vec<_>>(),
                             _ => vec![],
-                        }
-                    })
-                    .collect()
-            } else {
-                vec![]
-            };
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
 
             let bbox_slice: Option<&[(f32, f32, f32, f32)]> = if data_bboxes.is_empty() {
                 None
@@ -3458,10 +3456,8 @@ impl Plot {
                     for (row, row_values) in data.values.iter().enumerate() {
                         for (col, &value) in row_values.iter().enumerate() {
                             if value.is_finite() {
-                                all_points.push(crate::core::types::Point2f::new(
-                                    col as f32,
-                                    row as f32,
-                                ));
+                                all_points
+                                    .push(crate::core::types::Point2f::new(col as f32, row as f32));
                             }
                         }
                     }
@@ -4573,7 +4569,15 @@ impl Plot {
             .iter()
             .map(|&x| {
                 crate::render::skia::map_data_to_pixels_scaled(
-                    x, 0.0, x_min, x_max, 0.0, 1.0, plot_area, &self.x_scale, &AxisScale::Linear,
+                    x,
+                    0.0,
+                    x_min,
+                    x_max,
+                    0.0,
+                    1.0,
+                    plot_area,
+                    &self.x_scale,
+                    &AxisScale::Linear,
                 )
                 .0
             })
@@ -4582,7 +4586,15 @@ impl Plot {
             .iter()
             .map(|&y| {
                 crate::render::skia::map_data_to_pixels_scaled(
-                    0.0, y, 0.0, 1.0, y_min, y_max, plot_area, &AxisScale::Linear, &self.y_scale,
+                    0.0,
+                    y,
+                    0.0,
+                    1.0,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &AxisScale::Linear,
+                    &self.y_scale,
                 )
                 .1
             })
@@ -4605,7 +4617,15 @@ impl Plot {
             .iter()
             .map(|&x| {
                 crate::render::skia::map_data_to_pixels_scaled(
-                    x, 0.0, x_min, x_max, 0.0, 1.0, plot_area, &self.x_scale, &AxisScale::Linear,
+                    x,
+                    0.0,
+                    x_min,
+                    x_max,
+                    0.0,
+                    1.0,
+                    plot_area,
+                    &self.x_scale,
+                    &AxisScale::Linear,
                 )
                 .0
             })
@@ -4614,7 +4634,15 @@ impl Plot {
             .iter()
             .map(|&y| {
                 crate::render::skia::map_data_to_pixels_scaled(
-                    0.0, y, 0.0, 1.0, y_min, y_max, plot_area, &AxisScale::Linear, &self.y_scale,
+                    0.0,
+                    y,
+                    0.0,
+                    1.0,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &AxisScale::Linear,
+                    &self.y_scale,
                 )
                 .1
             })
@@ -4624,7 +4652,15 @@ impl Plot {
             .iter()
             .map(|&x| {
                 crate::render::skia::map_data_to_pixels_scaled(
-                    x, 0.0, x_min, x_max, 0.0, 1.0, plot_area, &self.x_scale, &AxisScale::Linear,
+                    x,
+                    0.0,
+                    x_min,
+                    x_max,
+                    0.0,
+                    1.0,
+                    plot_area,
+                    &self.x_scale,
+                    &AxisScale::Linear,
                 )
                 .0
             })
@@ -4633,7 +4669,15 @@ impl Plot {
             .iter()
             .map(|&y| {
                 crate::render::skia::map_data_to_pixels_scaled(
-                    0.0, y, 0.0, 1.0, y_min, y_max, plot_area, &AxisScale::Linear, &self.y_scale,
+                    0.0,
+                    y,
+                    0.0,
+                    1.0,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &AxisScale::Linear,
+                    &self.y_scale,
                 )
                 .1
             })
@@ -4940,36 +4984,57 @@ impl Plot {
             let legend = self.legend.to_legend();
 
             // Collect data bounding boxes for best position algorithm
-            let data_bboxes: Vec<(f32, f32, f32, f32)> = if matches!(legend.position, LegendPosition::Best) {
-                let marker_radius = 4.0_f32; // Approximate marker radius in pixels
-                self.series
-                    .iter()
-                    .flat_map(|series| {
-                        match &series.series_type {
-                            SeriesType::Line { x_data, y_data }
-                            | SeriesType::Scatter { x_data, y_data }
-                            | SeriesType::ErrorBars { x_data, y_data, .. }
-                            | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                                x_data.iter().zip(y_data.iter()).map(|(&x, &y)| {
-                                    let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
-                                        x, y, x_min, x_max, y_min, y_max, plot_area,
-                                        &self.x_scale, &self.y_scale,
-                                    );
-                                    // Create bounding box around each point
-                                    (px - marker_radius, py - marker_radius,
-                                     px + marker_radius, py + marker_radius)
-                                }).collect::<Vec<_>>()
+            let data_bboxes: Vec<(f32, f32, f32, f32)> =
+                if matches!(legend.position, LegendPosition::Best) {
+                    let marker_radius = 4.0_f32; // Approximate marker radius in pixels
+                    self.series
+                        .iter()
+                        .flat_map(|series| {
+                            match &series.series_type {
+                                SeriesType::Line { x_data, y_data }
+                                | SeriesType::Scatter { x_data, y_data }
+                                | SeriesType::ErrorBars { x_data, y_data, .. }
+                                | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                                    x_data
+                                        .iter()
+                                        .zip(y_data.iter())
+                                        .map(|(&x, &y)| {
+                                            let (px, py) =
+                                                crate::render::skia::map_data_to_pixels_scaled(
+                                                    x,
+                                                    y,
+                                                    x_min,
+                                                    x_max,
+                                                    y_min,
+                                                    y_max,
+                                                    plot_area,
+                                                    &self.x_scale,
+                                                    &self.y_scale,
+                                                );
+                                            // Create bounding box around each point
+                                            (
+                                                px - marker_radius,
+                                                py - marker_radius,
+                                                px + marker_radius,
+                                                py + marker_radius,
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                }
+                                _ => vec![], // Skip bar charts, histograms, etc. for now
                             }
-                            _ => vec![], // Skip bar charts, histograms, etc. for now
-                        }
-                    })
-                    .collect()
-            } else {
-                vec![]
-            };
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
 
             // Use new legend rendering with proper handles
-            let bbox_slice = if data_bboxes.is_empty() { None } else { Some(data_bboxes.as_slice()) };
+            let bbox_slice = if data_bboxes.is_empty() {
+                None
+            } else {
+                Some(data_bboxes.as_slice())
+            };
             renderer.draw_legend_full(&legend_items, &legend, plot_area, bbox_slice)?;
         }
 
@@ -5006,9 +5071,9 @@ impl Plot {
     /// Returns the complete SVG content as a string. This can be saved to a file
     /// or converted to other formats like PDF.
     pub fn render_to_svg(&self) -> Result<String> {
+        use crate::axes::TickLayout;
         use crate::export::SvgRenderer;
         use crate::render::skia::map_data_to_pixels;
-        use crate::axes::TickLayout;
 
         let (width, height) = self.dimensions;
         let width = width as f32;
@@ -5052,30 +5117,34 @@ impl Plot {
         });
 
         // Compute Y-axis tick layout (fix parameter order: pixel_top then pixel_bottom)
-        let y_tick_layout = TickLayout::compute_y_axis(
-            y_min, y_max, plot_top, plot_bottom, &self.y_scale, 6,
-        );
+        let y_tick_layout =
+            TickLayout::compute_y_axis(y_min, y_max, plot_top, plot_bottom, &self.y_scale, 6);
 
         // Draw grid lines (only horizontal for bar charts)
         if bar_categories.is_some() {
             // For bar charts, only draw horizontal grid lines
             svg.draw_grid(
-                &[],  // no vertical grid lines for bar charts
+                &[], // no vertical grid lines for bar charts
                 &y_tick_layout.pixel_positions,
-                plot_left, plot_right, plot_top, plot_bottom,
+                plot_left,
+                plot_right,
+                plot_top,
+                plot_bottom,
                 self.theme.grid_color,
                 LineStyle::Solid,
                 0.5,
             );
         } else {
             // For other charts, compute X-axis ticks and draw full grid
-            let x_tick_layout = TickLayout::compute(
-                x_min, x_max, plot_left, plot_right, &self.x_scale, 7,
-            );
+            let x_tick_layout =
+                TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.x_scale, 7);
             svg.draw_grid(
                 &x_tick_layout.pixel_positions,
                 &y_tick_layout.pixel_positions,
-                plot_left, plot_right, plot_top, plot_bottom,
+                plot_left,
+                plot_right,
+                plot_top,
+                plot_bottom,
                 self.theme.grid_color,
                 LineStyle::Solid,
                 0.5,
@@ -5083,14 +5152,24 @@ impl Plot {
         }
 
         // Draw plot area border
-        svg.draw_rectangle(plot_left, plot_top, plot_width, plot_height, self.theme.foreground, false);
+        svg.draw_rectangle(
+            plot_left,
+            plot_top,
+            plot_width,
+            plot_height,
+            self.theme.foreground,
+            false,
+        );
 
         // Draw axes and tick labels
         if let Some(categories) = bar_categories {
             // Bar chart: draw axes with category labels
             svg.draw_axes(
-                plot_left, plot_right, plot_top, plot_bottom,
-                &[],  // no X ticks for bar chart
+                plot_left,
+                plot_right,
+                plot_top,
+                plot_bottom,
+                &[], // no X ticks for bar chart
                 &y_tick_layout.pixel_positions,
                 self.theme.foreground,
                 true,
@@ -5102,7 +5181,10 @@ impl Plot {
                 &[],
                 &y_tick_layout.pixel_positions,
                 &y_tick_layout.labels,
-                plot_left, plot_right, plot_top, plot_bottom,
+                plot_left,
+                plot_right,
+                plot_top,
+                plot_bottom,
                 self.theme.foreground,
                 10.0,
             );
@@ -5116,11 +5198,13 @@ impl Plot {
             }
         } else {
             // Normal chart: draw axes with numeric labels
-            let x_tick_layout = TickLayout::compute(
-                x_min, x_max, plot_left, plot_right, &self.x_scale, 7,
-            );
+            let x_tick_layout =
+                TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.x_scale, 7);
             svg.draw_axes(
-                plot_left, plot_right, plot_top, plot_bottom,
+                plot_left,
+                plot_right,
+                plot_top,
+                plot_bottom,
                 &x_tick_layout.pixel_positions,
                 &y_tick_layout.pixel_positions,
                 self.theme.foreground,
@@ -5131,7 +5215,10 @@ impl Plot {
                 &x_tick_layout.labels,
                 &y_tick_layout.pixel_positions,
                 &y_tick_layout.labels,
-                plot_left, plot_right, plot_top, plot_bottom,
+                plot_left,
+                plot_right,
+                plot_top,
+                plot_bottom,
                 self.theme.foreground,
                 10.0,
             );
@@ -5171,7 +5258,8 @@ impl Plot {
                 SeriesType::Scatter { x_data, y_data } => {
                     let marker_size = series.marker_size.unwrap_or(6.0);
                     for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                        let (px, py) = map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
+                        let (px, py) =
+                            map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
                         svg.draw_marker(px, py, marker_size, color);
                     }
                 }
@@ -5181,9 +5269,12 @@ impl Plot {
                     let bar_gap = plot_width / num_bars as f32 * 0.15;
 
                     for (i, &value) in values.iter().enumerate() {
-                        let bar_x = plot_left + (i as f32 + 0.5) * (plot_width / num_bars as f32) - bar_width / 2.0;
-                        let (_, py) = map_data_to_pixels(0.0, value, x_min, x_max, y_min, y_max, plot_area);
-                        let (_, py_zero) = map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area);
+                        let bar_x = plot_left + (i as f32 + 0.5) * (plot_width / num_bars as f32)
+                            - bar_width / 2.0;
+                        let (_, py) =
+                            map_data_to_pixels(0.0, value, x_min, x_max, y_min, y_max, plot_area);
+                        let (_, py_zero) =
+                            map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area);
                         let bar_height = (py - py_zero).abs();
                         let bar_y = py.min(py_zero);
 
@@ -5665,26 +5756,25 @@ impl PlotSeriesBuilder {
         text: S,
         style: TextStyle,
     ) -> Self {
-        self.plot.annotations.push(Annotation::text_styled(x, y, text, style));
+        self.plot
+            .annotations
+            .push(Annotation::text_styled(x, y, text, style));
         self
     }
 
     /// Add an arrow annotation between two points
     pub fn arrow(mut self, x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
-        self.plot.annotations.push(Annotation::arrow(x1, y1, x2, y2));
+        self.plot
+            .annotations
+            .push(Annotation::arrow(x1, y1, x2, y2));
         self
     }
 
     /// Add an arrow annotation with custom styling
-    pub fn arrow_styled(
-        mut self,
-        x1: f64,
-        y1: f64,
-        x2: f64,
-        y2: f64,
-        style: ArrowStyle,
-    ) -> Self {
-        self.plot.annotations.push(Annotation::arrow_styled(x1, y1, x2, y2, style));
+    pub fn arrow_styled(mut self, x1: f64, y1: f64, x2: f64, y2: f64, style: ArrowStyle) -> Self {
+        self.plot
+            .annotations
+            .push(Annotation::arrow_styled(x1, y1, x2, y2, style));
         self
     }
 
@@ -5696,7 +5786,9 @@ impl PlotSeriesBuilder {
 
     /// Add a horizontal reference line with custom styling
     pub fn hline_styled(mut self, y: f64, color: Color, width: f32, style: LineStyle) -> Self {
-        self.plot.annotations.push(Annotation::hline_styled(y, color, width, style));
+        self.plot
+            .annotations
+            .push(Annotation::hline_styled(y, color, width, style));
         self
     }
 
@@ -5708,25 +5800,37 @@ impl PlotSeriesBuilder {
 
     /// Add a vertical reference line with custom styling
     pub fn vline_styled(mut self, x: f64, color: Color, width: f32, style: LineStyle) -> Self {
-        self.plot.annotations.push(Annotation::vline_styled(x, color, width, style));
+        self.plot
+            .annotations
+            .push(Annotation::vline_styled(x, color, width, style));
         self
     }
 
     /// Add a rectangle annotation
     pub fn rect(mut self, x: f64, y: f64, width: f64, height: f64) -> Self {
-        self.plot.annotations.push(Annotation::rectangle(x, y, width, height));
+        self.plot
+            .annotations
+            .push(Annotation::rectangle(x, y, width, height));
         self
     }
 
     /// Add a fill between two curves
     pub fn fill_between(mut self, x: &[f64], y1: &[f64], y2: &[f64]) -> Self {
-        self.plot.annotations.push(Annotation::fill_between(x.to_vec(), y1.to_vec(), y2.to_vec()));
+        self.plot.annotations.push(Annotation::fill_between(
+            x.to_vec(),
+            y1.to_vec(),
+            y2.to_vec(),
+        ));
         self
     }
 
     /// Add a fill between a curve and a baseline
     pub fn fill_to_baseline(mut self, x: &[f64], y: &[f64], baseline: f64) -> Self {
-        self.plot.annotations.push(Annotation::fill_to_baseline(x.to_vec(), y.to_vec(), baseline));
+        self.plot.annotations.push(Annotation::fill_to_baseline(
+            x.to_vec(),
+            y.to_vec(),
+            baseline,
+        ));
         self
     }
 
@@ -5988,9 +6092,7 @@ mod tests {
         let y_data: Vec<f64> = x_data.iter().map(|x| x * 2.0).collect();
 
         // Test that gpu() works on PlotSeriesBuilder
-        let plot = Plot::new()
-            .line(&x_data, &y_data)
-            .gpu(true);
+        let plot = Plot::new().line(&x_data, &y_data).gpu(true);
 
         assert_eq!(plot.get_backend_name(), "gpu");
     }
@@ -6011,9 +6113,7 @@ mod tests {
         let x_small: Vec<f64> = (0..100).map(|i| i as f64).collect();
         let y_small: Vec<f64> = x_small.iter().map(|x| x * x).collect();
 
-        let plot = Plot::new()
-            .line(&x_small, &y_small)
-            .end_series();
+        let plot = Plot::new().line(&x_small, &y_small).end_series();
 
         // auto_optimize consumes self and returns Self
         let plot = plot.auto_optimize();
@@ -6032,12 +6132,7 @@ mod tests {
         use crate::data::StreamingXY;
 
         let stream = StreamingXY::new(100);
-        stream.push_many(vec![
-            (0.0, 0.0),
-            (1.0, 1.0),
-            (2.0, 4.0),
-            (3.0, 9.0),
-        ]);
+        stream.push_many(vec![(0.0, 0.0), (1.0, 1.0), (2.0, 4.0), (3.0, 9.0)]);
 
         let plot = Plot::new()
             .line_streaming(&stream)
@@ -6062,11 +6157,7 @@ mod tests {
         use crate::data::StreamingXY;
 
         let stream = StreamingXY::new(100);
-        stream.push_many(vec![
-            (1.0, 10.0),
-            (2.0, 20.0),
-            (3.0, 30.0),
-        ]);
+        stream.push_many(vec![(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)]);
 
         let plot = Plot::new()
             .scatter_streaming(&stream)
@@ -6092,9 +6183,7 @@ mod tests {
 
         assert_eq!(stream.appended_count(), 2);
 
-        let _plot = Plot::new()
-            .line_streaming(&stream)
-            .end_series();
+        let _plot = Plot::new().line_streaming(&stream).end_series();
 
         // After line_streaming, buffer should be marked as rendered
         assert_eq!(stream.appended_count(), 0);
@@ -6105,11 +6194,7 @@ mod tests {
         use crate::data::StreamingXY;
 
         let stream = StreamingXY::new(100);
-        stream.push_many(vec![
-            (0.0, 0.0),
-            (1.0, 1.0),
-            (2.0, 4.0),
-        ]);
+        stream.push_many(vec![(0.0, 0.0), (1.0, 1.0), (2.0, 4.0)]);
 
         let plot = Plot::new()
             .line_streaming(&stream)
@@ -6137,9 +6222,7 @@ mod tests {
         // Buffer should only contain last 3 points
         assert_eq!(stream.len(), 3);
 
-        let plot = Plot::new()
-            .line_streaming(&stream)
-            .end_series();
+        let plot = Plot::new().line_streaming(&stream).end_series();
 
         if let SeriesType::Line { x_data, y_data } = &plot.series[0].series_type {
             assert_eq!(x_data.len(), 3);
@@ -6292,9 +6375,7 @@ mod tests {
         assert!(v1 > v0, "Version should increase after push");
 
         // Create plot (marks as rendered)
-        let _plot = Plot::new()
-            .line_streaming(&stream)
-            .end_series();
+        let _plot = Plot::new().line_streaming(&stream).end_series();
 
         // Push more data
         stream.push(2.0, 2.0);

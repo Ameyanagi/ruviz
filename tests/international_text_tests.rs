@@ -194,13 +194,13 @@ fn test_international_plot_generation() {
         .xlabel("横軸 (X)".to_string())
         .ylabel("縦軸 (Y)".to_string())
         .line(&x_data, &y_data)
-        .save("test_output/japanese_test.png");
+        .save("tests/output/japanese_test.png");
 
     assert!(result.is_ok(), "Japanese plot generation should succeed");
 
     // Verify file was created
     assert!(
-        Path::new("test_output/japanese_test.png").exists(),
+        Path::new("tests/output/japanese_test.png").exists(),
         "Japanese output file should exist"
     );
 }

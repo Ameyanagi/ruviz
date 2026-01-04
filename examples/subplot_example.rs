@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .subplot(1, 1, plot4)?; // Bottom-right
 
     // Save the subplot figure
-    let output_path = "test_output/subplot_example.png";
+    let output_path = "examples/output/subplot_example.png";
     let subplot_count = figure.subplot_count();
     figure.save(output_path)?;
 

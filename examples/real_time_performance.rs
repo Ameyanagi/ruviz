@@ -67,8 +67,8 @@ async fn main() -> Result<()> {
         run_static_performance_benchmark(&dataset)?;
 
         // Save static version
-        plot.save("real_time_performance_static.png")?;
-        println!("💾 Saved static version: real_time_performance_static.png");
+        plot.save("examples/output/real_time_performance_static.png")?;
+        println!("💾 Saved static version: examples/output/real_time_performance_static.png");
     }
 
     println!("✅ Performance demo completed!");
@@ -174,7 +174,7 @@ fn run_static_performance_benchmark(dataset: &PerformanceDataset) -> Result<()> 
 
     // Measure rendering time
     let render_start = Instant::now();
-    plot.save("benchmark_output.png")?;
+    plot.save("examples/output/benchmark_output.png")?;
     let render_time = render_start.elapsed();
 
     println!("📊 Benchmark Results:");

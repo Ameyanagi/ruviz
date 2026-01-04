@@ -19,7 +19,7 @@ fn main() -> ruviz::core::Result<()> {
         .theme(Theme::seaborn()) // Apply seaborn theme
         .boxplot(&data, Some(BoxPlotConfig::new()))
         .end_series()
-        .save("test_output/seaborn_boxplot_example.png");
+        .save("examples/output/seaborn_boxplot_example.png");
 
     match result {
         Ok(_) => println!("Seaborn-style boxplot saved as seaborn_boxplot_example.png"),
@@ -41,7 +41,7 @@ fn main() -> ruviz::core::Result<()> {
         .theme(Theme::seaborn()) // Apply seaborn theme
         .histogram(&hist_data, None)
         .end_series()
-        .save("test_output/seaborn_histogram_example.png");
+        .save("examples/output/seaborn_histogram_example.png");
 
     match hist_result {
         Ok(_) => println!("Seaborn-style histogram saved as seaborn_histogram_example.png"),

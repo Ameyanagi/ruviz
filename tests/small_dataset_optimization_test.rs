@@ -13,14 +13,14 @@ fn test_small_dataset_under_10ms() {
     // Warmup
     Plot::new()
         .line(&x, &y)
-        .save("test_output/opt_warmup.png")
+        .save("tests/output/opt_warmup.png")
         .expect("Warmup failed");
 
     // WHEN: Render with optimized path
     let start = Instant::now();
     Plot::new()
         .line(&x, &y)
-        .save("test_output/opt_small_1k.png")
+        .save("tests/output/opt_small_1k.png")
         .expect("Failed to save plot");
     let duration = start.elapsed();
 
@@ -42,14 +42,14 @@ fn test_very_small_dataset_under_5ms() {
     // Warmup
     Plot::new()
         .line(&x, &y)
-        .save("test_output/opt_warmup_tiny.png")
+        .save("tests/output/opt_warmup_tiny.png")
         .expect("Warmup failed");
 
     // WHEN: Render
     let start = Instant::now();
     Plot::new()
         .line(&x, &y)
-        .save("test_output/opt_very_small_100.png")
+        .save("tests/output/opt_very_small_100.png")
         .expect("Failed to save plot");
     let duration = start.elapsed();
 
@@ -70,14 +70,14 @@ fn test_medium_dataset_under_20ms() {
     // Warmup
     Plot::new()
         .line(&x, &y)
-        .save("test_output/opt_warmup_med.png")
+        .save("tests/output/opt_warmup_med.png")
         .expect("Warmup failed");
 
     // WHEN: Render
     let start = Instant::now();
     Plot::new()
         .line(&x, &y)
-        .save("test_output/opt_medium_5k.png")
+        .save("tests/output/opt_medium_5k.png")
         .expect("Failed to save plot");
     let duration = start.elapsed();
 
@@ -100,7 +100,7 @@ fn test_no_regression_large_datasets() {
     Plot::new()
         .line(&x, &y)
         .auto_optimize()
-        .save("test_output/opt_large_100k.png")
+        .save("tests/output/opt_large_100k.png")
         .expect("Failed to save plot");
     let duration = start.elapsed();
 
@@ -122,18 +122,18 @@ fn test_optimization_consistent_output() {
     Plot::new()
         .line(&x, &y)
         .title("Output Test 1")
-        .save("test_output/opt_consistency_1.png")
+        .save("tests/output/opt_consistency_1.png")
         .expect("Failed first render");
 
     Plot::new()
         .line(&x, &y)
         .title("Output Test 2")
-        .save("test_output/opt_consistency_2.png")
+        .save("tests/output/opt_consistency_2.png")
         .expect("Failed second render");
 
     // THEN: Both files should exist (visual comparison would be manual)
-    assert!(std::path::Path::new("test_output/opt_consistency_1.png").exists());
-    assert!(std::path::Path::new("test_output/opt_consistency_2.png").exists());
+    assert!(std::path::Path::new("tests/output/opt_consistency_1.png").exists());
+    assert!(std::path::Path::new("tests/output/opt_consistency_2.png").exists());
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn test_multiple_small_plots_efficient() {
     for (i, (x, y)) in datasets.iter().enumerate() {
         Plot::new()
             .line(x, y)
-            .save(format!("test_output/opt_multi_{}.png", i))
+            .save(format!("tests/output/opt_multi_{}.png", i))
             .expect("Failed to save plot");
     }
     let total_duration = start.elapsed();
@@ -175,7 +175,7 @@ fn test_small_dataset_with_styling() {
     // Warmup
     Plot::new()
         .line(&x, &y)
-        .save("test_output/opt_warmup_style.png")
+        .save("tests/output/opt_warmup_style.png")
         .expect("Warmup failed");
 
     // WHEN: Render with title and labels
@@ -185,7 +185,7 @@ fn test_small_dataset_with_styling() {
         .title("Small Dataset Test")
         .xlabel("X Axis")
         .ylabel("Y Axis")
-        .save("test_output/opt_small_styled.png")
+        .save("tests/output/opt_small_styled.png")
         .expect("Failed to save plot");
     let duration = start.elapsed();
 

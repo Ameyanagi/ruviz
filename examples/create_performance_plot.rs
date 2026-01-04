@@ -31,9 +31,9 @@ fn main() -> Result<()> {
         .width(1200.0)
         .dpi(150)
         .build()
-        .save("gpu_cpu_performance_comparison.png")?;
+        .save("examples/output/gpu_cpu_performance_comparison.png")?;
 
-    println!("✅ Saved: gpu_cpu_performance_comparison.png");
+    println!("✅ Saved: examples/output/gpu_cpu_performance_comparison.png");
 
     // Create speedup plot
     println!("📈 Creating speedup analysis plot...");
@@ -46,9 +46,9 @@ fn main() -> Result<()> {
         .width(1200.0)
         .dpi(150)
         .build()
-        .save("gpu_speedup_scaling.png")?;
+        .save("examples/output/gpu_speedup_scaling.png")?;
 
-    println!("✅ Saved: gpu_speedup_scaling.png");
+    println!("✅ Saved: examples/output/gpu_speedup_scaling.png");
 
     // Print summary
     println!("\n🔬 Performance Analysis Summary");

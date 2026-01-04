@@ -16,7 +16,7 @@ fn main() -> ruviz::core::Result<()> {
         .ylabel("Values")
         .boxplot(&data, Some(BoxPlotConfig::new()))
         .end_series()
-        .save("test_output/boxplot_example.png");
+        .save("examples/output/boxplot_example.png");
 
     match result {
         Ok(_) => println!("Box plot saved as boxplot_example.png"),

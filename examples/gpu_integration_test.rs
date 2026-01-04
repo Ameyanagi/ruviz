@@ -172,7 +172,7 @@ async fn test_cpu_fallback() -> Result<(), Box<dyn std::error::Error>> {
         .title("CPU Fallback Test")
         .xlabel("X values")
         .ylabel("sin(x)")
-        .save("test_output/gpu_integration_cpu_fallback.png");
+        .save("examples/output/gpu_integration_cpu_fallback.png");
 
     match plot_result {
         Ok(_) => {

@@ -323,9 +323,9 @@ impl SpacingConfig {
 impl Default for SpacingConfig {
     fn default() -> Self {
         Self {
-            title_pad: 12.0,  // ~0.75x title font size - professional spacing below title
-            label_pad: 14.0,  // ~1x label font size - space between ylabel and tick labels
-            tick_pad: 6.0,    // ~0.5x tick font size - space between tick labels and axis
+            title_pad: 12.0, // ~0.75x title font size - professional spacing below title
+            label_pad: 14.0, // ~1x label font size - space between ylabel and tick labels
+            tick_pad: 6.0,   // ~0.5x tick font size - space between tick labels and axis
             legend_pad: 8.0,
         }
     }

@@ -50,8 +50,8 @@ async fn main() -> Result<()> {
         println!("To enable: cargo run --features interactive --example basic_interaction");
 
         // Fallback to static plot
-        plot.save("basic_interaction_static.png")?;
-        println!("💾 Saved static version as: basic_interaction_static.png");
+        plot.save("examples/output/basic_interaction_static.png")?;
+        println!("💾 Saved static version as: examples/output/basic_interaction_static.png");
     }
 
     println!("✅ Example completed!");
@@ -75,10 +75,10 @@ mod tests {
             .ylabel("Y");
 
         // Test static save
-        let result = plot.save("test_basic_interaction.png");
+        let result = plot.save("examples/output/test_basic_interaction.png");
         assert!(result.is_ok());
 
         // Clean up
-        std::fs::remove_file("test_basic_interaction.png").ok();
+        std::fs::remove_file("examples/output/test_basic_interaction.png").ok();
     }
 }

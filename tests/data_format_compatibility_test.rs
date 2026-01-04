@@ -13,7 +13,7 @@ fn test_vec_f64() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Vec<f64> Data")
-        .save("test_output/data_vec_f64.png");
+        .save("tests/output/data_vec_f64.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Vec<f64> failed: {:?}", result.err());
@@ -33,7 +33,7 @@ fn test_vec_f32() {
     let result = Plot::new()
         .line(&x_f64, &y_f64)
         .title("Vec<f32> Data")
-        .save("test_output/data_vec_f32.png");
+        .save("tests/output/data_vec_f32.png");
 
     // THEN: Should succeed
     assert!(
@@ -53,7 +53,7 @@ fn test_slice_f64() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Slice Data")
-        .save("test_output/data_slice.png");
+        .save("tests/output/data_slice.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Slice data failed: {:?}", result.err());
@@ -73,7 +73,7 @@ fn test_integer_data() {
     let result = Plot::new()
         .line(&x_f64, &y_f64)
         .title("Integer Data")
-        .save("test_output/data_integer.png");
+        .save("tests/output/data_integer.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Integer data failed: {:?}", result.err());
@@ -92,7 +92,7 @@ fn test_ndarray_data() {
     let result = Plot::new()
         .line(&x, &y)
         .title("ndarray Data")
-        .save("test_output/data_ndarray.png");
+        .save("tests/output/data_ndarray.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "ndarray data failed: {:?}", result.err());
@@ -111,7 +111,7 @@ fn test_string_categories() {
     let result = Plot::new()
         .bar(&cat_strs, &values)
         .title("String Categories")
-        .save("test_output/data_string_categories.png");
+        .save("tests/output/data_string_categories.png");
 
     // THEN: Should succeed
     assert!(
@@ -131,7 +131,7 @@ fn test_str_slice_categories() {
     let result = Plot::new()
         .bar(&categories, &values)
         .title("&str Slice Categories")
-        .save("test_output/data_str_categories.png");
+        .save("tests/output/data_str_categories.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "&str categories failed: {:?}", result.err());
@@ -146,7 +146,7 @@ fn test_empty_data_error() {
     // WHEN: Attempting to plot empty data
     let result = Plot::new()
         .line(&x, &y)
-        .save("test_output/data_should_not_exist.png");
+        .save("tests/output/data_should_not_exist.png");
 
     // THEN: Should fail gracefully
     assert!(result.is_err(), "Empty data should produce error");
@@ -161,7 +161,7 @@ fn test_mismatched_length_error() {
     // WHEN: Attempting to plot mismatched data
     let result = Plot::new()
         .line(&x, &y)
-        .save("test_output/data_should_not_exist_2.png");
+        .save("tests/output/data_should_not_exist_2.png");
 
     // THEN: Should fail gracefully
     assert!(result.is_err(), "Mismatched data should produce error");
@@ -179,7 +179,7 @@ fn test_single_point() {
         .marker(MarkerStyle::Circle)
         .marker_size(10.0)
         .title("Single Point")
-        .save("test_output/data_single_point.png");
+        .save("tests/output/data_single_point.png");
 
     // THEN: May fail or succeed depending on implementation (single point is edge case)
     // Just verify it handles gracefully
@@ -196,7 +196,7 @@ fn test_two_points() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Two Points")
-        .save("test_output/data_two_points.png");
+        .save("tests/output/data_two_points.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Two points failed: {:?}", result.err());
@@ -212,7 +212,7 @@ fn test_large_values() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Large Values")
-        .save("test_output/data_large_values.png");
+        .save("tests/output/data_large_values.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Large values failed: {:?}", result.err());
@@ -228,7 +228,7 @@ fn test_small_values() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Small Values")
-        .save("test_output/data_small_values.png");
+        .save("tests/output/data_small_values.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Small values failed: {:?}", result.err());
@@ -246,7 +246,7 @@ fn test_negative_values() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Negative Values")
-        .save("test_output/data_negative_values.png");
+        .save("tests/output/data_negative_values.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Negative values failed: {:?}", result.err());
@@ -263,7 +263,7 @@ fn test_zero_values() {
         .scatter(&x, &y)
         .marker(MarkerStyle::Circle)
         .title("Zero X Values")
-        .save("test_output/data_zero_x.png");
+        .save("tests/output/data_zero_x.png");
 
     // THEN: May fail or succeed depending on implementation (zero range is edge case)
     // Just verify it handles gracefully
@@ -280,7 +280,7 @@ fn test_constant_values() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Constant Y Values")
-        .save("test_output/data_constant_y.png");
+        .save("tests/output/data_constant_y.png");
 
     // THEN: May fail or succeed depending on implementation (constant values is edge case)
     // Just verify it handles gracefully
@@ -297,7 +297,7 @@ fn test_nan_handling() {
     let result = Plot::new()
         .line(&x, &y)
         .title("NaN Handling")
-        .save("test_output/data_nan.png");
+        .save("tests/output/data_nan.png");
 
     // THEN: Should handle gracefully (either error or filter NaN)
     // Note: Actual behavior depends on implementation
@@ -314,7 +314,7 @@ fn test_infinity_handling() {
     let result = Plot::new()
         .line(&x, &y)
         .title("Infinity Handling")
-        .save("test_output/data_infinity.png");
+        .save("tests/output/data_infinity.png");
 
     // THEN: Should handle gracefully (either error or clip)
     // Note: Actual behavior depends on implementation
@@ -331,7 +331,7 @@ fn test_unicode_categories() {
     let result = Plot::new()
         .bar(&categories, &values)
         .title("Unicode Categories")
-        .save("test_output/data_unicode_categories.png");
+        .save("tests/output/data_unicode_categories.png");
 
     // THEN: Should succeed
     assert!(
@@ -355,7 +355,7 @@ fn test_long_categories() {
     let result = Plot::new()
         .bar(&categories, &values)
         .title("Long Categories")
-        .save("test_output/data_long_categories.png");
+        .save("tests/output/data_long_categories.png");
 
     // THEN: Should succeed
     assert!(result.is_ok(), "Long categories failed: {:?}", result.err());

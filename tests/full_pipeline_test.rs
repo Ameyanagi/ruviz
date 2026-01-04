@@ -16,13 +16,13 @@ fn test_basic_line_plot_pipeline() {
         .title("Test Plot")
         .xlabel("x")
         .ylabel("y")
-        .save("test_output/integration_basic_line.png");
+        .save("tests/output/integration_basic_line.png");
 
     // THEN: Plot should be created successfully
     assert!(result.is_ok(), "Failed to create plot: {:?}", result.err());
 
     // AND: File should exist with content
-    let path = Path::new("test_output/integration_basic_line.png");
+    let path = Path::new("tests/output/integration_basic_line.png");
     assert!(path.exists(), "Output file not created");
 
     let metadata = std::fs::metadata(path).unwrap();
@@ -51,7 +51,7 @@ fn test_multi_series_pipeline() {
         .scatter(&vec![1.5, 2.5, 3.5], &vec![2.0, 6.0, 12.0])
         .label("Points")
         .title("Multi-Series Test")
-        .save("test_output/integration_multi_series.png");
+        .save("tests/output/integration_multi_series.png");
 
     // THEN: Should succeed
     assert!(
@@ -61,7 +61,7 @@ fn test_multi_series_pipeline() {
     );
 
     // AND: File should be created
-    assert!(Path::new("test_output/integration_multi_series.png").exists());
+    assert!(Path::new("tests/output/integration_multi_series.png").exists());
 }
 
 #[test]
@@ -76,11 +76,11 @@ fn test_scatter_plot_pipeline() {
         .marker(MarkerStyle::Circle)
         .marker_size(8.0)
         .title("Scatter Test")
-        .save("test_output/integration_scatter.png");
+        .save("tests/output/integration_scatter.png");
 
     // THEN: Should succeed
     assert!(result.is_ok());
-    assert!(Path::new("test_output/integration_scatter.png").exists());
+    assert!(Path::new("tests/output/integration_scatter.png").exists());
 }
 
 #[test]
@@ -94,11 +94,11 @@ fn test_bar_chart_pipeline() {
         .bar(&categories, &values)
         .title("Bar Chart Test")
         .ylabel("Value")
-        .save("test_output/integration_bar.png");
+        .save("tests/output/integration_bar.png");
 
     // THEN: Should succeed
     assert!(result.is_ok());
-    assert!(Path::new("test_output/integration_bar.png").exists());
+    assert!(Path::new("tests/output/integration_bar.png").exists());
 }
 
 #[test]
@@ -114,11 +114,11 @@ fn test_histogram_pipeline() {
         .title("Histogram Test")
         .xlabel("Value")
         .ylabel("Frequency")
-        .save("test_output/integration_histogram.png");
+        .save("tests/output/integration_histogram.png");
 
     // THEN: Should succeed
     assert!(result.is_ok());
-    assert!(Path::new("test_output/integration_histogram.png").exists());
+    assert!(Path::new("tests/output/integration_histogram.png").exists());
 }
 
 #[test]
@@ -131,11 +131,11 @@ fn test_boxplot_pipeline() {
         .boxplot(&data, None)
         .title("Box Plot Test")
         .ylabel("Value")
-        .save("test_output/integration_boxplot.png");
+        .save("tests/output/integration_boxplot.png");
 
     // THEN: Should succeed
     assert!(result.is_ok());
-    assert!(Path::new("test_output/integration_boxplot.png").exists());
+    assert!(Path::new("tests/output/integration_boxplot.png").exists());
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn test_subplot_composition() {
         .subplot(1, 1, plot4)
         .unwrap()
         .suptitle("Integration Subplot Test")
-        .save("test_output/integration_subplots.png");
+        .save("tests/output/integration_subplots.png");
 
     // THEN: Should succeed
     assert!(
@@ -189,7 +189,7 @@ fn test_subplot_composition() {
         "Subplot save failed: {:?}",
         save_result.err()
     );
-    assert!(Path::new("test_output/integration_subplots.png").exists());
+    assert!(Path::new("tests/output/integration_subplots.png").exists());
 }
 
 #[test]
@@ -209,11 +209,11 @@ fn test_theme_application() {
             .theme(theme)
             .line(&x, &y)
             .title(&format!("{} Theme Test", name))
-            .save(&format!("test_output/integration_theme_{}.png", name));
+            .save(&format!("tests/output/integration_theme_{}.png", name));
 
         // THEN: Should succeed for all themes
         assert!(result.is_ok(), "{} theme failed", name);
-        assert!(Path::new(&format!("test_output/integration_theme_{}.png", name)).exists());
+        assert!(Path::new(&format!("tests/output/integration_theme_{}.png", name)).exists());
     }
 }
 
@@ -229,12 +229,12 @@ fn test_dpi_scaling() {
             .line(&x, &y)
             .dpi(dpi)
             .title(&format!("{} DPI Test", dpi))
-            .save(&format!("test_output/integration_dpi_{}.png", dpi));
+            .save(&format!("tests/output/integration_dpi_{}.png", dpi));
 
         // THEN: Should succeed
         assert!(result.is_ok(), "{} DPI failed", dpi);
 
-        let path_str = format!("test_output/integration_dpi_{}.png", dpi);
+        let path_str = format!("tests/output/integration_dpi_{}.png", dpi);
         let path = Path::new(&path_str);
         assert!(path.exists());
 
@@ -257,13 +257,13 @@ fn test_custom_dimensions() {
         .dimensions(1200, 900)
         .line(&x, &y)
         .title("Custom Dimensions Test")
-        .save("test_output/integration_custom_dimensions.png");
+        .save("tests/output/integration_custom_dimensions.png");
 
     // THEN: Should succeed
     assert!(result.is_ok());
 
     // AND: Image should have correct dimensions
-    let img = image::open("test_output/integration_custom_dimensions.png").unwrap();
+    let img = image::open("tests/output/integration_custom_dimensions.png").unwrap();
     assert_eq!(img.width(), 1200);
     assert_eq!(img.height(), 900);
 }
@@ -277,7 +277,7 @@ fn test_empty_data_error_handling() {
     // WHEN: Attempting to plot empty data
     let result = Plot::new()
         .line(&empty_x, &empty_y)
-        .save("test_output/should_not_exist.png");
+        .save("tests/output/should_not_exist.png");
 
     // THEN: Should fail gracefully
     assert!(result.is_err(), "Empty data should produce error");
@@ -292,7 +292,7 @@ fn test_mismatched_data_error_handling() {
     // WHEN: Attempting to plot mismatched data
     let result = Plot::new()
         .line(&x, &y)
-        .save("test_output/should_not_exist_2.png");
+        .save("tests/output/should_not_exist_2.png");
 
     // THEN: Should fail gracefully
     assert!(result.is_err(), "Mismatched data should produce error");

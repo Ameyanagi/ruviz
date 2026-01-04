@@ -17,7 +17,7 @@ fn main() -> Result<()> {
     Plot::new()
         .line(&x, &y)
         .title("Warmup")
-        .save("test_output/profile_warmup.png")?;
+        .save("examples/output/profile_warmup.png")?;
 
     // Timed runs
     println!("\nRunning 10 iterations to measure performance:");
@@ -31,7 +31,7 @@ fn main() -> Result<()> {
             .title(&format!("Small Dataset Test {}", i))
             .xlabel("X Axis")
             .ylabel("Y Axis")
-            .save("test_output/profile_small.png")?;
+            .save("examples/output/profile_small.png")?;
 
         let duration = start.elapsed();
         times.push(duration);

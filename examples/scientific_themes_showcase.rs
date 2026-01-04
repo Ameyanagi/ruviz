@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         .end_series()
         .xlim(0.0, 2.0 * PI)
         .legend(Position::TopRight)
-        .save("test_output/ieee_theme_example.png")?;
+        .save("examples/output/ieee_theme_example.png")?;
 
     // 2. Nature Journal Theme - Minimal grid, tight spacing
     println!("🧬 Creating Nature journal theme plot...");
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
         .end_series()
         .xlim(0.0, 2.0 * PI)
         .legend(Position::TopRight)
-        .save("test_output/nature_theme_example.png")?;
+        .save("examples/output/nature_theme_example.png")?;
 
     // 3. Presentation Theme - Large fonts, high contrast
     println!("📊 Creating presentation theme plot...");
@@ -61,7 +61,7 @@ fn main() -> Result<()> {
         .ylabel("Values")
         .bar(&categories, &values)
         .end_series()
-        .save("test_output/presentation_theme_example.png")?;
+        .save("examples/output/presentation_theme_example.png")?;
 
     // 4. Paul Tol Theme - Scientifically tested colorblind-friendly
     println!("🎨 Creating Paul Tol accessibility theme plot...");
@@ -83,7 +83,7 @@ fn main() -> Result<()> {
         .label("Series 3")
         .end_series()
         .legend(Position::TopRight)
-        .save("test_output/paul_tol_theme_example.png")?;
+        .save("examples/output/paul_tol_theme_example.png")?;
 
     // 5. Scientific palette histogram comparison
     println!("📈 Creating scientific palette histogram...");
@@ -99,7 +99,7 @@ fn main() -> Result<()> {
         .ylabel("Frequency")
         .histogram(&histogram_data, Some(hist_config))
         .end_series()
-        .save("test_output/scientific_palette_histogram.png")?;
+        .save("examples/output/scientific_palette_histogram.png")?;
 
     // 6. Theme comparison - same data, different themes
     println!("🔄 Creating theme comparison plots...");
@@ -126,7 +126,7 @@ fn main() -> Result<()> {
             .xlim(0.0, 2.0 * PI)
             .legend(Position::TopRight)
             .save(&format!(
-                "test_output/{}_theme_comparison.png",
+                "examples/output/{}_theme_comparison.png",
                 name.to_lowercase()
             ))?;
     }

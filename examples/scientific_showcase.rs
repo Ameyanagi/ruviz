@@ -136,7 +136,7 @@ fn main() -> Result<()> {
     figure = figure.subplot(1, 1, plot_d)?;
 
     // Save the complete scientific figure
-    figure.save("test_output/scientific_analysis_figure.png")?;
+    figure.save("examples/output/scientific_analysis_figure.png")?;
 
     let subplot_time = subplot_start.elapsed();
     println!("✅ Scientific figure completed in {:?}", subplot_time);
@@ -154,7 +154,7 @@ fn main() -> Result<()> {
         .end_series()
         .theme(Theme::seaborn());
 
-    detailed_timeseries.save("test_output/detailed_timeseries.png")?;
+    detailed_timeseries.save("examples/output/detailed_timeseries.png")?;
 
     // Professional correlation plot with trendline capability
     let detailed_correlation = Plot::new()
@@ -166,7 +166,7 @@ fn main() -> Result<()> {
         .end_series()
         .theme(Theme::seaborn());
 
-    detailed_correlation.save("test_output/detailed_correlation.png")?;
+    detailed_correlation.save("examples/output/detailed_correlation.png")?;
 
     // High-quality distribution analysis
     let detailed_histogram = Plot::new()
@@ -178,7 +178,7 @@ fn main() -> Result<()> {
         .end_series()
         .theme(Theme::seaborn());
 
-    detailed_histogram.save("test_output/detailed_distribution.png")?;
+    detailed_histogram.save("examples/output/detailed_distribution.png")?;
 
     let total_time = start_time.elapsed();
 

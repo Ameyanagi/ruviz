@@ -1,7 +1,7 @@
 use super::color::Color;
 use super::style::LineStyle;
-use crate::core::types::Point2f;
 use crate::core::Result;
+use crate::core::types::Point2f;
 use crate::data::{PooledVec, SharedMemoryPool};
 #[cfg(feature = "simd")]
 use wide::f32x4;

@@ -583,8 +583,8 @@ impl ColorMap {
     /// List all available colormap names
     pub fn available_names() -> Vec<&'static str> {
         vec![
-            "viridis", "plasma", "inferno", "magma", "hot", "cool", "gray", "jet",
-            "coolwarm", "rdbu",
+            "viridis", "plasma", "inferno", "magma", "hot", "cool", "gray", "jet", "coolwarm",
+            "rdbu",
         ]
     }
 }

@@ -2,84 +2,46 @@
 
 Comprehensive visual showcase of ruviz plotting capabilities.
 
-**Total Examples**: 9 curated visualizations across 5 categories
+**Total Examples**: 17
 
 ## Gallery Categories
 
-### 📊 Basic Plots (3 examples)
+### 📊 Basic Plots (1 examples)
 
 Fundamental plot types for everyday visualization
 
-- Box plots with quartiles and outliers
-- Histograms with automatic binning
-- Line plots for simple data series
-
-[View Basic Examples →](basic/README.md)
+[View Basic Plots Examples →](basic/README.md)
 
 ### 📈 Statistical Plots (2 examples)
 
 Statistical analysis and distributions
 
-- Seaborn-style box plots
-- Distribution histograms
+[View Statistical Plots Examples →](statistical/README.md)
 
-[View Statistical Examples →](statistical/README.md)
-
-### 📄 Publication Quality (1 example)
+### 📄 Publication Quality (2 examples)
 
 Professional figures for journals
 
-- Multi-panel scientific figures
-- IEEE/Nature/Science compliant
-- High-DPI export ready
+[View Publication Quality Examples →](publication/README.md)
 
-[View Publication Examples →](publication/README.md)
-
-### ⚡ Performance (2 examples)
+### ⚡ Performance (10 examples)
 
 Large dataset handling and optimization
 
-- 100K point parallel rendering
-- Memory-optimized workflows
-- Sub-second performance
-
 [View Performance Examples →](performance/README.md)
 
-### 🎨 Advanced Techniques (1 example)
+### 🎨 Advanced Techniques (2 examples)
 
 Complex visualizations and customization
 
-- Seaborn color palettes
-- Professional theming
-- Custom styling
-
-[View Advanced Examples →](advanced/README.md)
+[View Advanced Techniques Examples →](advanced/README.md)
 
 ---
 
-## Features Demonstrated
+All examples are automatically generated from the `examples/` directory.
 
-✅ **Plot Types**: Line, scatter, bar, histogram, box plot
-✅ **Styling**: Seaborn themes, publication quality, professional typography
-✅ **Performance**: Parallel rendering, memory optimization, large datasets
-✅ **Quality**: High-DPI export, IEEE compliance, journal-ready figures
-✅ **Advanced**: Custom palettes, multi-panel layouts, statistical analysis
-
-## Generate Gallery
-
-All examples are automatically generated from the `examples/` directory and can be regenerated using:
+To regenerate the gallery:
 
 ```bash
 cargo run --bin generate_gallery
-```
-
-Or manually run specific examples:
-
-```bash
-cargo run --example boxplot_example
-cargo run --example histogram_example
-cargo run --example scientific_showcase
-cargo run --example parallel_demo
-cargo run --example memory_optimization_demo
-cargo run --example seaborn_style_example
 ```

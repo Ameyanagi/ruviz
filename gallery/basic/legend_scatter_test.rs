@@ -7,7 +7,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Generate test data
     let x1: Vec<f64> = (0..20).map(|i| i as f64 * 0.5).collect();
-    let y1: Vec<f64> = x1.iter().map(|&x| x.sin() + 0.1 * (x * 3.0).cos()).collect();
+    let y1: Vec<f64> = x1
+        .iter()
+        .map(|&x| x.sin() + 0.1 * (x * 3.0).cos())
+        .collect();
     let x2: Vec<f64> = (0..15).map(|i| i as f64 * 0.7).collect();
     let y2: Vec<f64> = x2.iter().map(|&x| x.cos() - 0.1 * x).collect();
     let x3: Vec<f64> = (0..25).map(|i| i as f64 * 0.4).collect();
@@ -35,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .color(Color::GREEN)
         .marker(MarkerStyle::Triangle)
         .end_series()
-        .legend(Position::Best)  // Auto-positioning to minimize overlap
+        .legend(Position::Best) // Auto-positioning to minimize overlap
         .save("gallery/basic/legend_scatter_test.png")?;
 
     println!("✅ Legend scatter test completed!");

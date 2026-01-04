@@ -61,9 +61,13 @@ impl SvgRenderer {
             LineStyle::Dotted => Some("2,2".to_string()),
             LineStyle::DashDot => Some("6,2,2,2".to_string()),
             LineStyle::DashDotDot => Some("6,2,2,2,2,2".to_string()),
-            LineStyle::Custom(pattern) => {
-                Some(pattern.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","))
-            }
+            LineStyle::Custom(pattern) => Some(
+                pattern
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
         }
     }
 
@@ -164,7 +168,13 @@ impl SvgRenderer {
     }
 
     /// Draw a polyline (connected line segments)
-    pub fn draw_polyline(&mut self, points: &[(f32, f32)], color: Color, width: f32, style: LineStyle) {
+    pub fn draw_polyline(
+        &mut self,
+        points: &[(f32, f32)],
+        color: Color,
+        width: f32,
+        style: LineStyle,
+    ) {
         if points.len() < 2 {
             return;
         }
@@ -275,14 +285,30 @@ impl SvgRenderer {
         // Vertical grid lines
         for &x in x_ticks {
             if x >= plot_left && x <= plot_right {
-                self.draw_line(x, plot_top, x, plot_bottom, color, line_width, style.clone());
+                self.draw_line(
+                    x,
+                    plot_top,
+                    x,
+                    plot_bottom,
+                    color,
+                    line_width,
+                    style.clone(),
+                );
             }
         }
 
         // Horizontal grid lines
         for &y in y_ticks {
             if y >= plot_top && y <= plot_bottom {
-                self.draw_line(plot_left, y, plot_right, y, color, line_width, style.clone());
+                self.draw_line(
+                    plot_left,
+                    y,
+                    plot_right,
+                    y,
+                    color,
+                    line_width,
+                    style.clone(),
+                );
             }
         }
     }
@@ -391,13 +417,7 @@ impl SvgRenderer {
     }
 
     /// Draw legend
-    pub fn draw_legend(
-        &mut self,
-        items: &[(String, Color)],
-        x: f32,
-        y: f32,
-        font_size: f32,
-    ) {
+    pub fn draw_legend(&mut self, items: &[(String, Color)], x: f32, y: f32, font_size: f32) {
         if items.is_empty() {
             return;
         }
@@ -409,22 +429,29 @@ impl SvgRenderer {
         let swatch_gap = 8.0;
 
         // Draw legend background
-        self.draw_rectangle(x, y, legend_width, legend_height, Color::new_rgba(255, 255, 255, 230), true);
-        self.draw_rectangle(x, y, legend_width, legend_height, Color::new_rgba(0, 0, 0, 100), false);
+        self.draw_rectangle(
+            x,
+            y,
+            legend_width,
+            legend_height,
+            Color::new_rgba(255, 255, 255, 230),
+            true,
+        );
+        self.draw_rectangle(
+            x,
+            y,
+            legend_width,
+            legend_height,
+            Color::new_rgba(0, 0, 0, 100),
+            false,
+        );
 
         // Draw legend items
         for (i, (label, color)) in items.iter().enumerate() {
             let item_y = y + 8.0 + i as f32 * item_height;
 
             // Draw color swatch
-            self.draw_rectangle(
-                x + 8.0,
-                item_y,
-                swatch_size,
-                swatch_size,
-                *color,
-                true,
-            );
+            self.draw_rectangle(x + 8.0, item_y, swatch_size, swatch_size, *color, true);
 
             // Draw label
             let color_str = self.color_to_svg(Color::BLACK);
@@ -459,7 +486,11 @@ impl SvgRenderer {
             LineStyle::DashDot => "stroke-dasharray=\"6,2,2,2\"".to_string(),
             LineStyle::DashDotDot => "stroke-dasharray=\"6,2,2,2,2,2\"".to_string(),
             LineStyle::Custom(pattern) => {
-                let pattern_str = pattern.iter().map(|v| format!("{:.1}", v)).collect::<Vec<_>>().join(",");
+                let pattern_str = pattern
+                    .iter()
+                    .map(|v| format!("{:.1}", v))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 format!("stroke-dasharray=\"{}\"", pattern_str)
             }
         };
@@ -500,7 +531,11 @@ impl SvgRenderer {
                 writeln!(
                     self.content,
                     r#"  <rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}"/>"#,
-                    center_x - radius, y - radius, size, size, color_str
+                    center_x - radius,
+                    y - radius,
+                    size,
+                    size,
+                    color_str
                 )
                 .unwrap();
             }
@@ -547,14 +582,7 @@ impl SvgRenderer {
     }
 
     /// Draw a bar handle in the legend
-    fn draw_legend_bar_handle(
-        &mut self,
-        x: f32,
-        y: f32,
-        length: f32,
-        height: f32,
-        color: Color,
-    ) {
+    fn draw_legend_bar_handle(&mut self, x: f32, y: f32, length: f32, height: f32, color: Color) {
         let rect_y = y - height / 2.0;
         self.draw_rectangle(x, rect_y, length, height, color, true);
     }
@@ -622,7 +650,14 @@ impl SvgRenderer {
             }
             LegendItemType::ErrorBar => {
                 let cap_size = handle_height * 0.4;
-                self.draw_legend_line_handle(x, y, handle_length, item.color, &LineStyle::Solid, 1.5);
+                self.draw_legend_line_handle(
+                    x,
+                    y,
+                    handle_length,
+                    item.color,
+                    &LineStyle::Solid,
+                    1.5,
+                );
                 // Left cap
                 let color_str = self.color_to_svg(item.color);
                 writeln!(
@@ -643,14 +678,7 @@ impl SvgRenderer {
     }
 
     /// Draw legend frame with background and optional border
-    fn draw_legend_frame(
-        &mut self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        frame: &LegendFrame,
-    ) {
+    fn draw_legend_frame(&mut self, x: f32, y: f32, width: f32, height: f32, frame: &LegendFrame) {
         if !frame.visible {
             return;
         }
@@ -743,13 +771,17 @@ impl SvgRenderer {
             ..legend.clone()
         };
 
-        let (legend_x, legend_y) = resolved_legend.calculate_position(
-            (legend_width, legend_height),
-            plot_area,
-        );
+        let (legend_x, legend_y) =
+            resolved_legend.calculate_position((legend_width, legend_height), plot_area);
 
         // Draw frame
-        self.draw_legend_frame(legend_x, legend_y, legend_width, legend_height, &legend.frame);
+        self.draw_legend_frame(
+            legend_x,
+            legend_y,
+            legend_width,
+            legend_height,
+            &legend.frame,
+        );
 
         // Starting position for items
         let item_x = legend_x + spacing.border_pad;
@@ -901,14 +933,25 @@ mod tests {
     #[test]
     fn test_xml_escaping() {
         let renderer = SvgRenderer::new(100.0, 100.0);
-        assert_eq!(renderer.escape_xml("a < b & c > d"), "a &lt; b &amp; c &gt; d");
+        assert_eq!(
+            renderer.escape_xml("a < b & c > d"),
+            "a &lt; b &amp; c &gt; d"
+        );
     }
 
     #[test]
     fn test_svg_output() {
         let mut renderer = SvgRenderer::new(200.0, 150.0);
         renderer.draw_rectangle(0.0, 0.0, 200.0, 150.0, Color::WHITE, true);
-        renderer.draw_line(10.0, 10.0, 190.0, 140.0, Color::BLACK, 2.0, LineStyle::Solid);
+        renderer.draw_line(
+            10.0,
+            10.0,
+            190.0,
+            140.0,
+            Color::BLACK,
+            2.0,
+            LineStyle::Solid,
+        );
 
         let svg = renderer.to_svg_string();
         assert!(svg.contains("svg"));

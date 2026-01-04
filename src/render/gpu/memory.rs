@@ -6,7 +6,7 @@
 use super::{GpuCapabilities, GpuError, GpuResult};
 use crate::core::{PlottingError, Result};
 use crate::data::{PooledVec, SharedMemoryPool};
-use bytemuck::{Pod, cast_slice, cast_vec};
+use bytemuck::{Pod, cast_slice, cast_vec, try_cast_slice};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
@@ -221,12 +221,41 @@ impl GpuMemoryPool {
     /// Create an empty GPU buffer from raw size
     pub fn create_buffer_empty_bytes(
         &self,
-        _size: u64,
+        size: u64,
         usage: wgpu::BufferUsages,
         label: Option<&str>,
     ) -> Result<GpuBuffer> {
-        // Note: _size parameter is ignored for now, using empty data to create buffer
-        self.create_buffer_bytes(&[], usage, label)
+        let aligned_size = self.align_buffer_size(size);
+
+        // Check memory limit
+        {
+            let total_allocated = self.total_allocated.lock().unwrap();
+            if *total_allocated + aligned_size > self.memory_limit {
+                return Err(PlottingError::GpuMemoryError {
+                    requested: aligned_size as usize,
+                    available: Some((self.memory_limit - *total_allocated) as usize),
+                });
+            }
+        }
+
+        // Create empty buffer with proper size
+        let buffer = GpuBuffer::new_empty(&self.device, aligned_size, usage, label);
+
+        // Update memory tracking
+        {
+            let mut total_allocated = self.total_allocated.lock().unwrap();
+            *total_allocated += aligned_size;
+        }
+
+        // Update stats
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.total_allocated += aligned_size;
+            stats.buffers_created += 1;
+            stats.cache_misses += 1;
+        }
+
+        Ok(buffer)
     }
 
     /// Try to reuse a buffer from cache
@@ -249,6 +278,39 @@ impl GpuMemoryPool {
     /// Align buffer size to GPU requirements
     fn align_buffer_size(&self, size: u64) -> u64 {
         ((size + self.alignment - 1) / self.alignment) * self.alignment
+    }
+
+    /// Alignment-safe slice casting with fallback
+    ///
+    /// GPU buffer mappings (wgpu::BufferView) may not be aligned for the target type.
+    /// This method tries zero-copy casting first, falling back to manual byte-by-byte
+    /// reconstruction when the data is unaligned.
+    fn cast_slice_safe<T: Pod + Clone>(bytes: &[u8], element_count: usize) -> Vec<T> {
+        let element_size = std::mem::size_of::<T>();
+
+        // Fast path: try zero-copy cast (works when aligned)
+        if let Ok(aligned) = try_cast_slice::<u8, T>(bytes) {
+            return aligned.to_vec();
+        }
+
+        // Slow path: manual byte-by-byte reconstruction for unaligned data
+        // This is rare but necessary for GPU buffer mappings on some platforms
+        let mut result = Vec::with_capacity(element_count);
+
+        for i in 0..element_count {
+            let offset = i * element_size;
+            let element_bytes = &bytes[offset..offset + element_size];
+
+            // Create properly aligned temporary storage (heap allocation guarantees alignment)
+            let mut aligned_bytes = vec![0u8; element_size];
+            aligned_bytes.copy_from_slice(element_bytes);
+
+            // Safe because aligned_bytes is properly aligned
+            let element: &T = bytemuck::from_bytes(&aligned_bytes);
+            result.push(element.clone());
+        }
+
+        result
     }
 
     /// Read data back from GPU buffer
@@ -303,9 +365,10 @@ impl GpuMemoryPool {
             .ok_or_else(|| GpuError::OperationFailed("Buffer mapping failed".to_string()))?
             .map_err(|e| GpuError::OperationFailed(format!("Buffer mapping error: {:?}", e)))?;
 
-        // Copy data
+        // Copy data with alignment-safe method
         let mapped_data = buffer_slice.get_mapped_range();
-        let result_data: Vec<T> = cast_slice(&mapped_data[..element_count * element_size]).to_vec();
+        let byte_slice = &mapped_data[..element_count * element_size];
+        let result_data = Self::cast_slice_safe::<T>(byte_slice, element_count);
 
         // Unmap buffer
         drop(mapped_data);
@@ -430,5 +493,75 @@ mod tests {
 
         assert_eq!(stats.total_allocated, 1024);
         assert_eq!(stats.buffers_created, 5);
+    }
+
+    #[test]
+    fn test_cast_slice_safe_aligned() {
+        // Create aligned data (Vec is always heap-allocated with proper alignment)
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+
+        // This should use the fast path (zero-copy cast)
+        let result = GpuMemoryPool::cast_slice_safe::<f32>(bytes, 4);
+        assert_eq!(result, vec![1.0f32, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_cast_slice_safe_unaligned() {
+        // Simulate unaligned data by adding 1 offset byte
+        let original: Vec<f32> = vec![1.0, 2.0, 3.0];
+        let original_bytes: &[u8] = bytemuck::cast_slice(&original);
+
+        // Create buffer with 1-byte offset to simulate unalignment
+        let mut bytes = vec![0u8]; // 1 byte offset
+        bytes.extend_from_slice(original_bytes);
+
+        // Slice from offset 1 (unaligned for f32 which requires 4-byte alignment)
+        let unaligned = &bytes[1..];
+
+        // Should work via fallback path
+        let result = GpuMemoryPool::cast_slice_safe::<f32>(unaligned, 3);
+        assert_eq!(result, vec![1.0f32, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_cast_slice_safe_u32() {
+        // Test with u32 type
+        let data: Vec<u32> = vec![100, 200, 300, 400, 500];
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+
+        let result = GpuMemoryPool::cast_slice_safe::<u32>(bytes, 5);
+        assert_eq!(result, vec![100u32, 200, 300, 400, 500]);
+    }
+
+    #[test]
+    fn test_cast_slice_safe_unaligned_u64() {
+        // u64 requires 8-byte alignment - test with various offsets
+        let original: Vec<u64> = vec![0x1234567890ABCDEF, 0xFEDCBA0987654321];
+        let original_bytes: &[u8] = bytemuck::cast_slice(&original);
+
+        // Add 3 bytes offset (not aligned for u64)
+        let mut bytes = vec![0u8; 3];
+        bytes.extend_from_slice(original_bytes);
+
+        let unaligned = &bytes[3..];
+        let result = GpuMemoryPool::cast_slice_safe::<u64>(unaligned, 2);
+        assert_eq!(result, vec![0x1234567890ABCDEFu64, 0xFEDCBA0987654321]);
+    }
+
+    #[test]
+    fn test_cast_slice_safe_empty() {
+        let bytes: &[u8] = &[];
+        let result = GpuMemoryPool::cast_slice_safe::<f32>(bytes, 0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_cast_slice_safe_single_element() {
+        let data: Vec<f32> = vec![42.5];
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+
+        let result = GpuMemoryPool::cast_slice_safe::<f32>(bytes, 1);
+        assert_eq!(result, vec![42.5f32]);
     }
 }

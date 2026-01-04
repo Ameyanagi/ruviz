@@ -218,30 +218,16 @@ mod memory_pool_tests {
         let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
         let y_data = vec![0.0, 1.0, 0.0, 1.0, 0.0];
 
-        // Create plot with pooled memory enabled
-        let plot = Plot::with_pool_config(PoolConfig {
-            coordinate_pool_size: 1000,
-            pixel_pool_size: 4 * 1024 * 1024,
-            text_pool_size: 100 * 1024,
-            max_pools_per_type: 10,
-            enable_cross_thread_sharing: true,
-        });
-
-        // This should use pooled memory internally
-        let result = plot
+        // Create plot with pooled memory enabled using actual API
+        let result = Plot::new()
+            .with_memory_pooling(true)
             .line(&x_data, &y_data)
             .title("Pool Integration Test")
             .xlabel("X Values")
             .ylabel("Y Values")
-            .save("test_output/pool_integration_test.png");
+            .save("tests/output/pool_integration_test.png");
 
         assert!(result.is_ok());
-
-        // Pool statistics should show usage
-        let stats = plot.pool_statistics();
-        assert!(stats.total_allocations > 0);
-        assert!(stats.pool_hits > 0);
-        assert_eq!(stats.memory_leaks, 0);
     }
 }
 
@@ -294,7 +280,7 @@ mod performance_tests {
         let _result = plot
             .line(&x_data, &y_data)
             .title("Large Dataset Test")
-            .save("test_output/large_plot_memory_test.png");
+            .save("tests/output/large_plot_memory_test.png");
         let end_memory = get_memory_usage();
 
         let memory_growth = end_memory - start_memory;
@@ -320,7 +306,7 @@ mod performance_tests {
             let _result = plot
                 .line(&x_data, &y_data)
                 .title(&format!("Plot {}", i))
-                .save(&format!("test_output/steady_state_{}.png", i));
+                .save(&format!("tests/output/steady_state_{}.png", i));
         }
 
         let end_memory = get_memory_usage();

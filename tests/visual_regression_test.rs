@@ -93,10 +93,10 @@ fn test_visual_regression_basic_line() -> std::result::Result<(), Box<dyn std::e
                 .title("Basic Line Plot")
                 .xlabel("X")
                 .ylabel("Y")
-                .save("test_output/vr_basic_line.png")?;
+                .save("tests/output/vr_basic_line.png")?;
             Ok(())
         },
-        "test_output/vr_basic_line.png",
+        "tests/output/vr_basic_line.png",
         "tests/golden_images/01_basic_line.png",
         0.5, // 0.5% tolerance for minor rendering differences
     )?;
@@ -123,10 +123,10 @@ fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std:
                 .xlabel("X")
                 .ylabel("Y")
                 .legend(Position::TopLeft)
-                .save("test_output/vr_multi_series.png")?;
+                .save("tests/output/vr_multi_series.png")?;
             Ok(())
         },
-        "test_output/vr_multi_series.png",
+        "tests/output/vr_multi_series.png",
         "tests/golden_images/02_multi_series.png",
         0.5,
     )?;
@@ -150,10 +150,10 @@ fn test_visual_regression_scatter() -> std::result::Result<(), Box<dyn std::erro
                 .title("Scatter Plot")
                 .xlabel("X")
                 .ylabel("Y")
-                .save("test_output/vr_scatter.png")?;
+                .save("tests/output/vr_scatter.png")?;
             Ok(())
         },
-        "test_output/vr_scatter.png",
+        "tests/output/vr_scatter.png",
         "tests/golden_images/03_scatter.png",
         0.5,
     )?;
@@ -174,10 +174,10 @@ fn test_visual_regression_bar_chart() -> std::result::Result<(), Box<dyn std::er
                 .bar(&categories, &values)
                 .title("Bar Chart")
                 .ylabel("Value")
-                .save("test_output/vr_bar_chart.png")?;
+                .save("tests/output/vr_bar_chart.png")?;
             Ok(())
         },
-        "test_output/vr_bar_chart.png",
+        "tests/output/vr_bar_chart.png",
         "tests/golden_images/04_bar_chart.png",
         0.5,
     )?;
@@ -201,10 +201,10 @@ fn test_visual_regression_histogram() -> std::result::Result<(), Box<dyn std::er
                 .title("Histogram")
                 .xlabel("Value")
                 .ylabel("Frequency")
-                .save("test_output/vr_histogram.png")?;
+                .save("tests/output/vr_histogram.png")?;
             Ok(())
         },
-        "test_output/vr_histogram.png",
+        "tests/output/vr_histogram.png",
         "tests/golden_images/05_histogram.png",
         0.5,
     )?;
@@ -224,10 +224,10 @@ fn test_visual_regression_boxplot() -> std::result::Result<(), Box<dyn std::erro
                 .boxplot(&data, None)
                 .title("Box Plot")
                 .ylabel("Value")
-                .save("test_output/vr_boxplot.png")?;
+                .save("tests/output/vr_boxplot.png")?;
             Ok(())
         },
-        "test_output/vr_boxplot.png",
+        "tests/output/vr_boxplot.png",
         "tests/golden_images/06_boxplot.png",
         0.5,
     )?;
@@ -257,10 +257,10 @@ fn test_visual_regression_themes() -> std::result::Result<(), Box<dyn std::error
                     .title(&format!("{} Theme", name.to_uppercase()))
                     .xlabel("X")
                     .ylabel("Y")
-                    .save(&format!("test_output/vr_theme_{}.png", name))?;
+                    .save(&format!("tests/output/vr_theme_{}.png", name))?;
                 Ok(())
             },
-            &format!("test_output/vr_theme_{}.png", name),
+            &format!("tests/output/vr_theme_{}.png", name),
             &format!("tests/golden_images/0{}_theme_{}.png", idx, name),
             0.5,
         )?;
@@ -283,10 +283,10 @@ fn test_visual_regression_unicode() -> std::result::Result<(), Box<dyn std::erro
                 .title("Unicode: α β γ δ ε θ λ π σ ω")
                 .xlabel("Température (°C)")
                 .ylabel("Résultat")
-                .save("test_output/vr_unicode.png")?;
+                .save("tests/output/vr_unicode.png")?;
             Ok(())
         },
-        "test_output/vr_unicode.png",
+        "tests/output/vr_unicode.png",
         "tests/golden_images/24_unicode.png",
         0.5,
     )?;
@@ -307,10 +307,10 @@ fn test_visual_regression_dimensions() -> std::result::Result<(), Box<dyn std::e
                 .dimensions(1200, 900)
                 .line(&x, &y)
                 .title("Custom Dimensions")
-                .save("test_output/vr_custom_dimensions.png")?;
+                .save("tests/output/vr_custom_dimensions.png")?;
             Ok(())
         },
-        "test_output/vr_custom_dimensions.png",
+        "tests/output/vr_custom_dimensions.png",
         "tests/golden_images/14_custom_dimensions.png",
         0.5,
     )?;

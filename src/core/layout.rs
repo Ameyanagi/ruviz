@@ -177,7 +177,7 @@ pub struct LayoutConfig {
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
-            edge_buffer_pt: 8.0,      // Professional edge buffer from canvas edges
+            edge_buffer_pt: 8.0, // Professional edge buffer from canvas edges
             center_plot: true,
             max_margin_fraction: 0.4, // Max 40% of dimension for any margin
         }
@@ -481,15 +481,23 @@ mod tests {
         // With centering enabled, right margin should equal left margin
         // This centers the chart area itself in the canvas
         let margin_diff = (layout.margins.right - layout.margins.left).abs();
-        assert!(margin_diff < 1.0, "Margins should be equal: left={}, right={}",
-                layout.margins.left, layout.margins.right);
+        assert!(
+            margin_diff < 1.0,
+            "Margins should be equal: left={}, right={}",
+            layout.margins.left,
+            layout.margins.right
+        );
 
         // Plot center should be at canvas center
         let plot_center = layout.plot_area.center_x();
         let canvas_center = 640.0 / 2.0;
         let center_diff = (plot_center - canvas_center).abs();
-        assert!(center_diff < 1.0, "Plot should be centered: plot_center={}, canvas_center={}",
-                plot_center, canvas_center);
+        assert!(
+            center_diff < 1.0,
+            "Plot should be centered: plot_center={}, canvas_center={}",
+            plot_center,
+            canvas_center
+        );
     }
 
     #[test]
@@ -625,5 +633,4 @@ mod tests {
         let diff = (ratio_100 - ratio_200).abs() / ratio_100;
         assert!(diff < 0.2, "DPI scaling ratio diff: {}", diff);
     }
-
 }

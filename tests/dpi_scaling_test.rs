@@ -8,7 +8,7 @@ use std::fs;
 
 /// Setup test output directory
 fn setup_test_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("test_output")?;
+    fs::create_dir_all("tests/output")?;
     Ok(())
 }
 
@@ -31,25 +31,25 @@ fn test_dpi_scaling_produces_different_file_sizes()
     base_plot
         .clone()
         .dpi(96)
-        .save("test_output/dpi_scaling_96_test.png")?; // Screen
+        .save("tests/output/dpi_scaling_96_test.png")?; // Screen
     base_plot
         .clone()
         .dpi(150)
-        .save("test_output/dpi_scaling_150_test.png")?; // Web  
+        .save("tests/output/dpi_scaling_150_test.png")?; // Web  
     base_plot
         .clone()
         .dpi(300)
-        .save("test_output/dpi_scaling_300_test.png")?; // Print
+        .save("tests/output/dpi_scaling_300_test.png")?; // Print
     base_plot
         .clone()
         .dpi(600)
-        .save("test_output/dpi_scaling_600_test.png")?; // IEEE
+        .save("tests/output/dpi_scaling_600_test.png")?; // IEEE
 
     // Get file sizes
-    let size_96 = fs::metadata("test_output/dpi_scaling_96_test.png")?.len();
-    let size_150 = fs::metadata("test_output/dpi_scaling_150_test.png")?.len();
-    let size_300 = fs::metadata("test_output/dpi_scaling_300_test.png")?.len();
-    let size_600 = fs::metadata("test_output/dpi_scaling_600_test.png")?.len();
+    let size_96 = fs::metadata("tests/output/dpi_scaling_96_test.png")?.len();
+    let size_150 = fs::metadata("tests/output/dpi_scaling_150_test.png")?.len();
+    let size_300 = fs::metadata("tests/output/dpi_scaling_300_test.png")?.len();
+    let size_600 = fs::metadata("tests/output/dpi_scaling_600_test.png")?.len();
 
     println!(
         "File sizes - 96 DPI: {} bytes, 150 DPI: {} bytes, 300 DPI: {} bytes, 600 DPI: {} bytes",
@@ -110,17 +110,17 @@ fn test_dpi_canvas_size_scaling() -> std::result::Result<(), Box<dyn std::error:
 
     plot.clone()
         .dpi(96)
-        .save("test_output/canvas_96_test.png")?;
+        .save("tests/output/canvas_96_test.png")?;
     plot.clone()
         .dpi(192)
-        .save("test_output/canvas_192_test.png")?;
+        .save("tests/output/canvas_192_test.png")?;
     plot.clone()
         .dpi(288)
-        .save("test_output/canvas_288_test.png")?;
+        .save("tests/output/canvas_288_test.png")?;
 
-    let size_96 = fs::metadata("test_output/canvas_96_test.png")?.len();
-    let size_192 = fs::metadata("test_output/canvas_192_test.png")?.len();
-    let size_288 = fs::metadata("test_output/canvas_288_test.png")?.len();
+    let size_96 = fs::metadata("tests/output/canvas_96_test.png")?.len();
+    let size_192 = fs::metadata("tests/output/canvas_192_test.png")?.len();
+    let size_288 = fs::metadata("tests/output/canvas_288_test.png")?.len();
 
     println!(
         "Canvas sizes - 96 DPI: {} bytes, 192 DPI: {} bytes, 288 DPI: {} bytes",
@@ -164,13 +164,13 @@ fn test_dpi_font_scaling_consistency() -> std::result::Result<(), Box<dyn std::e
         .line(&x_data, &y_data);
 
     // Test font consistency across DPI
-    plot.clone().dpi(96).save("test_output/font_96_test.png")?;
+    plot.clone().dpi(96).save("tests/output/font_96_test.png")?;
     plot.clone()
         .dpi(300)
-        .save("test_output/font_300_test.png")?;
+        .save("tests/output/font_300_test.png")?;
 
-    let size_96 = fs::metadata("test_output/font_96_test.png")?.len();
-    let size_300 = fs::metadata("test_output/font_300_test.png")?.len();
+    let size_96 = fs::metadata("tests/output/font_96_test.png")?.len();
+    let size_300 = fs::metadata("tests/output/font_300_test.png")?.len();
 
     // Font scaling should contribute to file size increase
     let font_scaling_ratio = size_300 as f64 / size_96 as f64;

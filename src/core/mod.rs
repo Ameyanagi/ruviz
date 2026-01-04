@@ -1,8 +1,10 @@
 //! Core plotting functionality and main API
 
+pub mod annotation;
 pub mod config;
 pub mod error;
 pub mod layout;
+pub mod legend;
 pub mod plot;
 pub mod position;
 pub mod style;
@@ -10,6 +12,10 @@ pub mod subplot;
 pub mod types;
 pub mod units;
 
+pub use annotation::{
+    Annotation, ArrowHead, ArrowStyle, FillStyle, HatchPattern, ShapeStyle, TextAlign, TextStyle,
+    TextVAlign,
+};
 pub use config::{
     ComputedMargins, FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig,
     TypographyConfig,
@@ -18,6 +24,10 @@ pub use error::{PlottingError, Result};
 pub use layout::{
     ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, PlotContent, PlotLayout,
     TextPosition,
+};
+pub use legend::{
+    Legend, LegendAnchor, LegendFrame, LegendItem, LegendItemType, LegendPosition, LegendSpacing,
+    LegendSpacingPixels, find_best_position,
 };
 pub use plot::{BackendType, Plot};
 pub use position::Position;

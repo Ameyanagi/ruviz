@@ -51,7 +51,7 @@ fn test_professional_histogram() -> Result<(), Box<dyn std::error::Error>> {
         .histogram(&data, None)
         .end_series()
         .theme(Theme::publication())
-        .save("test_output/professional_histogram.png")?;
+        .save("examples/output/professional_histogram.png")?;
 
     println!("   ✅ Professional histogram saved");
     Ok(())
@@ -75,7 +75,7 @@ fn test_professional_bar_plot() -> Result<(), Box<dyn std::error::Error>> {
         .bar(&categories, &sales)
         .end_series()
         .theme(Theme::publication())
-        .save("test_output/professional_bar_plot.png")?;
+        .save("examples/output/professional_bar_plot.png")?;
 
     println!("   ✅ Professional bar plot saved");
     Ok(())
@@ -97,7 +97,7 @@ fn test_axis_limits() -> Result<(), Box<dyn std::error::Error>> {
         .end_series()
         .legend(Position::TopLeft)
         .theme(Theme::publication())
-        .save("test_output/manual_axis_limits.png")?;
+        .save("examples/output/manual_axis_limits.png")?;
 
     println!("   ✅ Manual axis limits test saved");
     Ok(())

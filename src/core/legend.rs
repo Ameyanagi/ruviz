@@ -205,15 +205,9 @@ pub struct LegendItem {
 #[derive(Debug, Clone)]
 pub enum LegendItemType {
     /// Line plot - draw a short line segment
-    Line {
-        style: LineStyle,
-        width: f32,
-    },
+    Line { style: LineStyle, width: f32 },
     /// Scatter plot - draw the marker
-    Scatter {
-        marker: MarkerStyle,
-        size: f32,
-    },
+    Scatter { marker: MarkerStyle, size: f32 },
     /// Line plot with markers - draw line segment with marker at center
     LineMarker {
         line_style: LineStyle,
@@ -224,9 +218,7 @@ pub enum LegendItemType {
     /// Bar chart - draw a filled rectangle
     Bar,
     /// Area/fill - draw a filled rectangle with optional edge
-    Area {
-        edge_color: Option<Color>,
-    },
+    Area { edge_color: Option<Color> },
     /// Histogram - same as bar
     Histogram,
     /// Error bars - draw line with error bar caps
@@ -350,13 +342,13 @@ pub struct LegendSpacing {
 impl Default for LegendSpacing {
     fn default() -> Self {
         Self {
-            handle_length: 2.0,      // 20px at 10pt - good handle length
-            handle_height: 0.7,      // 7px at 10pt - marker/line height
-            handle_text_pad: 1.0,    // 10px at 10pt - gap between handle and text
-            label_spacing: 0.7,      // 7px at 10pt - vertical gap between items
-            border_pad: 0.6,         // 6px at 10pt - padding inside frame
-            border_axes_pad: 1.0,    // 10px at 10pt - gap from plot axes
-            column_spacing: 2.0,     // 20px at 10pt - gap between columns
+            handle_length: 2.0,   // 20px at 10pt - good handle length
+            handle_height: 0.7,   // 7px at 10pt - marker/line height
+            handle_text_pad: 1.0, // 10px at 10pt - gap between handle and text
+            label_spacing: 0.7,   // 7px at 10pt - vertical gap between items
+            border_pad: 0.6,      // 6px at 10pt - padding inside frame
+            border_axes_pad: 1.0, // 10px at 10pt - gap from plot axes
+            column_spacing: 2.0,  // 20px at 10pt - gap between columns
         }
     }
 }
@@ -580,11 +572,7 @@ impl Legend {
         let spacing_px = self.spacing.to_pixels(self.font_size);
 
         // Find max label width (approximate)
-        let max_label_len = items
-            .iter()
-            .map(|item| item.label.len())
-            .max()
-            .unwrap_or(0);
+        let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
 
         let label_width = max_label_len as f32 * char_width;
         let item_width = spacing_px.handle_length + spacing_px.handle_text_pad + label_width;
@@ -636,9 +624,7 @@ impl Legend {
                 // Default to upper right, actual best calculation done separately
                 (right - width - pad, top + pad)
             }
-            LegendPosition::UpperRight | LegendPosition::Right => {
-                (right - width - pad, top + pad)
-            }
+            LegendPosition::UpperRight | LegendPosition::Right => (right - width - pad, top + pad),
             LegendPosition::UpperLeft => (left + pad, top + pad),
             LegendPosition::LowerLeft => (left + pad, bottom - height - pad),
             LegendPosition::LowerRight => (right - width - pad, bottom - height - pad),
@@ -755,10 +741,7 @@ fn calculate_total_overlap(
 }
 
 /// Calculate overlap area between two bounding boxes
-fn calculate_bbox_overlap(
-    bbox1: (f32, f32, f32, f32),
-    bbox2: (f32, f32, f32, f32),
-) -> f32 {
+fn calculate_bbox_overlap(bbox1: (f32, f32, f32, f32), bbox2: (f32, f32, f32, f32)) -> f32 {
     let (l1, t1, r1, b1) = bbox1;
     let (l2, t2, r2, b2) = bbox2;
 
@@ -807,9 +790,9 @@ mod tests {
         let spacing = LegendSpacing::default();
         let pixels = spacing.to_pixels(10.0);
 
-        assert!((pixels.handle_length - 20.0).abs() < 0.001);  // 2.0 * 10
-        assert!((pixels.label_spacing - 7.0).abs() < 0.001);   // 0.7 * 10
-        assert!((pixels.border_pad - 6.0).abs() < 0.001);      // 0.6 * 10
+        assert!((pixels.handle_length - 20.0).abs() < 0.001); // 2.0 * 10
+        assert!((pixels.label_spacing - 7.0).abs() < 0.001); // 0.7 * 10
+        assert!((pixels.border_pad - 6.0).abs() < 0.001); // 0.6 * 10
         assert!((pixels.handle_text_pad - 10.0).abs() < 0.001); // 1.0 * 10
         assert!((pixels.border_axes_pad - 10.0).abs() < 0.001); // 1.0 * 10
     }

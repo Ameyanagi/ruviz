@@ -58,7 +58,7 @@ fn test_auto_optimize_is_fluent() {
         .line(&x, &y)
         .auto_optimize()
         .title("Test")
-        .save("test_output/auto_optimize_fluent.png");
+        .save("tests/output/auto_optimize_fluent.png");
 
     assert!(result.is_ok());
 }

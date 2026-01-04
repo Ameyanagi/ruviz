@@ -8,7 +8,7 @@ use std::fs;
 
 /// Setup test output directory
 fn setup_test_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("test_output")?;
+    fs::create_dir_all("tests/output")?;
     Ok(())
 }
 
@@ -32,20 +32,20 @@ fn test_dpi_font_scaling_visual_consistency() -> std::result::Result<(), Box<dyn
     base_plot
         .clone()
         .dpi(96)
-        .save("test_output/font_scale_96_test.png")?; // 1x scale
+        .save("tests/output/font_scale_96_test.png")?; // 1x scale
     base_plot
         .clone()
         .dpi(192)
-        .save("test_output/font_scale_192_test.png")?; // 2x scale
+        .save("tests/output/font_scale_192_test.png")?; // 2x scale
     base_plot
         .clone()
         .dpi(288)
-        .save("test_output/font_scale_288_test.png")?; // 3x scale
+        .save("tests/output/font_scale_288_test.png")?; // 3x scale
 
     // Verify file sizes increase due to scaled typography
-    let size_96 = fs::metadata("test_output/font_scale_96_test.png")?.len();
-    let size_192 = fs::metadata("test_output/font_scale_192_test.png")?.len();
-    let size_288 = fs::metadata("test_output/font_scale_288_test.png")?.len();
+    let size_96 = fs::metadata("tests/output/font_scale_96_test.png")?.len();
+    let size_192 = fs::metadata("tests/output/font_scale_192_test.png")?.len();
+    let size_288 = fs::metadata("tests/output/font_scale_288_test.png")?.len();
 
     println!(
         "Font scaling sizes - 96 DPI: {} bytes, 192 DPI: {} bytes, 288 DPI: {} bytes",
@@ -93,14 +93,14 @@ fn test_dpi_line_width_scaling() -> std::result::Result<(), Box<dyn std::error::
     base_plot
         .clone()
         .dpi(96)
-        .save("test_output/line_width_96_test.png")?; // Base line width
+        .save("tests/output/line_width_96_test.png")?; // Base line width
     base_plot
         .clone()
         .dpi(300)
-        .save("test_output/line_width_300_test.png")?; // Scaled line width
+        .save("tests/output/line_width_300_test.png")?; // Scaled line width
 
-    let size_96 = fs::metadata("test_output/line_width_96_test.png")?.len();
-    let size_300 = fs::metadata("test_output/line_width_300_test.png")?.len();
+    let size_96 = fs::metadata("tests/output/line_width_96_test.png")?.len();
+    let size_300 = fs::metadata("tests/output/line_width_300_test.png")?.len();
 
     // Line width scaling should contribute to file size differences
     let line_width_ratio = size_300 as f64 / size_96 as f64;
@@ -139,16 +139,16 @@ fn test_publication_dpi_typography_standards() -> std::result::Result<(), Box<dy
     ieee_plot
         .clone()
         .dpi(600)
-        .save("test_output/ieee_typography_600_test.png")?;
+        .save("tests/output/ieee_typography_600_test.png")?;
 
     // Test Nature/Science 300 DPI standard
     ieee_plot
         .clone()
         .dpi(300)
-        .save("test_output/nature_typography_300_test.png")?;
+        .save("tests/output/nature_typography_300_test.png")?;
 
-    let ieee_size = fs::metadata("test_output/ieee_typography_600_test.png")?.len();
-    let nature_size = fs::metadata("test_output/nature_typography_300_test.png")?.len();
+    let ieee_size = fs::metadata("tests/output/ieee_typography_600_test.png")?.len();
+    let nature_size = fs::metadata("tests/output/nature_typography_300_test.png")?.len();
 
     // Publication standards should produce significantly large, high-quality files
     let publication_ratio = ieee_size as f64 / nature_size as f64;
@@ -195,19 +195,19 @@ fn test_font_line_ratio_consistency() -> std::result::Result<(), Box<dyn std::er
     ratio_plot
         .clone()
         .dpi(96)
-        .save("test_output/ratio_96_test.png")?;
+        .save("tests/output/ratio_96_test.png")?;
     ratio_plot
         .clone()
         .dpi(150)
-        .save("test_output/ratio_150_test.png")?;
+        .save("tests/output/ratio_150_test.png")?;
     ratio_plot
         .clone()
         .dpi(300)
-        .save("test_output/ratio_300_test.png")?;
+        .save("tests/output/ratio_300_test.png")?;
 
-    let size_96 = fs::metadata("test_output/ratio_96_test.png")?.len();
-    let size_150 = fs::metadata("test_output/ratio_150_test.png")?.len();
-    let size_300 = fs::metadata("test_output/ratio_300_test.png")?.len();
+    let size_96 = fs::metadata("tests/output/ratio_96_test.png")?.len();
+    let size_150 = fs::metadata("tests/output/ratio_150_test.png")?.len();
+    let size_300 = fs::metadata("tests/output/ratio_300_test.png")?.len();
 
     // Calculate scaling ratios to verify consistency
     let ratio_150_96 = size_150 as f64 / size_96 as f64;
