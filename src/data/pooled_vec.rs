@@ -5,7 +5,7 @@ use std::slice::{Iter, IterMut};
 use super::memory_pool::{PooledBuffer, SharedMemoryPool};
 
 /// A Vec-like container that uses pooled memory for efficient allocation
-/// Provides the same interface as Vec<T> but with memory pool backing
+/// Provides the same interface as `Vec<T>` but with memory pool backing
 pub struct PooledVec<T> {
     /// The underlying pooled buffer
     buffer: PooledBuffer<T>,

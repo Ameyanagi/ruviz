@@ -1,0 +1,4 @@
+Resolution: 400x300
+Megapixels: 0.1
+File size: 480000 bytes
+Format: RGBA
