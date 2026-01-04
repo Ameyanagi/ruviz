@@ -128,7 +128,7 @@ impl CosmicTextRenderer {
         Ok(())
     }
 
-    /// Render text rotated 90 degrees counterclockwise
+    /// Render text rotated 90 degrees counterclockwise with 2x supersampling for anti-aliasing
     pub fn render_text_rotated(
         &mut self,
         pixmap: &mut Pixmap,
@@ -138,6 +138,10 @@ impl CosmicTextRenderer {
         font_size: f32,
         color: Color,
     ) -> Result<()> {
+        // Use 2x supersampling for smooth rotated text
+        let supersample_scale = 2.0_f32;
+        let hi_res_font_size = font_size * supersample_scale;
+
         let mut font_system = get_font_system()
             .lock()
             .map_err(|e| PlottingError::RenderError(format!("Failed to lock FontSystem: {}", e)))?;
@@ -146,13 +150,13 @@ impl CosmicTextRenderer {
             .lock()
             .map_err(|e| PlottingError::RenderError(format!("Failed to lock SwashCache: {}", e)))?;
 
-        let metrics = Metrics::new(font_size, font_size * 1.2);
+        let metrics = Metrics::new(hi_res_font_size, hi_res_font_size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
 
-        let dpi_scale = font_size / 12.0;
+        let dpi_scale = hi_res_font_size / 12.0;
         let text_length_factor = (text.len() as f32).max(4.0);
-        let buffer_width = (text_length_factor * font_size * 2.5 * dpi_scale).max(800.0);
-        let buffer_height = (font_size * 6.0 * dpi_scale).max(180.0);
+        let buffer_width = (text_length_factor * hi_res_font_size * 2.5 * dpi_scale).max(1600.0);
+        let buffer_height = (hi_res_font_size * 6.0 * dpi_scale).max(360.0);
 
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
@@ -179,7 +183,7 @@ impl CosmicTextRenderer {
 
                 min_x = min_x.min(gx);
                 min_y = min_y.min(gy);
-                max_x = max_x.max(gx + 20.0);
+                max_x = max_x.max(gx + 20.0 * supersample_scale);
                 max_y = max_y.max(gy + run.line_height);
             }
         }
@@ -187,8 +191,8 @@ impl CosmicTextRenderer {
         if min_x == f32::MAX {
             min_x = 0.0;
             min_y = 0.0;
-            max_x = text.len() as f32 * font_size * 0.6;
-            max_y = font_size * 1.2;
+            max_x = text.len() as f32 * hi_res_font_size * 0.6;
+            max_y = hi_res_font_size * 1.2;
         }
 
         let padding = 30.0 * dpi_scale;
@@ -200,7 +204,7 @@ impl CosmicTextRenderer {
         let text_width = (max_x - min_x).ceil().max(1.0) as u32;
         let text_height = (max_y - min_y).ceil().max(1.0) as u32;
 
-        // Create temporary pixmap for horizontal text
+        // Create temporary pixmap for horizontal text at high resolution
         let mut temp_pixmap = Pixmap::new(text_width, text_height).ok_or_else(|| {
             PlottingError::RenderError("Failed to create temp pixmap".to_string())
         })?;
@@ -208,7 +212,7 @@ impl CosmicTextRenderer {
 
         let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
 
-        // Render to temporary pixmap
+        // Render to temporary pixmap at high resolution
         for run in buffer.layout_runs() {
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((0., 0.), 1.0);
@@ -248,7 +252,7 @@ impl CosmicTextRenderer {
             }
         }
 
-        // Apply 90° counterclockwise rotation
+        // Apply 90° counterclockwise rotation at high resolution
         let rotated_width = text_height;
         let rotated_height = text_width;
 
@@ -275,24 +279,76 @@ impl CosmicTextRenderer {
             }
         }
 
-        // Draw rotated text to main pixmap
+        // Downsample rotated pixmap with bilinear filtering for anti-aliasing
+        let scale = supersample_scale as u32;
+        let final_width = (rotated_width / scale).max(1);
+        let final_height = (rotated_height / scale).max(1);
+
+        let mut final_pixmap = Pixmap::new(final_width, final_height).ok_or_else(|| {
+            PlottingError::RenderError("Failed to create final pixmap".to_string())
+        })?;
+        final_pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+        // Bilinear downsampling (average 2x2 blocks)
+        for fy in 0..final_height {
+            for fx in 0..final_width {
+                let mut r_sum = 0u32;
+                let mut g_sum = 0u32;
+                let mut b_sum = 0u32;
+                let mut a_sum = 0u32;
+                let mut count = 0u32;
+
+                // Sample 2x2 block from high-res image
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let src_x = fx * scale + dx;
+                        let src_y = fy * scale + dy;
+                        if src_x < rotated_width && src_y < rotated_height {
+                            let src_idx = src_y as usize * rotated_width as usize + src_x as usize;
+                            let pixel = rotated_pixmap.pixels()[src_idx];
+                            r_sum += pixel.red() as u32;
+                            g_sum += pixel.green() as u32;
+                            b_sum += pixel.blue() as u32;
+                            a_sum += pixel.alpha() as u32;
+                            count += 1;
+                        }
+                    }
+                }
+
+                if count > 0 && a_sum > 0 {
+                    let r = (r_sum / count) as u8;
+                    let g = (g_sum / count) as u8;
+                    let b = (b_sum / count) as u8;
+                    let a = (a_sum / count) as u8;
+
+                    if let Some(pixel) = PremultipliedColorU8::from_rgba(r, g, b, a) {
+                        let dst_idx = fy as usize * final_width as usize + fx as usize;
+                        if dst_idx < final_pixmap.pixels().len() {
+                            final_pixmap.pixels_mut()[dst_idx] = pixel;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw downsampled rotated text to main pixmap
         let canvas_width = pixmap.width();
         let canvas_height = pixmap.height();
 
-        let margin_x = (rotated_width / 2) as i32;
-        let margin_y = (rotated_height / 2) as i32;
+        let margin_x = (final_width / 2) as i32;
+        let margin_y = (final_height / 2) as i32;
 
         let target_x = (x as i32 - margin_x)
             .max(0)
-            .min((canvas_width as i32) - (rotated_width as i32));
+            .min((canvas_width as i32) - (final_width as i32));
         let target_y = (y as i32 - margin_y)
             .max(0)
-            .min((canvas_height as i32) - (rotated_height as i32));
+            .min((canvas_height as i32) - (final_height as i32));
 
-        for py in 0..rotated_height {
-            for px in 0..rotated_width {
+        for py in 0..final_height {
+            for px in 0..final_width {
                 let src_pixel =
-                    rotated_pixmap.pixels()[py as usize * rotated_width as usize + px as usize];
+                    final_pixmap.pixels()[py as usize * final_width as usize + px as usize];
                 if src_pixel.alpha() > 0 {
                     let final_x = target_x + px as i32;
                     let final_y = target_y + py as i32;
@@ -304,7 +360,30 @@ impl CosmicTextRenderer {
                     {
                         let pixmap_idx = (final_y as u32 * canvas_width + final_x as u32) as usize;
                         if pixmap_idx < pixmap.pixels().len() {
-                            pixmap.pixels_mut()[pixmap_idx] = src_pixel;
+                            // Alpha blend with existing pixel
+                            let dst_pixel = pixmap.pixels()[pixmap_idx];
+                            let src_a = src_pixel.alpha() as f32 / 255.0;
+                            let dst_a = dst_pixel.alpha() as f32 / 255.0;
+                            let out_a = src_a + dst_a * (1.0 - src_a);
+
+                            if out_a > 0.0 {
+                                let out_r = ((src_pixel.red() as f32 * src_a
+                                    + dst_pixel.red() as f32 * dst_a * (1.0 - src_a))
+                                    / out_a) as u8;
+                                let out_g = ((src_pixel.green() as f32 * src_a
+                                    + dst_pixel.green() as f32 * dst_a * (1.0 - src_a))
+                                    / out_a) as u8;
+                                let out_b = ((src_pixel.blue() as f32 * src_a
+                                    + dst_pixel.blue() as f32 * dst_a * (1.0 - src_a))
+                                    / out_a) as u8;
+                                let out_a_u8 = (out_a * 255.0) as u8;
+
+                                if let Some(blended) =
+                                    PremultipliedColorU8::from_rgba(out_r, out_g, out_b, out_a_u8)
+                                {
+                                    pixmap.pixels_mut()[pixmap_idx] = blended;
+                                }
+                            }
                         }
                     }
                 }
