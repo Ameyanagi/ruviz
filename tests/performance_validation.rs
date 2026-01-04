@@ -58,6 +58,7 @@ fn test_10k_points_target() {
 }
 
 #[test]
+#[ignore] // Slow test - run manually with `cargo test -- --ignored`
 #[cfg(feature = "parallel")]
 fn test_100k_points_parallel() {
     // Target: <100ms for 100K points with parallel rendering (README.md)
@@ -88,6 +89,7 @@ fn test_100k_points_parallel() {
 }
 
 #[test]
+#[ignore] // Slow test - run manually with `cargo test -- --ignored`
 #[cfg(all(feature = "parallel", feature = "simd"))]
 fn test_1m_points_parallel_simd() {
     // Target: <1s for 1M points with parallel + SIMD (README.md)

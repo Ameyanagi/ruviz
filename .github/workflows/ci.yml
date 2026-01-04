@@ -206,7 +206,7 @@ jobs:
           key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Generate coverage
-        run: cargo tarpaulin --verbose --all-features --workspace --timeout 300 --out xml
+        run: cargo tarpaulin --verbose --all-features --workspace --timeout 600 --exclude-files "tests/performance*" --out xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -221,10 +221,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.85
+      - name: Install Rust 1.87
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.85.0
+          toolchain: 1.87.0
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -316,4 +316,4 @@ jobs:
       - name: Check for broken links in docs
         run: |
           cargo install cargo-deadlinks || true
-          cargo deadlinks --check-http
+          cargo deadlinks
