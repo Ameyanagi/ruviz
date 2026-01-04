@@ -124,6 +124,12 @@ impl Rectangle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PlotId(pub u64);
 
+impl Default for PlotId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlotId {
     pub fn new() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};

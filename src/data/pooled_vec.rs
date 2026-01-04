@@ -1,9 +1,8 @@
 use std::fmt;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::slice::{Iter, IterMut};
-use std::sync::{Arc, Mutex};
 
-use super::memory_pool::{MemoryPool, PooledBuffer, SharedMemoryPool};
+use super::memory_pool::{PooledBuffer, SharedMemoryPool};
 
 /// A Vec-like container that uses pooled memory for efficient allocation
 /// Provides the same interface as Vec<T> but with memory pool backing
@@ -192,12 +191,12 @@ impl<T> PooledVec<T> {
     }
 
     /// Get an iterator over the elements
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<'_, T> {
         self.as_slice().iter()
     }
 
     /// Get a mutable iterator over the elements
-    pub fn iter_mut(&mut self) -> IterMut<T> {
+    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
         self.as_mut_slice().iter_mut()
     }
 
@@ -212,7 +211,7 @@ impl<T> PooledVec<T> {
         let new_capacity = min_capacity.max(self.capacity() * 2);
 
         // Get a new larger buffer from the pool
-        let mut new_buffer = self.pool.acquire(new_capacity);
+        let new_buffer = self.pool.acquire(new_capacity);
 
         // Copy existing elements to the new buffer
         unsafe {

@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     println!("===========================\n");
 
     // Initialize renderers
-    let mut cpu_renderer = PooledRenderer::new();
+    let cpu_renderer = PooledRenderer::new();
     println!("✅ CPU Renderer ready");
 
     let mut gpu_renderer = match initialize_gpu_backend().await {

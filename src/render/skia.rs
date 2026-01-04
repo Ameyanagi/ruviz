@@ -661,9 +661,9 @@ impl SkiaRenderer {
 
             // tiny-skia uses premultiplied alpha BGRA format
             let alpha_f = a as f32 / 255.0;
-            let premult_r = ((r as f32 * alpha_f) as u8);
-            let premult_g = ((g as f32 * alpha_f) as u8);
-            let premult_b = ((b as f32 * alpha_f) as u8);
+            let premult_r = (r as f32 * alpha_f) as u8;
+            let premult_g = (g as f32 * alpha_f) as u8;
+            let premult_b = (b as f32 * alpha_f) as u8;
 
             // BGRA order for tiny-skia
             pixmap_data[i * 4] = premult_b;
@@ -1557,7 +1557,7 @@ impl SkiaRenderer {
     ) -> Result<()> {
         // Draw marker at center of handle area
         let center_x = x + length / 2.0;
-        self.draw_marker(center_x, y, size, marker.clone(), color)
+        self.draw_marker(center_x, y, size, *marker, color)
     }
 
     /// Draw a bar handle in the legend
@@ -1903,7 +1903,7 @@ impl SkiaRenderer {
         )?;
 
         // Starting position for items (inside padding)
-        let mut item_x = legend_x + spacing.border_pad;
+        let item_x = legend_x + spacing.border_pad;
         let mut item_y = legend_y + spacing.border_pad + legend.font_size / 2.0;
 
         // Draw title if present
@@ -2051,12 +2051,9 @@ impl SkiaRenderer {
 
     /// Save the current pixmap as PNG
     pub fn save_png<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        self.pixmap.save_png(path).map_err(|_| {
-            PlottingError::IoError(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to save PNG",
-            ))
-        })
+        self.pixmap
+            .save_png(path)
+            .map_err(|_| PlottingError::IoError(std::io::Error::other("Failed to save PNG")))
     }
 
     /// Export as SVG (simplified - tiny-skia doesn't directly support SVG export)

@@ -1,7 +1,7 @@
 //! Test for bar chart category labels and Y-axis alignment fixes
 use ruviz::prelude::*;
 
-fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::std::result::Result<(), Box<dyn std::error::Error>> {
     // Test 1: Bar chart with categories
     println!("Testing bar chart with categories...");
 

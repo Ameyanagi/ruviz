@@ -1,6 +1,6 @@
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🎯 Testing DPI Title Rendering");
     println!("==============================\n");
 

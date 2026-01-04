@@ -4,7 +4,7 @@ use std::time::Instant;
 use std::fs;
 // Removed rand dependency - using deterministic data generation for consistent publication images
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🖼️ RuViz Image Gallery Generator");
     println!("=================================");
     
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn generate_basic_plots() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_basic_plots() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("📊 Generating publication-quality basic plots...");
     
     // Publication settings: 1200x900 at 300 DPI for crisp print quality
@@ -89,7 +89,7 @@ fn generate_basic_plots() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn generate_parallel_examples() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_parallel_examples() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🧵 Generating publication-quality parallel rendering examples...");
     
     let width = 1200u32;
@@ -148,7 +148,7 @@ fn generate_parallel_examples() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn generate_datashader_examples() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_datashader_examples() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🎯 Generating publication-quality DataShader examples...");
     
     let width = 1200u32;
@@ -245,7 +245,7 @@ fn generate_datashader_examples() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn generate_theme_examples() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_theme_examples() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🎨 Generating publication-quality theme variations...");
     
     let width = 1200u32;
@@ -332,7 +332,7 @@ fn generate_theme_examples() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn generate_performance_examples() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_performance_examples() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("⚡ Generating publication-quality performance scaling examples...");
     
     let width = 1200u32;

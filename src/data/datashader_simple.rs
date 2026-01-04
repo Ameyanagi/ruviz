@@ -249,6 +249,12 @@ pub struct DataShader {
     canvas: DataShaderCanvas,
 }
 
+impl Default for DataShader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataShader {
     /// Create new DataShader with default canvas size
     pub fn new() -> Self {

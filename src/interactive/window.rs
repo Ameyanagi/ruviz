@@ -8,7 +8,6 @@ use crate::{
     interactive::{
         event::{
             EventHandler, EventProcessor, InteractionEvent, MouseButton, Point2D, RawInputEvent,
-            Vector2D,
         },
         renderer::RealTimeRenderer,
         state::InteractionState,
@@ -18,14 +17,14 @@ use crate::{
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
-    event::{ElementState, Event, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent},
+    event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes, WindowId},
 };
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -522,7 +521,7 @@ impl InteractiveWindowBuilder {
     }
 
     pub async fn build(self, plot: Plot) -> Result<InteractiveWindow> {
-        let mut window = InteractiveWindow::new(plot, &self.title, self.width, self.height).await?;
+        let window = InteractiveWindow::new(plot, &self.title, self.width, self.height).await?;
 
         // Apply builder settings
         // Note: Some settings like resizable/decorations would be applied

@@ -258,7 +258,7 @@ fn test_grid_disabled() -> std::result::Result<(), Box<dyn std::error::Error>> {
 fn test_custom_dimensions() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
 
-    let x_data = vec![1.0, 2.0, 3.0, 4.0];
+    let x_data = [1.0, 2.0, 3.0, 4.0];
     let y_data = vec![100.0, 150.0, 120.0, 180.0];
 
     let plot = Plot::new()

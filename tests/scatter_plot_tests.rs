@@ -50,7 +50,7 @@ fn test_scatter_plot_different_dpi() {
             .xlabel("X Axis")
             .ylabel("Y Axis")
             .scatter(&x_data, &y_data)
-            .save(&format!("tests/output/{}", filename));
+            .save(format!("tests/output/{}", filename));
 
         assert!(
             result.is_ok(),

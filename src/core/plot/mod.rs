@@ -120,7 +120,7 @@ impl PlotSeries {
         let color = self.color.unwrap_or(default_color);
         let line_width = self.line_width.unwrap_or(theme.line_width);
         let line_style = self.line_style.clone().unwrap_or(LineStyle::Solid);
-        let marker_style = self.marker_style.clone().unwrap_or(MarkerStyle::Circle);
+        let marker_style = self.marker_style.unwrap_or(MarkerStyle::Circle);
         let marker_size = self.marker_size.unwrap_or(6.0);
 
         let item_type = match &self.series_type {
@@ -976,7 +976,7 @@ impl Plot {
     /// ```
     ///
     /// ![Line plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)
-    pub fn line<X, Y>(mut self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -1041,7 +1041,7 @@ impl Plot {
     ///     .save("stream_updated.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn line_streaming(mut self, stream: &StreamingXY) -> PlotSeriesBuilder {
+    pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
         // Read current data from the streaming buffer
         let x_data = stream.read_x();
         let y_data = stream.read_y();
@@ -1083,7 +1083,7 @@ impl Plot {
     /// ```
     ///
     /// ![Scatter plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png)
-    pub fn scatter<X, Y>(mut self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    pub fn scatter<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -1127,7 +1127,7 @@ impl Plot {
     ///     .save("stream_scatter.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn scatter_streaming(mut self, stream: &StreamingXY) -> PlotSeriesBuilder {
+    pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
         let x_data = stream.read_x();
         let y_data = stream.read_y();
 
@@ -1167,7 +1167,7 @@ impl Plot {
     /// ```
     ///
     /// ![Bar chart example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png)
-    pub fn bar<S, V>(mut self, categories: &[S], values: &V) -> PlotSeriesBuilder
+    pub fn bar<S, V>(self, categories: &[S], values: &V) -> PlotSeriesBuilder
     where
         S: ToString,
         V: Data1D<f64>,
@@ -1372,7 +1372,7 @@ impl Plot {
     }
 
     /// Add error bars (Y-direction only)
-    pub fn error_bars<X, Y, E>(mut self, x_data: &X, y_data: &Y, y_errors: &E) -> PlotSeriesBuilder
+    pub fn error_bars<X, Y, E>(self, x_data: &X, y_data: &Y, y_errors: &E) -> PlotSeriesBuilder
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -1402,7 +1402,7 @@ impl Plot {
 
     /// Add error bars in both X and Y directions
     pub fn error_bars_xy<X, Y, EX, EY>(
-        mut self,
+        self,
         x_data: &X,
         y_data: &Y,
         x_errors: &EX,
@@ -1963,7 +1963,7 @@ impl Plot {
     // ========== End Annotation Methods ==========
 
     /// Enable LaTeX rendering (placeholder - requires latex feature)
-    pub fn latex(mut self, _enabled: bool) -> Self {
+    pub fn latex(self, _enabled: bool) -> Self {
         // Placeholder for future LaTeX support
         // Would require additional dependencies and rendering backend
         self
@@ -2919,7 +2919,7 @@ impl Plot {
         }
 
         // Validate all series data (same validation as render method)
-        for (_i, series) in self.series.iter().enumerate() {
+        for series in self.series.iter() {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     if x_data.len() != y_data.len() {
@@ -5594,7 +5594,7 @@ impl std::ops::Deref for PlotSeriesBuilder {
 // Implement most Plot methods for PlotSeriesBuilder to allow chaining
 impl PlotSeriesBuilder {
     /// Continue with a new line series
-    pub fn line<X, Y>(mut self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -5603,7 +5603,7 @@ impl PlotSeriesBuilder {
     }
 
     /// Continue with a new scatter series  
-    pub fn scatter<X, Y>(mut self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    pub fn scatter<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -5612,7 +5612,7 @@ impl PlotSeriesBuilder {
     }
 
     /// Continue with a new bar series
-    pub fn bar<S, V>(mut self, categories: &[S], values: &V) -> PlotSeriesBuilder
+    pub fn bar<S, V>(self, categories: &[S], values: &V) -> PlotSeriesBuilder
     where
         S: ToString,
         V: Data1D<f64>,
@@ -5621,12 +5621,12 @@ impl PlotSeriesBuilder {
     }
 
     /// Continue with a new streaming line series
-    pub fn line_streaming(mut self, stream: &StreamingXY) -> PlotSeriesBuilder {
+    pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
         self.end_series().line_streaming(stream)
     }
 
     /// Continue with a new streaming scatter series
-    pub fn scatter_streaming(mut self, stream: &StreamingXY) -> PlotSeriesBuilder {
+    pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
         self.end_series().scatter_streaming(stream)
     }
 

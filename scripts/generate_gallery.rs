@@ -144,7 +144,7 @@ fn generate_images(map: &CategoryMap) -> Result<(), Box<dyn std::error::Error>> 
             print!("      ▶ {} ... ", example_name);
 
             let output = Command::new("cargo")
-                .args(&["run", "--example", example_name, "--quiet"])
+                .args(["run", "--example", example_name, "--quiet"])
                 .output()?;
 
             if output.status.success() {
@@ -224,7 +224,7 @@ fn update_main_index(map: &CategoryMap) -> Result<(), Box<dyn std::error::Error>
         "performance",
         "advanced",
     ] {
-        let count = map.get(*category).map(|v| v.len()).unwrap_or(0);
+        let count = map.get(category).map(|v| v.len()).unwrap_or(0);
 
         let (title, desc, icon) = match *category {
             "basic" => (
@@ -290,7 +290,7 @@ impl CategoryMap {
     }
 
     fn add(&mut self, category: String, path: PathBuf) {
-        self.map.entry(category).or_insert_with(Vec::new).push(path);
+        self.map.entry(category).or_default().push(path);
     }
 
     fn get(&self, category: &str) -> Option<&Vec<PathBuf>> {

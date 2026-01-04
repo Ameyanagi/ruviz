@@ -210,7 +210,7 @@ where
     }
 
     /// Get an iterator over the mapped view
-    pub fn iter(&self) -> MappedDataViewIter<T, U, F>
+    pub fn iter(&self) -> MappedDataViewIter<'_, T, U, F>
     where
         T: Copy,
     {

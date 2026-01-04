@@ -44,7 +44,7 @@ fn test_multi_series_pipeline() {
 
     // WHEN: Creating plot with multiple series
     let result = Plot::new()
-        .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
+        .line(&x, &x.iter().copied().collect::<Vec<_>>())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
         .label("Quadratic")
@@ -208,8 +208,8 @@ fn test_theme_application() {
         let result = Plot::new()
             .theme(theme)
             .line(&x, &y)
-            .title(&format!("{} Theme Test", name))
-            .save(&format!("tests/output/integration_theme_{}.png", name));
+            .title(format!("{} Theme Test", name))
+            .save(format!("tests/output/integration_theme_{}.png", name));
 
         // THEN: Should succeed for all themes
         assert!(result.is_ok(), "{} theme failed", name);
@@ -228,8 +228,8 @@ fn test_dpi_scaling() {
         let result = Plot::new()
             .line(&x, &y)
             .dpi(dpi)
-            .title(&format!("{} DPI Test", dpi))
-            .save(&format!("tests/output/integration_dpi_{}.png", dpi));
+            .title(format!("{} DPI Test", dpi))
+            .save(format!("tests/output/integration_dpi_{}.png", dpi));
 
         // THEN: Should succeed
         assert!(result.is_ok(), "{} DPI failed", dpi);

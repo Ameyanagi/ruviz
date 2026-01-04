@@ -48,7 +48,7 @@ fn main() -> Result<()> {
         let plot_start = Instant::now();
         let plot = Plot::new()
             .dimensions(1400, 900)
-            .title(&format!("Parallel Rendering Demo - {} Points", size))
+            .title(format!("Parallel Rendering Demo - {} Points", size))
             .xlabel("Time (arbitrary units)")
             .ylabel("Complex Signal")
             .line(&x, &y)

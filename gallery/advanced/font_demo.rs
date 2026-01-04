@@ -1,7 +1,7 @@
 use ruviz::prelude::*;
 use std::fs;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Creating cosmic-text font rendering demo...");
 
     // Ensure test output directory exists

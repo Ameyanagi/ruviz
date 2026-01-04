@@ -129,7 +129,7 @@ pub fn scatter_plot_with_title<P: AsRef<Path>>(
 /// ```
 pub fn bar_chart<P: AsRef<Path>>(categories: &[&str], values: &[f64], path: P) -> Result<()> {
     Plot::new()
-        .bar(&categories, &values)
+        .bar(categories, &values)
         .auto_optimize()
         .save(path)
 }
@@ -152,7 +152,7 @@ pub fn bar_chart_with_title<P: AsRef<Path>>(
     path: P,
 ) -> Result<()> {
     Plot::new()
-        .bar(&categories, &values)
+        .bar(categories, &values)
         .title(title)
         .auto_optimize()
         .save(path)

@@ -174,7 +174,7 @@ pub fn get_hugepage_info() -> Option<HugepageInfo> {
 pub fn configure_transparent_hugepages(enabled: bool) -> Result<(), PlottingError> {
     let thp_path = "/sys/kernel/mm/transparent_hugepage/enabled";
 
-    if !fs::metadata(thp_path).is_ok() {
+    if fs::metadata(thp_path).is_err() {
         return Err(PlottingError::SystemError(
             "Transparent huge pages not supported".to_string(),
         ));

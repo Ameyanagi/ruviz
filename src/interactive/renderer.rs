@@ -4,7 +4,7 @@
 //! existing GPU acceleration while maintaining 60fps during interactions.
 
 use crate::{
-    core::{Plot, PlottingError, Result},
+    core::{Plot, Result},
     interactive::{
         event::{Annotation, Point2D, Rectangle},
         state::{DataPoint, DataPointId, InteractionState},

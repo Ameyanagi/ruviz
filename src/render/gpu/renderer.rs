@@ -3,14 +3,13 @@
 //! This module provides a high-performance GPU renderer that integrates seamlessly
 //! with the existing memory pool system for optimal performance across all dataset sizes.
 
+use super::GpuBackend;
 use super::compute::{ComputeManager, TransformParams};
-use super::memory::{GpuBuffer, GpuMemoryPool};
-use super::{GpuBackend, GpuError, GpuResult};
-use crate::core::{PlottingError, Position, Result};
+use super::memory::GpuMemoryPool;
+use crate::core::{PlottingError, Result};
 use crate::data::{Data1D, PooledVec, SharedMemoryPool};
 use crate::render::backend::Renderer;
 use crate::render::pooled::PooledRenderer;
-use crate::render::{Color, LineStyle, MarkerStyle};
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 

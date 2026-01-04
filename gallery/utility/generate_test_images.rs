@@ -2,7 +2,7 @@ use ruviz::prelude::*;
 use ruviz::render::skia::SkiaRenderer;
 use std::fs;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create output directories
     fs::create_dir_all("test_output")?;
     fs::create_dir_all("export_output/png")?;

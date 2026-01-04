@@ -140,6 +140,12 @@ pub struct ManagedBuffer<T> {
     stats: Arc<Mutex<MemoryStats>>,
 }
 
+impl Default for MemoryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryManager {
     /// Create new memory manager with default configuration
     pub fn new() -> Self {
@@ -604,7 +610,7 @@ impl<T> Drop for ManagedBuffer<T> {
     fn drop(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             // Return buffer to pool
-            let mut pools = self.pool.lock().unwrap();
+            let pools = self.pool.lock().unwrap();
             let mut stats = self.stats.lock().unwrap();
 
             stats.active_allocations = stats.active_allocations.saturating_sub(1);

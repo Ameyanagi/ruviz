@@ -3,7 +3,6 @@
 
 use proptest::prelude::*;
 use ruviz::prelude::*;
-use std::path::Path;
 
 // Property 1: Plot should handle any valid f64 data without panicking
 proptest! {
@@ -64,8 +63,8 @@ proptest! {
 proptest! {
     #[test]
     fn deterministic_output(
-        x in prop::collection::vec((-1000.0..1000.0), 10..50),
-        y in prop::collection::vec((-1000.0..1000.0), 10..50),
+        x in prop::collection::vec(-1000.0..1000.0, 10..50),
+        y in prop::collection::vec(-1000.0..1000.0, 10..50),
     ) {
         let min_len = x.len().min(y.len());
         let x: Vec<f64> = x[..min_len].to_vec();
@@ -87,8 +86,8 @@ proptest! {
 proptest! {
     #[test]
     fn bounds_contain_all_data(
-        x in prop::collection::vec((-1000.0..1000.0), 10..100),
-        y in prop::collection::vec((-1000.0..1000.0), 10..100),
+        x in prop::collection::vec(-1000.0..1000.0, 10..100),
+        y in prop::collection::vec(-1000.0..1000.0, 10..100),
     ) {
         let min_len = x.len().min(y.len());
         let x: Vec<f64> = x[..min_len].to_vec();
@@ -114,8 +113,8 @@ proptest! {
 proptest! {
     #[test]
     fn simple_api_matches_full_api(
-        x in prop::collection::vec((-100.0..100.0), 10..50),
-        y in prop::collection::vec((-100.0..100.0), 10..50),
+        x in prop::collection::vec(-100.0..100.0, 10..50),
+        y in prop::collection::vec(-100.0..100.0, 10..50),
     ) {
         let min_len = x.len().min(y.len());
         let x: Vec<f64> = x[..min_len].to_vec();
@@ -207,7 +206,7 @@ proptest! {
 proptest! {
     #[test]
     fn bar_chart_handles_values(
-        values in prop::collection::vec((0.0..1000.0), 1..20),
+        values in prop::collection::vec(0.0..1000.0, 1..20),
     ) {
         let categories: Vec<&str> = (0..values.len())
             .map(|i| match i % 5 {
@@ -229,7 +228,6 @@ proptest! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn proptest_module_compiles() {

@@ -1,6 +1,6 @@
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing Plotters-style FontFamily system...");
     
     // Create test output directory if it doesn't exist

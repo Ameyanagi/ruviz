@@ -1,4 +1,3 @@
-use crate::core::position::Position;
 /// Subplot functionality for multiple plots in one figure
 ///
 /// Provides grid-based layout system for arranging multiple plots

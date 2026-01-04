@@ -9,7 +9,7 @@ use std::path::Path;
 #[cfg(feature = "pdf")]
 use printpdf::{
     Color as PdfColor, IndirectFontRef, Line, LineDashPattern, Mm, PdfDocumentReference,
-    PdfLayerReference, Point, Pt, Rgb,
+    PdfLayerReference, Point, Rgb,
 };
 
 /// PDF renderer for vector-based plot export

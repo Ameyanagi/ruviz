@@ -35,7 +35,7 @@ fn main() {
             .size(8.0, 6.0)
             .dpi(100)
             .line(&x, &y)
-            .title(&format!("{} points", format_number(n)))
+            .title(format!("{} points", format_number(n)))
             .render()
             .expect("Render failed");
 

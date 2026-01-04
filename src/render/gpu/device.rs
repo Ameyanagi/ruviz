@@ -413,6 +413,6 @@ impl std::ops::Deref for GpuDevice {
     type Target = wgpu::Device;
 
     fn deref(&self) -> &Self::Target {
-        &*self.device
+        &self.device
     }
 }

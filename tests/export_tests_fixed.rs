@@ -163,12 +163,12 @@ fn test_all_themes_export() -> std::result::Result<(), Box<dyn std::error::Error
             .title(format!("{} Theme Test", theme_name))
             .line(&x_data, &y_data)
             .end_series()
-            .save(&format!("export_output/png/theme_{}.png", theme_name))?;
+            .save(format!("export_output/png/theme_{}.png", theme_name))?;
 
         // SVG export
         let renderer = SkiaRenderer::new(800, 600, theme.clone())?;
         renderer.export_svg(
-            &format!("export_output/svg/theme_{}.svg", theme_name),
+            format!("export_output/svg/theme_{}.svg", theme_name),
             800,
             600,
         )?;
@@ -181,7 +181,7 @@ fn test_all_themes_export() -> std::result::Result<(), Box<dyn std::error::Error
 
         let image = plot_raw.render()?;
         fs::write(
-            &format!("export_output/raw/theme_{}.bin", theme_name),
+            format!("export_output/raw/theme_{}.bin", theme_name),
             &image.pixels,
         )?;
     }
@@ -211,7 +211,7 @@ fn test_different_resolutions() -> std::result::Result<(), Box<dyn std::error::E
             .title(format!("Resolution Test - {}", name.to_uppercase()))
             .line(&x_data, &y_data)
             .end_series()
-            .save(&format!(
+            .save(format!(
                 "export_output/png/resolution_{}_{}_{}x{}.png",
                 name, "png", width, height
             ))?;
@@ -219,7 +219,7 @@ fn test_different_resolutions() -> std::result::Result<(), Box<dyn std::error::E
         // SVG
         let renderer = SkiaRenderer::new(width, height, Theme::default())?;
         renderer.export_svg(
-            &format!(
+            format!(
                 "export_output/svg/resolution_{}_{}_{}x{}.svg",
                 name, "svg", width, height
             ),
@@ -236,7 +236,7 @@ fn test_different_resolutions() -> std::result::Result<(), Box<dyn std::error::E
 
         let image = plot.render()?;
         fs::write(
-            &format!(
+            format!(
                 "export_output/raw/resolution_{}_{}x{}.bin",
                 name, width, height
             ),
@@ -251,7 +251,7 @@ fn test_different_resolutions() -> std::result::Result<(), Box<dyn std::error::E
             image.pixels.len()
         );
         fs::write(
-            &format!(
+            format!(
                 "export_output/raw/resolution_{}_{}x{}_info.txt",
                 name, width, height
             ),

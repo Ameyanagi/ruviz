@@ -4,7 +4,6 @@
 use crate::core::error::PlottingError;
 use crate::data::platform::get_platform_optimizer;
 use std::sync::{Arc, Mutex, OnceLock};
-use wgpu::util::DeviceExt;
 
 /// GPU-specific error types
 #[derive(Debug, thiserror::Error)]
@@ -499,7 +498,7 @@ pub fn get_gpu_backend() -> Option<&'static GpuBackend> {
 
 /// Check if GPU acceleration is available
 pub fn is_gpu_available() -> bool {
-    get_gpu_backend().map_or(false, |backend| backend.is_available())
+    get_gpu_backend().is_some_and(|backend| backend.is_available())
 }
 
 /// Get GPU capabilities if available

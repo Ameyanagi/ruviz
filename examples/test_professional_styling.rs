@@ -1,7 +1,7 @@
 use ruviz::prelude::*;
 use std::fs;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🎨 Testing Professional Histogram and Bar Plot Styling");
     println!("=====================================================");
 
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn test_professional_histogram() -> Result<(), Box<dyn std::error::Error>> {
+fn test_professional_histogram() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate realistic histogram data
     let data = vec![
         1.2, 1.5, 1.8, 2.1, 2.3, 2.7, 2.9, 3.1, 3.4, 3.6, 3.8, 4.0, 4.2, 4.5, 4.7, 4.9, 5.1, 5.3,
@@ -57,7 +57,7 @@ fn test_professional_histogram() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn test_professional_bar_plot() -> Result<(), Box<dyn std::error::Error>> {
+fn test_professional_bar_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let categories = vec![
         "Product A",
         "Product B",
@@ -81,7 +81,7 @@ fn test_professional_bar_plot() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn test_axis_limits() -> Result<(), Box<dyn std::error::Error>> {
+fn test_axis_limits() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     let y = vec![2.0, 8.0, 18.0, 32.0, 50.0];
 

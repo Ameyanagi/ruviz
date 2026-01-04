@@ -2,7 +2,7 @@ use ruviz::data::Data1D;
 use ruviz::render::pooled::PooledRenderer;
 use std::time::Instant;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("🧪 Memory Pool Performance Test (Release Mode)");
     println!("================================================");
 

@@ -6,7 +6,7 @@
 use ruviz::{core::plot::Plot, data::Data1D, render::gpu::GpuRenderer};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     println!("🖥️ GPU Integration Test");
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn test_coordinate_transformation(
     mut gpu_renderer: GpuRenderer,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n🔄 Testing coordinate transformation...");
 
     // Test with small dataset (should use CPU)
@@ -159,7 +159,7 @@ async fn test_coordinate_transformation(
     Ok(())
 }
 
-async fn test_cpu_fallback() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_cpu_fallback() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing CPU fallback rendering...");
 
     // Generate test data

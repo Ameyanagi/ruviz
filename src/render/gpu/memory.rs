@@ -6,7 +6,7 @@
 use super::{GpuCapabilities, GpuError, GpuResult};
 use crate::core::{PlottingError, Result};
 use crate::data::{PooledVec, SharedMemoryPool};
-use bytemuck::{Pod, cast_slice, cast_vec, try_cast_slice};
+use bytemuck::{Pod, cast_slice, try_cast_slice};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wgpu::util::DeviceExt;
@@ -272,7 +272,7 @@ impl GpuMemoryPool {
     pub fn return_buffer(&self, buffer: GpuBuffer) {
         let cache_key = (buffer.size(), buffer.usage());
         let mut cache = self.buffer_cache.lock().unwrap();
-        cache.entry(cache_key).or_insert_with(Vec::new).push(buffer);
+        cache.entry(cache_key).or_default().push(buffer);
     }
 
     /// Align buffer size to GPU requirements
@@ -307,7 +307,7 @@ impl GpuMemoryPool {
 
             // Safe because aligned_bytes is properly aligned
             let element: &T = bytemuck::from_bytes(&aligned_bytes);
-            result.push(element.clone());
+            result.push(*element);
         }
 
         result
@@ -361,7 +361,7 @@ impl GpuMemoryPool {
         self.device
             .poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
 
-        let result = pollster::block_on(receiver.receive())
+        pollster::block_on(receiver.receive())
             .ok_or_else(|| GpuError::OperationFailed("Buffer mapping failed".to_string()))?
             .map_err(|e| GpuError::OperationFailed(format!("Buffer mapping error: {:?}", e)))?;
 

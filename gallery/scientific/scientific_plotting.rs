@@ -1,7 +1,7 @@
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Generating scientific plotting examples...");
 
     // Create test output directory if it doesn't exist
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Generate error bars example showing experimental vs theoretical data
-fn generate_error_bars_example() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_error_bars_example() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Simulate experimental data with measurement errors
     let x_data: Vec<f64> = (0..20).map(|i| i as f64 * 0.5).collect();
     let theoretical: Vec<f64> = x_data.iter().map(|&x| x.powi(2) * 0.1).collect();
@@ -65,7 +65,7 @@ fn generate_error_bars_example() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Generate multi-series comparison with different error magnitudes
-fn generate_multi_series_with_errors() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_multi_series_with_errors() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x_data: Vec<f64> = (0..15).map(|i| i as f64).collect();
 
     // Three different measurement techniques with different precision
@@ -99,7 +99,7 @@ fn generate_multi_series_with_errors() -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Generate statistical distribution plots
-fn generate_statistical_plots() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_statistical_plots() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate normal distribution data
     let x_range: Vec<f64> = (-40..41).map(|i| i as f64 * 0.1).collect();
 
@@ -134,7 +134,7 @@ fn generate_statistical_plots() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Generate publication-quality figure with multiple data types
-fn generate_publication_figure() -> Result<(), Box<dyn std::error::Error>> {
+fn generate_publication_figure() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Simulate complex scientific data
     let time: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
 

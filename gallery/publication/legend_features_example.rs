@@ -10,7 +10,7 @@ use ruviz::core::Plot;
 use ruviz::core::Position;
 use ruviz::render::{Color, LineStyle, MarkerStyle, Theme};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Legend Features Gallery Example");
     println!("================================");
 

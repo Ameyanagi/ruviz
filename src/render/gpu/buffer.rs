@@ -119,7 +119,7 @@ impl GpuBuffer {
 
     /// Get wgpu buffer reference
     pub fn buffer(&self) -> &wgpu::Buffer {
-        &*self.buffer
+        &self.buffer
     }
 
     /// Get buffer size

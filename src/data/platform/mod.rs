@@ -1,6 +1,6 @@
 //! Platform-specific memory optimizations
 
-use crate::data::memory::{MemoryConfig, MemoryStats};
+use crate::data::memory::MemoryConfig;
 use std::sync::{Arc, RwLock};
 
 /// Platform-specific memory optimization strategies
