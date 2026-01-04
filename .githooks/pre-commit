@@ -1,0 +1,32 @@
+#!/bin/bash
+# Pre-commit hook for ruviz
+# Runs cargo fmt check and clippy before allowing commits
+#
+# Setup: make setup-hooks
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Check formatting
+echo "Checking formatting with cargo fmt..."
+if ! cargo fmt --all -- --check; then
+    echo ""
+    echo "❌ Formatting check failed!"
+    echo "Run 'cargo fmt' to fix formatting issues."
+    exit 1
+fi
+echo "✓ Formatting OK"
+
+# Run clippy with strict warnings
+echo "Running clippy..."
+if ! cargo clippy --all-targets --all-features -- -D warnings 2>/dev/null; then
+    echo ""
+    echo "❌ Clippy check failed!"
+    echo "Fix the warnings above before committing."
+    exit 1
+fi
+echo "✓ Clippy OK"
+
+echo ""
+echo "✓ All pre-commit checks passed!"

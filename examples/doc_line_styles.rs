@@ -19,6 +19,7 @@ fn main() -> Result<()> {
         .title("Line Styles")
         .xlabel("x")
         .ylabel("y")
+        .dpi(300)
         .legend_position(LegendPosition::Best)
         .line(&x, &y_solid)
         .label("Solid")

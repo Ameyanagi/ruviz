@@ -14,6 +14,7 @@ fn main() -> Result<()> {
         .title("Marker Styles")
         .xlabel("x")
         .ylabel("y")
+        .dpi(300)
         .legend_position(LegendPosition::Best)
         // Row 11: Circle
         .scatter(&x, &vec![11.0; 5])

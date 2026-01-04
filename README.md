@@ -247,6 +247,12 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidel
 git clone https://github.com/ruviz/ruviz.git
 cd ruviz
 
+# Setup pre-commit hooks (recommended)
+make setup-hooks
+
+# Run code quality checks
+make check
+
 # Run tests
 cargo test --all-features
 
@@ -256,6 +262,8 @@ cargo run --example basic_example --release
 # Run benchmarks
 cargo bench --all-features
 ```
+
+The pre-commit hooks will automatically run `cargo fmt --check` and `cargo clippy` before each commit to ensure code quality.
 
 ## Roadmap
 

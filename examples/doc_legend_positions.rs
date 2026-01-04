@@ -54,14 +54,14 @@ fn main() -> Result<()> {
         .color(Color::from_palette(1))
         .end_series();
 
-    // Create a 2x2 subplot figure with larger size
+    // Create a 2x2 subplot figure with larger size at 300 DPI
     subplots(2, 2, 800, 600)?
         .suptitle("Legend Positions")
         .subplot_at(0, plot_ul)?
         .subplot_at(1, plot_ur)?
         .subplot_at(2, plot_ll)?
         .subplot_at(3, plot_lr)?
-        .save("docs/images/legend_positions.png")?;
+        .save_with_dpi("docs/images/legend_positions.png", 300.0)?;
 
     println!("✓ Generated docs/images/legend_positions.png");
     Ok(())

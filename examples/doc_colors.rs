@@ -23,6 +23,7 @@ fn main() -> Result<()> {
         .title("Default Color Palette")
         .xlabel("x")
         .ylabel("y")
+        .dpi(300)
         .legend_position(LegendPosition::Best)
         .line(&x, &y1)
         .label("Color 1")

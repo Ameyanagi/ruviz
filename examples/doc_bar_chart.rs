@@ -12,6 +12,7 @@ fn main() -> Result<()> {
         .title("Bar Chart")
         .xlabel("Category")
         .ylabel("Value")
+        .dpi(300)
         .bar(&categories, &values)
         .end_series()
         .save("docs/images/bar_chart.png")?;

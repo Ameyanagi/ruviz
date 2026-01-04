@@ -17,6 +17,7 @@ fn main() -> Result<()> {
         .title("Scatter Plot")
         .xlabel("x")
         .ylabel("y")
+        .dpi(300)
         .scatter(&x, &y)
         .end_series()
         .save("docs/images/scatter_plot.png")?;

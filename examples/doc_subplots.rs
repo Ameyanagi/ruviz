@@ -21,7 +21,10 @@ fn main() -> Result<()> {
 
     // Subplot 1: Scatter plot
     let x_scatter: Vec<f64> = (0..30).map(|i| i as f64 * 0.3).collect();
-    let y_scatter: Vec<f64> = x_scatter.iter().map(|&v| v.cos() + 0.1 * (v * 3.0).sin()).collect();
+    let y_scatter: Vec<f64> = x_scatter
+        .iter()
+        .map(|&v| v.cos() + 0.1 * (v * 3.0).sin())
+        .collect();
     let plot_scatter = Plot::new()
         .title("Scatter Plot")
         .xlabel("x")
@@ -56,14 +59,14 @@ fn main() -> Result<()> {
         .color(Color::from_palette(1))
         .end_series();
 
-    // Create a 2x2 subplot figure
+    // Create a 2x2 subplot figure at 300 DPI
     subplots(2, 2, 800, 600)?
         .suptitle("Subplot Gallery")
         .subplot_at(0, plot_line)?
         .subplot_at(1, plot_scatter)?
         .subplot_at(2, plot_bar)?
         .subplot_at(3, plot_multi)?
-        .save("docs/images/subplots.png")?;
+        .save_with_dpi("docs/images/subplots.png", 300.0)?;
 
     println!("✓ Generated docs/images/subplots.png");
     Ok(())

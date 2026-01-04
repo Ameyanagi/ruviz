@@ -12,6 +12,7 @@ fn main() -> Result<()> {
         .title("Sine Wave")
         .xlabel("x")
         .ylabel("sin(x)")
+        .dpi(300)
         .line(&x, &y)
         .end_series()
         .save("docs/images/line_plot.png")?;

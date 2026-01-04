@@ -14,6 +14,7 @@ jobs:
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
+    needs: [fmt, clippy]  # Only run tests if code quality checks pass
     strategy:
       fail-fast: false
       matrix:
@@ -121,6 +122,7 @@ jobs:
   examples:
     name: Build Examples
     runs-on: ubuntu-latest
+    needs: [fmt, clippy]  # Only build examples if code quality checks pass
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

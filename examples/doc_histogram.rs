@@ -20,6 +20,7 @@ fn main() -> Result<()> {
         .title("Histogram")
         .xlabel("Value")
         .ylabel("Frequency")
+        .dpi(300)
         .histogram(&data, None)
         .end_series()
         .save("docs/images/histogram.png")?;
