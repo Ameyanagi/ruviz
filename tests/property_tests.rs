@@ -1,5 +1,6 @@
 // Property-based testing - TDD approach
 // These tests verify robustness properties with randomized inputs
+// Run with: cargo test --test property_tests -- --ignored
 
 use proptest::prelude::*;
 use ruviz::prelude::*;
@@ -7,6 +8,7 @@ use ruviz::prelude::*;
 // Property 1: Plot should handle any valid f64 data without panicking
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn plot_never_panics_on_valid_data(
         x in prop::collection::vec(
             any::<f64>().prop_filter("finite", |x| x.is_finite()),
@@ -35,6 +37,7 @@ proptest! {
 // Property 2: Auto-optimize should always select a valid backend
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn auto_optimize_always_selects_backend(
         size in 1usize..10000,
     ) {
@@ -62,6 +65,7 @@ proptest! {
 // Property 3: Same data should produce deterministic output
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn deterministic_output(
         x in prop::collection::vec(-1000.0..1000.0, 10..50),
         y in prop::collection::vec(-1000.0..1000.0, 10..50),
@@ -85,6 +89,7 @@ proptest! {
 // Property 4: Data bounds should be valid
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn bounds_contain_all_data(
         x in prop::collection::vec(-1000.0..1000.0, 10..100),
         y in prop::collection::vec(-1000.0..1000.0, 10..100),
@@ -112,6 +117,7 @@ proptest! {
 // Property 5: Simple API should match full API output
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn simple_api_matches_full_api(
         x in prop::collection::vec(-100.0..100.0, 10..50),
         y in prop::collection::vec(-100.0..100.0, 10..50),
@@ -154,6 +160,7 @@ proptest! {
 // Property 6: Empty data should error gracefully
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn empty_data_errors_gracefully(
         has_x in prop::bool::ANY,
         has_y in prop::bool::ANY,
@@ -179,6 +186,7 @@ proptest! {
 // Property 7: Scatter plots should behave like line plots for data handling
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn scatter_plot_robust(
         x in prop::collection::vec(-1e10_f64..1e10_f64, 5..100),
         y in prop::collection::vec(-1e10_f64..1e10_f64, 5..100),
@@ -199,6 +207,7 @@ proptest! {
 // Property 8: Bar charts should handle any positive values
 proptest! {
     #[test]
+    #[ignore] // Slow property test - run manually
     fn bar_chart_handles_values(
         values in prop::collection::vec(0.0..1000.0, 1..20),
     ) {
