@@ -330,6 +330,13 @@
 //! let y_cos: Vec<f64> = x.iter().map(|&v| v.cos()).collect();
 //!
 //! // Create plots with different legend positions
+//! let plot_ul = Plot::new()
+//!     .title("UpperLeft")
+//!     .legend_position(LegendPosition::UpperLeft)
+//!     .line(&x, &y_sin).label("sin(x)")
+//!     .line(&x, &y_cos).label("cos(x)")
+//!     .end_series();
+//!
 //! let plot_ur = Plot::new()
 //!     .title("UpperRight")
 //!     .legend_position(LegendPosition::UpperRight)
@@ -344,10 +351,20 @@
 //!     .line(&x, &y_cos).label("cos(x)")
 //!     .end_series();
 //!
-//! // Combine in subplots
-//! subplots(1, 2, 800, 400)?
-//!     .subplot_at(0, plot_ur)?
-//!     .subplot_at(1, plot_ll)?
+//! let plot_lr = Plot::new()
+//!     .title("LowerRight")
+//!     .legend_position(LegendPosition::LowerRight)
+//!     .line(&x, &y_sin).label("sin(x)")
+//!     .line(&x, &y_cos).label("cos(x)")
+//!     .end_series();
+//!
+//! // Combine in 2x2 subplots
+//! subplots(2, 2, 800, 600)?
+//!     .suptitle("Legend Positions")
+//!     .subplot_at(0, plot_ul)?
+//!     .subplot_at(1, plot_ur)?
+//!     .subplot_at(2, plot_ll)?
+//!     .subplot_at(3, plot_lr)?
 //!     .save("legend_positions.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
