@@ -1,4 +1,0 @@
-Resolution: 1920x1080
-Megapixels: 2.1
-File size: 8294400 bytes
-Format: RGBA

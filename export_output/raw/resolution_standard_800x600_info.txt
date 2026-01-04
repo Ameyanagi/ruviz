@@ -1,4 +1,0 @@
-Resolution: 800x600
-Megapixels: 0.5
-File size: 1920000 bytes
-Format: RGBA
