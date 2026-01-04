@@ -34,8 +34,8 @@ impl GridSpec {
         Self {
             rows,
             cols,
-            hspace: 0.1, // 10% spacing - tighter default for cleaner look
-            wspace: 0.1,
+            hspace: 0.0, // No spacing - subplots fill available area
+            wspace: 0.0,
         }
     }
 

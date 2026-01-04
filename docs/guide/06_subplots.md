@@ -130,10 +130,10 @@ subplots(2, 2, 800, 600)?
 ```
 
 **Spacing Guidelines**:
-- **0.0-0.1**: Very tight layout
-- **0.1-0.2**: Tight layout (default 0.1)
-- **0.2-0.3**: Normal spacing
-- **0.3-0.5**: Generous spacing
+- **0.0**: No spacing - subplots fill available area (default)
+- **0.05-0.1**: Tight layout with small gaps
+- **0.1-0.2**: Normal spacing
+- **0.2-0.3**: Generous spacing
 
 ### Custom Dimensions
 
