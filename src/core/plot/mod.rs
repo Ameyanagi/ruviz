@@ -286,6 +286,21 @@ impl Plot {
     /// - DPI: 100 (640 × 480 pixels)
     /// - Font size: 10pt base
     /// - Line width: 1.5pt
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    /// let y = vec![1.0, 4.0, 9.0, 16.0, 25.0];
+    ///
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .end_series()
+    ///     .save("plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new() -> Self {
         let config = PlotConfig::default();
         let (width, height) = config.canvas_size();
@@ -364,6 +379,21 @@ impl Plot {
     }
 
     /// Create a new Plot with a specific theme
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0, 4.0];
+    /// let y = vec![1.0, 4.0, 2.0, 3.0];
+    ///
+    /// Plot::with_theme(Theme::dark())
+    ///     .line(&x, &y)
+    ///     .end_series()
+    ///     .save("dark_plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn with_theme(theme: Theme) -> Self {
         let mut plot = Self::new();
         plot.theme = theme;
@@ -371,6 +401,32 @@ impl Plot {
     }
 
     /// Set the theme for the plot (fluent API)
+    ///
+    /// Available themes include:
+    /// - `Theme::light()` - default light theme
+    /// - `Theme::dark()` - dark mode theme
+    /// - `Theme::seaborn()` - seaborn-style theme
+    /// - `Theme::publication()` - publication-ready theme
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+    /// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+    ///
+    /// Plot::new()
+    ///     .theme(Theme::dark())
+    ///     .line(&x, &y)
+    ///     .end_series()
+    ///     .save("dark_theme.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// | Default | Dark | Seaborn | Publication |
+    /// |---------|------|---------|-------------|
+    /// | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png) |
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
@@ -438,24 +494,78 @@ impl Plot {
     }
 
     /// Set the plot title
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .title("My Plot Title")
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("titled.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn title<S: Into<String>>(mut self, title: S) -> Self {
         self.title = Some(title.into());
         self
     }
 
     /// Set the X-axis label
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .xlabel("Time (s)")
+    ///     .ylabel("Amplitude")
+    ///     .line(&[0.0, 1.0, 2.0], &[0.0, 0.5, 1.0])
+    ///     .end_series()
+    ///     .save("labeled.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
         self.xlabel = Some(label.into());
         self
     }
 
     /// Set the Y-axis label
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .ylabel("Temperature (°C)")
+    ///     .line(&[1.0, 2.0, 3.0], &[20.0, 22.0, 21.0])
+    ///     .end_series()
+    ///     .save("ylabel.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
         self.ylabel = Some(label.into());
         self
     }
 
     /// Set X-axis limits (min, max)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .xlim(0.0, 10.0)
+    ///     .ylim(-1.0, 1.0)
+    ///     .line(&[0.0, 5.0, 10.0], &[0.0, 1.0, 0.0])
+    ///     .end_series()
+    ///     .save("limits.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn xlim(mut self, min: f64, max: f64) -> Self {
         if min < max && min.is_finite() && max.is_finite() {
             self.x_limits = Some((min, max));
@@ -464,6 +574,19 @@ impl Plot {
     }
 
     /// Set Y-axis limits (min, max)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .ylim(0.0, 100.0)
+    ///     .line(&[1.0, 2.0, 3.0], &[25.0, 50.0, 75.0])
+    ///     .end_series()
+    ///     .save("ylim.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn ylim(mut self, min: f64, max: f64) -> Self {
         if min < max && min.is_finite() && max.is_finite() {
             self.y_limits = Some((min, max));
@@ -807,6 +930,21 @@ impl Plot {
     }
 
     /// Set margin around plot area
+    ///
+    /// The margin is specified as a fraction of the canvas size (0.0 to 0.5).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .margin(0.15)  // 15% margin on all sides
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("margin.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn margin(mut self, margin: f32) -> Self {
         self.margin = Some(margin.clamp(0.0, 0.5));
         self
@@ -819,6 +957,25 @@ impl Plot {
     }
 
     /// Add a line plot series
+    ///
+    /// Creates a line chart connecting data points in order.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+    /// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+    ///
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .end_series()
+    ///     .save("line.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// ![Line plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)
     pub fn line<X, Y>(mut self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
     where
         X: Data1D<f64>,
@@ -906,6 +1063,25 @@ impl Plot {
     }
 
     /// Add a scatter plot series
+    ///
+    /// Creates a scatter plot showing individual data points as markers.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
+    /// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+    ///
+    /// Plot::new()
+    ///     .scatter(&x, &y)
+    ///     .end_series()
+    ///     .save("scatter.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// ![Scatter plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png)
     pub fn scatter<X, Y>(mut self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
     where
         X: Data1D<f64>,
@@ -970,6 +1146,25 @@ impl Plot {
     }
 
     /// Add a bar plot series
+    ///
+    /// Creates a bar chart with categorical x-axis labels.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let categories = vec!["A", "B", "C", "D", "E"];
+    /// let values = vec![23.0, 45.0, 56.0, 78.0, 32.0];
+    ///
+    /// Plot::new()
+    ///     .bar(&categories, &values)
+    ///     .end_series()
+    ///     .save("bar.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// ![Bar chart example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png)
     pub fn bar<S, V>(mut self, categories: &[S], values: &V) -> PlotSeriesBuilder
     where
         S: ToString,
@@ -996,6 +1191,24 @@ impl Plot {
     }
 
     /// Add a histogram plot series
+    ///
+    /// Creates a histogram showing the distribution of data values.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let data: Vec<f64> = (0..1000).map(|i| (i as f64 / 100.0).sin()).collect();
+    ///
+    /// Plot::new()
+    ///     .histogram(&data, None)
+    ///     .end_series()
+    ///     .save("histogram.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// ![Histogram example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png)
     pub fn histogram<T, D: Data1D<T>>(
         self,
         data: &D,
@@ -1030,6 +1243,27 @@ impl Plot {
     }
 
     /// Add a box plot series
+    ///
+    /// Creates a box plot showing the distribution of data with quartiles,
+    /// median, and outliers.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    /// use ruviz::plots::boxplot::BoxPlotConfig;
+    ///
+    /// let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
+    ///                 11.0, 12.0, 35.0, 40.0, -5.0]; // includes outliers
+    ///
+    /// Plot::new()
+    ///     .boxplot(&data, Some(BoxPlotConfig::new()))
+    ///     .end_series()
+    ///     .save("boxplot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// ![Box plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png)
     pub fn boxplot<T, D: Data1D<T>>(
         self,
         data: &D,
@@ -1065,34 +1299,25 @@ impl Plot {
 
     /// Add a heatmap visualization for 2D array data
     ///
+    /// Creates a color-mapped visualization of 2D data.
+    ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use ruviz::prelude::*;
     ///
-    /// let data = vec![
-    ///     vec![1.0, 2.0, 3.0],
-    ///     vec![4.0, 5.0, 6.0],
-    ///     vec![7.0, 8.0, 9.0],
-    /// ];
+    /// let data: Vec<Vec<f64>> = (0..10)
+    ///     .map(|i| (0..10).map(|j| (i + j) as f64).collect())
+    ///     .collect();
     ///
     /// Plot::new()
     ///     .heatmap(&data, None)
-    ///     .title("My Heatmap")
+    ///     .end_series()
     ///     .save("heatmap.png")?;
-    ///
-    /// // With custom configuration
-    /// let config = HeatmapConfig::new()
-    ///     .colormap(ColorMap::coolwarm())
-    ///     .vmin(0.0)
-    ///     .vmax(10.0)
-    ///     .colorbar(true)
-    ///     .annotate(true);
-    ///
-    /// Plot::new()
-    ///     .heatmap(&data, Some(config))
-    ///     .save("heatmap_annotated.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    ///
+    /// ![Heatmap example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png)
     pub fn heatmap(
         self,
         data: &[Vec<f64>],
@@ -1228,16 +1453,24 @@ impl Plot {
     /// - `LegendPosition::OutsideRight`, etc. - outside plot positions
     ///
     /// # Example
+    ///
     /// ```rust,no_run
     /// use ruviz::prelude::*;
     ///
+    /// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+    /// let sin_y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+    /// let cos_y: Vec<f64> = x.iter().map(|&v| v.cos()).collect();
+    ///
     /// Plot::new()
-    ///     .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
-    ///     .label("y = x²")
     ///     .legend_position(LegendPosition::Best)
-    ///     .save("plot.png")?;
+    ///     .line(&x, &sin_y).label("sin(x)")
+    ///     .line(&x, &cos_y).label("cos(x)")
+    ///     .end_series()
+    ///     .save("legend.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    ///
+    /// ![Legend example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend.png)
     pub fn legend_position(mut self, position: LegendPosition) -> Self {
         self.legend.enabled = true;
         // Convert LegendPosition to old Position for backward compatibility
@@ -1296,6 +1529,20 @@ impl Plot {
     }
 
     /// Enable/disable grid
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// // Disable grid
+    /// Plot::new()
+    ///     .grid(false)
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("no_grid.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn grid(mut self, enabled: bool) -> Self {
         self.grid.enabled = enabled;
         self
@@ -3999,6 +4246,21 @@ impl Plot {
     }
 
     /// Save the plot to a PNG file
+    ///
+    /// Renders the plot and saves it to the specified path.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .title("Saved Plot")
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("output.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         use crate::render::skia::SkiaRenderer;
 

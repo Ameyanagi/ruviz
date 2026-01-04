@@ -13,6 +13,30 @@
 //! - **Large Dataset Support**: DataShader-style aggregation for 100M+ points
 //! - **Cross Platform**: Linux, macOS, Windows, WASM support
 //!
+//! ## Gallery
+//!
+//! | Plot Types | | |
+//! |:---:|:---:|:---:|
+//! | ![Line Plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png) | ![Scatter Plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png) | ![Bar Chart](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png) |
+//! | Line Plot | Scatter Plot | Bar Chart |
+//! | ![Histogram](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png) | ![Box Plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png) | ![Heatmap](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png) |
+//! | Histogram | Box Plot | Heatmap |
+//!
+//! | Styling Options | | |
+//! |:---:|:---:|:---:|
+//! | ![Line Styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png) | ![Marker Styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png) | ![Colors](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png) |
+//! | Line Styles | Marker Styles | Color Palette |
+//!
+//! | Themes | | | |
+//! |:---:|:---:|:---:|:---:|
+//! | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png) |
+//! | Default | Dark | Seaborn | Publication |
+//!
+//! | Layout | |
+//! |:---:|:---:|
+//! | ![Legend Positions](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png) | ![Subplots](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png) |
+//! | Legend Positions | Subplots |
+//!
 //! ## Quick Start
 //!
 //! ```rust,no_run
@@ -45,10 +69,14 @@ pub mod interactive;
 
 /// Convenience re-exports for common usage
 pub mod prelude {
+    pub use crate::axes::AxisScale;
     pub use crate::core::{
-        BackendType, GridSpec, Plot, Position, Result, SubplotFigure, subplots, subplots_default,
+        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern,
+        Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot, Position, Result,
+        ShapeStyle, SubplotFigure, TextAlign, TextStyle, TextVAlign, subplots, subplots_default,
     };
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
+    pub use crate::plots::{HeatmapConfig, Interpolation};
     pub use crate::render::{
         Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,
         Theme,

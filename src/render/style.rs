@@ -1,6 +1,25 @@
 /// Line style enumeration for plot lines and borders
 ///
-/// Defines different visual styles for drawing lines in plots
+/// Defines different visual styles for drawing lines in plots.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+/// use ruviz::render::LineStyle;
+///
+/// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+/// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+///
+/// Plot::new()
+///     .line(&x, &y)
+///     .style(LineStyle::Dashed)
+///     .end_series()
+///     .save("dashed_line.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ![Line styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png)
 #[derive(Debug, Clone, PartialEq)]
 pub enum LineStyle {
     /// Solid continuous line (default)
@@ -135,6 +154,26 @@ impl std::fmt::Display for LineStyle {
 }
 
 /// Marker style for scatter plots and data points
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+/// use ruviz::render::MarkerStyle;
+///
+/// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+/// let y = vec![1.0, 4.0, 2.0, 5.0, 3.0];
+///
+/// Plot::new()
+///     .scatter(&x, &y)
+///     .marker(MarkerStyle::Star)
+///     .marker_size(12.0)
+///     .end_series()
+///     .save("star_markers.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ![Marker styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MarkerStyle {
     /// Filled circle (default)

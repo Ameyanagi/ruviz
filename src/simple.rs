@@ -3,7 +3,7 @@
 //! This module provides one-liner convenience functions for common plotting tasks.
 //! All functions automatically optimize backend selection based on data size.
 //!
-//! # Examples
+//! # Quick Start
 //!
 //! ```rust,no_run
 //! use ruviz::simple::*;
@@ -17,6 +17,17 @@
 //! line_plot_with_title(&x, &y, "My Plot", "line_titled.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Available Functions
+//!
+//! | Function | Description |
+//! |----------|-------------|
+//! | [`line_plot`] | Create a line plot |
+//! | [`scatter_plot`] | Create a scatter plot |
+//! | [`bar_chart`] | Create a bar chart |
+//! | [`histogram`] | Create a histogram |
+//!
+//! ![Line plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)
 
 use crate::prelude::*;
 use std::path::Path;

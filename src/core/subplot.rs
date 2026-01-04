@@ -108,6 +108,29 @@ impl GridSpec {
 }
 
 /// Subplot figure containing multiple plots arranged in a grid
+///
+/// Create subplot figures using [`subplots()`] or [`subplots_default()`].
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+/// let y_sin: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+/// let y_cos: Vec<f64> = x.iter().map(|&v| v.cos()).collect();
+///
+/// let plot1 = Plot::new().line(&x, &y_sin).end_series();
+/// let plot2 = Plot::new().line(&x, &y_cos).end_series();
+///
+/// subplots(1, 2, 800, 400)?
+///     .subplot_at(0, plot1)?
+///     .subplot_at(1, plot2)?
+///     .save("side_by_side.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ![Subplot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png)
 #[derive(Debug, Clone)]
 pub struct SubplotFigure {
     /// Grid specification for layout

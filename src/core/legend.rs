@@ -18,6 +18,25 @@ use crate::render::{Color, LineStyle, MarkerStyle};
 /// Codes 0-10 correspond to matplotlib's numeric position codes.
 /// Additional outside positions are provided for placing legends
 /// outside the plot area.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let x = vec![1.0, 2.0, 3.0, 4.0];
+/// let y = vec![1.0, 4.0, 2.0, 3.0];
+///
+/// Plot::new()
+///     .legend_position(LegendPosition::UpperRight)
+///     .line(&x, &y)
+///     .label("Data")
+///     .end_series()
+///     .save("legend_upper_right.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ![Legend positions](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LegendPosition {
     /// Code 0: Automatic best position (minimizes data overlap)

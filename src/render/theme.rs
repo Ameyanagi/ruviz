@@ -3,7 +3,39 @@ use crate::render::{Color, LineStyle};
 /// Comprehensive theme system for consistent plot styling
 ///
 /// Themes control the visual appearance of all plot elements including colors,
-/// fonts, spacing, and other visual properties
+/// fonts, spacing, and other visual properties.
+///
+/// # Available Themes
+///
+/// | Theme | Description |
+/// |-------|-------------|
+/// | [`Theme::light()`] | Default light theme with white background |
+/// | [`Theme::dark()`] | Dark mode with dark background |
+/// | [`Theme::seaborn()`] | Seaborn-inspired styling |
+/// | [`Theme::publication()`] | Publication-ready, high contrast |
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+/// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+///
+/// // Using dark theme
+/// Plot::new()
+///     .theme(Theme::dark())
+///     .line(&x, &y)
+///     .end_series()
+///     .save("dark_plot.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Visual Comparison
+///
+/// | Default | Dark | Seaborn | Publication |
+/// |---------|------|---------|-------------|
+/// | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png) |
 #[derive(Debug, Clone)]
 pub struct Theme {
     /// Background color of the plot area

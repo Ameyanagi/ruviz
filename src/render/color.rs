@@ -2,7 +2,30 @@ use std::fmt;
 
 /// Color representation for plot elements
 ///
-/// Supports predefined colors and custom RGB/RGBA values with hex parsing
+/// Supports predefined colors and custom RGB/RGBA values with hex parsing.
+///
+/// # Default Palette
+///
+/// Use [`Color::default_palette()`] to get the 8-color default palette.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+/// use ruviz::render::Color;
+///
+/// let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+/// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+///
+/// Plot::new()
+///     .line(&x, &y)
+///     .color(Color::new(255, 0, 128)) // Custom pink
+///     .end_series()
+///     .save("custom_color.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ![Default color palette](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
     pub r: u8,
@@ -424,6 +447,49 @@ impl ColorMap {
         )
     }
 
+    /// Coolwarm diverging colormap (blue-white-red, centered at zero)
+    pub fn coolwarm() -> Self {
+        Self::new(
+            "coolwarm".to_string(),
+            vec![
+                Color::from_rgb_u32(0x3b4cc0), // Blue
+                Color::from_rgb_u32(0x6788ee), // Light blue
+                Color::from_rgb_u32(0x9abbff), // Lighter blue
+                Color::from_rgb_u32(0xc9d7f0), // Very light blue
+                Color::from_rgb_u32(0xf7f7f7), // White (center)
+                Color::from_rgb_u32(0xf6cfa5), // Very light red
+                Color::from_rgb_u32(0xf08a6d), // Light red
+                Color::from_rgb_u32(0xd8412d), // Red
+                Color::from_rgb_u32(0xb40426), // Dark red
+            ],
+        )
+    }
+
+    /// RdBu diverging colormap (red-white-blue)
+    pub fn rdbu() -> Self {
+        Self::new(
+            "rdbu".to_string(),
+            vec![
+                Color::from_rgb_u32(0x67001f), // Dark red
+                Color::from_rgb_u32(0xb2182b), // Red
+                Color::from_rgb_u32(0xd6604d), // Light red
+                Color::from_rgb_u32(0xf4a582), // Salmon
+                Color::from_rgb_u32(0xfddbc7), // Light salmon
+                Color::from_rgb_u32(0xf7f7f7), // White (center)
+                Color::from_rgb_u32(0xd1e5f0), // Light blue
+                Color::from_rgb_u32(0x92c5de), // Light blue
+                Color::from_rgb_u32(0x4393c3), // Blue
+                Color::from_rgb_u32(0x2166ac), // Dark blue
+                Color::from_rgb_u32(0x053061), // Very dark blue
+            ],
+        )
+    }
+
+    /// Create a colormap from a slice of colors
+    pub fn from_colors(colors: &[Color]) -> Self {
+        Self::new("custom".to_string(), colors.to_vec())
+    }
+
     /// Get colormap by name
     pub fn by_name(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
@@ -435,6 +501,8 @@ impl ColorMap {
             "cool" => Some(Self::cool()),
             "gray" | "grey" => Some(Self::gray()),
             "jet" => Some(Self::jet()),
+            "coolwarm" => Some(Self::coolwarm()),
+            "rdbu" => Some(Self::rdbu()),
             _ => None,
         }
     }
@@ -443,6 +511,7 @@ impl ColorMap {
     pub fn available_names() -> Vec<&'static str> {
         vec![
             "viridis", "plasma", "inferno", "magma", "hot", "cool", "gray", "jet",
+            "coolwarm", "rdbu",
         ]
     }
 }
