@@ -34,9 +34,9 @@
 //!
 //! | | | |
 //! |:---:|:---:|:---:|
-//! | [![Line Plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png) | [![Scatter Plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png) | [![Bar Chart](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png) |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png" width="250"></a> |
 //! | Line Plot | Scatter Plot | Bar Chart |
-//! | [![Histogram](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png) | [![Box Plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png) | [![Heatmap](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png) |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png" width="250"></a> |
 //! | Histogram | Box Plot | Heatmap |
 //!
 //! <details>
@@ -164,7 +164,7 @@
 //!
 //! | | | |
 //! |:---:|:---:|:---:|
-//! | [![Line Styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png) | [![Marker Styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png) | [![Colors](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png) |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png" width="250"></a> |
 //! | Line Styles | Marker Styles | Color Palette |
 //!
 //! <details>
@@ -240,7 +240,7 @@
 //!
 //! | | | | |
 //! |:---:|:---:|:---:|:---:|
-//! | [![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png) | [![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png) | [![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png) | [![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png) |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png" width="200"></a> |
 //! | Default | Dark | Seaborn | Publication |
 //!
 //! <details>
@@ -315,7 +315,7 @@
 //!
 //! | | |
 //! |:---:|:---:|
-//! | [![Legend Positions](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png) | [![Subplots](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png)](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png) |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png" width="350"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png" width="350"></a> |
 //! | Legend Positions | Subplots |
 //!
 //! <details>
