@@ -422,7 +422,8 @@
 //!     .title("Trigonometric Functions")
 //!     .line(&x, &sin_y).label("sin(x)")
 //!     .line(&x, &cos_y).label("cos(x)")
-//!     .legend_best()  // Enable legend (like plt.legend())
+//!     .end_series()     // Finish series chain
+//!     .legend_best()    // Enable legend (like plt.legend())
 //!     .save("trig.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

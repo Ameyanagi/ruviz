@@ -1538,7 +1538,8 @@ impl Plot {
     /// Plot::new()
     ///     .line(&x, &sin_y).label("sin(x)")
     ///     .line(&x, &cos_y).label("cos(x)")
-    ///     .legend_best()  // Like plt.legend() in matplotlib
+    ///     .end_series()       // Finish series chain
+    ///     .legend_best()      // Like plt.legend() in matplotlib
     ///     .save("legend.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
