@@ -1225,7 +1225,7 @@ impl Plot {
                 data_vec.push((*val).into());
             }
         }
-        let hist_config = config.unwrap_or_else(|| HistogramConfig::new());
+        let hist_config = config.unwrap_or_default();
 
         let series = PlotSeries {
             series_type: SeriesType::Histogram {
@@ -1280,7 +1280,7 @@ impl Plot {
                 data_vec.push((*val).into());
             }
         }
-        let box_config = config.unwrap_or_else(|| BoxPlotConfig::new());
+        let box_config = config.unwrap_or_default();
 
         let series = PlotSeries {
             series_type: SeriesType::BoxPlot {
@@ -2321,7 +2321,7 @@ impl Plot {
                             let text = format!("{:.2}", value);
                             let text_color = data.get_text_color(cell_color);
                             let text_x = cell_x + cell_width / 2.0;
-                            let font_size = (cell_height * 0.3).max(8.0).min(20.0);
+                            let font_size = (cell_height * 0.3).clamp(8.0, 20.0);
                             // Center vertically: y position at cell center + half font size
                             let text_y = cell_y + cell_height / 2.0 + font_size / 3.0;
                             renderer
@@ -2908,7 +2908,7 @@ impl Plot {
         }
 
         // Convert renderer output to Image
-        Ok(renderer.to_image())
+        Ok(renderer.into_image())
     }
 
     /// Render the plot to an external renderer (used for subplots)
@@ -3187,8 +3187,7 @@ impl Plot {
         }
 
         // Render each data series
-        let mut color_index = 0;
-        for series in &self.series {
+        for (color_index, series) in self.series.iter().enumerate() {
             // Get series styling with defaults
             let color = series.color.unwrap_or_else(|| {
                 let palette = Color::default_palette();
@@ -3294,7 +3293,6 @@ impl Plot {
                     }
                 }
             }
-            color_index += 1;
         }
 
         // Draw annotations after data series but before legend
@@ -4051,7 +4049,7 @@ impl Plot {
         );
 
         // Convert renderer output to Image
-        Ok(renderer.to_image())
+        Ok(renderer.into_image())
     }
 
     /// Calculate data bounds across all series
@@ -5663,7 +5661,11 @@ impl PlotSeriesBuilder {
 
     /// Set DPI for export quality
     pub fn dpi(mut self, dpi: u32) -> Self {
+        self.plot.config.figure.dpi = dpi.max(72) as f32;
         self.plot.dpi = dpi.max(72);
+        // Update dimensions to reflect new DPI
+        let (w, h) = self.plot.config.canvas_size();
+        self.plot.dimensions = (w, h);
         self
     }
 

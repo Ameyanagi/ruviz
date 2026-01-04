@@ -27,7 +27,8 @@ use crate::render::{FontFamily, FontWeight};
 ///
 /// Each preset configures typography, line widths, and spacing for
 /// a specific use case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(clippy::upper_case_acronyms)] // IEEE is the standard organization acronym
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PlotStyle {
     /// Matplotlib-like defaults
     ///
@@ -35,6 +36,7 @@ pub enum PlotStyle {
     /// - 10pt base font (sans-serif)
     /// - 1.5pt data lines
     /// - Good for general use
+    #[default]
     Default,
 
     /// Minimal chrome, clean look
@@ -415,12 +417,6 @@ impl PlotStyle {
             PlotStyle::Web => "Optimized for web/screen viewing",
             PlotStyle::Poster => "Large format for poster presentations",
         }
-    }
-}
-
-impl Default for PlotStyle {
-    fn default() -> Self {
-        PlotStyle::Default
     }
 }
 

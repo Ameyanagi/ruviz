@@ -172,11 +172,7 @@ unsafe impl<T: Sync> Sync for DataView<T> {}
 
 impl<T> Clone for DataView<T> {
     fn clone(&self) -> Self {
-        Self {
-            data: self.data,
-            len: self.len,
-            _phantom: PhantomData,
-        }
+        *self
     }
 }
 

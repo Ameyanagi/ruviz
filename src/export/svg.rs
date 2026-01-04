@@ -795,7 +795,7 @@ impl SvgRenderer {
         }
 
         // Calculate items per column
-        let items_per_col = (items.len() + legend.columns - 1) / legend.columns;
+        let items_per_col = items.len().div_ceil(legend.columns);
 
         // Calculate column width
         let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);

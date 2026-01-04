@@ -105,7 +105,7 @@ impl<T> PooledVec<T> {
     /// Clear all elements from the vector
     pub fn clear(&mut self) {
         // Drop all elements in reverse order
-        while let Some(_) = self.pop() {}
+        while self.pop().is_some() {}
     }
 
     /// Get a slice of all elements

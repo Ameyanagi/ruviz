@@ -235,8 +235,8 @@ impl ParallelRenderer {
 
         // Fallback: simple coordinate transformation without SIMD
         for i in 0..point_count {
-            let x_norm = (x_data[i] - bounds.x_min as f64) / (bounds.x_max - bounds.x_min) as f64;
-            let y_norm = (y_data[i] - bounds.y_min as f64) / (bounds.y_max - bounds.y_min) as f64;
+            let x_norm = (x_data[i] - bounds.x_min) / (bounds.x_max - bounds.x_min);
+            let y_norm = (y_data[i] - bounds.y_min) / (bounds.y_max - bounds.y_min);
 
             let pixel_x = plot_area.left + x_norm as f32 * (plot_area.right - plot_area.left);
             let pixel_y = plot_area.bottom - y_norm as f32 * (plot_area.bottom - plot_area.top);
@@ -275,7 +275,7 @@ impl ParallelRenderer {
 
         // Parallel processing with overlapping chunks
         let chunk_size = self.chunk_size;
-        let chunk_count = (points.len() + chunk_size - 1) / chunk_size;
+        let chunk_count = points.len().div_ceil(chunk_size);
 
         let segments: Vec<LineSegment> = (0..chunk_count)
             .into_par_iter()

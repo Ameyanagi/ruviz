@@ -80,6 +80,7 @@ impl GpuBuffer {
 }
 
 /// GPU memory pool for efficient buffer management
+#[allow(clippy::type_complexity)] // Cache key type is inherently complex for GPU buffer management
 pub struct GpuMemoryPool {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -277,7 +278,7 @@ impl GpuMemoryPool {
 
     /// Align buffer size to GPU requirements
     fn align_buffer_size(&self, size: u64) -> u64 {
-        ((size + self.alignment - 1) / self.alignment) * self.alignment
+        size.div_ceil(self.alignment) * self.alignment
     }
 
     /// Alignment-safe slice casting with fallback

@@ -1,21 +1,7 @@
 // Clippy configuration - allow some lints that are too strict for this codebase
+// too_many_arguments: Many rendering functions require multiple parameters for
+// flexibility. Consider config structs for future additions, but current API is ergonomic.
 #![allow(clippy::too_many_arguments)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::derivable_impls)]
-#![allow(clippy::manual_div_ceil)]
-#![allow(clippy::field_reassign_with_default)]
-#![allow(clippy::wrong_self_convention)]
-#![allow(clippy::ptr_arg)]
-#![allow(clippy::redundant_closure)]
-#![allow(clippy::unnecessary_cast)]
-#![allow(clippy::empty_line_after_doc_comments)]
-#![allow(clippy::upper_case_acronyms)]
-#![allow(clippy::manual_clamp)]
-#![allow(clippy::explicit_counter_loop)]
-#![allow(clippy::module_inception)]
-#![allow(clippy::redundant_pattern_matching)]
-#![allow(clippy::non_canonical_clone_impl)]
-#![allow(clippy::enum_variant_names)]
 #![allow(unconditional_recursion)]
 // Allow unused code during development
 #![allow(dead_code)]

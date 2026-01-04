@@ -182,9 +182,10 @@ impl Scale for SymLogScale {
 /// User-facing axis scale configuration
 ///
 /// This enum provides a simple API for setting axis scales on plots.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum AxisScale {
     /// Linear scale (default)
+    #[default]
     Linear,
     /// Logarithmic scale (base 10)
     /// Only valid for positive data values
@@ -195,12 +196,6 @@ pub enum AxisScale {
         /// Linear threshold (values within ±linthresh are scaled linearly)
         linthresh: f64,
     },
-}
-
-impl Default for AxisScale {
-    fn default() -> Self {
-        AxisScale::Linear
-    }
 }
 
 impl AxisScale {

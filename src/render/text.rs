@@ -90,11 +90,12 @@ pub fn initialize_text_system() {
 /// Represents the font family to use for text rendering. The system will
 /// automatically fall back to available fonts if the requested family
 /// is not available.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum FontFamily {
     /// System default serif font (Times, Georgia, etc.)
     Serif,
     /// System default sans-serif font (Arial, Helvetica, etc.)
+    #[default]
     SansSerif,
     /// System default monospace font (Courier, Consolas, etc.)
     Monospace,
@@ -132,12 +133,6 @@ impl FontFamily {
     }
 }
 
-impl Default for FontFamily {
-    fn default() -> Self {
-        FontFamily::SansSerif
-    }
-}
-
 impl From<&str> for FontFamily {
     fn from(name: &str) -> Self {
         match name.to_lowercase().as_str() {
@@ -158,7 +153,7 @@ impl From<String> for FontFamily {
 }
 
 /// Font weight specification
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
     /// Thin weight (100)
     Thin,
@@ -167,6 +162,7 @@ pub enum FontWeight {
     /// Light weight (300)
     Light,
     /// Normal/regular weight (400)
+    #[default]
     Normal,
     /// Medium weight (500)
     Medium,
@@ -182,7 +178,7 @@ pub enum FontWeight {
 
 impl FontWeight {
     /// Convert to cosmic-text Weight type
-    pub fn to_cosmic_weight(&self) -> CosmicWeight {
+    pub fn to_cosmic_weight(self) -> CosmicWeight {
         match self {
             FontWeight::Thin => CosmicWeight::THIN,
             FontWeight::ExtraLight => CosmicWeight::EXTRA_LIGHT,
@@ -197,16 +193,11 @@ impl FontWeight {
     }
 }
 
-impl Default for FontWeight {
-    fn default() -> Self {
-        FontWeight::Normal
-    }
-}
-
 /// Font style specification
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStyle {
     /// Normal upright style
+    #[default]
     Normal,
     /// Italic style
     Italic,
@@ -216,18 +207,12 @@ pub enum FontStyle {
 
 impl FontStyle {
     /// Convert to cosmic-text Style type
-    pub fn to_cosmic_style(&self) -> CosmicStyle {
+    pub fn to_cosmic_style(self) -> CosmicStyle {
         match self {
             FontStyle::Normal => CosmicStyle::Normal,
             FontStyle::Italic => CosmicStyle::Italic,
             FontStyle::Oblique => CosmicStyle::Oblique,
         }
-    }
-}
-
-impl Default for FontStyle {
-    fn default() -> Self {
-        FontStyle::Normal
     }
 }
 

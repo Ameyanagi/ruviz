@@ -6,6 +6,7 @@ use crate::data::platform::get_platform_optimizer;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// GPU-specific error types
+#[allow(clippy::enum_variant_names)] // All variants describe failure modes
 #[derive(Debug, thiserror::Error)]
 pub enum GpuError {
     #[error("GPU initialization failed: {0}")]

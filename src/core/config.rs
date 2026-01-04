@@ -556,7 +556,7 @@ impl Default for ComputedMargins {
 ///
 /// This struct aggregates all configuration options for a plot,
 /// using physical units for DPI-independent layout.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PlotConfig {
     /// Figure dimensions and DPI
     pub figure: FigureConfig,
@@ -696,18 +696,6 @@ impl PlotConfig {
                 dpi: REFERENCE_DPI,
             },
             ..Default::default()
-        }
-    }
-}
-
-impl Default for PlotConfig {
-    fn default() -> Self {
-        Self {
-            figure: FigureConfig::default(),
-            typography: TypographyConfig::default(),
-            lines: LineConfig::default(),
-            spacing: SpacingConfig::default(),
-            margins: MarginConfig::default(),
         }
     }
 }

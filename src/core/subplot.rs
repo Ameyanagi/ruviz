@@ -370,7 +370,7 @@ impl SubplotFigure {
 
                 // Copy subplot renderer to main renderer at correct position
                 renderer.draw_subplot(
-                    subplot_renderer.to_image(),
+                    subplot_renderer.into_image(),
                     subplot_rect.left() as u32,
                     subplot_rect.top() as u32,
                 )?;

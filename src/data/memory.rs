@@ -130,8 +130,6 @@ pub struct MemoryConfig {
     pub max_pool_memory: usize,
 }
 
-/// 2D point for pooling
-
 /// Managed buffer that returns to pool when dropped
 #[derive(Debug)]
 pub struct ManagedBuffer<T> {

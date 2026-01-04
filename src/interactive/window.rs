@@ -51,14 +51,18 @@ impl InteractiveWindow {
     /// Create new interactive window
     pub async fn new(plot: Plot, title: &str, width: u32, height: u32) -> Result<Self> {
         let renderer = RealTimeRenderer::new().await?;
-        let mut interaction_state = InteractionState::default();
-
         // Set up data bounds based on plot data
         // In real implementation, would analyze plot data to determine bounds
-        interaction_state.data_bounds =
-            crate::interactive::event::Rectangle::new(0.0, 0.0, 100.0, 100.0);
-        interaction_state.screen_bounds =
-            crate::interactive::event::Rectangle::new(0.0, 0.0, width as f64, height as f64);
+        let interaction_state = InteractionState {
+            data_bounds: crate::interactive::event::Rectangle::new(0.0, 0.0, 100.0, 100.0),
+            screen_bounds: crate::interactive::event::Rectangle::new(
+                0.0,
+                0.0,
+                width as f64,
+                height as f64,
+            ),
+            ..Default::default()
+        };
 
         let event_handler = Box::new(DefaultEventHandler::new());
 
@@ -418,6 +422,7 @@ impl ApplicationHandler for InteractiveApp {
 }
 
 /// Default event handler implementation
+#[allow(clippy::type_complexity)] // Event handler callbacks need this flexibility
 struct DefaultEventHandler {
     custom_handlers: Vec<Box<dyn Fn(&InteractionEvent) -> Result<()>>>,
 }

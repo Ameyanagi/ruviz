@@ -37,9 +37,10 @@ use crate::render::{Color, LineStyle, MarkerStyle};
 /// ```
 ///
 /// ![Legend positions](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png)
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum LegendPosition {
     /// Code 0: Automatic best position (minimizes data overlap)
+    #[default]
     Best,
     /// Code 1: Upper right corner (default)
     UpperRight,
@@ -78,14 +79,6 @@ pub enum LegendPosition {
         /// Anchor point on legend box
         anchor: LegendAnchor,
     },
-}
-
-impl Default for LegendPosition {
-    fn default() -> Self {
-        // Default to "best" auto-positioning (matplotlib loc=0)
-        // This minimizes overlap with data points
-        LegendPosition::Best
-    }
 }
 
 impl LegendPosition {
@@ -355,7 +348,7 @@ impl Default for LegendSpacing {
 
 impl LegendSpacing {
     /// Calculate pixel values from font size
-    pub fn to_pixels(&self, font_size: f32) -> LegendSpacingPixels {
+    pub fn to_pixels(self, font_size: f32) -> LegendSpacingPixels {
         LegendSpacingPixels {
             handle_length: self.handle_length * font_size,
             handle_height: self.handle_height * font_size,
@@ -578,7 +571,7 @@ impl Legend {
         let item_width = spacing_px.handle_length + spacing_px.handle_text_pad + label_width;
 
         // Calculate dimensions based on columns
-        let items_per_col = (items.len() + self.columns - 1) / self.columns;
+        let items_per_col = items.len().div_ceil(self.columns);
 
         let content_width = item_width * self.columns as f32
             + (self.columns.saturating_sub(1)) as f32 * spacing_px.column_spacing;

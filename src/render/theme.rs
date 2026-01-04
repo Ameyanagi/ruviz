@@ -643,6 +643,7 @@ impl ThemeBuilder {
     }
 }
 
+#[allow(clippy::derivable_impls)] // Theme::light() is the semantic default, not Theme::default()
 impl Default for ThemeBuilder {
     fn default() -> Self {
         Self {
@@ -652,6 +653,7 @@ impl Default for ThemeBuilder {
 }
 
 /// Predefined theme variants
+#[allow(clippy::upper_case_acronyms)] // IEEE is the standard organization acronym
 pub enum ThemeVariant {
     Light,
     Dark,

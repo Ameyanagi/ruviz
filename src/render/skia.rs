@@ -76,16 +76,17 @@ impl SkiaRenderer {
         let mut paint = Paint::default();
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
+        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
 
-        let mut stroke = Stroke::default();
-        stroke.width = width.max(0.1);
+        let mut stroke = Stroke {
+            width: width.max(0.1),
+            ..Stroke::default()
+        };
 
         // Apply line style
         if let Some(dash_pattern) = style.to_dash_array() {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
-
-        paint.set_color_rgba8(color.r, color.g, color.b, color.a);
 
         let mut path = PathBuilder::new();
         path.move_to(x1, y1);
@@ -116,10 +117,12 @@ impl SkiaRenderer {
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
 
-        let mut stroke = Stroke::default();
-        stroke.width = width.max(0.1);
-        stroke.line_cap = LineCap::Round;
-        stroke.line_join = LineJoin::Round;
+        let mut stroke = Stroke {
+            width: width.max(0.1),
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Stroke::default()
+        };
 
         // Apply line style
         if let Some(dash_pattern) = style.to_dash_array() {
@@ -236,10 +239,12 @@ impl SkiaRenderer {
             border_paint.anti_alias = true;
 
             // Professional border stroke (1.0px width)
-            let mut stroke = Stroke::default();
-            stroke.width = 1.0;
-            stroke.line_cap = LineCap::Square;
-            stroke.line_join = LineJoin::Miter;
+            let stroke = Stroke {
+                width: 1.0,
+                line_cap: LineCap::Square,
+                line_join: LineJoin::Miter,
+                ..Stroke::default()
+            };
 
             self.pixmap
                 .stroke_path(&path, &border_paint, &stroke, Transform::identity(), None);
@@ -1745,10 +1750,12 @@ impl SkiaRenderer {
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
 
-        let mut stroke = Stroke::default();
-        stroke.width = line_width;
-        stroke.line_cap = LineCap::Round;
-        stroke.line_join = LineJoin::Round;
+        let stroke = Stroke {
+            width: line_width,
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Stroke::default()
+        };
 
         self.pixmap
             .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -1914,7 +1921,7 @@ impl SkiaRenderer {
         }
 
         // Calculate items per column
-        let items_per_col = (items.len() + legend.columns - 1) / legend.columns;
+        let items_per_col = items.len().div_ceil(legend.columns);
 
         // Calculate column width
         let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
@@ -1973,7 +1980,7 @@ impl SkiaRenderer {
         font_size: f32,
     ) -> Result<()> {
         // Draw the colorbar gradient (vertical, from vmax at top to vmin at bottom)
-        let num_segments = (height as usize).max(50).min(256);
+        let num_segments = (height as usize).clamp(50, 256);
         let segment_height = height / num_segments as f32;
 
         for i in 0..num_segments {
@@ -2040,8 +2047,8 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Get the current pixmap as an Image
-    pub fn to_image(self) -> Image {
+    /// Consume the renderer and convert to an Image
+    pub fn into_image(self) -> Image {
         Image {
             width: self.width,
             height: self.height,
@@ -2471,8 +2478,10 @@ impl SkiaRenderer {
                 paint.set_color(edge_color.to_tiny_skia_color());
                 paint.anti_alias = true;
 
-                let mut stroke = Stroke::default();
-                stroke.width = style.edge_width.max(0.1);
+                let mut stroke = Stroke {
+                    width: style.edge_width.max(0.1),
+                    ..Stroke::default()
+                };
 
                 if let Some(dash_pattern) = style.edge_style.to_dash_array() {
                     stroke.dash = StrokeDash::new(dash_pattern, 0.0);
@@ -2560,8 +2569,10 @@ impl SkiaRenderer {
                 edge_paint.set_color(edge_color.to_tiny_skia_color());
                 edge_paint.anti_alias = true;
 
-                let mut stroke = Stroke::default();
-                stroke.width = style.edge_width.max(0.1);
+                let stroke = Stroke {
+                    width: style.edge_width.max(0.1),
+                    ..Stroke::default()
+                };
 
                 self.pixmap
                     .stroke_path(&path, &edge_paint, &stroke, Transform::identity(), None);
@@ -2948,7 +2959,7 @@ fn test_draw_subplot() {
     let subplot_renderer = SkiaRenderer::new(200, 150, theme).unwrap();
 
     // Convert subplot to image
-    let subplot_image = subplot_renderer.to_image();
+    let subplot_image = subplot_renderer.into_image();
 
     // Should draw subplot without error
     let result = main_renderer.draw_subplot(subplot_image, 10, 20);
@@ -2963,7 +2974,7 @@ fn test_draw_subplot_bounds_checking() {
     let mut main_renderer = SkiaRenderer::new(400, 300, theme.clone()).unwrap();
     let subplot_renderer = SkiaRenderer::new(200, 150, theme).unwrap();
 
-    let subplot_image = subplot_renderer.to_image();
+    let subplot_image = subplot_renderer.into_image();
 
     // Should handle valid positions
     assert!(
@@ -2986,7 +2997,7 @@ fn test_to_image_conversion() {
     let theme = Theme::default();
     let renderer = SkiaRenderer::new(400, 300, theme).unwrap();
 
-    let image = renderer.to_image();
+    let image = renderer.into_image();
 
     assert_eq!(image.width, 400);
     assert_eq!(image.height, 300);

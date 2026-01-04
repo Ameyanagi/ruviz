@@ -231,7 +231,7 @@ impl ComputeManager {
 
             // Use workgroups of 64 for optimal GPU utilization
             let workgroup_size = 64;
-            let num_workgroups = (point_count + workgroup_size - 1) / workgroup_size;
+            let num_workgroups = point_count.div_ceil(workgroup_size);
             compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
         }
 
@@ -297,7 +297,7 @@ impl ComputeManager {
 
             // Use workgroups of 64 for optimal GPU utilization
             let workgroup_size = 64;
-            let num_workgroups = (point_count + workgroup_size - 1) / workgroup_size;
+            let num_workgroups = point_count.div_ceil(workgroup_size);
             compute_pass.dispatch_workgroups(num_workgroups, 1, 1);
         }
 

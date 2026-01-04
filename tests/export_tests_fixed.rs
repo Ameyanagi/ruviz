@@ -280,11 +280,12 @@ fn test_export_validation() -> std::result::Result<(), Box<dyn std::error::Error
     let image = plot.render()?;
 
     // Validate image properties
-    assert_eq!(image.width, 800, "Default width should be 800");
-    assert_eq!(image.height, 600, "Default height should be 600");
+    // Default figure size: 6.4×4.8 inches at 100 DPI = 640×480 pixels
+    assert_eq!(image.width, 640, "Default width should be 640");
+    assert_eq!(image.height, 480, "Default height should be 480");
     assert_eq!(
         image.pixels.len(),
-        800 * 600 * 4,
+        640 * 480 * 4,
         "RGBA data should be width * height * 4"
     );
 

@@ -114,7 +114,7 @@ impl PooledRenderer {
                 // Handle remaining elements
                 while i < len {
                     if let Some(x) = x_data.get(i) {
-                        let transformed = (*x as f64 * scale + offset) as f32;
+                        let transformed = (*x * scale + offset) as f32;
                         result.push(transformed);
                     }
                     i += 1;
@@ -123,7 +123,7 @@ impl PooledRenderer {
                 // Process small datasets without SIMD
                 for i in 0..len {
                     if let Some(x) = x_data.get(i) {
-                        let transformed = (*x as f64 * scale + offset) as f32;
+                        let transformed = (*x * scale + offset) as f32;
                         result.push(transformed);
                     }
                 }
@@ -134,7 +134,7 @@ impl PooledRenderer {
             // Process all datasets without SIMD
             for i in 0..len {
                 if let Some(x) = x_data.get(i) {
-                    let transformed = (*x as f64 * scale + offset) as f32;
+                    let transformed = (*x * scale + offset) as f32;
                     result.push(transformed);
                 }
             }
@@ -207,7 +207,7 @@ impl PooledRenderer {
                 // Handle remaining elements
                 while i < len {
                     if let Some(y) = y_data.get(i) {
-                        let transformed = (*y as f64 * scale + offset) as f32;
+                        let transformed = (*y * scale + offset) as f32;
                         result.push(transformed);
                     }
                     i += 1;
@@ -216,7 +216,7 @@ impl PooledRenderer {
                 // Process small datasets without SIMD
                 for i in 0..len {
                     if let Some(y) = y_data.get(i) {
-                        let transformed = (*y as f64 * scale + offset) as f32;
+                        let transformed = (*y * scale + offset) as f32;
                         result.push(transformed);
                     }
                 }
@@ -227,7 +227,7 @@ impl PooledRenderer {
             // Process all datasets without SIMD
             for i in 0..len {
                 if let Some(y) = y_data.get(i) {
-                    let transformed = (*y as f64 * scale + offset) as f32;
+                    let transformed = (*y * scale + offset) as f32;
                     result.push(transformed);
                 }
             }
@@ -404,7 +404,7 @@ static GLOBAL_POOLED_RENDERER: OnceLock<PooledRenderer> = OnceLock::new();
 /// This provides a convenient singleton for integrating pooled rendering
 /// throughout the application without manual pool management.
 pub fn get_pooled_renderer() -> &'static PooledRenderer {
-    GLOBAL_POOLED_RENDERER.get_or_init(|| PooledRenderer::new())
+    GLOBAL_POOLED_RENDERER.get_or_init(PooledRenderer::new)
 }
 
 // Manual implementations to avoid dependency chain issues

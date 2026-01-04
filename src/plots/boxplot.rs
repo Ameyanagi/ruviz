@@ -18,6 +18,7 @@ pub struct BoxPlotConfig {
 }
 
 /// Methods for detecting outliers
+#[allow(clippy::upper_case_acronyms)] // IQR is the standard statistics acronym
 #[derive(Debug, Clone, Copy)]
 pub enum OutlierMethod {
     /// Standard IQR method: outliers beyond 1.5 * IQR from quartiles

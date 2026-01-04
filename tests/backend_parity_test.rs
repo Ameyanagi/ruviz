@@ -72,8 +72,9 @@ fn test_backend_consistency_scatter() {
     assert!(result.is_ok());
 
     let img = image::open("tests/output/backend_scatter.png").unwrap();
-    assert_eq!(img.width(), 800);
-    assert_eq!(img.height(), 600);
+    // Default figure size: 6.4×4.8 inches at 100 DPI = 640×480 pixels
+    assert_eq!(img.width(), 640);
+    assert_eq!(img.height(), 480);
 }
 
 #[test]
@@ -92,8 +93,9 @@ fn test_backend_consistency_bar() {
     assert!(result.is_ok());
 
     let img = image::open("tests/output/backend_bar.png").unwrap();
-    assert_eq!(img.width(), 800);
-    assert_eq!(img.height(), 600);
+    // Default figure size: 6.4×4.8 inches at 100 DPI = 640×480 pixels
+    assert_eq!(img.width(), 640);
+    assert_eq!(img.height(), 480);
 }
 
 #[test]
@@ -113,8 +115,9 @@ fn test_backend_consistency_histogram() {
     assert!(result.is_ok());
 
     let img = image::open("tests/output/backend_histogram.png").unwrap();
-    assert_eq!(img.width(), 800);
-    assert_eq!(img.height(), 600);
+    // Default figure size: 6.4×4.8 inches at 100 DPI = 640×480 pixels
+    assert_eq!(img.width(), 640);
+    assert_eq!(img.height(), 480);
 }
 
 #[test]
@@ -132,8 +135,9 @@ fn test_backend_consistency_boxplot() {
     assert!(result.is_ok());
 
     let img = image::open("tests/output/backend_boxplot.png").unwrap();
-    assert_eq!(img.width(), 800);
-    assert_eq!(img.height(), 600);
+    // Default figure size: 6.4×4.8 inches at 100 DPI = 640×480 pixels
+    assert_eq!(img.width(), 640);
+    assert_eq!(img.height(), 480);
 }
 
 #[test]
@@ -157,8 +161,9 @@ fn test_backend_consistency_multi_series() {
     assert!(result.is_ok());
 
     let img = image::open("tests/output/backend_multi_series.png").unwrap();
-    assert_eq!(img.width(), 800);
-    assert_eq!(img.height(), 600);
+    // Default figure size: 6.4×4.8 inches at 100 DPI = 640×480 pixels
+    assert_eq!(img.width(), 640);
+    assert_eq!(img.height(), 480);
 }
 
 #[test]
@@ -184,8 +189,9 @@ fn test_backend_consistency_themes() {
         assert!(result.is_ok(), "{} theme failed", name);
 
         let img = image::open(format!("tests/output/backend_theme_{}.png", name)).unwrap();
-        assert_eq!(img.width(), 800);
-        assert_eq!(img.height(), 600);
+        // Default figure size: 6.4×4.8 inches at 100 DPI = 640×480 pixels
+        assert_eq!(img.width(), 640);
+        assert_eq!(img.height(), 480);
     }
 }
 
@@ -207,9 +213,10 @@ fn test_backend_consistency_dpi() {
         assert!(result.is_ok(), "{} DPI failed", dpi);
 
         // AND: Should produce appropriately sized output (±1 pixel for rounding)
+        // Default figure size is 6.4 × 4.8 inches, so pixel dimensions = inches × DPI
         let img = image::open(format!("tests/output/backend_dpi_{}.png", dpi)).unwrap();
-        let expected_width = (800.0 * (dpi as f32 / 96.0)) as u32;
-        let expected_height = (600.0 * (dpi as f32 / 96.0)) as u32;
+        let expected_width = (6.4 * dpi as f32) as u32;
+        let expected_height = (4.8 * dpi as f32) as u32;
 
         let width_diff = (img.width() as i32 - expected_width as i32).abs();
         let height_diff = (img.height() as i32 - expected_height as i32).abs();
@@ -255,8 +262,27 @@ fn test_backend_consistency_dimensions() {
 
         let img =
             image::open(format!("tests/output/backend_dim_{}x{}.png", width, height)).unwrap();
-        assert_eq!(img.width(), width);
-        assert_eq!(img.height(), height);
+        // Allow ±1 pixel tolerance due to DPI auto-scaling rounding
+        let width_diff = (img.width() as i32 - width as i32).abs();
+        let height_diff = (img.height() as i32 - height as i32).abs();
+        assert!(
+            width_diff <= 1,
+            "{}x{} width mismatch: {} vs {} (diff: {})",
+            width,
+            height,
+            img.width(),
+            width,
+            width_diff
+        );
+        assert!(
+            height_diff <= 1,
+            "{}x{} height mismatch: {} vs {} (diff: {})",
+            width,
+            height,
+            img.height(),
+            height,
+            height_diff
+        );
     }
 }
 

@@ -221,6 +221,7 @@ pub fn initialize_platform_optimization() -> Result<(), crate::core::error::Plot
     Ok(())
 }
 
+#[allow(clippy::module_inception)] // Platform-specific module pattern using #[path]
 #[cfg(target_os = "linux")]
 #[path = "linux.rs"]
 mod platform;

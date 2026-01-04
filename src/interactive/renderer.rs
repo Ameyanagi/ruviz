@@ -297,7 +297,7 @@ impl RealTimeRenderer {
     fn render_hover_highlight(
         &mut self,
         state: &InteractionState,
-        pixel_data: &mut Vec<u8>,
+        pixel_data: &mut [u8],
     ) -> Result<()> {
         if let Some(ref hover_point) = state.hover_point {
             let screen_pos = state.data_to_screen(hover_point.position);
@@ -310,7 +310,7 @@ impl RealTimeRenderer {
     fn render_selection_highlight(
         &mut self,
         state: &InteractionState,
-        pixel_data: &mut Vec<u8>,
+        pixel_data: &mut [u8],
     ) -> Result<()> {
         for point_id in &state.selected_points {
             // In real implementation, would look up actual point coordinates
@@ -330,7 +330,7 @@ impl RealTimeRenderer {
     fn render_brush_region(
         &mut self,
         state: &InteractionState,
-        pixel_data: &mut Vec<u8>,
+        pixel_data: &mut [u8],
     ) -> Result<()> {
         if let Some(region) = state.brushed_region {
             self.draw_selection_rectangle(pixel_data, region, self.brush_color)?;
@@ -342,7 +342,7 @@ impl RealTimeRenderer {
     fn render_annotations(
         &mut self,
         state: &InteractionState,
-        pixel_data: &mut Vec<u8>,
+        pixel_data: &mut [u8],
     ) -> Result<()> {
         for annotation in &state.annotations {
             self.annotation_renderer.render_annotation(
@@ -357,7 +357,7 @@ impl RealTimeRenderer {
     }
 
     /// Render tooltip
-    fn render_tooltip(&mut self, state: &InteractionState, pixel_data: &mut Vec<u8>) -> Result<()> {
+    fn render_tooltip(&mut self, state: &InteractionState, pixel_data: &mut [u8]) -> Result<()> {
         if state.tooltip_visible && !state.tooltip_content.is_empty() {
             self.draw_tooltip(pixel_data, &state.tooltip_content, state.tooltip_position)?;
         }
@@ -367,7 +367,7 @@ impl RealTimeRenderer {
     /// Draw highlight circle at screen position
     fn draw_highlight_circle(
         &self,
-        pixel_data: &mut Vec<u8>,
+        pixel_data: &mut [u8],
         center: Point2D,
         radius: f32,
         color: Color,
@@ -408,7 +408,7 @@ impl RealTimeRenderer {
     /// Draw selection rectangle
     fn draw_selection_rectangle(
         &self,
-        pixel_data: &mut Vec<u8>,
+        pixel_data: &mut [u8],
         region: Rectangle,
         color: Color,
     ) -> Result<()> {
@@ -438,12 +438,7 @@ impl RealTimeRenderer {
     }
 
     /// Draw tooltip
-    fn draw_tooltip(
-        &self,
-        pixel_data: &mut Vec<u8>,
-        content: &str,
-        position: Point2D,
-    ) -> Result<()> {
+    fn draw_tooltip(&self, pixel_data: &mut [u8], content: &str, position: Point2D) -> Result<()> {
         // Simple tooltip rendering - in production would use proper text rendering
         // For now, just draw a simple colored rectangle as placeholder
         let tooltip_width = content.len() as f64 * 8.0 + 20.0;
@@ -615,7 +610,7 @@ impl AnnotationRenderer {
         &self,
         annotation: &Annotation,
         state: &InteractionState,
-        pixel_data: &mut Vec<u8>,
+        pixel_data: &mut [u8],
         width: u32,
         height: u32,
     ) -> Result<()> {

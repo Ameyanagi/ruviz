@@ -1,4 +1,4 @@
-/// Basic geometric types for plotting
+//! Basic geometric types for plotting
 
 /// 2D point with floating-point coordinates
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,7 +21,7 @@ impl Point2f {
     }
 
     /// Convert to array for SIMD operations
-    pub fn to_array(&self) -> [f32; 2] {
+    pub fn to_array(self) -> [f32; 2] {
         [self.x, self.y]
     }
 

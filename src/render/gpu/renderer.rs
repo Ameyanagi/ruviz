@@ -200,12 +200,10 @@ impl GpuRenderer {
         // Setup transformation parameters
         let (left, top, right, bottom) = viewport;
         let params = TransformParams {
-            scale_x: (right - left) as f32 / (x_range.1 - x_range.0) as f32,
-            scale_y: (bottom - top) as f32 / (y_range.1 - y_range.0) as f32,
-            offset_x: left
-                - (x_range.0 as f32 * (right - left) as f32 / (x_range.1 - x_range.0) as f32),
-            offset_y: top
-                - (y_range.0 as f32 * (bottom - top) as f32 / (y_range.1 - y_range.0) as f32),
+            scale_x: (right - left) / (x_range.1 - x_range.0) as f32,
+            scale_y: (bottom - top) / (y_range.1 - y_range.0) as f32,
+            offset_x: left - (x_range.0 as f32 * (right - left) / (x_range.1 - x_range.0) as f32),
+            offset_y: top - (y_range.0 as f32 * (bottom - top) / (y_range.1 - y_range.0) as f32),
             width: (right - left) as u32,
             height: (bottom - top) as u32,
             _padding: [0, 0],

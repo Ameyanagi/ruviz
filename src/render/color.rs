@@ -131,12 +131,12 @@ impl Color {
     }
 
     /// Convert to tiny-skia Color32 for rendering
-    pub fn to_tiny_skia_color(&self) -> tiny_skia::Color {
+    pub fn to_tiny_skia_color(self) -> tiny_skia::Color {
         tiny_skia::Color::from_rgba8(self.r, self.g, self.b, self.a)
     }
 
     /// Convert to f32 RGBA values (0.0-1.0 range)
-    pub fn to_rgba_f32(&self) -> (f32, f32, f32, f32) {
+    pub fn to_rgba_f32(self) -> (f32, f32, f32, f32) {
         (
             self.r as f32 / 255.0,
             self.g as f32 / 255.0,

@@ -556,8 +556,6 @@ pub struct PixelViewport {
     pub bottom: f32,
 }
 
-/// 2D point with single precision coordinates
-
 /// 2D affine transformation matrix
 #[derive(Debug, Clone)]
 pub struct AffineTransform2D {
