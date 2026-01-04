@@ -197,7 +197,7 @@ impl SubplotFigure {
             width,
             height,
             suptitle: None,
-            margin: 0.1, // 10% margin by default
+            margin: 0.05, // 5% margin by default - tighter layout
         })
     }
 
