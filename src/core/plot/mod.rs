@@ -5255,49 +5255,175 @@ impl PlotSeriesBuilder {
     }
 
     /// Set series label for legend
+    ///
+    /// Labels appear in the plot legend when enabled.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .legend_position(LegendPosition::UpperRight)
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .label("Quadratic")
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0])
+    ///     .label("Linear")
+    ///     .end_series()
+    ///     .save("labeled.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn label<S: Into<String>>(mut self, label: S) -> Self {
         self.series.label = Some(label.into());
         self
     }
 
     /// Set series color
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .color(Color::RED)
+    ///     .line(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0])
+    ///     .color(Color::from_hex("#00FF00").unwrap())
+    ///     .end_series()
+    ///     .save("colored_lines.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn color(mut self, color: Color) -> Self {
         self.series.color = Some(color);
         self
     }
 
     /// Set line width
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .width(3.0)  // Thick line
+    ///     .line(&[1.0, 2.0, 3.0], &[0.5, 2.0, 4.5])
+    ///     .width(1.0)  // Thin line
+    ///     .end_series()
+    ///     .save("line_widths.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn width(mut self, width: f32) -> Self {
         self.series.line_width = Some(width.max(0.1));
         self
     }
 
     /// Set line style
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .style(LineStyle::Dashed)
+    ///     .line(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0])
+    ///     .style(LineStyle::Dotted)
+    ///     .end_series()
+    ///     .save("line_styles.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn style(mut self, style: LineStyle) -> Self {
         self.series.line_style = Some(style);
         self
     }
 
     /// Set marker style (for scatter plots)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .scatter(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .marker(MarkerStyle::Circle)
+    ///     .scatter(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0])
+    ///     .marker(MarkerStyle::Square)
+    ///     .end_series()
+    ///     .save("markers.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn marker(mut self, marker: MarkerStyle) -> Self {
         self.series.marker_style = Some(marker);
         self
     }
 
     /// Set marker size (for scatter plots)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .scatter(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .marker_size(15.0)  // Large markers
+    ///     .scatter(&[1.0, 2.0, 3.0], &[2.0, 4.0, 6.0])
+    ///     .marker_size(5.0)   // Small markers
+    ///     .end_series()
+    ///     .save("marker_sizes.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn marker_size(mut self, size: f32) -> Self {
         self.series.marker_size = Some(size.max(0.1));
         self
     }
 
     /// Set transparency
+    ///
+    /// Values range from 0.0 (fully transparent) to 1.0 (fully opaque).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .scatter(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .alpha(0.5)  // Semi-transparent
+    ///     .end_series()
+    ///     .save("transparent.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn alpha(mut self, alpha: f32) -> Self {
         self.series.alpha = Some(alpha.clamp(0.0, 1.0));
         self
     }
 
     /// Finish configuring this series and return to the main Plot
-    /// This consumes the builder and adds the series to the plot
+    ///
+    /// This consumes the builder and adds the series to the plot.
+    /// Call this when you're done configuring the series and want to
+    /// either save the plot or add more series.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .label("Series 1")
+    ///     .color(Color::BLUE)
+    ///     .end_series()  // Finalize first series
+    ///     .title("My Plot")
+    ///     .save("plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn end_series(mut self) -> Plot {
         // Auto-assign color if none specified
         if self.series.color.is_none() {
