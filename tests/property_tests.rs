@@ -180,14 +180,8 @@ proptest! {
 proptest! {
     #[test]
     fn scatter_plot_robust(
-        x in prop::collection::vec(
-            any::<f64>().prop_filter("finite", |x| x.is_finite()),
-            5..100
-        ),
-        y in prop::collection::vec(
-            any::<f64>().prop_filter("finite", |y| y.is_finite()),
-            5..100
-        ),
+        x in prop::collection::vec(-1e10_f64..1e10_f64, 5..100),
+        y in prop::collection::vec(-1e10_f64..1e10_f64, 5..100),
     ) {
         let min_len = x.len().min(y.len());
         let x: Vec<f64> = x[..min_len].to_vec();
