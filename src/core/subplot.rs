@@ -34,8 +34,8 @@ impl GridSpec {
         Self {
             rows,
             cols,
-            hspace: 0.2,
-            wspace: 0.2,
+            hspace: 0.1, // 10% spacing - tighter default for cleaner look
+            wspace: 0.1,
         }
     }
 
@@ -470,18 +470,21 @@ mod tests {
     #[test]
     fn test_subplot_rect_calculation() {
         let grid = GridSpec::new(2, 2);
+        let margin = 0.1;
 
         // Test first subplot (top-left)
-        let rect = grid.subplot_rect(0, 800, 600, 0.1).unwrap();
-        assert!(rect.left() >= 80.0); // Should account for margin
+        let rect = grid.subplot_rect(0, 800, 600, margin).unwrap();
+        // With 0.1 margin on 600px min dimension: margin_px = 60px
+        // With 0.1 spacing: x = 60 + spacing/2 ≈ 77px
+        assert!(rect.left() >= 60.0); // Should be past margin
         assert!(rect.top() >= 60.0);
         assert!(rect.width() > 0.0);
         assert!(rect.height() > 0.0);
 
         // Test last subplot (bottom-right)
-        let rect = grid.subplot_rect(3, 800, 600, 0.1).unwrap();
-        assert!(rect.right() <= 720.0); // Should fit within margins
-        assert!(rect.bottom() <= 540.0);
+        let rect = grid.subplot_rect(3, 800, 600, margin).unwrap();
+        assert!(rect.right() <= 740.0); // Should fit within margins (800 - 60)
+        assert!(rect.bottom() <= 540.0); // Should fit within margins (600 - 60)
     }
 
     #[test]
