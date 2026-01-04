@@ -1,7 +1,10 @@
+//! Memory performance benchmarks for ruviz
+//!
+//! These benchmarks measure memory allocation and pooling performance.
+
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ruviz::data::{MemoryPool, PooledVec};
+use ruviz::data::{MemoryPool, PooledVec, SharedMemoryPool};
 use ruviz::prelude::*;
-use std::sync::{Arc, Mutex};
 
 fn bench_allocation_overhead(c: &mut Criterion) {
     let mut group = c.benchmark_group("allocation_overhead");
@@ -32,70 +35,32 @@ fn bench_allocation_overhead(c: &mut Criterion) {
                 });
             },
         );
-
-        // Benchmark pooled allocation with reuse
-        group.bench_with_input(
-            BenchmarkId::new("pool_allocation_reuse", size),
-            size,
-            |b, &size| {
-                let mut pool = MemoryPool::<f64>::new(size * 2);
-                // Pre-warm the pool
-                let buffer = pool.acquire(size);
-                pool.release(buffer);
-
-                b.iter(|| {
-                    let buffer = pool.acquire(size);
-                    pool.release(buffer);
-                });
-            },
-        );
     }
     group.finish();
 }
 
-fn bench_large_plot_memory(c: &mut Criterion) {
-    let mut group = c.benchmark_group("large_plot_memory");
+fn bench_plot_rendering(c: &mut Criterion) {
+    let mut group = c.benchmark_group("plot_rendering");
 
-    for points in [1000, 10000, 100000].iter() {
-        let x_data: Vec<f64> = (0..*points).map(|i| i as f64).collect();
-        let y_data: Vec<f64> = (0..*points).map(|i| (i as f64).sin()).collect();
+    // Create test output directory
+    std::fs::create_dir_all("test_output").ok();
 
-        group.throughput(Throughput::Elements(*points as u64));
+    for &points in [100, 1000, 10000].iter() {
+        group.throughput(Throughput::Elements(points as u64));
 
-        // Benchmark without memory pooling
+        let x_data: Vec<f64> = (0..points).map(|i| i as f64 * 0.01).collect();
+        let y_data: Vec<f64> = x_data.iter().map(|&x| x.sin()).collect();
+
+        // Benchmark plot rendering
         group.bench_with_input(
-            BenchmarkId::new("traditional_rendering", points),
+            BenchmarkId::new("line_plot", points),
             &(x_data.clone(), y_data.clone()),
             |b, (x, y)| {
                 b.iter(|| {
-                    let plot = Plot::new();
-                    let _result = plot
+                    let _result = Plot::new()
                         .line(x, y)
                         .title("Performance Test")
-                        .save(&format!("test_output/bench_traditional_{}.png", points));
-                });
-            },
-        );
-
-        // Benchmark with memory pooling
-        group.bench_with_input(
-            BenchmarkId::new("pooled_rendering", points),
-            &(x_data, y_data),
-            |b, (x, y)| {
-                let pool_config = PoolConfig {
-                    coordinate_pool_size: *points,
-                    pixel_pool_size: 8 * 1024 * 1024, // 8MB
-                    text_pool_size: 256 * 1024,       // 256KB
-                    max_pools_per_type: 5,
-                    enable_cross_thread_sharing: false,
-                };
-
-                b.iter(|| {
-                    let plot = Plot::with_pool_config(pool_config.clone());
-                    let _result = plot
-                        .line(x, y)
-                        .title("Performance Test")
-                        .save(&format!("test_output/bench_pooled_{}.png", points));
+                        .save(&format!("test_output/bench_{}.png", points));
                 });
             },
         );
@@ -110,14 +75,11 @@ fn bench_steady_state_rendering(c: &mut Criterion) {
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y_data = vec![0.0, 1.0, 0.0, 1.0, 0.0];
 
-    // Benchmark memory growth over time
+    // Benchmark memory growth over time with many plots
     group.bench_function("steady_state_100_plots", |b| {
-        let pool_config = PoolConfig::default();
-        let plot = Plot::with_pool_config(pool_config);
-
         b.iter(|| {
             for i in 0..100 {
-                let _result = plot
+                let _result = Plot::new()
                     .line(&x_data, &y_data)
                     .title(&format!("Plot {}", i))
                     .save(&format!("test_output/steady_state_{}.png", i));
@@ -131,7 +93,7 @@ fn bench_steady_state_rendering(c: &mut Criterion) {
 fn bench_concurrent_rendering(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_rendering");
 
-    for threads in [1, 2, 4, 8].iter() {
+    for threads in [1, 2, 4].iter() {
         let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
         let y_data = vec![0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
 
@@ -145,14 +107,8 @@ fn bench_concurrent_rendering(c: &mut Criterion) {
                             let x = x_data.clone();
                             let y = y_data.clone();
                             std::thread::spawn(move || {
-                                let pool_config = PoolConfig {
-                                    enable_cross_thread_sharing: true,
-                                    ..PoolConfig::default()
-                                };
-                                let plot = Plot::with_pool_config(pool_config);
-
                                 for i in 0..10 {
-                                    let _result = plot
+                                    let _result = Plot::new()
                                         .line(&x, &y)
                                         .title(&format!("Thread {} Plot {}", thread_id, i))
                                         .save(&format!(
@@ -177,42 +133,19 @@ fn bench_concurrent_rendering(c: &mut Criterion) {
 fn bench_memory_pool_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_pool_operations");
 
-    // Benchmark pool acquire/release patterns
+    // Benchmark acquire/release cycle
     group.bench_function("acquire_release_cycle", |b| {
         let mut pool = MemoryPool::<f64>::new(1000);
+
         b.iter(|| {
             let buffer = pool.acquire(1000);
-            // Simulate some work
-            unsafe {
-                for i in 0..1000 {
-                    *buffer.as_mut_ptr().add(i) = i as f64;
-                }
-            }
             pool.release(buffer);
         });
     });
 
-    // Benchmark pool growth behavior
-    group.bench_function("pool_growth", |b| {
-        b.iter(|| {
-            let mut pool = MemoryPool::<f64>::new(100);
-            let mut buffers = Vec::new();
-
-            // Allocate more than initial capacity
-            for _ in 0..10 {
-                buffers.push(pool.acquire(100));
-            }
-
-            // Release all
-            for buffer in buffers {
-                pool.release(buffer);
-            }
-        });
-    });
-
     // Benchmark PooledVec operations
-    group.bench_function("pooled_vec_operations", |b| {
-        let pool = Arc::new(Mutex::new(MemoryPool::<f64>::new(10000)));
+    group.bench_function("pooled_vec_push", |b| {
+        let pool = SharedMemoryPool::<f64>::new(10000);
 
         b.iter(|| {
             let mut vec = PooledVec::new(pool.clone());
@@ -229,39 +162,30 @@ fn bench_memory_pool_operations(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_data_view_operations(c: &mut Criterion) {
-    let mut group = c.benchmark_group("data_view_operations");
+fn bench_vec_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("vec_operations");
 
-    let pool = Arc::new(Mutex::new(MemoryPool::<f64>::new(10000)));
-    let mut pooled_data = PooledVec::new(pool);
-    for i in 0..10000 {
-        pooled_data.push(i as f64);
-    }
-
-    // Benchmark zero-copy view creation
-    group.bench_function("create_data_view", |b| {
+    // Compare traditional Vec vs PooledVec
+    group.bench_function("traditional_vec_push", |b| {
         b.iter(|| {
-            let view = DataView::from_pooled_vec(&pooled_data);
-            criterion::black_box(view);
-        });
-    });
-
-    // Benchmark Data1D trait operations on view
-    group.bench_function("data_view_iteration", |b| {
-        let view = DataView::from_pooled_vec(&pooled_data);
-
-        b.iter(|| {
-            let sum: f64 = (0..view.len()).map(|i| view.get(i).unwrap().into()).sum();
+            let mut vec = Vec::with_capacity(1000);
+            for i in 0..1000 {
+                vec.push(i as f64);
+            }
+            let sum: f64 = vec.iter().sum();
             criterion::black_box(sum);
         });
     });
 
-    // Compare with traditional Vec operations
-    group.bench_function("vec_iteration", |b| {
-        let vec_data: Vec<f64> = (0..10000).map(|i| i as f64).collect();
+    group.bench_function("pooled_vec_iteration", |b| {
+        let pool = SharedMemoryPool::<f64>::new(10000);
+        let mut vec = PooledVec::new(pool);
+        for i in 0..10000 {
+            vec.push(i as f64);
+        }
 
         b.iter(|| {
-            let sum: f64 = vec_data.iter().sum();
+            let sum: f64 = vec.iter().sum();
             criterion::black_box(sum);
         });
     });
@@ -269,55 +193,13 @@ fn bench_data_view_operations(c: &mut Criterion) {
     group.finish();
 }
 
-// Mock implementations for benchmarking (will be replaced by real implementations)
-#[cfg(bench)]
-mod mock_implementations {
-    use super::*;
-
-    // These will be replaced by the actual implementations
-    impl MemoryPool<f64> {
-        pub fn new(_capacity: usize) -> Self {
-            unimplemented!("MemoryPool not implemented yet")
-        }
-
-        pub fn acquire(&mut self, _len: usize) -> PooledBuffer<f64> {
-            unimplemented!("MemoryPool::acquire not implemented yet")
-        }
-
-        pub fn release(&mut self, _buffer: PooledBuffer<f64>) {
-            unimplemented!("MemoryPool::release not implemented yet")
-        }
-    }
-
-    impl Plot {
-        pub fn with_pool_config(_config: PoolConfig) -> Self {
-            unimplemented!("Plot::with_pool_config not implemented yet")
-        }
-    }
-
-    #[derive(Clone)]
-    pub struct PoolConfig {
-        pub coordinate_pool_size: usize,
-        pub pixel_pool_size: usize,
-        pub text_pool_size: usize,
-        pub max_pools_per_type: usize,
-        pub enable_cross_thread_sharing: bool,
-    }
-
-    impl Default for PoolConfig {
-        fn default() -> Self {
-            unimplemented!("PoolConfig::default not implemented yet")
-        }
-    }
-}
-
 criterion_group!(
     benches,
     bench_allocation_overhead,
-    bench_large_plot_memory,
+    bench_plot_rendering,
     bench_steady_state_rendering,
     bench_concurrent_rendering,
     bench_memory_pool_operations,
-    bench_data_view_operations
+    bench_vec_operations,
 );
 criterion_main!(benches);
