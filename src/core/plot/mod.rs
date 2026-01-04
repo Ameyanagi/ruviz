@@ -3317,6 +3317,59 @@ impl Plot {
             )?;
         }
 
+        // Collect legend items from series with labels
+        let legend_items: Vec<LegendItem> = self
+            .series
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, series)| {
+                let default_color = self.theme.get_color(idx);
+                series.to_legend_item(default_color, &self.theme)
+            })
+            .collect();
+
+        // Draw legend if there are labeled series and legend is enabled
+        if !legend_items.is_empty() && self.legend.enabled {
+            let legend = self.legend.to_legend();
+
+            // Collect data bounding boxes for best position algorithm
+            let data_bboxes: Vec<(f32, f32, f32, f32)> = if matches!(legend.position, LegendPosition::Best) {
+                let marker_radius = 4.0_f32;
+                self.series
+                    .iter()
+                    .flat_map(|series| {
+                        match &series.series_type {
+                            SeriesType::Line { x_data, y_data }
+                            | SeriesType::Scatter { x_data, y_data } => {
+                                x_data.iter().zip(y_data.iter()).filter_map(|(&x, &y)| {
+                                    if x.is_finite() && y.is_finite() {
+                                        let (px, py) = map_data_to_pixels(
+                                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                                        );
+                                        Some((px - marker_radius, py - marker_radius,
+                                             px + marker_radius, py + marker_radius))
+                                    } else {
+                                        None
+                                    }
+                                }).collect::<Vec<_>>()
+                            }
+                            _ => vec![],
+                        }
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            let bbox_slice: Option<&[(f32, f32, f32, f32)]> = if data_bboxes.is_empty() {
+                None
+            } else {
+                Some(&data_bboxes)
+            };
+
+            renderer.draw_legend_full(&legend_items, &legend, plot_area, bbox_slice)?;
+        }
+
         Ok(())
     }
 
