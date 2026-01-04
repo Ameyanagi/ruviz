@@ -72,11 +72,38 @@ pub struct Theme {
 
 impl Theme {
     /// Create a new theme builder
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let custom_theme = Theme::builder()
+    ///     .background(Color::from_hex("#1a1a2e").unwrap())
+    ///     .foreground(Color::WHITE)
+    ///     .font_size(12.0)
+    ///     .build();
+    /// ```
     pub fn builder() -> ThemeBuilder {
         ThemeBuilder::default()
     }
 
     /// Create default light theme
+    ///
+    /// White background with black text, suitable for documents and light mode interfaces.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .with_theme(Theme::light())
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("light_plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn light() -> Self {
         Self {
             background: Color::WHITE,
@@ -98,6 +125,21 @@ impl Theme {
     }
 
     /// Create dark theme
+    ///
+    /// Dark background with light text, ideal for dark mode interfaces and reducing eye strain.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .with_theme(Theme::dark())
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("dark_plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn dark() -> Self {
         Self {
             background: Color::from_hex("#1e1e1e").unwrap(),
@@ -119,6 +161,21 @@ impl Theme {
     }
 
     /// Create publication-ready theme (high contrast, clean)
+    ///
+    /// Uses serif fonts and grayscale colors suitable for academic journals and print.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .with_theme(Theme::publication())
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("publication_plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn publication() -> Self {
         Self {
             background: Color::WHITE,
@@ -169,6 +226,21 @@ impl Theme {
     }
 
     /// Create seaborn-style theme (matplotlib-inspired, clean and professional)
+    ///
+    /// Inspired by Python's seaborn library, with a clean, modern aesthetic.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .with_theme(Theme::seaborn())
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .end_series()
+    ///     .save("seaborn_plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn seaborn() -> Self {
         Self {
             background: Color::WHITE,

@@ -57,8 +57,24 @@ impl LineStyle {
     }
 
     /// Create a custom line style from dash pattern
-    /// Pattern should alternate between dash length and gap length
-    /// Example: vec![4.0, 2.0, 1.0, 2.0] creates dash-dot pattern
+    ///
+    /// Pattern should alternate between dash length and gap length.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// // Custom dash-dot-dot pattern: long dash, short gap, dot, gap, dot, gap
+    /// let custom_style = LineStyle::Custom(vec![10.0, 3.0, 2.0, 3.0, 2.0, 3.0]);
+    ///
+    /// Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .style(custom_style)
+    ///     .end_series()
+    ///     .save("custom_line.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn custom<I>(pattern: I) -> Self
     where
         I: IntoIterator<Item = f32>,
@@ -103,6 +119,18 @@ impl LineStyle {
     }
 
     /// Scale the pattern by a factor (useful for different line widths)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::LineStyle;
+    ///
+    /// let dashed = LineStyle::Dashed;
+    /// let wide_dashed = dashed.scaled(2.0);
+    ///
+    /// // Doubled pattern: [10.0, 10.0] instead of [5.0, 5.0]
+    /// assert_eq!(wide_dashed.to_dash_array(), Some(vec![10.0, 10.0]));
+    /// ```
     pub fn scaled(&self, factor: f32) -> Self {
         if factor <= 0.0 {
             return self.clone();

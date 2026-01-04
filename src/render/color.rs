@@ -36,16 +36,49 @@ pub struct Color {
 
 impl Color {
     /// Create a new Color from RGB values (alpha = 255)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// let red = Color::new(255, 0, 0);
+    /// let purple = Color::new(128, 0, 128);
+    /// ```
     pub fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
     }
 
     /// Create a new Color from RGBA values
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// // Semi-transparent blue
+    /// let translucent_blue = Color::new_rgba(0, 0, 255, 128);
+    /// ```
     pub fn new_rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
 
     /// Create a Color from hex string (supports #RGB, #RRGGBB, #RRGGBBAA)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// // 6-digit hex
+    /// let coral = Color::from_hex("#FF7F50").unwrap();
+    ///
+    /// // 3-digit hex (shorthand)
+    /// let cyan = Color::from_hex("#0FF").unwrap();
+    ///
+    /// // 8-digit hex with alpha
+    /// let semi_red = Color::from_hex("#FF000080").unwrap();
+    /// ```
     pub fn from_hex(hex: &str) -> Result<Self, ColorError> {
         let hex = hex.trim_start_matches('#');
 
@@ -80,6 +113,18 @@ impl Color {
     }
 
     /// Create a Color with modified alpha value
+    ///
+    /// Alpha ranges from 0.0 (fully transparent) to 1.0 (fully opaque).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// // Make red 50% transparent
+    /// let semi_red = Color::RED.with_alpha(0.5);
+    /// assert_eq!(semi_red.a, 127);
+    /// ```
     pub fn with_alpha(mut self, alpha: f32) -> Self {
         self.a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
         self
@@ -192,6 +237,21 @@ impl Color {
 /// Default color palette for automatic color cycling
 impl Color {
     /// Get the default color palette (matplotlib-inspired)
+    ///
+    /// Returns a 10-color palette suitable for distinguishing data series.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// let palette = Color::default_palette();
+    /// assert_eq!(palette.len(), 10);
+    ///
+    /// // Access individual colors
+    /// let blue = palette[0];
+    /// let orange = palette[1];
+    /// ```
     pub fn default_palette() -> &'static [Color] {
         static PALETTE: &[Color] = &[
             Color::from_rgb_u32(0x1f77b4), // Blue
@@ -209,6 +269,19 @@ impl Color {
     }
 
     /// Get a color from the default palette by index (cycles if index >= palette length)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// let first = Color::from_palette(0);  // Blue
+    /// let second = Color::from_palette(1); // Orange
+    ///
+    /// // Colors cycle after 10
+    /// let eleventh = Color::from_palette(10);
+    /// assert_eq!(first, eleventh);
+    /// ```
     pub fn from_palette(index: usize) -> Self {
         let palette = Self::default_palette();
         palette[index % palette.len()]
