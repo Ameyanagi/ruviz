@@ -275,6 +275,60 @@ impl Color {
             self.a as f32 / 255.0,
         )
     }
+
+    /// Create a darker version of this color
+    ///
+    /// The factor controls how much to darken (0.0 = unchanged, 1.0 = black).
+    /// Commonly used for generating edge colors from fill colors.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// let blue = Color::new(100, 150, 200);
+    /// let dark_blue = blue.darken(0.3); // 30% darker
+    /// assert!(dark_blue.r < blue.r);
+    /// assert!(dark_blue.g < blue.g);
+    /// assert!(dark_blue.b < blue.b);
+    /// ```
+    #[inline]
+    pub fn darken(self, factor: f32) -> Self {
+        let factor = factor.clamp(0.0, 1.0);
+        let mult = 1.0 - factor;
+        Self {
+            r: ((self.r as f32) * mult) as u8,
+            g: ((self.g as f32) * mult) as u8,
+            b: ((self.b as f32) * mult) as u8,
+            a: self.a,
+        }
+    }
+
+    /// Create a lighter version of this color
+    ///
+    /// The factor controls how much to lighten (0.0 = unchanged, 1.0 = white).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// let blue = Color::new(100, 150, 200);
+    /// let light_blue = blue.lighten(0.3); // 30% lighter
+    /// assert!(light_blue.r > blue.r);
+    /// assert!(light_blue.g > blue.g);
+    /// assert!(light_blue.b > blue.b);
+    /// ```
+    #[inline]
+    pub fn lighten(self, factor: f32) -> Self {
+        let factor = factor.clamp(0.0, 1.0);
+        Self {
+            r: (self.r as f32 + (255.0 - self.r as f32) * factor) as u8,
+            g: (self.g as f32 + (255.0 - self.g as f32) * factor) as u8,
+            b: (self.b as f32 + (255.0 - self.b as f32) * factor) as u8,
+            a: self.a,
+        }
+    }
 }
 
 // Predefined color constants
@@ -939,5 +993,59 @@ mod tests {
 
         // No suggestion for very different strings
         assert_eq!(Color::suggest_named("xyz"), None);
+    }
+
+    #[test]
+    fn test_color_darken() {
+        let color = Color::new(100, 150, 200);
+
+        // 0% darkening = unchanged
+        let same = color.darken(0.0);
+        assert_eq!(same.r, 100);
+        assert_eq!(same.g, 150);
+        assert_eq!(same.b, 200);
+
+        // 30% darkening
+        let darker = color.darken(0.3);
+        assert_eq!(darker.r, 70); // 100 * 0.7 = 70
+        assert_eq!(darker.g, 105); // 150 * 0.7 = 105
+        assert_eq!(darker.b, 140); // 200 * 0.7 = 140
+
+        // 100% darkening = black
+        let black = color.darken(1.0);
+        assert_eq!(black.r, 0);
+        assert_eq!(black.g, 0);
+        assert_eq!(black.b, 0);
+
+        // Alpha preserved
+        let with_alpha = Color::new_rgba(100, 150, 200, 128).darken(0.5);
+        assert_eq!(with_alpha.a, 128);
+    }
+
+    #[test]
+    fn test_color_lighten() {
+        let color = Color::new(100, 150, 200);
+
+        // 0% lightening = unchanged
+        let same = color.lighten(0.0);
+        assert_eq!(same.r, 100);
+        assert_eq!(same.g, 150);
+        assert_eq!(same.b, 200);
+
+        // 50% lightening
+        let lighter = color.lighten(0.5);
+        assert_eq!(lighter.r, 177); // 100 + (255-100)*0.5 = 177.5
+        assert_eq!(lighter.g, 202); // 150 + (255-150)*0.5 = 202.5
+        assert_eq!(lighter.b, 227); // 200 + (255-200)*0.5 = 227.5
+
+        // 100% lightening = white
+        let white = color.lighten(1.0);
+        assert_eq!(white.r, 255);
+        assert_eq!(white.g, 255);
+        assert_eq!(white.b, 255);
+
+        // Alpha preserved
+        let with_alpha = Color::new_rgba(100, 150, 200, 128).lighten(0.5);
+        assert_eq!(with_alpha.a, 128);
     }
 }
