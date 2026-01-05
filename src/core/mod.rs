@@ -9,6 +9,7 @@ pub mod legend;
 pub mod plot;
 pub mod position;
 pub mod style;
+pub mod style_utils;
 pub mod subplot;
 pub mod types;
 pub mod units;
@@ -19,7 +20,7 @@ pub use annotation::{
 };
 pub use config::{
     ComputedMargins, FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig,
-    TypographyConfig,
+    SpineConfig, TypographyConfig,
 };
 pub use constants::{dimensions, dpi, font_scales, font_sizes, line_widths, margins, spacing};
 pub use error::{PlottingError, Result};
@@ -34,6 +35,7 @@ pub use legend::{
 pub use plot::{BackendType, Plot, PlotBuilder, PlotInput, SeriesStyle};
 pub use position::Position;
 pub use style::PlotStyle;
+pub use style_utils::StyleResolver;
 pub use subplot::{GridSpec, SubplotFigure, subplots, subplots_default};
 pub use types::{BoundingBox, Point2f};
 pub use units::{
