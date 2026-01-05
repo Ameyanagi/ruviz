@@ -1,6 +1,9 @@
 /// Histogram plot implementation with automatic binning and statistical analysis
+use crate::core::style_utils::{StyleResolver, defaults};
 use crate::core::{PlottingError, Result};
 use crate::data::Data1D;
+use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
+use crate::render::{Color, SkiaRenderer, Theme};
 
 /// Configuration for histogram plots
 #[derive(Debug, Clone)]
@@ -15,6 +18,14 @@ pub struct HistogramConfig {
     pub cumulative: bool,
     /// Bin edges calculation method
     pub bin_method: BinMethod,
+    /// Fill alpha (opacity), default from defaults::HISTOGRAM_FILL_ALPHA
+    pub fill_alpha: Option<f32>,
+    /// Edge color (auto-derived from fill if None)
+    pub edge_color: Option<Color>,
+    /// Edge width in points (default from defaults::PATCH_LINE_WIDTH)
+    pub edge_width: Option<f32>,
+    /// Bar width as fraction of bin width (0.0-1.0, default 0.9)
+    pub bar_width: Option<f32>,
 }
 
 /// Methods for calculating histogram bin edges
@@ -41,6 +52,127 @@ pub struct HistogramData {
     pub n_samples: usize,
     /// Whether the data is normalized to density
     pub is_density: bool,
+    /// Fill alpha (from config or default)
+    pub fill_alpha: f32,
+    /// Edge color (None = auto-derive from fill)
+    pub edge_color: Option<Color>,
+    /// Edge width in points
+    pub edge_width: f32,
+    /// Bar width as fraction of bin width
+    pub bar_width: f32,
+}
+
+// Implement PlotData trait for HistogramData
+impl PlotData for HistogramData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        let x_min = self.bin_edges.first().copied().unwrap_or(0.0);
+        let x_max = self.bin_edges.last().copied().unwrap_or(1.0);
+        let y_min = 0.0; // Histogram always starts at 0
+        let y_max = self
+            .counts
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        ((x_min, x_max), (y_min, y_max))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.counts.is_empty() || self.counts.iter().all(|&c| c == 0.0)
+    }
+}
+
+// Implement PlotRender trait for HistogramData
+impl PlotRender for HistogramData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        self.render_styled(
+            renderer,
+            area,
+            theme,
+            color,
+            self.fill_alpha,
+            Some(self.edge_width),
+        )
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let resolver = StyleResolver::new(theme);
+
+        // Resolve styling
+        let fill_alpha = alpha.clamp(0.0, 1.0);
+        let fill_color = color.with_alpha(fill_alpha);
+        let edge_color = resolver.edge_color(color, self.edge_color);
+        let edge_width = resolver.patch_line_width(line_width);
+
+        // Draw bars
+        for (i, &count) in self.counts.iter().enumerate() {
+            if count <= 0.0 {
+                continue;
+            }
+
+            let left = self.bin_edges[i];
+            let right = self.bin_edges[i + 1];
+            let bin_width = right - left;
+
+            // Apply bar_width factor (center bars within bin)
+            let bar_actual_width = bin_width * self.bar_width as f64;
+            let bar_offset = (bin_width - bar_actual_width) / 2.0;
+            let bar_left = left + bar_offset;
+            let bar_right = right - bar_offset;
+
+            // Convert to screen coordinates
+            let (x1, y1) = area.data_to_screen(bar_left, 0.0);
+            let (x2, y2) = area.data_to_screen(bar_right, count);
+
+            // Calculate rectangle bounds
+            let rect_x = x1.min(x2);
+            let rect_y = y1.min(y2);
+            let rect_width = (x2 - x1).abs();
+            let rect_height = (y2 - y1).abs();
+
+            // Draw filled rectangle
+            renderer.draw_rectangle(
+                rect_x,
+                rect_y,
+                rect_width,
+                rect_height,
+                fill_color,
+                true, // filled
+            )?;
+
+            // Draw edge (if width > 0)
+            if edge_width > 0.0 {
+                // Use polygon outline for customizable stroke width
+                let vertices = [
+                    (rect_x, rect_y),
+                    (rect_x + rect_width, rect_y),
+                    (rect_x + rect_width, rect_y + rect_height),
+                    (rect_x, rect_y + rect_height),
+                ];
+                renderer.draw_polygon_outline(&vertices, edge_color, edge_width)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for HistogramConfig {
@@ -51,9 +183,16 @@ impl Default for HistogramConfig {
             density: false,
             cumulative: false,
             bin_method: BinMethod::Sturges,
+            fill_alpha: None,
+            edge_color: None,
+            edge_width: None,
+            bar_width: None,
         }
     }
 }
+
+// Implement PlotConfig marker trait
+impl PlotConfig for HistogramConfig {}
 
 impl HistogramConfig {
     pub fn new() -> Self {
@@ -82,6 +221,30 @@ impl HistogramConfig {
 
     pub fn bin_method(mut self, method: BinMethod) -> Self {
         self.bin_method = method;
+        self
+    }
+
+    /// Set fill alpha (0.0-1.0)
+    pub fn fill_alpha(mut self, alpha: f32) -> Self {
+        self.fill_alpha = Some(alpha.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set edge color explicitly
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.edge_color = Some(color);
+        self
+    }
+
+    /// Set edge width in points
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.edge_width = Some(width);
+        self
+    }
+
+    /// Set bar width as fraction of bin width (0.0-1.0)
+    pub fn bar_width(mut self, width: f32) -> Self {
+        self.bar_width = Some(width.clamp(0.0, 1.0));
         self
     }
 }
@@ -175,11 +338,21 @@ where
         }
     }
 
+    // Extract styling from config, using defaults for None values
+    let fill_alpha = config.fill_alpha.unwrap_or(defaults::HISTOGRAM_FILL_ALPHA);
+    let edge_color = config.edge_color;
+    let edge_width = config.edge_width.unwrap_or(defaults::PATCH_LINE_WIDTH);
+    let bar_width = config.bar_width.unwrap_or(defaults::HISTOGRAM_BAR_WIDTH);
+
     Ok(HistogramData {
         bin_edges,
         counts,
         n_samples,
         is_density,
+        fill_alpha,
+        edge_color,
+        edge_width,
+        bar_width,
     })
 }
 
@@ -394,5 +567,63 @@ mod tests {
         let hist = result.unwrap();
         assert!(hist.bin_edges.len() > 1);
         assert_eq!(hist.bin_edges.len(), hist.counts.len() + 1);
+    }
+
+    #[test]
+    fn test_histogram_plot_data_trait() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let config = HistogramConfig::new().bins(5);
+
+        let hist = calculate_histogram(&data, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = hist.data_bounds();
+        assert!((x_min - 1.0).abs() < 1e-10);
+        assert!((x_max - 10.0).abs() < 1e-10);
+        assert!((y_min - 0.0).abs() < 1e-10); // histogram y starts at 0
+        assert!(y_max > 0.0);
+
+        // Test is_empty
+        assert!(!hist.is_empty());
+    }
+
+    #[test]
+    fn test_histogram_styling_defaults() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let config = HistogramConfig::new().bins(5);
+
+        let hist = calculate_histogram(&data, &config).unwrap();
+
+        // Check default styling values from defaults module
+        assert!((hist.fill_alpha - 1.0).abs() < 1e-10); // HISTOGRAM_FILL_ALPHA = 1.0
+        assert!((hist.edge_width - 0.8).abs() < 1e-10); // PATCH_LINE_WIDTH = 0.8
+        assert!((hist.bar_width - 0.9).abs() < 1e-10); // HISTOGRAM_BAR_WIDTH = 0.9
+        assert!(hist.edge_color.is_none()); // Auto-derived
+    }
+
+    #[test]
+    fn test_histogram_custom_styling() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let config = HistogramConfig::new()
+            .bins(5)
+            .fill_alpha(0.5)
+            .edge_width(2.0)
+            .bar_width(0.7)
+            .edge_color(Color::RED);
+
+        let hist = calculate_histogram(&data, &config).unwrap();
+
+        assert!((hist.fill_alpha - 0.5).abs() < 1e-10);
+        assert!((hist.edge_width - 2.0).abs() < 1e-10);
+        assert!((hist.bar_width - 0.7).abs() < 1e-10);
+        assert_eq!(hist.edge_color, Some(Color::RED));
+    }
+
+    #[test]
+    fn test_histogram_config_is_plot_config() {
+        // Verify HistogramConfig implements PlotConfig
+        fn accepts_plot_config<T: PlotConfig>(_: &T) {}
+        let config = HistogramConfig::default();
+        accepts_plot_config(&config);
     }
 }
