@@ -46,7 +46,7 @@ pub mod three_d;
 pub mod vector;
 
 // Core trait exports
-pub use traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+pub use traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, StyledShape};
 
 // Distribution plot exports
 pub use distribution::{
