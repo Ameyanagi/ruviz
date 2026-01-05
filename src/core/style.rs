@@ -19,7 +19,8 @@
 //! ```
 
 use crate::core::config::{
-    FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig, TypographyConfig,
+    FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig, SpineConfig,
+    TypographyConfig,
 };
 use crate::render::{FontFamily, FontWeight};
 
@@ -147,6 +148,7 @@ impl PlotStyle {
                     legend_pad: 6.0,
                 },
                 margins: MarginConfig::Auto { min: 0.4, max: 1.0 },
+                spines: SpineConfig::despine(), // Minimal style uses despine
             },
 
             PlotStyle::Publication => PlotConfig {
@@ -178,6 +180,7 @@ impl PlotStyle {
                     legend_pad: 6.0,
                 },
                 margins: MarginConfig::Auto { min: 0.4, max: 0.9 },
+                spines: SpineConfig::default(),
             },
 
             PlotStyle::IEEE => PlotConfig {
@@ -212,6 +215,7 @@ impl PlotStyle {
                     min: 0.25,
                     max: 0.6,
                 },
+                spines: SpineConfig::default(),
             },
 
             PlotStyle::Nature => PlotConfig {
@@ -243,6 +247,7 @@ impl PlotStyle {
                     legend_pad: 4.0,
                 },
                 margins: MarginConfig::Auto { min: 0.2, max: 0.5 },
+                spines: SpineConfig::default(),
             },
 
             PlotStyle::Presentation => PlotConfig {
@@ -274,6 +279,7 @@ impl PlotStyle {
                     legend_pad: 12.0,
                 },
                 margins: MarginConfig::Auto { min: 0.6, max: 1.5 },
+                spines: SpineConfig::default(),
             },
 
             PlotStyle::Dark => PlotConfig {
@@ -282,6 +288,7 @@ impl PlotStyle {
                 lines: LineConfig::default(),
                 spacing: SpacingConfig::default(),
                 margins: MarginConfig::default(),
+                spines: SpineConfig::default(),
                 // Note: Dark colors are applied via Theme, not PlotConfig
             },
 
@@ -310,6 +317,7 @@ impl PlotStyle {
                     legend_pad: 10.0,
                 },
                 margins: MarginConfig::Auto { min: 0.5, max: 1.3 },
+                spines: SpineConfig::default(),
             },
 
             PlotStyle::Web => PlotConfig {
@@ -336,6 +344,7 @@ impl PlotStyle {
                 },
                 spacing: SpacingConfig::default(),
                 margins: MarginConfig::default(),
+                spines: SpineConfig::default(),
             },
 
             PlotStyle::Poster => PlotConfig {
@@ -367,6 +376,7 @@ impl PlotStyle {
                     legend_pad: 16.0,
                 },
                 margins: MarginConfig::Auto { min: 0.8, max: 2.0 },
+                spines: SpineConfig::default(),
             },
         }
     }
