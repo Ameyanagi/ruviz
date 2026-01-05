@@ -18,6 +18,7 @@ use crate::{
     data::{Data1D, DataShader, StreamingXY},
     plots::boxplot::BoxPlotConfig,
     plots::histogram::HistogramConfig,
+    plots::traits::PlotRender,
     render::skia::{
         SkiaRenderer, calculate_plot_area_config, calculate_plot_area_dpi, generate_ticks,
         map_data_to_pixels,
@@ -156,6 +157,28 @@ impl PlotSeries {
                 // Heatmaps don't typically have legend items
                 return None;
             }
+            SeriesType::Kde { .. } => {
+                // KDE plots use line legend (similar to line plots)
+                LegendItemType::Line {
+                    style: line_style,
+                    width: line_width,
+                }
+            }
+            SeriesType::Ecdf { .. } => {
+                // ECDF plots use line legend (step function)
+                LegendItemType::Line {
+                    style: line_style,
+                    width: line_width,
+                }
+            }
+            SeriesType::Violin { .. } => {
+                // Violin plots use bar-style legend
+                LegendItemType::Bar
+            }
+            SeriesType::Boxen { .. } => {
+                // Boxen plots use bar-style legend
+                LegendItemType::Bar
+            }
         };
 
         Some(LegendItem {
@@ -202,6 +225,22 @@ enum SeriesType {
     },
     Heatmap {
         data: crate::plots::heatmap::HeatmapData,
+    },
+    /// KDE (Kernel Density Estimation) plot
+    Kde {
+        data: crate::plots::KdeData,
+    },
+    /// ECDF (Empirical Cumulative Distribution Function) plot
+    Ecdf {
+        data: crate::plots::EcdfData,
+    },
+    /// Violin plot
+    Violin {
+        data: crate::plots::ViolinData,
+    },
+    /// Boxen (Letter-Value) plot
+    Boxen {
+        data: crate::plots::BoxenData,
     },
 }
 
@@ -1481,6 +1520,82 @@ impl Plot {
         PlotSeriesBuilder::new(self, series)
     }
 
+    /// Add a KDE (Kernel Density Estimation) plot
+    ///
+    /// Creates a smooth density estimate visualization of the data distribution.
+    /// Returns a `PlotBuilder<KdeConfig>` for method chaining with KDE-specific options.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let data: Vec<f64> = (0..1000).map(|i| (i as f64 / 100.0).sin()).collect();
+    ///
+    /// // Simple usage - just save directly
+    /// Plot::new()
+    ///     .kde(&data)
+    ///     .save("kde.png")?;
+    ///
+    /// // With configuration
+    /// Plot::new()
+    ///     .kde(&data)
+    ///     .bandwidth(0.5)
+    ///     .fill(true)
+    ///     .fill_alpha(0.3)
+    ///     .title("KDE Distribution")
+    ///     .save("kde_configured.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn kde<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::KdeConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        let mut data_vec = Vec::with_capacity(data.len());
+        for i in 0..data.len() {
+            if let Some(val) = data.get(i) {
+                data_vec.push((*val).into());
+            }
+        }
+
+        PlotBuilder::new(
+            self,
+            PlotInput::Single(data_vec),
+            crate::plots::KdeConfig::default(),
+        )
+    }
+
+    /// Start building an ECDF (Empirical Cumulative Distribution Function) plot
+    ///
+    /// Returns a `PlotBuilder<EcdfConfig>` for configuring the ECDF plot.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// Plot::new()
+    ///     .ecdf(&data)
+    ///     .stat(EcdfStat::Proportion)
+    ///     .show_ci(true)
+    ///     .save("ecdf.png")?;
+    /// ```
+    pub fn ecdf<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::EcdfConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        let mut data_vec = Vec::with_capacity(data.len());
+        for i in 0..data.len() {
+            if let Some(val) = data.get(i) {
+                data_vec.push((*val).into());
+            }
+        }
+
+        PlotBuilder::new(
+            self,
+            PlotInput::Single(data_vec),
+            crate::plots::EcdfConfig::default(),
+        )
+    }
+
     /// Configure legend with position
     ///
     /// For matplotlib-compatible position codes, use `legend_position()` with `LegendPosition`.
@@ -2083,6 +2198,56 @@ impl Plot {
         Ok(())
     }
 
+    /// Internal method to add a KDE series (used by PlotBuilder)
+    ///
+    /// This method is called by the PlotBuilder when finalizing a KDE series.
+    pub(crate) fn add_kde_series(
+        mut self,
+        kde_data: crate::plots::KdeData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Kde { data: kde_data },
+            label: style.label,
+            color: style
+                .color
+                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            line_width: style.line_width,
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha,
+        };
+
+        self.series.push(series);
+        self.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add an ECDF series
+    pub(crate) fn add_ecdf_series(
+        mut self,
+        ecdf_data: crate::plots::EcdfData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Ecdf { data: ecdf_data },
+            label: style.label,
+            color: style
+                .color
+                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            line_width: style.line_width,
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha,
+        };
+
+        self.series.push(series);
+        self.auto_color_index += 1;
+        self
+    }
+
     /// Helper method to render a single series using normal (non-DataShader) rendering
     fn render_series_normal(
         &self,
@@ -2427,6 +2592,62 @@ impl Plot {
             SeriesType::ErrorBars { .. } | SeriesType::ErrorBarsXY { .. } => {
                 // Error bars are handled separately (often combined with scatter)
             }
+            SeriesType::Kde { data } => {
+                // Use PlotRender trait to render KDE
+                let plot_area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                data.render(renderer, &plot_area, &self.theme, color)?;
+            }
+            SeriesType::Ecdf { data } => {
+                // Use PlotRender trait to render ECDF
+                let plot_area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                data.render(renderer, &plot_area, &self.theme, color)?;
+            }
+            SeriesType::Violin { data } => {
+                // Use PlotRender trait to render Violin
+                let plot_area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                data.render(renderer, &plot_area, &self.theme, color)?;
+            }
+            SeriesType::Boxen { data } => {
+                // Use PlotRender trait to render Boxen
+                let plot_area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                data.render(renderer, &plot_area, &self.theme, color)?;
+            }
         }
 
         Ok(())
@@ -2597,6 +2818,26 @@ impl Plot {
                 }
                 SeriesType::Heatmap { data } => {
                     if data.values.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Kde { data } => {
+                    if data.x.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Ecdf { data } => {
+                    if data.x.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Violin { data } => {
+                    if data.data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Boxen { data } => {
+                    if data.boxes.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
@@ -3084,6 +3325,26 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Kde { data } => {
+                    if data.x.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Ecdf { data } => {
+                    if data.x.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Violin { data } => {
+                    if data.data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Boxen { data } => {
+                    if data.boxes.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -3481,6 +3742,10 @@ impl Plot {
                 SeriesType::Histogram { data, .. } => data.len(),
                 SeriesType::BoxPlot { data, .. } => data.len(),
                 SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
+                SeriesType::Kde { data } => data.x.len(),
+                SeriesType::Ecdf { data } => data.x.len(),
+                SeriesType::Violin { data } => data.data.len(),
+                SeriesType::Boxen { data } => data.boxes.len() * 4, // Each box has 4 points
             })
             .sum()
     }
@@ -3579,6 +3844,52 @@ impl Plot {
                 SeriesType::BoxPlot { data, .. } => {
                     if data.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Kde { data } => {
+                    // Add KDE points
+                    for i in 0..data.x.len() {
+                        let x = data.x[i];
+                        let y = data.y[i];
+                        if x.is_finite() && y.is_finite() {
+                            all_points.push(crate::core::types::Point2f::new(x as f32, y as f32));
+                        }
+                    }
+                }
+                SeriesType::Ecdf { data } => {
+                    // Add ECDF points
+                    for i in 0..data.x.len() {
+                        let x = data.x[i];
+                        let y = data.y[i];
+                        if x.is_finite() && y.is_finite() {
+                            all_points.push(crate::core::types::Point2f::new(x as f32, y as f32));
+                        }
+                    }
+                }
+                SeriesType::Violin { data } => {
+                    // Add violin KDE points
+                    for i in 0..data.kde.x.len() {
+                        let x = 0.5; // Centered position
+                        let y = data.kde.x[i];
+                        if y.is_finite() {
+                            all_points.push(crate::core::types::Point2f::new(x as f32, y as f32));
+                        }
+                    }
+                }
+                SeriesType::Boxen { data } => {
+                    // Add boxen box corner points
+                    for boxen_box in &data.boxes {
+                        let rect = crate::plots::distribution::boxen_rect(
+                            boxen_box,
+                            0.5,
+                            data.config.orient,
+                        );
+                        for (x, y) in rect {
+                            if x.is_finite() && y.is_finite() {
+                                all_points
+                                    .push(crate::core::types::Point2f::new(x as f32, y as f32));
+                            }
+                        }
                     }
                 }
             }
@@ -3987,6 +4298,112 @@ impl Plot {
                             n_cols: data.n_cols,
                         }
                     }
+                    SeriesType::Kde { data: kde_data } => {
+                        // Transform KDE coordinates in parallel
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &kde_data.x,
+                            &kde_data.y,
+                            data_bounds.clone(),
+                            parallel_plot_area.clone(),
+                        )?;
+
+                        // Process line segments in parallel
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            series.line_style.clone().unwrap_or(LineStyle::Solid),
+                            color,
+                            line_width,
+                        )?;
+
+                        RenderSeriesType::Line { segments }
+                    }
+                    SeriesType::Ecdf { data: ecdf_data } => {
+                        // Transform ECDF step vertices in parallel
+                        let step_x: Vec<f64> =
+                            ecdf_data.step_vertices.iter().map(|(x, _)| *x).collect();
+                        let step_y: Vec<f64> =
+                            ecdf_data.step_vertices.iter().map(|(_, y)| *y).collect();
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &step_x,
+                            &step_y,
+                            data_bounds.clone(),
+                            parallel_plot_area.clone(),
+                        )?;
+
+                        // Process line segments in parallel
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            series.line_style.clone().unwrap_or(LineStyle::Solid),
+                            color,
+                            line_width,
+                        )?;
+
+                        RenderSeriesType::Line { segments }
+                    }
+                    SeriesType::Violin { data: violin_data } => {
+                        // Violin plots use polygon rendering, not supported in parallel mode
+                        // Fall back to simple representation using KDE outline
+                        let half_width = violin_data.config.width / 2.0;
+                        let (left, right) = crate::plots::distribution::violin_polygon(
+                            violin_data,
+                            0.5,
+                            half_width,
+                            &violin_data.config,
+                        );
+                        let polygon =
+                            crate::plots::distribution::close_violin_polygon(&left, &right);
+
+                        let poly_x: Vec<f64> = polygon.iter().map(|(x, _)| *x).collect();
+                        let poly_y: Vec<f64> = polygon.iter().map(|(_, y)| *y).collect();
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &poly_x,
+                            &poly_y,
+                            data_bounds.clone(),
+                            parallel_plot_area.clone(),
+                        )?;
+
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            LineStyle::Solid,
+                            color,
+                            line_width,
+                        )?;
+
+                        RenderSeriesType::Line { segments }
+                    }
+                    SeriesType::Boxen { data: boxen_data } => {
+                        // Boxen plots use polygon rendering, not supported in parallel mode
+                        // Fall back to simple representation using box outlines
+                        let mut all_points = Vec::new();
+                        for boxen_box in &boxen_data.boxes {
+                            let rect = crate::plots::distribution::boxen_rect(
+                                boxen_box,
+                                0.5,
+                                boxen_data.config.orient,
+                            );
+                            for (x, y) in &rect {
+                                all_points.push((*x, *y));
+                            }
+                        }
+
+                        let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
+                        let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &poly_x,
+                            &poly_y,
+                            data_bounds.clone(),
+                            parallel_plot_area.clone(),
+                        )?;
+
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            LineStyle::Solid,
+                            color,
+                            line_width,
+                        )?;
+
+                        RenderSeriesType::Line { segments }
+                    }
                 };
 
                 Ok(SeriesRenderData {
@@ -4275,6 +4692,68 @@ impl Plot {
                     y_min = y_min.min(0.0);
                     y_max = y_max.max(data.n_rows as f64);
                 }
+                SeriesType::Kde { data } => {
+                    // KDE bounds from x/y data
+                    for i in 0..data.x.len() {
+                        let x_val = data.x[i];
+                        let y_val = data.y[i];
+
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                    // Include zero baseline for density plots
+                    y_min = y_min.min(0.0);
+                }
+                SeriesType::Ecdf { data } => {
+                    // ECDF bounds from x/y data
+                    for i in 0..data.x.len() {
+                        let x_val = data.x[i];
+                        let y_val = data.y[i];
+
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                    // Include zero baseline for ECDF
+                    y_min = y_min.min(0.0);
+                }
+                SeriesType::Violin { data } => {
+                    // Violin bounds from KDE and data range
+                    let (data_min, data_max) = data.range;
+                    if data_min.is_finite() {
+                        y_min = y_min.min(data_min);
+                    }
+                    if data_max.is_finite() {
+                        y_max = y_max.max(data_max);
+                    }
+                    // X bounds for centered violin
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                }
+                SeriesType::Boxen { data } => {
+                    // Boxen bounds from data range
+                    let (data_min, data_max) = data.data_range;
+                    if data_min.is_finite() {
+                        y_min = y_min.min(data_min);
+                    }
+                    if data_max.is_finite() {
+                        y_max = y_max.max(data_max);
+                    }
+                    // X bounds for centered boxen
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                }
             }
         }
 
@@ -4320,6 +4799,10 @@ impl Plot {
                 SeriesType::ErrorBars { x_data, .. } => x_data.len(),
                 SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
                 SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
+                SeriesType::Kde { data } => data.x.len(),
+                SeriesType::Ecdf { data } => data.x.len(),
+                SeriesType::Violin { data } => data.data.len(),
+                SeriesType::Boxen { data } => data.boxes.len() * 4,
             })
             .sum::<usize>();
 
@@ -4465,6 +4948,26 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Kde { data } => {
+                    if data.x.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Ecdf { data } => {
+                    if data.x.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Violin { data } => {
+                    if data.data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Boxen { data } => {
+                    if data.boxes.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -4540,6 +5043,54 @@ impl Plot {
                     x_max = x_max.max(data.n_cols as f64);
                     y_min = y_min.min(0.0);
                     y_max = y_max.max(data.n_rows as f64);
+                }
+                SeriesType::Kde { data } => {
+                    // KDE bounds from x/y data
+                    for (&x, &y) in data.x.iter().zip(data.y.iter()) {
+                        x_min = x_min.min(x);
+                        x_max = x_max.max(x);
+                        y_min = y_min.min(y);
+                        y_max = y_max.max(y);
+                    }
+                    // Include zero baseline for density plots
+                    y_min = y_min.min(0.0);
+                }
+                SeriesType::Ecdf { data } => {
+                    // ECDF bounds from x/y data
+                    for (&x, &y) in data.x.iter().zip(data.y.iter()) {
+                        x_min = x_min.min(x);
+                        x_max = x_max.max(x);
+                        y_min = y_min.min(y);
+                        y_max = y_max.max(y);
+                    }
+                    // Include zero baseline for ECDF
+                    y_min = y_min.min(0.0);
+                }
+                SeriesType::Violin { data } => {
+                    // Violin bounds from data range
+                    let (data_min, data_max) = data.range;
+                    if data_min.is_finite() {
+                        y_min = y_min.min(data_min);
+                    }
+                    if data_max.is_finite() {
+                        y_max = y_max.max(data_max);
+                    }
+                    // X bounds for centered violin
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                }
+                SeriesType::Boxen { data } => {
+                    // Boxen bounds from data range
+                    let (data_min, data_max) = data.data_range;
+                    if data_min.is_finite() {
+                        y_min = y_min.min(data_min);
+                    }
+                    if data_max.is_finite() {
+                        y_max = y_max.max(data_max);
+                    }
+                    // X bounds for centered boxen
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
                 }
             }
         }
@@ -4912,6 +5463,10 @@ impl Plot {
                 SeriesType::Histogram { data, .. } => data.len(),
                 SeriesType::BoxPlot { data, .. } => data.len(),
                 SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
+                SeriesType::Kde { data } => data.x.len(),
+                SeriesType::Ecdf { data } => data.x.len(),
+                SeriesType::Violin { data } => data.data.len(),
+                SeriesType::Boxen { data } => data.boxes.len() * 4,
             })
             .sum();
 

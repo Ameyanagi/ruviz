@@ -1,7 +1,17 @@
 //! Pie chart implementation
 //!
 //! Provides pie and donut chart functionality with labels, percentages, and explode.
+//!
+//! # Trait-Based API
+//!
+//! Pie charts implement the core plot traits:
+//! - [`PlotConfig`] for `PieConfig`
+//! - [`PlotCompute`] for `Pie` marker struct
+//! - [`PlotData`] for `PieData`
+//! - [`PlotRender`] for `PieData`
 
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::primitives::{Wedge, pie_wedges};
 use crate::render::{Color, SkiaRenderer, Theme};
 use std::f64::consts::PI;
@@ -145,6 +155,12 @@ impl PieConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for PieConfig {}
+
+/// Marker struct for Pie plot type
+pub struct Pie;
+
 /// Pie chart data and computed wedges
 #[derive(Debug, Clone)]
 pub struct PieData {
@@ -156,6 +172,12 @@ pub struct PieData {
     pub total: f64,
     /// Percentages for each wedge
     pub percentages: Vec<f64>,
+    /// Start angles for each wedge (radians)
+    pub start_angles: Vec<f64>,
+    /// End angles for each wedge (radians)
+    pub end_angles: Vec<f64>,
+    /// Configuration used
+    pub(crate) config: PieConfig,
 }
 
 impl PieData {
@@ -172,12 +194,18 @@ impl PieData {
 
         // Convert start angle to radians and adjust for convention
         let start_angle_rad = config.start_angle * PI / 180.0 - PI / 2.0;
-        let direction = if config.counter_clockwise { 1.0 } else { -1.0 };
 
         let mut wedges = pie_wedges(&positive_values, cx, cy, radius, Some(start_angle_rad));
 
+        // Compute normalized angles
+        let mut start_angles = Vec::with_capacity(wedges.len());
+        let mut end_angles = Vec::with_capacity(wedges.len());
+
         // Apply configuration to wedges
         for (i, wedge) in wedges.iter_mut().enumerate() {
+            start_angles.push(wedge.start_angle);
+            end_angles.push(wedge.end_angle);
+
             // Apply inner radius for donut
             if config.inner_radius > 0.0 {
                 *wedge = wedge.inner_radius(radius * config.inner_radius);
@@ -194,7 +222,17 @@ impl PieData {
             wedges,
             total,
             percentages,
+            start_angles,
+            end_angles,
+            config: config.clone(),
         }
+    }
+
+    /// Create normalized pie data (without specific coordinates)
+    /// Used by PlotCompute trait
+    pub fn compute(values: &[f64], config: &PieConfig) -> Self {
+        // Use unit circle coordinates for normalized computation
+        Self::from_values(values, 0.5, 0.5, 0.5, config)
     }
 }
 
@@ -326,6 +364,158 @@ pub fn render_pie(
     Ok(pie_data)
 }
 
+// ============================================================================
+// Trait Implementations
+// ============================================================================
+
+impl PlotCompute for Pie {
+    type Input<'a> = &'a [f64];
+    type Config = PieConfig;
+    type Output = PieData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        let positive_count = input.iter().filter(|&&v| v > 0.0).count();
+        if positive_count == 0 {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        Ok(PieData::compute(input, config))
+    }
+}
+
+impl PlotData for PieData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        // Pie charts use a normalized 0-1 coordinate space
+        ((0.0, 1.0), (0.0, 1.0))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
+impl PlotRender for PieData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        _color: Color,
+    ) -> Result<()> {
+        if self.wedges.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+
+        // Calculate center and radius from plot area
+        let (cx, cy) = area.data_to_screen(0.5, 0.5);
+        let (edge_x, _) = area.data_to_screen(1.0, 0.5);
+        let (_, edge_y) = area.data_to_screen(0.5, 1.0);
+        let radius = ((edge_x - cx).abs().min((edge_y - cy).abs())) * 0.9;
+
+        // Recompute wedges with screen coordinates
+        let screen_data =
+            PieData::from_values(&self.values, cx as f64, cy as f64, radius as f64, config);
+
+        // Get colors from config or theme palette
+        let colors = if let Some(ref colors) = config.colors {
+            colors.clone()
+        } else {
+            let palette = theme.color_palette.clone();
+            (0..screen_data.wedges.len())
+                .map(|i| palette[i % palette.len()])
+                .collect()
+        };
+
+        // Number of segments per arc for smooth curves
+        let segments = 64;
+
+        // Draw shadow if configured
+        if config.shadow > 0.0 {
+            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
+            let offset = config.shadow;
+            for wedge in &screen_data.wedges {
+                let polygon = wedge.as_polygon(segments);
+                let shadow_polygon: Vec<(f32, f32)> = polygon
+                    .iter()
+                    .map(|(x, y)| ((x + offset) as f32, (y + offset) as f32))
+                    .collect();
+                renderer.draw_filled_polygon(&shadow_polygon, shadow_color)?;
+            }
+        }
+
+        // Draw wedges
+        for (i, wedge) in screen_data.wedges.iter().enumerate() {
+            let color = colors[i % colors.len()];
+            let polygon = wedge.as_polygon(segments);
+            let polygon_f32: Vec<(f32, f32)> = polygon
+                .iter()
+                .map(|(x, y)| (*x as f32, *y as f32))
+                .collect();
+
+            // Draw filled wedge
+            renderer.draw_filled_polygon(&polygon_f32, color)?;
+
+            // Draw edge if configured
+            if let Some(edge_color) = config.edge_color {
+                renderer.draw_polygon_outline(&polygon_f32, edge_color, config.edge_width)?;
+            }
+        }
+
+        // Draw labels
+        if config.show_labels || config.show_percentages || config.show_values {
+            for (i, wedge) in screen_data.wedges.iter().enumerate() {
+                let label_parts: Vec<String> = [
+                    if config.show_labels && i < config.labels.len() {
+                        Some(config.labels[i].clone())
+                    } else {
+                        None
+                    },
+                    if config.show_percentages {
+                        Some(format!("{:.1}%", screen_data.percentages[i]))
+                    } else {
+                        None
+                    },
+                    if config.show_values {
+                        Some(format!("{:.1}", screen_data.values[i]))
+                    } else {
+                        None
+                    },
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+
+                if !label_parts.is_empty() {
+                    let label = label_parts.join("\n");
+
+                    // Calculate label position
+                    let label_r = if config.inner_radius > 0.0 {
+                        radius as f64 * (1.0 + config.inner_radius) / 2.0 * config.label_distance
+                    } else {
+                        radius as f64 * config.label_distance
+                    };
+
+                    let mid_angle = (wedge.start_angle + wedge.end_angle) / 2.0;
+                    let label_x = cx as f64 + label_r * mid_angle.cos();
+                    let label_y = cy as f64 + label_r * mid_angle.sin();
+
+                    renderer.draw_text_centered(
+                        &label,
+                        label_x as f32,
+                        label_y as f32,
+                        config.label_font_size,
+                        config.text_color,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +559,66 @@ mod tests {
 
         // Should only have 2 wedges (negative value filtered)
         assert_eq!(data.wedges.len(), 2);
+    }
+
+    #[test]
+    fn test_pie_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<PieConfig>();
+    }
+
+    #[test]
+    fn test_pie_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let values = vec![30.0, 20.0, 50.0];
+        let config = PieConfig::default();
+        let result = Pie::compute(&values, &config);
+
+        assert!(result.is_ok());
+        let pie_data = result.unwrap();
+        assert_eq!(pie_data.wedges.len(), 3);
+        assert!((pie_data.total - 100.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_pie_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let values: Vec<f64> = vec![];
+        let config = PieConfig::default();
+        let result = Pie::compute(&values, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pie_plot_compute_all_negative() {
+        use crate::plots::traits::PlotCompute;
+
+        let values = vec![-10.0, -20.0];
+        let config = PieConfig::default();
+        let result = Pie::compute(&values, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pie_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let values = vec![30.0, 20.0, 50.0];
+        let config = PieConfig::default();
+        let pie_data = Pie::compute(&values, &config).unwrap();
+
+        // Test data_bounds (pie uses normalized 0-1 space)
+        let ((x_min, x_max), (y_min, y_max)) = pie_data.data_bounds();
+        assert!((x_min - 0.0).abs() < 1e-10);
+        assert!((x_max - 1.0).abs() < 1e-10);
+        assert!((y_min - 0.0).abs() < 1e-10);
+        assert!((y_max - 1.0).abs() < 1e-10);
+
+        // Test is_empty
+        assert!(!pie_data.is_empty());
     }
 }

@@ -1,8 +1,19 @@
 //! Contour plot implementations
 //!
 //! Provides contour and filled contour visualization for 2D scalar fields.
+//!
+//! # Trait-Based API
+//!
+//! Contour plots implement the core plot traits:
+//! - [`PlotConfig`] for `ContourConfig`
+//! - [`PlotCompute`] for `Contour` marker struct
+//! - [`PlotData`] for `ContourPlotData`
+//! - [`PlotRender`] for `ContourPlotData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, ColorMap, LineStyle, Theme};
 use crate::stats::contour::{ContourLevel, auto_levels, contour_lines};
 
 /// Configuration for contour plot
@@ -108,6 +119,12 @@ impl ContourConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for ContourConfig {}
+
+/// Marker struct for Contour plot type
+pub struct Contour;
+
 /// Computed contour data for plotting
 #[derive(Debug, Clone)]
 pub struct ContourPlotData {
@@ -123,6 +140,25 @@ pub struct ContourPlotData {
     pub z: Vec<f64>,
     /// Grid dimensions (nx, ny)
     pub shape: (usize, usize),
+    /// Configuration used
+    pub(crate) config: ContourConfig,
+}
+
+/// Input for contour plot computation
+pub struct ContourInput<'a> {
+    /// X grid coordinates
+    pub x: &'a [f64],
+    /// Y grid coordinates
+    pub y: &'a [f64],
+    /// Z values (row-major, len = x.len() * y.len())
+    pub z: &'a [f64],
+}
+
+impl<'a> ContourInput<'a> {
+    /// Create new contour input
+    pub fn new(x: &'a [f64], y: &'a [f64], z: &'a [f64]) -> Self {
+        Self { x, y, z }
+    }
 }
 
 /// Compute contour data from a 2D grid
@@ -152,6 +188,7 @@ pub fn compute_contour_plot(
             y: vec![],
             z: vec![],
             shape: (0, 0),
+            config: config.clone(),
         };
     }
 
@@ -176,6 +213,7 @@ pub fn compute_contour_plot(
         y: y.to_vec(),
         z: z.to_vec(),
         shape: (nx, ny),
+        config: config.clone(),
     }
 }
 
@@ -244,6 +282,125 @@ pub fn contour_range(x: &[f64], y: &[f64]) -> ((f64, f64), (f64, f64)) {
     let y_max = y.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
     ((x_min, x_max), (y_min, y_max))
+}
+
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+impl PlotCompute for Contour {
+    type Input<'a> = ContourInput<'a>;
+    type Config = ContourConfig;
+    type Output = ContourPlotData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        let nx = input.x.len();
+        let ny = input.y.len();
+
+        if nx == 0 || ny == 0 {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        if input.z.len() != nx * ny {
+            return Err(crate::core::PlottingError::InvalidInput(format!(
+                "Z array length {} does not match grid size {} x {} = {}",
+                input.z.len(),
+                nx,
+                ny,
+                nx * ny
+            )));
+        }
+
+        Ok(compute_contour_plot(input.x, input.y, input.z, config))
+    }
+}
+
+impl PlotData for ContourPlotData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        contour_range(&self.x, &self.y)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.levels.is_empty() || self.x.is_empty() || self.y.is_empty()
+    }
+}
+
+impl PlotRender for ContourPlotData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let n_levels = self.levels.len();
+
+        // Get colormap for level coloring
+        let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
+
+        // Draw filled regions if enabled
+        if config.filled {
+            let regions = contour_fill_regions(self);
+            for (level_low, level_high, polygons) in regions {
+                // Calculate color based on level position
+                let z_min = self.levels.first().copied().unwrap_or(0.0);
+                let z_max = self.levels.last().copied().unwrap_or(1.0);
+                let z_range = z_max - z_min;
+                let t = if z_range > 0.0 {
+                    ((level_low + level_high) / 2.0 - z_min) / z_range
+                } else {
+                    0.5
+                };
+
+                let fill_color = cmap.sample(t).with_alpha(config.alpha);
+
+                for polygon in &polygons {
+                    let screen_polygon: Vec<(f32, f32)> = polygon
+                        .iter()
+                        .map(|(x, y)| area.data_to_screen(*x, *y))
+                        .collect();
+                    renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+                }
+            }
+        }
+
+        // Draw contour lines if enabled
+        if config.show_lines {
+            for (i, level) in self.lines.iter().enumerate() {
+                // Determine line color
+                let line_color = config.line_color.unwrap_or_else(|| {
+                    if n_levels > 1 {
+                        let t = i as f64 / (n_levels - 1) as f64;
+                        cmap.sample(t)
+                    } else {
+                        color
+                    }
+                });
+
+                // Draw each contour segment (each segment is (x1, y1, x2, y2))
+                for &(x1, y1, x2, y2) in &level.segments {
+                    let (sx1, sy1) = area.data_to_screen(x1, y1);
+                    let (sx2, sy2) = area.data_to_screen(x2, y2);
+                    renderer.draw_line(
+                        sx1,
+                        sy1,
+                        sx2,
+                        sy2,
+                        line_color,
+                        config.line_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -319,5 +476,74 @@ mod tests {
 
         assert!(data.levels.is_empty());
         assert_eq!(data.shape, (0, 0));
+    }
+
+    #[test]
+    fn test_contour_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<ContourConfig>();
+    }
+
+    #[test]
+    fn test_contour_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let (x, y, z) = make_test_grid();
+        let config = ContourConfig::default().n_levels(5);
+        let input = ContourInput::new(&x, &y, &z);
+        let result = Contour::compute(input, &config);
+
+        assert!(result.is_ok());
+        let contour_data = result.unwrap();
+        assert_eq!(contour_data.shape, (10, 10));
+        assert!(!contour_data.levels.is_empty());
+    }
+
+    #[test]
+    fn test_contour_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = vec![];
+        let y: Vec<f64> = vec![];
+        let z: Vec<f64> = vec![];
+        let config = ContourConfig::default();
+        let input = ContourInput::new(&x, &y, &z);
+        let result = Contour::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_contour_plot_compute_mismatched_z() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 1.0];
+        let z = vec![1.0, 2.0, 3.0]; // Should be 6 elements (3 * 2)
+        let config = ContourConfig::default();
+        let input = ContourInput::new(&x, &y, &z);
+        let result = Contour::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_contour_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let (x, y, z) = make_test_grid();
+        let config = ContourConfig::default().n_levels(5);
+        let input = ContourInput::new(&x, &y, &z);
+        let contour_data = Contour::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = contour_data.data_bounds();
+        assert!((x_min - 0.0).abs() < 1e-10);
+        assert!((x_max - 9.0).abs() < 1e-10);
+        assert!((y_min - 0.0).abs() < 1e-10);
+        assert!((y_max - 9.0).abs() < 1e-10);
+
+        // Test is_empty
+        assert!(!contour_data.is_empty());
     }
 }

@@ -31,7 +31,7 @@ fn main() -> Result<()> {
 
     // Draw each wedge
     for (i, wedge) in wedges.iter().enumerate() {
-        let polygon = wedge.to_polygon(32);
+        let polygon = wedge.as_polygon(32);
         let points: Vec<(f32, f32)> = polygon
             .iter()
             .map(|(x, y)| (*x as f32, *y as f32))

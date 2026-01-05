@@ -57,9 +57,6 @@ pub fn linkage(distance_matrix: &[Vec<f64>], method: LinkageMethod) -> Linkage {
     let mut active = vec![true; n];
     let mut linkage_matrix = Vec::with_capacity(n - 1);
 
-    // Next cluster index for merged clusters
-    let mut next_cluster = n;
-
     for _ in 0..(n - 1) {
         // Find minimum distance between active clusters
         let (min_i, min_j, min_dist) = find_min_distance(&dist, &active);
@@ -74,8 +71,6 @@ pub fn linkage(distance_matrix: &[Vec<f64>], method: LinkageMethod) -> Linkage {
         // Mark j as inactive, update i's size
         active[min_j] = false;
         cluster_size[min_i] = size;
-
-        next_cluster += 1;
     }
 
     // Compute optimal leaf ordering (simple version: in-order traversal)

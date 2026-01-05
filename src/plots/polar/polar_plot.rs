@@ -1,8 +1,19 @@
 //! Polar plot implementations
 //!
 //! Provides polar scatter, line, and bar plots.
+//!
+//! # Trait-Based API
+//!
+//! Polar plots implement the core plot traits:
+//! - [`PlotConfig`] for `PolarPlotConfig`
+//! - [`PlotCompute`] for `PolarPlot` marker struct
+//! - [`PlotData`] for `PolarPlotData`
+//! - [`PlotRender`] for `PolarPlotData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, LineStyle, MarkerStyle, Theme};
 
 /// Configuration for polar plots
 #[derive(Debug, Clone)]
@@ -92,6 +103,12 @@ impl PolarPlotConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for PolarPlotConfig {}
+
+/// Marker struct for Polar plot type
+pub struct PolarPlot;
+
 /// A point in polar coordinates
 #[derive(Debug, Clone, Copy)]
 pub struct PolarPoint {
@@ -136,6 +153,23 @@ pub struct PolarPlotData {
     pub r_max: f64,
     /// Polygon vertices for fill (closed path)
     pub fill_polygon: Vec<(f64, f64)>,
+    /// Configuration used
+    pub(crate) config: PolarPlotConfig,
+}
+
+/// Input for polar plot computation
+pub struct PolarPlotInput<'a> {
+    /// Radius values
+    pub r: &'a [f64],
+    /// Theta values (in radians)
+    pub theta: &'a [f64],
+}
+
+impl<'a> PolarPlotInput<'a> {
+    /// Create new polar plot input
+    pub fn new(r: &'a [f64], theta: &'a [f64]) -> Self {
+        Self { r, theta }
+    }
 }
 
 /// Compute polar plot points
@@ -154,6 +188,7 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
             points: vec![],
             r_max: 1.0,
             fill_polygon: vec![],
+            config: config.clone(),
         };
     }
 
@@ -187,6 +222,7 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
         points,
         r_max: if r_max > 0.0 { r_max } else { 1.0 },
         fill_polygon,
+        config: config.clone(),
     }
 }
 
@@ -231,6 +267,98 @@ pub fn circle_vertices(cx: f64, cy: f64, radius: f64, n_segments: usize) -> Vec<
             (cx + radius * theta.cos(), cy + radius * theta.sin())
         })
         .collect()
+}
+
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+impl PlotCompute for PolarPlot {
+    type Input<'a> = PolarPlotInput<'a>;
+    type Config = PolarPlotConfig;
+    type Output = PolarPlotData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.r.is_empty() || input.theta.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        Ok(compute_polar_plot(input.r, input.theta, config))
+    }
+}
+
+impl PlotData for PolarPlotData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        // Polar plots use normalized -r_max to r_max range
+        ((-self.r_max, self.r_max), (-self.r_max, self.r_max))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+impl PlotRender for PolarPlotData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.points.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let line_color = config.color.unwrap_or(color);
+
+        // Draw fill if enabled
+        if config.fill && !self.fill_polygon.is_empty() {
+            let fill_color = line_color.with_alpha(config.fill_alpha);
+            let screen_polygon: Vec<(f32, f32)> = self
+                .fill_polygon
+                .iter()
+                .map(|(x, y)| area.data_to_screen(*x, *y))
+                .collect();
+            renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+        }
+
+        // Draw lines connecting points
+        if self.points.len() > 1 {
+            for i in 0..self.points.len() - 1 {
+                let p1 = &self.points[i];
+                let p2 = &self.points[i + 1];
+                let (sx1, sy1) = area.data_to_screen(p1.x, p1.y);
+                let (sx2, sy2) = area.data_to_screen(p2.x, p2.y);
+                renderer.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    line_color,
+                    config.line_width,
+                    LineStyle::Solid,
+                )?;
+            }
+        }
+
+        // Draw markers if configured
+        if config.marker_size > 0.0 {
+            for point in &self.points {
+                let (sx, sy) = area.data_to_screen(point.x, point.y);
+                renderer.draw_marker(
+                    sx,
+                    sy,
+                    config.marker_size,
+                    MarkerStyle::Circle,
+                    line_color,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -280,5 +408,47 @@ mod tests {
     fn test_circle_vertices() {
         let vertices = circle_vertices(0.0, 0.0, 1.0, 4);
         assert_eq!(vertices.len(), 5); // 4 segments + closing point
+    }
+
+    #[test]
+    fn test_polar_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<PolarPlotConfig>();
+    }
+
+    #[test]
+    fn test_polar_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let r = vec![1.0, 2.0, 3.0];
+        let theta = vec![0.0, PI / 2.0, PI];
+        let config = PolarPlotConfig::default();
+        let input = PolarPlotInput::new(&r, &theta);
+        let result = PolarPlot::compute(input, &config);
+
+        assert!(result.is_ok());
+        let polar_data = result.unwrap();
+        assert_eq!(polar_data.points.len(), 3);
+    }
+
+    #[test]
+    fn test_polar_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let r = vec![1.0, 2.0, 3.0];
+        let theta = vec![0.0, PI / 2.0, PI];
+        let config = PolarPlotConfig::default();
+        let input = PolarPlotInput::new(&r, &theta);
+        let polar_data = PolarPlot::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = polar_data.data_bounds();
+        assert!(x_min < 0.0);
+        assert!(x_max > 0.0);
+        assert!(y_min < 0.0);
+        assert!(y_max > 0.0);
+
+        // Test is_empty
+        assert!(!polar_data.is_empty());
     }
 }

@@ -1,8 +1,19 @@
 //! Stem plot implementations
 //!
 //! Provides stem plots (lollipop charts) for discrete data visualization.
+//!
+//! # Trait-Based API
+//!
+//! Stem plots implement the core plot traits:
+//! - [`PlotConfig`] for `StemConfig`
+//! - [`PlotCompute`] for `Stem` marker struct
+//! - [`PlotData`] for `StemData`
+//! - [`PlotRender`] for `StemData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, LineStyle, MarkerStyle, Theme};
 
 /// Configuration for stem plot
 #[derive(Debug, Clone)]
@@ -112,6 +123,12 @@ impl StemConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for StemConfig {}
+
+/// Marker struct for Stem plot type
+pub struct Stem;
+
 /// A single stem element
 #[derive(Debug, Clone, Copy)]
 pub struct StemElement {
@@ -207,6 +224,132 @@ pub fn stem_range(x: &[f64], y: &[f64], config: &StemConfig) -> ((f64, f64), (f6
     }
 }
 
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+/// Computed stem plot data
+#[derive(Debug, Clone)]
+pub struct StemData {
+    /// All stem elements
+    pub stems: Vec<StemElement>,
+    /// Data bounds
+    pub bounds: ((f64, f64), (f64, f64)),
+    /// Configuration used
+    pub(crate) config: StemConfig,
+}
+
+/// Input for stem plot computation
+pub struct StemInput<'a> {
+    /// X coordinates (positions)
+    pub x: &'a [f64],
+    /// Y coordinates (values)
+    pub y: &'a [f64],
+}
+
+impl<'a> StemInput<'a> {
+    /// Create new stem input
+    pub fn new(x: &'a [f64], y: &'a [f64]) -> Self {
+        Self { x, y }
+    }
+}
+
+impl PlotCompute for Stem {
+    type Input<'a> = StemInput<'a>;
+    type Config = StemConfig;
+    type Output = StemData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.x.is_empty() || input.y.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        let stems = compute_stems(input.x, input.y, config);
+        let bounds = stem_range(input.x, input.y, config);
+
+        Ok(StemData {
+            stems,
+            bounds,
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for StemData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        self.bounds
+    }
+
+    fn is_empty(&self) -> bool {
+        self.stems.is_empty()
+    }
+}
+
+impl PlotRender for StemData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.stems.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let line_color = config.line_color.unwrap_or(color);
+        let marker_color = config.marker_color.unwrap_or(color);
+
+        // Convert StemMarker to MarkerStyle
+        let marker_style = match config.marker {
+            StemMarker::Circle => Some(MarkerStyle::Circle),
+            StemMarker::Square => Some(MarkerStyle::Square),
+            StemMarker::Diamond => Some(MarkerStyle::Diamond),
+            StemMarker::Triangle => Some(MarkerStyle::Triangle),
+            StemMarker::None => None,
+        };
+
+        for stem in &self.stems {
+            // Draw stem line
+            let ((x1, y1), (x2, y2)) = match config.orientation {
+                StemOrientation::Vertical => stem.vertical_line(),
+                StemOrientation::Horizontal => stem.horizontal_line(),
+            };
+
+            let (sx1, sy1) = area.data_to_screen(x1, y1);
+            let (sx2, sy2) = area.data_to_screen(x2, y2);
+            renderer.draw_line(
+                sx1,
+                sy1,
+                sx2,
+                sy2,
+                line_color,
+                config.line_width,
+                LineStyle::Solid,
+            )?;
+
+            // Draw marker at top
+            if let Some(style) = marker_style {
+                let (mx, my) = stem.marker_position(config.orientation);
+                let (smx, smy) = area.data_to_screen(mx, my);
+                renderer.draw_marker(smx, smy, config.marker_size, style, marker_color)?;
+            }
+
+            // Draw marker at baseline if configured
+            if config.bottom_marker {
+                if let Some(style) = marker_style {
+                    let (bx, by) = stem.baseline_marker_position(config.orientation);
+                    let (sbx, sby) = area.data_to_screen(bx, by);
+                    renderer.draw_marker(sbx, sby, config.marker_size * 0.7, style, line_color)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +422,74 @@ mod tests {
         let stems = compute_stems(&x, &y, &config);
 
         assert!((stems[0].baseline - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_stem_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<StemConfig>();
+    }
+
+    #[test]
+    fn test_stem_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0, 3.0];
+        let y = vec![2.0, 5.0, 3.0, 4.0];
+        let config = StemConfig::default();
+        let input = StemInput::new(&x, &y);
+        let result = Stem::compute(input, &config);
+
+        assert!(result.is_ok());
+        let stem_data = result.unwrap();
+        assert_eq!(stem_data.stems.len(), 4);
+    }
+
+    #[test]
+    fn test_stem_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = vec![];
+        let y: Vec<f64> = vec![];
+        let config = StemConfig::default();
+        let input = StemInput::new(&x, &y);
+        let result = Stem::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stem_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 3.0, 2.0];
+        let config = StemConfig::default();
+        let input = StemInput::new(&x, &y);
+        let stem_data = Stem::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = stem_data.data_bounds();
+        assert!(x_min < 0.0); // margin applied
+        assert!(x_max > 2.0); // margin applied
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!stem_data.is_empty());
+    }
+
+    #[test]
+    fn test_stem_plot_compute_horizontal() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![2.0, 4.0, 3.0];
+        let config = StemConfig::default().horizontal();
+        let input = StemInput::new(&x, &y);
+        let result = Stem::compute(input, &config);
+
+        assert!(result.is_ok());
+        let stem_data = result.unwrap();
+        assert_eq!(stem_data.config.orientation, StemOrientation::Horizontal);
     }
 }

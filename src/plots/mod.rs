@@ -48,6 +48,12 @@ pub mod vector;
 // Core trait exports
 pub use traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 
+// Distribution plot exports
+pub use distribution::{
+    Boxen, BoxenConfig, BoxenData, Ecdf, EcdfConfig, EcdfData, EcdfStat, Kde, KdeConfig, KdeData,
+    Violin, ViolinConfig, ViolinData, compute_boxen, compute_ecdf, compute_kde,
+};
+
 pub use boxplot::{BoxPlotConfig, BoxPlotData, calculate_box_plot};
 pub use heatmap::{
     HeatmapConfig, HeatmapData, Interpolation, process_heatmap, process_heatmap_flat,

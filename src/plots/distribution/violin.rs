@@ -2,8 +2,19 @@
 //!
 //! Provides violin plots for visualizing distribution shapes,
 //! combining KDE with optional box/strip components.
+//!
+//! # Trait-Based API
+//!
+//! Violin plots implement the core plot traits:
+//! - [`PlotConfig`] for `ViolinConfig`
+//! - [`PlotCompute`] for `Violin` marker struct
+//! - [`PlotData`] for `ViolinData`
+//! - [`PlotRender`] for `ViolinData`
 
-use crate::render::{Color, SkiaRenderer, Theme};
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, LineStyle, Theme};
 use crate::stats::kde::{KdeResult, kde_1d};
 
 /// Configuration for violin plot
@@ -189,6 +200,12 @@ impl ViolinConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for ViolinConfig {}
+
+/// Marker struct for Violin plot type (used with PlotCompute trait)
+pub struct Violin;
+
 /// Violin plot data with computed KDE
 #[derive(Debug, Clone)]
 pub struct ViolinData {
@@ -200,6 +217,8 @@ pub struct ViolinData {
     pub quartiles: (f64, f64, f64),
     /// Data min and max
     pub range: (f64, f64),
+    /// Configuration used to compute this data
+    pub(crate) config: ViolinConfig,
 }
 
 impl ViolinData {
@@ -237,6 +256,7 @@ impl ViolinData {
             kde,
             quartiles: (q1, median, q3),
             range: (min, max),
+            config: config.clone(),
         })
     }
 
@@ -347,6 +367,145 @@ pub fn close_violin_polygon(left: &[(f64, f64)], right: &[(f64, f64)]) -> Vec<(f
     polygon
 }
 
+// ============================================================================
+// Trait Implementations
+// ============================================================================
+
+impl PlotCompute for Violin {
+    type Input<'a> = &'a [f64];
+    type Config = ViolinConfig;
+    type Output = ViolinData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        ViolinData::from_values(input, config).ok_or(crate::core::PlottingError::EmptyDataSet)
+    }
+}
+
+impl PlotData for ViolinData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        // For vertical violin: x is centered (use 0-1 range), y is data range
+        // For horizontal violin: x is data range, y is centered
+        match self.config.orientation {
+            Orientation::Vertical => {
+                let x_range = (0.0, 1.0); // Will be adjusted by position
+                let y_range = self.range;
+                (x_range, y_range)
+            }
+            Orientation::Horizontal => {
+                let x_range = self.range;
+                let y_range = (0.0, 1.0); // Will be adjusted by position
+                (x_range, y_range)
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+impl PlotRender for ViolinData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.data.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let half_width = config.width / 2.0;
+
+        // Generate polygon vertices (center at 0.5 for single violin)
+        let (left, right) = violin_polygon(self, 0.5, half_width, config);
+        let polygon = close_violin_polygon(&left, &right);
+
+        if polygon.is_empty() {
+            return Ok(());
+        }
+
+        // Convert to screen coordinates
+        let screen_points: Vec<(f32, f32)> = polygon
+            .iter()
+            .map(|(x, y)| area.data_to_screen(*x, *y))
+            .collect();
+
+        // Draw filled violin
+        if screen_points.len() >= 3 {
+            let fill_color = config
+                .fill_color
+                .unwrap_or(color)
+                .with_alpha(config.fill_alpha);
+            renderer.draw_filled_polygon(&screen_points, fill_color)?;
+        }
+
+        // Draw outline
+        let line_color = config.line_color.unwrap_or(color);
+        if screen_points.len() >= 2 && config.line_width > 0.0 {
+            let mut outline = screen_points.clone();
+            outline.push(screen_points[0]); // Close the path
+            renderer.draw_polyline(&outline, line_color, config.line_width, LineStyle::Solid)?;
+        }
+
+        // Draw inner elements (box, quartiles, median)
+        let center = 0.5;
+        let (q1, median, q3) = self.quartiles;
+
+        if config.show_box {
+            // Draw small box for IQR
+            let box_half_width = half_width * 0.15;
+            let (x1, y1) = area.data_to_screen(center - box_half_width, q1);
+            let (x2, y2) = area.data_to_screen(center + box_half_width, q3);
+            renderer.draw_rectangle(x1, y1, x2 - x1, y2 - y1, config.inner_color, true)?;
+        }
+
+        if config.show_quartiles {
+            // Draw quartile lines
+            let line_half = half_width * 0.2;
+            let (q1_x1, q1_y) = area.data_to_screen(center - line_half, q1);
+            let (q1_x2, _) = area.data_to_screen(center + line_half, q1);
+            renderer.draw_line(
+                q1_x1,
+                q1_y,
+                q1_x2,
+                q1_y,
+                config.inner_color,
+                1.0,
+                LineStyle::Solid,
+            )?;
+
+            let (q3_x1, q3_y) = area.data_to_screen(center - line_half, q3);
+            let (q3_x2, _) = area.data_to_screen(center + line_half, q3);
+            renderer.draw_line(
+                q3_x1,
+                q3_y,
+                q3_x2,
+                q3_y,
+                config.inner_color,
+                1.0,
+                LineStyle::Solid,
+            )?;
+        }
+
+        if config.show_median {
+            // Draw median dot or line
+            let (mx, my) = area.data_to_screen(center, median);
+            renderer.draw_marker(
+                mx,
+                my,
+                4.0,
+                crate::render::MarkerStyle::Circle,
+                Color::new(255, 255, 255),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,5 +557,53 @@ mod tests {
         assert!((percentile(&data, 50.0) - 3.0).abs() < 1e-10);
         assert!((percentile(&data, 0.0) - 1.0).abs() < 1e-10);
         assert!((percentile(&data, 100.0) - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_violin_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<ViolinConfig>();
+    }
+
+    #[test]
+    fn test_violin_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let data: Vec<f64> = (0..100).map(|i| (i as f64 * 0.1).sin()).collect();
+        let config = ViolinConfig::default();
+        let result = Violin::compute(&data, &config);
+
+        assert!(result.is_ok());
+        let violin_data = result.unwrap();
+        assert!(!violin_data.data.is_empty());
+        assert!(violin_data.max_density() > 0.0);
+    }
+
+    #[test]
+    fn test_violin_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let data: Vec<f64> = vec![];
+        let config = ViolinConfig::default();
+        let result = Violin::compute(&data, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_violin_plot_data_trait() {
+        use crate::plots::traits::PlotData;
+
+        let data: Vec<f64> = (0..100).map(|i| i as f64).collect();
+        let config = ViolinConfig::default();
+        let violin_data = ViolinData::from_values(&data, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = violin_data.data_bounds();
+        assert!(x_min <= x_max);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!violin_data.is_empty());
     }
 }

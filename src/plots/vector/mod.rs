@@ -6,5 +6,6 @@
 pub mod quiver;
 
 pub use quiver::{
-    QuiverArrow, QuiverConfig, QuiverPivot, QuiverPlotData, compute_quiver, quiver_range,
+    Quiver, QuiverArrow, QuiverConfig, QuiverInput, QuiverPivot, QuiverPlotData, compute_quiver,
+    quiver_range,
 };

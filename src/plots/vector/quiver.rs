@@ -1,8 +1,19 @@
 //! Quiver (vector field) plot implementations
 //!
 //! Provides arrow/vector field visualization.
+//!
+//! # Trait-Based API
+//!
+//! Quiver plots implement the core plot traits:
+//! - [`PlotConfig`] for `QuiverConfig`
+//! - [`PlotCompute`] for `Quiver` marker struct
+//! - [`PlotData`] for `QuiverPlotData`
+//! - [`PlotRender`] for `QuiverPlotData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, ColorMap, LineStyle, Theme};
 
 /// Configuration for quiver plot
 #[derive(Debug, Clone)]
@@ -91,6 +102,31 @@ impl QuiverConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for QuiverConfig {}
+
+/// Marker struct for Quiver plot type
+pub struct Quiver;
+
+/// Input for quiver plot computation
+pub struct QuiverInput<'a> {
+    /// X positions
+    pub x: &'a [f64],
+    /// Y positions
+    pub y: &'a [f64],
+    /// X components of vectors (or angles if angles_mode)
+    pub u: &'a [f64],
+    /// Y components of vectors (or magnitudes if angles_mode)
+    pub v: &'a [f64],
+}
+
+impl<'a> QuiverInput<'a> {
+    /// Create new quiver input
+    pub fn new(x: &'a [f64], y: &'a [f64], u: &'a [f64], v: &'a [f64]) -> Self {
+        Self { x, y, u, v }
+    }
+}
+
 /// A single arrow in a quiver plot
 #[derive(Debug, Clone)]
 pub struct QuiverArrow {
@@ -113,6 +149,8 @@ pub struct QuiverPlotData {
     pub arrows: Vec<QuiverArrow>,
     /// Magnitude range for color scaling
     pub magnitude_range: (f64, f64),
+    /// Configuration used
+    pub(crate) config: QuiverConfig,
 }
 
 /// Compute quiver plot data
@@ -138,6 +176,7 @@ pub fn compute_quiver(
         return QuiverPlotData {
             arrows: vec![],
             magnitude_range: (0.0, 1.0),
+            config: config.clone(),
         };
     }
 
@@ -191,6 +230,99 @@ pub fn compute_quiver(
     QuiverPlotData {
         arrows,
         magnitude_range: (min_mag, max_mag),
+        config: config.clone(),
+    }
+}
+
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+impl PlotCompute for Quiver {
+    type Input<'a> = QuiverInput<'a>;
+    type Config = QuiverConfig;
+    type Output = QuiverPlotData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.x.is_empty() || input.y.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        Ok(compute_quiver(input.x, input.y, input.u, input.v, config))
+    }
+}
+
+impl PlotData for QuiverPlotData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        quiver_range(self)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.arrows.is_empty()
+    }
+}
+
+impl PlotRender for QuiverPlotData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.arrows.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let base_color = config.color.unwrap_or(color);
+
+        // Get colormap for magnitude coloring
+        let cmap = if config.color_by_magnitude {
+            Some(ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis))
+        } else {
+            None
+        };
+
+        let (min_mag, max_mag) = self.magnitude_range;
+        let mag_range = if (max_mag - min_mag).abs() < 1e-10 {
+            1.0
+        } else {
+            max_mag - min_mag
+        };
+
+        for arrow in &self.arrows {
+            // Determine arrow color
+            let arrow_color = if let Some(ref colormap) = cmap {
+                let t = (arrow.magnitude - min_mag) / mag_range;
+                colormap.sample(t)
+            } else {
+                base_color
+            };
+
+            // Draw shaft
+            let (sx1, sy1) = area.data_to_screen(arrow.start.0, arrow.start.1);
+            let (sx2, sy2) = area.data_to_screen(arrow.end.0, arrow.end.1);
+            renderer.draw_line(
+                sx1,
+                sy1,
+                sx2,
+                sy2,
+                arrow_color,
+                config.width,
+                LineStyle::Solid,
+            )?;
+
+            // Draw head
+            let head_screen: Vec<(f32, f32)> = arrow
+                .head
+                .iter()
+                .map(|(x, y)| area.data_to_screen(*x, *y))
+                .collect();
+            renderer.draw_filled_polygon(&head_screen, arrow_color)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -310,5 +442,66 @@ mod tests {
         let data = compute_quiver(&x, &y, &u, &v, &config);
 
         assert!(data.arrows.is_empty());
+    }
+
+    #[test]
+    fn test_quiver_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<QuiverConfig>();
+    }
+
+    #[test]
+    fn test_quiver_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 1.0, 2.0];
+        let u = vec![1.0, 0.0, -1.0];
+        let v = vec![0.0, 1.0, 0.0];
+        let config = QuiverConfig::default();
+        let input = QuiverInput::new(&x, &y, &u, &v);
+        let result = Quiver::compute(input, &config);
+
+        assert!(result.is_ok());
+        let quiver_data = result.unwrap();
+        assert_eq!(quiver_data.arrows.len(), 3);
+    }
+
+    #[test]
+    fn test_quiver_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = vec![];
+        let y: Vec<f64> = vec![];
+        let u: Vec<f64> = vec![];
+        let v: Vec<f64> = vec![];
+        let config = QuiverConfig::default();
+        let input = QuiverInput::new(&x, &y, &u, &v);
+        let result = Quiver::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_quiver_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 1.0, 2.0];
+        let u = vec![1.0, 0.0, -1.0];
+        let v = vec![0.0, 1.0, 0.0];
+        let config = QuiverConfig::default();
+        let input = QuiverInput::new(&x, &y, &u, &v);
+        let quiver_data = Quiver::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = quiver_data.data_bounds();
+        assert!(x_min <= 0.0);
+        assert!(x_max >= 2.0);
+        assert!(y_min <= 0.0);
+        assert!(y_max >= 2.0);
+
+        // Test is_empty
+        assert!(!quiver_data.is_empty());
     }
 }

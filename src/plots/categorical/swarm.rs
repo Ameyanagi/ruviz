@@ -1,8 +1,19 @@
 //! Swarm plot implementations
 //!
 //! Provides non-overlapping categorical scatter plots using beeswarm algorithm.
+//!
+//! # Trait-Based API
+//!
+//! Swarm plots implement the core plot traits:
+//! - [`PlotConfig`] for `SwarmConfig`
+//! - [`PlotCompute`] for `Swarm` marker struct
+//! - [`PlotData`] for `SwarmData`
+//! - [`PlotRender`] for `SwarmData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, MarkerStyle, Theme};
 use crate::stats::beeswarm::beeswarm_positions;
 
 /// Configuration for swarm plot
@@ -87,6 +98,12 @@ impl SwarmConfig {
         self
     }
 }
+
+// Implement PlotConfig marker trait
+impl PlotConfig for SwarmConfig {}
+
+/// Marker struct for Swarm plot type (used with PlotCompute trait)
+pub struct Swarm;
 
 /// A single point in a swarm plot
 #[derive(Debug, Clone, Copy)]
@@ -240,6 +257,105 @@ pub fn swarm_range(
     }
 }
 
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+/// Computed swarm plot data
+#[derive(Debug, Clone)]
+pub struct SwarmData {
+    /// All computed points
+    pub points: Vec<SwarmPoint>,
+    /// Number of categories
+    pub num_categories: usize,
+    /// Configuration used to compute this data
+    pub(crate) config: SwarmConfig,
+}
+
+/// Input for swarm plot computation
+pub struct SwarmInput<'a> {
+    /// Category indices
+    pub categories: &'a [usize],
+    /// Values
+    pub values: &'a [f64],
+    /// Optional group indices
+    pub groups: Option<&'a [usize]>,
+}
+
+impl<'a> SwarmInput<'a> {
+    /// Create new swarm input
+    pub fn new(categories: &'a [usize], values: &'a [f64]) -> Self {
+        Self {
+            categories,
+            values,
+            groups: None,
+        }
+    }
+
+    /// Add groups
+    pub fn with_groups(mut self, groups: &'a [usize]) -> Self {
+        self.groups = Some(groups);
+        self
+    }
+}
+
+impl PlotCompute for Swarm {
+    type Input<'a> = SwarmInput<'a>;
+    type Config = SwarmConfig;
+    type Output = SwarmData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        let points = compute_swarm_points(input.categories, input.values, input.groups, config);
+
+        if points.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        // Calculate number of categories
+        let num_categories = input.categories.iter().max().map_or(0, |&m| m + 1);
+
+        Ok(SwarmData {
+            points,
+            num_categories,
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for SwarmData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        swarm_range(&self.points, self.num_categories, self.config.orientation)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+impl PlotRender for SwarmData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.points.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let point_color = config.color.unwrap_or(color).with_alpha(config.alpha);
+
+        for point in &self.points {
+            let (px, py) = area.data_to_screen(point.x, point.y);
+            renderer.draw_marker(px, py, config.size, MarkerStyle::Circle, point_color)?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,5 +411,75 @@ mod tests {
         let points = compute_swarm_points(&categories, &values, None, &config);
 
         assert!(points.is_empty());
+    }
+
+    #[test]
+    fn test_swarm_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<SwarmConfig>();
+    }
+
+    #[test]
+    fn test_swarm_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let categories = vec![0, 0, 1, 1, 2, 2];
+        let values = vec![1.0, 1.5, 2.0, 2.5, 3.0, 3.5];
+        let config = SwarmConfig::default();
+        let input = SwarmInput::new(&categories, &values);
+        let result = Swarm::compute(input, &config);
+
+        assert!(result.is_ok());
+        let swarm_data = result.unwrap();
+        assert_eq!(swarm_data.points.len(), 6);
+        assert_eq!(swarm_data.num_categories, 3);
+    }
+
+    #[test]
+    fn test_swarm_plot_compute_with_groups() {
+        use crate::plots::traits::PlotCompute;
+
+        let categories = vec![0, 0, 1, 1];
+        let values = vec![1.0, 2.0, 1.0, 2.0];
+        let groups = vec![0, 1, 0, 1];
+        let config = SwarmConfig::default().dodge(true);
+        let input = SwarmInput::new(&categories, &values).with_groups(&groups);
+        let result = Swarm::compute(input, &config);
+
+        assert!(result.is_ok());
+        let swarm_data = result.unwrap();
+        assert_eq!(swarm_data.points.len(), 4);
+    }
+
+    #[test]
+    fn test_swarm_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let categories: Vec<usize> = vec![];
+        let values: Vec<f64> = vec![];
+        let config = SwarmConfig::default();
+        let input = SwarmInput::new(&categories, &values);
+        let result = Swarm::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_swarm_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let categories = vec![0, 1, 2];
+        let values = vec![1.0, 5.0, 3.0];
+        let config = SwarmConfig::default();
+        let input = SwarmInput::new(&categories, &values);
+        let swarm_data = Swarm::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = swarm_data.data_bounds();
+        assert!(x_min <= x_max);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!swarm_data.is_empty());
     }
 }

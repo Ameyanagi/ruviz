@@ -1,8 +1,19 @@
 //! Stacked and grouped bar chart implementations
 //!
 //! Provides stacked bar, grouped bar, and horizontal bar functionality.
+//!
+//! # Trait-Based API
+//!
+//! Bar plots implement the core plot traits:
+//! - [`PlotConfig`] for `StackedBarConfig` and `GroupedBarConfig`
+//! - [`PlotCompute`] for `StackedBar` and `GroupedBar` marker structs
+//! - [`PlotData`] for `StackedBarData` and `GroupedBarData`
+//! - [`PlotRender`] for `StackedBarData` and `GroupedBarData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, LineStyle, Theme};
 
 /// Configuration for stacked bar chart
 #[derive(Debug, Clone)]
@@ -178,6 +189,16 @@ impl GroupedBarConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for StackedBarConfig {}
+impl PlotConfig for GroupedBarConfig {}
+
+/// Marker struct for StackedBar plot type
+pub struct StackedBar;
+
+/// Marker struct for GroupedBar plot type
+pub struct GroupedBar;
+
 /// A single bar rectangle
 #[derive(Debug, Clone, Copy)]
 pub struct BarRect {
@@ -198,7 +219,7 @@ pub struct BarRect {
 /// Compute stacked bar rectangles
 ///
 /// # Arguments
-/// * `values` - 2D array of values [series][category]
+/// * `values` - 2D array of values \[series\]\[category\]
 /// * `categories` - Number of categories
 /// * `config` - Stacked bar configuration
 ///
@@ -258,7 +279,7 @@ pub fn compute_stacked_bars(
 /// Compute grouped bar rectangles
 ///
 /// # Arguments
-/// * `values` - 2D array of values [series][category]
+/// * `values` - 2D array of values \[series\]\[category\]
 /// * `categories` - Number of categories
 /// * `config` - Grouped bar configuration
 ///
@@ -375,6 +396,236 @@ pub fn grouped_bar_range(values: &[Vec<f64>]) -> (f64, f64) {
     (min_val, max_val)
 }
 
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+/// Computed stacked bar data
+#[derive(Debug, Clone)]
+pub struct StackedBarData {
+    /// All bar rectangles
+    pub bars: Vec<BarRect>,
+    /// Number of categories
+    pub num_categories: usize,
+    /// Number of series
+    pub num_series: usize,
+    /// Value range (min, max)
+    pub value_range: (f64, f64),
+    /// Configuration used
+    pub(crate) config: StackedBarConfig,
+}
+
+/// Computed grouped bar data
+#[derive(Debug, Clone)]
+pub struct GroupedBarData {
+    /// All bar rectangles
+    pub bars: Vec<BarRect>,
+    /// Number of categories
+    pub num_categories: usize,
+    /// Number of series
+    pub num_series: usize,
+    /// Value range (min, max)
+    pub value_range: (f64, f64),
+    /// Configuration used
+    pub(crate) config: GroupedBarConfig,
+}
+
+/// Input for bar chart computation
+pub struct BarInput<'a> {
+    /// 2D values: \[series\]\[category\]
+    pub values: &'a [Vec<f64>],
+    /// Number of categories
+    pub num_categories: usize,
+}
+
+impl<'a> BarInput<'a> {
+    /// Create new bar input
+    pub fn new(values: &'a [Vec<f64>], num_categories: usize) -> Self {
+        Self {
+            values,
+            num_categories,
+        }
+    }
+}
+
+impl PlotCompute for StackedBar {
+    type Input<'a> = BarInput<'a>;
+    type Config = StackedBarConfig;
+    type Output = StackedBarData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.values.is_empty() || input.num_categories == 0 {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        let bars = compute_stacked_bars(input.values, input.num_categories, config);
+        let value_range = stacked_bar_range(input.values);
+
+        Ok(StackedBarData {
+            bars,
+            num_categories: input.num_categories,
+            num_series: input.values.len(),
+            value_range,
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotCompute for GroupedBar {
+    type Input<'a> = BarInput<'a>;
+    type Config = GroupedBarConfig;
+    type Output = GroupedBarData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.values.is_empty() || input.num_categories == 0 {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        let bars = compute_grouped_bars(input.values, input.num_categories, config);
+        let value_range = grouped_bar_range(input.values);
+
+        Ok(GroupedBarData {
+            bars,
+            num_categories: input.num_categories,
+            num_series: input.values.len(),
+            value_range,
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for StackedBarData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        let cat_range = (-0.5, self.num_categories as f64 - 0.5);
+        match self.config.orientation {
+            BarOrientation::Vertical => (cat_range, self.value_range),
+            BarOrientation::Horizontal => (self.value_range, cat_range),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bars.is_empty()
+    }
+}
+
+impl PlotData for GroupedBarData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        let cat_range = (-0.5, self.num_categories as f64 - 0.5);
+        match self.config.orientation {
+            BarOrientation::Vertical => (cat_range, self.value_range),
+            BarOrientation::Horizontal => (self.value_range, cat_range),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bars.is_empty()
+    }
+}
+
+impl PlotRender for StackedBarData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        _color: Color,
+    ) -> Result<()> {
+        if self.bars.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+
+        for bar in &self.bars {
+            // Get color for this series
+            let bar_color = config
+                .colors
+                .as_ref()
+                .and_then(|c| c.get(bar.series).copied())
+                .unwrap_or_else(|| theme.get_color(bar.series))
+                .with_alpha(config.alpha);
+
+            // Convert to screen coordinates
+            let (x1, y1) = area.data_to_screen(bar.x, bar.y + bar.height);
+            let (x2, y2) = area.data_to_screen(bar.x + bar.width, bar.y);
+
+            let x = x1.min(x2);
+            let y = y1.min(y2);
+            let w = (x2 - x1).abs();
+            let h = (y2 - y1).abs();
+
+            renderer.draw_rectangle(x, y, w, h, bar_color, true)?;
+
+            // Draw edge if specified
+            if config.edge_width > 0.0 {
+                if let Some(edge_color) = config.edge_color {
+                    let outline = vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)];
+                    renderer.draw_polyline(
+                        &outline,
+                        edge_color,
+                        config.edge_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl PlotRender for GroupedBarData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        _color: Color,
+    ) -> Result<()> {
+        if self.bars.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+
+        for bar in &self.bars {
+            // Get color for this series
+            let bar_color = config
+                .colors
+                .as_ref()
+                .and_then(|c| c.get(bar.series).copied())
+                .unwrap_or_else(|| theme.get_color(bar.series))
+                .with_alpha(config.alpha);
+
+            // Convert to screen coordinates
+            let (x1, y1) = area.data_to_screen(bar.x, bar.y + bar.height);
+            let (x2, y2) = area.data_to_screen(bar.x + bar.width, bar.y);
+
+            let x = x1.min(x2);
+            let y = y1.min(y2);
+            let w = (x2 - x1).abs();
+            let h = (y2 - y1).abs();
+
+            renderer.draw_rectangle(x, y, w, h, bar_color, true)?;
+
+            // Draw edge if specified
+            if config.edge_width > 0.0 {
+                if let Some(edge_color) = config.edge_color {
+                    let outline = vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)];
+                    renderer.draw_polyline(
+                        &outline,
+                        edge_color,
+                        config.edge_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +686,97 @@ mod tests {
         let (min, max) = grouped_bar_range(&values);
         assert!((min - (-5.0)).abs() < 1e-10);
         assert!((max - 20.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_stacked_bar_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<StackedBarConfig>();
+    }
+
+    #[test]
+    fn test_grouped_bar_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<GroupedBarConfig>();
+    }
+
+    #[test]
+    fn test_stacked_bar_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let values = vec![vec![10.0, 20.0, 15.0], vec![5.0, 10.0, 8.0]];
+        let config = StackedBarConfig::default();
+        let input = BarInput::new(&values, 3);
+        let result = StackedBar::compute(input, &config);
+
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert_eq!(data.bars.len(), 6);
+        assert_eq!(data.num_categories, 3);
+        assert_eq!(data.num_series, 2);
+    }
+
+    #[test]
+    fn test_grouped_bar_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let values = vec![vec![10.0, 20.0], vec![15.0, 25.0]];
+        let config = GroupedBarConfig::default();
+        let input = BarInput::new(&values, 2);
+        let result = GroupedBar::compute(input, &config);
+
+        assert!(result.is_ok());
+        let data = result.unwrap();
+        assert_eq!(data.bars.len(), 4);
+        assert_eq!(data.num_categories, 2);
+        assert_eq!(data.num_series, 2);
+    }
+
+    #[test]
+    fn test_stacked_bar_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let values: Vec<Vec<f64>> = vec![];
+        let config = StackedBarConfig::default();
+        let input = BarInput::new(&values, 0);
+        let result = StackedBar::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_stacked_bar_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let values = vec![vec![10.0, 20.0], vec![5.0, 15.0]];
+        let config = StackedBarConfig::default();
+        let input = BarInput::new(&values, 2);
+        let data = StackedBar::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
+        assert!(x_min <= x_max);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn test_grouped_bar_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let values = vec![vec![10.0, 20.0], vec![15.0, 25.0]];
+        let config = GroupedBarConfig::default();
+        let input = BarInput::new(&values, 2);
+        let data = GroupedBar::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = data.data_bounds();
+        assert!(x_min <= x_max);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!data.is_empty());
     }
 }

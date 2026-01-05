@@ -1,8 +1,19 @@
 //! Area and fill between plot implementations
 //!
 //! Provides area fill, fill_between, and stackplot functionality.
+//!
+//! # Trait-Based API
+//!
+//! Area plots implement the core plot traits:
+//! - [`PlotConfig`] for `AreaConfig` and `StackPlotConfig`
+//! - [`PlotCompute`] for `Area` and `StackedArea` marker structs
+//! - [`PlotData`] for `AreaData` and `StackedAreaData`
+//! - [`PlotRender`] for `AreaData` and `StackedAreaData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, LineStyle, Theme};
 
 /// Configuration for area plot
 #[derive(Debug, Clone)]
@@ -281,6 +292,16 @@ impl StackPlotConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for AreaConfig {}
+impl PlotConfig for StackPlotConfig {}
+
+/// Marker struct for Area plot type
+pub struct Area;
+
+/// Marker struct for StackedArea plot type
+pub struct StackedArea;
+
 /// Compute stacked area data
 ///
 /// # Arguments
@@ -344,6 +365,257 @@ pub fn compute_stack(
     }
 
     result
+}
+
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+/// Computed area data
+#[derive(Debug, Clone)]
+pub struct AreaData {
+    /// Polygon vertices for the filled area
+    pub polygon: Vec<(f64, f64)>,
+    /// X coordinates
+    pub x: Vec<f64>,
+    /// Y coordinates
+    pub y: Vec<f64>,
+    /// Data bounds
+    pub bounds: ((f64, f64), (f64, f64)),
+    /// Configuration used
+    pub(crate) config: AreaConfig,
+}
+
+/// Input for area plot computation
+pub struct AreaInput<'a> {
+    /// X coordinates
+    pub x: &'a [f64],
+    /// Y coordinates
+    pub y: &'a [f64],
+}
+
+impl<'a> AreaInput<'a> {
+    /// Create new area input
+    pub fn new(x: &'a [f64], y: &'a [f64]) -> Self {
+        Self { x, y }
+    }
+}
+
+impl PlotCompute for Area {
+    type Input<'a> = AreaInput<'a>;
+    type Config = AreaConfig;
+    type Output = AreaData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.x.is_empty() || input.y.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        let polygon = area_polygon(input.x, input.y, config.baseline);
+
+        let x_min = input.x.iter().cloned().fold(f64::INFINITY, f64::min);
+        let x_max = input.x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let y_min = input
+            .y
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min)
+            .min(config.baseline);
+        let y_max = input
+            .y
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max)
+            .max(config.baseline);
+
+        Ok(AreaData {
+            polygon,
+            x: input.x.to_vec(),
+            y: input.y.to_vec(),
+            bounds: ((x_min, x_max), (y_min, y_max)),
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for AreaData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        self.bounds
+    }
+
+    fn is_empty(&self) -> bool {
+        self.polygon.is_empty()
+    }
+}
+
+impl PlotRender for AreaData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.polygon.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let fill_color = config.color.unwrap_or(color).with_alpha(config.alpha);
+
+        // Convert polygon to screen coordinates
+        let screen_polygon: Vec<(f32, f32)> = self
+            .polygon
+            .iter()
+            .map(|(x, y)| area.data_to_screen(*x, *y))
+            .collect();
+
+        // Draw filled area
+        renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+
+        // Draw top line if configured
+        if let Some(line_color) = config.line_color {
+            let n = self.x.len();
+            let line_points: Vec<(f32, f32)> = (0..n)
+                .map(|i| area.data_to_screen(self.x[i], self.y[i]))
+                .collect();
+            renderer.draw_polyline(
+                &line_points,
+                line_color,
+                config.line_width,
+                LineStyle::Solid,
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Computed stacked area data
+#[derive(Debug, Clone)]
+pub struct StackedAreaData {
+    /// Stack bounds for each series (lower, upper)
+    pub stacks: Vec<(Vec<f64>, Vec<f64>)>,
+    /// X coordinates
+    pub x: Vec<f64>,
+    /// Data bounds
+    pub bounds: ((f64, f64), (f64, f64)),
+    /// Configuration used
+    pub(crate) config: StackPlotConfig,
+}
+
+/// Input for stacked area plot computation
+pub struct StackedAreaInput<'a> {
+    /// X coordinates
+    pub x: &'a [f64],
+    /// Y series to stack
+    pub ys: &'a [Vec<f64>],
+}
+
+impl<'a> StackedAreaInput<'a> {
+    /// Create new stacked area input
+    pub fn new(x: &'a [f64], ys: &'a [Vec<f64>]) -> Self {
+        Self { x, ys }
+    }
+}
+
+impl PlotCompute for StackedArea {
+    type Input<'a> = StackedAreaInput<'a>;
+    type Config = StackPlotConfig;
+    type Output = StackedAreaData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.x.is_empty() || input.ys.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        let stacks = compute_stack(input.x, input.ys, config.baseline);
+
+        if stacks.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        // Compute bounds
+        let x_min = input.x.iter().cloned().fold(f64::INFINITY, f64::min);
+        let x_max = input.x.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        let mut y_min = f64::INFINITY;
+        let mut y_max = f64::NEG_INFINITY;
+        for (lower, upper) in &stacks {
+            y_min = y_min.min(lower.iter().cloned().fold(f64::INFINITY, f64::min));
+            y_max = y_max.max(upper.iter().cloned().fold(f64::NEG_INFINITY, f64::max));
+        }
+
+        Ok(StackedAreaData {
+            stacks,
+            x: input.x.to_vec(),
+            bounds: ((x_min, x_max), (y_min, y_max)),
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for StackedAreaData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        self.bounds
+    }
+
+    fn is_empty(&self) -> bool {
+        self.stacks.is_empty()
+    }
+}
+
+impl PlotRender for StackedAreaData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        _color: Color,
+    ) -> Result<()> {
+        if self.stacks.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+
+        for (i, (lower, upper)) in self.stacks.iter().enumerate() {
+            let polygon = fill_between_polygon(&self.x, lower, upper);
+
+            let fill_color = config
+                .colors
+                .as_ref()
+                .and_then(|c| c.get(i).copied())
+                .unwrap_or_else(|| theme.get_color(i))
+                .with_alpha(config.alpha);
+
+            // Convert to screen coordinates
+            let screen_polygon: Vec<(f32, f32)> = polygon
+                .iter()
+                .map(|(x, y)| area.data_to_screen(*x, *y))
+                .collect();
+
+            renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+
+            // Draw separator line if configured
+            if config.show_lines && i < self.stacks.len() - 1 {
+                let upper_line: Vec<(f32, f32)> = self
+                    .x
+                    .iter()
+                    .zip(upper.iter())
+                    .map(|(x, y)| area.data_to_screen(*x, *y))
+                    .collect();
+                renderer.draw_polyline(
+                    &upper_line,
+                    config.line_color,
+                    config.line_width,
+                    LineStyle::Solid,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -413,5 +685,100 @@ mod tests {
         // Should be centered around 0
         assert!((stack[0].0[0] - (-1.0)).abs() < 1e-10);
         assert!((stack[0].1[0] - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_area_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<AreaConfig>();
+    }
+
+    #[test]
+    fn test_stack_plot_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<StackPlotConfig>();
+    }
+
+    #[test]
+    fn test_area_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 1.0];
+        let config = AreaConfig::default();
+        let input = AreaInput::new(&x, &y);
+        let result = Area::compute(input, &config);
+
+        assert!(result.is_ok());
+        let area_data = result.unwrap();
+        assert!(!area_data.polygon.is_empty());
+    }
+
+    #[test]
+    fn test_area_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = vec![];
+        let y: Vec<f64> = vec![];
+        let config = AreaConfig::default();
+        let input = AreaInput::new(&x, &y);
+        let result = Area::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_area_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 1.0];
+        let config = AreaConfig::default();
+        let input = AreaInput::new(&x, &y);
+        let area_data = Area::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = area_data.data_bounds();
+        assert!((x_min - 0.0).abs() < 1e-10);
+        assert!((x_max - 2.0).abs() < 1e-10);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!area_data.is_empty());
+    }
+
+    #[test]
+    fn test_stacked_area_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0];
+        let ys = vec![vec![1.0, 2.0, 1.0], vec![2.0, 1.0, 2.0]];
+        let config = StackPlotConfig::default();
+        let input = StackedAreaInput::new(&x, &ys);
+        let result = StackedArea::compute(input, &config);
+
+        assert!(result.is_ok());
+        let stack_data = result.unwrap();
+        assert_eq!(stack_data.stacks.len(), 2);
+    }
+
+    #[test]
+    fn test_stacked_area_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let x = vec![0.0, 1.0, 2.0];
+        let ys = vec![vec![1.0, 2.0, 1.0], vec![2.0, 1.0, 2.0]];
+        let config = StackPlotConfig::default();
+        let input = StackedAreaInput::new(&x, &ys);
+        let stack_data = StackedArea::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = stack_data.data_bounds();
+        assert!((x_min - 0.0).abs() < 1e-10);
+        assert!((x_max - 2.0).abs() < 1e-10);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!stack_data.is_empty());
     }
 }

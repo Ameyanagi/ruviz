@@ -1,8 +1,19 @@
 //! Step plot implementations
 //!
 //! Provides step function visualization for discrete/piecewise-constant data.
+//!
+//! # Trait-Based API
+//!
+//! Step plots implement the core plot traits:
+//! - [`PlotConfig`] for `StepConfig`
+//! - [`PlotCompute`] for `Step` marker struct
+//! - [`PlotData`] for `StepData`
+//! - [`PlotRender`] for `StepData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, LineStyle, Theme};
 
 /// Where to place the step
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +98,12 @@ impl StepConfig {
         self
     }
 }
+
+// Implement PlotConfig marker trait
+impl PlotConfig for StepConfig {}
+
+/// Marker struct for Step plot type
+pub struct Step;
 
 /// Compute step line vertices
 ///
@@ -192,6 +209,124 @@ pub fn step_range(x: &[f64], y: &[f64], baseline: f64) -> ((f64, f64), (f64, f64
     ((x_min, x_max), (y_min, y_max))
 }
 
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+/// Computed step plot data
+#[derive(Debug, Clone)]
+pub struct StepData {
+    /// Line vertices
+    pub line: Vec<(f64, f64)>,
+    /// Polygon vertices (if fill enabled)
+    pub polygon: Vec<(f64, f64)>,
+    /// Original X coordinates
+    pub x: Vec<f64>,
+    /// Original Y coordinates
+    pub y: Vec<f64>,
+    /// Data bounds
+    pub bounds: ((f64, f64), (f64, f64)),
+    /// Configuration used
+    pub(crate) config: StepConfig,
+}
+
+/// Input for step plot computation
+pub struct StepInput<'a> {
+    /// X coordinates
+    pub x: &'a [f64],
+    /// Y coordinates
+    pub y: &'a [f64],
+}
+
+impl<'a> StepInput<'a> {
+    /// Create new step input
+    pub fn new(x: &'a [f64], y: &'a [f64]) -> Self {
+        Self { x, y }
+    }
+}
+
+impl PlotCompute for Step {
+    type Input<'a> = StepInput<'a>;
+    type Config = StepConfig;
+    type Output = StepData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.x.is_empty() || input.y.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        let line = step_line(input.x, input.y, config.where_step);
+        let polygon = if config.fill {
+            step_polygon(input.x, input.y, config.where_step, config.baseline)
+        } else {
+            vec![]
+        };
+        let bounds = step_range(input.x, input.y, config.baseline);
+
+        Ok(StepData {
+            line,
+            polygon,
+            x: input.x.to_vec(),
+            y: input.y.to_vec(),
+            bounds,
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for StepData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        self.bounds
+    }
+
+    fn is_empty(&self) -> bool {
+        self.line.is_empty()
+    }
+}
+
+impl PlotRender for StepData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.line.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let line_color = config.color.unwrap_or(color);
+
+        // Draw fill if enabled
+        if config.fill && !self.polygon.is_empty() {
+            let fill_color = line_color.with_alpha(config.fill_alpha);
+            let screen_polygon: Vec<(f32, f32)> = self
+                .polygon
+                .iter()
+                .map(|(x, y)| area.data_to_screen(*x, *y))
+                .collect();
+            renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+        }
+
+        // Draw step line
+        let screen_line: Vec<(f32, f32)> = self
+            .line
+            .iter()
+            .map(|(x, y)| area.data_to_screen(*x, *y))
+            .collect();
+        renderer.draw_polyline(
+            &screen_line,
+            line_color,
+            config.line_width,
+            LineStyle::Solid,
+        )?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +398,74 @@ mod tests {
         let y: Vec<f64> = vec![];
         let vertices = step_line(&x, &y, StepWhere::Pre);
         assert!(vertices.is_empty());
+    }
+
+    #[test]
+    fn test_step_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<StepConfig>();
+    }
+
+    #[test]
+    fn test_step_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 1.5];
+        let config = StepConfig::default();
+        let input = StepInput::new(&x, &y);
+        let result = Step::compute(input, &config);
+
+        assert!(result.is_ok());
+        let step_data = result.unwrap();
+        assert!(!step_data.line.is_empty());
+    }
+
+    #[test]
+    fn test_step_plot_compute_with_fill() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 1.5];
+        let config = StepConfig::default().fill(true);
+        let input = StepInput::new(&x, &y);
+        let result = Step::compute(input, &config);
+
+        assert!(result.is_ok());
+        let step_data = result.unwrap();
+        assert!(!step_data.polygon.is_empty());
+    }
+
+    #[test]
+    fn test_step_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = vec![];
+        let y: Vec<f64> = vec![];
+        let config = StepConfig::default();
+        let input = StepInput::new(&x, &y);
+        let result = Step::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_step_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 3.0, 2.0];
+        let config = StepConfig::default();
+        let input = StepInput::new(&x, &y);
+        let step_data = Step::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = step_data.data_bounds();
+        assert!((x_min - 0.0).abs() < 1e-10);
+        assert!((x_max - 2.0).abs() < 1e-10);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!step_data.is_empty());
     }
 }

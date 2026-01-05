@@ -1,8 +1,19 @@
 //! Hexbin plot implementations
 //!
 //! Provides hexagonal binning for visualizing 2D point density.
+//!
+//! # Trait-Based API
+//!
+//! Hexbin plots implement the core plot traits:
+//! - [`PlotConfig`] for `HexbinConfig`
+//! - [`PlotCompute`] for `Hexbin` marker struct
+//! - [`PlotData`] for `HexbinPlotData`
+//! - [`PlotRender`] for `HexbinPlotData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, ColorMap, LineStyle, Theme};
 use std::collections::HashMap;
 
 /// Configuration for hexbin plot
@@ -110,6 +121,12 @@ impl HexbinConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for HexbinConfig {}
+
+/// Marker struct for Hexbin plot type
+pub struct Hexbin;
+
 /// A single hexagonal bin
 #[derive(Debug, Clone)]
 pub struct HexBin {
@@ -148,6 +165,34 @@ pub struct HexbinPlotData {
     pub value_range: (f64, f64),
     /// Data bounds
     pub bounds: ((f64, f64), (f64, f64)),
+    /// Configuration used
+    pub(crate) config: HexbinConfig,
+}
+
+/// Input for hexbin plot computation
+pub struct HexbinInput<'a> {
+    /// X coordinates
+    pub x: &'a [f64],
+    /// Y coordinates
+    pub y: &'a [f64],
+    /// Optional values for aggregation
+    pub values: Option<&'a [f64]>,
+}
+
+impl<'a> HexbinInput<'a> {
+    /// Create new hexbin input
+    pub fn new(x: &'a [f64], y: &'a [f64]) -> Self {
+        Self { x, y, values: None }
+    }
+
+    /// Create hexbin input with values
+    pub fn with_values(x: &'a [f64], y: &'a [f64], values: &'a [f64]) -> Self {
+        Self {
+            x,
+            y,
+            values: Some(values),
+        }
+    }
 }
 
 /// Compute hexagonal index from point
@@ -209,6 +254,7 @@ pub fn compute_hexbin(
             hex_size: 1.0,
             value_range: (0.0, 1.0),
             bounds: ((0.0, 1.0), (0.0, 1.0)),
+            config: config.clone(),
         };
     }
 
@@ -295,12 +341,104 @@ pub fn compute_hexbin(
         hex_size,
         value_range: (min_value, max_value),
         bounds: ((x_min, x_max), (y_min, y_max)),
+        config: config.clone(),
     }
 }
 
 /// Compute data range for hexbin plot
 pub fn hexbin_range(data: &HexbinPlotData) -> ((f64, f64), (f64, f64)) {
     data.bounds
+}
+
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+impl PlotCompute for Hexbin {
+    type Input<'a> = HexbinInput<'a>;
+    type Config = HexbinConfig;
+    type Output = HexbinPlotData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.x.is_empty() || input.y.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        Ok(compute_hexbin(input.x, input.y, input.values, config))
+    }
+}
+
+impl PlotData for HexbinPlotData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        self.bounds
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bins.is_empty()
+    }
+}
+
+impl PlotRender for HexbinPlotData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        _color: Color,
+    ) -> Result<()> {
+        if self.bins.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let (min_value, max_value) = self.value_range;
+        let value_range = max_value - min_value;
+
+        // Get colormap
+        let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
+
+        for bin in &self.bins {
+            // Calculate color based on value
+            let t = if value_range > 0.0 {
+                (bin.value - min_value) / value_range
+            } else {
+                0.5
+            };
+            let fill_color = cmap.sample(t).with_alpha(config.alpha);
+
+            // Convert vertices to screen coordinates
+            let screen_vertices: Vec<(f32, f32)> = bin
+                .vertices
+                .iter()
+                .map(|(x, y)| area.data_to_screen(*x, *y))
+                .collect();
+
+            // Draw filled hexagon
+            renderer.draw_filled_polygon(&screen_vertices, fill_color)?;
+
+            // Draw edge if configured
+            if let Some(edge_color) = config.edge_color {
+                if config.edge_width > 0.0 {
+                    // Draw hexagon outline
+                    for i in 0..6 {
+                        let (x1, y1) = screen_vertices[i];
+                        let (x2, y2) = screen_vertices[(i + 1) % 6];
+                        renderer.draw_line(
+                            x1,
+                            y1,
+                            x2,
+                            y2,
+                            edge_color,
+                            config.edge_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -367,5 +505,76 @@ mod tests {
         let data = compute_hexbin(&x, &y, None, &config);
 
         assert!(data.bins.is_empty());
+    }
+
+    #[test]
+    fn test_hexbin_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<HexbinConfig>();
+    }
+
+    #[test]
+    fn test_hexbin_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = (0..100).map(|i| (i as f64) / 10.0).collect();
+        let y: Vec<f64> = (0..100).map(|i| ((i as f64) / 10.0).sin()).collect();
+        let config = HexbinConfig::default().gridsize(10);
+        let input = HexbinInput::new(&x, &y);
+        let result = Hexbin::compute(input, &config);
+
+        assert!(result.is_ok());
+        let hexbin_data = result.unwrap();
+        assert!(!hexbin_data.bins.is_empty());
+    }
+
+    #[test]
+    fn test_hexbin_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = vec![];
+        let y: Vec<f64> = vec![];
+        let config = HexbinConfig::default();
+        let input = HexbinInput::new(&x, &y);
+        let result = Hexbin::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hexbin_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let x: Vec<f64> = (0..50).map(|i| (i as f64) / 5.0).collect();
+        let y: Vec<f64> = (0..50).map(|i| ((i as f64) / 5.0).cos()).collect();
+        let config = HexbinConfig::default().gridsize(5);
+        let input = HexbinInput::new(&x, &y);
+        let hexbin_data = Hexbin::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = hexbin_data.data_bounds();
+        assert!(x_min <= x_max);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!hexbin_data.is_empty());
+    }
+
+    #[test]
+    fn test_hexbin_plot_compute_with_values() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![0.0, 0.1, 0.2, 1.0, 1.1, 1.2];
+        let y = vec![0.0, 0.1, 0.2, 0.0, 0.1, 0.2];
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let config = HexbinConfig::default()
+            .gridsize(5)
+            .reduce_fn(ReduceFunction::Mean);
+        let input = HexbinInput::with_values(&x, &y, &values);
+        let result = Hexbin::compute(input, &config);
+
+        assert!(result.is_ok());
+        let hexbin_data = result.unwrap();
+        assert!(!hexbin_data.bins.is_empty());
     }
 }

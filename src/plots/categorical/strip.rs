@@ -1,8 +1,19 @@
 //! Strip plot implementations
 //!
 //! Provides strip plots (jittered scatter for categorical data).
+//!
+//! # Trait-Based API
+//!
+//! Strip plots implement the core plot traits:
+//! - [`PlotConfig`] for `StripConfig`
+//! - [`PlotCompute`] for `Strip` marker struct
+//! - [`PlotData`] for `StripData`
+//! - [`PlotRender`] for `StripData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, MarkerStyle, Theme};
 
 /// Configuration for strip plot
 #[derive(Debug, Clone)]
@@ -92,6 +103,12 @@ impl StripConfig {
         self
     }
 }
+
+// Implement PlotConfig marker trait
+impl PlotConfig for StripConfig {}
+
+/// Marker struct for Strip plot type (used with PlotCompute trait)
+pub struct Strip;
 
 /// A single point in a strip plot
 #[derive(Debug, Clone, Copy)]
@@ -214,6 +231,105 @@ pub fn strip_range(
     }
 }
 
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+/// Computed strip plot data
+#[derive(Debug, Clone)]
+pub struct StripData {
+    /// All computed points
+    pub points: Vec<StripPoint>,
+    /// Number of categories
+    pub num_categories: usize,
+    /// Configuration used to compute this data
+    pub(crate) config: StripConfig,
+}
+
+/// Input for strip plot computation
+pub struct StripInput<'a> {
+    /// Category indices
+    pub categories: &'a [usize],
+    /// Values
+    pub values: &'a [f64],
+    /// Optional group indices
+    pub groups: Option<&'a [usize]>,
+}
+
+impl<'a> StripInput<'a> {
+    /// Create new strip input
+    pub fn new(categories: &'a [usize], values: &'a [f64]) -> Self {
+        Self {
+            categories,
+            values,
+            groups: None,
+        }
+    }
+
+    /// Add groups
+    pub fn with_groups(mut self, groups: &'a [usize]) -> Self {
+        self.groups = Some(groups);
+        self
+    }
+}
+
+impl PlotCompute for Strip {
+    type Input<'a> = StripInput<'a>;
+    type Config = StripConfig;
+    type Output = StripData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        let points = compute_strip_points(input.categories, input.values, input.groups, config);
+
+        if points.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        // Calculate number of categories
+        let num_categories = input.categories.iter().max().map_or(0, |&m| m + 1);
+
+        Ok(StripData {
+            points,
+            num_categories,
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for StripData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        strip_range(&self.points, self.num_categories, self.config.orientation)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+}
+
+impl PlotRender for StripData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.points.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let point_color = config.color.unwrap_or(color).with_alpha(config.alpha);
+
+        for point in &self.points {
+            let (px, py) = area.data_to_screen(point.x, point.y);
+            renderer.draw_marker(px, py, config.size, MarkerStyle::Circle, point_color)?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +399,75 @@ mod tests {
         let points = compute_strip_points(&categories, &values, None, &config);
 
         assert!(points.is_empty());
+    }
+
+    #[test]
+    fn test_strip_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<StripConfig>();
+    }
+
+    #[test]
+    fn test_strip_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let categories = vec![0, 0, 1, 1, 2, 2];
+        let values = vec![1.0, 1.5, 2.0, 2.5, 3.0, 3.5];
+        let config = StripConfig::default();
+        let input = StripInput::new(&categories, &values);
+        let result = Strip::compute(input, &config);
+
+        assert!(result.is_ok());
+        let strip_data = result.unwrap();
+        assert_eq!(strip_data.points.len(), 6);
+        assert_eq!(strip_data.num_categories, 3);
+    }
+
+    #[test]
+    fn test_strip_plot_compute_with_groups() {
+        use crate::plots::traits::PlotCompute;
+
+        let categories = vec![0, 0, 1, 1];
+        let values = vec![1.0, 2.0, 1.0, 2.0];
+        let groups = vec![0, 1, 0, 1];
+        let config = StripConfig::default().dodge(true);
+        let input = StripInput::new(&categories, &values).with_groups(&groups);
+        let result = Strip::compute(input, &config);
+
+        assert!(result.is_ok());
+        let strip_data = result.unwrap();
+        assert_eq!(strip_data.points.len(), 4);
+    }
+
+    #[test]
+    fn test_strip_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let categories: Vec<usize> = vec![];
+        let values: Vec<f64> = vec![];
+        let config = StripConfig::default();
+        let input = StripInput::new(&categories, &values);
+        let result = Strip::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_strip_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let categories = vec![0, 1, 2];
+        let values = vec![1.0, 5.0, 3.0];
+        let config = StripConfig::default();
+        let input = StripInput::new(&categories, &values);
+        let strip_data = Strip::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = strip_data.data_bounds();
+        assert!(x_min <= x_max);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!strip_data.is_empty());
     }
 }

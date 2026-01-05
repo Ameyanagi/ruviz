@@ -1,14 +1,55 @@
 //! KDE (Kernel Density Estimation) plot implementations
 //!
 //! Provides smooth distribution visualization through kernel density estimation.
+//!
+//! # Trait-Based API
+//!
+//! The KDE plot implements the plot traits for unified behavior:
+//! - [`crate::plots::PlotCompute`]: Transforms input data into KDE curves
+//! - [`crate::plots::PlotData`]: Provides data bounds and emptiness check
+//! - [`crate::plots::PlotRender`]: Renders to a canvas
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use ruviz::prelude::*;
+//!
+//! // Zero-ceremony API (recommended)
+//! Plot::new()
+//!     .kde(&data)
+//!     .bandwidth(0.5)
+//!     .fill(true)
+//!     .title("KDE Distribution")
+//!     .save("kde.png")?;
+//! ```
 
-use crate::render::Color;
+use crate::core::error::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::{Color, LineStyle, SkiaRenderer, Theme};
 use crate::stats::kde::{kde_1d, kde_2d};
 
+// =============================================================================
+// KDE Configuration
+// =============================================================================
+
 /// Configuration for KDE plot
+///
+/// Controls the appearance and computation of kernel density estimation plots.
+///
+/// # Example
+///
+/// ```rust
+/// use ruviz::plots::distribution::KdeConfig;
+///
+/// let config = KdeConfig::new()
+///     .bandwidth(0.5)
+///     .n_points(200)
+///     .fill(true)
+///     .fill_alpha(0.3);
+/// ```
 #[derive(Debug, Clone)]
-pub struct KdePlotConfig {
-    /// Bandwidth method
+pub struct KdeConfig {
+    /// Bandwidth method (None = Scott's rule)
     pub bandwidth: Option<f64>,
     /// Number of points for density curve
     pub n_points: usize,
@@ -30,7 +71,7 @@ pub struct KdePlotConfig {
     pub clip: Option<(f64, f64)>,
 }
 
-impl Default for KdePlotConfig {
+impl Default for KdeConfig {
     fn default() -> Self {
         Self {
             bandwidth: None,
@@ -47,7 +88,10 @@ impl Default for KdePlotConfig {
     }
 }
 
-impl KdePlotConfig {
+// Implement PlotConfig marker trait
+impl PlotConfig for KdeConfig {}
+
+impl KdeConfig {
     /// Create new config
     pub fn new() -> Self {
         Self::default()
@@ -108,9 +152,33 @@ impl KdePlotConfig {
     }
 }
 
+/// Deprecated alias for backward compatibility
+#[deprecated(since = "0.8.0", note = "Use KdeConfig instead")]
+pub type KdePlotConfig = KdeConfig;
+
+// =============================================================================
+// KDE Data
+// =============================================================================
+
 /// Computed KDE data for plotting
+///
+/// Contains the density curve coordinates and metadata from KDE computation.
+/// This struct implements [`PlotData`] and [`PlotRender`] traits.
+///
+/// # Example
+///
+/// ```rust
+/// use ruviz::plots::distribution::{KdeConfig, compute_kde};
+///
+/// let data = vec![1.0, 2.0, 2.5, 3.0, 3.5, 4.0];
+/// let kde_data = compute_kde(&data, &KdeConfig::default());
+///
+/// // Access computed values
+/// println!("Bandwidth: {}", kde_data.bandwidth);
+/// println!("Points: {}", kde_data.x.len());
+/// ```
 #[derive(Debug, Clone)]
-pub struct KdePlotData {
+pub struct KdeData {
     /// X coordinates
     pub x: Vec<f64>,
     /// Y coordinates (density or cumulative)
@@ -119,23 +187,45 @@ pub struct KdePlotData {
     pub bandwidth: f64,
     /// Whether this is cumulative
     pub cumulative: bool,
+    /// Configuration used for computation (for rendering)
+    pub(crate) config: KdeConfig,
 }
+
+/// Deprecated alias for backward compatibility
+#[deprecated(since = "0.8.0", note = "Use KdeData instead")]
+pub type KdePlotData = KdeData;
+
+// =============================================================================
+// KDE Computation
+// =============================================================================
 
 /// Compute KDE for plotting
 ///
 /// # Arguments
 /// * `data` - Input data
-/// * `config` - KDE plot configuration
+/// * `config` - KDE configuration
 ///
 /// # Returns
-/// KdePlotData for rendering
-pub fn compute_kde_plot(data: &[f64], config: &KdePlotConfig) -> KdePlotData {
+/// `KdeData` for rendering
+///
+/// # Example
+///
+/// ```rust
+/// use ruviz::plots::distribution::{KdeConfig, compute_kde};
+///
+/// let data = vec![1.0, 2.0, 2.5, 3.0, 3.5, 4.0];
+/// let kde_data = compute_kde(&data, &KdeConfig::default());
+///
+/// assert!(!kde_data.x.is_empty());
+/// ```
+pub fn compute_kde(data: &[f64], config: &KdeConfig) -> KdeData {
     if data.is_empty() {
-        return KdePlotData {
+        return KdeData {
             x: vec![],
             y: vec![],
             bandwidth: 0.0,
             cumulative: false,
+            config: config.clone(),
         };
     }
 
@@ -187,18 +277,25 @@ pub fn compute_kde_plot(data: &[f64], config: &KdePlotConfig) -> KdePlotData {
         (x, y)
     };
 
-    KdePlotData {
+    KdeData {
         x,
         y,
         bandwidth: kde.bandwidth,
         cumulative: config.cumulative,
+        config: config.clone(),
     }
+}
+
+/// Deprecated alias for backward compatibility
+#[deprecated(since = "0.8.0", note = "Use compute_kde instead")]
+pub fn compute_kde_plot(data: &[f64], config: &KdeConfig) -> KdeData {
+    compute_kde(data, config)
 }
 
 /// Generate polygon vertices for filled KDE plot
 ///
 /// Returns vertices that close the polygon to baseline
-pub fn kde_fill_polygon(kde_data: &KdePlotData, baseline: f64) -> Vec<(f64, f64)> {
+pub fn kde_fill_polygon(kde_data: &KdeData, baseline: f64) -> Vec<(f64, f64)> {
     if kde_data.x.is_empty() {
         return vec![];
     }
@@ -216,6 +313,134 @@ pub fn kde_fill_polygon(kde_data: &KdePlotData, baseline: f64) -> Vec<(f64, f64)
     polygon.push((kde_data.x[0], baseline));
 
     polygon
+}
+
+// =============================================================================
+// Trait Implementations
+// =============================================================================
+
+/// Marker type for KDE plot computation
+///
+/// This empty struct is used to implement [`PlotCompute`] for KDE plots.
+pub struct Kde;
+
+impl PlotCompute for Kde {
+    type Input<'a> = &'a [f64];
+    type Config = KdeConfig;
+    type Output = KdeData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        Ok(compute_kde(input, config))
+    }
+}
+
+impl PlotData for KdeData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        if self.x.is_empty() {
+            return ((0.0, 1.0), (0.0, 1.0));
+        }
+
+        let x_min = self.x.iter().copied().fold(f64::INFINITY, f64::min);
+        let x_max = self.x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        // Density always starts at 0
+        let y_min = 0.0;
+        let y_max = self.y.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+        ((x_min, x_max), (y_min, y_max * 1.05)) // 5% padding on top
+    }
+
+    fn is_empty(&self) -> bool {
+        self.x.is_empty()
+    }
+}
+
+impl PlotRender for KdeData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        // Transform data to screen coordinates
+        let points: Vec<(f32, f32)> = self
+            .x
+            .iter()
+            .zip(self.y.iter())
+            .map(|(&x, &y)| area.data_to_screen(x, y))
+            .collect();
+
+        // Draw fill if enabled
+        if self.config.fill {
+            let baseline_y = area.data_to_screen(0.0, 0.0).1;
+
+            // Create polygon for fill
+            let mut polygon: Vec<(f32, f32)> = Vec::with_capacity(points.len() + 2);
+            polygon.push((points[0].0, baseline_y));
+            polygon.extend_from_slice(&points);
+            polygon.push((points[points.len() - 1].0, baseline_y));
+
+            let fill_color = color.with_alpha(self.config.fill_alpha);
+            renderer.draw_filled_polygon(&polygon, fill_color)?;
+        }
+
+        // Draw the line
+        let line_width = self.config.line_width;
+        renderer.draw_polyline(&points, color, line_width, LineStyle::Solid)?;
+
+        Ok(())
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let actual_color = color.with_alpha(alpha);
+        let actual_line_width = line_width.unwrap_or(self.config.line_width);
+
+        // Transform data to screen coordinates
+        let points: Vec<(f32, f32)> = self
+            .x
+            .iter()
+            .zip(self.y.iter())
+            .map(|(&x, &y)| area.data_to_screen(x, y))
+            .collect();
+
+        // Draw fill if enabled
+        if self.config.fill {
+            let baseline_y = area.data_to_screen(0.0, 0.0).1;
+
+            let mut polygon: Vec<(f32, f32)> = Vec::with_capacity(points.len() + 2);
+            polygon.push((points[0].0, baseline_y));
+            polygon.extend_from_slice(&points);
+            polygon.push((points[points.len() - 1].0, baseline_y));
+
+            let fill_alpha = self.config.fill_alpha * alpha;
+            let fill_color = color.with_alpha(fill_alpha);
+            renderer.draw_filled_polygon(&polygon, fill_color)?;
+        }
+
+        // Draw the line
+        renderer.draw_polyline(&points, actual_color, actual_line_width, LineStyle::Solid)?;
+
+        // Call the base render for any additional processing
+        let _ = theme; // Acknowledge unused parameter
+
+        Ok(())
+    }
 }
 
 /// Configuration for 2D KDE (density heatmap)
@@ -323,12 +548,13 @@ pub fn compute_kde_2d_plot(x: &[f64], y: &[f64], config: &Kde2dPlotConfig) -> Kd
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plots::traits::PlotCompute;
 
     #[test]
-    fn test_kde_plot_basic() {
+    fn test_kde_basic() {
         let data = vec![1.0, 2.0, 2.5, 3.0, 3.5, 4.0];
-        let config = KdePlotConfig::default();
-        let kde_data = compute_kde_plot(&data, &config);
+        let config = KdeConfig::default();
+        let kde_data = compute_kde(&data, &config);
 
         assert!(!kde_data.x.is_empty());
         assert_eq!(kde_data.x.len(), kde_data.y.len());
@@ -336,10 +562,10 @@ mod tests {
     }
 
     #[test]
-    fn test_kde_plot_cumulative() {
+    fn test_kde_cumulative() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let config = KdePlotConfig::default().cumulative(true);
-        let kde_data = compute_kde_plot(&data, &config);
+        let config = KdeConfig::default().cumulative(true);
+        let kde_data = compute_kde(&data, &config);
 
         assert!(kde_data.cumulative);
         // Cumulative should be monotonically increasing
@@ -353,10 +579,10 @@ mod tests {
     }
 
     #[test]
-    fn test_kde_plot_clipped() {
+    fn test_kde_clipped() {
         let data = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
-        let config = KdePlotConfig::default().clip(1.0, 4.0);
-        let kde_data = compute_kde_plot(&data, &config);
+        let config = KdeConfig::default().clip(1.0, 4.0);
+        let kde_data = compute_kde(&data, &config);
 
         for &xi in &kde_data.x {
             assert!(xi >= 1.0 && xi <= 4.0);
@@ -365,11 +591,12 @@ mod tests {
 
     #[test]
     fn test_kde_fill_polygon() {
-        let kde_data = KdePlotData {
+        let kde_data = KdeData {
             x: vec![0.0, 1.0, 2.0],
             y: vec![0.1, 0.5, 0.2],
             bandwidth: 0.5,
             cumulative: false,
+            config: KdeConfig::default(),
         };
 
         let polygon = kde_fill_polygon(&kde_data, 0.0);
@@ -379,10 +606,86 @@ mod tests {
     #[test]
     fn test_kde_empty() {
         let data: Vec<f64> = vec![];
-        let config = KdePlotConfig::default();
-        let kde_data = compute_kde_plot(&data, &config);
+        let config = KdeConfig::default();
+        let kde_data = compute_kde(&data, &config);
 
         assert!(kde_data.x.is_empty());
         assert!(kde_data.y.is_empty());
+    }
+
+    // ==========================================================================
+    // Trait Implementation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_kde_plot_compute_trait() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let config = KdeConfig::default();
+
+        let result = Kde::compute(&data, &config);
+        assert!(result.is_ok());
+
+        let kde_data = result.unwrap();
+        assert!(!kde_data.is_empty());
+        assert_eq!(kde_data.x.len(), config.n_points);
+    }
+
+    #[test]
+    fn test_kde_plot_data_trait() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let config = KdeConfig::default();
+        let kde_data = compute_kde(&data, &config);
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = kde_data.data_bounds();
+        assert!(x_min < x_max);
+        assert_eq!(y_min, 0.0); // Density starts at 0
+        assert!(y_max > 0.0);
+
+        // Test is_empty
+        assert!(!kde_data.is_empty());
+
+        // Test empty data
+        let empty_data: Vec<f64> = vec![];
+        let empty_kde = compute_kde(&empty_data, &config);
+        assert!(empty_kde.is_empty());
+    }
+
+    #[test]
+    fn test_kde_config_implements_plot_config() {
+        // Verify that KdeConfig implements PlotConfig (compile-time check)
+        fn accepts_plot_config<T: PlotConfig>(_: &T) {}
+        let config = KdeConfig::default();
+        accepts_plot_config(&config);
+    }
+
+    #[test]
+    fn test_kde_config_builder_methods() {
+        let config = KdeConfig::new()
+            .bandwidth(0.5)
+            .n_points(100)
+            .fill(true)
+            .fill_alpha(0.5)
+            .cumulative(false)
+            .clip(0.0, 10.0)
+            .vertical_line(5.0);
+
+        assert_eq!(config.bandwidth, Some(0.5));
+        assert_eq!(config.n_points, 100);
+        assert!(config.fill);
+        assert_eq!(config.fill_alpha, 0.5);
+        assert!(!config.cumulative);
+        assert_eq!(config.clip, Some((0.0, 10.0)));
+        assert_eq!(config.vertical_lines.len(), 1);
+    }
+
+    // Backward compatibility tests
+    #[test]
+    #[allow(deprecated)]
+    fn test_deprecated_type_aliases() {
+        // Test that deprecated aliases still work
+        let _config: KdePlotConfig = KdeConfig::default();
+        let data = vec![1.0, 2.0, 3.0];
+        let _kde_data: KdePlotData = compute_kde_plot(&data, &_config);
     }
 }

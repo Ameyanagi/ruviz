@@ -22,7 +22,6 @@
 //! ```
 
 use crate::render::{Color, LineStyle, MarkerStyle};
-use std::path::Path;
 
 /// Marker type for plot input data
 ///
@@ -343,17 +342,18 @@ where
     }
 }
 
-// Terminal methods that consume the builder
-impl<C> PlotBuilder<C>
-where
-    C: crate::plots::PlotConfig,
-{
-    /// Save the plot to a file
+// Note: Terminal methods (save, render) are implemented per-config type
+// to properly finalize series before saving. See PlotBuilder<KdeConfig> below.
+
+// =============================================================================
+// KDE-specific PlotBuilder methods
+// =============================================================================
+
+impl PlotBuilder<crate::plots::KdeConfig> {
+    /// Set bandwidth for KDE
     ///
-    /// Auto-finalizes the current series before saving.
-    ///
-    /// # Arguments
-    /// * `path` - Output file path (supports PNG, JPEG, etc.)
+    /// Bandwidth controls the smoothness of the density estimate.
+    /// If not set, Scott's rule is used for automatic bandwidth selection.
     ///
     /// # Example
     ///
@@ -363,37 +363,223 @@ where
     ///     .bandwidth(0.5)
     ///     .save("kde.png")?;
     /// ```
-    pub fn save<P: AsRef<Path>>(self, path: P) -> crate::core::Result<()> {
-        // Note: Full implementation would finalize series first
-        // For now, delegate to Plot::save
-        self.plot.save(path)
+    pub fn bandwidth(mut self, bw: f64) -> Self {
+        self.config.bandwidth = Some(bw);
+        self
     }
 
-    /// Save the plot with explicit size
+    /// Set number of points for density curve
     ///
-    /// Auto-finalizes the current series before saving.
-    pub fn save_with_size<P: AsRef<Path>>(
-        self,
-        path: P,
-        width: u32,
-        height: u32,
-    ) -> crate::core::Result<()> {
-        self.plot.save_with_size(path, width, height)
+    /// More points create a smoother curve but increase computation time.
+    /// Default is 200 points.
+    pub fn n_points(mut self, n: usize) -> Self {
+        self.config.n_points = n.max(10);
+        self
+    }
+
+    /// Enable/disable fill under the curve
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .kde(&data)
+    ///     .fill(true)
+    ///     .fill_alpha(0.3)
+    ///     .save("kde.png")?;
+    /// ```
+    pub fn fill(mut self, fill: bool) -> Self {
+        self.config.fill = fill;
+        self
+    }
+
+    /// Set fill alpha (transparency)
+    ///
+    /// Values range from 0.0 (fully transparent) to 1.0 (fully opaque).
+    /// Default is 0.3.
+    pub fn fill_alpha(mut self, alpha: f32) -> Self {
+        self.config.fill_alpha = alpha.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set KDE line width
+    ///
+    /// This is a config-level setting separate from the series style line_width.
+    pub fn kde_line_width(mut self, width: f32) -> Self {
+        self.config.line_width = width.max(0.1);
+        self
+    }
+
+    /// Enable cumulative distribution mode
+    ///
+    /// When enabled, displays the cumulative distribution function (CDF)
+    /// instead of the probability density function (PDF).
+    pub fn cumulative(mut self, cumulative: bool) -> Self {
+        self.config.cumulative = cumulative;
+        self
+    }
+
+    /// Clip the KDE to specified bounds
+    ///
+    /// Useful for truncating the density estimate at natural boundaries.
+    pub fn clip(mut self, min: f64, max: f64) -> Self {
+        self.config.clip = Some((min, max));
+        self
+    }
+
+    /// Add a vertical reference line at the specified value
+    pub fn vertical_line(mut self, x: f64) -> Self {
+        self.config.vertical_lines.push(x);
+        self
+    }
+
+    /// Finalize the KDE series and add it to the plot
+    ///
+    /// This computes the KDE and adds it as a series to the inner Plot.
+    fn finalize(self) -> super::Plot {
+        let data = match &self.input {
+            PlotInput::Single(d) => d.clone(),
+            _ => vec![], // Should not happen for KDE
+        };
+
+        // Compute KDE
+        let kde_data = crate::plots::compute_kde(&data, &self.config);
+
+        // Add series to plot using internal mutation
+        self.plot.add_kde_series(kde_data, self.style)
+    }
+
+    /// Save the plot to a file
+    ///
+    /// Finalizes the KDE series and then saves.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .kde(&data)
+    ///     .bandwidth(0.5)
+    ///     .save("kde.png")?;
+    /// ```
+    pub fn save<P: AsRef<std::path::Path>>(self, path: P) -> crate::core::Result<()> {
+        self.finalize().save(path)
     }
 
     /// Render the plot to an Image
     ///
-    /// Auto-finalizes the current series before rendering.
-    /// Use `.png_data()` on the returned Image to get PNG bytes.
+    /// Finalizes the KDE series before rendering.
     pub fn render(self) -> crate::core::Result<super::Image> {
-        self.plot.render()
+        self.finalize().render()
     }
 
     /// Render the plot to an SVG string
     ///
-    /// Auto-finalizes the current series before rendering.
+    /// Finalizes the KDE series before rendering.
     pub fn render_to_svg(self) -> crate::core::Result<String> {
-        self.plot.render_to_svg()
+        self.finalize().render_to_svg()
+    }
+}
+
+// =============================================================================
+// ECDF (Empirical Cumulative Distribution Function) Builder
+// =============================================================================
+
+impl PlotBuilder<crate::plots::EcdfConfig> {
+    /// Set the statistic type for ECDF
+    ///
+    /// Options:
+    /// - `EcdfStat::Proportion` (default): Y-axis from 0 to 1
+    /// - `EcdfStat::Count`: Y-axis shows raw counts
+    /// - `EcdfStat::Percent`: Y-axis from 0 to 100
+    pub fn stat(mut self, stat: crate::plots::EcdfStat) -> Self {
+        self.config.stat = stat;
+        self
+    }
+
+    /// Enable complementary ECDF (survival function)
+    ///
+    /// When enabled, plots 1 - ECDF(x) instead of ECDF(x).
+    pub fn complementary(mut self, comp: bool) -> Self {
+        self.config.complementary = comp;
+        self
+    }
+
+    /// Show confidence interval band
+    ///
+    /// Uses the DKW inequality to compute confidence bounds.
+    pub fn show_ci(mut self, show: bool) -> Self {
+        self.config.show_ci = show;
+        self
+    }
+
+    /// Set confidence level for CI band
+    ///
+    /// Default is 0.95 (95% confidence interval).
+    pub fn ci_level(mut self, level: f64) -> Self {
+        self.config.ci_level = level.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Show markers at each data point
+    pub fn show_markers(mut self, show: bool) -> Self {
+        self.config.show_markers = show;
+        self
+    }
+
+    /// Set marker size
+    pub fn marker_size(mut self, size: f32) -> Self {
+        self.config.marker_size = size.max(0.1);
+        self
+    }
+
+    /// Set line width for ECDF
+    pub fn ecdf_line_width(mut self, width: f32) -> Self {
+        self.config.line_width = width.max(0.1);
+        self
+    }
+
+    /// Finalize the ECDF series and add it to the plot
+    fn finalize(self) -> super::Plot {
+        let data = match &self.input {
+            PlotInput::Single(d) => d.clone(),
+            _ => vec![], // Should not happen for ECDF
+        };
+
+        // Compute ECDF
+        let ecdf_data = crate::plots::compute_ecdf(&data, &self.config);
+
+        // Add series to plot using internal mutation
+        self.plot.add_ecdf_series(ecdf_data, self.style)
+    }
+
+    /// Save the plot to a file
+    ///
+    /// Finalizes the ECDF series and then saves.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .ecdf(&data)
+    ///     .show_ci(true)
+    ///     .save("ecdf.png")?;
+    /// ```
+    pub fn save<P: AsRef<std::path::Path>>(self, path: P) -> crate::core::Result<()> {
+        self.finalize().save(path)
+    }
+
+    /// Render the plot to an Image
+    ///
+    /// Finalizes the ECDF series before rendering.
+    pub fn render(self) -> crate::core::Result<super::Image> {
+        self.finalize().render()
+    }
+
+    /// Render the plot to an SVG string
+    ///
+    /// Finalizes the ECDF series before rendering.
+    pub fn render_to_svg(self) -> crate::core::Result<String> {
+        self.finalize().render_to_svg()
     }
 }
 

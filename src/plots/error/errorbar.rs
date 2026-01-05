@@ -1,8 +1,19 @@
 //! Error bar implementations
 //!
 //! Provides error bar visualization for uncertainty representation.
+//!
+//! # Trait-Based API
+//!
+//! Error bar plots implement the core plot traits:
+//! - [`PlotConfig`] for `ErrorBarConfig`
+//! - [`PlotCompute`] for `ErrorBarPlot` marker struct
+//! - [`PlotData`] for `ErrorBarData`
+//! - [`PlotRender`] for `ErrorBarData`
 
-use crate::render::Color;
+use crate::core::Result;
+use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, LineStyle, Theme};
 
 /// Configuration for error bars
 #[derive(Debug, Clone)]
@@ -86,6 +97,12 @@ impl ErrorBarConfig {
         self
     }
 }
+
+// Implement PlotConfig marker trait
+impl PlotConfig for ErrorBarConfig {}
+
+/// Marker struct for ErrorBar plot type
+pub struct ErrorBarPlot;
 
 /// Error values for asymmetric errors
 #[derive(Debug, Clone)]
@@ -302,6 +319,223 @@ pub fn error_bar_range(bars: &[ErrorBar]) -> ((f64, f64), (f64, f64)) {
     ((x_min, x_max), (y_min, y_max))
 }
 
+// ============================================================================
+// Trait-Based API
+// ============================================================================
+
+/// Computed error bar plot data
+#[derive(Debug, Clone)]
+pub struct ErrorBarData {
+    /// All error bars
+    pub bars: Vec<ErrorBar>,
+    /// Data bounds including error extents
+    pub bounds: ((f64, f64), (f64, f64)),
+    /// Configuration used
+    pub(crate) config: ErrorBarConfig,
+}
+
+/// Input for error bar plot computation
+pub struct ErrorBarInput<'a> {
+    /// X coordinates
+    pub x: &'a [f64],
+    /// Y coordinates
+    pub y: &'a [f64],
+    /// Y error values (optional)
+    pub yerr: Option<&'a ErrorValues>,
+    /// X error values (optional)
+    pub xerr: Option<&'a ErrorValues>,
+}
+
+impl<'a> ErrorBarInput<'a> {
+    /// Create new error bar input with y errors
+    pub fn new(x: &'a [f64], y: &'a [f64], yerr: &'a ErrorValues) -> Self {
+        Self {
+            x,
+            y,
+            yerr: Some(yerr),
+            xerr: None,
+        }
+    }
+
+    /// Create error bar input with both x and y errors
+    pub fn with_both(
+        x: &'a [f64],
+        y: &'a [f64],
+        yerr: &'a ErrorValues,
+        xerr: &'a ErrorValues,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            yerr: Some(yerr),
+            xerr: Some(xerr),
+        }
+    }
+
+    /// Create error bar input with x errors only
+    pub fn x_only(x: &'a [f64], y: &'a [f64], xerr: &'a ErrorValues) -> Self {
+        Self {
+            x,
+            y,
+            yerr: None,
+            xerr: Some(xerr),
+        }
+    }
+}
+
+impl PlotCompute for ErrorBarPlot {
+    type Input<'a> = ErrorBarInput<'a>;
+    type Config = ErrorBarConfig;
+    type Output = ErrorBarData;
+
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+        if input.x.is_empty() || input.y.is_empty() {
+            return Err(crate::core::PlottingError::EmptyDataSet);
+        }
+
+        let bars = compute_error_bars(input.x, input.y, input.yerr, input.xerr);
+        let bounds = error_bar_range(&bars);
+
+        Ok(ErrorBarData {
+            bars,
+            bounds,
+            config: config.clone(),
+        })
+    }
+}
+
+impl PlotData for ErrorBarData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        self.bounds
+    }
+
+    fn is_empty(&self) -> bool {
+        self.bars.is_empty()
+    }
+}
+
+impl PlotRender for ErrorBarData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        if self.bars.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let bar_color = config.color.unwrap_or(color).with_alpha(config.alpha);
+
+        // Convert ErrorLineStyle to LineStyle (using a helper fn to avoid move issues)
+        let get_line_style = || match config.line_style {
+            ErrorLineStyle::Solid => LineStyle::Solid,
+            ErrorLineStyle::Dashed => LineStyle::Dashed,
+        };
+
+        // Calculate cap size in data units
+        let ((x_min, x_max), _) = self.bounds;
+        let x_range = x_max - x_min;
+        let cap_size = x_range * config.cap_size;
+
+        for bar in &self.bars {
+            // Draw Y error bar if enabled
+            if config.yerr {
+                let ((x1, y1), (x2, y2)) = bar.y_line();
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                renderer.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    bar_color,
+                    config.line_width,
+                    get_line_style(),
+                )?;
+
+                // Draw caps
+                let (lower_cap, upper_cap) = bar.y_caps(cap_size);
+                let (lc1, lc2) = lower_cap;
+                let (uc1, uc2) = upper_cap;
+
+                let (slc1x, slc1y) = area.data_to_screen(lc1.0, lc1.1);
+                let (slc2x, slc2y) = area.data_to_screen(lc2.0, lc2.1);
+                renderer.draw_line(
+                    slc1x,
+                    slc1y,
+                    slc2x,
+                    slc2y,
+                    bar_color,
+                    config.line_width,
+                    get_line_style(),
+                )?;
+
+                let (suc1x, suc1y) = area.data_to_screen(uc1.0, uc1.1);
+                let (suc2x, suc2y) = area.data_to_screen(uc2.0, uc2.1);
+                renderer.draw_line(
+                    suc1x,
+                    suc1y,
+                    suc2x,
+                    suc2y,
+                    bar_color,
+                    config.line_width,
+                    get_line_style(),
+                )?;
+            }
+
+            // Draw X error bar if enabled
+            if config.xerr {
+                let ((x1, y1), (x2, y2)) = bar.x_line();
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                renderer.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    bar_color,
+                    config.line_width,
+                    get_line_style(),
+                )?;
+
+                // Draw caps
+                let (left_cap, right_cap) = bar.x_caps(cap_size);
+                let (lc1, lc2) = left_cap;
+                let (rc1, rc2) = right_cap;
+
+                let (slc1x, slc1y) = area.data_to_screen(lc1.0, lc1.1);
+                let (slc2x, slc2y) = area.data_to_screen(lc2.0, lc2.1);
+                renderer.draw_line(
+                    slc1x,
+                    slc1y,
+                    slc2x,
+                    slc2y,
+                    bar_color,
+                    config.line_width,
+                    get_line_style(),
+                )?;
+
+                let (src1x, src1y) = area.data_to_screen(rc1.0, rc1.1);
+                let (src2x, src2y) = area.data_to_screen(rc2.0, rc2.1);
+                renderer.draw_line(
+                    src1x,
+                    src1y,
+                    src2x,
+                    src2y,
+                    bar_color,
+                    config.line_width,
+                    get_line_style(),
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,5 +594,79 @@ mod tests {
         assert!((x_max - 2.0).abs() < 1e-10);
         assert!((y_min - 4.5).abs() < 1e-10);
         assert!((y_max - 11.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_errorbar_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<ErrorBarConfig>();
+    }
+
+    #[test]
+    fn test_errorbar_plot_compute_trait() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![10.0, 20.0, 15.0];
+        let yerr = ErrorValues::symmetric(vec![1.0, 2.0, 1.5]);
+        let config = ErrorBarConfig::default();
+        let input = ErrorBarInput::new(&x, &y, &yerr);
+        let result = ErrorBarPlot::compute(input, &config);
+
+        assert!(result.is_ok());
+        let error_data = result.unwrap();
+        assert_eq!(error_data.bars.len(), 3);
+    }
+
+    #[test]
+    fn test_errorbar_plot_compute_empty() {
+        use crate::plots::traits::PlotCompute;
+
+        let x: Vec<f64> = vec![];
+        let y: Vec<f64> = vec![];
+        let yerr = ErrorValues::symmetric(vec![]);
+        let config = ErrorBarConfig::default();
+        let input = ErrorBarInput::new(&x, &y, &yerr);
+        let result = ErrorBarPlot::compute(input, &config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_errorbar_plot_data_trait() {
+        use crate::plots::traits::{PlotCompute, PlotData};
+
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![10.0, 20.0, 15.0];
+        let yerr = ErrorValues::symmetric(vec![1.0, 2.0, 1.5]);
+        let config = ErrorBarConfig::default();
+        let input = ErrorBarInput::new(&x, &y, &yerr);
+        let error_data = ErrorBarPlot::compute(input, &config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = error_data.data_bounds();
+        assert!((x_min - 1.0).abs() < 1e-10);
+        assert!((x_max - 3.0).abs() < 1e-10);
+        assert!(y_min <= y_max);
+
+        // Test is_empty
+        assert!(!error_data.is_empty());
+    }
+
+    #[test]
+    fn test_errorbar_with_both_errors() {
+        use crate::plots::traits::PlotCompute;
+
+        let x = vec![1.0, 2.0];
+        let y = vec![10.0, 20.0];
+        let yerr = ErrorValues::symmetric(vec![1.0, 2.0]);
+        let xerr = ErrorValues::symmetric(vec![0.1, 0.2]);
+        let config = ErrorBarConfig::default().xerr(true);
+        let input = ErrorBarInput::with_both(&x, &y, &yerr, &xerr);
+        let result = ErrorBarPlot::compute(input, &config);
+
+        assert!(result.is_ok());
+        let error_data = result.unwrap();
+        assert_eq!(error_data.bars.len(), 2);
     }
 }
