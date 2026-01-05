@@ -549,6 +549,181 @@ impl Default for ComputedMargins {
 }
 
 // =============================================================================
+// Spine Configuration
+// =============================================================================
+
+/// Configuration for plot spines (axis borders)
+///
+/// Spines are the lines that form the plot's border. Seaborn's popular `despine()`
+/// function removes some spines for a cleaner look. This configuration enables
+/// similar control in ruviz.
+///
+/// # Default
+///
+/// By default, all spines are visible (matplotlib behavior).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ruviz::core::SpineConfig;
+///
+/// // Default: all spines visible
+/// let all_visible = SpineConfig::default();
+///
+/// // Seaborn-style despine (hide top and right)
+/// let despined = SpineConfig::despine();
+///
+/// // Minimal: only bottom and left
+/// let minimal = SpineConfig::minimal();
+///
+/// // Custom configuration
+/// let custom = SpineConfig {
+///     left: true,
+///     right: false,
+///     top: false,
+///     bottom: true,
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpineConfig {
+    /// Show left spine (y-axis border)
+    pub left: bool,
+    /// Show right spine
+    pub right: bool,
+    /// Show top spine
+    pub top: bool,
+    /// Show bottom spine (x-axis border)
+    pub bottom: bool,
+    /// Offset spines from data area (in points)
+    /// When > 0, spines are moved outward from the data area
+    pub offset: f32,
+}
+
+impl SpineConfig {
+    /// Create a new spine configuration with all spines visible
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a "despined" configuration (seaborn-style)
+    ///
+    /// Hides the top and right spines, keeping only bottom and left.
+    /// This is the most common seaborn despine pattern.
+    pub fn despine() -> Self {
+        Self {
+            left: true,
+            right: false,
+            top: false,
+            bottom: true,
+            offset: 0.0,
+        }
+    }
+
+    /// Create a minimal configuration with only bottom and left spines
+    ///
+    /// Alias for `despine()`.
+    pub fn minimal() -> Self {
+        Self::despine()
+    }
+
+    /// Create a configuration with no spines
+    pub fn none() -> Self {
+        Self {
+            left: false,
+            right: false,
+            top: false,
+            bottom: false,
+            offset: 0.0,
+        }
+    }
+
+    /// Create a configuration with all spines visible
+    pub fn all() -> Self {
+        Self::default()
+    }
+
+    /// Set the spine offset in points
+    ///
+    /// When offset > 0, spines are moved outward from the data area,
+    /// creating visual separation between data and axes.
+    pub fn with_offset(mut self, offset: f32) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    /// Hide the left spine
+    pub fn hide_left(mut self) -> Self {
+        self.left = false;
+        self
+    }
+
+    /// Hide the right spine
+    pub fn hide_right(mut self) -> Self {
+        self.right = false;
+        self
+    }
+
+    /// Hide the top spine
+    pub fn hide_top(mut self) -> Self {
+        self.top = false;
+        self
+    }
+
+    /// Hide the bottom spine
+    pub fn hide_bottom(mut self) -> Self {
+        self.bottom = false;
+        self
+    }
+
+    /// Show the left spine
+    pub fn show_left(mut self) -> Self {
+        self.left = true;
+        self
+    }
+
+    /// Show the right spine
+    pub fn show_right(mut self) -> Self {
+        self.right = true;
+        self
+    }
+
+    /// Show the top spine
+    pub fn show_top(mut self) -> Self {
+        self.top = true;
+        self
+    }
+
+    /// Show the bottom spine
+    pub fn show_bottom(mut self) -> Self {
+        self.bottom = true;
+        self
+    }
+
+    /// Check if any spine is visible
+    pub fn any_visible(&self) -> bool {
+        self.left || self.right || self.top || self.bottom
+    }
+
+    /// Get offset in pixels at the given DPI
+    pub fn offset_px(&self, dpi: f32) -> f32 {
+        pt_to_px(self.offset, dpi)
+    }
+}
+
+impl Default for SpineConfig {
+    fn default() -> Self {
+        Self {
+            left: true,
+            right: true,
+            top: true,
+            bottom: true,
+            offset: 0.0,
+        }
+    }
+}
+
+// =============================================================================
 // Main Plot Configuration
 // =============================================================================
 
@@ -568,6 +743,8 @@ pub struct PlotConfig {
     pub spacing: SpacingConfig,
     /// Margin settings
     pub margins: MarginConfig,
+    /// Spine (axis border) visibility
+    pub spines: SpineConfig,
 }
 
 impl PlotConfig {
@@ -776,6 +953,20 @@ impl PlotConfigBuilder {
         self
     }
 
+    /// Set spine configuration
+    pub fn spines(mut self, spines: SpineConfig) -> Self {
+        self.config.spines = spines;
+        self
+    }
+
+    /// Use despined style (hide top and right spines)
+    ///
+    /// Convenience method for seaborn-style despine.
+    pub fn despine(mut self) -> Self {
+        self.config.spines = SpineConfig::despine();
+        self
+    }
+
     /// Build the final configuration
     pub fn build(self) -> PlotConfig {
         self.config
@@ -910,5 +1101,67 @@ mod tests {
 
         // Ratios should be equal (DPI-independent)
         assert!((ratio_100 - ratio_300).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_spine_config_default() {
+        let spines = SpineConfig::default();
+        assert!(spines.left);
+        assert!(spines.right);
+        assert!(spines.top);
+        assert!(spines.bottom);
+        assert!((spines.offset - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_spine_config_despine() {
+        let spines = SpineConfig::despine();
+        assert!(spines.left);
+        assert!(!spines.right);
+        assert!(!spines.top);
+        assert!(spines.bottom);
+    }
+
+    #[test]
+    fn test_spine_config_none() {
+        let spines = SpineConfig::none();
+        assert!(!spines.left);
+        assert!(!spines.right);
+        assert!(!spines.top);
+        assert!(!spines.bottom);
+        assert!(!spines.any_visible());
+    }
+
+    #[test]
+    fn test_spine_config_builder_chain() {
+        let spines = SpineConfig::default()
+            .hide_top()
+            .hide_right()
+            .with_offset(5.0);
+
+        assert!(spines.left);
+        assert!(!spines.right);
+        assert!(!spines.top);
+        assert!(spines.bottom);
+        assert!((spines.offset - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_spine_config_offset_px() {
+        let spines = SpineConfig::default().with_offset(10.0);
+        // At 72 DPI, 10 points = 10 pixels
+        assert!((spines.offset_px(72.0) - 10.0).abs() < 0.001);
+        // At 144 DPI, 10 points = 20 pixels
+        assert!((spines.offset_px(144.0) - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_plot_config_builder_despine() {
+        let config = PlotConfig::builder().despine().build();
+
+        assert!(config.spines.left);
+        assert!(!config.spines.right);
+        assert!(!config.spines.top);
+        assert!(config.spines.bottom);
     }
 }
