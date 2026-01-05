@@ -38,6 +38,12 @@
 //! | Line Plot | Scatter Plot | Bar Chart |
 //! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png" width="250"></a> |
 //! | Histogram | Box Plot | Heatmap |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/kde_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/kde_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/ecdf_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/ecdf_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/pie_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/pie_chart.png" width="250"></a> |
+//! | KDE Plot | ECDF Plot | Pie Chart |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/errorbar_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/errorbar_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/violin_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/violin_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/contour_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/contour_plot.png" width="250"></a> |
+//! | Error Bar | Violin Plot | Contour Plot |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/polar_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/polar_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/radar_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/radar_chart.png" width="250"></a> | |
+//! | Polar Plot | Radar Chart | |
 //!
 //! ### Advanced Plot Types (30+ Total)
 //!
