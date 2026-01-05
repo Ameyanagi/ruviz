@@ -24,6 +24,7 @@
 //! ```
 
 use crate::core::error::Result;
+use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::{Color, LineStyle, SkiaRenderer, Theme};
 use crate::stats::kde::{kde_1d, kde_2d};
@@ -408,8 +409,9 @@ impl PlotRender for KdeData {
             return Ok(());
         }
 
-        let actual_color = color.with_alpha(alpha);
-        let actual_line_width = line_width.unwrap_or(self.config.line_width);
+        let resolver = StyleResolver::new(theme);
+        let actual_line_width =
+            line_width.unwrap_or_else(|| resolver.line_width(Some(self.config.line_width)));
 
         // Transform data to screen coordinates
         let points: Vec<(f32, f32)> = self
@@ -428,16 +430,14 @@ impl PlotRender for KdeData {
             polygon.extend_from_slice(&points);
             polygon.push((points[points.len() - 1].0, baseline_y));
 
-            let fill_alpha = self.config.fill_alpha * alpha;
+            let fill_alpha = self.config.fill_alpha * alpha.clamp(0.0, 1.0);
             let fill_color = color.with_alpha(fill_alpha);
             renderer.draw_filled_polygon(&polygon, fill_color)?;
         }
 
         // Draw the line
+        let actual_color = color.with_alpha(alpha.clamp(0.0, 1.0));
         renderer.draw_polyline(&points, actual_color, actual_line_width, LineStyle::Solid)?;
-
-        // Call the base render for any additional processing
-        let _ = theme; // Acknowledge unused parameter
 
         Ok(())
     }
