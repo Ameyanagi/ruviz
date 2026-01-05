@@ -8,6 +8,7 @@ pub mod gpu;
 #[cfg(feature = "parallel")]
 pub mod parallel;
 pub mod pooled;
+pub mod primitives;
 #[cfg(feature = "simd")]
 pub mod simd;
 pub mod skia;
@@ -25,6 +26,7 @@ pub use parallel::{
     DetailedPerformanceInfo, ParallelConfig, ParallelRenderer, PerformanceStats, SeriesRenderData,
 };
 pub use pooled::{LineSegment, PooledRenderer, PooledRendererStats, get_pooled_renderer};
+pub use primitives::{Arc, Arrow, Polygon, Wedge};
 #[cfg(feature = "simd")]
 pub use simd::{CoordinateBounds, PixelViewport, SIMDPerformanceInfo, SIMDTransformer};
 pub use skia::SkiaRenderer;

@@ -345,6 +345,86 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Draw a filled polygon from a list of vertices
+    ///
+    /// The polygon is automatically closed.
+    pub fn draw_filled_polygon(&mut self, vertices: &[(f32, f32)], color: Color) -> Result<()> {
+        if vertices.len() < 3 {
+            return Ok(()); // Need at least 3 points
+        }
+
+        let mut pb = PathBuilder::new();
+        pb.move_to(vertices[0].0, vertices[0].1);
+
+        for &(x, y) in &vertices[1..] {
+            pb.line_to(x, y);
+        }
+
+        pb.close();
+
+        let path = pb.finish().ok_or(PlottingError::RenderError(
+            "Failed to create polygon path".to_string(),
+        ))?;
+
+        let mut paint = Paint::default();
+        let (r, g, b, a) = color.to_rgba_f32();
+        let fill_color = tiny_skia::Color::from_rgba(r, g, b, a).ok_or(
+            PlottingError::RenderError("Invalid polygon color".to_string()),
+        )?;
+
+        paint.set_color(fill_color);
+        paint.anti_alias = true;
+
+        self.pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+
+        Ok(())
+    }
+
+    /// Draw the outline of a polygon
+    pub fn draw_polygon_outline(
+        &mut self,
+        vertices: &[(f32, f32)],
+        color: Color,
+        width: f32,
+    ) -> Result<()> {
+        if vertices.len() < 3 {
+            return Ok(()); // Need at least 3 points
+        }
+
+        let mut pb = PathBuilder::new();
+        pb.move_to(vertices[0].0, vertices[0].1);
+
+        for &(x, y) in &vertices[1..] {
+            pb.line_to(x, y);
+        }
+
+        pb.close();
+
+        let path = pb.finish().ok_or(PlottingError::RenderError(
+            "Failed to create polygon outline path".to_string(),
+        ))?;
+
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+
+        let stroke = Stroke {
+            width,
+            ..Stroke::default()
+        };
+
+        self.pixmap
+            .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+
+        Ok(())
+    }
+
     /// Draw a marker at the given position
     pub fn draw_marker(
         &mut self,

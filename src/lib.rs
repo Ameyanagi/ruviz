@@ -21,7 +21,7 @@
 //!
 //! - **High Performance**: <100ms for 100K points, <1s for 1M points
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
-//! - **Multiple Plot Types**: Line, scatter, bar, histogram, heatmap
+//! - **30+ Plot Types**: Distribution, categorical, polar, regression, composite plots
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: DataShader-style aggregation for 100M+ points
 //! - **Cross Platform**: Linux, macOS, Windows, WASM support
@@ -38,6 +38,26 @@
 //! | Line Plot | Scatter Plot | Bar Chart |
 //! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png" width="250"></a> |
 //! | Histogram | Box Plot | Heatmap |
+//!
+//! ### Advanced Plot Types (30+ Total)
+//!
+//! ruviz provides comprehensive plot type coverage for scientific visualization:
+//!
+//! | Category | Plot Types |
+//! |----------|------------|
+//! | **Distribution** | Violin, KDE (1D/2D), Boxen, ECDF, Strip, Swarm |
+//! | **Categorical** | Grouped Bar, Stacked Bar, Horizontal Bar |
+//! | **Composition** | Pie, Donut, Area, Stacked Area |
+//! | **Continuous** | Contour, Hexbin, Fill Between |
+//! | **Error** | Error Bars (symmetric/asymmetric) |
+//! | **Discrete** | Step, Stem |
+//! | **Regression** | Regression Plot, Residual Plot |
+//! | **Polar** | Polar Plot, Radar/Spider Chart |
+//! | **Composite** | Joint Plot, Pair Plot |
+//! | **Vector** | Quiver Plot |
+//! | **Hierarchical** | Dendrogram |
+//!
+//! See [`plots`] module and [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md) for details.
 //!
 //! <details>
 //! <summary>Plot Types Code Examples</summary>
@@ -486,6 +506,7 @@ pub mod layout;
 pub mod plots;
 pub mod render;
 pub mod simple;
+pub mod stats;
 pub mod text;
 
 #[cfg(feature = "interactive")]

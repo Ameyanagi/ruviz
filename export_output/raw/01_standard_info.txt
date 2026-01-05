@@ -1,0 +1,4 @@
+Standard Plot Raw Data
+Size: 640x480
+Bytes: 1228800
+Format: RGBA

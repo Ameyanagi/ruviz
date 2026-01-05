@@ -1,0 +1,418 @@
+//! Core plot traits for data transformation and rendering
+//!
+//! This module defines the core traits that unify all plot type implementations:
+//!
+//! - [`PlotCompute`]: Transforms raw input data into computed plot data
+//! - [`PlotData`]: Common interface for computed data (bounds, emptiness)
+//! - [`PlotRender`]: Renders computed data to a renderer
+//!
+//! # Design Philosophy
+//!
+//! These traits follow a separation of concerns:
+//!
+//! 1. **Computation** (`PlotCompute`): Pure data transformation, no rendering knowledge
+//! 2. **Data interface** (`PlotData`): Common queries on computed data
+//! 3. **Rendering** (`PlotRender`): Visual output, depends on computed data
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use ruviz::plots::traits::{PlotCompute, PlotData, PlotRender};
+//!
+//! // Compute KDE data
+//! let kde_data = Kde::compute(&data, &KdeConfig::default())?;
+//!
+//! // Query bounds for axis setup
+//! let ((x_min, x_max), (y_min, y_max)) = kde_data.data_bounds();
+//!
+//! // Render to canvas
+//! kde_data.render(&mut renderer, &area, &theme, color)?;
+//! ```
+
+use crate::core::error::Result;
+use crate::render::{Color, SkiaRenderer, Theme};
+
+/// Defines the plot area for rendering
+///
+/// Represents the rectangular region where plot data should be rendered,
+/// including the coordinate transformation parameters.
+#[derive(Debug, Clone, Copy)]
+pub struct PlotArea {
+    /// Left edge of plot area in pixels
+    pub x: f32,
+    /// Top edge of plot area in pixels
+    pub y: f32,
+    /// Width of plot area in pixels
+    pub width: f32,
+    /// Height of plot area in pixels
+    pub height: f32,
+    /// Data x-axis minimum value
+    pub x_min: f64,
+    /// Data x-axis maximum value
+    pub x_max: f64,
+    /// Data y-axis minimum value
+    pub y_min: f64,
+    /// Data y-axis maximum value
+    pub y_max: f64,
+}
+
+impl PlotArea {
+    /// Create a new plot area with the given bounds
+    pub fn new(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        }
+    }
+
+    /// Transform data coordinates to screen coordinates
+    ///
+    /// # Arguments
+    /// * `data_x` - X coordinate in data space
+    /// * `data_y` - Y coordinate in data space
+    ///
+    /// # Returns
+    /// (screen_x, screen_y) in pixel coordinates
+    #[inline]
+    pub fn data_to_screen(&self, data_x: f64, data_y: f64) -> (f32, f32) {
+        let x_range = self.x_max - self.x_min;
+        let y_range = self.y_max - self.y_min;
+
+        // Avoid division by zero
+        let norm_x = if x_range.abs() > f64::EPSILON {
+            (data_x - self.x_min) / x_range
+        } else {
+            0.5
+        };
+
+        let norm_y = if y_range.abs() > f64::EPSILON {
+            (data_y - self.y_min) / y_range
+        } else {
+            0.5
+        };
+
+        let screen_x = self.x + (norm_x as f32) * self.width;
+        // Y is inverted in screen coordinates (0 at top)
+        let screen_y = self.y + (1.0 - norm_y as f32) * self.height;
+
+        (screen_x, screen_y)
+    }
+
+    /// Transform screen coordinates to data coordinates
+    ///
+    /// # Arguments
+    /// * `screen_x` - X coordinate in pixels
+    /// * `screen_y` - Y coordinate in pixels
+    ///
+    /// # Returns
+    /// (data_x, data_y) in data space
+    #[inline]
+    pub fn screen_to_data(&self, screen_x: f32, screen_y: f32) -> (f64, f64) {
+        let norm_x = (screen_x - self.x) / self.width;
+        let norm_y = 1.0 - (screen_y - self.y) / self.height;
+
+        let data_x = self.x_min + (norm_x as f64) * (self.x_max - self.x_min);
+        let data_y = self.y_min + (norm_y as f64) * (self.y_max - self.y_min);
+
+        (data_x, data_y)
+    }
+
+    /// Check if a data point is within the plot area bounds
+    #[inline]
+    pub fn contains_data(&self, data_x: f64, data_y: f64) -> bool {
+        data_x >= self.x_min && data_x <= self.x_max && data_y >= self.y_min && data_y <= self.y_max
+    }
+
+    /// Get the center point of the plot area in screen coordinates
+    pub fn center(&self) -> (f32, f32) {
+        (self.x + self.width / 2.0, self.y + self.height / 2.0)
+    }
+
+    /// Get the center point of the plot area in data coordinates
+    pub fn data_center(&self) -> (f64, f64) {
+        (
+            (self.x_min + self.x_max) / 2.0,
+            (self.y_min + self.y_max) / 2.0,
+        )
+    }
+}
+
+/// Marker trait for plot configuration types
+///
+/// All plot-specific configuration structs should implement this trait.
+/// This enables generic handling of configurations in the `PlotBuilder`.
+///
+/// # Requirements
+///
+/// Implementations must provide:
+/// - `Default`: Sensible defaults for all configuration options
+/// - `Clone`: Allow cloning for storage in series
+///
+/// # Example
+///
+/// ```rust,ignore
+/// #[derive(Debug, Clone, Default)]
+/// pub struct KdeConfig {
+///     pub bandwidth: Option<f64>,
+///     pub n_points: usize,
+///     pub fill: bool,
+/// }
+///
+/// impl PlotConfig for KdeConfig {}
+/// ```
+pub trait PlotConfig: Default + Clone {}
+
+/// Trait for computing plot data from raw input
+///
+/// This trait defines the data transformation step for each plot type.
+/// It takes raw input data and configuration, producing computed data
+/// ready for rendering.
+///
+/// # Type Parameters
+///
+/// - `Input<'a>`: The input data type (can be borrowed)
+/// - `Config`: Plot-specific configuration implementing [`PlotConfig`]
+/// - `Output`: Computed data implementing [`PlotData`]
+///
+/// # Example
+///
+/// ```rust,ignore
+/// impl PlotCompute for Kde {
+///     type Input<'a> = &'a [f64];
+///     type Config = KdeConfig;
+///     type Output = KdeData;
+///
+///     fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
+///         // Perform KDE computation...
+///         Ok(KdeData { x, y, bandwidth })
+///     }
+/// }
+/// ```
+pub trait PlotCompute {
+    /// The input data type (typically a reference to slices or tuples of slices)
+    type Input<'a>;
+
+    /// The configuration type for this plot
+    type Config: PlotConfig;
+
+    /// The computed output data type
+    type Output: PlotData;
+
+    /// Compute plot data from input and configuration
+    ///
+    /// # Arguments
+    /// * `input` - The raw input data
+    /// * `config` - Plot-specific configuration
+    ///
+    /// # Returns
+    /// Computed data ready for rendering, or an error
+    fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output>;
+}
+
+/// Common interface for computed plot data
+///
+/// All computed plot data types implement this trait to provide
+/// common queries needed for rendering setup and validation.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// impl PlotData for KdeData {
+///     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+///         let x_min = self.x.iter().copied().fold(f64::INFINITY, f64::min);
+///         let x_max = self.x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+///         let y_min = 0.0; // Density starts at 0
+///         let y_max = self.y.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+///         ((x_min, x_max), (y_min, y_max))
+///     }
+///
+///     fn is_empty(&self) -> bool {
+///         self.x.is_empty()
+///     }
+/// }
+/// ```
+pub trait PlotData {
+    /// Get the data bounds for this plot data
+    ///
+    /// Returns `((x_min, x_max), (y_min, y_max))` representing the
+    /// bounding box of the data in data coordinates.
+    ///
+    /// # Returns
+    /// A tuple of tuples: `((x_min, x_max), (y_min, y_max))`
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64));
+
+    /// Check if the plot data is empty
+    ///
+    /// Empty data should not be rendered and may require special handling.
+    fn is_empty(&self) -> bool;
+}
+
+/// Trait for rendering computed plot data
+///
+/// This trait extends [`PlotData`] with rendering capability.
+/// Implementations draw the computed data to a renderer within
+/// the specified plot area.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// impl PlotRender for KdeData {
+///     fn render(
+///         &self,
+///         renderer: &mut SkiaRenderer,
+///         area: &PlotArea,
+///         theme: &Theme,
+///         color: Color,
+///     ) -> Result<()> {
+///         if self.is_empty() {
+///             return Ok(());
+///         }
+///
+///         // Draw the KDE curve
+///         let points: Vec<(f32, f32)> = self.x.iter()
+///             .zip(self.y.iter())
+///             .map(|(&x, &y)| area.data_to_screen(x, y))
+///             .collect();
+///
+///         renderer.draw_polyline(&points, color, theme.line_width, LineStyle::Solid)?;
+///         Ok(())
+///     }
+/// }
+/// ```
+pub trait PlotRender: PlotData {
+    /// Render the plot data to a renderer
+    ///
+    /// # Arguments
+    /// * `renderer` - The Skia renderer to draw to
+    /// * `area` - The plot area defining coordinate transformation
+    /// * `theme` - Theme for styling (line widths, etc.)
+    /// * `color` - The color to use for this series
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or an error if rendering fails
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+    ) -> Result<()>;
+
+    /// Render with additional styling options
+    ///
+    /// Default implementation calls `render()` with the base color.
+    /// Override for plot types that support additional styling.
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        _alpha: f32,
+        _line_width: Option<f32>,
+    ) -> Result<()> {
+        self.render(renderer, area, theme, color)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plot_area_creation() {
+        let area = PlotArea::new(100.0, 50.0, 600.0, 400.0, 0.0, 10.0, 0.0, 100.0);
+
+        assert_eq!(area.x, 100.0);
+        assert_eq!(area.y, 50.0);
+        assert_eq!(area.width, 600.0);
+        assert_eq!(area.height, 400.0);
+        assert_eq!(area.x_min, 0.0);
+        assert_eq!(area.x_max, 10.0);
+        assert_eq!(area.y_min, 0.0);
+        assert_eq!(area.y_max, 100.0);
+    }
+
+    #[test]
+    fn test_plot_area_data_to_screen() {
+        let area = PlotArea::new(100.0, 50.0, 600.0, 400.0, 0.0, 10.0, 0.0, 100.0);
+
+        // Bottom-left corner in data = top-right in screen (y inverted)
+        let (sx, sy) = area.data_to_screen(0.0, 0.0);
+        assert!((sx - 100.0).abs() < 0.01);
+        assert!((sy - 450.0).abs() < 0.01); // y=50+400=450 (bottom of plot area)
+
+        // Top-right corner in data = bottom-left in screen (y inverted)
+        let (sx, sy) = area.data_to_screen(10.0, 100.0);
+        assert!((sx - 700.0).abs() < 0.01); // x=100+600=700
+        assert!((sy - 50.0).abs() < 0.01); // y=50 (top of plot area)
+
+        // Center
+        let (sx, sy) = area.data_to_screen(5.0, 50.0);
+        assert!((sx - 400.0).abs() < 0.01); // x=100+300=400
+        assert!((sy - 250.0).abs() < 0.01); // y=50+200=250
+    }
+
+    #[test]
+    fn test_plot_area_screen_to_data() {
+        let area = PlotArea::new(100.0, 50.0, 600.0, 400.0, 0.0, 10.0, 0.0, 100.0);
+
+        // Round-trip test
+        let (data_x, data_y) = (5.0, 50.0);
+        let (sx, sy) = area.data_to_screen(data_x, data_y);
+        let (rx, ry) = area.screen_to_data(sx, sy);
+
+        assert!((rx - data_x).abs() < 0.01);
+        assert!((ry - data_y).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_plot_area_contains_data() {
+        let area = PlotArea::new(100.0, 50.0, 600.0, 400.0, 0.0, 10.0, 0.0, 100.0);
+
+        assert!(area.contains_data(5.0, 50.0)); // Inside
+        assert!(area.contains_data(0.0, 0.0)); // Corner
+        assert!(area.contains_data(10.0, 100.0)); // Corner
+        assert!(!area.contains_data(-1.0, 50.0)); // Outside x
+        assert!(!area.contains_data(5.0, 150.0)); // Outside y
+    }
+
+    #[test]
+    fn test_plot_area_center() {
+        let area = PlotArea::new(100.0, 50.0, 600.0, 400.0, 0.0, 10.0, 0.0, 100.0);
+
+        let (cx, cy) = area.center();
+        assert!((cx - 400.0).abs() < 0.01);
+        assert!((cy - 250.0).abs() < 0.01);
+
+        let (dx, dy) = area.data_center();
+        assert!((dx - 5.0).abs() < 0.01);
+        assert!((dy - 50.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_plot_area_zero_range() {
+        // Test handling of zero-range data (single point)
+        let area = PlotArea::new(100.0, 50.0, 600.0, 400.0, 5.0, 5.0, 50.0, 50.0);
+
+        // Should map to center when range is zero
+        let (sx, sy) = area.data_to_screen(5.0, 50.0);
+        assert!((sx - 400.0).abs() < 0.01); // Center x
+        assert!((sy - 250.0).abs() < 0.01); // Center y
+    }
+}

@@ -54,13 +54,19 @@ Plot::new()
 - Comprehensive error handling with `Result` types
 - Memory-safe by design
 
-### 📊 Rich Plot Types
-- **Line plots**: Connected data visualization
-- **Scatter plots**: Individual point markers
-- **Bar charts**: Categorical comparisons
-- **Histograms**: Data distribution analysis
-- **Box plots**: Statistical summaries
-- **Heatmaps**: 2D data matrices *(coming soon)*
+### 📊 Rich Plot Types (30+)
+**Basic**: Line, Scatter, Bar, Histogram, Box Plot, Heatmap
+**Distribution**: Violin, KDE (1D/2D), Boxen, ECDF, Strip, Swarm
+**Categorical**: Grouped Bar, Stacked Bar, Horizontal Bar
+**Composition**: Pie, Donut, Area, Stacked Area
+**Continuous**: Contour, Hexbin, Fill Between
+**Error**: Error Bars (symmetric/asymmetric)
+**Discrete**: Step, Stem
+**Regression**: Regression Plot, Residual Plot
+**Polar**: Polar Plot, Radar/Spider Chart
+**Composite**: Joint Plot, Pair Plot
+**Vector**: Quiver Plot
+**Hierarchical**: Dendrogram
 
 ### 🎨 Publication Quality
 - **High-DPI export**: 72, 96, 300, 600 DPI for print
@@ -267,14 +273,25 @@ The pre-commit hooks will automatically run `cargo fmt --check` and `cargo clipp
 
 ## Roadmap
 
-- [x] Core plot types (line, scatter, bar, histogram, boxplot)
+- [x] Core plot types (line, scatter, bar, histogram, boxplot, heatmap)
 - [x] Parallel rendering
 - [x] SIMD optimization
 - [x] GPU acceleration (experimental)
 - [x] Professional themes
 - [x] Subplots and multi-panel figures
+- [x] **Comprehensive plot types (30+)** - matplotlib/seaborn/Makie parity
+  - [x] Distribution: Violin, KDE, Boxen, ECDF, Strip, Swarm
+  - [x] Categorical: Grouped/Stacked/Horizontal Bar
+  - [x] Composition: Pie, Donut, Area
+  - [x] Continuous: Contour, Hexbin
+  - [x] Error: Error Bars
+  - [x] Discrete: Step, Stem
+  - [x] Regression: Regplot, Residplot
+  - [x] Polar: Polar, Radar
+  - [x] Composite: Joint, Pair
+  - [x] Vector: Quiver
+  - [x] Hierarchical: Dendrogram
 - [ ] Auto-backend selection (v0.2)
-- [ ] Heatmaps and contour plots (v0.2)
 - [ ] SVG export (v0.2)
 - [ ] Interactive plots with zoom/pan (v0.3)
 - [ ] 3D plotting (v1.0+)
