@@ -1691,30 +1691,33 @@ impl SkiaRenderer {
         let handle_length = spacing.handle_length;
         let handle_height = spacing.handle_height;
 
+        // First draw the base type
         match &item.item_type {
             LegendItemType::Line { style, width } => {
-                self.draw_legend_line_handle(x, y, handle_length, item.color, style, *width)
+                self.draw_legend_line_handle(x, y, handle_length, item.color, style, *width)?;
             }
             LegendItemType::Scatter { marker, size } => {
-                self.draw_legend_scatter_handle(x, y, handle_length, item.color, marker, *size)
+                self.draw_legend_scatter_handle(x, y, handle_length, item.color, marker, *size)?;
             }
             LegendItemType::LineMarker {
                 line_style,
                 line_width,
                 marker,
                 marker_size,
-            } => self.draw_legend_line_marker_handle(
-                x,
-                y,
-                handle_length,
-                item.color,
-                line_style,
-                *line_width,
-                marker,
-                *marker_size,
-            ),
+            } => {
+                self.draw_legend_line_marker_handle(
+                    x,
+                    y,
+                    handle_length,
+                    item.color,
+                    line_style,
+                    *line_width,
+                    marker,
+                    *marker_size,
+                )?;
+            }
             LegendItemType::Bar | LegendItemType::Histogram => {
-                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)?;
             }
             LegendItemType::Area { edge_color } => {
                 // Draw filled rectangle with optional edge
@@ -1731,41 +1734,97 @@ impl SkiaRenderer {
                         1.0,
                     )?;
                 }
-                Ok(())
             }
             LegendItemType::ErrorBar => {
-                // Draw line with caps at both ends
-                let cap_size = handle_height * 0.4;
-                self.draw_legend_line_handle(
-                    x,
+                // ErrorBar type: Draw vertical error bar with marker (matplotlib-style)
+                let center_x = x + handle_length / 2.0;
+                let error_height = handle_height * 0.8;
+                let half_error = error_height / 2.0;
+                let cap_width = handle_height * 0.5;
+                let half_cap = cap_width / 2.0;
+
+                // Vertical error bar line
+                self.draw_line(
+                    center_x,
+                    y - half_error,
+                    center_x,
+                    y + half_error,
+                    item.color,
+                    1.5,
+                    LineStyle::Solid,
+                )?;
+                // Top cap (horizontal)
+                self.draw_line(
+                    center_x - half_cap,
+                    y - half_error,
+                    center_x + half_cap,
+                    y - half_error,
+                    item.color,
+                    1.5,
+                    LineStyle::Solid,
+                )?;
+                // Bottom cap (horizontal)
+                self.draw_line(
+                    center_x - half_cap,
+                    y + half_error,
+                    center_x + half_cap,
+                    y + half_error,
+                    item.color,
+                    1.5,
+                    LineStyle::Solid,
+                )?;
+                // Draw marker in center
+                self.draw_marker(
+                    center_x,
                     y,
-                    handle_length,
+                    handle_height * 0.4,
+                    MarkerStyle::Circle,
                     item.color,
-                    &LineStyle::Solid,
-                    1.5,
                 )?;
-                // Left cap
-                self.draw_line(
-                    x,
-                    y - cap_size,
-                    x,
-                    y + cap_size,
-                    item.color,
-                    1.5,
-                    LineStyle::Solid,
-                )?;
-                // Right cap
-                self.draw_line(
-                    x + handle_length,
-                    y - cap_size,
-                    x + handle_length,
-                    y + cap_size,
-                    item.color,
-                    1.5,
-                    LineStyle::Solid,
-                )
             }
         }
+
+        // If the series has attached error bars (not ErrorBar type), overlay error bar indicator
+        if item.has_error_bars && !matches!(item.item_type, LegendItemType::ErrorBar) {
+            let center_x = x + handle_length / 2.0;
+            let error_height = handle_height * 0.7; // Slightly smaller for overlay
+            let half_error = error_height / 2.0;
+            let cap_width = handle_height * 0.4;
+            let half_cap = cap_width / 2.0;
+
+            // Vertical error bar line
+            self.draw_line(
+                center_x,
+                y - half_error,
+                center_x,
+                y + half_error,
+                item.color,
+                1.0,
+                LineStyle::Solid,
+            )?;
+            // Top cap (horizontal)
+            self.draw_line(
+                center_x - half_cap,
+                y - half_error,
+                center_x + half_cap,
+                y - half_error,
+                item.color,
+                1.0,
+                LineStyle::Solid,
+            )?;
+            // Bottom cap (horizontal)
+            self.draw_line(
+                center_x - half_cap,
+                y + half_error,
+                center_x + half_cap,
+                y + half_error,
+                item.color,
+                1.0,
+                LineStyle::Solid,
+            )?;
+        }
+
+        Ok(())
     }
 
     /// Draw rectangle outline (stroke only, no fill)

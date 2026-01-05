@@ -649,31 +649,71 @@ impl SvgRenderer {
                 }
             }
             LegendItemType::ErrorBar => {
-                let cap_size = handle_height * 0.4;
-                self.draw_legend_line_handle(
-                    x,
-                    y,
-                    handle_length,
-                    item.color,
-                    &LineStyle::Solid,
-                    1.5,
-                );
-                // Left cap
+                // Draw vertical error bar with marker (matplotlib-style)
+                let center_x = x + handle_length / 2.0;
+                let error_height = handle_height * 0.8;
+                let half_error = error_height / 2.0;
+                let cap_width = handle_height * 0.5;
+                let half_cap = cap_width / 2.0;
                 let color_str = self.color_to_svg(item.color);
+
+                // Vertical error bar line
                 writeln!(
                     self.content,
                     r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="1.5"/>"#,
-                    x, y - cap_size, x, y + cap_size, color_str
+                    center_x, y - half_error, center_x, y + half_error, color_str
                 )
                 .unwrap();
-                // Right cap
+                // Top cap (horizontal)
                 writeln!(
                     self.content,
                     r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="1.5"/>"#,
-                    x + handle_length, y - cap_size, x + handle_length, y + cap_size, color_str
+                    center_x - half_cap, y - half_error, center_x + half_cap, y - half_error, color_str
                 )
                 .unwrap();
+                // Bottom cap (horizontal)
+                writeln!(
+                    self.content,
+                    r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="1.5"/>"#,
+                    center_x - half_cap, y + half_error, center_x + half_cap, y + half_error, color_str
+                )
+                .unwrap();
+                // Draw marker in center
+                let marker_size = handle_height * 0.4;
+                self.draw_marker(center_x, y, marker_size, item.color);
             }
+        }
+
+        // If the series has attached error bars (not ErrorBar type), overlay error bar indicator
+        if item.has_error_bars && !matches!(item.item_type, LegendItemType::ErrorBar) {
+            let center_x = x + handle_length / 2.0;
+            let error_height = handle_height * 0.7; // Slightly smaller for overlay
+            let half_error = error_height / 2.0;
+            let cap_width = handle_height * 0.4;
+            let half_cap = cap_width / 2.0;
+            let color_str = self.color_to_svg(item.color);
+
+            // Vertical error bar line
+            writeln!(
+                self.content,
+                r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="1.0"/>"#,
+                center_x, y - half_error, center_x, y + half_error, color_str
+            )
+            .unwrap();
+            // Top cap (horizontal)
+            writeln!(
+                self.content,
+                r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="1.0"/>"#,
+                center_x - half_cap, y - half_error, center_x + half_cap, y - half_error, color_str
+            )
+            .unwrap();
+            // Bottom cap (horizontal)
+            writeln!(
+                self.content,
+                r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="1.0"/>"#,
+                center_x - half_cap, y + half_error, center_x + half_cap, y + half_error, color_str
+            )
+            .unwrap();
         }
     }
 

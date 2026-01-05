@@ -192,6 +192,8 @@ pub struct LegendItem {
     pub color: Color,
     /// Type of visual representation
     pub item_type: LegendItemType,
+    /// Whether this series has Y error bars (shown as vertical error bar in legend)
+    pub has_error_bars: bool,
 }
 
 /// How the legend item should be visually represented
@@ -225,6 +227,7 @@ impl LegendItem {
             label: label.into(),
             color,
             item_type: LegendItemType::Line { style, width },
+            has_error_bars: false,
         }
     }
 
@@ -234,6 +237,7 @@ impl LegendItem {
             label: label.into(),
             color,
             item_type: LegendItemType::Scatter { marker, size },
+            has_error_bars: false,
         }
     }
 
@@ -255,6 +259,7 @@ impl LegendItem {
                 marker,
                 marker_size,
             },
+            has_error_bars: false,
         }
     }
 
@@ -264,6 +269,7 @@ impl LegendItem {
             label: label.into(),
             color,
             item_type: LegendItemType::Bar,
+            has_error_bars: false,
         }
     }
 
@@ -273,6 +279,7 @@ impl LegendItem {
             label: label.into(),
             color,
             item_type: LegendItemType::Histogram,
+            has_error_bars: false,
         }
     }
 
@@ -282,6 +289,7 @@ impl LegendItem {
             label: label.into(),
             color,
             item_type: LegendItemType::Area { edge_color },
+            has_error_bars: false,
         }
     }
 
@@ -291,6 +299,7 @@ impl LegendItem {
             label: label.into(),
             color,
             item_type: LegendItemType::ErrorBar,
+            has_error_bars: true, // Error bar type always has error bars
         }
     }
 
@@ -301,7 +310,14 @@ impl LegendItem {
             label,
             color,
             item_type: LegendItemType::Bar,
+            has_error_bars: false,
         }
+    }
+
+    /// Set whether this legend item should show error bars
+    pub fn with_error_bars(mut self, has_error_bars: bool) -> Self {
+        self.has_error_bars = has_error_bars;
+        self
     }
 }
 

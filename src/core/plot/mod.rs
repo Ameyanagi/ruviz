@@ -18,6 +18,7 @@ use crate::{
     },
     data::{Data1D, DataShader, StreamingXY},
     plots::boxplot::BoxPlotConfig,
+    plots::error::errorbar::{ErrorBarConfig, ErrorValues},
     plots::histogram::HistogramConfig,
     plots::traits::PlotRender,
     render::skia::{
@@ -113,6 +114,12 @@ struct PlotSeries {
     marker_size: Option<f32>,
     /// Alpha/transparency override
     alpha: Option<f32>,
+    /// Optional Y error bar data (attached to series)
+    y_errors: Option<ErrorValues>,
+    /// Optional X error bar data (attached to series)
+    x_errors: Option<ErrorValues>,
+    /// Error bar configuration (cap size, line width, etc.)
+    error_config: Option<ErrorBarConfig>,
 }
 
 impl PlotSeries {
@@ -182,10 +189,14 @@ impl PlotSeries {
             }
         };
 
+        // Check if this series has attached error bars
+        let has_error_bars = self.y_errors.is_some() || self.x_errors.is_some();
+
         Some(LegendItem {
             label: label.clone(),
             color,
             item_type,
+            has_error_bars,
         })
     }
 }
@@ -1073,6 +1084,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -1126,6 +1140,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         // Mark as rendered so partial updates can be tracked
@@ -1174,6 +1191,9 @@ impl Plot {
             marker_style: Some(MarkerStyle::Circle),
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -1211,6 +1231,9 @@ impl Plot {
             marker_style: Some(MarkerStyle::Circle),
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         stream.mark_rendered();
@@ -1258,6 +1281,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -1310,6 +1336,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -1365,6 +1394,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -1413,6 +1445,9 @@ impl Plot {
                     marker_style: None,
                     marker_size: None,
                     alpha: None,
+                    y_errors: None,
+                    x_errors: None,
+                    error_config: None,
                 };
                 PlotSeriesBuilder::new(self, series)
             }
@@ -1439,6 +1474,9 @@ impl Plot {
                     marker_style: None,
                     marker_size: None,
                     alpha: None,
+                    y_errors: None,
+                    x_errors: None,
+                    error_config: None,
                 };
                 PlotSeriesBuilder::new(self, series)
             }
@@ -1469,6 +1507,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -1507,6 +1548,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -2228,6 +2272,9 @@ impl Plot {
             marker_style: None,
             marker_size: None,
             alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         self.series.push(series);
@@ -2255,6 +2302,9 @@ impl Plot {
             marker_style: style.marker_style,
             marker_size: style.marker_size,
             alpha: style.alpha,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         self.series.push(series);
@@ -2279,6 +2329,9 @@ impl Plot {
             marker_style: style.marker_style,
             marker_size: style.marker_size,
             alpha: style.alpha,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
         };
 
         self.series.push(series);
@@ -2314,6 +2367,25 @@ impl Plot {
                     .collect();
 
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
+
+                // Draw attached error bars if present
+                if series.y_errors.is_some() || series.x_errors.is_some() {
+                    Self::render_attached_error_bars(
+                        renderer,
+                        x_data,
+                        y_data,
+                        series.y_errors.as_ref(),
+                        series.x_errors.as_ref(),
+                        series.error_config.as_ref(),
+                        color,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        line_width,
+                    )?;
+                }
             }
             SeriesType::Scatter { x_data, y_data } => {
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)); // DPI-scaled marker size
@@ -2324,6 +2396,25 @@ impl Plot {
                         x, y, x_min, x_max, y_min, y_max, plot_area,
                     );
                     renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                }
+
+                // Draw attached error bars if present
+                if series.y_errors.is_some() || series.x_errors.is_some() {
+                    Self::render_attached_error_bars(
+                        renderer,
+                        x_data,
+                        y_data,
+                        series.y_errors.as_ref(),
+                        series.x_errors.as_ref(),
+                        series.error_config.as_ref(),
+                        color,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        line_width,
+                    )?;
                 }
             }
             SeriesType::Bar { values, .. } => {
@@ -2627,8 +2718,79 @@ impl Plot {
                     )?;
                 }
             }
-            SeriesType::ErrorBars { .. } | SeriesType::ErrorBarsXY { .. } => {
-                // Error bars are handled separately (often combined with scatter)
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                // Draw markers at data points
+                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+
+                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
+                    if x.is_finite() && y.is_finite() {
+                        let (px, py) = crate::render::skia::map_data_to_pixels(
+                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                        );
+                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    }
+                }
+
+                // Draw Y error bars
+                let y_err_values = ErrorValues::symmetric(y_errors.clone());
+                Self::render_attached_error_bars(
+                    renderer,
+                    x_data,
+                    y_data,
+                    Some(&y_err_values),
+                    None,
+                    series.error_config.as_ref(),
+                    color,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    line_width,
+                )?;
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                // Draw markers at data points
+                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+
+                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
+                    if x.is_finite() && y.is_finite() {
+                        let (px, py) = crate::render::skia::map_data_to_pixels(
+                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                        );
+                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    }
+                }
+
+                // Draw X and Y error bars
+                let x_err_values = ErrorValues::symmetric(x_errors.clone());
+                let y_err_values = ErrorValues::symmetric(y_errors.clone());
+                Self::render_attached_error_bars(
+                    renderer,
+                    x_data,
+                    y_data,
+                    Some(&y_err_values),
+                    Some(&x_err_values),
+                    series.error_config.as_ref(),
+                    color,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    line_width,
+                )?;
             }
             SeriesType::Kde { data } => {
                 // Use PlotRender trait to render KDE
@@ -3140,6 +3302,25 @@ impl Plot {
                     if points.len() >= 2 {
                         renderer.draw_polyline(&points, color, line_width, line_style)?;
                     }
+
+                    // Draw attached error bars if present
+                    if series.y_errors.is_some() || series.x_errors.is_some() {
+                        Self::render_attached_error_bars(
+                            &mut renderer,
+                            x_data,
+                            y_data,
+                            series.y_errors.as_ref(),
+                            series.x_errors.as_ref(),
+                            series.error_config.as_ref(),
+                            color,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            line_width,
+                        )?;
+                    }
                 }
                 SeriesType::Scatter { x_data, y_data } => {
                     // Draw individual markers
@@ -3153,6 +3334,25 @@ impl Plot {
                             );
                             renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
                         }
+                    }
+
+                    // Draw attached error bars if present
+                    if series.y_errors.is_some() || series.x_errors.is_some() {
+                        Self::render_attached_error_bars(
+                            &mut renderer,
+                            x_data,
+                            y_data,
+                            series.y_errors.as_ref(),
+                            series.x_errors.as_ref(),
+                            series.error_config.as_ref(),
+                            color,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            line_width,
+                        )?;
                     }
                 }
                 SeriesType::Bar { categories, values } => {
@@ -3625,6 +3825,25 @@ impl Plot {
                     if points.len() >= 2 {
                         renderer.draw_polyline(&points, color, line_width, line_style)?;
                     }
+
+                    // Draw attached error bars if present
+                    if series.y_errors.is_some() || series.x_errors.is_some() {
+                        Self::render_attached_error_bars(
+                            renderer,
+                            x_data,
+                            y_data,
+                            series.y_errors.as_ref(),
+                            series.x_errors.as_ref(),
+                            series.error_config.as_ref(),
+                            color,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            line_width,
+                        )?;
+                    }
                 }
                 SeriesType::Scatter { x_data, y_data } => {
                     // Draw individual markers
@@ -3638,6 +3857,25 @@ impl Plot {
                             );
                             renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
                         }
+                    }
+
+                    // Draw attached error bars if present
+                    if series.y_errors.is_some() || series.x_errors.is_some() {
+                        Self::render_attached_error_bars(
+                            renderer,
+                            x_data,
+                            y_data,
+                            series.y_errors.as_ref(),
+                            series.x_errors.as_ref(),
+                            series.error_config.as_ref(),
+                            color,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            line_width,
+                        )?;
                     }
                 }
                 SeriesType::Bar { categories, values } => {
@@ -3796,6 +4034,232 @@ impl Plot {
                 SeriesType::Boxen { data } => data.boxes.len() * 4, // Each box has 4 points
             })
             .sum()
+    }
+
+    /// Helper to render attached error bars on Line/Scatter series
+    #[allow(clippy::too_many_arguments)]
+    fn render_attached_error_bars(
+        renderer: &mut SkiaRenderer,
+        x_data: &[f64],
+        y_data: &[f64],
+        y_errors: Option<&ErrorValues>,
+        x_errors: Option<&ErrorValues>,
+        error_config: Option<&ErrorBarConfig>,
+        series_color: Color,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        plot_area: tiny_skia::Rect,
+        default_line_width: f32,
+    ) -> Result<()> {
+        let config = error_config.cloned().unwrap_or_default();
+        let bar_color = config
+            .color
+            .unwrap_or(series_color)
+            .with_alpha(config.alpha);
+        let line_width = config.line_width.max(default_line_width * 0.75); // Slightly thinner than data line
+
+        // Cap size is directly in pixels (matplotlib-style, typical: 4-6 pixels)
+        let cap_size_px = config.cap_size;
+        let half_cap = cap_size_px / 2.0;
+
+        let n = x_data.len().min(y_data.len());
+
+        for i in 0..n {
+            let x_val = x_data[i];
+            let y_val = y_data[i];
+
+            if !x_val.is_finite() || !y_val.is_finite() {
+                continue;
+            }
+
+            // Get Y error bounds (skip NaN/Infinity values)
+            let (y_lower, y_upper) = if let Some(yerr) = y_errors {
+                if let Some((lo, hi)) = yerr.bounds_at(i) {
+                    let lo_abs = lo.abs();
+                    let hi_abs = hi.abs();
+                    if lo_abs.is_finite() && hi_abs.is_finite() {
+                        (lo_abs, hi_abs)
+                    } else {
+                        (0.0, 0.0) // Skip invalid error values
+                    }
+                } else {
+                    (0.0, 0.0)
+                }
+            } else {
+                (0.0, 0.0)
+            };
+
+            // Get X error bounds (skip NaN/Infinity values)
+            let (x_lower, x_upper) = if let Some(xerr) = x_errors {
+                if let Some((lo, hi)) = xerr.bounds_at(i) {
+                    let lo_abs = lo.abs();
+                    let hi_abs = hi.abs();
+                    if lo_abs.is_finite() && hi_abs.is_finite() {
+                        (lo_abs, hi_abs)
+                    } else {
+                        (0.0, 0.0) // Skip invalid error values
+                    }
+                } else {
+                    (0.0, 0.0)
+                }
+            } else {
+                (0.0, 0.0)
+            };
+
+            // Draw Y error bar (vertical line + caps) with clipping
+            if y_lower > 0.0 || y_upper > 0.0 {
+                let (px, py_top_raw) = map_data_to_pixels(
+                    x_val,
+                    y_val + y_upper,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                );
+                let (_, py_bottom_raw) = map_data_to_pixels(
+                    x_val,
+                    y_val - y_lower,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                );
+
+                // Clip to plot area bounds
+                let plot_top = plot_area.y();
+                let plot_bottom = plot_area.y() + plot_area.height();
+                let plot_left = plot_area.x();
+                let plot_right = plot_area.x() + plot_area.width();
+
+                let py_top = py_top_raw.max(plot_top).min(plot_bottom);
+                let py_bottom = py_bottom_raw.max(plot_top).min(plot_bottom);
+
+                // Only draw if there's visible area
+                if (py_bottom - py_top).abs() > 0.5 {
+                    // Vertical error line (clipped)
+                    renderer.draw_line(
+                        px,
+                        py_top,
+                        px,
+                        py_bottom,
+                        bar_color,
+                        line_width,
+                        LineStyle::Solid,
+                    )?;
+
+                    // Draw caps (horizontal lines) - use pixel offsets directly
+                    let cap_left_x = (px - half_cap).max(plot_left);
+                    let cap_right_x = (px + half_cap).min(plot_right);
+
+                    // Top cap (only if within plot area)
+                    if py_top_raw >= plot_top && py_top_raw <= plot_bottom {
+                        renderer.draw_line(
+                            cap_left_x,
+                            py_top,
+                            cap_right_x,
+                            py_top,
+                            bar_color,
+                            line_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                    // Bottom cap (only if within plot area)
+                    if py_bottom_raw >= plot_top && py_bottom_raw <= plot_bottom {
+                        renderer.draw_line(
+                            cap_left_x,
+                            py_bottom,
+                            cap_right_x,
+                            py_bottom,
+                            bar_color,
+                            line_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                }
+            }
+
+            // Draw X error bar (horizontal line + caps) with clipping
+            if x_lower > 0.0 || x_upper > 0.0 {
+                let (_, py) =
+                    map_data_to_pixels(x_val, y_val, x_min, x_max, y_min, y_max, plot_area);
+                let (px_left_raw, _) = map_data_to_pixels(
+                    x_val - x_lower,
+                    y_val,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                );
+                let (px_right_raw, _) = map_data_to_pixels(
+                    x_val + x_upper,
+                    y_val,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                );
+
+                // Clip to plot area bounds
+                let plot_top = plot_area.y();
+                let plot_bottom = plot_area.y() + plot_area.height();
+                let plot_left = plot_area.x();
+                let plot_right = plot_area.x() + plot_area.width();
+
+                let px_left = px_left_raw.max(plot_left).min(plot_right);
+                let px_right = px_right_raw.max(plot_left).min(plot_right);
+
+                // Only draw if there's visible area
+                if (px_right - px_left).abs() > 0.5 {
+                    // Horizontal error line (clipped)
+                    renderer.draw_line(
+                        px_left,
+                        py,
+                        px_right,
+                        py,
+                        bar_color,
+                        line_width,
+                        LineStyle::Solid,
+                    )?;
+
+                    // Draw caps (vertical lines) - use pixel offsets directly
+                    let cap_top_y = (py - half_cap).max(plot_top);
+                    let cap_bottom_y = (py + half_cap).min(plot_bottom);
+
+                    // Left cap (only if within plot area)
+                    if px_left_raw >= plot_left && px_left_raw <= plot_right {
+                        renderer.draw_line(
+                            px_left,
+                            cap_top_y,
+                            px_left,
+                            cap_bottom_y,
+                            bar_color,
+                            line_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                    // Right cap (only if within plot area)
+                    if px_right_raw >= plot_left && px_right_raw <= plot_right {
+                        renderer.draw_line(
+                            px_right,
+                            cap_top_y,
+                            px_right,
+                            cap_bottom_y,
+                            bar_color,
+                            line_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Create PlotContent for layout calculation
@@ -6273,6 +6737,145 @@ impl PlotSeriesBuilder {
         self
     }
 
+    // ========== Error Bar Modifier Methods ==========
+
+    /// Attach symmetric Y error bars to this series
+    ///
+    /// Error bars are drawn as vertical lines centered on each data point,
+    /// extending `yerr` distance above and below.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    /// let y = vec![2.3, 3.5, 4.1, 5.8, 6.2];
+    /// let yerr = vec![0.3, 0.4, 0.25, 0.5, 0.35];
+    ///
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .with_yerr(&yerr)
+    ///     .label("Measurement")
+    ///     .end_series()
+    ///     .legend_best()
+    ///     .save("line_with_errors.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn with_yerr<E: Data1D<f64>>(mut self, errors: &E) -> Self {
+        self.series.y_errors = Some(ErrorValues::symmetric(errors.iter().copied().collect()));
+        self
+    }
+
+    /// Attach symmetric X error bars to this series
+    ///
+    /// Error bars are drawn as horizontal lines centered on each data point,
+    /// extending `xerr` distance left and right.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    /// let y = vec![2.3, 3.5, 4.1, 5.8, 6.2];
+    /// let xerr = vec![0.1, 0.15, 0.1, 0.2, 0.15];
+    ///
+    /// Plot::new()
+    ///     .scatter(&x, &y)
+    ///     .with_xerr(&xerr)
+    ///     .label("Data Points")
+    ///     .end_series()
+    ///     .save("scatter_with_xerr.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn with_xerr<E: Data1D<f64>>(mut self, errors: &E) -> Self {
+        self.series.x_errors = Some(ErrorValues::symmetric(errors.iter().copied().collect()));
+        self
+    }
+
+    /// Attach asymmetric Y error bars to this series
+    ///
+    /// Error bars have different lengths above and below each point.
+    ///
+    /// # Arguments
+    /// * `lower` - Error values extending below each point
+    /// * `upper` - Error values extending above each point
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0];
+    /// let y = vec![5.0, 7.0, 6.0];
+    /// let lower = vec![0.5, 0.3, 0.4];  // Extends down
+    /// let upper = vec![0.8, 1.0, 0.6];  // Extends up
+    ///
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .with_yerr_asymmetric(&lower, &upper)
+    ///     .label("Asymmetric Errors")
+    ///     .end_series()
+    ///     .save("asymmetric_errors.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn with_yerr_asymmetric<E1, E2>(mut self, lower: &E1, upper: &E2) -> Self
+    where
+        E1: Data1D<f64>,
+        E2: Data1D<f64>,
+    {
+        self.series.y_errors = Some(ErrorValues::asymmetric(
+            lower.iter().copied().collect(),
+            upper.iter().copied().collect(),
+        ));
+        self
+    }
+
+    /// Attach asymmetric X error bars to this series
+    ///
+    /// Error bars have different lengths left and right of each point.
+    ///
+    /// # Arguments
+    /// * `left` - Error values extending left of each point
+    /// * `right` - Error values extending right of each point
+    pub fn with_xerr_asymmetric<E1, E2>(mut self, left: &E1, right: &E2) -> Self
+    where
+        E1: Data1D<f64>,
+        E2: Data1D<f64>,
+    {
+        self.series.x_errors = Some(ErrorValues::asymmetric(
+            left.iter().copied().collect(),
+            right.iter().copied().collect(),
+        ));
+        self
+    }
+
+    /// Configure error bar appearance
+    ///
+    /// Allows customization of cap size, line width, and color for attached error bars.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    /// use ruviz::plots::error::ErrorBarConfig;
+    ///
+    /// Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[4.0, 5.0, 6.0])
+    ///     .with_yerr(&[0.3, 0.4, 0.35])
+    ///     .error_config(ErrorBarConfig::default().cap_size(0.15).line_width(2.0))
+    ///     .end_series()
+    ///     .save("custom_errors.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn error_config(mut self, config: ErrorBarConfig) -> Self {
+        self.series.error_config = Some(config);
+        self
+    }
+
+    // ========== End Error Bar Modifier Methods ==========
+
     /// Finish configuring this series and return to the main Plot
     ///
     /// This consumes the builder and adds the series to the plot.
@@ -6351,6 +6954,76 @@ impl PlotSeriesBuilder {
     /// Continue with a new streaming scatter series
     pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
         self.end_series().scatter_streaming(stream)
+    }
+
+    /// Continue with a new error bar series (Y errors only)
+    ///
+    /// This enables chaining multiple error bar series without ownership issues.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+    /// let y1 = vec![2.3, 3.5, 4.1, 5.8, 6.2];
+    /// let yerr1 = vec![0.3, 0.4, 0.25, 0.5, 0.35];
+    /// let y2 = vec![1.8, 2.9, 3.5, 4.2, 5.5];
+    /// let yerr2 = vec![0.3, 0.4, 0.3, 0.5, 0.4];
+    ///
+    /// Plot::new()
+    ///     .error_bars(&x, &y1, &yerr1)
+    ///     .label("Dataset 1")
+    ///     .error_bars(&x, &y2, &yerr2)  // Continuation - chains correctly
+    ///     .label("Dataset 2")
+    ///     .end_series()
+    ///     .legend_best()
+    ///     .save("multiple_errorbars.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn error_bars<X, Y, E>(self, x_data: &X, y_data: &Y, y_errors: &E) -> PlotSeriesBuilder
+    where
+        X: Data1D<f64>,
+        Y: Data1D<f64>,
+        E: Data1D<f64>,
+    {
+        self.end_series().error_bars(x_data, y_data, y_errors)
+    }
+
+    /// Continue with a new error bar series (both X and Y errors)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0];
+    /// let y = vec![2.0, 4.0, 3.0];
+    /// let xerr = vec![0.1, 0.15, 0.1];
+    /// let yerr = vec![0.3, 0.4, 0.35];
+    ///
+    /// Plot::new()
+    ///     .error_bars_xy(&x, &y, &xerr, &yerr)
+    ///     .label("Full Uncertainty")
+    ///     .end_series()
+    ///     .save("xy_errors.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn error_bars_xy<X, Y, EX, EY>(
+        self,
+        x_data: &X,
+        y_data: &Y,
+        x_errors: &EX,
+        y_errors: &EY,
+    ) -> PlotSeriesBuilder
+    where
+        X: Data1D<f64>,
+        Y: Data1D<f64>,
+        EX: Data1D<f64>,
+        EY: Data1D<f64>,
+    {
+        self.end_series()
+            .error_bars_xy(x_data, y_data, x_errors, y_errors)
     }
 
     /// Set plot title
@@ -7109,5 +7782,239 @@ mod tests {
         let v2 = stream.version();
 
         assert!(v2 > v1, "Version should increase after second push");
+    }
+
+    // ========== Error Bar Modifier API Tests ==========
+
+    #[test]
+    fn test_with_yerr_symmetric() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![2.0, 4.0, 3.0];
+        let yerr = vec![0.3, 0.4, 0.25];
+
+        let plot = Plot::new()
+            .line(&x, &y)
+            .with_yerr(&yerr)
+            .label("Test")
+            .end_series();
+
+        assert_eq!(plot.series.len(), 1);
+        assert!(plot.series[0].y_errors.is_some());
+        assert!(plot.series[0].x_errors.is_none());
+
+        // Verify it's symmetric error values
+        if let Some(ErrorValues::Symmetric(errs)) = &plot.series[0].y_errors {
+            assert_eq!(errs.len(), 3);
+            assert!((errs[0] - 0.3).abs() < 1e-10);
+        } else {
+            panic!("Expected symmetric error values");
+        }
+    }
+
+    #[test]
+    fn test_with_xerr_symmetric() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![2.0, 4.0, 3.0];
+        let xerr = vec![0.15, 0.2, 0.1];
+
+        let plot = Plot::new()
+            .scatter(&x, &y)
+            .with_xerr(&xerr)
+            .label("Test")
+            .end_series();
+
+        assert_eq!(plot.series.len(), 1);
+        assert!(plot.series[0].x_errors.is_some());
+        assert!(plot.series[0].y_errors.is_none());
+
+        if let Some(ErrorValues::Symmetric(errs)) = &plot.series[0].x_errors {
+            assert_eq!(errs.len(), 3);
+            assert!((errs[1] - 0.2).abs() < 1e-10);
+        } else {
+            panic!("Expected symmetric error values");
+        }
+    }
+
+    #[test]
+    fn test_with_yerr_asymmetric() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![2.0, 4.0, 3.0];
+        let lower = vec![0.2, 0.3, 0.2];
+        let upper = vec![0.5, 0.6, 0.4];
+
+        let plot = Plot::new()
+            .line(&x, &y)
+            .with_yerr_asymmetric(&lower, &upper)
+            .label("Test")
+            .end_series();
+
+        assert_eq!(plot.series.len(), 1);
+        assert!(plot.series[0].y_errors.is_some());
+
+        if let Some(ErrorValues::Asymmetric(lo, hi)) = &plot.series[0].y_errors {
+            assert_eq!(lo.len(), 3);
+            assert_eq!(hi.len(), 3);
+            assert!((lo[0] - 0.2).abs() < 1e-10);
+            assert!((hi[0] - 0.5).abs() < 1e-10);
+        } else {
+            panic!("Expected asymmetric error values");
+        }
+    }
+
+    #[test]
+    fn test_with_xerr_asymmetric() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![2.0, 4.0, 3.0];
+        let left = vec![0.1, 0.15, 0.1];
+        let right = vec![0.2, 0.25, 0.2];
+
+        let plot = Plot::new()
+            .scatter(&x, &y)
+            .with_xerr_asymmetric(&left, &right)
+            .label("Test")
+            .end_series();
+
+        assert_eq!(plot.series.len(), 1);
+        assert!(plot.series[0].x_errors.is_some());
+
+        if let Some(ErrorValues::Asymmetric(lo, hi)) = &plot.series[0].x_errors {
+            assert_eq!(lo.len(), 3);
+            assert_eq!(hi.len(), 3);
+            assert!((lo[1] - 0.15).abs() < 1e-10);
+            assert!((hi[1] - 0.25).abs() < 1e-10);
+        } else {
+            panic!("Expected asymmetric error values");
+        }
+    }
+
+    #[test]
+    fn test_error_config() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![2.0, 4.0, 3.0];
+        let yerr = vec![0.3, 0.4, 0.25];
+
+        let config = ErrorBarConfig::default().cap_size(0.15).line_width(2.0);
+
+        let plot = Plot::new()
+            .line(&x, &y)
+            .with_yerr(&yerr)
+            .error_config(config)
+            .label("Test")
+            .end_series();
+
+        assert!(plot.series[0].error_config.is_some());
+        let cfg = plot.series[0].error_config.as_ref().unwrap();
+        assert!((cfg.cap_size - 0.15).abs() < 1e-10);
+        assert!((cfg.line_width - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_combined_xy_errors() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![2.0, 4.0, 3.0];
+        let xerr = vec![0.15, 0.2, 0.1];
+        let yerr = vec![0.3, 0.4, 0.25];
+
+        let plot = Plot::new()
+            .scatter(&x, &y)
+            .with_yerr(&yerr)
+            .with_xerr(&xerr)
+            .label("Test")
+            .end_series();
+
+        assert_eq!(plot.series.len(), 1);
+        assert!(plot.series[0].y_errors.is_some());
+        assert!(plot.series[0].x_errors.is_some());
+    }
+
+    #[test]
+    fn test_error_bars_continuation_method() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y1 = vec![2.0, 4.0, 3.0];
+        let y1_err = vec![0.3, 0.4, 0.25];
+        let y2 = vec![1.5, 3.5, 2.5];
+        let y2_err = vec![0.2, 0.3, 0.2];
+
+        let plot = Plot::new()
+            .error_bars(&x, &y1, &y1_err)
+            .label("Series A")
+            .error_bars(&x, &y2, &y2_err) // Continuation method
+            .label("Series B")
+            .end_series();
+
+        assert_eq!(plot.series.len(), 2);
+        assert!(matches!(
+            &plot.series[0].series_type,
+            SeriesType::ErrorBars { .. }
+        ));
+        assert!(matches!(
+            &plot.series[1].series_type,
+            SeriesType::ErrorBars { .. }
+        ));
+    }
+
+    #[test]
+    fn test_line_with_error_bars_renders() {
+        use crate::render::{SkiaRenderer, Theme};
+
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = vec![2.0, 4.0, 3.0, 5.0, 4.5];
+        let yerr = vec![0.3, 0.4, 0.25, 0.5, 0.35];
+
+        let plot = Plot::new()
+            .line(&x, &y)
+            .with_yerr(&yerr)
+            .title("Line with Error Bars")
+            .end_series();
+
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        let result = plot.render_to_renderer(&mut renderer, 96.0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_scatter_with_xy_error_bars_renders() {
+        use crate::render::{SkiaRenderer, Theme};
+
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = vec![2.0, 4.0, 3.0, 5.0, 4.5];
+        let xerr = vec![0.15, 0.2, 0.1, 0.15, 0.2];
+        let yerr = vec![0.3, 0.4, 0.25, 0.5, 0.35];
+
+        let plot = Plot::new()
+            .scatter(&x, &y)
+            .with_yerr(&yerr)
+            .with_xerr(&xerr)
+            .title("Scatter with XY Error Bars")
+            .end_series();
+
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        let result = plot.render_to_renderer(&mut renderer, 96.0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_series_with_different_errors() {
+        use crate::render::{SkiaRenderer, Theme};
+
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y1 = vec![2.0, 4.0, 3.0, 5.0, 4.5];
+        let y1_err = vec![0.3, 0.4, 0.25, 0.5, 0.35];
+        let y2 = vec![1.5, 3.5, 2.5, 4.5, 4.0];
+        let y2_err = vec![0.2, 0.3, 0.2, 0.4, 0.3];
+
+        let plot = Plot::new()
+            .line(&x, &y1)
+            .with_yerr(&y1_err)
+            .label("Series A")
+            .scatter(&x, &y2)
+            .with_yerr(&y2_err)
+            .label("Series B")
+            .title("Multiple Series with Error Bars")
+            .end_series();
+
+        let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        let result = plot.render_to_renderer(&mut renderer, 96.0);
+        assert!(result.is_ok());
     }
 }

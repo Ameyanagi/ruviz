@@ -1,229 +1,118 @@
 //! Documentation example: Error Bars
 //!
 //! Generates docs/images/errorbar_plot.png for rustdoc
+//!
+//! This example demonstrates both error bar API patterns:
+//! 1. **Modifier Pattern**: Attach error bars to existing Line/Scatter series
+//! 2. **Standalone Pattern**: Create dedicated error bar series
+//!
+//! The modifier pattern (`.with_yerr()`, `.with_xerr()`) is recommended for most use cases
+//! as it matches the mental model from matplotlib/plotly where error bars are properties
+//! of data series.
 
-use ruviz::plots::error::{ErrorValues, compute_error_bars};
 use ruviz::prelude::*;
-use ruviz::render::SkiaRenderer;
 
 fn main() -> Result<()> {
-    let width = 800;
-    let height = 500;
-    let theme = Theme::default();
+    // === PATTERN 1: Modifier Pattern (Recommended) ===
+    // Attach error bars to Line and Scatter series using .with_yerr() / .with_xerr()
 
-    let mut renderer = SkiaRenderer::new(width, height, theme.clone())?;
-    renderer.clear();
-
-    // Sample data with errors
     let x: Vec<f64> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
-    let y: Vec<f64> = vec![2.3, 3.5, 4.1, 5.8, 6.2, 7.5, 8.1];
-    let y_err: Vec<f64> = vec![0.3, 0.4, 0.25, 0.5, 0.35, 0.4, 0.45];
+    let y_line: Vec<f64> = vec![2.3, 3.5, 4.1, 5.8, 6.2, 7.5, 8.1];
+    let y_line_err: Vec<f64> = vec![0.3, 0.4, 0.25, 0.5, 0.35, 0.4, 0.45];
 
-    // Asymmetric errors for a second dataset
-    let y2: Vec<f64> = vec![1.8, 2.9, 3.5, 4.2, 5.5, 6.0, 7.2];
-    let y2_lower: Vec<f64> = vec![0.2, 0.3, 0.2, 0.4, 0.3, 0.35, 0.4];
-    let y2_upper: Vec<f64> = vec![0.4, 0.5, 0.35, 0.6, 0.5, 0.55, 0.6];
+    let y_scatter: Vec<f64> = vec![1.8, 2.9, 3.5, 4.2, 5.5, 6.0, 7.2];
+    let y_scatter_err: Vec<f64> = vec![0.25, 0.35, 0.3, 0.4, 0.35, 0.3, 0.4];
+    let x_scatter_err: Vec<f64> = vec![0.15, 0.2, 0.1, 0.15, 0.2, 0.1, 0.15];
 
-    let colors = Color::default_palette();
+    Plot::new()
+        .title("Error Bars on Line and Scatter Plots")
+        .xlabel("X")
+        .ylabel("Y")
+        .size(8.0, 5.0)
+        // Line plot with Y error bars (modifier pattern) - NO markers
+        .line(&x, &y_line)
+        .with_yerr(&y_line_err)
+        .label("Line + Y Errors")
+        .color(Color::from_palette(0))
+        .end_series()
+        // Scatter plot with both X and Y error bars (modifier pattern)
+        .scatter(&x, &y_scatter)
+        .with_yerr(&y_scatter_err)
+        .with_xerr(&x_scatter_err)
+        .label("Scatter + XY Errors")
+        .color(Color::from_palette(1))
+        .end_series()
+        .legend_best()
+        .save("docs/images/errorbar_plot.png")?;
 
-    // Plot area
-    let margin = 70.0_f32;
-    let plot_width = width as f32 - 2.0 * margin;
-    let plot_height = height as f32 - 2.0 * margin;
-
-    let x_min = 0.0_f64;
-    let x_max = 8.0_f64;
-    let y_min = 0.0_f64;
-    let y_max = 10.0_f64;
-
-    let to_screen = |px: f64, py: f64| -> (f32, f32) {
-        let sx = margin + plot_width * ((px - x_min) / (x_max - x_min)) as f32;
-        let sy = margin + plot_height * (1.0 - ((py - y_min) / (y_max - y_min)) as f32);
-        (sx, sy)
-    };
-
-    // Draw axes
-    renderer.draw_rectangle(
-        margin,
-        margin,
-        plot_width,
-        plot_height,
-        theme.grid_color,
-        false,
-    )?;
-
-    // Grid
-    for i in 0..=5 {
-        let y = margin + plot_height * i as f32 / 5.0;
-        renderer.draw_line(
-            margin,
-            y,
-            margin + plot_width,
-            y,
-            theme.grid_color,
-            0.5,
-            LineStyle::Solid,
-        )?;
-        let val = y_max - (y_max - y_min) * i as f64 / 5.0;
-        renderer.draw_text(
-            &format!("{:.0}", val),
-            margin - 25.0,
-            y,
-            10.0,
-            theme.foreground,
-        )?;
-    }
-    for i in 0..=8 {
-        let x_val = margin + plot_width * i as f32 / 8.0;
-        renderer.draw_text_centered(
-            &format!("{}", i),
-            x_val,
-            margin + plot_height + 15.0,
-            10.0,
-            theme.foreground,
-        )?;
-    }
-
-    // Compute error bars
-    let errors1 = ErrorValues::Symmetric(y_err.clone());
-    let error_bars1 = compute_error_bars(&x, &y, Some(&errors1), None);
-
-    let errors2 = ErrorValues::Asymmetric(y2_lower.clone(), y2_upper.clone());
-    let error_bars2 = compute_error_bars(&x, &y2, Some(&errors2), None);
-
-    let cap_size = 6.0_f32;
-
-    // Draw error bars for dataset 1
-    for bar in &error_bars1 {
-        let (cx, cy) = to_screen(bar.x, bar.y);
-        let (_, y_low) = to_screen(bar.x, bar.y_lower);
-        let (_, y_high) = to_screen(bar.x, bar.y_upper);
-        let cap_half = cap_size / 2.0;
-
-        // Vertical line
-        renderer.draw_line(cx, y_low, cx, y_high, colors[0], 1.5, LineStyle::Solid)?;
-        // Top cap
-        renderer.draw_line(
-            cx - cap_half,
-            y_high,
-            cx + cap_half,
-            y_high,
-            colors[0],
-            1.5,
-            LineStyle::Solid,
-        )?;
-        // Bottom cap
-        renderer.draw_line(
-            cx - cap_half,
-            y_low,
-            cx + cap_half,
-            y_low,
-            colors[0],
-            1.5,
-            LineStyle::Solid,
-        )?;
-        // Data point
-        renderer.draw_circle(cx, cy, 5.0, colors[0], true)?;
-    }
-
-    // Draw error bars for dataset 2
-    for bar in &error_bars2 {
-        let (cx, cy) = to_screen(bar.x, bar.y);
-        let (_, y_low) = to_screen(bar.x, bar.y_lower);
-        let (_, y_high) = to_screen(bar.x, bar.y_upper);
-        let cap_half = cap_size / 2.0;
-
-        renderer.draw_line(cx, y_low, cx, y_high, colors[1], 1.5, LineStyle::Solid)?;
-        renderer.draw_line(
-            cx - cap_half,
-            y_high,
-            cx + cap_half,
-            y_high,
-            colors[1],
-            1.5,
-            LineStyle::Solid,
-        )?;
-        renderer.draw_line(
-            cx - cap_half,
-            y_low,
-            cx + cap_half,
-            y_low,
-            colors[1],
-            1.5,
-            LineStyle::Solid,
-        )?;
-        renderer.draw_marker(cx, cy, 10.0, MarkerStyle::Square, colors[1])?;
-    }
-
-    // Connect points with lines
-    for i in 0..x.len() - 1 {
-        let (x1, y1_s) = to_screen(x[i], y[i]);
-        let (x2_s, y2_s) = to_screen(x[i + 1], y[i + 1]);
-        renderer.draw_line(
-            x1,
-            y1_s,
-            x2_s,
-            y2_s,
-            colors[0].with_alpha(0.5),
-            1.0,
-            LineStyle::Solid,
-        )?;
-
-        let (x1, y1_s) = to_screen(x[i], y2[i]);
-        let (x2_s, y2_s) = to_screen(x[i + 1], y2[i + 1]);
-        renderer.draw_line(
-            x1,
-            y1_s,
-            x2_s,
-            y2_s,
-            colors[1].with_alpha(0.5),
-            1.0,
-            LineStyle::Solid,
-        )?;
-    }
-
-    // Title and labels
-    renderer.draw_text_centered(
-        "Error Bar Plot",
-        width as f32 / 2.0,
-        25.0,
-        16.0,
-        theme.foreground,
-    )?;
-    renderer.draw_text_centered(
-        "X",
-        width as f32 / 2.0,
-        height as f32 - 15.0,
-        12.0,
-        theme.foreground,
-    )?;
-    renderer.draw_text_rotated("Y", 20.0, height as f32 / 2.0, 12.0, theme.foreground)?;
-
-    // Legend
-    renderer.draw_circle(width as f32 - 145.0, 50.0, 5.0, colors[0], true)?;
-    renderer.draw_text(
-        "Symmetric Error",
-        width as f32 - 135.0,
-        50.0,
-        10.0,
-        theme.foreground,
-    )?;
-    renderer.draw_marker(
-        width as f32 - 145.0,
-        70.0,
-        10.0,
-        MarkerStyle::Square,
-        colors[1],
-    )?;
-    renderer.draw_text(
-        "Asymmetric Error",
-        width as f32 - 135.0,
-        70.0,
-        10.0,
-        theme.foreground,
-    )?;
-
-    renderer.save_png("docs/images/errorbar_plot.png")?;
     println!("Generated docs/images/errorbar_plot.png");
+
+    // === PATTERN 2: Standalone Error Bars (existing API) ===
+    // Use error_bars() for dedicated error bar series
+
+    let y_standalone: Vec<f64> = vec![3.0, 4.2, 4.8, 5.5, 6.8, 7.2, 8.5];
+    let y_standalone_err: Vec<f64> = vec![0.4, 0.5, 0.35, 0.6, 0.45, 0.5, 0.55];
+
+    Plot::new()
+        .title("Standalone Error Bars")
+        .xlabel("X")
+        .ylabel("Y")
+        .size(8.0, 5.0)
+        .error_bars(&x, &y_standalone, &y_standalone_err)
+        .label("Standalone")
+        .color(Color::from_palette(2))
+        .marker(MarkerStyle::Triangle)
+        .end_series()
+        .save("docs/images/errorbar_standalone.png")?;
+
+    println!("Generated docs/images/errorbar_standalone.png");
+
+    // === PATTERN 3: Asymmetric Error Bars ===
+    // Use .with_yerr_asymmetric() for different upper/lower bounds
+
+    let y_asym: Vec<f64> = vec![2.5, 3.8, 4.5, 5.2, 6.5, 7.0, 8.0];
+    let y_lower: Vec<f64> = vec![0.2, 0.3, 0.2, 0.4, 0.3, 0.25, 0.35];
+    let y_upper: Vec<f64> = vec![0.5, 0.6, 0.4, 0.7, 0.5, 0.55, 0.6];
+
+    Plot::new()
+        .title("Asymmetric Error Bars")
+        .xlabel("X")
+        .ylabel("Y")
+        .size(8.0, 5.0)
+        .line(&x, &y_asym)
+        .with_yerr_asymmetric(&y_lower, &y_upper)
+        .label("Asymmetric Errors")
+        .color(Color::from_palette(3))
+        .marker(MarkerStyle::Diamond)
+        .end_series()
+        .save("docs/images/errorbar_asymmetric.png")?;
+
+    println!("Generated docs/images/errorbar_asymmetric.png");
+
+    // === PATTERN 4: Continuation Method (chaining error bar series) ===
+    // Use .error_bars() as continuation method
+
+    let y_a: Vec<f64> = vec![2.0, 3.2, 3.8, 4.5, 5.8, 6.2, 7.5];
+    let y_a_err: Vec<f64> = vec![0.35, 0.45, 0.3, 0.55, 0.4, 0.45, 0.5];
+    let y_b: Vec<f64> = vec![1.5, 2.5, 3.0, 3.8, 5.0, 5.5, 6.8];
+    let y_b_err: Vec<f64> = vec![0.3, 0.4, 0.35, 0.5, 0.4, 0.35, 0.45];
+
+    Plot::new()
+        .title("Multiple Error Bar Series (Continuation)")
+        .xlabel("X")
+        .ylabel("Y")
+        .size(8.0, 5.0)
+        .error_bars(&x, &y_a, &y_a_err)
+        .label("Dataset A")
+        .color(Color::from_palette(0))
+        .error_bars(&x, &y_b, &y_b_err) // Continuation method - no .end_series() needed!
+        .label("Dataset B")
+        .color(Color::from_palette(1))
+        .end_series()
+        .legend_best()
+        .save("docs/images/errorbar_continuation.png")?;
+
+    println!("Generated docs/images/errorbar_continuation.png");
+
     Ok(())
 }

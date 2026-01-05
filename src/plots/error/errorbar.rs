@@ -20,10 +20,10 @@ use crate::render::{Color, LineStyle, Theme};
 pub struct ErrorBarConfig {
     /// Color for error bars
     pub color: Option<Color>,
-    /// Line width for error bar lines
+    /// Line width for error bar lines (in pixels)
     pub line_width: f32,
-    /// Cap width as fraction of data spacing
-    pub cap_size: f64,
+    /// Cap width in pixels (matplotlib default: 0, typical: 4-6)
+    pub cap_size: f32,
     /// Line style for error bars
     pub line_style: ErrorLineStyle,
     /// Whether to show horizontal error bars
@@ -46,7 +46,7 @@ impl Default for ErrorBarConfig {
         Self {
             color: None,
             line_width: 1.5,
-            cap_size: 0.1,
+            cap_size: 8.0, // 8 pixels - professional size, visible but not overwhelming
             line_style: ErrorLineStyle::Solid,
             xerr: false,
             yerr: true,
@@ -73,8 +73,8 @@ impl ErrorBarConfig {
         self
     }
 
-    /// Set cap size
-    pub fn cap_size(mut self, size: f64) -> Self {
+    /// Set cap size in pixels (matplotlib typical: 4-6)
+    pub fn cap_size(mut self, size: f32) -> Self {
         self.cap_size = size.max(0.0);
         self
     }
@@ -435,10 +435,16 @@ impl PlotRender for ErrorBarData {
             ErrorLineStyle::Dashed => LineStyle::Dashed,
         };
 
-        // Calculate cap size in data units
+        // Cap size is in pixels - convert to data units for drawing
+        // Calculate pixels per data unit
         let ((x_min, x_max), _) = self.bounds;
         let x_range = x_max - x_min;
-        let cap_size = x_range * config.cap_size;
+        let pixels_per_unit = area.width / x_range as f32;
+        let cap_size = if pixels_per_unit > 0.0 {
+            (config.cap_size / pixels_per_unit) as f64
+        } else {
+            0.0
+        };
 
         for bar in &self.bars {
             // Draw Y error bar if enabled
