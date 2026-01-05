@@ -1,5 +1,54 @@
 //! Basic geometric types for plotting
 
+/// Orientation for plots that support horizontal/vertical rendering
+///
+/// Many plot types (boxplot, violin, bar, etc.) can be rendered in either
+/// horizontal or vertical orientation. This enum provides a unified way
+/// to specify the orientation.
+///
+/// # Default
+///
+/// `Orientation::Vertical` is the default for most plots.
+///
+/// # Matplotlib/Seaborn Compatibility
+///
+/// - `Vertical`: Standard orientation (categories on x-axis, values on y-axis)
+/// - `Horizontal`: Rotated orientation (categories on y-axis, values on x-axis)
+///   - In matplotlib: `orient='h'` or `orientation='horizontal'`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Orientation {
+    /// Vertical orientation (default)
+    /// Categories on x-axis, values on y-axis
+    #[default]
+    Vertical,
+    /// Horizontal orientation
+    /// Categories on y-axis, values on x-axis
+    Horizontal,
+}
+
+impl Orientation {
+    /// Check if this is horizontal orientation
+    pub fn is_horizontal(&self) -> bool {
+        matches!(self, Orientation::Horizontal)
+    }
+
+    /// Check if this is vertical orientation
+    pub fn is_vertical(&self) -> bool {
+        matches!(self, Orientation::Vertical)
+    }
+
+    /// Swap x and y coordinates based on orientation
+    ///
+    /// For horizontal orientation, swaps the coordinates.
+    /// For vertical orientation, returns unchanged.
+    pub fn transform_xy<T: Copy>(&self, x: T, y: T) -> (T, T) {
+        match self {
+            Orientation::Vertical => (x, y),
+            Orientation::Horizontal => (y, x),
+        }
+    }
+}
+
 /// 2D point with floating-point coordinates
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point2f {

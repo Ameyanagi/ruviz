@@ -37,7 +37,7 @@ pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;
 pub use subplot::{GridSpec, SubplotFigure, subplots, subplots_default};
-pub use types::{BoundingBox, Point2f};
+pub use types::{BoundingBox, Orientation, Point2f};
 pub use units::{
     POINTS_PER_INCH, REFERENCE_DPI, in_to_pt, in_to_px, pt_to_in, pt_to_px, px_to_in, px_to_pt,
 };
