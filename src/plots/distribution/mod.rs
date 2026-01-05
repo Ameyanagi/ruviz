@@ -5,6 +5,7 @@
 //! - ECDF plots (empirical cumulative distribution)
 //! - Violin plots
 //! - Boxen (letter-value) plots
+//! - Rug plots
 //!
 //! # Trait-Based API
 //!
@@ -16,6 +17,7 @@
 pub mod boxen;
 pub mod ecdf;
 pub mod kde;
+pub mod rug;
 pub mod violin;
 
 // Primary exports (new names)
@@ -27,6 +29,7 @@ pub use kde::{
     Kde, Kde2dPlotConfig, Kde2dPlotData, KdeConfig, KdeData, compute_kde, compute_kde_2d_plot,
     kde_fill_polygon,
 };
+pub use rug::{Rug, RugAxis, RugBuilder, RugConfig, RugData, compute_rug_lines};
 pub use violin::{
     BandwidthMethod, Orientation, Violin, ViolinConfig, ViolinData, ViolinScale,
     close_violin_polygon, violin_polygon,
