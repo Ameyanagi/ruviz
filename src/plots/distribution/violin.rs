@@ -12,6 +12,7 @@
 //! - [`PlotRender`] for `ViolinData`
 
 use crate::core::Result;
+use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, Theme};
@@ -448,6 +449,117 @@ impl PlotRender for ViolinData {
             let mut outline = screen_points.clone();
             outline.push(screen_points[0]); // Close the path
             renderer.draw_polyline(&outline, line_color, config.line_width, LineStyle::Solid)?;
+        }
+
+        // Draw inner elements (box, quartiles, median)
+        let center = 0.5;
+        let (q1, median, q3) = self.quartiles;
+
+        if config.show_box {
+            // Draw small box for IQR
+            let box_half_width = half_width * 0.15;
+            let (x1, y1) = area.data_to_screen(center - box_half_width, q1);
+            let (x2, y2) = area.data_to_screen(center + box_half_width, q3);
+            renderer.draw_rectangle(x1, y1, x2 - x1, y2 - y1, config.inner_color, true)?;
+        }
+
+        if config.show_quartiles {
+            // Draw quartile lines
+            let line_half = half_width * 0.2;
+            let (q1_x1, q1_y) = area.data_to_screen(center - line_half, q1);
+            let (q1_x2, _) = area.data_to_screen(center + line_half, q1);
+            renderer.draw_line(
+                q1_x1,
+                q1_y,
+                q1_x2,
+                q1_y,
+                config.inner_color,
+                1.0,
+                LineStyle::Solid,
+            )?;
+
+            let (q3_x1, q3_y) = area.data_to_screen(center - line_half, q3);
+            let (q3_x2, _) = area.data_to_screen(center + line_half, q3);
+            renderer.draw_line(
+                q3_x1,
+                q3_y,
+                q3_x2,
+                q3_y,
+                config.inner_color,
+                1.0,
+                LineStyle::Solid,
+            )?;
+        }
+
+        if config.show_median {
+            // Draw median dot or line
+            let (mx, my) = area.data_to_screen(center, median);
+            renderer.draw_marker(
+                mx,
+                my,
+                4.0,
+                crate::render::MarkerStyle::Circle,
+                Color::new(255, 255, 255),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
+        if self.data.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let resolver = StyleResolver::new(theme);
+        let half_width = config.width / 2.0;
+
+        // Generate polygon vertices (center at 0.5 for single violin)
+        let (left, right) = violin_polygon(self, 0.5, half_width, config);
+        let polygon = close_violin_polygon(&left, &right);
+
+        if polygon.is_empty() {
+            return Ok(());
+        }
+
+        // Convert to screen coordinates
+        let screen_points: Vec<(f32, f32)> = polygon
+            .iter()
+            .map(|(x, y)| area.data_to_screen(*x, *y))
+            .collect();
+
+        // Use StyleResolver for fill color
+        let fill_alpha = if config.fill_alpha != 0.7 {
+            config.fill_alpha // User override
+        } else {
+            alpha.clamp(0.0, 1.0) // Theme/caller provided
+        };
+        let fill_color = config.fill_color.unwrap_or(color).with_alpha(fill_alpha);
+
+        // Draw filled violin
+        if screen_points.len() >= 3 {
+            renderer.draw_filled_polygon(&screen_points, fill_color)?;
+        }
+
+        // Use StyleResolver for edge/line styling
+        let actual_line_width =
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
+        let line_color = resolver.edge_color(color, config.line_color);
+
+        // Draw outline
+        if screen_points.len() >= 2 && actual_line_width > 0.0 {
+            let mut outline = screen_points.clone();
+            outline.push(screen_points[0]); // Close the path
+            renderer.draw_polyline(&outline, line_color, actual_line_width, LineStyle::Solid)?;
         }
 
         // Draw inner elements (box, quartiles, median)
