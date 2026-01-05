@@ -330,6 +330,92 @@ pub trait PlotRender: PlotData {
     }
 }
 
+/// Trait for filled shapes with optional edge styling
+///
+/// This trait provides a consistent interface for plot elements that have
+/// both a fill color and an edge (stroke). Examples include histogram bars,
+/// box plot boxes, violin fills, and bar chart bars.
+///
+/// # Design Philosophy
+///
+/// The trait follows matplotlib/seaborn conventions:
+/// - Fill color is the primary color (from theme palette or explicit)
+/// - Edge color defaults to a darker version of the fill (30% darker)
+/// - Edge width defaults to `patch.linewidth` (0.8pt in matplotlib)
+/// - Alpha affects fill transparency
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ruviz::plots::traits::StyledShape;
+/// use ruviz::render::Color;
+///
+/// struct Bar {
+///     fill: Color,
+///     edge: Option<Color>,
+///     edge_width: f32,
+///     alpha: f32,
+/// }
+///
+/// impl StyledShape for Bar {
+///     fn fill_color(&self) -> Color {
+///         self.fill
+///     }
+///
+///     fn edge_color(&self) -> Option<Color> {
+///         self.edge
+///     }
+///
+///     fn edge_width(&self) -> f32 {
+///         self.edge_width
+///     }
+///
+///     fn alpha(&self) -> f32 {
+///         self.alpha
+///     }
+/// }
+/// ```
+pub trait StyledShape {
+    /// Get the fill color for this shape
+    ///
+    /// This is the primary color used to fill the interior of the shape.
+    fn fill_color(&self) -> Color;
+
+    /// Get the explicit edge color, if set
+    ///
+    /// Returns `None` to use auto-derived edge color (typically 30% darker
+    /// than fill color). Returns `Some(color)` for explicit edge color.
+    fn edge_color(&self) -> Option<Color>;
+
+    /// Get the edge (stroke) width in points
+    ///
+    /// Default is 0.8pt (matplotlib's `patch.linewidth`).
+    fn edge_width(&self) -> f32;
+
+    /// Get the fill alpha (opacity)
+    ///
+    /// Returns a value between 0.0 (fully transparent) and 1.0 (fully opaque).
+    fn alpha(&self) -> f32;
+
+    /// Get the resolved edge color
+    ///
+    /// If an explicit edge color is set, returns that. Otherwise,
+    /// returns a 30% darker version of the fill color.
+    ///
+    /// This is a convenience method that can be overridden for custom behavior.
+    fn resolved_edge_color(&self) -> Color {
+        self.edge_color()
+            .unwrap_or_else(|| self.fill_color().darken(0.3))
+    }
+
+    /// Get the fill color with alpha applied
+    ///
+    /// Returns the fill color with the shape's alpha value applied.
+    fn fill_color_with_alpha(&self) -> Color {
+        self.fill_color().with_alpha(self.alpha())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,5 +500,79 @@ mod tests {
         let (sx, sy) = area.data_to_screen(5.0, 50.0);
         assert!((sx - 400.0).abs() < 0.01); // Center x
         assert!((sy - 250.0).abs() < 0.01); // Center y
+    }
+
+    // Tests for StyledShape trait
+    struct TestShape {
+        fill: Color,
+        edge: Option<Color>,
+        edge_width: f32,
+        alpha: f32,
+    }
+
+    impl StyledShape for TestShape {
+        fn fill_color(&self) -> Color {
+            self.fill
+        }
+
+        fn edge_color(&self) -> Option<Color> {
+            self.edge
+        }
+
+        fn edge_width(&self) -> f32 {
+            self.edge_width
+        }
+
+        fn alpha(&self) -> f32 {
+            self.alpha
+        }
+    }
+
+    #[test]
+    fn test_styled_shape_explicit_edge() {
+        let shape = TestShape {
+            fill: Color::BLUE,
+            edge: Some(Color::RED),
+            edge_width: 1.5,
+            alpha: 0.8,
+        };
+
+        assert_eq!(shape.fill_color(), Color::BLUE);
+        assert_eq!(shape.edge_color(), Some(Color::RED));
+        assert_eq!(shape.resolved_edge_color(), Color::RED);
+        assert_eq!(shape.edge_width(), 1.5);
+        assert_eq!(shape.alpha(), 0.8);
+    }
+
+    #[test]
+    fn test_styled_shape_auto_edge() {
+        let shape = TestShape {
+            fill: Color::new(100, 150, 200),
+            edge: None,
+            edge_width: 0.8,
+            alpha: 1.0,
+        };
+
+        // Auto-derived edge should be 30% darker
+        let edge = shape.resolved_edge_color();
+        assert_eq!(edge.r, 70); // 100 * 0.7
+        assert_eq!(edge.g, 105); // 150 * 0.7
+        assert_eq!(edge.b, 140); // 200 * 0.7
+    }
+
+    #[test]
+    fn test_styled_shape_fill_with_alpha() {
+        let shape = TestShape {
+            fill: Color::new(100, 150, 200),
+            edge: None,
+            edge_width: 0.8,
+            alpha: 0.5,
+        };
+
+        let fill_with_alpha = shape.fill_color_with_alpha();
+        assert_eq!(fill_with_alpha.r, 100);
+        assert_eq!(fill_with_alpha.g, 150);
+        assert_eq!(fill_with_alpha.b, 200);
+        assert_eq!(fill_with_alpha.a, 127); // 255 * 0.5 ≈ 127
     }
 }
