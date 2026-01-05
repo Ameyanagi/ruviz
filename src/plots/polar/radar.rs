@@ -11,6 +11,7 @@
 //! - [`PlotRender`] for `RadarPlotData`
 
 use crate::core::Result;
+use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, MarkerStyle, Theme};
@@ -396,6 +397,117 @@ impl PlotRender for RadarPlotData {
                         sy2,
                         series_color,
                         config.line_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+            }
+
+            // Draw markers if configured
+            if config.marker_size > 0.0 {
+                for (x, y) in &series.markers {
+                    let (sx, sy) = area.data_to_screen(*x, *y);
+                    renderer.draw_marker(
+                        sx,
+                        sy,
+                        config.marker_size,
+                        MarkerStyle::Circle,
+                        series_color,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
+        if self.series.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let resolver = StyleResolver::new(theme);
+
+        // Use StyleResolver for line width
+        let effective_line_width =
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
+
+        // Draw grid rings
+        if config.show_grid {
+            let grid_color = theme.grid_color;
+            for ring in &self.grid_rings {
+                if ring.len() < 2 {
+                    continue;
+                }
+                // Draw closed polygon for the ring
+                for i in 0..ring.len() {
+                    let (x1, y1) = ring[i];
+                    let (x2, y2) = ring[(i + 1) % ring.len()];
+                    let (sx1, sy1) = area.data_to_screen(x1, y1);
+                    let (sx2, sy2) = area.data_to_screen(x2, y2);
+                    renderer.draw_line(sx1, sy1, sx2, sy2, grid_color, 0.5, LineStyle::Solid)?;
+                }
+            }
+
+            // Draw axes
+            for &((x1, y1), (x2, y2)) in &self.axes {
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                renderer.draw_line(sx1, sy1, sx2, sy2, grid_color, 0.5, LineStyle::Solid)?;
+            }
+        }
+
+        // Draw each series
+        let colors = config.colors.clone().unwrap_or_else(|| {
+            // Use color cycle
+            vec![color]
+        });
+
+        for (series_idx, series) in self.series.iter().enumerate() {
+            let series_color = colors
+                .get(series_idx % colors.len())
+                .copied()
+                .unwrap_or(color);
+
+            // Draw fill if enabled - use provided alpha
+            if config.fill && !series.polygon.is_empty() {
+                let fill_alpha = if alpha != 1.0 {
+                    alpha * config.fill_alpha
+                } else {
+                    config.fill_alpha
+                };
+                let fill_color = series_color.with_alpha(fill_alpha);
+                let screen_polygon: Vec<(f32, f32)> = series
+                    .polygon
+                    .iter()
+                    .map(|(x, y)| area.data_to_screen(*x, *y))
+                    .collect();
+                renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+            }
+
+            // Draw lines connecting points
+            if series.polygon.len() > 1 {
+                let n = series.polygon.len();
+                for i in 0..n {
+                    let (x1, y1) = series.polygon[i];
+                    let (x2, y2) = series.polygon[(i + 1) % n];
+                    let (sx1, sy1) = area.data_to_screen(x1, y1);
+                    let (sx2, sy2) = area.data_to_screen(x2, y2);
+                    renderer.draw_line(
+                        sx1,
+                        sy1,
+                        sx2,
+                        sy2,
+                        series_color,
+                        effective_line_width,
                         LineStyle::Solid,
                     )?;
                 }
