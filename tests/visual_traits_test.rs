@@ -238,6 +238,185 @@ fn test_scatter_visual() {
 }
 
 // =============================================================================
+// Histogram Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Visual test - run with: cargo test --test visual_traits_test -- --ignored"]
+fn test_histogram_visual() {
+    use ruviz::plots::histogram::HistogramConfig;
+
+    let config = visual::VisualTestConfig::default();
+    let data = generate_test_data(1000);
+
+    let result = visual::run_visual_test("histogram", &config, |path| {
+        let hist_config = HistogramConfig::default().bins(30);
+        Plot::new()
+            .title("Histogram")
+            .xlabel("Value")
+            .ylabel("Frequency")
+            .histogram(&data, Some(hist_config))
+            .end_series()
+            .grid(true)
+            .save(path)?;
+        Ok(())
+    });
+
+    if !result.passed {
+        println!("{}", result.assert_message());
+    }
+}
+
+// =============================================================================
+// Box Plot Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Visual test - run with: cargo test --test visual_traits_test -- --ignored"]
+fn test_boxplot_visual() {
+    let config = visual::VisualTestConfig::default();
+    let data = generate_test_data(100);
+
+    let result = visual::run_visual_test("boxplot", &config, |path| {
+        Plot::new()
+            .title("Box Plot")
+            .ylabel("Value")
+            .boxplot(&data, None)
+            .end_series()
+            .grid(true)
+            .save(path)?;
+        Ok(())
+    });
+
+    if !result.passed {
+        println!("{}", result.assert_message());
+    }
+}
+
+// =============================================================================
+// Violin Plot Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Visual test - run with: cargo test --test visual_traits_test -- --ignored"]
+fn test_violin_visual() {
+    let config = visual::VisualTestConfig::default();
+    let data = generate_test_data(200);
+
+    let result = visual::run_visual_test("violin", &config, |path| {
+        Plot::new()
+            .title("Violin Plot")
+            .ylabel("Value")
+            .violin(&data, None)
+            .end_series()
+            .grid(true)
+            .save(path)?;
+        Ok(())
+    });
+
+    if !result.passed {
+        println!("{}", result.assert_message());
+    }
+}
+
+// =============================================================================
+// Contour Plot Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Visual test - run with: cargo test --test visual_traits_test -- --ignored"]
+fn test_contour_visual() {
+    let config = visual::VisualTestConfig::default();
+
+    let result = visual::run_visual_test("contour", &config, |path| {
+        // Generate 2D grid data
+        let n = 50;
+        let x: Vec<f64> = (0..n)
+            .map(|i| -3.0 + 6.0 * i as f64 / (n - 1) as f64)
+            .collect();
+        let y: Vec<f64> = x.clone();
+        let mut z = vec![vec![0.0; n]; n];
+
+        for (i, yi) in y.iter().enumerate() {
+            for (j, xj) in x.iter().enumerate() {
+                z[i][j] = (-xj * xj - yi * yi).exp()
+                    + 0.5 * (-(xj - 1.0).powi(2) - (yi - 1.0).powi(2)).exp();
+            }
+        }
+
+        Plot::new()
+            .title("Contour Plot")
+            .xlabel("X")
+            .ylabel("Y")
+            .contour(&x, &y, &z, None)
+            .end_series()
+            .save(path)?;
+        Ok(())
+    });
+
+    if !result.passed {
+        println!("{}", result.assert_message());
+    }
+}
+
+// =============================================================================
+// Heatmap Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Visual test - run with: cargo test --test visual_traits_test -- --ignored"]
+fn test_heatmap_visual() {
+    let config = visual::VisualTestConfig::default();
+
+    let result = visual::run_visual_test("heatmap", &config, |path| {
+        // Generate matrix data
+        let matrix = vec![
+            vec![1.0, 2.0, 3.0, 4.0],
+            vec![5.0, 6.0, 7.0, 8.0],
+            vec![9.0, 10.0, 11.0, 12.0],
+            vec![13.0, 14.0, 15.0, 16.0],
+        ];
+
+        Plot::new()
+            .title("Heatmap")
+            .heatmap(&matrix, None)
+            .end_series()
+            .save(path)?;
+        Ok(())
+    });
+
+    if !result.passed {
+        println!("{}", result.assert_message());
+    }
+}
+
+// =============================================================================
+// Radar Chart Tests
+// =============================================================================
+
+#[test]
+#[ignore = "Visual test - run with: cargo test --test visual_traits_test -- --ignored"]
+fn test_radar_visual() {
+    let config = visual::VisualTestConfig::default();
+
+    let result = visual::run_visual_test("radar", &config, |path| {
+        let categories = vec!["Speed", "Power", "Range", "Defense", "Health", "Magic"];
+        let values = vec![0.8, 0.6, 0.7, 0.5, 0.9, 0.4];
+
+        Plot::new()
+            .title("Radar Chart")
+            .radar(&categories, &values, None)
+            .end_series()
+            .save(path)?;
+        Ok(())
+    });
+
+    if !result.passed {
+        println!("{}", result.assert_message());
+    }
+}
+
+// =============================================================================
 // Helper to run all visual tests
 // =============================================================================
 
@@ -258,4 +437,10 @@ fn test_all_visual() {
     println!("  - test_step_visual");
     println!("  - test_errorbar_visual");
     println!("  - test_scatter_visual");
+    println!("  - test_histogram_visual");
+    println!("  - test_boxplot_visual");
+    println!("  - test_violin_visual");
+    println!("  - test_contour_visual");
+    println!("  - test_heatmap_visual");
+    println!("  - test_radar_visual");
 }
