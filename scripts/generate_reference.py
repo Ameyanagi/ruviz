@@ -244,6 +244,115 @@ def generate_errorbar(data):
     print(f"Generated: {OUTPUT_DIR / 'errorbar.png'}")
 
 
+def generate_histogram(data):
+    """Generate histogram plot reference."""
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE, dpi=DPI)
+
+    ax.hist(data['normal'], bins=30, alpha=0.7, edgecolor='black',
+            linewidth=0.8, label='Normal')
+    ax.hist(data['bimodal'], bins=30, alpha=0.7, edgecolor='black',
+            linewidth=0.8, label='Bimodal')
+
+    ax.set_title('Histogram')
+    ax.set_xlabel('Value')
+    ax.set_ylabel('Frequency')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / 'histogram.png')
+    plt.close(fig)
+    print(f"Generated: {OUTPUT_DIR / 'histogram.png'}")
+
+
+def generate_boxplot(data):
+    """Generate box plot reference."""
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE, dpi=DPI)
+
+    box_data = [data['normal'], data['bimodal'], data['uniform'], data['exponential']]
+    bp = ax.boxplot(box_data, tick_labels=['Normal', 'Bimodal', 'Uniform', 'Exponential'],
+                    patch_artist=True)
+
+    # Style the boxes with fill color
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+
+    ax.set_title('Box Plot')
+    ax.set_ylabel('Value')
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / 'boxplot.png')
+    plt.close(fig)
+    print(f"Generated: {OUTPUT_DIR / 'boxplot.png'}")
+
+
+def generate_heatmap(data):
+    """Generate heatmap plot reference."""
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE, dpi=DPI)
+
+    # Generate correlation-like data
+    np.random.seed(SEED)
+    matrix = np.random.randn(8, 8)
+    matrix = (matrix + matrix.T) / 2  # Make symmetric
+
+    if sns:
+        sns.heatmap(matrix, ax=ax, cmap='viridis', annot=True, fmt='.2f',
+                    linewidths=0.5, linecolor='white')
+    else:
+        im = ax.imshow(matrix, cmap='viridis')
+        fig.colorbar(im, ax=ax)
+        # Add text annotations
+        for i in range(matrix.shape[0]):
+            for j in range(matrix.shape[1]):
+                ax.text(j, i, f'{matrix[i, j]:.2f}', ha='center', va='center',
+                        color='white' if abs(matrix[i, j]) > 0.5 else 'black',
+                        fontsize=8)
+
+    ax.set_title('Heatmap')
+
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / 'heatmap.png')
+    plt.close(fig)
+    print(f"Generated: {OUTPUT_DIR / 'heatmap.png'}")
+
+
+def generate_radar(data):
+    """Generate radar (spider) chart reference."""
+    fig, ax = plt.subplots(figsize=FIGURE_SIZE, dpi=DPI, subplot_kw=dict(polar=True))
+
+    # Categories
+    categories = ['Speed', 'Power', 'Range', 'Defense', 'Health', 'Magic']
+    N = len(categories)
+
+    # Values for two series
+    values1 = [0.8, 0.6, 0.7, 0.5, 0.9, 0.4]
+    values2 = [0.5, 0.9, 0.4, 0.8, 0.6, 0.7]
+
+    # Close the polygon
+    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+    values1 += values1[:1]
+    values2 += values2[:1]
+    angles += angles[:1]
+
+    ax.plot(angles, values1, 'o-', linewidth=2, label='Player 1')
+    ax.fill(angles, values1, alpha=0.25)
+    ax.plot(angles, values2, 'o-', linewidth=2, label='Player 2')
+    ax.fill(angles, values2, alpha=0.25)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(categories)
+    ax.set_title('Radar Chart')
+    ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0))
+
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / 'radar.png')
+    plt.close(fig)
+    print(f"Generated: {OUTPUT_DIR / 'radar.png'}")
+
+
 def generate_all():
     """Generate all reference images."""
     print(f"Generating reference images in: {OUTPUT_DIR}")
@@ -260,6 +369,10 @@ def generate_all():
         ('hexbin', generate_hexbin),
         ('pie', generate_pie),
         ('errorbar', generate_errorbar),
+        ('histogram', generate_histogram),
+        ('boxplot', generate_boxplot),
+        ('heatmap', generate_heatmap),
+        ('radar', generate_radar),
     ]
 
     for name, generator in generators:
@@ -289,6 +402,10 @@ def main():
         'hexbin': generate_hexbin,
         'pie': generate_pie,
         'errorbar': generate_errorbar,
+        'histogram': generate_histogram,
+        'boxplot': generate_boxplot,
+        'heatmap': generate_heatmap,
+        'radar': generate_radar,
         'all': generate_all,
     }
 
