@@ -1,6 +1,9 @@
 /// Box plot implementation with statistical analysis and outlier detection
+use crate::core::style_utils::{StyleResolver, defaults};
 use crate::core::{PlottingError, Result};
 use crate::data::Data1D;
+use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
+use crate::render::{Color, LineStyle, MarkerStyle, SkiaRenderer, Theme};
 
 /// Configuration for box plots
 #[derive(Debug, Clone)]
@@ -15,6 +18,22 @@ pub struct BoxPlotConfig {
     pub orientation: BoxOrientation,
     /// Whisker calculation method
     pub whisker_method: WhiskerMethod,
+    /// Fill alpha (opacity), default from defaults::BOXPLOT_FILL_ALPHA
+    pub fill_alpha: Option<f32>,
+    /// Edge color (auto-derived from fill if None)
+    pub edge_color: Option<Color>,
+    /// Edge width in points (default from defaults::PATCH_LINE_WIDTH)
+    pub edge_width: Option<f32>,
+    /// Box width ratio (fraction of available space, default 0.5)
+    pub width_ratio: Option<f32>,
+    /// Whisker line width (None = use theme.line_width)
+    pub whisker_width: Option<f32>,
+    /// Median line width (default: theme.line_width * 1.5)
+    pub median_width: Option<f32>,
+    /// Cap width as fraction of box width (default 0.5)
+    pub cap_width: Option<f32>,
+    /// Outlier marker size (default 6.0)
+    pub flier_size: Option<f32>,
 }
 
 /// Methods for detecting outliers
@@ -74,6 +93,385 @@ pub struct BoxPlotData {
     pub n_samples: usize,
     /// Interquartile range (Q3 - Q1)
     pub iqr: f64,
+    /// Box orientation
+    pub orientation: BoxOrientation,
+    /// Fill alpha for box
+    pub fill_alpha: f32,
+    /// Edge color (None = auto-derive)
+    pub edge_color: Option<Color>,
+    /// Edge width in points
+    pub edge_width: f32,
+    /// Box width ratio
+    pub width_ratio: f32,
+    /// Whisker line width
+    pub whisker_width: Option<f32>,
+    /// Median line width
+    pub median_width: Option<f32>,
+    /// Cap width as fraction of box width
+    pub cap_width: f32,
+    /// Outlier marker size
+    pub flier_size: f32,
+    /// Whether to show outliers
+    pub show_outliers: bool,
+    /// Whether to show mean
+    pub show_mean: bool,
+}
+
+// Implement PlotData trait for BoxPlotData
+impl PlotData for BoxPlotData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        // For vertical box plots, x is typically categorical (0, 1, 2, etc.)
+        // and y spans the data range
+        let (y_min, y_max) = if self.outliers.is_empty() {
+            (self.min, self.max)
+        } else {
+            let outlier_min = self.outliers.iter().copied().fold(f64::INFINITY, f64::min);
+            let outlier_max = self
+                .outliers
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            (self.min.min(outlier_min), self.max.max(outlier_max))
+        };
+
+        match self.orientation {
+            BoxOrientation::Vertical => ((-0.5, 0.5), (y_min, y_max)),
+            BoxOrientation::Horizontal => ((y_min, y_max), (-0.5, 0.5)),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.n_samples == 0
+    }
+}
+
+// Implement PlotRender trait for BoxPlotData
+impl PlotRender for BoxPlotData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        self.render_styled(
+            renderer,
+            area,
+            theme,
+            color,
+            self.fill_alpha,
+            Some(self.edge_width),
+        )
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let resolver = StyleResolver::new(theme);
+
+        // Resolve styling
+        let fill_alpha = alpha.clamp(0.0, 1.0);
+        let fill_color = color.with_alpha(fill_alpha);
+        let edge_color = resolver.edge_color(color, self.edge_color);
+        let edge_width = resolver.patch_line_width(line_width);
+        let whisker_width = self.whisker_width.unwrap_or(theme.line_width);
+        let median_width = self.median_width.unwrap_or(theme.line_width * 1.5);
+
+        // For rendering, use the center position (x=0 for single box)
+        let center_x = 0.0;
+
+        match self.orientation {
+            BoxOrientation::Vertical => {
+                self.render_vertical(
+                    renderer,
+                    area,
+                    center_x,
+                    fill_color,
+                    edge_color,
+                    edge_width,
+                    whisker_width,
+                    median_width,
+                    color,
+                )?;
+            }
+            BoxOrientation::Horizontal => {
+                self.render_horizontal(
+                    renderer,
+                    area,
+                    center_x,
+                    fill_color,
+                    edge_color,
+                    edge_width,
+                    whisker_width,
+                    median_width,
+                    color,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl BoxPlotData {
+    /// Render a vertical box plot
+    fn render_vertical(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        center_x: f64,
+        fill_color: Color,
+        edge_color: Color,
+        edge_width: f32,
+        whisker_width: f32,
+        median_width: f32,
+        marker_color: Color,
+    ) -> Result<()> {
+        // Calculate box dimensions
+        let box_half_width = (self.width_ratio * 0.5) as f64;
+        let cap_half_width = box_half_width * self.cap_width as f64;
+
+        // Convert key y-values to screen coordinates
+        let (left_x, _) = area.data_to_screen(center_x - box_half_width, self.q1);
+        let (right_x, _) = area.data_to_screen(center_x + box_half_width, self.q1);
+        let (_, q1_y) = area.data_to_screen(center_x, self.q1);
+        let (_, q3_y) = area.data_to_screen(center_x, self.q3);
+        let (_, median_y) = area.data_to_screen(center_x, self.median);
+        let (_, min_y) = area.data_to_screen(center_x, self.min);
+        let (_, max_y) = area.data_to_screen(center_x, self.max);
+        let (center_screen_x, _) = area.data_to_screen(center_x, 0.0);
+
+        // Draw box (filled rectangle from Q1 to Q3)
+        let box_x = left_x;
+        let box_y = q3_y.min(q1_y); // q3_y is higher on screen (smaller y)
+        let box_width = right_x - left_x;
+        let box_height = (q1_y - q3_y).abs();
+
+        renderer.draw_rectangle(box_x, box_y, box_width, box_height, fill_color, true)?;
+
+        // Draw box edge
+        if edge_width > 0.0 {
+            let vertices = [
+                (box_x, box_y),
+                (box_x + box_width, box_y),
+                (box_x + box_width, box_y + box_height),
+                (box_x, box_y + box_height),
+            ];
+            renderer.draw_polygon_outline(&vertices, edge_color, edge_width)?;
+        }
+
+        // Draw median line
+        renderer.draw_line(
+            left_x,
+            median_y,
+            right_x,
+            median_y,
+            edge_color,
+            median_width,
+            LineStyle::Solid,
+        )?;
+
+        // Draw whiskers (vertical lines from Q1 to min, and Q3 to max)
+        renderer.draw_line(
+            center_screen_x,
+            q1_y,
+            center_screen_x,
+            min_y,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+        renderer.draw_line(
+            center_screen_x,
+            q3_y,
+            center_screen_x,
+            max_y,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+
+        // Draw caps (horizontal lines at min and max)
+        let (cap_left, _) = area.data_to_screen(center_x - cap_half_width, self.min);
+        let (cap_right, _) = area.data_to_screen(center_x + cap_half_width, self.min);
+        renderer.draw_line(
+            cap_left,
+            min_y,
+            cap_right,
+            min_y,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+        renderer.draw_line(
+            cap_left,
+            max_y,
+            cap_right,
+            max_y,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+
+        // Draw outliers
+        if self.show_outliers && !self.outliers.is_empty() {
+            for &outlier in &self.outliers {
+                let (ox, oy) = area.data_to_screen(center_x, outlier);
+                renderer.draw_marker(ox, oy, self.flier_size, MarkerStyle::Circle, marker_color)?;
+            }
+        }
+
+        // Draw mean if present
+        if self.show_mean {
+            if let Some(mean_val) = self.mean {
+                let (mx, my) = area.data_to_screen(center_x, mean_val);
+                // Diamond marker for mean
+                renderer.draw_marker(
+                    mx,
+                    my,
+                    self.flier_size,
+                    MarkerStyle::Diamond,
+                    marker_color,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Render a horizontal box plot
+    fn render_horizontal(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        center_y: f64,
+        fill_color: Color,
+        edge_color: Color,
+        edge_width: f32,
+        whisker_width: f32,
+        median_width: f32,
+        marker_color: Color,
+    ) -> Result<()> {
+        // Calculate box dimensions
+        let box_half_height = (self.width_ratio * 0.5) as f64;
+        let cap_half_height = box_half_height * self.cap_width as f64;
+
+        // Convert key x-values to screen coordinates
+        let (q1_x, _) = area.data_to_screen(self.q1, center_y);
+        let (q3_x, _) = area.data_to_screen(self.q3, center_y);
+        let (median_x, _) = area.data_to_screen(self.median, center_y);
+        let (min_x, _) = area.data_to_screen(self.min, center_y);
+        let (max_x, _) = area.data_to_screen(self.max, center_y);
+        let (_, top_y) = area.data_to_screen(self.q1, center_y - box_half_height);
+        let (_, bottom_y) = area.data_to_screen(self.q1, center_y + box_half_height);
+        let (_, center_screen_y) = area.data_to_screen(0.0, center_y);
+
+        // Draw box (filled rectangle from Q1 to Q3)
+        let box_x = q1_x.min(q3_x);
+        let box_y = top_y.min(bottom_y);
+        let box_width = (q3_x - q1_x).abs();
+        let box_height = (bottom_y - top_y).abs();
+
+        renderer.draw_rectangle(box_x, box_y, box_width, box_height, fill_color, true)?;
+
+        // Draw box edge
+        if edge_width > 0.0 {
+            let vertices = [
+                (box_x, box_y),
+                (box_x + box_width, box_y),
+                (box_x + box_width, box_y + box_height),
+                (box_x, box_y + box_height),
+            ];
+            renderer.draw_polygon_outline(&vertices, edge_color, edge_width)?;
+        }
+
+        // Draw median line (vertical for horizontal box plot)
+        renderer.draw_line(
+            median_x,
+            top_y,
+            median_x,
+            bottom_y,
+            edge_color,
+            median_width,
+            LineStyle::Solid,
+        )?;
+
+        // Draw whiskers (horizontal lines from Q1 to min, and Q3 to max)
+        renderer.draw_line(
+            q1_x,
+            center_screen_y,
+            min_x,
+            center_screen_y,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+        renderer.draw_line(
+            q3_x,
+            center_screen_y,
+            max_x,
+            center_screen_y,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+
+        // Draw caps (vertical lines at min and max)
+        let (_, cap_top) = area.data_to_screen(self.min, center_y - cap_half_height);
+        let (_, cap_bottom) = area.data_to_screen(self.min, center_y + cap_half_height);
+        renderer.draw_line(
+            min_x,
+            cap_top,
+            min_x,
+            cap_bottom,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+        renderer.draw_line(
+            max_x,
+            cap_top,
+            max_x,
+            cap_bottom,
+            edge_color,
+            whisker_width,
+            LineStyle::Solid,
+        )?;
+
+        // Draw outliers
+        if self.show_outliers && !self.outliers.is_empty() {
+            for &outlier in &self.outliers {
+                let (ox, oy) = area.data_to_screen(outlier, center_y);
+                renderer.draw_marker(ox, oy, self.flier_size, MarkerStyle::Circle, marker_color)?;
+            }
+        }
+
+        // Draw mean if present
+        if self.show_mean {
+            if let Some(mean_val) = self.mean {
+                let (mx, my) = area.data_to_screen(mean_val, center_y);
+                renderer.draw_marker(
+                    mx,
+                    my,
+                    self.flier_size,
+                    MarkerStyle::Diamond,
+                    marker_color,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for BoxPlotConfig {
@@ -84,9 +482,20 @@ impl Default for BoxPlotConfig {
             show_mean: false,
             orientation: BoxOrientation::Vertical,
             whisker_method: WhiskerMethod::Tukey,
+            fill_alpha: None,
+            edge_color: None,
+            edge_width: None,
+            width_ratio: None,
+            whisker_width: None,
+            median_width: None,
+            cap_width: None,
+            flier_size: None,
         }
     }
 }
+
+// Implement PlotConfig marker trait
+impl PlotConfig for BoxPlotConfig {}
 
 impl BoxPlotConfig {
     pub fn new() -> Self {
@@ -117,6 +526,54 @@ impl BoxPlotConfig {
         self.whisker_method = method;
         self
     }
+
+    /// Set fill alpha (0.0-1.0)
+    pub fn fill_alpha(mut self, alpha: f32) -> Self {
+        self.fill_alpha = Some(alpha.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set edge color explicitly
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.edge_color = Some(color);
+        self
+    }
+
+    /// Set edge width in points
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.edge_width = Some(width);
+        self
+    }
+
+    /// Set box width ratio (fraction of available space)
+    pub fn width_ratio(mut self, ratio: f32) -> Self {
+        self.width_ratio = Some(ratio.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set whisker line width
+    pub fn whisker_width(mut self, width: f32) -> Self {
+        self.whisker_width = Some(width);
+        self
+    }
+
+    /// Set median line width
+    pub fn median_width(mut self, width: f32) -> Self {
+        self.median_width = Some(width);
+        self
+    }
+
+    /// Set cap width as fraction of box width
+    pub fn cap_width(mut self, width: f32) -> Self {
+        self.cap_width = Some(width.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set outlier marker size
+    pub fn flier_size(mut self, size: f32) -> Self {
+        self.flier_size = Some(size);
+        self
+    }
 }
 
 /// Calculate box plot statistics from data
@@ -145,6 +602,16 @@ where
     let (whisker_min, whisker_max, outliers) =
         calculate_whiskers_and_outliers(&values, q1, q3, iqr, config);
 
+    // Extract styling from config, using defaults for None values
+    let fill_alpha = config.fill_alpha.unwrap_or(defaults::BOXPLOT_FILL_ALPHA);
+    let edge_color = config.edge_color;
+    let edge_width = config.edge_width.unwrap_or(defaults::PATCH_LINE_WIDTH);
+    let width_ratio = config.width_ratio.unwrap_or(defaults::BOXPLOT_WIDTH_RATIO);
+    let whisker_width = config.whisker_width;
+    let median_width = config.median_width;
+    let cap_width = config.cap_width.unwrap_or(defaults::BOXPLOT_CAP_WIDTH);
+    let flier_size = config.flier_size.unwrap_or(defaults::FLIER_SIZE);
+
     Ok(BoxPlotData {
         min: whisker_min,
         q1,
@@ -155,6 +622,17 @@ where
         outliers,
         n_samples,
         iqr,
+        orientation: config.orientation,
+        fill_alpha,
+        edge_color,
+        edge_width,
+        width_ratio,
+        whisker_width,
+        median_width,
+        cap_width,
+        flier_size,
+        show_outliers: config.show_outliers,
+        show_mean: config.show_mean,
     })
 }
 
@@ -441,5 +919,52 @@ mod tests {
             WhiskerMethod::Percentile10_90 => {}
             _ => panic!("Expected Percentile10_90"),
         }
+    }
+
+    #[test]
+    fn test_plot_data_trait() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let config = BoxPlotConfig::new();
+        let boxplot = calculate_box_plot(&data, &config).unwrap();
+
+        // Test data_bounds: returns ((x_min, x_max), (y_min, y_max))
+        let ((_x_min, _x_max), (y_min, y_max)) = boxplot.data_bounds();
+        // Bounds should include y range (min to max whisker values)
+        assert!(y_min <= 1.0);
+        assert!(y_max >= 10.0);
+
+        // Test is_empty
+        assert!(!boxplot.is_empty());
+    }
+
+    #[test]
+    fn test_styling_fields() {
+        let config = BoxPlotConfig::new()
+            .fill_alpha(0.5)
+            .edge_color(Color::new(255, 0, 0))
+            .edge_width(2.0)
+            .width_ratio(0.8)
+            .whisker_width(1.5)
+            .median_width(2.5)
+            .cap_width(0.6)
+            .flier_size(8.0);
+
+        assert_eq!(config.fill_alpha, Some(0.5));
+        assert!(config.edge_color.is_some());
+        assert_eq!(config.edge_width, Some(2.0));
+        assert_eq!(config.width_ratio, Some(0.8));
+        assert_eq!(config.whisker_width, Some(1.5));
+        assert_eq!(config.median_width, Some(2.5));
+        assert_eq!(config.cap_width, Some(0.6));
+        assert_eq!(config.flier_size, Some(8.0));
+
+        // Test that styling propagates to BoxPlotData
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let boxplot = calculate_box_plot(&data, &config).unwrap();
+
+        assert_eq!(boxplot.fill_alpha, 0.5);
+        assert!(boxplot.edge_color.is_some());
+        assert_eq!(boxplot.edge_width, 2.0);
+        assert_eq!(boxplot.width_ratio, 0.8);
     }
 }
