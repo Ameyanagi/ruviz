@@ -1,8 +1,10 @@
 //! Core Plot implementation and types
 
+mod builder;
 mod config;
 mod image;
 
+pub use builder::{PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{BackendType, GridMode, TickDirection};
 pub use image::Image;
 

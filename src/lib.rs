@@ -517,11 +517,14 @@ pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
         Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern, Legend,
-        LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot, Position, Result,
-        ShapeStyle, SubplotFigure, TextAlign, TextStyle, TextVAlign, subplots, subplots_default,
+        LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInput,
+        Position, Result, SeriesStyle, ShapeStyle, SubplotFigure, TextAlign, TextStyle, TextVAlign,
+        subplots, subplots_default,
     };
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
-    pub use crate::plots::{HeatmapConfig, Interpolation};
+    pub use crate::plots::{
+        HeatmapConfig, Interpolation, PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender,
+    };
     pub use crate::render::{
         Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,
         Theme,

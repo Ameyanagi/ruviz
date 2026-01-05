@@ -31,7 +31,7 @@ pub use legend::{
     Legend, LegendAnchor, LegendFrame, LegendItem, LegendItemType, LegendPosition, LegendSpacing,
     LegendSpacingPixels, find_best_position,
 };
-pub use plot::{BackendType, Plot};
+pub use plot::{BackendType, Plot, PlotBuilder, PlotInput, SeriesStyle};
 pub use position::Position;
 pub use style::PlotStyle;
 pub use subplot::{GridSpec, SubplotFigure, subplots, subplots_default};

@@ -6,9 +6,9 @@
 //!
 //! All plot types implement the core traits defined in [`traits`]:
 //!
-//! - [`PlotCompute`](traits::PlotCompute): Data transformation
-//! - [`PlotData`](traits::PlotData): Common data interface
-//! - [`PlotRender`](traits::PlotRender): Rendering to canvas
+//! - [`PlotCompute`]: Data transformation
+//! - [`PlotData`]: Common data interface
+//! - [`PlotRender`]: Rendering to canvas
 //!
 //! ## Plot Categories
 //!
