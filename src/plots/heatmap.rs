@@ -1,8 +1,19 @@
 //! Heatmap visualization for 2D array data
 //!
 //! Provides color-mapped grid visualization with colorbars and annotations.
+//!
+//! # Trait-Based API
+//!
+//! Heatmap plots implement the core plot traits:
+//! - [`PlotConfig`] for `HeatmapConfig`
+//! - [`PlotData`] for `HeatmapData`
+//! - [`PlotRender`] for `HeatmapData`
 
-use crate::render::{Color, ColorMap};
+use crate::core::Result as PlotResult;
+use crate::core::style_utils::StyleResolver;
+use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
+use crate::render::skia::SkiaRenderer;
+use crate::render::{Color, ColorMap, Theme};
 
 /// Interpolation method for heatmap rendering
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -141,6 +152,9 @@ impl HeatmapConfig {
     }
 }
 
+// Implement PlotConfig marker trait
+impl PlotConfig for HeatmapConfig {}
+
 /// Processed heatmap data ready for rendering
 #[derive(Debug, Clone)]
 pub struct HeatmapData {
@@ -265,6 +279,117 @@ pub fn process_heatmap_flat(
     process_heatmap(&values, config)
 }
 
+// =============================================================================
+// PlotData and PlotRender implementations
+// =============================================================================
+
+impl PlotData for HeatmapData {
+    fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
+        // X bounds: 0 to n_cols
+        // Y bounds: 0 to n_rows
+        ((0.0, self.n_cols as f64), (0.0, self.n_rows as f64))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.values.is_empty() || self.values[0].is_empty()
+    }
+}
+
+impl PlotRender for HeatmapData {
+    fn render(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        _color: Color, // Heatmaps use colormap, not single color
+    ) -> PlotResult<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let alpha = config.alpha;
+
+        // Draw each cell
+        for row in 0..self.n_rows {
+            for col in 0..self.n_cols {
+                let value = self.values[row][col];
+                if !value.is_finite() {
+                    continue;
+                }
+
+                // Get color from colormap
+                let cell_color = self.get_color(value).with_alpha(alpha);
+
+                // Calculate cell bounds in data coordinates
+                // Y is inverted (row 0 at top)
+                let x1 = col as f64;
+                let x2 = (col + 1) as f64;
+                let y1 = (self.n_rows - row - 1) as f64;
+                let y2 = (self.n_rows - row) as f64;
+
+                // Convert to screen coordinates
+                let (sx1, sy1) = area.data_to_screen(x1, y2);
+                let (sx2, sy2) = area.data_to_screen(x2, y1);
+
+                // Draw the cell
+                renderer.draw_rectangle(sx1, sy1, sx2 - sx1, sy2 - sy1, cell_color, true)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        _color: Color,
+        alpha: f32,
+        _line_width: Option<f32>,
+    ) -> PlotResult<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let _resolver = StyleResolver::new(theme);
+
+        // Use provided alpha or config alpha
+        let effective_alpha = if alpha != 1.0 { alpha } else { config.alpha };
+
+        // Draw each cell
+        for row in 0..self.n_rows {
+            for col in 0..self.n_cols {
+                let value = self.values[row][col];
+                if !value.is_finite() {
+                    continue;
+                }
+
+                // Get color from colormap
+                let cell_color = self.get_color(value).with_alpha(effective_alpha);
+
+                // Calculate cell bounds in data coordinates
+                // Y is inverted (row 0 at top)
+                let x1 = col as f64;
+                let x2 = (col + 1) as f64;
+                let y1 = (self.n_rows - row - 1) as f64;
+                let y2 = (self.n_rows - row) as f64;
+
+                // Convert to screen coordinates
+                let (sx1, sy1) = area.data_to_screen(x1, y2);
+                let (sx2, sy2) = area.data_to_screen(x2, y1);
+
+                // Draw the cell
+                renderer.draw_rectangle(sx1, sy1, sx2 - sx1, sy2 - sy1, cell_color, true)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,5 +502,28 @@ mod tests {
     #[test]
     fn test_interpolation_enum() {
         assert_eq!(Interpolation::default(), Interpolation::Nearest);
+    }
+
+    #[test]
+    fn test_heatmap_config_implements_plot_config() {
+        fn assert_plot_config<T: PlotConfig>() {}
+        assert_plot_config::<HeatmapConfig>();
+    }
+
+    #[test]
+    fn test_heatmap_plot_data_trait() {
+        let data = vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]];
+        let config = HeatmapConfig::default();
+        let heatmap = process_heatmap(&data, config).unwrap();
+
+        // Test data_bounds
+        let ((x_min, x_max), (y_min, y_max)) = heatmap.data_bounds();
+        assert!((x_min - 0.0).abs() < 0.001);
+        assert!((x_max - 3.0).abs() < 0.001);
+        assert!((y_min - 0.0).abs() < 0.001);
+        assert!((y_max - 2.0).abs() < 0.001);
+
+        // Test is_empty
+        assert!(!heatmap.is_empty());
     }
 }
