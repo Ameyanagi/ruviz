@@ -47,3 +47,4 @@ plans/
 claudedocs/
 AGENTS.md
 CLAUDE.mdexport_output/
+.playwright-mcp
