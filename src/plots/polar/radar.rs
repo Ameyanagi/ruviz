@@ -1,6 +1,26 @@
 //! Radar (Spider/Star) chart implementations
 //!
-//! Provides radar/spider charts for multivariate data visualization.
+//! Provides radar/spider charts for multivariate data visualization
+//! with configurable axis labels and styling.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use ruviz::plots::polar::RadarConfig;
+//!
+//! // Create radar chart with custom labels
+//! let config = RadarConfig::new()
+//!     .labels(vec!["Speed", "Power", "Defense", "Magic", "Luck"]
+//!         .into_iter().map(String::from).collect())
+//!     .fill(true)
+//!     .fill_alpha(0.3)
+//!     .show_axis_labels(true)   // Show category labels
+//!     .label_font_size(11.0);   // Font size in points
+//!
+//! // Hide labels for minimal appearance
+//! let minimal = RadarConfig::new()
+//!     .show_axis_labels(false);
+//! ```
 //!
 //! # Trait-Based API
 //!
@@ -40,6 +60,10 @@ pub struct RadarConfig {
     pub start_angle: f64,
     /// Value range (min, max) - None for auto
     pub value_range: Option<(f64, f64)>,
+    /// Show axis labels
+    pub show_axis_labels: bool,
+    /// Font size for axis labels
+    pub label_font_size: f32,
 }
 
 impl Default for RadarConfig {
@@ -55,6 +79,8 @@ impl Default for RadarConfig {
             grid_rings: 5,
             start_angle: PI / 2.0, // Start from top
             value_range: None,
+            show_axis_labels: true,
+            label_font_size: 10.0,
         }
     }
 }
@@ -104,6 +130,18 @@ impl RadarConfig {
     /// Set start angle
     pub fn start_angle(mut self, angle: f64) -> Self {
         self.start_angle = angle;
+        self
+    }
+
+    /// Show/hide axis labels
+    pub fn show_axis_labels(mut self, show: bool) -> Self {
+        self.show_axis_labels = show;
+        self
+    }
+
+    /// Set label font size
+    pub fn label_font_size(mut self, size: f32) -> Self {
+        self.label_font_size = size.max(1.0);
         self
     }
 }
@@ -359,6 +397,15 @@ impl PlotRender for RadarPlotData {
             }
         }
 
+        // Draw axis labels
+        if config.show_axis_labels {
+            let label_color = theme.foreground;
+            for (label, x, y) in &self.axis_labels {
+                let (sx, sy) = area.data_to_screen(*x, *y);
+                renderer.draw_text(label, sx, sy, config.label_font_size, label_color)?;
+            }
+        }
+
         // Draw each series
         let colors = config.colors.clone().unwrap_or_else(|| {
             // Use color cycle
@@ -462,6 +509,15 @@ impl PlotRender for RadarPlotData {
                 let (sx1, sy1) = area.data_to_screen(x1, y1);
                 let (sx2, sy2) = area.data_to_screen(x2, y2);
                 renderer.draw_line(sx1, sy1, sx2, sy2, grid_color, 0.5, LineStyle::Solid)?;
+            }
+        }
+
+        // Draw axis labels
+        if config.show_axis_labels {
+            let label_color = theme.foreground;
+            for (label, x, y) in &self.axis_labels {
+                let (sx, sy) = area.data_to_screen(*x, *y);
+                renderer.draw_text(label, sx, sy, config.label_font_size, label_color)?;
             }
         }
 

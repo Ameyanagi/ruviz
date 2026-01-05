@@ -1,6 +1,29 @@
 //! Polar plot implementations
 //!
-//! Provides polar scatter, line, and bar plots.
+//! Provides polar scatter, line, and bar plots with configurable axis labels.
+//!
+//! # Axis Labels
+//!
+//! Polar plots support angular (theta) and radial (r) axis labels:
+//!
+//! ```rust,ignore
+//! use ruviz::plots::polar::PolarPlotConfig;
+//!
+//! // Default: show all labels
+//! let config = PolarPlotConfig::default();
+//!
+//! // Customize label appearance
+//! let config = PolarPlotConfig::new()
+//!     .show_theta_labels(true)      // Show 0°, 30°, 60°, etc.
+//!     .show_r_labels(true)          // Show radial scale
+//!     .r_label_position(22.5)       // Position at 22.5° from right
+//!     .label_font_size(10.0);       // Font size in points
+//!
+//! // Hide labels for cleaner appearance
+//! let minimal = PolarPlotConfig::new()
+//!     .show_theta_labels(false)
+//!     .show_r_labels(false);
+//! ```
 //!
 //! # Trait-Based API
 //!
@@ -40,6 +63,14 @@ pub struct PolarPlotConfig {
     pub fill: bool,
     /// Fill alpha
     pub fill_alpha: f32,
+    /// Show angular axis labels (0°, 45°, 90°, etc.)
+    pub show_theta_labels: bool,
+    /// Show radial axis labels
+    pub show_r_labels: bool,
+    /// Position of radial labels in degrees from right (default: 22.5)
+    pub r_label_position: f64,
+    /// Font size for axis labels
+    pub label_font_size: f32,
 }
 
 impl Default for PolarPlotConfig {
@@ -56,6 +87,10 @@ impl Default for PolarPlotConfig {
             marker_size: 0.0,
             fill: false,
             fill_alpha: 0.3,
+            show_theta_labels: true,
+            show_r_labels: true,
+            r_label_position: 22.5, // degrees
+            label_font_size: 10.0,
         }
     }
 }
@@ -101,6 +136,30 @@ impl PolarPlotConfig {
         self.fill_alpha = alpha.clamp(0.0, 1.0);
         self
     }
+
+    /// Show/hide angular labels (0°, 45°, 90°, etc.)
+    pub fn show_theta_labels(mut self, show: bool) -> Self {
+        self.show_theta_labels = show;
+        self
+    }
+
+    /// Show/hide radial labels
+    pub fn show_r_labels(mut self, show: bool) -> Self {
+        self.show_r_labels = show;
+        self
+    }
+
+    /// Set position of radial labels (degrees from right)
+    pub fn r_label_position(mut self, degrees: f64) -> Self {
+        self.r_label_position = degrees;
+        self
+    }
+
+    /// Set label font size
+    pub fn label_font_size(mut self, size: f32) -> Self {
+        self.label_font_size = size.max(1.0);
+        self
+    }
 }
 
 // Implement PlotConfig marker trait
@@ -144,6 +203,17 @@ impl PolarPoint {
     }
 }
 
+/// A label with position and text
+#[derive(Debug, Clone)]
+pub struct PositionedLabel {
+    /// Screen-relative x position (in data coordinates)
+    pub x: f64,
+    /// Screen-relative y position (in data coordinates)
+    pub y: f64,
+    /// Label text
+    pub text: String,
+}
+
 /// Computed polar plot data
 #[derive(Debug, Clone)]
 pub struct PolarPlotData {
@@ -153,6 +223,10 @@ pub struct PolarPlotData {
     pub r_max: f64,
     /// Polygon vertices for fill (closed path)
     pub fill_polygon: Vec<(f64, f64)>,
+    /// Angular axis labels (0°, 90°, etc.)
+    pub theta_labels: Vec<PositionedLabel>,
+    /// Radial axis labels
+    pub r_labels: Vec<PositionedLabel>,
     /// Configuration used
     pub(crate) config: PolarPlotConfig,
 }
@@ -182,12 +256,16 @@ impl<'a> PolarPlotInput<'a> {
 /// # Returns
 /// PolarPlotData with converted points
 pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) -> PolarPlotData {
+    use std::f64::consts::PI;
+
     let n = r.len().min(theta.len());
     if n == 0 {
         return PolarPlotData {
             points: vec![],
             r_max: 1.0,
             fill_polygon: vec![],
+            theta_labels: vec![],
+            r_labels: vec![],
             config: config.clone(),
         };
     }
@@ -208,6 +286,9 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
         points.push(point);
     }
 
+    // Ensure we have a valid r_max
+    let r_max = if r_max > 0.0 { r_max } else { 1.0 };
+
     // Generate fill polygon if enabled
     let fill_polygon = if config.fill && !points.is_empty() {
         let mut polygon: Vec<(f64, f64)> = points.iter().map(|p| (p.x, p.y)).collect();
@@ -218,10 +299,47 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
         vec![]
     };
 
+    // Compute theta labels (0°, 45°, 90°, etc.) positioned at edge of plot
+    let theta_labels = if config.show_theta_labels {
+        let label_radius = r_max * 1.12; // Position slightly outside the plot
+        (0..config.thetgrid_count)
+            .map(|i| {
+                let angle = 2.0 * PI * i as f64 / config.thetgrid_count as f64;
+                let degrees = (angle * 180.0 / PI).round() as i32;
+                PositionedLabel {
+                    x: label_radius * angle.cos(),
+                    y: label_radius * angle.sin(),
+                    text: format!("{}°", degrees),
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    // Compute radial labels positioned along r_label_position angle
+    let r_labels = if config.show_r_labels {
+        let label_angle = config.r_label_position * PI / 180.0; // Convert to radians
+        (1..=config.rgrid_count)
+            .map(|i| {
+                let radius = r_max * i as f64 / config.rgrid_count as f64;
+                PositionedLabel {
+                    x: radius * label_angle.cos(),
+                    y: radius * label_angle.sin(),
+                    text: format!("{:.1}", radius),
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
     PolarPlotData {
         points,
-        r_max: if r_max > 0.0 { r_max } else { 1.0 },
+        r_max,
         fill_polygon,
+        theta_labels,
+        r_labels,
         config: config.clone(),
     }
 }
@@ -303,7 +421,7 @@ impl PlotRender for PolarPlotData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
     ) -> Result<()> {
         if self.points.is_empty() {
@@ -355,6 +473,19 @@ impl PlotRender for PolarPlotData {
                     line_color,
                 )?;
             }
+        }
+
+        // Draw theta labels (angular axis labels: 0°, 30°, 60°, etc.)
+        let label_color = theme.foreground;
+        for label in &self.theta_labels {
+            let (sx, sy) = area.data_to_screen(label.x, label.y);
+            renderer.draw_text(&label.text, sx, sy, config.label_font_size, label_color)?;
+        }
+
+        // Draw radial labels
+        for label in &self.r_labels {
+            let (sx, sy) = area.data_to_screen(label.x, label.y);
+            renderer.draw_text(&label.text, sx, sy, config.label_font_size, label_color)?;
         }
 
         Ok(())

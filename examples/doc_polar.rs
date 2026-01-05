@@ -83,6 +83,22 @@ fn main() -> Result<()> {
         )?;
     }
 
+    // Draw angular axis labels (0°, 30°, 60°, etc.)
+    let label_radius = radius + 15.0;
+    for i in 0..12 {
+        let angle = i as f64 * std::f64::consts::PI / 6.0;
+        let degrees = (i * 30) % 360;
+        let label_x = center_x + label_radius * angle.cos() as f32;
+        let label_y = center_y - label_radius * angle.sin() as f32;
+        renderer.draw_text_centered(
+            &format!("{}°", degrees),
+            label_x,
+            label_y,
+            9.0,
+            theme.foreground,
+        )?;
+    }
+
     // Draw polar data (rose)
     let max_r = r1.iter().chain(r2.iter()).fold(0.0_f64, |a, &b| a.max(b));
 

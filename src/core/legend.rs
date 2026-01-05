@@ -374,23 +374,57 @@ pub struct LegendSpacingPixels {
 }
 
 // ============================================================================
-// Frame Styling
+// Legend Style (matplotlib-compatible)
 // ============================================================================
 
-/// Frame/box styling for the legend
+/// Legend styling configuration (matplotlib-compatible)
+///
+/// Provides comprehensive legend frame styling matching matplotlib/seaborn defaults.
+/// This replaces the old `LegendFrame` struct with enhanced functionality.
+///
+/// # matplotlib Compatibility
+///
+/// | matplotlib rcParam | LegendStyle field | Default |
+/// |-------------------|-------------------|---------|
+/// | `legend.frameon` | `visible` | `true` |
+/// | `legend.framealpha` | `alpha` | `0.8` |
+/// | `legend.facecolor` | `face_color` | `WHITE` |
+/// | `legend.edgecolor` | `edge_color` | `#CCCCCC` |
+/// | `legend.fancybox` | `fancy_box` | `true` |
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ruviz::core::LegendStyle;
+///
+/// // Default matplotlib-like style
+/// let style = LegendStyle::default();
+///
+/// // No frame
+/// let invisible = LegendStyle::invisible();
+///
+/// // Custom style
+/// let custom = LegendStyle::default()
+///     .alpha(0.9)
+///     .fancy_box(false);
+/// ```
 #[derive(Debug, Clone)]
-pub struct LegendFrame {
-    /// Whether to draw the frame
+pub struct LegendStyle {
+    /// Whether to draw the frame (matplotlib `legend.frameon`)
     pub visible: bool,
-    /// Background fill color (with alpha for transparency)
-    pub background: Color,
-    /// Border stroke color (None = no border)
-    pub border_color: Option<Color>,
+    /// Background alpha (matplotlib `legend.framealpha`)
+    pub alpha: f32,
+    /// Background fill color (matplotlib `legend.facecolor`)
+    pub face_color: Color,
+    /// Border stroke color (matplotlib `legend.edgecolor`)
+    pub edge_color: Option<Color>,
     /// Border line width in points
     pub border_width: f32,
-    /// Corner radius for rounded corners (0 = sharp corners)
+    /// Use rounded corners (matplotlib `legend.fancybox`)
+    pub fancy_box: bool,
+    /// Corner radius for rounded corners (when fancy_box=true)
     pub corner_radius: f32,
-    /// Whether to draw a drop shadow
+    /// Whether to draw a drop shadow (matplotlib `legend.shadow`)
     pub shadow: bool,
     /// Shadow offset (x, y) in points
     pub shadow_offset: (f32, f32),
@@ -398,14 +432,24 @@ pub struct LegendFrame {
     pub shadow_color: Color,
 }
 
-impl Default for LegendFrame {
+impl Default for LegendStyle {
+    /// Create default legend style matching matplotlib defaults
+    ///
+    /// - `visible: true` (frameon)
+    /// - `alpha: 0.8` (framealpha)
+    /// - `face_color: WHITE` (facecolor)
+    /// - `edge_color: #CCCCCC` (edgecolor, matplotlib `.8` gray)
+    /// - `fancy_box: true` (fancybox)
+    /// - `corner_radius: 4.0` (for fancybox)
     fn default() -> Self {
         Self {
             visible: true,
-            background: Color::WHITE, // Fully opaque white (users can set transparency if needed)
-            border_color: Some(Color::new_rgba(128, 128, 128, 200)),
+            alpha: 0.8,
+            face_color: Color::WHITE,
+            edge_color: Some(Color::from_gray(204)), // #CCCCCC (matplotlib .8)
             border_width: 0.8,
-            corner_radius: 0.0,
+            fancy_box: true,
+            corner_radius: 4.0,
             shadow: false,
             shadow_offset: (2.0, -2.0),
             shadow_color: Color::new_rgba(0, 0, 0, 50),
@@ -413,8 +457,13 @@ impl Default for LegendFrame {
     }
 }
 
-impl LegendFrame {
-    /// Create a frame with no visible background or border
+impl LegendStyle {
+    /// Create a new legend style with defaults
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a style with no visible frame
     pub fn invisible() -> Self {
         Self {
             visible: false,
@@ -422,14 +471,90 @@ impl LegendFrame {
         }
     }
 
-    /// Create a frame with rounded corners
+    /// Create a style with rounded corners (fancybox)
     pub fn rounded(radius: f32) -> Self {
         Self {
+            fancy_box: true,
             corner_radius: radius,
             ..Default::default()
         }
     }
+
+    /// Create a style with sharp corners (no fancybox)
+    pub fn sharp() -> Self {
+        Self {
+            fancy_box: false,
+            corner_radius: 0.0,
+            ..Default::default()
+        }
+    }
+
+    /// Set whether frame is visible
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+
+    /// Set background alpha (0.0 = transparent, 1.0 = opaque)
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set background fill color
+    pub fn face_color(mut self, color: Color) -> Self {
+        self.face_color = color;
+        self
+    }
+
+    /// Set border stroke color
+    pub fn edge_color(mut self, color: Option<Color>) -> Self {
+        self.edge_color = color;
+        self
+    }
+
+    /// Set border line width
+    pub fn border_width(mut self, width: f32) -> Self {
+        self.border_width = width.max(0.0);
+        self
+    }
+
+    /// Set whether to use rounded corners (fancybox)
+    pub fn fancy_box(mut self, enabled: bool) -> Self {
+        self.fancy_box = enabled;
+        self
+    }
+
+    /// Set corner radius (used when fancy_box=true)
+    pub fn corner_radius(mut self, radius: f32) -> Self {
+        self.corner_radius = radius.max(0.0);
+        self
+    }
+
+    /// Set whether to draw shadow
+    pub fn shadow(mut self, enabled: bool) -> Self {
+        self.shadow = enabled;
+        self
+    }
+
+    /// Get effective corner radius (0 if fancy_box is false)
+    pub fn effective_corner_radius(&self) -> f32 {
+        if self.fancy_box {
+            self.corner_radius
+        } else {
+            0.0
+        }
+    }
+
+    /// Get effective background color with alpha applied
+    pub fn effective_face_color(&self) -> Color {
+        self.face_color.with_alpha(self.alpha)
+    }
 }
+
+/// Type alias for backward compatibility
+#[deprecated(since = "0.2.0", note = "Use LegendStyle instead")]
+pub type LegendFrame = LegendStyle;
 
 // ============================================================================
 // Complete Legend Configuration
@@ -444,8 +569,8 @@ pub struct Legend {
     pub position: LegendPosition,
     /// Spacing configuration (in font-size units)
     pub spacing: LegendSpacing,
-    /// Frame styling
-    pub frame: LegendFrame,
+    /// Style configuration (matplotlib-compatible)
+    pub style: LegendStyle,
     /// Font size for legend labels in points
     pub font_size: f32,
     /// Text color for labels
@@ -462,7 +587,7 @@ impl Default for Legend {
             enabled: false,
             position: LegendPosition::default(),
             spacing: LegendSpacing::default(),
-            frame: LegendFrame::default(),
+            style: LegendStyle::default(),
             font_size: 10.0,
             text_color: Color::BLACK,
             columns: 1,
@@ -540,9 +665,16 @@ impl Legend {
         self
     }
 
-    /// Configure frame styling
-    pub fn frame(mut self, frame: LegendFrame) -> Self {
-        self.frame = frame;
+    /// Configure legend style
+    pub fn style(mut self, style: LegendStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Configure frame styling (deprecated, use `style()` instead)
+    #[deprecated(since = "0.2.0", note = "Use style() instead")]
+    pub fn frame(mut self, style: LegendStyle) -> Self {
+        self.style = style;
         self
     }
 

@@ -136,24 +136,39 @@ fn main() -> Result<()> {
     )?;
     renderer.draw_text_rotated("Y", 20.0, height as f32 / 2.0, 12.0, theme.foreground)?;
 
-    // Colorbar
-    let cb_x = width as f32 - 50.0;
+    // Colorbar - use high number of segments for smooth gradient
+    let cb_x = width as f32 - 60.0;
     let cb_y = margin;
     let cb_height = plot_height;
     let cb_width = 15.0;
-    for i in 0..50 {
-        let t = i as f64 / 50.0;
+    let num_segments = cb_height as usize;
+    let segment_height = cb_height / num_segments as f32;
+
+    for i in 0..num_segments {
+        let t = i as f64 / num_segments as f64;
         let color = colormap.sample(1.0 - t);
-        renderer.draw_rectangle(
+        renderer.draw_solid_rectangle(
             cb_x,
-            cb_y + cb_height * t as f32,
+            cb_y + i as f32 * segment_height,
             cb_width,
-            cb_height / 50.0 + 1.0,
+            segment_height + 0.5,
             color,
-            true,
         )?;
     }
     renderer.draw_rectangle(cb_x, cb_y, cb_width, cb_height, theme.foreground, false)?;
+
+    // Colorbar tick labels
+    let cb_ticks = [0.0, 0.25, 0.5, 0.75, 1.0];
+    for &tick_val in &cb_ticks {
+        let tick_y = cb_y + cb_height * (1.0 - tick_val as f32);
+        renderer.draw_text(
+            &format!("{:.2}", tick_val),
+            cb_x + cb_width + 5.0,
+            tick_y,
+            10.0,
+            theme.foreground,
+        )?;
+    }
 
     renderer.save_png("docs/images/contour_plot.png")?;
     println!("Generated docs/images/contour_plot.png");

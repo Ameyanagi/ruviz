@@ -2,6 +2,20 @@
 //!
 //! Provides color-mapped grid visualization with colorbars and annotations.
 //!
+//! # Colorbar Configuration
+//!
+//! Heatmaps support configurable colorbar labels and font sizes:
+//!
+//! ```rust,ignore
+//! use ruviz::plots::HeatmapConfig;
+//!
+//! let config = HeatmapConfig::default()
+//!     .colorbar(true)
+//!     .colorbar_label("Temperature (°C)")
+//!     .colorbar_tick_font_size(10.0)    // Tick label size
+//!     .colorbar_label_font_size(11.0);  // Axis label size
+//! ```
+//!
 //! # Trait-Based API
 //!
 //! Heatmap plots implement the core plot traits:
@@ -38,6 +52,10 @@ pub struct HeatmapConfig {
     pub colorbar: bool,
     /// Label for the colorbar
     pub colorbar_label: Option<String>,
+    /// Font size for colorbar tick labels (in points)
+    pub colorbar_tick_font_size: f32,
+    /// Font size for colorbar label (in points)
+    pub colorbar_label_font_size: f32,
     /// Custom labels for X axis ticks
     pub xticklabels: Option<Vec<String>>,
     /// Custom labels for Y axis ticks
@@ -62,6 +80,8 @@ impl Default for HeatmapConfig {
             vmax: None,
             colorbar: true,
             colorbar_label: None,
+            colorbar_tick_font_size: 12.0, // Readable colorbar tick labels
+            colorbar_label_font_size: 14.0, // Larger for visibility
             xticklabels: None,
             yticklabels: None,
             interpolation: Interpolation::Nearest,
@@ -106,6 +126,22 @@ impl HeatmapConfig {
     /// Set the colorbar label
     pub fn colorbar_label<S: Into<String>>(mut self, label: S) -> Self {
         self.colorbar_label = Some(label.into());
+        self
+    }
+
+    /// Set the colorbar tick font size (in points)
+    ///
+    /// Default is 10.0pt to match axis tick labels.
+    pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
+        self.colorbar_tick_font_size = size.max(1.0);
+        self
+    }
+
+    /// Set the colorbar label font size (in points)
+    ///
+    /// Default is 11.0pt, slightly larger than tick labels.
+    pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
+        self.colorbar_label_font_size = size.max(1.0);
         self
     }
 

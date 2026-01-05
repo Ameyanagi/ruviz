@@ -329,6 +329,29 @@ impl Color {
             a: self.a,
         }
     }
+
+    /// Create a grayscale color from a single value
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::render::Color;
+    ///
+    /// // Light gray (#CCCCCC)
+    /// let light_gray = Color::from_gray(204);
+    /// assert_eq!(light_gray.r, 204);
+    /// assert_eq!(light_gray.g, 204);
+    /// assert_eq!(light_gray.b, 204);
+    /// ```
+    #[inline]
+    pub const fn from_gray(value: u8) -> Self {
+        Self {
+            r: value,
+            g: value,
+            b: value,
+            a: 255,
+        }
+    }
 }
 
 // Predefined color constants

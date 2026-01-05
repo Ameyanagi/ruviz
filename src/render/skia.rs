@@ -1,8 +1,8 @@
 use crate::{
     core::{
-        ComputedMargins, LayoutRect, Legend, LegendFrame, LegendItem, LegendItemType,
-        LegendPosition, LegendSpacingPixels, PlottingError, Result, SpacingConfig, TextPosition,
-        find_best_position, plot::Image, pt_to_px,
+        ComputedMargins, LayoutRect, Legend, LegendItem, LegendItemType, LegendPosition,
+        LegendSpacingPixels, LegendStyle, PlottingError, Result, SpacingConfig, TextPosition,
+        TickFormatter, find_best_position, plot::Image, pt_to_px,
     },
     render::{Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme},
 };
@@ -258,6 +258,41 @@ impl SkiaRenderer {
             self.pixmap
                 .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
+
+        Ok(())
+    }
+
+    /// Draw a solid color rectangle with no transparency or border
+    /// Used for gradient segments like colorbar where 100% opacity and no anti-aliasing is needed
+    pub fn draw_solid_rectangle(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        let rect = Rect::from_xywh(x, y, width, height).ok_or(PlottingError::RenderError(
+            "Invalid rectangle dimensions".to_string(),
+        ))?;
+
+        let mut path = PathBuilder::new();
+        path.push_rect(rect);
+        let path = path.finish().ok_or(PlottingError::RenderError(
+            "Failed to create rectangle path".to_string(),
+        ))?;
+
+        let mut fill_paint = Paint::default();
+        fill_paint.set_color(color.to_tiny_skia_color());
+        fill_paint.anti_alias = false; // No anti-aliasing for crisp edges
+
+        self.pixmap.fill_path(
+            &path,
+            &fill_paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
 
         Ok(())
     }
@@ -847,18 +882,16 @@ impl SkiaRenderer {
         let label_pad_px = pt_to_px(spacing.label_pad, dpi);
         let char_width_estimate = 4.0 * dpi_scale;
 
-        // Generate and draw X-axis tick labels
+        // Generate ticks and format all labels with consistent precision
         let x_ticks = generate_ticks(x_min, x_max, 5);
-        for &tick_value in x_ticks.iter() {
+        let y_ticks = generate_ticks(y_min, y_max, 5);
+        let x_labels = format_tick_labels(&x_ticks);
+        let y_labels = format_tick_labels(&y_ticks);
+
+        // Draw X-axis tick labels
+        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
             let x_pixel = plot_area.left()
-                + (tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
 
             let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
             let label_x = (x_pixel - text_width_estimate)
@@ -867,27 +900,19 @@ impl SkiaRenderer {
             // Position tick labels with tick_pad below the axis
             let label_y = (plot_area.bottom() + tick_pad_px + tick_size)
                 .min(self.height() as f32 - tick_size - 5.0);
-            self.draw_text(&label_text, label_x, label_y, tick_size, color)?;
+            self.draw_text(label_text, label_x, label_y, tick_size, color)?;
         }
 
-        // Generate and draw Y-axis tick labels
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        for &tick_value in y_ticks.iter() {
+        // Draw Y-axis tick labels
+        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
             let y_pixel = plot_area.bottom()
-                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             // Position tick labels with tick_pad left of the axis
             let label_x = (plot_area.left() - text_width_estimate - tick_pad_px).max(5.0);
             self.draw_text(
-                &label_text,
+                label_text,
                 label_x,
                 y_pixel - tick_size / 3.0,
                 tick_size,
@@ -936,41 +961,31 @@ impl SkiaRenderer {
         let y_label_offset = 25.0 * dpi_scale;
         let char_width_estimate = 4.0 * dpi_scale;
 
+        // Generate ticks and format all labels with consistent precision
         let x_ticks = generate_ticks(x_min, x_max, 5);
-        for &tick_value in x_ticks.iter() {
+        let y_ticks = generate_ticks(y_min, y_max, 5);
+        let x_labels = format_tick_labels(&x_ticks);
+        let y_labels = format_tick_labels(&y_ticks);
+
+        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
             let x_pixel = plot_area.left()
-                + (tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
             let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
             let label_x = (x_pixel - text_width_estimate)
                 .max(0.0)
                 .min(self.width() as f32 - text_width_estimate * 2.0);
             let label_y =
                 (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0);
-            self.draw_text(&label_text, label_x, label_y, tick_size, color)?;
+            self.draw_text(label_text, label_x, label_y, tick_size, color)?;
         }
 
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        for &tick_value in y_ticks.iter() {
+        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
             let y_pixel = plot_area.bottom()
-                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             let label_x = (plot_area.left() - text_width_estimate - 15.0 * dpi_scale).max(5.0);
             self.draw_text(
-                &label_text,
+                label_text,
                 label_x,
                 y_pixel - tick_size / 3.0,
                 tick_size,
@@ -1017,17 +1032,14 @@ impl SkiaRenderer {
         let y_tick_offset = 15.0 * dpi_scale; // Additional offset for Y-axis tick labels
         let char_width_estimate = 4.0 * dpi_scale; // Rough character width for centering
 
+        // Format all tick labels with consistent precision
+        let x_labels = format_tick_labels(x_major_ticks);
+        let y_labels = format_tick_labels(y_major_ticks);
+
         // Draw X-axis tick labels using provided major ticks
-        for &tick_value in x_major_ticks {
+        for (tick_value, label_text) in x_major_ticks.iter().zip(x_labels.iter()) {
             let x_pixel = plot_area.left()
-                + (tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
 
             // Center X-axis tick labels horizontally under the tick mark, with proper offset
             // Ensure labels don't overflow canvas bounds
@@ -1037,27 +1049,20 @@ impl SkiaRenderer {
                 .min(self.width() as f32 - text_width_estimate * 2.0);
             let label_y =
                 (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0); // Ensure within canvas
-            self.draw_text(&label_text, label_x, label_y, tick_size, color)?;
+            self.draw_text(label_text, label_x, label_y, tick_size, color)?;
         }
 
         // Draw Y-axis tick labels using provided major ticks
-        for &tick_value in y_major_ticks {
+        for (tick_value, label_text) in y_major_ticks.iter().zip(y_labels.iter()) {
             let y_pixel = plot_area.bottom()
-                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
             // Right-align Y-axis tick labels next to the tick mark with proper offset
             // Ensure labels fit within the left margin space
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0); // Ensure minimum 5px from canvas edge
             self.draw_text(
-                &label_text,
+                label_text,
                 label_x,
                 y_pixel + tick_size * 0.3,
                 tick_size,
@@ -1137,22 +1142,16 @@ impl SkiaRenderer {
             }
         }
 
-        // Draw Y-axis tick labels (same as numeric version)
-        for &tick_value in y_major_ticks {
+        // Draw Y-axis tick labels with consistent precision
+        let y_labels = format_tick_labels(y_major_ticks);
+        for (tick_value, label_text) in y_major_ticks.iter().zip(y_labels.iter()) {
             let y_pixel = plot_area.bottom()
-                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0);
             self.draw_text(
-                &label_text,
+                label_text,
                 label_x,
                 y_pixel + tick_size * 0.3,
                 tick_size,
@@ -1266,6 +1265,8 @@ impl SkiaRenderer {
         x_max: f64,
         y_min: f64,
         y_max: f64,
+        x_ticks: &[f64],
+        y_ticks: &[f64],
         xtick_baseline_y: f32,
         ytick_right_x: f32,
         tick_size: f32,
@@ -1288,38 +1289,26 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        // Generate and draw X-axis tick labels
-        let x_ticks = generate_ticks(x_min, x_max, 5);
-        for &tick_value in x_ticks.iter() {
+        // Format all tick labels with consistent precision
+        let x_labels = format_tick_labels(x_ticks);
+        let y_labels = format_tick_labels(y_ticks);
+
+        // Draw X-axis tick labels using provided ticks
+        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
             let x_pixel = plot_area.left
-                + (tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
 
             let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
             let label_x = (x_pixel - text_width_estimate)
                 .max(0.0)
                 .min(self.width() as f32 - text_width_estimate * 2.0);
-            self.draw_text(&label_text, label_x, xtick_baseline_y, tick_size, color)?;
+            self.draw_text(label_text, label_x, xtick_baseline_y, tick_size, color)?;
         }
 
-        // Generate and draw Y-axis tick labels
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        for &tick_value in y_ticks.iter() {
+        // Draw Y-axis tick labels using provided ticks
+        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
             let y_pixel = plot_area.bottom
-                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             // Position so the right edge of the text is at ytick_right_x with a gap
@@ -1327,7 +1316,7 @@ impl SkiaRenderer {
             let min_x = tick_size * 0.5; // Minimum distance from left edge
             let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
             self.draw_text(
-                &label_text,
+                label_text,
                 label_x,
                 y_pixel + tick_size * 0.35, // Center vertically on tick
                 tick_size,
@@ -1354,6 +1343,7 @@ impl SkiaRenderer {
         categories: &[String],
         y_min: f64,
         y_max: f64,
+        y_ticks: &[f64],
         xtick_baseline_y: f32,
         ytick_right_x: f32,
         tick_size: f32,
@@ -1399,25 +1389,20 @@ impl SkiaRenderer {
             }
         }
 
-        // Generate and draw Y-axis tick labels (same as numeric version)
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        for &tick_value in y_ticks.iter() {
+        // Format Y-axis tick labels with consistent precision
+        let y_labels = format_tick_labels(y_ticks);
+
+        // Draw Y-axis tick labels using provided ticks
+        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
             let y_pixel = plot_area.bottom
-                - (tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let label_text = if tick_value.abs() < 0.001 {
-                "0".to_string()
-            } else if tick_value.abs() > 1000.0 {
-                format!("{:.0e}", tick_value)
-            } else {
-                format!("{:.1}", tick_value)
-            };
+                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             let gap = tick_size * 0.5;
             let min_x = tick_size * 0.5;
             let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
             self.draw_text(
-                &label_text,
+                label_text,
                 label_x,
                 y_pixel + tick_size * 0.35,
                 tick_size,
@@ -1864,17 +1849,17 @@ impl SkiaRenderer {
         y: f32,
         width: f32,
         height: f32,
-        frame: &LegendFrame,
+        style: &LegendStyle,
     ) -> Result<()> {
-        if !frame.visible {
+        if !style.visible {
             return Ok(());
         }
 
-        let radius = frame.corner_radius;
+        let radius = style.effective_corner_radius();
 
         // Draw shadow if enabled
-        if frame.shadow {
-            let (shadow_dx, shadow_dy) = frame.shadow_offset;
+        if style.shadow {
+            let (shadow_dx, shadow_dy) = style.shadow_offset;
             if radius > 0.0 {
                 self.draw_rounded_rectangle(
                     x + shadow_dx,
@@ -1882,7 +1867,7 @@ impl SkiaRenderer {
                     width,
                     height,
                     radius,
-                    frame.shadow_color,
+                    style.shadow_color,
                     true,
                 )?;
             } else {
@@ -1891,21 +1876,22 @@ impl SkiaRenderer {
                     y + shadow_dy,
                     width,
                     height,
-                    frame.shadow_color,
+                    style.shadow_color,
                     true,
                 )?;
             }
         }
 
-        // Draw background
+        // Draw background with alpha applied
+        let face_color = style.effective_face_color();
         if radius > 0.0 {
-            self.draw_rounded_rectangle(x, y, width, height, radius, frame.background, true)?;
+            self.draw_rounded_rectangle(x, y, width, height, radius, face_color, true)?;
         } else {
-            self.draw_rectangle(x, y, width, height, frame.background, true)?;
+            self.draw_rectangle(x, y, width, height, face_color, true)?;
         }
 
         // Draw border if specified
-        if let Some(border_color) = frame.border_color {
+        if let Some(edge_color) = style.edge_color {
             if radius > 0.0 {
                 self.draw_rounded_rectangle_outline(
                     x,
@@ -1913,11 +1899,11 @@ impl SkiaRenderer {
                     width,
                     height,
                     radius,
-                    border_color,
-                    frame.border_width,
+                    edge_color,
+                    style.border_width,
                 )?;
             } else {
-                self.draw_rectangle_outline(x, y, width, height, border_color, frame.border_width)?;
+                self.draw_rectangle_outline(x, y, width, height, edge_color, style.border_width)?;
             }
         }
 
@@ -2000,7 +1986,7 @@ impl SkiaRenderer {
             legend_y,
             legend_width,
             legend_height,
-            &legend.frame,
+            &legend.style,
         )?;
 
         // Starting position for items (inside padding)
@@ -2060,6 +2046,20 @@ impl SkiaRenderer {
     ///
     /// Draws a vertical gradient bar showing the color mapping from vmin to vmax,
     /// with tick marks and optional label.
+    ///
+    /// # Arguments
+    ///
+    /// * `colormap` - The color map to sample from
+    /// * `vmin` - Minimum value in the data range
+    /// * `vmax` - Maximum value in the data range
+    /// * `x` - X position of colorbar (left edge)
+    /// * `y` - Y position of colorbar (top edge)
+    /// * `width` - Width of the colorbar
+    /// * `height` - Height of the colorbar
+    /// * `label` - Optional label to display (rotated 90°)
+    /// * `foreground_color` - Color for ticks, text, and border
+    /// * `tick_font_size` - Font size for tick labels (in points)
+    /// * `label_font_size` - Font size for colorbar label (in points, optional)
     pub fn draw_colorbar(
         &mut self,
         colormap: &crate::render::ColorMap,
@@ -2071,33 +2071,40 @@ impl SkiaRenderer {
         height: f32,
         label: Option<&str>,
         foreground_color: Color,
-        font_size: f32,
+        tick_font_size: f32,
+        label_font_size: Option<f32>,
     ) -> Result<()> {
+        // Use tick font size for label if not specified separately
+        let label_font_size = label_font_size.unwrap_or(tick_font_size * 1.1);
+
         // Draw the colorbar gradient (vertical, from vmax at top to vmin at bottom)
-        let num_segments = (height as usize).clamp(50, 256);
+        // Use one segment per pixel row to eliminate anti-aliasing artifacts
+        let num_segments = (height as usize).max(50);
         let segment_height = height / num_segments as f32;
 
         for i in 0..num_segments {
             // Map segment to value (top = vmax, bottom = vmin)
-            let normalized = 1.0 - (i as f64 / (num_segments - 1) as f64);
+            let normalized = 1.0 - (i as f64 / (num_segments - 1).max(1) as f64);
             let color = colormap.sample(normalized);
             let segment_y = y + i as f32 * segment_height;
 
-            self.draw_rectangle(x, segment_y, width, segment_height + 1.0, color, true)?;
+            // Use solid rectangle with small overlap to ensure seamless gradient
+            // draw_solid_rectangle has 100% opacity and no anti-aliasing
+            self.draw_solid_rectangle(x, segment_y, width, segment_height + 0.5, color)?;
         }
 
         // Draw border around colorbar
         let stroke_width = 1.0;
         self.draw_rectangle(x, y, width, height, foreground_color, false)?;
 
-        // Draw tick marks and values on the right side
-        let num_ticks = 5;
+        // Generate nice tick values using tick formatter
+        let ticks = generate_ticks(vmin, vmax, 6);
         let tick_width = width * 0.3;
-        let text_offset = width + font_size * 0.5;
+        let text_offset = width + tick_font_size * 0.5;
 
-        for i in 0..=num_ticks {
-            let t = i as f64 / num_ticks as f64;
-            let value = vmin + t * (vmax - vmin);
+        for &value in &ticks {
+            // Map value to Y position (top = vmax, bottom = vmin)
+            let t = (value - vmin) / (vmax - vmin);
             let tick_y = y + height * (1.0 - t as f32);
 
             // Draw tick mark
@@ -2111,31 +2118,23 @@ impl SkiaRenderer {
                 LineStyle::Solid,
             )?;
 
-            // Draw value label
-            let label_text = if value.abs() < 0.001 && value.abs() > 0.0 {
-                format!("{:.1e}", value)
-            } else if value.abs() >= 1000.0 {
-                format!("{:.0e}", value)
-            } else if value.abs() < 0.01 {
-                format!("{:.2}", value)
-            } else {
-                format!("{:.1}", value)
-            };
+            // Draw value label using unified TickFormatter
+            let label_text = format_tick_label(value);
 
             self.draw_text(
                 &label_text,
                 x + text_offset,
-                tick_y + font_size * 0.3,
-                font_size,
+                tick_y + tick_font_size * 0.3,
+                tick_font_size,
                 foreground_color,
             )?;
         }
 
         // Draw colorbar label (rotated 90 degrees) if provided
         if let Some(label) = label {
-            let label_x = x + width + font_size * 4.0;
+            let label_x = x + width + tick_font_size * 4.0;
             let label_y = y + height / 2.0;
-            self.draw_text_rotated(label, label_x, label_y, font_size, foreground_color)?;
+            self.draw_text_rotated(label, label_x, label_y, label_font_size, foreground_color)?;
         }
 
         Ok(())
@@ -2988,7 +2987,9 @@ fn generate_scientific_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
     while tick <= end + epsilon {
         // Only include ticks within the actual data range
         if tick >= min - epsilon && tick <= max + epsilon {
-            ticks.push(tick);
+            // Clean up floating point errors by rounding to appropriate precision
+            let clean_tick = clean_tick_value(tick, step);
+            ticks.push(clean_tick);
         }
         tick += step;
 
@@ -3000,9 +3001,13 @@ fn generate_scientific_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
 
     // Ensure we have reasonable number of ticks (3-10)
     if ticks.len() < 3 {
-        // Fall back to simple min/max/middle approach
-        let middle = (min + max) / 2.0;
-        return vec![min, middle, max];
+        // Fall back to simple min/max/middle approach with cleaned values
+        let range = max - min;
+        let fallback_step = range / 2.0;
+        let clean_min = clean_tick_value(min, fallback_step);
+        let clean_max = clean_tick_value(max, fallback_step);
+        let clean_middle = clean_tick_value((min + max) / 2.0, fallback_step);
+        return vec![clean_min, clean_middle, clean_max];
     }
 
     // Limit to max_ticks to prevent overcrowding
@@ -3011,6 +3016,18 @@ fn generate_scientific_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
     }
 
     ticks
+}
+
+/// Clean up floating point errors in tick values by rounding to appropriate precision
+fn clean_tick_value(value: f64, step: f64) -> f64 {
+    // Determine number of decimal places based on step size
+    let decimals = if step >= 1.0 {
+        0
+    } else {
+        (-step.log10().floor()) as i32 + 1
+    };
+    let mult = 10.0_f64.powi(decimals);
+    (value * mult).round() / mult
 }
 
 /// Generate minor tick values between major ticks
@@ -3033,6 +3050,46 @@ pub fn generate_minor_ticks(major_ticks: &[f64], minor_count: usize) -> Vec<f64>
     }
 
     minor_ticks
+}
+
+/// Format a tick value using the unified TickFormatter
+///
+/// This provides matplotlib-compatible tick label formatting:
+/// - Integers display without decimals: "5" not "5.0"
+/// - Minimal decimal precision: "3.14" not "3.140000"
+/// - Scientific notation for very large/small values (|v| >= 10^4 or |v| <= 10^-4)
+///
+/// # Arguments
+///
+/// * `value` - The tick value to format
+///
+/// # Returns
+///
+/// A clean string representation of the tick value
+pub fn format_tick_label(value: f64) -> String {
+    // Use static formatter instance for consistency
+    static FORMATTER: std::sync::LazyLock<TickFormatter> =
+        std::sync::LazyLock::new(TickFormatter::default);
+    FORMATTER.format_tick(value)
+}
+
+/// Format multiple tick values with consistent precision
+///
+/// All ticks will use the same number of decimal places,
+/// determined by the tick that needs the most precision.
+/// This ensures visual alignment of tick labels.
+///
+/// # Arguments
+///
+/// * `values` - The tick values to format
+///
+/// # Returns
+///
+/// Vector of formatted tick labels with consistent precision
+pub fn format_tick_labels(values: &[f64]) -> Vec<String> {
+    static FORMATTER: std::sync::LazyLock<TickFormatter> =
+        std::sync::LazyLock::new(TickFormatter::default);
+    FORMATTER.format_ticks(values)
 }
 
 #[test]

@@ -4,7 +4,7 @@
 //! This renderer is also used as the intermediate format for PDF export.
 
 use crate::core::{
-    Legend, LegendFrame, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels,
+    Legend, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels, LegendStyle,
     PlottingError, Result, find_best_position,
 };
 use crate::render::{Color, LineStyle, MarkerStyle};
@@ -678,16 +678,16 @@ impl SvgRenderer {
     }
 
     /// Draw legend frame with background and optional border
-    fn draw_legend_frame(&mut self, x: f32, y: f32, width: f32, height: f32, frame: &LegendFrame) {
-        if !frame.visible {
+    fn draw_legend_frame(&mut self, x: f32, y: f32, width: f32, height: f32, style: &LegendStyle) {
+        if !style.visible {
             return;
         }
 
-        let radius = frame.corner_radius;
+        let radius = style.effective_corner_radius();
 
         // Draw shadow if enabled
-        if frame.shadow {
-            let (shadow_dx, shadow_dy) = frame.shadow_offset;
+        if style.shadow {
+            let (shadow_dx, shadow_dy) = style.shadow_offset;
             if radius > 0.0 {
                 self.draw_rounded_rectangle(
                     x + shadow_dx,
@@ -695,7 +695,7 @@ impl SvgRenderer {
                     width,
                     height,
                     radius,
-                    frame.shadow_color,
+                    style.shadow_color,
                     true,
                 );
             } else {
@@ -704,25 +704,26 @@ impl SvgRenderer {
                     y + shadow_dy,
                     width,
                     height,
-                    frame.shadow_color,
+                    style.shadow_color,
                     true,
                 );
             }
         }
 
-        // Draw background
+        // Draw background with alpha applied
+        let face_color = style.effective_face_color();
         if radius > 0.0 {
-            self.draw_rounded_rectangle(x, y, width, height, radius, frame.background, true);
+            self.draw_rounded_rectangle(x, y, width, height, radius, face_color, true);
         } else {
-            self.draw_rectangle(x, y, width, height, frame.background, true);
+            self.draw_rectangle(x, y, width, height, face_color, true);
         }
 
         // Draw border if specified
-        if let Some(border_color) = frame.border_color {
+        if let Some(edge_color) = style.edge_color {
             if radius > 0.0 {
-                self.draw_rounded_rectangle(x, y, width, height, radius, border_color, false);
+                self.draw_rounded_rectangle(x, y, width, height, radius, edge_color, false);
             } else {
-                self.draw_rectangle(x, y, width, height, border_color, false);
+                self.draw_rectangle(x, y, width, height, edge_color, false);
             }
         }
     }
@@ -780,7 +781,7 @@ impl SvgRenderer {
             legend_y,
             legend_width,
             legend_height,
-            &legend.frame,
+            &legend.style,
         );
 
         // Starting position for items

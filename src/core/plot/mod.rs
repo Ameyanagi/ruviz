@@ -11,9 +11,10 @@ pub use image::Image;
 use crate::{
     axes::AxisScale,
     core::{
-        Annotation, ArrowStyle, FillStyle, LayoutCalculator, LayoutConfig, Legend, LegendItem,
-        LegendItemType, LegendPosition, MarginConfig, PlotConfig, PlotContent, PlotLayout,
-        PlotStyle, PlottingError, Position, REFERENCE_DPI, Result, ShapeStyle, TextStyle, pt_to_px,
+        Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig, Legend,
+        LegendItem, LegendItemType, LegendPosition, MarginConfig, PlotConfig, PlotContent,
+        PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, Result, ShapeStyle,
+        TextStyle, pt_to_px,
     },
     data::{Data1D, DataShader, StreamingXY},
     plots::boxplot::BoxPlotConfig,
@@ -59,8 +60,8 @@ pub struct Plot {
     annotations: Vec<Annotation>,
     /// Legend configuration
     legend: LegendConfig,
-    /// Grid configuration
-    grid: GridConfig,
+    /// Grid styling configuration (using unified GridStyle)
+    grid_style: GridStyle,
     /// Tick configuration
     tick_config: TickConfig,
     /// Margin around plot area (fraction of canvas)
@@ -269,7 +270,7 @@ impl LegendConfig {
             ..Legend::default()
         };
         if let Some(radius) = self.corner_radius {
-            legend.frame.corner_radius = radius;
+            legend.style.corner_radius = radius;
         }
         if let Some(cols) = self.columns {
             legend.columns = cols;
@@ -278,16 +279,8 @@ impl LegendConfig {
     }
 }
 
-/// Grid configuration  
-#[derive(Clone, Debug)]
-struct GridConfig {
-    /// Whether to show grid
-    enabled: bool,
-    /// Grid color override
-    color: Option<Color>,
-    /// Grid line style override
-    style: Option<LineStyle>,
-}
+// NOTE: GridConfig has been replaced by the unified GridStyle from core module.
+// See `grid_style: GridStyle` field in Plot struct for grid configuration.
 
 /// Tick configuration for axes
 #[derive(Clone, Debug)]
@@ -362,11 +355,7 @@ impl Plot {
                 corner_radius: None,
                 columns: None,
             },
-            grid: GridConfig {
-                enabled: true,
-                color: None,
-                style: None,
-            },
+            grid_style: GridStyle::default(),
             tick_config: TickConfig::default(),
             margin: None,
             scientific_notation: false,
@@ -1403,11 +1392,14 @@ impl Plot {
     ///
     /// ![Heatmap example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png)
     pub fn heatmap(
-        self,
+        mut self,
         data: &[Vec<f64>],
         config: Option<crate::plots::heatmap::HeatmapConfig>,
     ) -> PlotSeriesBuilder {
         let heatmap_config = config.unwrap_or_default();
+
+        // Disable grid for heatmaps (grid doesn't make sense behind heatmap cells)
+        self.grid_style.visible = false;
 
         // Process heatmap data
         match crate::plots::heatmap::process_heatmap(data, heatmap_config) {
@@ -1729,7 +1721,29 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn grid(mut self, enabled: bool) -> Self {
-        self.grid.enabled = enabled;
+        self.grid_style.visible = enabled;
+        self
+    }
+
+    /// Configure grid styling with unified GridStyle
+    ///
+    /// This is the preferred way to configure grid appearance, using
+    /// the unified `GridStyle` configuration that ensures consistency
+    /// across all plot types.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ruviz::core::GridStyle;
+    /// use ruviz::render::Color;
+    ///
+    /// Plot::new()
+    ///     .with_grid_style(GridStyle::default().color(Color::BLUE).alpha(0.5))
+    ///     .line(&x, &y)
+    ///     .save("styled_grid.png")?;
+    /// ```
+    pub fn with_grid_style(mut self, style: GridStyle) -> Self {
+        self.grid_style = style;
         self
     }
 
@@ -1838,14 +1852,38 @@ impl Plot {
     }
 
     /// Set grid color
+    ///
+    /// # Deprecated
+    ///
+    /// Use `with_grid_style(GridStyle::default().color(color))` instead for
+    /// unified grid configuration.
+    #[deprecated(since = "0.2.0", note = "Use with_grid_style() instead")]
     pub fn grid_color(mut self, color: Color) -> Self {
-        self.grid.color = Some(color);
+        self.grid_style.color = color;
         self
     }
 
     /// Set grid line style
-    pub fn grid_style(mut self, style: LineStyle) -> Self {
-        self.grid.style = Some(style);
+    ///
+    /// # Deprecated
+    ///
+    /// Use `with_grid_style(GridStyle::default().line_style(style))` instead for
+    /// unified grid configuration.
+    #[deprecated(since = "0.2.0", note = "Use with_grid_style() instead")]
+    pub fn grid_line_style(mut self, style: LineStyle) -> Self {
+        self.grid_style.line_style = style;
+        self
+    }
+
+    /// Set grid line width
+    pub fn grid_line_width(mut self, width: f32) -> Self {
+        self.grid_style.line_width = width;
+        self
+    }
+
+    /// Set grid transparency
+    pub fn grid_alpha(mut self, alpha: f32) -> Self {
+        self.grid_style.alpha = alpha;
         self
     }
 
@@ -2573,7 +2611,6 @@ impl Plot {
                     let colorbar_x = plot_area.right() + colorbar_margin;
                     let colorbar_y = plot_area.y();
                     let colorbar_height = plot_area.height();
-                    let font_size = 10.0;
 
                     renderer.draw_colorbar(
                         &data.config.colormap,
@@ -2585,7 +2622,8 @@ impl Plot {
                         colorbar_height,
                         data.config.colorbar_label.as_deref(),
                         color,
-                        font_size,
+                        data.config.colorbar_tick_font_size,
+                        Some(data.config.colorbar_label_font_size),
                     )?;
                 }
             }
@@ -2990,15 +3028,16 @@ impl Plot {
             .map(|&tick| map_data_to_pixels(0.0, tick, x_min, x_max, y_min, y_max, plot_area).1)
             .collect();
 
-        // Draw grid if enabled
-        if self.grid.enabled {
-            let grid_width_px = self.line_width_px(self.config.lines.grid_width);
+        // Draw grid if enabled - using unified GridStyle
+        if self.grid_style.visible {
+            let grid_color = self.grid_style.effective_color();
+            let grid_width_px = self.line_width_px(self.grid_style.line_width);
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
-                self.theme.grid_color,
-                LineStyle::Solid,
+                grid_color,
+                self.grid_style.line_style.clone(),
                 grid_width_px,
             )?;
         }
@@ -3016,6 +3055,7 @@ impl Plot {
                     categories,
                     y_min,
                     y_max,
+                    &y_ticks,
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
@@ -3029,6 +3069,8 @@ impl Plot {
                     x_max,
                     y_min,
                     y_max,
+                    &x_ticks,
+                    &y_ticks,
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
@@ -3426,15 +3468,16 @@ impl Plot {
             .map(|&tick| map_data_to_pixels(0.0, tick, x_min, x_max, y_min, y_max, plot_area).1)
             .collect();
 
-        // Draw grid if enabled
-        if self.grid.enabled {
-            let grid_width_px = pt_to_px(self.config.lines.grid_width, dpi);
+        // Draw grid if enabled - using unified GridStyle
+        if self.grid_style.visible {
+            let grid_color = self.grid_style.effective_color();
+            let grid_width_px = pt_to_px(self.grid_style.line_width, dpi);
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
-                self.theme.grid_color,
-                LineStyle::Solid,
+                grid_color,
+                self.grid_style.line_style.clone(),
                 grid_width_px,
             )?;
         }
@@ -3452,6 +3495,7 @@ impl Plot {
                     categories,
                     y_min,
                     y_max,
+                    &y_ticks,
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
@@ -3465,6 +3509,8 @@ impl Plot {
                     x_max,
                     y_min,
                     y_max,
+                    &x_ticks,
+                    &y_ticks,
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
@@ -3681,7 +3727,9 @@ impl Plot {
 
         // Draw legend if there are labeled series and legend is enabled
         if !legend_items.is_empty() && self.legend.enabled {
-            let legend = self.legend.to_legend();
+            let mut legend = self.legend.to_legend();
+            // Scale legend font size from points to pixels for proper DPI handling
+            legend.font_size = pt_to_px(legend.font_size, dpi);
 
             // Collect data bounding boxes for best position algorithm
             let data_bboxes: Vec<(f32, f32, f32, f32)> =
@@ -3977,15 +4025,16 @@ impl Plot {
             })
             .collect();
 
-        // Draw grid if enabled (sequential - UI elements)
-        if self.grid.enabled {
+        // Draw grid if enabled - using unified GridStyle (sequential - UI elements)
+        if self.grid_style.visible {
+            let grid_color = self.grid_style.effective_color();
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
-                self.theme.grid_color,
-                LineStyle::Solid,
-                self.dpi_scaled_line_width(1.0),
+                grid_color,
+                self.grid_style.line_style.clone(),
+                self.dpi_scaled_line_width(self.grid_style.line_width),
             )?;
         }
 
@@ -5254,15 +5303,16 @@ impl Plot {
             })
             .collect();
 
-        // Render grid if enabled
-        if self.grid.enabled {
+        // Render grid if enabled - using unified GridStyle
+        if self.grid_style.visible {
+            let grid_color = self.grid_style.effective_color();
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
-                self.theme.grid_color,
-                crate::render::LineStyle::Solid,
-                self.dpi_scaled_line_width(1.0),
+                grid_color,
+                self.grid_style.line_style.clone(),
+                self.dpi_scaled_line_width(self.grid_style.line_width),
             )?;
         }
 
@@ -5361,6 +5411,7 @@ impl Plot {
                     categories,
                     y_min,
                     y_max,
+                    &y_major_ticks,
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
@@ -5374,6 +5425,8 @@ impl Plot {
                     x_max,
                     y_min,
                     y_max,
+                    &x_major_ticks,
+                    &y_major_ticks,
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
@@ -5638,8 +5691,10 @@ impl Plot {
 
         // Draw legend if there are labeled series and legend is enabled
         if !legend_items.is_empty() && self.legend.enabled {
-            // Convert old LegendConfig to new Legend type
-            let legend = self.legend.to_legend();
+            // Convert old LegendConfig to new Legend type with DPI scaling
+            let mut legend = self.legend.to_legend();
+            // Scale legend font size from points to pixels for proper DPI handling
+            legend.font_size = pt_to_px(legend.font_size, self.config.figure.dpi);
 
             // Collect data bounding boxes for best position algorithm
             let data_bboxes: Vec<(f32, f32, f32, f32)> =
@@ -5778,35 +5833,38 @@ impl Plot {
         let y_tick_layout =
             TickLayout::compute_y_axis(y_min, y_max, plot_top, plot_bottom, &self.y_scale, 6);
 
-        // Draw grid lines (only horizontal for bar charts)
-        if bar_categories.is_some() {
-            // For bar charts, only draw horizontal grid lines
-            svg.draw_grid(
-                &[], // no vertical grid lines for bar charts
-                &y_tick_layout.pixel_positions,
-                plot_left,
-                plot_right,
-                plot_top,
-                plot_bottom,
-                self.theme.grid_color,
-                LineStyle::Solid,
-                0.5,
-            );
-        } else {
-            // For other charts, compute X-axis ticks and draw full grid
-            let x_tick_layout =
-                TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.x_scale, 7);
-            svg.draw_grid(
-                &x_tick_layout.pixel_positions,
-                &y_tick_layout.pixel_positions,
-                plot_left,
-                plot_right,
-                plot_top,
-                plot_bottom,
-                self.theme.grid_color,
-                LineStyle::Solid,
-                0.5,
-            );
+        // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
+        if self.grid_style.visible {
+            let grid_color = self.grid_style.effective_color();
+            if bar_categories.is_some() {
+                // For bar charts, only draw horizontal grid lines
+                svg.draw_grid(
+                    &[], // no vertical grid lines for bar charts
+                    &y_tick_layout.pixel_positions,
+                    plot_left,
+                    plot_right,
+                    plot_top,
+                    plot_bottom,
+                    grid_color,
+                    self.grid_style.line_style.clone(),
+                    self.grid_style.line_width,
+                );
+            } else {
+                // For other charts, compute X-axis ticks and draw full grid
+                let x_tick_layout =
+                    TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.x_scale, 7);
+                svg.draw_grid(
+                    &x_tick_layout.pixel_positions,
+                    &y_tick_layout.pixel_positions,
+                    plot_left,
+                    plot_right,
+                    plot_top,
+                    plot_bottom,
+                    grid_color,
+                    self.grid_style.line_style.clone(),
+                    self.grid_style.line_width,
+                );
+            }
         }
 
         // Draw plot area border
@@ -6322,7 +6380,7 @@ impl PlotSeriesBuilder {
 
     /// Enable/disable grid
     pub fn grid(mut self, enabled: bool) -> Self {
-        self.plot.grid.enabled = enabled;
+        self.plot.grid_style.visible = enabled;
         self
     }
 

@@ -256,12 +256,26 @@ fn generate_nice_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
 
     while tick <= end + epsilon {
         if tick >= min - epsilon && tick <= max + epsilon {
-            ticks.push(tick);
+            // Clean up floating point errors by rounding to appropriate precision
+            let clean_tick = clean_float(tick, step);
+            ticks.push(clean_tick);
         }
         tick += step;
     }
 
     ticks
+}
+
+/// Clean up floating point errors by rounding to appropriate precision based on step size
+fn clean_float(value: f64, step: f64) -> f64 {
+    // Round to a precision appropriate for the step size
+    let decimals = if step >= 1.0 {
+        0
+    } else {
+        (-step.log10().floor()) as i32 + 1
+    };
+    let mult = 10.0_f64.powi(decimals);
+    (value * mult).round() / mult
 }
 
 #[cfg(test)]
