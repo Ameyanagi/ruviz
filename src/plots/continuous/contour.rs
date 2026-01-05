@@ -11,6 +11,7 @@
 //! - [`PlotRender`] for `ContourPlotData`
 
 use crate::core::Result;
+use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, ColorMap, LineStyle, Theme};
@@ -393,6 +394,90 @@ impl PlotRender for ContourPlotData {
                         sy2,
                         line_color,
                         config.line_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
+        if self.is_empty() {
+            return Ok(());
+        }
+
+        let config = &self.config;
+        let resolver = StyleResolver::new(theme);
+        let n_levels = self.levels.len();
+
+        // Get colormap for level coloring
+        let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
+
+        // Use provided alpha or config alpha
+        let effective_alpha = if alpha != 1.0 { alpha } else { config.alpha };
+        let effective_line_width =
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
+
+        // Draw filled regions if enabled
+        if config.filled {
+            let regions = contour_fill_regions(self);
+            for (level_low, level_high, polygons) in regions {
+                // Calculate color based on level position
+                let z_min = self.levels.first().copied().unwrap_or(0.0);
+                let z_max = self.levels.last().copied().unwrap_or(1.0);
+                let z_range = z_max - z_min;
+                let t = if z_range > 0.0 {
+                    ((level_low + level_high) / 2.0 - z_min) / z_range
+                } else {
+                    0.5
+                };
+
+                let fill_color = cmap.sample(t).with_alpha(effective_alpha);
+
+                for polygon in &polygons {
+                    let screen_polygon: Vec<(f32, f32)> = polygon
+                        .iter()
+                        .map(|(x, y)| area.data_to_screen(*x, *y))
+                        .collect();
+                    renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+                }
+            }
+        }
+
+        // Draw contour lines if enabled
+        if config.show_lines {
+            for (i, level) in self.lines.iter().enumerate() {
+                // Determine line color using StyleResolver
+                let line_color = config.line_color.unwrap_or_else(|| {
+                    if n_levels > 1 {
+                        let t = i as f64 / (n_levels - 1) as f64;
+                        cmap.sample(t)
+                    } else {
+                        color
+                    }
+                });
+
+                // Draw each contour segment (each segment is (x1, y1, x2, y2))
+                for &(x1, y1, x2, y2) in &level.segments {
+                    let (sx1, sy1) = area.data_to_screen(x1, y1);
+                    let (sx2, sy2) = area.data_to_screen(x2, y2);
+                    renderer.draw_line(
+                        sx1,
+                        sy1,
+                        sx2,
+                        sy2,
+                        line_color,
+                        effective_line_width,
                         LineStyle::Solid,
                     )?;
                 }
