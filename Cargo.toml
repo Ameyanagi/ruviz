@@ -283,3 +283,7 @@ harness = false
 [[bench]]
 name = "memory_benchmarks"
 harness = false
+
+[[bench]]
+name = "plot_traits"
+harness = false
