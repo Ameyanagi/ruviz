@@ -187,6 +187,27 @@ impl PlotSeries {
                 // Boxen plots use bar-style legend
                 LegendItemType::Bar
             }
+            SeriesType::Contour { .. } => {
+                // Contour plots don't typically have legend items (use colorbar instead)
+                return None;
+            }
+            SeriesType::Pie { .. } => {
+                // Pie slices get individual legend items (handled separately)
+                LegendItemType::Bar
+            }
+            SeriesType::Radar { data } => {
+                // Radar series use filled polygon legend with Area type
+                LegendItemType::Area {
+                    edge_color: Some(color),
+                }
+            }
+            SeriesType::Polar { .. } => {
+                // Polar plots use line legend
+                LegendItemType::Line {
+                    style: line_style,
+                    width: line_width,
+                }
+            }
         };
 
         // Check if this series has attached error bars
@@ -198,6 +219,51 @@ impl PlotSeries {
             item_type,
             has_error_bars,
         })
+    }
+
+    /// Create multiple LegendItems from this series (for Radar series that contain multiple internal series)
+    ///
+    /// Returns a Vec of legend items, expanding radar series into individual entries per data series.
+    fn to_legend_items(&self, base_color_idx: usize, theme: &Theme) -> Vec<LegendItem> {
+        let line_width = self.line_width.unwrap_or(theme.line_width);
+        let line_style = self.line_style.clone().unwrap_or(LineStyle::Solid);
+
+        match &self.series_type {
+            SeriesType::Radar { data } => {
+                // For radar charts, create a legend item for each internal series
+                // Use Area type to show filled swatches matching the filled polygon style
+                data.series
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, radar_series)| {
+                        let color = data
+                            .config
+                            .colors
+                            .as_ref()
+                            .and_then(|colors| colors.get(idx).copied())
+                            .unwrap_or_else(|| theme.get_color(base_color_idx + idx));
+                        // Use a more visible alpha for legend swatches (0.6 instead of fill_alpha)
+                        // This ensures legend items are clearly visible while still showing fill style
+                        let fill_color = color.with_alpha(0.6);
+                        LegendItem {
+                            label: radar_series.label.clone(),
+                            color: fill_color,
+                            item_type: LegendItemType::Area {
+                                edge_color: Some(color), // Use full-opacity color for edge
+                            },
+                            has_error_bars: false,
+                        }
+                    })
+                    .collect()
+            }
+            _ => {
+                // For other series types, use the single-item method
+                let default_color = theme.get_color(base_color_idx);
+                self.to_legend_item(default_color, theme)
+                    .into_iter()
+                    .collect()
+            }
+        }
     }
 }
 
@@ -253,6 +319,22 @@ enum SeriesType {
     /// Boxen (Letter-Value) plot
     Boxen {
         data: crate::plots::BoxenData,
+    },
+    /// Contour plot
+    Contour {
+        data: crate::plots::continuous::contour::ContourPlotData,
+    },
+    /// Pie chart
+    Pie {
+        data: crate::plots::composition::pie::PieData,
+    },
+    /// Radar chart
+    Radar {
+        data: crate::plots::polar::radar::RadarPlotData,
+    },
+    /// Polar plot
+    Polar {
+        data: crate::plots::polar::polar_plot::PolarPlotData,
     },
 }
 
@@ -1632,6 +1714,234 @@ impl Plot {
         )
     }
 
+    /// Add a contour plot for 2D scalar field visualization
+    ///
+    /// Creates contour lines or filled contours from grid data.
+    /// Returns a `PlotBuilder<ContourConfig>` for method chaining.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - X coordinates of the grid (1D array)
+    /// * `y` - Y coordinates of the grid (1D array)
+    /// * `z` - Z values as a flattened 2D array (row-major, len = x.len() * y.len())
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x: Vec<f64> = (-50..=50).map(|i| i as f64 / 10.0).collect();
+    /// let y: Vec<f64> = (-50..=50).map(|i| i as f64 / 10.0).collect();
+    /// let z: Vec<f64> = y.iter().flat_map(|yv| {
+    ///     x.iter().map(move |xv| (-xv*xv - yv*yv).exp())
+    /// }).collect();
+    ///
+    /// Plot::new()
+    ///     .title("Gaussian Surface")
+    ///     .contour(&x, &y, &z)
+    ///     .levels(10)
+    ///     .filled(true)
+    ///     .save("contour.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn contour<X, Y, Z>(self, x: &X, y: &Y, z: &Z) -> PlotBuilder<crate::plots::ContourConfig>
+    where
+        X: Data1D<f64>,
+        Y: Data1D<f64>,
+        Z: Data1D<f64>,
+    {
+        let x_vec: Vec<f64> = (0..x.len()).filter_map(|i| x.get(i).copied()).collect();
+        let y_vec: Vec<f64> = (0..y.len()).filter_map(|i| y.get(i).copied()).collect();
+        let z_vec: Vec<f64> = (0..z.len()).filter_map(|i| z.get(i).copied()).collect();
+
+        // Convert flat z to 2D grid (row-major)
+        let ny = y_vec.len();
+        let nx = x_vec.len();
+        let z_2d: Vec<Vec<f64>> = (0..ny)
+            .map(|j| {
+                (0..nx)
+                    .map(|i| z_vec.get(j * nx + i).copied().unwrap_or(0.0))
+                    .collect()
+            })
+            .collect();
+
+        PlotBuilder::new(
+            self,
+            PlotInput::Grid2D {
+                x: x_vec,
+                y: y_vec,
+                z: z_2d,
+            },
+            crate::plots::ContourConfig::default(),
+        )
+    }
+
+    /// Add a pie chart for proportional data visualization
+    ///
+    /// Creates a pie chart with optional labels, exploded segments, and donut style.
+    /// Returns a `PlotBuilder<PieConfig>` for method chaining.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let values = vec![35.0, 25.0, 20.0, 15.0, 5.0];
+    ///
+    /// Plot::new()
+    ///     .title("Market Share")
+    ///     .pie(&values)
+    ///     .labels(&["A", "B", "C", "D", "Other"])
+    ///     .donut(0.4)
+    ///     .save("pie.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn pie<V>(self, values: &V) -> PlotBuilder<crate::plots::PieConfig>
+    where
+        V: Data1D<f64>,
+    {
+        let values_vec: Vec<f64> = (0..values.len())
+            .filter_map(|i| values.get(i).copied())
+            .collect();
+
+        PlotBuilder::new(
+            self,
+            PlotInput::Single(values_vec),
+            crate::plots::PieConfig::default(),
+        )
+    }
+
+    /// Add a radar/spider chart for multivariate data comparison
+    ///
+    /// Creates a radar chart with multiple axes arranged in a circle.
+    /// Returns a `PlotBuilder<RadarConfig>` for method chaining.
+    ///
+    /// # Arguments
+    ///
+    /// * `labels` - Labels for each axis spoke
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// Plot::new()
+    ///     .title("Player Stats")
+    ///     .radar(&["Speed", "Power", "Defense", "Magic", "Luck"])
+    ///     .series(&[85.0, 92.0, 78.0, 65.0, 88.0])
+    ///     .label("Player 1")
+    ///     .fill_alpha(0.3)
+    ///     .series(&[72.0, 68.0, 95.0, 82.0, 75.0])
+    ///     .label("Player 2")
+    ///     .fill_alpha(0.3)
+    ///     .save("radar.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn radar<S: AsRef<str>>(self, labels: &[S]) -> PlotBuilder<crate::plots::RadarConfig> {
+        let label_strings: Vec<String> = labels.iter().map(|s| s.as_ref().to_string()).collect();
+
+        let config = crate::plots::RadarConfig::default().labels(label_strings);
+
+        PlotBuilder::new(self, PlotInput::Single(vec![]), config)
+    }
+
+    /// Add a Violin plot for visualizing distribution shapes
+    ///
+    /// Creates a violin plot combining KDE density estimation with optional
+    /// box/strip components for statistical visualization.
+    /// Returns a `PlotBuilder<ViolinConfig>` for method chaining with violin-specific options.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let data: Vec<f64> = (0..200).map(|i| {
+    ///     let x = (i as f64 * 0.1).sin() * 3.0 + 5.0;
+    ///     x
+    /// }).collect();
+    ///
+    /// // Simple usage
+    /// Plot::new()
+    ///     .violin(&data)
+    ///     .save("violin.png")?;
+    ///
+    /// // With configuration
+    /// Plot::new()
+    ///     .violin(&data)
+    ///     .show_box(true)
+    ///     .show_median(true)
+    ///     .fill_alpha(0.6)
+    ///     .title("Distribution")
+    ///     .save("violin_configured.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn violin<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::ViolinConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        let mut data_vec = Vec::with_capacity(data.len());
+        for i in 0..data.len() {
+            if let Some(val) = data.get(i) {
+                data_vec.push((*val).into());
+            }
+        }
+
+        PlotBuilder::new(
+            self,
+            PlotInput::Single(data_vec),
+            crate::plots::ViolinConfig::default(),
+        )
+    }
+
+    /// Add a Polar line plot for visualizing data in polar coordinates
+    ///
+    /// Creates a polar plot with r (radius) and theta (angle in radians) data.
+    /// Returns a `PlotBuilder<PolarPlotConfig>` for method chaining with polar-specific options.
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - Radius values (distance from center)
+    /// * `theta` - Angle values in radians
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    /// use std::f64::consts::PI;
+    ///
+    /// // Rose curve
+    /// let n_points = 200;
+    /// let theta: Vec<f64> = (0..n_points)
+    ///     .map(|i| i as f64 * 2.0 * PI / n_points as f64)
+    ///     .collect();
+    /// let r: Vec<f64> = theta.iter().map(|&t| (3.0 * t).cos().abs()).collect();
+    ///
+    /// Plot::new()
+    ///     .title("Rose Curve")
+    ///     .polar_line(&r, &theta)
+    ///     .fill(true)
+    ///     .fill_alpha(0.3)
+    ///     .save("polar.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn polar_line<R, T>(self, r: &R, theta: &T) -> PlotBuilder<crate::plots::PolarPlotConfig>
+    where
+        R: Data1D<f64>,
+        T: Data1D<f64>,
+    {
+        let r_vec: Vec<f64> = (0..r.len()).filter_map(|i| r.get(i).copied()).collect();
+        let theta_vec: Vec<f64> = (0..theta.len())
+            .filter_map(|i| theta.get(i).copied())
+            .collect();
+
+        PlotBuilder::new(
+            self,
+            PlotInput::XY(r_vec, theta_vec),
+            crate::plots::PolarPlotConfig::default(),
+        )
+    }
+
     /// Configure legend with position
     ///
     /// For matplotlib-compatible position codes, use `legend_position()` with `LegendPosition`.
@@ -2339,6 +2649,141 @@ impl Plot {
         self
     }
 
+    /// Internal method to add a Contour series
+    pub(crate) fn add_contour_series(
+        mut self,
+        contour_data: crate::plots::continuous::contour::ContourPlotData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Contour { data: contour_data },
+            label: style.label,
+            color: style
+                .color
+                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            line_width: style.line_width,
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+        };
+
+        self.series.push(series);
+        self.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Pie series
+    pub(crate) fn add_pie_series(
+        mut self,
+        pie_data: crate::plots::composition::pie::PieData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Pie { data: pie_data },
+            label: style.label,
+            color: style
+                .color
+                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            line_width: style.line_width,
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+        };
+
+        self.series.push(series);
+        self.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Radar series
+    pub(crate) fn add_radar_series(
+        mut self,
+        radar_data: crate::plots::polar::radar::RadarPlotData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Radar { data: radar_data },
+            label: style.label,
+            color: style
+                .color
+                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            line_width: style.line_width,
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+        };
+
+        self.series.push(series);
+        self.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Violin series
+    pub(crate) fn add_violin_series(
+        mut self,
+        violin_data: crate::plots::ViolinData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Violin { data: violin_data },
+            label: style.label,
+            color: style
+                .color
+                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            line_width: style.line_width,
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+        };
+
+        self.series.push(series);
+        self.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Polar series
+    pub(crate) fn add_polar_series(
+        mut self,
+        polar_data: crate::plots::polar::polar_plot::PolarPlotData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Polar { data: polar_data },
+            label: style.label,
+            color: style
+                .color
+                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            line_width: style.line_width,
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+        };
+
+        self.series.push(series);
+        self.auto_color_index += 1;
+        self
+    }
+
     /// Helper method to render a single series using normal (non-DataShader) rendering
     fn render_series_normal(
         &self,
@@ -2848,6 +3293,116 @@ impl Plot {
                 );
                 data.render(renderer, &plot_area, &self.theme, color)?;
             }
+            SeriesType::Contour { data } => {
+                // Use PlotRender trait to render Contour
+                let contour_plot_area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                data.render(renderer, &contour_plot_area, &self.theme, color)?;
+
+                // Draw colorbar if enabled
+                if data.config.colorbar {
+                    let colorbar_width = 20.0;
+                    let colorbar_margin = 10.0;
+                    let colorbar_x = plot_area.right() + colorbar_margin;
+                    let colorbar_y = plot_area.y();
+                    let colorbar_height = plot_area.height();
+
+                    // Get value range from contour data
+                    let (vmin, vmax) = if data.levels.is_empty() {
+                        (0.0, 1.0)
+                    } else {
+                        (
+                            data.levels.first().copied().unwrap_or(0.0),
+                            data.levels.last().copied().unwrap_or(1.0),
+                        )
+                    };
+
+                    // Get colormap from contour config
+                    let colormap = crate::render::ColorMap::by_name(&data.config.cmap)
+                        .unwrap_or_else(crate::render::ColorMap::viridis);
+
+                    renderer.draw_colorbar(
+                        &colormap,
+                        vmin,
+                        vmax,
+                        colorbar_x,
+                        colorbar_y,
+                        colorbar_width,
+                        colorbar_height,
+                        data.config.colorbar_label.as_deref(),
+                        self.theme.foreground,
+                        data.config.colorbar_tick_font_size,
+                        Some(data.config.colorbar_label_font_size),
+                    )?;
+                }
+            }
+            SeriesType::Pie { data } => {
+                // Use PlotRender trait to render Pie with 1:1 aspect ratio
+                // (uses normalized 0-1 coordinates)
+                let (pie_x, pie_y, pie_size) = {
+                    let size = plot_area.width().min(plot_area.height());
+                    let x_offset = (plot_area.width() - size) / 2.0;
+                    let y_offset = (plot_area.height() - size) / 2.0;
+                    (plot_area.x() + x_offset, plot_area.y() + y_offset, size)
+                };
+                let pie_plot_area = crate::plots::PlotArea::new(
+                    pie_x, pie_y, pie_size, pie_size, 0.0, 1.0, 0.0, 1.0,
+                );
+                data.render(renderer, &pie_plot_area, &self.theme, color)?;
+            }
+            SeriesType::Radar { data } => {
+                // Use PlotRender trait to render Radar with 1:1 aspect ratio
+                // and extra top padding for title clearance
+                let (square_area, adjusted_y, adjusted_height) = {
+                    let size = plot_area.width().min(plot_area.height());
+                    let x_offset = (plot_area.width() - size) / 2.0;
+                    // Add extra top margin to avoid title overlap with top axis labels
+                    // Radar axis labels are positioned at r=1.15 (15% outside the chart)
+                    // Plus we need space for the label text itself (~10% more)
+                    // Total: 25% clearance for proper separation
+                    let title_clearance = size * 0.20;
+                    let y_offset = (plot_area.height() - size) / 2.0 + title_clearance;
+                    let adjusted_size = size - title_clearance;
+                    (
+                        plot_area.x() + x_offset,
+                        plot_area.y() + y_offset,
+                        adjusted_size,
+                    )
+                };
+                let radar_plot_area = crate::plots::PlotArea::new(
+                    square_area,
+                    adjusted_y,
+                    adjusted_height, // square
+                    adjusted_height, // square
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                data.render(renderer, &radar_plot_area, &self.theme, color)?;
+            }
+            SeriesType::Polar { data } => {
+                // Use PlotRender trait to render Polar with 1:1 aspect ratio
+                // Center the square plot area within available space
+                let (polar_x, polar_y, polar_size) = {
+                    let size = plot_area.width().min(plot_area.height());
+                    let x_offset = (plot_area.width() - size) / 2.0;
+                    let y_offset = (plot_area.height() - size) / 2.0;
+                    (plot_area.x() + x_offset, plot_area.y() + y_offset, size)
+                };
+                let polar_plot_area = crate::plots::PlotArea::new(
+                    polar_x, polar_y, polar_size, polar_size, x_min, x_max, y_min, y_max,
+                );
+                data.render(renderer, &polar_plot_area, &self.theme, color)?;
+            }
         }
 
         Ok(())
@@ -3041,6 +3596,26 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Contour { data } => {
+                    if data.levels.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Pie { data } => {
+                    if data.values.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Radar { data } => {
+                    if data.series.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Polar { data } => {
+                    if data.points.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -3126,6 +3701,37 @@ impl Plot {
             }
         });
 
+        // Extract violin categories and positions if present (for categorical x-axis labels)
+        let violin_data: Vec<(String, f64)> = self
+            .series
+            .iter()
+            .filter_map(|s| {
+                if let SeriesType::Violin { data } = &s.series_type {
+                    data.config
+                        .category
+                        .clone()
+                        .map(|cat| (cat, data.config.x_position))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
+            violin_data.into_iter().unzip();
+
+        // Check if this is a violin categorical plot (to use special rendering)
+        let is_violin_categorical = !violin_categories.is_empty();
+
+        // Use violin categories if bar_categories is not present and violin categories exist
+        let bar_categories = bar_categories.or_else(|| {
+            if is_violin_categorical {
+                Some(violin_categories.clone())
+            } else {
+                None
+            }
+        });
+
         // Choose layout method based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
             match &self.config.margins {
@@ -3161,15 +3767,28 @@ impl Plot {
                     (skia_rect, Some(layout))
                 }
                 _ => {
-                    // Use legacy margin-based layout
-                    let margins = self.config.compute_margins(
-                        self.title.is_some(),
-                        self.xlabel.is_some(),
-                        self.ylabel.is_some(),
+                    // Always use LayoutCalculator for consistent plot area and title/label positioning
+                    let content = self.create_plot_content(y_min, y_max);
+                    let layout_config = LayoutConfig::default();
+                    let calculator = LayoutCalculator::new(layout_config);
+                    let layout = calculator.compute(
+                        (scaled_width, scaled_height),
+                        &content,
+                        &self.config.typography,
+                        &self.config.spacing,
+                        dpi,
                     );
-                    let plot_area =
-                        calculate_plot_area_config(scaled_width, scaled_height, &margins, dpi);
-                    (plot_area, None)
+                    let skia_rect = tiny_skia::Rect::from_ltrb(
+                        layout.plot_area.left,
+                        layout.plot_area.top,
+                        layout.plot_area.right,
+                        layout.plot_area.bottom,
+                    )
+                    .ok_or(PlottingError::InvalidData {
+                        message: "Invalid plot area from layout".to_string(),
+                        position: None,
+                    })?;
+                    (skia_rect, Some(layout))
                 }
             };
 
@@ -3191,7 +3810,8 @@ impl Plot {
             .collect();
 
         // Draw grid if enabled - using unified GridStyle
-        if self.grid_style.visible {
+        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
+        if self.grid_style.visible && self.needs_cartesian_axes() {
             let grid_color = self.grid_style.effective_color();
             let grid_width_px = self.line_width_px(self.grid_style.line_width);
             renderer.draw_grid(
@@ -3204,71 +3824,79 @@ impl Plot {
             )?;
         }
 
-        // Draw axes and labels based on layout method
-        if let Some(ref layout) = layout_opt {
-            // Content-driven layout: use computed positions
-            let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
+        // Draw axes and labels using computed layout positions
+        // Note: layout_opt is always Some since all render paths now compute layout
+        let layout = layout_opt.expect("layout should always be computed");
+        let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
 
-            // Draw tick labels using layout positions
-            // Use categorical labels for bar charts, numeric for others
-            if let Some(ref categories) = bar_categories {
-                renderer.draw_axis_labels_at_categorical(
-                    &layout.plot_area,
-                    categories,
-                    y_min,
-                    y_max,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.theme.foreground,
-                    dpi,
-                )?;
-            } else {
-                renderer.draw_axis_labels_at(
-                    &layout.plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &x_ticks,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.theme.foreground,
-                    dpi,
-                )?;
-            }
-
-            // Draw title if present
-            if let Some(ref pos) = layout.title_pos {
-                if let Some(ref title) = self.title {
-                    renderer.draw_title_at(pos, title, self.theme.foreground)?;
-                }
-            }
-
-            // Draw xlabel if present
-            if let Some(ref pos) = layout.xlabel_pos {
-                if let Some(ref xlabel) = self.xlabel {
-                    renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
-                }
-            }
-
-            // Draw ylabel if present
-            if let Some(ref pos) = layout.ylabel_pos {
-                if let Some(ref ylabel) = self.ylabel {
-                    renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
-                }
-            }
-        } else {
-            // Legacy layout: use old positioning logic
-            renderer.draw_axes(
-                plot_area,
-                &x_tick_pixels,
-                &y_tick_pixels,
+        // Draw tick labels using layout positions
+        // Use categorical labels for bar/violin charts, numeric for others
+        if is_violin_categorical {
+            // Violin plots use their own x-positions for category labels
+            renderer.draw_axis_labels_at_categorical_violin(
+                &layout.plot_area,
+                &violin_categories,
+                &violin_positions,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
                 self.theme.foreground,
+                dpi,
             )?;
+        } else if let Some(ref categories) = bar_categories {
+            renderer.draw_axis_labels_at_categorical(
+                &layout.plot_area,
+                categories,
+                y_min,
+                y_max,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.theme.foreground,
+                dpi,
+            )?;
+        } else {
+            renderer.draw_axis_labels_at(
+                &layout.plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &x_ticks,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.theme.foreground,
+                dpi,
+            )?;
+        }
+
+        // Draw title if present
+        if let Some(ref pos) = layout.title_pos {
+            if let Some(ref title) = self.title {
+                renderer.draw_title_at(pos, title, self.theme.foreground)?;
+            }
+        }
+
+        // Draw xlabel if present
+        if let Some(ref pos) = layout.xlabel_pos {
+            if let Some(ref xlabel) = self.xlabel {
+                renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
+            }
+        }
+
+        // Draw ylabel if present
+        if let Some(ref pos) = layout.ylabel_pos {
+            if let Some(ref ylabel) = self.ylabel {
+                renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
+            }
         }
 
         // Render each data series
@@ -3587,6 +4215,26 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Contour { data } => {
+                    if data.levels.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Pie { data } => {
+                    if data.values.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Radar { data } => {
+                    if data.series.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Polar { data } => {
+                    if data.points.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -3602,54 +4250,87 @@ impl Plot {
             }
         });
 
+        // Extract violin categories if present (for categorical x-axis labels)
+        let violin_categories: Vec<String> = self
+            .series
+            .iter()
+            .filter_map(|s| {
+                if let SeriesType::Violin { data } = &s.series_type {
+                    data.config.category.clone()
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Use violin categories if bar_categories is not present and violin categories exist
+        let bar_categories = bar_categories.or({
+            if !violin_categories.is_empty() {
+                Some(violin_categories)
+            } else {
+                None
+            }
+        });
+
         // Choose layout method based on MarginConfig
-        let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) = match &self
-            .config
-            .margins
-        {
-            MarginConfig::ContentDriven {
-                edge_buffer,
-                center_plot,
-            } => {
-                // Use content-driven layout calculator
-                let content = self.create_plot_content(y_min, y_max);
-                let layout_config = LayoutConfig {
-                    edge_buffer_pt: *edge_buffer,
-                    center_plot: *center_plot,
-                    ..Default::default()
-                };
-                let calculator = LayoutCalculator::new(layout_config);
-                let layout = calculator.compute(
-                    (renderer.width(), renderer.height()),
-                    &content,
-                    &self.config.typography,
-                    &self.config.spacing,
-                    dpi,
-                );
-                let skia_rect = tiny_skia::Rect::from_ltrb(
-                    layout.plot_area.left,
-                    layout.plot_area.top,
-                    layout.plot_area.right,
-                    layout.plot_area.bottom,
-                )
-                .ok_or(PlottingError::InvalidData {
-                    message: "Invalid plot area from layout".to_string(),
-                    position: None,
-                })?;
-                (skia_rect, Some(layout))
-            }
-            _ => {
-                // Use legacy margin-based layout
-                let margins = self.config.compute_margins(
-                    self.title.is_some(),
-                    self.xlabel.is_some(),
-                    self.ylabel.is_some(),
-                );
-                let plot_area =
-                    calculate_plot_area_config(renderer.width(), renderer.height(), &margins, dpi);
-                (plot_area, None)
-            }
-        };
+        let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
+            match &self.config.margins {
+                MarginConfig::ContentDriven {
+                    edge_buffer,
+                    center_plot,
+                } => {
+                    // Use content-driven layout calculator
+                    let content = self.create_plot_content(y_min, y_max);
+                    let layout_config = LayoutConfig {
+                        edge_buffer_pt: *edge_buffer,
+                        center_plot: *center_plot,
+                        ..Default::default()
+                    };
+                    let calculator = LayoutCalculator::new(layout_config);
+                    let layout = calculator.compute(
+                        (renderer.width(), renderer.height()),
+                        &content,
+                        &self.config.typography,
+                        &self.config.spacing,
+                        dpi,
+                    );
+                    let skia_rect = tiny_skia::Rect::from_ltrb(
+                        layout.plot_area.left,
+                        layout.plot_area.top,
+                        layout.plot_area.right,
+                        layout.plot_area.bottom,
+                    )
+                    .ok_or(PlottingError::InvalidData {
+                        message: "Invalid plot area from layout".to_string(),
+                        position: None,
+                    })?;
+                    (skia_rect, Some(layout))
+                }
+                _ => {
+                    // Always use LayoutCalculator for consistent plot area and title/label positioning
+                    let content = self.create_plot_content(y_min, y_max);
+                    let layout_config = LayoutConfig::default();
+                    let calculator = LayoutCalculator::new(layout_config);
+                    let layout = calculator.compute(
+                        (renderer.width(), renderer.height()),
+                        &content,
+                        &self.config.typography,
+                        &self.config.spacing,
+                        dpi,
+                    );
+                    let skia_rect = tiny_skia::Rect::from_ltrb(
+                        layout.plot_area.left,
+                        layout.plot_area.top,
+                        layout.plot_area.right,
+                        layout.plot_area.bottom,
+                    )
+                    .ok_or(PlottingError::InvalidData {
+                        message: "Invalid plot area from layout".to_string(),
+                        position: None,
+                    })?;
+                    (skia_rect, Some(layout))
+                }
+            };
 
         // Generate nice tick values - adapt count to available space
         // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
@@ -3669,7 +4350,8 @@ impl Plot {
             .collect();
 
         // Draw grid if enabled - using unified GridStyle
-        if self.grid_style.visible {
+        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
+        if self.grid_style.visible && self.needs_cartesian_axes() {
             let grid_color = self.grid_style.effective_color();
             let grid_width_px = pt_to_px(self.grid_style.line_width, dpi);
             renderer.draw_grid(
@@ -3682,115 +4364,61 @@ impl Plot {
             )?;
         }
 
-        // Draw axes and labels based on layout method
-        if let Some(ref layout) = layout_opt {
-            // Content-driven layout: use computed positions
-            let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
+        // Draw axes and labels using computed layout positions
+        // Note: layout_opt is always Some since all render paths now compute layout
+        let layout = layout_opt.expect("layout should always be computed");
+        let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
 
-            // Draw tick labels using layout positions
-            // Use categorical labels for bar charts, numeric for others
-            if let Some(ref categories) = bar_categories {
-                renderer.draw_axis_labels_at_categorical(
-                    &layout.plot_area,
-                    categories,
-                    y_min,
-                    y_max,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.theme.foreground,
-                    dpi,
-                )?;
-            } else {
-                renderer.draw_axis_labels_at(
-                    &layout.plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &x_ticks,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.theme.foreground,
-                    dpi,
-                )?;
-            }
-
-            // Draw title if present
-            if let Some(ref pos) = layout.title_pos {
-                if let Some(ref title) = self.title {
-                    renderer.draw_title_at(pos, title, self.theme.foreground)?;
-                }
-            }
-
-            // Draw xlabel if present
-            if let Some(ref pos) = layout.xlabel_pos {
-                if let Some(ref xlabel) = self.xlabel {
-                    renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
-                }
-            }
-
-            // Draw ylabel if present
-            if let Some(ref pos) = layout.ylabel_pos {
-                if let Some(ref ylabel) = self.ylabel {
-                    renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
-                }
-            }
-        } else {
-            // Legacy layout: use old positioning logic
-            renderer.draw_axes(
-                plot_area,
-                &x_tick_pixels,
-                &y_tick_pixels,
+        // Draw tick labels using layout positions
+        // Use categorical labels for bar charts, numeric for others
+        if let Some(ref categories) = bar_categories {
+            renderer.draw_axis_labels_at_categorical(
+                &layout.plot_area,
+                categories,
+                y_min,
+                y_max,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
                 self.theme.foreground,
+                dpi,
             )?;
+        } else {
+            renderer.draw_axis_labels_at(
+                &layout.plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &x_ticks,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.theme.foreground,
+                dpi,
+            )?;
+        }
 
-            // Draw title if present
+        // Draw title if present
+        if let Some(ref pos) = layout.title_pos {
             if let Some(ref title) = self.title {
-                let title_size_px = pt_to_px(self.config.typography.title_size(), dpi);
-                renderer.draw_title(
-                    title,
-                    plot_area,
-                    self.theme.foreground,
-                    title_size_px,
-                    dpi,
-                    &self.config.spacing,
-                )?;
+                renderer.draw_title_at(pos, title, self.theme.foreground)?;
             }
+        }
 
-            // Draw axis labels if present (legacy mode)
-            let margins = self.config.compute_margins(
-                self.title.is_some(),
-                self.xlabel.is_some(),
-                self.ylabel.is_some(),
-            );
-
+        // Draw xlabel if present
+        if let Some(ref pos) = layout.xlabel_pos {
             if let Some(ref xlabel) = self.xlabel {
-                let label_size = pt_to_px(self.config.typography.label_size(), dpi);
-                let xlabel_y = renderer.height() as f32 - margins.bottom_px(dpi) * 0.3;
-                renderer.draw_text_centered(
-                    xlabel,
-                    renderer.width() as f32 / 2.0,
-                    xlabel_y,
-                    label_size,
-                    self.theme.foreground,
-                )?;
+                renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
             }
+        }
 
+        // Draw ylabel if present
+        if let Some(ref pos) = layout.ylabel_pos {
             if let Some(ref ylabel) = self.ylabel {
-                let label_size = pt_to_px(self.config.typography.label_size(), dpi);
-                let estimated_text_width = ylabel.len() as f32 * label_size * 0.8;
-                let ylabel_x = (estimated_text_width * 0.6).max(margins.left_px(dpi) * 0.3);
-                renderer.draw_text_rotated(
-                    ylabel,
-                    ylabel_x,
-                    renderer.height() as f32 / 2.0,
-                    label_size,
-                    self.theme.foreground,
-                )?;
+                renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
             }
         }
 
@@ -3953,14 +4581,12 @@ impl Plot {
         }
 
         // Collect legend items from series with labels
+        // Use flat_map to expand Radar series into multiple legend entries
         let legend_items: Vec<LegendItem> = self
             .series
             .iter()
             .enumerate()
-            .filter_map(|(idx, series)| {
-                let default_color = self.theme.get_color(idx);
-                series.to_legend_item(default_color, &self.theme)
-            })
+            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.theme))
             .collect();
 
         // Draw legend if there are labeled series and legend is enabled
@@ -4032,8 +4658,29 @@ impl Plot {
                 SeriesType::Ecdf { data } => data.x.len(),
                 SeriesType::Violin { data } => data.data.len(),
                 SeriesType::Boxen { data } => data.boxes.len() * 4, // Each box has 4 points
+                SeriesType::Contour { data } => data.x.len() * data.y.len(),
+                SeriesType::Pie { data } => data.values.len(),
+                SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
+                SeriesType::Polar { data } => data.points.len(),
             })
             .sum()
+    }
+
+    /// Check if the plot needs standard Cartesian axes
+    ///
+    /// Some plot types (Pie, Radar, Polar) have their own coordinate system
+    /// and don't use standard X/Y axes with tick labels.
+    fn needs_cartesian_axes(&self) -> bool {
+        // If any series is a non-Cartesian type, skip standard axes
+        for series in &self.series {
+            match &series.series_type {
+                SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. } => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        true
     }
 
     /// Helper to render attached error bars on Line/Scatter series
@@ -4404,6 +5051,42 @@ impl Plot {
                         }
                     }
                 }
+                SeriesType::Contour { data } => {
+                    // Add contour line segment endpoints
+                    for level in &data.lines {
+                        for &(x1, y1, x2, y2) in &level.segments {
+                            if x1.is_finite() && y1.is_finite() {
+                                all_points
+                                    .push(crate::core::types::Point2f::new(x1 as f32, y1 as f32));
+                            }
+                            if x2.is_finite() && y2.is_finite() {
+                                all_points
+                                    .push(crate::core::types::Point2f::new(x2 as f32, y2 as f32));
+                            }
+                        }
+                    }
+                }
+                SeriesType::Pie { .. } => {
+                    // Pie charts don't use point-based datashader, use normalized coords
+                    all_points.push(crate::core::types::Point2f::new(0.5, 0.5));
+                }
+                SeriesType::Radar { data } => {
+                    // Add radar series points (already in cartesian coordinates from polygon)
+                    for series_data in &data.series {
+                        for &(x, y) in &series_data.polygon {
+                            all_points.push(crate::core::types::Point2f::new(x as f32, y as f32));
+                        }
+                    }
+                }
+                SeriesType::Polar { data } => {
+                    // Add polar plot points (already in cartesian coordinates)
+                    for point in &data.points {
+                        all_points.push(crate::core::types::Point2f::new(
+                            point.x as f32,
+                            point.y as f32,
+                        ));
+                    }
+                }
             }
         }
 
@@ -4490,7 +5173,8 @@ impl Plot {
             .collect();
 
         // Draw grid if enabled - using unified GridStyle (sequential - UI elements)
-        if self.grid_style.visible {
+        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
+        if self.grid_style.visible && self.needs_cartesian_axes() {
             let grid_color = self.grid_style.effective_color();
             renderer.draw_grid(
                 &x_tick_pixels,
@@ -4502,13 +5186,15 @@ impl Plot {
             )?;
         }
 
-        // Draw axes (sequential - UI elements)
-        renderer.draw_axes(
-            plot_area,
-            &x_tick_pixels,
-            &y_tick_pixels,
-            self.theme.foreground,
-        )?;
+        // Draw axes (sequential - UI elements) - only for Cartesian plots
+        if self.needs_cartesian_axes() {
+            renderer.draw_axes(
+                plot_area,
+                &x_tick_pixels,
+                &y_tick_pixels,
+                self.theme.foreground,
+            )?;
+        }
 
         // Process all series in parallel
         let processed_series = self.parallel_renderer.process_series_parallel(
@@ -4917,6 +5603,88 @@ impl Plot {
 
                         RenderSeriesType::Line { segments }
                     }
+                    SeriesType::Contour { data: contour_data } => {
+                        // Contour plots use line segment rendering
+                        let mut all_points = Vec::new();
+                        for level in &contour_data.lines {
+                            for &(x1, y1, x2, y2) in &level.segments {
+                                all_points.push((x1, y1));
+                                all_points.push((x2, y2));
+                            }
+                        }
+
+                        let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
+                        let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &poly_x,
+                            &poly_y,
+                            data_bounds.clone(),
+                            parallel_plot_area.clone(),
+                        )?;
+
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            LineStyle::Solid,
+                            color,
+                            line_width,
+                        )?;
+
+                        RenderSeriesType::Line { segments }
+                    }
+                    SeriesType::Pie { .. } => {
+                        // Pie charts use polygon rendering, not supported in parallel mode
+                        // Return empty segments (will be rendered using normal path)
+                        RenderSeriesType::Line { segments: vec![] }
+                    }
+                    SeriesType::Radar { data: radar_data } => {
+                        // Radar plots use polygon rendering, not supported in parallel mode
+                        // Fall back to line rendering of radar polygon outlines
+                        let mut all_points = Vec::new();
+                        for series_data in &radar_data.series {
+                            for &(x, y) in &series_data.polygon {
+                                all_points.push((x, y));
+                            }
+                        }
+
+                        let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
+                        let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &poly_x,
+                            &poly_y,
+                            data_bounds.clone(),
+                            parallel_plot_area.clone(),
+                        )?;
+
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            LineStyle::Solid,
+                            color,
+                            line_width,
+                        )?;
+
+                        RenderSeriesType::Line { segments }
+                    }
+                    SeriesType::Polar { data: polar_data } => {
+                        // Polar plots use polygon rendering, not supported in parallel mode
+                        // Fall back to line rendering of polar points
+                        let poly_x: Vec<f64> = polar_data.points.iter().map(|p| p.x).collect();
+                        let poly_y: Vec<f64> = polar_data.points.iter().map(|p| p.y).collect();
+                        let points = self.parallel_renderer.transform_coordinates_parallel(
+                            &poly_x,
+                            &poly_y,
+                            data_bounds.clone(),
+                            parallel_plot_area.clone(),
+                        )?;
+
+                        let segments = self.parallel_renderer.process_polyline_parallel(
+                            &points,
+                            LineStyle::Solid,
+                            color,
+                            line_width,
+                        )?;
+
+                        RenderSeriesType::Line { segments }
+                    }
                 };
 
                 Ok(SeriesRenderData {
@@ -5242,13 +6010,21 @@ impl Plot {
                     y_min = y_min.min(0.0);
                 }
                 SeriesType::Violin { data } => {
-                    // Violin bounds from KDE and data range
-                    let (data_min, data_max) = data.range;
-                    if data_min.is_finite() {
-                        y_min = y_min.min(data_min);
+                    // Violin bounds from KDE range (extends beyond data range by 3 bandwidths)
+                    // Use KDE's x values which represent the evaluation range
+                    let (kde_min, kde_max) = if !data.kde.x.is_empty() {
+                        (
+                            data.kde.x.first().copied().unwrap_or(data.range.0),
+                            data.kde.x.last().copied().unwrap_or(data.range.1),
+                        )
+                    } else {
+                        data.range
+                    };
+                    if kde_min.is_finite() {
+                        y_min = y_min.min(kde_min);
                     }
-                    if data_max.is_finite() {
-                        y_max = y_max.max(data_max);
+                    if kde_max.is_finite() {
+                        y_max = y_max.max(kde_max);
                     }
                     // X bounds for centered violin
                     x_min = x_min.min(0.0);
@@ -5266,6 +6042,54 @@ impl Plot {
                     // X bounds for centered boxen
                     x_min = x_min.min(0.0);
                     x_max = x_max.max(1.0);
+                }
+                SeriesType::Contour { data } => {
+                    // Contour bounds from grid coordinates
+                    for &x_val in &data.x {
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                    }
+                    for &y_val in &data.y {
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                }
+                SeriesType::Pie { .. } => {
+                    // Pie charts use normalized 0-1 coordinate space
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                    y_min = y_min.min(0.0);
+                    y_max = y_max.max(1.0);
+                }
+                SeriesType::Radar { data } => {
+                    // Radar charts use normalized coordinate space
+                    // Bounds are determined by the polygon coordinates
+                    for series_data in &data.series {
+                        for &(x_val, y_val) in &series_data.polygon {
+                            if x_val.is_finite() {
+                                x_min = x_min.min(x_val);
+                                x_max = x_max.max(x_val);
+                            }
+                            if y_val.is_finite() {
+                                y_min = y_min.min(y_val);
+                                y_max = y_max.max(y_val);
+                            }
+                        }
+                    }
+                }
+                SeriesType::Polar { data } => {
+                    // Polar plots need symmetric space centered at origin
+                    // Use ONLY the label margin bounds, ignoring actual data points
+                    // This ensures asymmetric curves (like cardioid) still have centered labels
+                    let label_margin = data.r_max * 1.5;
+                    x_min = -label_margin;
+                    x_max = label_margin;
+                    y_min = -label_margin;
+                    y_max = label_margin;
                 }
             }
         }
@@ -5316,6 +6140,10 @@ impl Plot {
                 SeriesType::Ecdf { data } => data.x.len(),
                 SeriesType::Violin { data } => data.data.len(),
                 SeriesType::Boxen { data } => data.boxes.len() * 4,
+                SeriesType::Contour { data } => data.x.len() * data.y.len(),
+                SeriesType::Pie { data } => data.values.len(),
+                SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
+                SeriesType::Polar { data } => data.points.len(),
             })
             .sum::<usize>();
 
@@ -5481,6 +6309,26 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+                SeriesType::Contour { data } => {
+                    if data.levels.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Pie { data } => {
+                    if data.values.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Radar { data } => {
+                    if data.series.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Polar { data } => {
+                    if data.points.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
             }
         }
 
@@ -5605,10 +6453,56 @@ impl Plot {
                     x_min = x_min.min(0.0);
                     x_max = x_max.max(1.0);
                 }
+                SeriesType::Contour { data } => {
+                    // Contour bounds from grid coordinates
+                    for &x_val in &data.x {
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                    }
+                    for &y_val in &data.y {
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                }
+                SeriesType::Pie { .. } => {
+                    // Pie charts use normalized 0-1 coordinate space
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                    y_min = y_min.min(0.0);
+                    y_max = y_max.max(1.0);
+                }
+                SeriesType::Radar { data } => {
+                    // Radar charts use polygon coordinates
+                    for series_data in &data.series {
+                        for &(x_val, y_val) in &series_data.polygon {
+                            if x_val.is_finite() {
+                                x_min = x_min.min(x_val);
+                                x_max = x_max.max(x_val);
+                            }
+                            if y_val.is_finite() {
+                                y_min = y_min.min(y_val);
+                                y_max = y_max.max(y_val);
+                            }
+                        }
+                    }
+                }
+                SeriesType::Polar { data } => {
+                    // Polar plots need symmetric space centered at origin
+                    // Use label margin bounds to ensure all angle labels are visible
+                    let label_margin = data.r_max * 1.5;
+                    x_min = -label_margin;
+                    x_max = label_margin;
+                    y_min = -label_margin;
+                    y_max = label_margin;
+                }
             }
         }
 
-        // Add padding to data bounds
+        // Add padding to data bounds (skip for polar which has its own margins)
         let x_range = x_max - x_min;
         let y_range = y_max - y_min;
         x_min -= x_range * 0.05;
@@ -5620,6 +6514,37 @@ impl Plot {
         let bar_categories: Option<Vec<String>> = self.series.iter().find_map(|s| {
             if let SeriesType::Bar { categories, .. } = &s.series_type {
                 Some(categories.clone())
+            } else {
+                None
+            }
+        });
+
+        // Extract violin categories and positions if present (for categorical x-axis labels)
+        let violin_data: Vec<(String, f64)> = self
+            .series
+            .iter()
+            .filter_map(|s| {
+                if let SeriesType::Violin { data } = &s.series_type {
+                    data.config
+                        .category
+                        .clone()
+                        .map(|cat| (cat, data.config.x_position))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
+            violin_data.into_iter().unzip();
+
+        // Check if this is a violin categorical plot (to use special rendering)
+        let is_violin_categorical = !violin_categories.is_empty();
+
+        // Use violin categories if bar_categories is not present and violin categories exist
+        let bar_categories = bar_categories.or_else(|| {
+            if is_violin_categorical {
+                Some(violin_categories.clone())
             } else {
                 None
             }
@@ -5662,13 +6587,28 @@ impl Plot {
                     (skia_rect, Some(layout))
                 }
                 _ => {
-                    // Use legacy margin-based layout
-                    let plot_area = crate::render::skia::calculate_plot_area_dpi(
-                        scaled_width,
-                        scaled_height,
-                        self.dpi_scale(),
+                    // Always use LayoutCalculator for consistent plot area and title/label positioning
+                    let content = self.create_plot_content(y_min, y_max);
+                    let layout_config = LayoutConfig::default();
+                    let calculator = LayoutCalculator::new(layout_config);
+                    let layout = calculator.compute(
+                        (scaled_width, scaled_height),
+                        &content,
+                        &self.config.typography,
+                        &self.config.spacing,
+                        dpi,
                     );
-                    (plot_area, None)
+                    let skia_rect = tiny_skia::Rect::from_ltrb(
+                        layout.plot_area.left,
+                        layout.plot_area.top,
+                        layout.plot_area.right,
+                        layout.plot_area.bottom,
+                    )
+                    .ok_or(PlottingError::InvalidData {
+                        message: "Invalid plot area from layout".to_string(),
+                        position: None,
+                    })?;
+                    (skia_rect, Some(layout))
                 }
             };
 
@@ -5768,7 +6708,8 @@ impl Plot {
             .collect();
 
         // Render grid if enabled - using unified GridStyle
-        if self.grid_style.visible {
+        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
+        if self.grid_style.visible && self.needs_cartesian_axes() {
             let grid_color = self.grid_style.effective_color();
             renderer.draw_grid(
                 &x_tick_pixels,
@@ -5851,25 +6792,48 @@ impl Plot {
             })
             .collect();
 
-        // Always draw axes with enhanced tick system
-        renderer.draw_axes_with_config(
-            plot_area,
-            &x_major_tick_pixels,
-            &y_major_tick_pixels,
-            &x_minor_tick_pixels,
-            &y_minor_tick_pixels,
-            &self.tick_config.direction,
-            self.theme.foreground,
-        )?;
+        // Only draw axes for Cartesian plots (skip for Pie, Radar, etc.)
+        let draw_axes = self.needs_cartesian_axes();
 
-        // Draw axis labels, tick values, and title based on layout method
-        if let Some(ref layout) = layout_opt {
-            // Content-driven layout: use computed positions
-            let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
+        if draw_axes {
+            // Always draw axes with enhanced tick system
+            renderer.draw_axes_with_config(
+                plot_area,
+                &x_major_tick_pixels,
+                &y_major_tick_pixels,
+                &x_minor_tick_pixels,
+                &y_minor_tick_pixels,
+                &self.tick_config.direction,
+                self.theme.foreground,
+            )?;
+        }
 
-            // Draw tick labels using layout positions
-            // Use categorical labels for bar charts, numeric for others
-            if let Some(ref categories) = bar_categories {
+        // Draw axis labels, tick values, and title using computed layout positions
+        // Note: layout_opt is always Some since all render paths now compute layout
+        let layout = layout_opt.expect("layout should always be computed");
+        let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
+
+        // Draw tick labels using layout positions (only for Cartesian plots)
+        if draw_axes {
+            // Use categorical labels for bar/violin charts, numeric for others
+            if is_violin_categorical {
+                // Violin plots use their own x-positions for category labels
+                renderer.draw_axis_labels_at_categorical_violin(
+                    &layout.plot_area,
+                    &violin_categories,
+                    &violin_positions,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &y_major_ticks,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.theme.foreground,
+                    dpi,
+                )?;
+            } else if let Some(ref categories) = bar_categories {
                 renderer.draw_axis_labels_at_categorical(
                     &layout.plot_area,
                     categories,
@@ -5898,15 +6862,17 @@ impl Plot {
                     dpi,
                 )?;
             }
+        }
 
-            // Draw title if present
-            if let Some(ref pos) = layout.title_pos {
-                if let Some(ref title) = self.title {
-                    renderer.draw_title_at(pos, title, self.theme.foreground)?;
-                }
+        // Draw title if present
+        if let Some(ref pos) = layout.title_pos {
+            if let Some(ref title) = self.title {
+                renderer.draw_title_at(pos, title, self.theme.foreground)?;
             }
+        }
 
-            // Draw x-axis label if present
+        // Draw x-axis label if present (only for Cartesian plots)
+        if draw_axes {
             if let Some(ref pos) = layout.xlabel_pos {
                 if let Some(ref xlabel) = self.xlabel {
                     renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
@@ -5918,52 +6884,6 @@ impl Plot {
                 if let Some(ref ylabel) = self.ylabel {
                     renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
                 }
-            }
-        } else {
-            // Legacy layout: use old methods
-            let x_label = self.xlabel.as_deref().unwrap_or("X");
-            let y_label = self.ylabel.as_deref().unwrap_or("Y");
-
-            // Use categorical labels for bar charts, numeric for others
-            if let Some(ref categories) = bar_categories {
-                renderer.draw_axis_labels_with_categories(
-                    plot_area,
-                    categories,
-                    y_min,
-                    y_max,
-                    &y_major_ticks,
-                    x_label,
-                    y_label,
-                    self.theme.foreground,
-                    self.dpi_scaled_font_size(14.0),
-                    self.dpi_scale(),
-                )?;
-            } else {
-                renderer.draw_axis_labels_with_ticks(
-                    plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &x_major_ticks,
-                    &y_major_ticks,
-                    x_label,
-                    y_label,
-                    self.theme.foreground,
-                    self.dpi_scaled_font_size(14.0),
-                    self.dpi_scale(),
-                )?;
-            }
-
-            // Draw title if present
-            if let Some(ref title) = self.title {
-                renderer.draw_title_legacy(
-                    title,
-                    plot_area,
-                    self.theme.foreground,
-                    self.dpi_scaled_font_size(16.0),
-                    self.dpi_scale(),
-                )?;
             }
         }
 
@@ -5984,6 +6904,10 @@ impl Plot {
                 SeriesType::Ecdf { data } => data.x.len(),
                 SeriesType::Violin { data } => data.data.len(),
                 SeriesType::Boxen { data } => data.boxes.len() * 4,
+                SeriesType::Contour { data } => data.x.len() * data.y.len(),
+                SeriesType::Pie { data } => data.values.len(),
+                SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
+                SeriesType::Polar { data } => data.points.len(),
             })
             .sum();
 
@@ -6143,14 +7067,12 @@ impl Plot {
         }
 
         // Collect legend items from series with labels
+        // Use flat_map to expand Radar series into multiple legend entries
         let legend_items: Vec<LegendItem> = self
             .series
             .iter()
             .enumerate()
-            .filter_map(|(idx, series)| {
-                let default_color = self.theme.get_color(idx);
-                series.to_legend_item(default_color, &self.theme)
-            })
+            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.theme))
             .collect();
 
         // Draw legend if there are labeled series and legend is enabled
@@ -6298,7 +7220,8 @@ impl Plot {
             TickLayout::compute_y_axis(y_min, y_max, plot_top, plot_bottom, &self.y_scale, 6);
 
         // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
-        if self.grid_style.visible {
+        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
+        if self.grid_style.visible && self.needs_cartesian_axes() {
             let grid_color = self.grid_style.effective_color();
             if bar_categories.is_some() {
                 // For bar charts, only draw horizontal grid lines
@@ -6418,10 +7341,8 @@ impl Plot {
             let line_width = series.line_width.unwrap_or(self.theme.line_width);
             let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
 
-            // Collect legend item if labeled
-            if let Some(legend_item) = series.to_legend_item(default_color, &self.theme) {
-                legend_items.push(legend_item);
-            }
+            // Collect legend items (expands Radar series into multiple entries)
+            legend_items.extend(series.to_legend_items(idx, &self.theme));
 
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } => {

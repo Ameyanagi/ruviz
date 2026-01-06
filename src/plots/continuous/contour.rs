@@ -17,6 +17,18 @@ use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, ColorMap, LineStyle, Theme};
 use crate::stats::contour::{ContourLevel, auto_levels, contour_lines};
 
+/// Interpolation method for smoothing contour data
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum ContourInterpolation {
+    /// No interpolation - use raw grid values (default)
+    #[default]
+    Nearest,
+    /// Bilinear interpolation for smoother transitions
+    Linear,
+    /// Bicubic spline interpolation for smoothest appearance
+    Cubic,
+}
+
 /// Configuration for contour plot
 #[derive(Debug, Clone)]
 pub struct ContourConfig {
@@ -40,6 +52,18 @@ pub struct ContourConfig {
     pub label_fontsize: f32,
     /// Alpha for filled contours
     pub alpha: f32,
+    /// Interpolation method for smoothing
+    pub interpolation: ContourInterpolation,
+    /// Interpolation factor (grid upsampling multiplier, e.g., 4 = 4x resolution)
+    pub interpolation_factor: usize,
+    /// Whether to show a colorbar
+    pub colorbar: bool,
+    /// Label for the colorbar
+    pub colorbar_label: Option<String>,
+    /// Font size for colorbar tick labels (in points)
+    pub colorbar_tick_font_size: f32,
+    /// Font size for colorbar label (in points)
+    pub colorbar_label_font_size: f32,
 }
 
 impl Default for ContourConfig {
@@ -55,6 +79,15 @@ impl Default for ContourConfig {
             show_labels: false,
             label_fontsize: 10.0,
             alpha: 1.0,
+            // Apply 2x bilinear interpolation by default for smoother contours
+            // This eliminates blocky appearance without significant performance cost
+            interpolation: ContourInterpolation::Linear,
+            interpolation_factor: 2,
+            // Colorbar disabled by default for backward compatibility
+            colorbar: false,
+            colorbar_label: None,
+            colorbar_tick_font_size: 10.0,
+            colorbar_label_font_size: 11.0,
         }
     }
 }
@@ -116,6 +149,70 @@ impl ContourConfig {
     /// Set alpha
     pub fn alpha(mut self, alpha: f32) -> Self {
         self.alpha = alpha.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set interpolation method for smoothing
+    ///
+    /// # Arguments
+    /// * `method` - Interpolation method (Nearest, Linear, or Cubic)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use ruviz::plots::ContourConfig;
+    /// use ruviz::plots::ContourInterpolation;
+    ///
+    /// let config = ContourConfig::new()
+    ///     .interpolation(ContourInterpolation::Linear)
+    ///     .interpolation_factor(4);
+    /// ```
+    pub fn interpolation(mut self, method: ContourInterpolation) -> Self {
+        self.interpolation = method;
+        self
+    }
+
+    /// Set interpolation factor (grid upsampling multiplier)
+    ///
+    /// Higher values produce smoother contours but increase computation.
+    /// Recommended values: 2-8.
+    ///
+    /// # Arguments
+    /// * `factor` - Upsampling factor (1 = no upsampling, 4 = 4x resolution)
+    pub fn interpolation_factor(mut self, factor: usize) -> Self {
+        self.interpolation_factor = factor.max(1);
+        self
+    }
+
+    /// Enable or disable colorbar
+    ///
+    /// When enabled, a colorbar showing the value-to-color mapping is displayed
+    /// to the right of the contour plot.
+    pub fn colorbar(mut self, show: bool) -> Self {
+        self.colorbar = show;
+        self
+    }
+
+    /// Set the colorbar label
+    ///
+    /// The label is displayed rotated 90° next to the colorbar.
+    pub fn colorbar_label<S: Into<String>>(mut self, label: S) -> Self {
+        self.colorbar_label = Some(label.into());
+        self
+    }
+
+    /// Set the colorbar tick font size (in points)
+    ///
+    /// Default is 10.0pt to match axis tick labels.
+    pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
+        self.colorbar_tick_font_size = size.max(1.0);
+        self
+    }
+
+    /// Set the colorbar label font size (in points)
+    ///
+    /// Default is 11.0pt, slightly larger than tick labels.
+    pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
+        self.colorbar_label_font_size = size.max(1.0);
         self
     }
 }
@@ -193,9 +290,18 @@ pub fn compute_contour_plot(
         };
     }
 
+    // Apply interpolation if configured
+    let (interp_x, interp_y, interp_z, interp_nx, interp_ny) =
+        if config.interpolation != ContourInterpolation::Nearest && config.interpolation_factor > 1
+        {
+            interpolate_grid(x, y, z, config.interpolation, config.interpolation_factor)
+        } else {
+            (x.to_vec(), y.to_vec(), z.to_vec(), nx, ny)
+        };
+
     // Convert flat array to 2D for contour functions
-    let z_2d: Vec<Vec<f64>> = (0..ny)
-        .map(|iy| z[iy * nx..(iy + 1) * nx].to_vec())
+    let z_2d: Vec<Vec<f64>> = (0..interp_ny)
+        .map(|iy| interp_z[iy * interp_nx..(iy + 1) * interp_nx].to_vec())
         .collect();
 
     // Determine levels
@@ -205,15 +311,15 @@ pub fn compute_contour_plot(
         .unwrap_or_else(|| auto_levels(&z_2d, config.n_levels));
 
     // Compute contour lines for all levels at once
-    let lines = contour_lines(x, y, &z_2d, &levels);
+    let lines = contour_lines(&interp_x, &interp_y, &z_2d, &levels);
 
     ContourPlotData {
         levels,
         lines,
-        x: x.to_vec(),
-        y: y.to_vec(),
-        z: z.to_vec(),
-        shape: (nx, ny),
+        x: interp_x,
+        y: interp_y,
+        z: interp_z,
+        shape: (interp_nx, interp_ny),
         config: config.clone(),
     }
 }
@@ -488,6 +594,150 @@ impl PlotRender for ContourPlotData {
     }
 }
 
+// =============================================================================
+// Grid Interpolation Functions
+// =============================================================================
+
+/// Interpolate a 2D grid to higher resolution
+///
+/// # Arguments
+/// * `x` - Original X coordinates
+/// * `y` - Original Y coordinates
+/// * `z` - Original Z values (row-major, len = x.len() * y.len())
+/// * `method` - Interpolation method
+/// * `factor` - Upsampling factor (2 = 2x resolution, 4 = 4x resolution)
+///
+/// # Returns
+/// (new_x, new_y, new_z, new_nx, new_ny)
+fn interpolate_grid(
+    x: &[f64],
+    y: &[f64],
+    z: &[f64],
+    method: ContourInterpolation,
+    factor: usize,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>, usize, usize) {
+    let nx = x.len();
+    let ny = y.len();
+
+    if nx < 2 || ny < 2 || factor < 2 {
+        return (x.to_vec(), y.to_vec(), z.to_vec(), nx, ny);
+    }
+
+    // Create new coordinate arrays with higher resolution
+    let new_nx = (nx - 1) * factor + 1;
+    let new_ny = (ny - 1) * factor + 1;
+
+    let x_min = x[0];
+    let x_max = x[nx - 1];
+    let y_min = y[0];
+    let y_max = y[ny - 1];
+
+    let new_x: Vec<f64> = (0..new_nx)
+        .map(|i| x_min + (x_max - x_min) * (i as f64) / ((new_nx - 1) as f64))
+        .collect();
+
+    let new_y: Vec<f64> = (0..new_ny)
+        .map(|i| y_min + (y_max - y_min) * (i as f64) / ((new_ny - 1) as f64))
+        .collect();
+
+    // Interpolate Z values
+    let mut new_z = vec![0.0; new_nx * new_ny];
+
+    for iy in 0..new_ny {
+        for ix in 0..new_nx {
+            let fx = (new_x[ix] - x_min) / (x_max - x_min) * ((nx - 1) as f64);
+            let fy = (new_y[iy] - y_min) / (y_max - y_min) * ((ny - 1) as f64);
+
+            new_z[iy * new_nx + ix] = match method {
+                ContourInterpolation::Nearest => {
+                    // Nearest neighbor - shouldn't reach here due to check above
+                    let ix_src = fx.round() as usize;
+                    let iy_src = fy.round() as usize;
+                    z[iy_src.min(ny - 1) * nx + ix_src.min(nx - 1)]
+                }
+                ContourInterpolation::Linear => bilinear_interpolate(z, nx, ny, fx, fy),
+                ContourInterpolation::Cubic => bicubic_interpolate(z, nx, ny, fx, fy),
+            };
+        }
+    }
+
+    (new_x, new_y, new_z, new_nx, new_ny)
+}
+
+/// Bilinear interpolation at fractional coordinates
+fn bilinear_interpolate(z: &[f64], nx: usize, ny: usize, fx: f64, fy: f64) -> f64 {
+    let x0 = (fx.floor() as usize).min(nx - 2);
+    let y0 = (fy.floor() as usize).min(ny - 2);
+    let x1 = x0 + 1;
+    let y1 = y0 + 1;
+
+    let dx = fx - x0 as f64;
+    let dy = fy - y0 as f64;
+
+    let z00 = z[y0 * nx + x0];
+    let z10 = z[y0 * nx + x1];
+    let z01 = z[y1 * nx + x0];
+    let z11 = z[y1 * nx + x1];
+
+    // Bilinear interpolation formula
+    z00 * (1.0 - dx) * (1.0 - dy) + z10 * dx * (1.0 - dy) + z01 * (1.0 - dx) * dy + z11 * dx * dy
+}
+
+/// Bicubic interpolation at fractional coordinates
+///
+/// Uses Catmull-Rom spline for smooth interpolation
+fn bicubic_interpolate(z: &[f64], nx: usize, ny: usize, fx: f64, fy: f64) -> f64 {
+    let x1 = (fx.floor() as isize).clamp(0, nx as isize - 1) as usize;
+    let y1 = (fy.floor() as isize).clamp(0, ny as isize - 1) as usize;
+
+    let dx = fx - x1 as f64;
+    let dy = fy - y1 as f64;
+
+    // Get 4x4 neighborhood with clamped boundary handling
+    let get_z = |ix: isize, iy: isize| -> f64 {
+        let cix = ix.clamp(0, nx as isize - 1) as usize;
+        let ciy = iy.clamp(0, ny as isize - 1) as usize;
+        z[ciy * nx + cix]
+    };
+
+    let x1i = x1 as isize;
+    let y1i = y1 as isize;
+
+    // Interpolate in Y direction first for each of 4 X columns
+    let mut col_values = [0.0; 4];
+    for (i, col_val) in col_values.iter_mut().enumerate() {
+        let xi = x1i - 1 + i as isize;
+        *col_val = cubic_interp(
+            get_z(xi, y1i - 1),
+            get_z(xi, y1i),
+            get_z(xi, y1i + 1),
+            get_z(xi, y1i + 2),
+            dy,
+        );
+    }
+
+    // Then interpolate in X direction
+    cubic_interp(
+        col_values[0],
+        col_values[1],
+        col_values[2],
+        col_values[3],
+        dx,
+    )
+}
+
+/// Catmull-Rom cubic interpolation
+fn cubic_interp(p0: f64, p1: f64, p2: f64, p3: f64, t: f64) -> f64 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+
+    // Catmull-Rom spline coefficients
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,7 +761,8 @@ mod tests {
     #[test]
     fn test_contour_plot_basic() {
         let (x, y, z) = make_test_grid();
-        let config = ContourConfig::default().n_levels(5);
+        // Disable interpolation for this test to get exact grid dimensions
+        let config = ContourConfig::default().n_levels(5).interpolation_factor(1);
         let data = compute_contour_plot(&x, &y, &z, &config);
 
         assert_eq!(data.shape, (10, 10));
@@ -574,7 +825,8 @@ mod tests {
         use crate::plots::traits::PlotCompute;
 
         let (x, y, z) = make_test_grid();
-        let config = ContourConfig::default().n_levels(5);
+        // Disable interpolation for this test to get exact grid dimensions
+        let config = ContourConfig::default().n_levels(5).interpolation_factor(1);
         let input = ContourInput::new(&x, &y, &z);
         let result = Contour::compute(input, &config);
 

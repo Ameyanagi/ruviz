@@ -146,6 +146,74 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Draw a polyline clipped to a rectangular region
+    pub fn draw_polyline_clipped(
+        &mut self,
+        points: &[(f32, f32)],
+        color: Color,
+        width: f32,
+        style: LineStyle,
+        clip_rect: (f32, f32, f32, f32), // (x, y, width, height)
+    ) -> Result<()> {
+        if points.len() < 2 {
+            return Ok(());
+        }
+
+        // Create clip mask
+        let mut mask = Mask::new(self.width, self.height).ok_or(PlottingError::RenderError(
+            "Failed to create clip mask".to_string(),
+        ))?;
+
+        // Create clip path from rectangle
+        let clip_path = {
+            let mut pb = PathBuilder::new();
+            let (x, y, w, h) = clip_rect;
+            pb.move_to(x, y);
+            pb.line_to(x + w, y);
+            pb.line_to(x + w, y + h);
+            pb.line_to(x, y + h);
+            pb.close();
+            pb.finish().ok_or(PlottingError::RenderError(
+                "Failed to create clip path".to_string(),
+            ))?
+        };
+
+        // Fill mask with clip region
+        mask.fill_path(&clip_path, FillRule::Winding, true, Transform::identity());
+
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+
+        let mut stroke = Stroke {
+            width: width.max(0.1),
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            ..Stroke::default()
+        };
+
+        // Apply line style
+        if let Some(dash_pattern) = style.to_dash_array() {
+            stroke.dash = StrokeDash::new(dash_pattern, 0.0);
+        }
+
+        let mut path = PathBuilder::new();
+        path.move_to(points[0].0, points[0].1);
+
+        for &(x, y) in &points[1..] {
+            path.line_to(x, y);
+        }
+
+        let path = path.finish().ok_or(PlottingError::RenderError(
+            "Failed to create polyline path".to_string(),
+        ))?;
+
+        self.pixmap
+            .stroke_path(&path, &paint, &stroke, Transform::identity(), Some(&mask));
+
+        Ok(())
+    }
+
     /// Draw a circle (for scatter plots)
     pub fn draw_circle(
         &mut self,
@@ -416,6 +484,77 @@ impl SkiaRenderer {
             FillRule::Winding,
             Transform::identity(),
             None,
+        );
+
+        Ok(())
+    }
+
+    /// Draw a filled polygon clipped to a rectangular region
+    ///
+    /// This is useful for rendering shapes that should not extend beyond
+    /// a specific area (e.g., violin plots within plot bounds).
+    pub fn draw_filled_polygon_clipped(
+        &mut self,
+        vertices: &[(f32, f32)],
+        color: Color,
+        clip_rect: (f32, f32, f32, f32), // (x, y, width, height)
+    ) -> Result<()> {
+        if vertices.len() < 3 {
+            return Ok(()); // Need at least 3 points
+        }
+
+        // Create clip mask
+        let mut mask = Mask::new(self.width, self.height).ok_or(PlottingError::RenderError(
+            "Failed to create clip mask".to_string(),
+        ))?;
+
+        // Create clip path from rectangle
+        let clip_path = {
+            let mut pb = PathBuilder::new();
+            let (x, y, w, h) = clip_rect;
+            pb.move_to(x, y);
+            pb.line_to(x + w, y);
+            pb.line_to(x + w, y + h);
+            pb.line_to(x, y + h);
+            pb.close();
+            pb.finish().ok_or(PlottingError::RenderError(
+                "Failed to create clip path".to_string(),
+            ))?
+        };
+
+        // Fill mask with clip region (white = allow rendering)
+        mask.fill_path(&clip_path, FillRule::Winding, true, Transform::identity());
+
+        // Create polygon path
+        let mut pb = PathBuilder::new();
+        pb.move_to(vertices[0].0, vertices[0].1);
+
+        for &(x, y) in &vertices[1..] {
+            pb.line_to(x, y);
+        }
+
+        pb.close();
+
+        let path = pb.finish().ok_or(PlottingError::RenderError(
+            "Failed to create polygon path".to_string(),
+        ))?;
+
+        let mut paint = Paint::default();
+        let (r, g, b, a) = color.to_rgba_f32();
+        let fill_color = tiny_skia::Color::from_rgba(r, g, b, a).ok_or(
+            PlottingError::RenderError("Invalid polygon color".to_string()),
+        )?;
+
+        paint.set_color(fill_color);
+        paint.anti_alias = true;
+
+        // Draw with clip mask
+        self.pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            Some(&mask),
         );
 
         Ok(())
@@ -1315,13 +1454,10 @@ impl SkiaRenderer {
             let gap = tick_size * 0.5; // Gap between labels and axis
             let min_x = tick_size * 0.5; // Minimum distance from left edge
             let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
-            self.draw_text(
-                label_text,
-                label_x,
-                y_pixel + tick_size * 0.35, // Center vertically on tick
-                tick_size,
-                color,
-            )?;
+            // Center text vertically on tick: move up by half the text height
+            // Text height is approximately tick_size * 1.2, so half is tick_size * 0.6
+            let centered_y = y_pixel - tick_size * 0.5;
+            self.draw_text(label_text, label_x, centered_y, tick_size, color)?;
         }
 
         // Draw border around plot area
@@ -1401,13 +1537,97 @@ impl SkiaRenderer {
             let gap = tick_size * 0.5;
             let min_x = tick_size * 0.5;
             let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
-            self.draw_text(
-                label_text,
-                label_x,
-                y_pixel + tick_size * 0.35,
-                tick_size,
-                color,
-            )?;
+            // Center text vertically on tick
+            let centered_y = y_pixel - tick_size * 0.5;
+            self.draw_text(label_text, label_x, centered_y, tick_size, color)?;
+        }
+
+        // Draw border around plot area
+        self.draw_plot_border(skia_plot_area, color, dpi_scale)?;
+
+        Ok(())
+    }
+
+    /// Draw axis labels for violin/distribution plots with categorical x-axis
+    ///
+    /// Unlike bar charts which use integer positions (0, 1, 2, ...), violin plots
+    /// use arbitrary x-positions (e.g., 0.5 for a single violin). This method
+    /// draws category labels at the actual x-positions within the data range.
+    ///
+    /// # Arguments
+    /// * `plot_area` - The computed plot area
+    /// * `categories` - Category labels to draw
+    /// * `x_positions` - X positions for each category in data space
+    /// * `x_min` - Minimum x value (data space)
+    /// * `x_max` - Maximum x value (data space)
+    /// * `y_min`, `y_max` - Y data range
+    /// * `y_ticks` - Y-axis tick values
+    /// * Other arguments for positioning and styling
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_axis_labels_at_categorical_violin(
+        &mut self,
+        plot_area: &LayoutRect,
+        categories: &[String],
+        x_positions: &[f64],
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        y_ticks: &[f64],
+        xtick_baseline_y: f32,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+        dpi: f32,
+    ) -> Result<()> {
+        let dpi_scale = dpi / 100.0;
+        let char_width_estimate = tick_size * 0.6;
+
+        // Convert LayoutRect to tiny_skia Rect for border drawing
+        let skia_plot_area = Rect::from_ltrb(
+            plot_area.left,
+            plot_area.top,
+            plot_area.right,
+            plot_area.bottom,
+        )
+        .ok_or(PlottingError::InvalidData {
+            message: "Invalid plot area dimensions".to_string(),
+            position: None,
+        })?;
+
+        // Draw X-axis category labels at specified positions
+        let x_range = x_max - x_min;
+        if x_range > 0.0 {
+            for (category, &x_pos) in categories.iter().zip(x_positions.iter()) {
+                // Map data position to pixel position
+                let x_center =
+                    plot_area.left + ((x_pos - x_min) / x_range) as f32 * plot_area.width();
+
+                // Estimate text width for centering
+                let text_width_estimate = category.len() as f32 * char_width_estimate;
+                let label_x = (x_center - text_width_estimate / 2.0)
+                    .max(0.0)
+                    .min(self.width() as f32 - text_width_estimate);
+
+                self.draw_text(category, label_x, xtick_baseline_y, tick_size, color)?;
+            }
+        }
+
+        // Format Y-axis tick labels with consistent precision
+        let y_labels = format_tick_labels(y_ticks);
+
+        // Draw Y-axis tick labels using provided ticks
+        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
+            let y_pixel = plot_area.bottom
+                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+
+            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            let gap = tick_size * 0.5;
+            let min_x = tick_size * 0.5;
+            let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
+            // Center text vertically on tick
+            let centered_y = y_pixel - tick_size * 0.5;
+            self.draw_text(label_text, label_x, centered_y, tick_size, color)?;
         }
 
         // Draw border around plot area
@@ -2085,11 +2305,12 @@ impl SkiaRenderer {
 
                 // Draw label - vertically centered with handle
                 let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
-                // Use 0.3 multiplier for better vertical centering with marker/line handles
+                // Center text vertically on handle
+                let centered_y = row_y - legend.font_size * 0.65;
                 self.draw_text(
                     &item.label,
                     text_x,
-                    row_y + legend.font_size * 0.3,
+                    centered_y,
                     legend.font_size,
                     legend.text_color,
                 )?;

@@ -51,6 +51,10 @@ pub struct ViolinConfig {
     pub line_width: f32,
     /// Inner color (for box/quartiles)
     pub inner_color: Color,
+    /// Category name for this violin (for X-axis label)
+    pub category: Option<String>,
+    /// X position for this violin (default: 0.5 for single violin)
+    pub x_position: f64,
 }
 
 /// Bandwidth selection method
@@ -99,7 +103,9 @@ impl Default for ViolinConfig {
             fill_alpha: 0.7,
             line_color: None,
             line_width: 1.0,
-            inner_color: Color::new(0, 0, 0),
+            inner_color: Color::new(51, 51, 51), // Dark gray instead of pure black
+            category: None,
+            x_position: 0.5, // Default center position for single violin
         }
     }
 }
@@ -197,6 +203,22 @@ impl ViolinConfig {
     /// Set line width
     pub fn line_width(mut self, width: f32) -> Self {
         self.line_width = width.max(0.0);
+        self
+    }
+
+    /// Set category name for this violin
+    ///
+    /// The category name is displayed on the X-axis instead of numeric values.
+    pub fn category<S: Into<String>>(mut self, name: S) -> Self {
+        self.category = Some(name.into());
+        self
+    }
+
+    /// Set X position for this violin
+    ///
+    /// Used when plotting multiple violins to control their horizontal positions.
+    pub fn x_position(mut self, pos: f64) -> Self {
+        self.x_position = pos;
         self
     }
 }
@@ -384,18 +406,25 @@ impl PlotCompute for Violin {
 
 impl PlotData for ViolinData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // For vertical violin: x is centered (use 0-1 range), y is data range
-        // For horizontal violin: x is data range, y is centered
+        // For vertical violin: x is centered (use 0-1 range), y is KDE range
+        // For horizontal violin: x is KDE range, y is centered
+        // Use the KDE's actual range (which extends beyond data min/max by 3 bandwidths)
+        let kde_range = if self.kde.x.is_empty() {
+            self.range
+        } else {
+            let kde_min = self.kde.x.first().copied().unwrap_or(self.range.0);
+            let kde_max = self.kde.x.last().copied().unwrap_or(self.range.1);
+            (kde_min, kde_max)
+        };
+
         match self.config.orientation {
             Orientation::Vertical => {
                 let x_range = (0.0, 1.0); // Will be adjusted by position
-                let y_range = self.range;
-                (x_range, y_range)
+                (x_range, kde_range)
             }
             Orientation::Horizontal => {
-                let x_range = self.range;
                 let y_range = (0.0, 1.0); // Will be adjusted by position
-                (x_range, y_range)
+                (kde_range, y_range)
             }
         }
     }
@@ -434,21 +463,30 @@ impl PlotRender for ViolinData {
             .map(|(x, y)| area.data_to_screen(*x, *y))
             .collect();
 
-        // Draw filled violin
+        // Get clip rectangle from plot area bounds
+        let clip_rect = (area.x, area.y, area.width, area.height);
+
+        // Draw filled violin with clipping to plot area
         if screen_points.len() >= 3 {
             let fill_color = config
                 .fill_color
                 .unwrap_or(color)
                 .with_alpha(config.fill_alpha);
-            renderer.draw_filled_polygon(&screen_points, fill_color)?;
+            renderer.draw_filled_polygon_clipped(&screen_points, fill_color, clip_rect)?;
         }
 
-        // Draw outline
+        // Draw outline with clipping
         let line_color = config.line_color.unwrap_or(color);
         if screen_points.len() >= 2 && config.line_width > 0.0 {
             let mut outline = screen_points.clone();
             outline.push(screen_points[0]); // Close the path
-            renderer.draw_polyline(&outline, line_color, config.line_width, LineStyle::Solid)?;
+            renderer.draw_polyline_clipped(
+                &outline,
+                line_color,
+                config.line_width,
+                LineStyle::Solid,
+                clip_rect,
+            )?;
         }
 
         // Draw inner elements (box, quartiles, median)
@@ -456,16 +494,28 @@ impl PlotRender for ViolinData {
         let (q1, median, q3) = self.quartiles;
 
         if config.show_box {
-            // Draw small box for IQR
-            let box_half_width = half_width * 0.15;
+            // Draw thin box for IQR (seaborn-style: ~5% of half-width)
+            let box_half_width = half_width * 0.025;
             let (x1, y1) = area.data_to_screen(center - box_half_width, q1);
             let (x2, y2) = area.data_to_screen(center + box_half_width, q3);
-            renderer.draw_rectangle(x1, y1, x2 - x1, y2 - y1, config.inner_color, true)?;
+            // Use abs() for dimensions and min() for origin to handle y-axis inversion
+            let box_x = x1.min(x2);
+            let box_y = y1.min(y2);
+            let box_width = (x2 - x1).abs().max(4.0); // Minimum 4px width for visibility
+            let box_height = (y2 - y1).abs();
+            renderer.draw_rectangle(
+                box_x,
+                box_y,
+                box_width,
+                box_height,
+                config.inner_color,
+                true,
+            )?;
         }
 
         if config.show_quartiles {
             // Draw quartile lines
-            let line_half = half_width * 0.2;
+            let line_half = half_width * 0.12;
             let (q1_x1, q1_y) = area.data_to_screen(center - line_half, q1);
             let (q1_x2, _) = area.data_to_screen(center + line_half, q1);
             renderer.draw_line(
@@ -537,6 +587,9 @@ impl PlotRender for ViolinData {
             .map(|(x, y)| area.data_to_screen(*x, *y))
             .collect();
 
+        // Get clip rectangle from plot area bounds
+        let clip_rect = (area.x, area.y, area.width, area.height);
+
         // Use StyleResolver for fill color
         let fill_alpha = if config.fill_alpha != 0.7 {
             config.fill_alpha // User override
@@ -545,9 +598,9 @@ impl PlotRender for ViolinData {
         };
         let fill_color = config.fill_color.unwrap_or(color).with_alpha(fill_alpha);
 
-        // Draw filled violin
+        // Draw filled violin with clipping to plot area
         if screen_points.len() >= 3 {
-            renderer.draw_filled_polygon(&screen_points, fill_color)?;
+            renderer.draw_filled_polygon_clipped(&screen_points, fill_color, clip_rect)?;
         }
 
         // Use StyleResolver for edge/line styling
@@ -555,11 +608,17 @@ impl PlotRender for ViolinData {
             line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
         let line_color = resolver.edge_color(color, config.line_color);
 
-        // Draw outline
+        // Draw outline with clipping
         if screen_points.len() >= 2 && actual_line_width > 0.0 {
             let mut outline = screen_points.clone();
             outline.push(screen_points[0]); // Close the path
-            renderer.draw_polyline(&outline, line_color, actual_line_width, LineStyle::Solid)?;
+            renderer.draw_polyline_clipped(
+                &outline,
+                line_color,
+                actual_line_width,
+                LineStyle::Solid,
+                clip_rect,
+            )?;
         }
 
         // Draw inner elements (box, quartiles, median)
@@ -567,16 +626,28 @@ impl PlotRender for ViolinData {
         let (q1, median, q3) = self.quartiles;
 
         if config.show_box {
-            // Draw small box for IQR
-            let box_half_width = half_width * 0.15;
+            // Draw thin box for IQR (seaborn-style: ~5% of half-width)
+            let box_half_width = half_width * 0.025;
             let (x1, y1) = area.data_to_screen(center - box_half_width, q1);
             let (x2, y2) = area.data_to_screen(center + box_half_width, q3);
-            renderer.draw_rectangle(x1, y1, x2 - x1, y2 - y1, config.inner_color, true)?;
+            // Use abs() for dimensions and min() for origin to handle y-axis inversion
+            let box_x = x1.min(x2);
+            let box_y = y1.min(y2);
+            let box_width = (x2 - x1).abs().max(4.0); // Minimum 4px width for visibility
+            let box_height = (y2 - y1).abs();
+            renderer.draw_rectangle(
+                box_x,
+                box_y,
+                box_width,
+                box_height,
+                config.inner_color,
+                true,
+            )?;
         }
 
         if config.show_quartiles {
             // Draw quartile lines
-            let line_half = half_width * 0.2;
+            let line_half = half_width * 0.12;
             let (q1_x1, q1_y) = area.data_to_screen(center - line_half, q1);
             let (q1_x2, _) = area.data_to_screen(center + line_half, q1);
             renderer.draw_line(

@@ -297,15 +297,16 @@ impl LayoutCalculator {
         };
 
         // Step 5: Position elements - centered on PLOT AREA, not canvas
+        // Note: y positions are the TOP of the text rendering area
         let title_pos = content.title.as_ref().map(|_| TextPosition {
-            x: plot_area.center_x(),       // Centered on plot area
-            y: edge_buffer + title_height, // Just below buffer, at baseline
+            x: plot_area.center_x(), // Centered on plot area
+            y: edge_buffer,          // Title top at edge buffer
             size: title_size_px,
         });
 
         let xlabel_pos = content.xlabel.as_ref().map(|_| TextPosition {
-            x: plot_area.center_x(),        // Centered on plot area
-            y: canvas_height - edge_buffer, // Just above bottom buffer
+            x: plot_area.center_x(),                        // Centered on plot area
+            y: canvas_height - edge_buffer - xlabel_height, // X-label top position
             size: label_size_px,
         });
 
@@ -315,7 +316,9 @@ impl LayoutCalculator {
             size: label_size_px,
         });
 
-        let xtick_baseline_y = plot_area.bottom + tick_pad + xtick_height;
+        // Position tick labels just below/left of the plot area with small padding
+        // y positions are the TOP of the text rendering area
+        let xtick_baseline_y = plot_area.bottom + tick_pad;
         let ytick_right_x = plot_area.left - tick_pad;
 
         PlotLayout {
