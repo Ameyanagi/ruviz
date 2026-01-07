@@ -67,6 +67,18 @@ wide = { version = "0.7", optional = true }
 winit = { version = "0.30", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 
+# Animation export
+gif = { version = "0.13", optional = true }
+color_quant = { version = "1.1", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+
+# High-quality GIF (optional)
+gifski = { version = "1.32", optional = true }
+
+# Pure Rust video encoding (optional)
+rav1e = { version = "0.7", optional = true }
+av1-grain = { version = "0.2", optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 approx = "0.5"
@@ -102,8 +114,14 @@ performance = ["parallel", "simd"]
 svg = []
 pdf = ["printpdf", "svg2pdf"]
 
+# Animation export features
+animation = ["gif", "color_quant", "crossbeam-channel"]
+animation-gif = ["animation"]
+animation-hq-gif = ["animation", "gifski"]
+animation-video = ["animation", "rav1e", "av1-grain"]
+
 # Full feature set
-full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive-gpu"]
+full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive-gpu", "animation"]
 
 [profile.release]
 lto = true

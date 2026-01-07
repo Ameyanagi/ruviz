@@ -47,6 +47,7 @@
 mod builder;
 mod config;
 mod configuration;
+pub mod data;
 mod image;
 mod layout_manager;
 mod render_pipeline;
@@ -55,6 +56,7 @@ mod series_manager;
 pub use builder::{PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{BackendType, GridMode, TickDirection};
 pub use configuration::PlotConfiguration;
+pub use data::{IntoPlotData, PlotData, PlotText};
 pub use image::Image;
 pub use layout_manager::LayoutManager;
 pub use render_pipeline::RenderPipeline;
@@ -310,34 +312,34 @@ impl PlotSeries {
 #[derive(Clone, Debug)]
 pub(crate) enum SeriesType {
     Line {
-        x_data: Vec<f64>,
-        y_data: Vec<f64>,
+        x_data: PlotData,
+        y_data: PlotData,
     },
     Scatter {
-        x_data: Vec<f64>,
-        y_data: Vec<f64>,
+        x_data: PlotData,
+        y_data: PlotData,
     },
     Bar {
         categories: Vec<String>,
-        values: Vec<f64>,
+        values: PlotData,
     },
     ErrorBars {
-        x_data: Vec<f64>,
-        y_data: Vec<f64>,
-        y_errors: Vec<f64>,
+        x_data: PlotData,
+        y_data: PlotData,
+        y_errors: PlotData,
     },
     ErrorBarsXY {
-        x_data: Vec<f64>,
-        y_data: Vec<f64>,
-        x_errors: Vec<f64>,
-        y_errors: Vec<f64>,
+        x_data: PlotData,
+        y_data: PlotData,
+        x_errors: PlotData,
+        y_errors: PlotData,
     },
     Histogram {
-        data: Vec<f64>,
+        data: PlotData,
         config: crate::plots::histogram::HistogramConfig,
     },
     BoxPlot {
-        data: Vec<f64>,
+        data: PlotData,
         config: crate::plots::boxplot::BoxPlotConfig,
     },
     Heatmap {
@@ -375,6 +377,111 @@ pub(crate) enum SeriesType {
     Polar {
         data: crate::plots::polar::polar_plot::PolarPlotData,
     },
+}
+
+impl SeriesType {
+    /// Check if this series contains any reactive data
+    pub fn is_reactive(&self) -> bool {
+        match self {
+            SeriesType::Line { x_data, y_data } => x_data.is_reactive() || y_data.is_reactive(),
+            SeriesType::Scatter { x_data, y_data } => x_data.is_reactive() || y_data.is_reactive(),
+            SeriesType::Bar { values, .. } => values.is_reactive(),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => x_data.is_reactive() || y_data.is_reactive() || y_errors.is_reactive(),
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                x_data.is_reactive()
+                    || y_data.is_reactive()
+                    || x_errors.is_reactive()
+                    || y_errors.is_reactive()
+            }
+            SeriesType::Histogram { data, .. } => data.is_reactive(),
+            SeriesType::BoxPlot { data, .. } => data.is_reactive(),
+            // Other types use their own data structures, not PlotData
+            _ => false,
+        }
+    }
+
+    /// Resolve all PlotData in this series to static Vec<f64> at the given time
+    ///
+    /// Returns a new SeriesType with all PlotData converted to PlotData::Static
+    pub fn resolve(&self, time: f64) -> SeriesType {
+        match self {
+            SeriesType::Line { x_data, y_data } => SeriesType::Line {
+                x_data: PlotData::Static(x_data.resolve(time)),
+                y_data: PlotData::Static(y_data.resolve(time)),
+            },
+            SeriesType::Scatter { x_data, y_data } => SeriesType::Scatter {
+                x_data: PlotData::Static(x_data.resolve(time)),
+                y_data: PlotData::Static(y_data.resolve(time)),
+            },
+            SeriesType::Bar { categories, values } => SeriesType::Bar {
+                categories: categories.clone(),
+                values: PlotData::Static(values.resolve(time)),
+            },
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => SeriesType::ErrorBars {
+                x_data: PlotData::Static(x_data.resolve(time)),
+                y_data: PlotData::Static(y_data.resolve(time)),
+                y_errors: PlotData::Static(y_errors.resolve(time)),
+            },
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => SeriesType::ErrorBarsXY {
+                x_data: PlotData::Static(x_data.resolve(time)),
+                y_data: PlotData::Static(y_data.resolve(time)),
+                x_errors: PlotData::Static(x_errors.resolve(time)),
+                y_errors: PlotData::Static(y_errors.resolve(time)),
+            },
+            SeriesType::Histogram { data, config } => SeriesType::Histogram {
+                data: PlotData::Static(data.resolve(time)),
+                config: config.clone(),
+            },
+            SeriesType::BoxPlot { data, config } => SeriesType::BoxPlot {
+                data: PlotData::Static(data.resolve(time)),
+                config: config.clone(),
+            },
+            // Other types don't use PlotData - clone as-is
+            other => other.clone(),
+        }
+    }
+
+    /// Get resolved x_data as Vec<f64> (panics if not Line/Scatter/ErrorBars)
+    #[inline]
+    pub fn x_data_resolved(&self, time: f64) -> Vec<f64> {
+        match self {
+            SeriesType::Line { x_data, .. }
+            | SeriesType::Scatter { x_data, .. }
+            | SeriesType::ErrorBars { x_data, .. }
+            | SeriesType::ErrorBarsXY { x_data, .. } => x_data.resolve(time),
+            _ => panic!("x_data not available for this series type"),
+        }
+    }
+
+    /// Get resolved y_data as Vec<f64> (panics if not Line/Scatter/ErrorBars)
+    #[inline]
+    pub fn y_data_resolved(&self, time: f64) -> Vec<f64> {
+        match self {
+            SeriesType::Line { y_data, .. }
+            | SeriesType::Scatter { y_data, .. }
+            | SeriesType::ErrorBars { y_data, .. }
+            | SeriesType::ErrorBarsXY { y_data, .. } => y_data.resolve(time),
+            _ => panic!("y_data not available for this series type"),
+        }
+    }
 }
 
 /// Legend configuration (legacy, for backward compatibility)
@@ -685,6 +792,26 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn title<S: Into<String>>(mut self, title: S) -> Self {
+        self.display.title = Some(data::PlotText::Static(title.into()));
+        self
+    }
+
+    /// Set the plot title as a reactive signal.
+    ///
+    /// Use this for animations where the title changes over time.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ruviz::prelude::*;
+    /// use ruviz::animation::signal;
+    ///
+    /// let title_signal = signal::of(|t| format!("Time: {:.2}s", t));
+    /// let plot = Plot::new()
+    ///     .title_signal(title_signal)
+    ///     .line(&x, &y);
+    /// ```
+    pub fn title_signal(mut self, title: impl Into<data::PlotText>) -> Self {
         self.display.title = Some(title.into());
         self
     }
@@ -705,6 +832,12 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
+        self.display.xlabel = Some(data::PlotText::Static(label.into()));
+        self
+    }
+
+    /// Set the X-axis label as a reactive signal.
+    pub fn xlabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.display.xlabel = Some(label.into());
         self
     }
@@ -724,6 +857,12 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
+        self.display.ylabel = Some(data::PlotText::Static(label.into()));
+        self
+    }
+
+    /// Set the Y-axis label as a reactive signal.
+    pub fn ylabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.display.ylabel = Some(label.into());
         self
     }
@@ -1235,8 +1374,8 @@ impl Plot {
     /// ```
     pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
         // Read current data from the streaming buffer
-        let x_data = stream.read_x();
-        let y_data = stream.read_y();
+        let x_data = PlotData::Static(stream.read_x());
+        let y_data = PlotData::Static(stream.read_y());
 
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
@@ -1327,8 +1466,8 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        let x_data = stream.read_x();
-        let y_data = stream.read_y();
+        let x_data = PlotData::Static(stream.read_x());
+        let y_data = PlotData::Static(stream.read_y());
 
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
@@ -1439,7 +1578,7 @@ impl Plot {
 
         let series = PlotSeries {
             series_type: SeriesType::Histogram {
-                data: data_vec,
+                data: PlotData::Static(data_vec),
                 config: hist_config,
             },
             label: None,
@@ -1497,7 +1636,7 @@ impl Plot {
 
         let series = PlotSeries {
             series_type: SeriesType::BoxPlot {
-                data: data_vec,
+                data: PlotData::Static(data_vec),
                 config: box_config,
             },
             label: None,
@@ -1609,9 +1748,9 @@ impl Plot {
 
         let series = PlotSeries {
             series_type: SeriesType::ErrorBars {
-                x_data: x_vec,
-                y_data: y_vec,
-                y_errors: e_vec,
+                x_data: PlotData::Static(x_vec),
+                y_data: PlotData::Static(y_vec),
+                y_errors: PlotData::Static(e_vec),
             },
             label: None,
             color: None,
@@ -1649,10 +1788,10 @@ impl Plot {
 
         let series = PlotSeries {
             series_type: SeriesType::ErrorBarsXY {
-                x_data: x_vec,
-                y_data: y_vec,
-                x_errors: ex_vec,
-                y_errors: ey_vec,
+                x_data: PlotData::Static(x_vec),
+                y_data: PlotData::Static(y_vec),
+                x_errors: PlotData::Static(ex_vec),
+                y_errors: PlotData::Static(ey_vec),
             },
             label: None,
             color: None,
@@ -2603,8 +2742,8 @@ impl Plot {
 
         let series = PlotSeries {
             series_type: SeriesType::Line {
-                x_data: x_vec,
-                y_data: y_vec,
+                x_data: PlotData::Static(x_vec),
+                y_data: PlotData::Static(y_vec),
             },
             label: None,
             color: Some(
@@ -2852,8 +2991,8 @@ impl Plot {
     /// This method is called by the PlotBuilder when finalizing a line series.
     pub(crate) fn add_line_series(
         mut self,
-        x_data: Vec<f64>,
-        y_data: Vec<f64>,
+        x_data: PlotData,
+        y_data: PlotData,
         config: &crate::plots::basic::LineConfig,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
@@ -2891,8 +3030,8 @@ impl Plot {
     /// This method is called by the PlotBuilder when finalizing a scatter series.
     pub(crate) fn add_scatter_series(
         mut self,
-        x_data: Vec<f64>,
-        y_data: Vec<f64>,
+        x_data: PlotData,
+        y_data: PlotData,
         config: &crate::plots::basic::ScatterConfig,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
@@ -2927,7 +3066,7 @@ impl Plot {
     pub(crate) fn add_bar_series(
         mut self,
         categories: Vec<String>,
-        values: Vec<f64>,
+        values: PlotData,
         config: &crate::plots::basic::BarConfig,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
@@ -2973,6 +3112,8 @@ impl Plot {
 
         match &series.series_type {
             SeriesType::Line { x_data, y_data } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
                 let points: Vec<(f32, f32)> = x_data
                     .iter()
                     .zip(y_data.iter())
@@ -2989,8 +3130,8 @@ impl Plot {
                 if series.y_errors.is_some() || series.x_errors.is_some() {
                     Self::render_attached_error_bars(
                         renderer,
-                        x_data,
-                        y_data,
+                        &x_data,
+                        &y_data,
                         series.y_errors.as_ref(),
                         series.x_errors.as_ref(),
                         series.error_config.as_ref(),
@@ -3005,6 +3146,8 @@ impl Plot {
                 }
             }
             SeriesType::Scatter { x_data, y_data } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)); // DPI-scaled marker size
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
 
@@ -3019,8 +3162,8 @@ impl Plot {
                 if series.y_errors.is_some() || series.x_errors.is_some() {
                     Self::render_attached_error_bars(
                         renderer,
-                        x_data,
-                        y_data,
+                        &x_data,
+                        &y_data,
                         series.y_errors.as_ref(),
                         series.x_errors.as_ref(),
                         series.error_config.as_ref(),
@@ -3035,6 +3178,7 @@ impl Plot {
                 }
             }
             SeriesType::Bar { values, .. } => {
+                let values = values.resolve(0.0);
                 // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
                 let bar_width_fraction = 0.8;
                 let data_range = (x_max - x_min) as f32;
@@ -3060,8 +3204,9 @@ impl Plot {
                 }
             }
             SeriesType::Histogram { data, config } => {
+                let data = data.resolve(0.0);
                 // Calculate histogram data
-                let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
                     .map_err(|e| {
                         PlottingError::RenderError(format!("Histogram calculation failed: {}", e))
                     })?;
@@ -3101,9 +3246,10 @@ impl Plot {
                 }
             }
             SeriesType::BoxPlot { data, config } => {
+                let data = data.resolve(0.0);
                 // Calculate box plot statistics
                 let box_data =
-                    crate::plots::boxplot::calculate_box_plot(data, config).map_err(|e| {
+                    crate::plots::boxplot::calculate_box_plot(&data, config).map_err(|e| {
                         PlottingError::RenderError(format!("Box plot calculation failed: {}", e))
                     })?;
 
@@ -3340,6 +3486,9 @@ impl Plot {
                 y_data,
                 y_errors,
             } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+                let y_errors = y_errors.resolve(0.0);
                 // Draw markers at data points
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
@@ -3354,11 +3503,11 @@ impl Plot {
                 }
 
                 // Draw Y error bars
-                let y_err_values = ErrorValues::symmetric(y_errors.clone());
+                let y_err_values = ErrorValues::symmetric(y_errors);
                 Self::render_attached_error_bars(
                     renderer,
-                    x_data,
-                    y_data,
+                    &x_data,
+                    &y_data,
                     Some(&y_err_values),
                     None,
                     series.error_config.as_ref(),
@@ -3377,6 +3526,10 @@ impl Plot {
                 x_errors,
                 y_errors,
             } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+                let x_errors = x_errors.resolve(0.0);
+                let y_errors = y_errors.resolve(0.0);
                 // Draw markers at data points
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
@@ -3391,12 +3544,12 @@ impl Plot {
                 }
 
                 // Draw X and Y error bars
-                let x_err_values = ErrorValues::symmetric(x_errors.clone());
-                let y_err_values = ErrorValues::symmetric(y_errors.clone());
+                let x_err_values = ErrorValues::symmetric(x_errors);
+                let y_err_values = ErrorValues::symmetric(y_errors);
                 Self::render_attached_error_bars(
                     renderer,
-                    x_data,
-                    y_data,
+                    &x_data,
+                    &y_data,
                     Some(&y_err_values),
                     Some(&x_err_values),
                     series.error_config.as_ref(),
@@ -3602,6 +3755,10 @@ impl Plot {
 
         match &series.series_type {
             SeriesType::Line { x_data, y_data } => {
+                // Resolve PlotData to concrete Vec<f64>
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+
                 // Use GPU for coordinate transformation
                 let viewport = (
                     plot_area.x(),
@@ -3612,8 +3769,8 @@ impl Plot {
 
                 let (x_transformed, y_transformed) = gpu_renderer
                     .transform_coordinates_optimal(
-                        x_data,
-                        y_data,
+                        &x_data,
+                        &y_data,
                         (x_min, x_max),
                         (y_min, y_max),
                         viewport,
@@ -3632,6 +3789,10 @@ impl Plot {
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
             }
             SeriesType::Scatter { x_data, y_data } => {
+                // Resolve PlotData to concrete Vec<f64>
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+
                 // Use GPU for coordinate transformation
                 let viewport = (
                     plot_area.x(),
@@ -3642,8 +3803,8 @@ impl Plot {
 
                 let (x_transformed, y_transformed) = gpu_renderer
                     .transform_coordinates_optimal(
-                        x_data,
-                        y_data,
+                        &x_data,
+                        &y_data,
                         (x_min, x_max),
                         (y_min, y_max),
                         viewport,
@@ -3819,13 +3980,15 @@ impl Plot {
         }
 
         // Check if parallel processing should be used
+        // Note: Parallel rendering not supported for reactive plots (Signal uses Rc which is !Send)
         #[cfg(feature = "parallel")]
         {
             let series_count = self.series_mgr.series.len();
-            if self
-                .render
-                .parallel_renderer
-                .should_use_parallel(series_count, total_points)
+            if !self.is_reactive()
+                && self
+                    .render
+                    .parallel_renderer
+                    .should_use_parallel(series_count, total_points)
             {
                 return self.render_with_parallel();
             }
@@ -4053,24 +4216,27 @@ impl Plot {
             )?;
         }
 
-        // Draw title if present
+        // Draw title if present (resolve at t=0 for static render)
         if let Some(ref pos) = layout.title_pos {
             if let Some(ref title) = self.display.title {
-                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
+                let title_str = title.resolve(0.0);
+                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
             }
         }
 
         // Draw xlabel if present
         if let Some(ref pos) = layout.xlabel_pos {
             if let Some(ref xlabel) = self.display.xlabel {
-                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
+                let xlabel_str = xlabel.resolve(0.0);
+                renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
             }
         }
 
         // Draw ylabel if present
         if let Some(ref pos) = layout.ylabel_pos {
             if let Some(ref ylabel) = self.display.ylabel {
-                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
+                let ylabel_str = ylabel.resolve(0.0);
+                renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
             }
         }
 
@@ -4091,6 +4257,8 @@ impl Plot {
 
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     // Convert data to pixel coordinates
                     let mut points = Vec::new();
                     for i in 0..x_data.len() {
@@ -4112,8 +4280,8 @@ impl Plot {
                     if series.y_errors.is_some() || series.x_errors.is_some() {
                         Self::render_attached_error_bars(
                             &mut renderer,
-                            x_data,
-                            y_data,
+                            &x_data,
+                            &y_data,
                             series.y_errors.as_ref(),
                             series.x_errors.as_ref(),
                             series.error_config.as_ref(),
@@ -4128,6 +4296,8 @@ impl Plot {
                     }
                 }
                 SeriesType::Scatter { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     // Draw individual markers
                     let marker_size_px = self.line_width_px(series.marker_size.unwrap_or(8.0)); // 8pt default marker
                     for i in 0..x_data.len() {
@@ -4145,8 +4315,8 @@ impl Plot {
                     if series.y_errors.is_some() || series.x_errors.is_some() {
                         Self::render_attached_error_bars(
                             &mut renderer,
-                            x_data,
-                            y_data,
+                            &x_data,
+                            &y_data,
                             series.y_errors.as_ref(),
                             series.x_errors.as_ref(),
                             series.error_config.as_ref(),
@@ -4161,6 +4331,7 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { categories, values } => {
+                    let values = values.resolve(0.0);
                     // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
                     let bar_width_fraction = 0.8;
                     let data_range = (x_max - x_min) as f32;
@@ -4193,8 +4364,9 @@ impl Plot {
                     }
                 }
                 SeriesType::Histogram { data, config } => {
+                    let data = data.resolve(0.0);
                     // Calculate histogram data
-                    let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                    let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
                         .map_err(|e| {
                             PlottingError::RenderError(format!(
                                 "Histogram calculation failed: {}",
@@ -4264,6 +4436,8 @@ impl Plot {
                     match &series.series_type {
                         SeriesType::ErrorBars { x_data, y_data, .. }
                         | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                            let x_data = x_data.resolve(0.0);
+                            let y_data = y_data.resolve(0.0);
                             let marker_size_px =
                                 self.line_width_px(series.marker_size.unwrap_or(8.0));
                             for i in 0..x_data.len() {
@@ -4291,6 +4465,62 @@ impl Plot {
 
         // Convert renderer output to Image
         Ok(renderer.into_image())
+    }
+
+    /// Render the plot at a specific animation time.
+    ///
+    /// This method resolves all reactive data (Signal/Observable) at the given time
+    /// before rendering. For static plots, this is equivalent to `render()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `time` - The animation time in seconds at which to render
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ruviz::prelude::*;
+    /// use ruviz::animation::signal;
+    ///
+    /// let y_signal = signal::of(|t| (0..10).map(|i| (i as f64 * 0.1 + t).sin()).collect());
+    /// let plot = Plot::new()
+    ///     .line(&x, y_signal)
+    ///     .title_signal(signal::of(|t| format!("t={:.2}s", t)));
+    ///
+    /// // Render at different times
+    /// let frame_0 = plot.render_at(0.0)?;
+    /// let frame_1 = plot.render_at(1.0)?;
+    /// ```
+    pub fn render_at(&self, _time: f64) -> Result<Image> {
+        // For now, delegate to render() for backward compatibility.
+        // Future: resolve reactive PlotData and PlotText at the given time.
+        //
+        // TODO: When series modification is complete:
+        // 1. Resolve all PlotData in series at `time`
+        // 2. Resolve PlotText (title, xlabel, ylabel) at `time`
+        // 3. Build resolved data and call render pipeline
+        self.render()
+    }
+
+    /// Check if this plot contains any reactive data (Signal or Observable).
+    ///
+    /// Returns `true` if any series data or text attributes are reactive,
+    /// `false` if all data is static.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let static_plot = Plot::new().line(&x, &y);
+    /// assert!(!static_plot.is_reactive());
+    ///
+    /// let reactive_plot = Plot::new().line(&x, y_signal);
+    /// assert!(reactive_plot.is_reactive());
+    /// ```
+    pub fn is_reactive(&self) -> bool {
+        self.series_mgr
+            .series
+            .iter()
+            .any(|s| s.series_type.is_reactive())
     }
 
     /// Render the plot to an external renderer (used for subplots)
@@ -4579,24 +4809,27 @@ impl Plot {
             )?;
         }
 
-        // Draw title if present
+        // Draw title if present (resolve at t=0 for static render)
         if let Some(ref pos) = layout.title_pos {
             if let Some(ref title) = self.display.title {
-                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
+                let title_str = title.resolve(0.0);
+                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
             }
         }
 
         // Draw xlabel if present
         if let Some(ref pos) = layout.xlabel_pos {
             if let Some(ref xlabel) = self.display.xlabel {
-                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
+                let xlabel_str = xlabel.resolve(0.0);
+                renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
             }
         }
 
         // Draw ylabel if present
         if let Some(ref pos) = layout.ylabel_pos {
             if let Some(ref ylabel) = self.display.ylabel {
-                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
+                let ylabel_str = ylabel.resolve(0.0);
+                renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
             }
         }
 
@@ -4617,6 +4850,8 @@ impl Plot {
 
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     // Convert data to pixel coordinates
                     let mut points = Vec::new();
                     for i in 0..x_data.len() {
@@ -4638,8 +4873,8 @@ impl Plot {
                     if series.y_errors.is_some() || series.x_errors.is_some() {
                         Self::render_attached_error_bars(
                             renderer,
-                            x_data,
-                            y_data,
+                            &x_data,
+                            &y_data,
                             series.y_errors.as_ref(),
                             series.x_errors.as_ref(),
                             series.error_config.as_ref(),
@@ -4654,6 +4889,8 @@ impl Plot {
                     }
                 }
                 SeriesType::Scatter { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     // Draw individual markers
                     let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
                     for i in 0..x_data.len() {
@@ -4671,8 +4908,8 @@ impl Plot {
                     if series.y_errors.is_some() || series.x_errors.is_some() {
                         Self::render_attached_error_bars(
                             renderer,
-                            x_data,
-                            y_data,
+                            &x_data,
+                            &y_data,
                             series.y_errors.as_ref(),
                             series.x_errors.as_ref(),
                             series.error_config.as_ref(),
@@ -4687,6 +4924,7 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { categories, values } => {
+                    let values = values.resolve(0.0);
                     // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
                     let bar_width_fraction = 0.8;
                     let data_range = (x_max - x_min) as f32;
@@ -4723,6 +4961,8 @@ impl Plot {
                     match &series.series_type {
                         SeriesType::ErrorBars { x_data, y_data, .. }
                         | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                            let x_data = x_data.resolve(0.0);
+                            let y_data = y_data.resolve(0.0);
                             let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
                             for i in 0..x_data.len() {
                                 let x_val = x_data[i];
@@ -4785,25 +5025,29 @@ impl Plot {
                         .iter()
                         .flat_map(|series| match &series.series_type {
                             SeriesType::Line { x_data, y_data }
-                            | SeriesType::Scatter { x_data, y_data } => x_data
-                                .iter()
-                                .zip(y_data.iter())
-                                .filter_map(|(&x, &y)| {
-                                    if x.is_finite() && y.is_finite() {
-                                        let (px, py) = map_data_to_pixels(
-                                            x, y, x_min, x_max, y_min, y_max, plot_area,
-                                        );
-                                        Some((
-                                            px - marker_radius,
-                                            py - marker_radius,
-                                            px + marker_radius,
-                                            py + marker_radius,
-                                        ))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect::<Vec<_>>(),
+                            | SeriesType::Scatter { x_data, y_data } => {
+                                let x_data = x_data.resolve(0.0);
+                                let y_data = y_data.resolve(0.0);
+                                x_data
+                                    .iter()
+                                    .zip(y_data.iter())
+                                    .filter_map(|(&x, &y)| {
+                                        if x.is_finite() && y.is_finite() {
+                                            let (px, py) = map_data_to_pixels(
+                                                x, y, x_min, x_max, y_min, y_max, plot_area,
+                                            );
+                                            Some((
+                                                px - marker_radius,
+                                                py - marker_radius,
+                                                px + marker_radius,
+                                                py + marker_radius,
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                            }
                             _ => vec![],
                         })
                         .collect()
@@ -5111,9 +5355,9 @@ impl Plot {
             .unwrap_or(5);
 
         PlotContent {
-            title: self.display.title.clone(),
-            xlabel: self.display.xlabel.clone(),
-            ylabel: self.display.ylabel.clone(),
+            title: self.display.title.as_ref().map(|t| t.resolve(0.0)),
+            xlabel: self.display.xlabel.as_ref().map(|t| t.resolve(0.0)),
+            ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(0.0)),
             max_ytick_chars,
             max_xtick_chars: 5, // Reasonable default
         }
@@ -5128,6 +5372,8 @@ impl Plot {
         for series in &self.series_mgr.series {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     for i in 0..x_data.len() {
                         let x = x_data[i];
                         let y = y_data[i];
@@ -5138,6 +5384,8 @@ impl Plot {
                 }
                 SeriesType::ErrorBars { x_data, y_data, .. }
                 | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     for i in 0..x_data.len() {
                         let x = x_data[i];
                         let y = y_data[i];
@@ -5147,6 +5395,7 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { values, .. } => {
+                    let values = values.resolve(0.0);
                     // For bar charts, convert category indices to points
                     for (i, &value) in values.iter().enumerate() {
                         if value.is_finite() {
@@ -5167,9 +5416,10 @@ impl Plot {
                     }
                 }
                 SeriesType::Histogram { data, config } => {
+                    let data = data.resolve(0.0);
                     // Calculate histogram and add bin center points
                     if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(data, config)
+                        crate::plots::histogram::calculate_histogram(&data, config)
                     {
                         for (i, &count) in hist_data.counts.iter().enumerate() {
                             if count > 0.0 {
@@ -5398,13 +5648,15 @@ impl Plot {
                 // Process each series type
                 let render_series_type = match &series.series_type {
                     SeriesType::Line { x_data, y_data } => {
+                        let x_data = x_data.resolve(0.0);
+                        let y_data = y_data.resolve(0.0);
                         // Transform coordinates in parallel
                         let points = self
                             .render
                             .parallel_renderer
                             .transform_coordinates_parallel(
-                                x_data,
-                                y_data,
+                                &x_data,
+                                &y_data,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
                             )?;
@@ -5420,13 +5672,15 @@ impl Plot {
                         RenderSeriesType::Line { segments }
                     }
                     SeriesType::Scatter { x_data, y_data } => {
+                        let x_data = x_data.resolve(0.0);
+                        let y_data = y_data.resolve(0.0);
                         // Transform coordinates in parallel
                         let points = self
                             .render
                             .parallel_renderer
                             .transform_coordinates_parallel(
-                                x_data,
-                                y_data,
+                                &x_data,
+                                &y_data,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
                             )?;
@@ -5442,6 +5696,7 @@ impl Plot {
                         RenderSeriesType::Scatter { markers }
                     }
                     SeriesType::Bar { categories, values } => {
+                        let values = values.resolve(0.0);
                         // Convert categories to x-coordinates
                         let x_data: Vec<f64> = (0..categories.len()).map(|i| i as f64).collect();
 
@@ -5451,7 +5706,7 @@ impl Plot {
                             .parallel_renderer
                             .transform_coordinates_parallel(
                                 &x_data,
-                                values,
+                                &values,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
                             )?;
@@ -5490,14 +5745,16 @@ impl Plot {
                     }
                     SeriesType::ErrorBars { x_data, y_data, .. }
                     | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                        let x_data = x_data.resolve(0.0);
+                        let y_data = y_data.resolve(0.0);
                         // For now, render error bars as scatter points
                         // Full error bar implementation would be added here
                         let points = self
                             .render
                             .parallel_renderer
                             .transform_coordinates_parallel(
-                                x_data,
-                                y_data,
+                                &x_data,
+                                &y_data,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
                             )?;
@@ -5512,8 +5769,9 @@ impl Plot {
                         RenderSeriesType::Scatter { markers }
                     }
                     SeriesType::Histogram { data, config } => {
+                        let data = data.resolve(0.0);
                         // Calculate histogram data
-                        let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                        let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
                             .map_err(|e| {
                                 PlottingError::RenderError(format!(
                                     "Histogram calculation failed: {}",
@@ -5564,8 +5822,9 @@ impl Plot {
                         RenderSeriesType::Bar { bars }
                     }
                     SeriesType::BoxPlot { data, config } => {
+                        let data = data.resolve(0.0);
                         // Calculate box plot statistics
-                        let box_data = crate::plots::boxplot::calculate_box_plot(data, config)
+                        let box_data = crate::plots::boxplot::calculate_box_plot(&data, config)
                             .map_err(|e| {
                                 PlottingError::RenderError(format!(
                                     "Box plot calculation failed: {}",
@@ -6085,6 +6344,8 @@ impl Plot {
         for series in &self.series_mgr.series {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     for i in 0..x_data.len() {
                         let x_val = x_data[i];
                         let y_val = y_data[i];
@@ -6100,12 +6361,13 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { categories, values } => {
+                    let values = values.resolve(0.0);
                     // Add 0.5-unit padding on each side for bar charts (matplotlib-compatible)
                     // This ensures bars at positions 0 and n-1 are fully visible
                     x_min = x_min.min(-0.5);
                     x_max = x_max.max(categories.len() as f64 - 0.5);
 
-                    for &val in values {
+                    for &val in &values {
                         if val.is_finite() {
                             y_min = y_min.min(val.min(0.0));
                             y_max = y_max.max(val.max(0.0));
@@ -6117,6 +6379,9 @@ impl Plot {
                     y_data,
                     y_errors,
                 } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
+                    let y_errors = y_errors.resolve(0.0);
                     for i in 0..x_data.len() {
                         let x_val = x_data[i];
                         let y_val = y_data[i];
@@ -6138,6 +6403,10 @@ impl Plot {
                     x_errors,
                     y_errors,
                 } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
+                    let x_errors = x_errors.resolve(0.0);
+                    let y_errors = y_errors.resolve(0.0);
                     for i in 0..x_data.len() {
                         let x_val = x_data[i];
                         let y_val = y_data[i];
@@ -6155,9 +6424,10 @@ impl Plot {
                     }
                 }
                 SeriesType::Histogram { data, config } => {
+                    let data = data.resolve(0.0);
                     // Calculate histogram to get data bounds
                     if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(data, config)
+                        crate::plots::histogram::calculate_histogram(&data, config)
                     {
                         // X bounds from bin edges
                         if !hist_data.bin_edges.is_empty() {
@@ -6175,6 +6445,7 @@ impl Plot {
                     }
                 }
                 SeriesType::BoxPlot { data, .. } => {
+                    let data = data.resolve(0.0);
                     if data.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
                     }
@@ -6184,7 +6455,7 @@ impl Plot {
                     x_max = x_max.max(1.0);
 
                     // Y bounds include all data values
-                    for &value in data {
+                    for &value in &data {
                         if value.is_finite() {
                             y_min = y_min.min(value);
                             y_max = y_max.max(value);
@@ -6588,6 +6859,8 @@ impl Plot {
                 | SeriesType::Scatter { x_data, y_data }
                 | SeriesType::ErrorBars { x_data, y_data, .. }
                 | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     for (&x, &y) in x_data.iter().zip(y_data.iter()) {
                         x_min = x_min.min(x);
                         x_max = x_max.max(x);
@@ -6596,6 +6869,7 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { values, .. } => {
+                    let values = values.resolve(0.0);
                     // Add 0.5-unit padding on each side for bar charts (matplotlib-compatible)
                     let n_categories = values.len();
                     x_min = x_min.min(-0.5);
@@ -6606,8 +6880,9 @@ impl Plot {
                     }
                 }
                 SeriesType::Histogram { data, config } => {
+                    let data = data.resolve(0.0);
                     if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(data, config)
+                        crate::plots::histogram::calculate_histogram(&data, config)
                     {
                         if let (Some(&first), Some(&last)) =
                             (hist_data.bin_edges.first(), hist_data.bin_edges.last())
@@ -6626,9 +6901,10 @@ impl Plot {
                     }
                 }
                 SeriesType::BoxPlot { data, .. } => {
+                    let data = data.resolve(0.0);
                     x_min = x_min.min(0.0);
                     x_max = x_max.max(1.0);
-                    for &value in data {
+                    for &value in &data {
                         if value.is_finite() {
                             y_min = y_min.min(value);
                             y_max = y_max.max(value);
@@ -7102,10 +7378,11 @@ impl Plot {
             }
         }
 
-        // Draw title if present
+        // Draw title if present (resolve at t=0 for static render)
         if let Some(ref pos) = layout.title_pos {
             if let Some(ref title) = self.display.title {
-                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
+                let title_str = title.resolve(0.0);
+                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
             }
         }
 
@@ -7113,14 +7390,16 @@ impl Plot {
         if draw_axes {
             if let Some(ref pos) = layout.xlabel_pos {
                 if let Some(ref xlabel) = self.display.xlabel {
-                    renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
+                    let xlabel_str = xlabel.resolve(0.0);
+                    renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
                 }
             }
 
             // Draw y-axis label if present
             if let Some(ref pos) = layout.ylabel_pos {
                 if let Some(ref ylabel) = self.display.ylabel {
-                    renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
+                    let ylabel_str = ylabel.resolve(0.0);
+                    renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
                 }
             }
         }
@@ -7162,20 +7441,23 @@ impl Plot {
                 match &series.series_type {
                     SeriesType::Scatter { x_data, y_data }
                     | SeriesType::Line { x_data, y_data } => {
+                        let x_data = x_data.resolve(0.0);
+                        let y_data = y_data.resolve(0.0);
                         let mut datashader = DataShader::with_canvas_size(
                             plot_area.width() as usize,
                             plot_area.height() as usize,
                         );
 
-                        datashader.aggregate(x_data, y_data)?;
+                        datashader.aggregate(&x_data, &y_data)?;
                         let image = datashader.render();
 
                         // Draw the DataShader result
                         renderer.draw_datashader_image(&image, plot_area)?;
                     }
                     SeriesType::Histogram { data, config } => {
+                        let data = data.resolve(0.0);
                         // For histograms, calculate bins and use DataShader for high density
-                        let hist_data = crate::plots::histogram::calculate_histogram(data, config)
+                        let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
                             .map_err(|e| {
                                 PlottingError::RenderError(format!(
                                     "Histogram calculation failed: {}",
@@ -7335,6 +7617,8 @@ impl Plot {
                                 | SeriesType::Scatter { x_data, y_data }
                                 | SeriesType::ErrorBars { x_data, y_data, .. }
                                 | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                                    let x_data = x_data.resolve(0.0);
+                                    let y_data = y_data.resolve(0.0);
                                     x_data
                                         .iter()
                                         .zip(y_data.iter())
@@ -7611,6 +7895,8 @@ impl Plot {
 
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     let points: Vec<(f32, f32)> = x_data
                         .iter()
                         .zip(y_data.iter())
@@ -7622,6 +7908,8 @@ impl Plot {
                     svg.draw_polyline(&points, color, line_width, line_style);
                 }
                 SeriesType::Scatter { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
                     let marker_size = series.marker_size.unwrap_or(6.0);
                     for (&x, &y) in x_data.iter().zip(y_data.iter()) {
                         let (px, py) =
@@ -7630,6 +7918,7 @@ impl Plot {
                     }
                 }
                 SeriesType::Bar { categories, values } => {
+                    let values = values.resolve(0.0);
                     let num_bars = categories.len();
                     let bar_width = plot_width / num_bars as f32 * 0.7;
                     let bar_gap = plot_width / num_bars as f32 * 0.15;
@@ -7659,19 +7948,27 @@ impl Plot {
 
         svg.end_group(); // End clip group
 
-        // Draw title
+        // Draw title (resolve at t=0)
         if let Some(ref title) = self.display.title {
+            let title_str = title.resolve(0.0);
             let title_x = width / 2.0;
             let title_y = plot_top / 2.0;
-            svg.draw_text_centered(title, title_x, title_y, 14.0, self.display.theme.foreground);
+            svg.draw_text_centered(
+                &title_str,
+                title_x,
+                title_y,
+                14.0,
+                self.display.theme.foreground,
+            );
         }
 
         // Draw X-axis label
         if let Some(ref xlabel) = self.display.xlabel {
+            let xlabel_str = xlabel.resolve(0.0);
             let label_x = plot_left + plot_width / 2.0;
             let label_y = height - 10.0;
             svg.draw_text_centered(
-                xlabel,
+                &xlabel_str,
                 label_x,
                 label_y,
                 11.0,
@@ -7681,10 +7978,11 @@ impl Plot {
 
         // Draw Y-axis label (rotated)
         if let Some(ref ylabel) = self.display.ylabel {
+            let ylabel_str = ylabel.resolve(0.0);
             let label_x = 15.0;
             let label_y = plot_top + plot_height / 2.0;
             svg.draw_text_rotated(
-                ylabel,
+                &ylabel_str,
                 label_x,
                 label_y,
                 11.0,
@@ -7759,6 +8057,45 @@ impl Plot {
         std::fs::write(path, pdf_data).map_err(PlottingError::IoError)?;
 
         Ok(())
+    }
+
+    // ==========================================================================
+    // Animation Methods (feature-gated)
+    // ==========================================================================
+
+    /// Render a single frame for animation capture
+    ///
+    /// Returns the raw RGB pixel data suitable for encoding.
+    /// This is used internally by the animation recording system.
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - Frame width in pixels
+    /// * `height` - Frame height in pixels
+    ///
+    /// # Returns
+    ///
+    /// RGB pixel data as a Vec<u8> (width * height * 3 bytes)
+    #[cfg(feature = "animation")]
+    pub fn render_frame(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+        // Create a sized version of the plot
+        let sized_plot = self.clone().size_px(width, height);
+
+        // Render to RGBA image
+        let image = sized_plot.render()?;
+        let rgba_data = &image.pixels;
+
+        // Convert RGBA to RGB
+        let pixels = (width * height) as usize;
+        let mut rgb_data = vec![0u8; pixels * 3];
+
+        for i in 0..pixels {
+            rgb_data[i * 3] = rgba_data[i * 4]; // R
+            rgb_data[i * 3 + 1] = rgba_data[i * 4 + 1]; // G
+            rgb_data[i * 3 + 2] = rgba_data[i * 4 + 2]; // B
+        }
+
+        Ok(rgb_data)
     }
 }
 
@@ -8239,18 +8576,36 @@ impl PlotSeriesBuilder {
 
     /// Set plot title
     pub fn title<S: Into<String>>(mut self, title: S) -> Self {
+        self.plot.display.title = Some(data::PlotText::Static(title.into()));
+        self
+    }
+
+    /// Set the plot title as a reactive signal.
+    pub fn title_signal(mut self, title: impl Into<data::PlotText>) -> Self {
         self.plot.display.title = Some(title.into());
         self
     }
 
     /// Set X-axis label
     pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
+        self.plot.display.xlabel = Some(data::PlotText::Static(label.into()));
+        self
+    }
+
+    /// Set X-axis label as a reactive signal.
+    pub fn xlabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.plot.display.xlabel = Some(label.into());
         self
     }
 
     /// Set Y-axis label
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
+        self.plot.display.ylabel = Some(data::PlotText::Static(label.into()));
+        self
+    }
+
+    /// Set Y-axis label as a reactive signal.
+    pub fn ylabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.plot.display.ylabel = Some(label.into());
         self
     }
@@ -8754,10 +9109,12 @@ mod tests {
 
         // Verify data was captured
         if let SeriesType::Line { x_data, y_data } = &plot.series_mgr.series[0].series_type {
-            assert_eq!(x_data.len(), 4);
-            assert_eq!(y_data.len(), 4);
-            assert_eq!(x_data[0], 0.0);
-            assert_eq!(y_data[3], 9.0);
+            let x_resolved = x_data.resolve(0.0);
+            let y_resolved = y_data.resolve(0.0);
+            assert_eq!(x_resolved.len(), 4);
+            assert_eq!(y_resolved.len(), 4);
+            assert_eq!(x_resolved[0], 0.0);
+            assert_eq!(y_resolved[3], 9.0);
         } else {
             panic!("Expected Line series type");
         }
@@ -8835,12 +9192,13 @@ mod tests {
 
         let plot = Plot::new().line_streaming(&stream).end_series();
 
-        if let SeriesType::Line { x_data, y_data } = &plot.series_mgr.series[0].series_type {
-            assert_eq!(x_data.len(), 3);
+        if let SeriesType::Line { x_data, y_data: _ } = &plot.series_mgr.series[0].series_type {
+            let x_resolved = x_data.resolve(0.0);
+            assert_eq!(x_resolved.len(), 3);
             // Should be the last 3 values
-            assert_eq!(x_data[0], 2.0);
-            assert_eq!(x_data[1], 3.0);
-            assert_eq!(x_data[2], 4.0);
+            assert_eq!(x_resolved[0], 2.0);
+            assert_eq!(x_resolved[1], 3.0);
+            assert_eq!(x_resolved[2], 4.0);
         } else {
             panic!("Expected Line series type");
         }

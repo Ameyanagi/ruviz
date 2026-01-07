@@ -171,13 +171,14 @@ fn create_brushing_demo_plot(data: &CorrelatedData) -> Result<Plot> {
     // For demonstration, create a plot that shows multiple data series
     // In a real implementation, this would have actual brushing interactivity
 
-    let plot = Plot::new()
+    let plot: Plot = Plot::new()
         .line(&data.time, &data.values)
         .scatter(&data.time, &data.values)
         .title("Interactive Data Brushing Demo\n(Multi-plot brushing coming soon)")
         .xlabel("Time")
         .ylabel("Value")
-        .legend(Position::TopLeft);
+        .legend(Position::TopLeft)
+        .into();
 
     // Add instructions as plot title
     // In a real implementation, we would add text annotations

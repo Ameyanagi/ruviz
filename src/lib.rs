@@ -25,6 +25,152 @@
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: DataShader-style aggregation for 100M+ points
 //! - **Cross Platform**: Linux, macOS, Windows, WASM support
+//! - **Reactive Animation**: Signal-based animation with time-varying data
+//!
+//! ## Quick Start
+//!
+//! Create plots with minimal boilerplate using top-level convenience functions:
+//!
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! // Line plot - one line of code!
+//! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+//! let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+//! line(&x, &y).title("Sine Wave").save("sine.png")?;
+//!
+//! // Scatter plot
+//! scatter(&x, &y).title("Points").marker(MarkerStyle::Circle).save("scatter.png")?;
+//!
+//! // Bar chart
+//! let cats = ["A", "B", "C", "D"];
+//! let vals = [10.0, 25.0, 15.0, 30.0];
+//! bar(&cats, &vals).title("Sales").save("bar.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Reactive Animation (New!)
+//!
+//! Create smooth animations with Signal-based reactive data. Define your animation
+//! once and render at any time point.
+//!
+//! ### Basic Animation with record! Macro
+//!
+//! ```rust,ignore
+//! use ruviz::prelude::*;
+//! use ruviz::record;
+//!
+//! // Frame-based animation
+//! record!("wave.gif", 60, |t| {
+//!     let phase = t.time * 2.0 * std::f64::consts::PI;
+//!     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+//!     let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
+//!     line(&x, &y).title(format!("t = {:.2}s", t.time))
+//! })?;
+//!
+//! // Duration-based animation (2 seconds at 30fps)
+//! record!("bounce.gif", 2 secs, |t| {
+//!     let y = t.ease_over(easing::ease_out_bounce, 100.0, 0.0, 2.0);
+//!     scatter(&[0.0], &[y]).title("Bouncing Ball")
+//! })?;
+//!
+//! // Custom framerate
+//! record!("smooth.gif", 3 secs @ 60 fps, |t| {
+//!     let x = t.lerp_over(0.0, 10.0, 3.0);
+//!     line(&[0.0, x], &[0.0, x]).title("Growing Line")
+//! })?;
+//! ```
+//!
+//! ### Signal-Based Reactive Plots
+//!
+//! Use `Signal<T>` for pull-based animation values that are evaluated at render time:
+//!
+//! ```rust,ignore
+//! use ruviz::prelude::*;
+//! use ruviz::animation::signal;
+//!
+//! // Create signals that vary over time
+//! let amplitude = signal::lerp(0.0, 2.0, 3.0);  // 0 to 2 over 3 seconds
+//! let frequency = signal::ease(easing::ease_in_out_quad, 1.0, 5.0, 3.0);
+//!
+//! // Compose signals
+//! let y_data = signal::of(move |t| {
+//!     let amp = amplitude.at(t);
+//!     let freq = frequency.at(t);
+//!     (0..100).map(|i| {
+//!         let x = i as f64 * 0.1;
+//!         amp * (x * freq).sin()
+//!     }).collect::<Vec<f64>>()
+//! });
+//!
+//! // Use with reactive title
+//! let title = signal::of(|t| format!("Wave Animation - t={:.2}s", t));
+//!
+//! // Create plot with reactive data (evaluated at render time)
+//! let plot = Plot::new()
+//!     .title_signal(title)
+//!     .line_signal(&x_data, y_data);
+//!
+//! // Record using reactive plot
+//! record!("reactive.gif", &plot, 3 secs)?;
+//! ```
+//!
+//! ### Reactive Labels
+//!
+//! Make titles and axis labels change during animation:
+//!
+//! ```rust,ignore
+//! use ruviz::prelude::*;
+//! use ruviz::animation::signal;
+//!
+//! // Dynamic title showing current time
+//! let title = signal::of(|t| format!("Simulation: {:.1}s", t));
+//!
+//! // Dynamic axis label
+//! let ylabel = signal::of(|t| {
+//!     if t < 1.0 { "Accelerating".to_string() }
+//!     else if t < 2.0 { "Constant Velocity".to_string() }
+//!     else { "Decelerating".to_string() }
+//! });
+//!
+//! Plot::new()
+//!     .title_signal(title)
+//!     .xlabel("Time")
+//!     .ylabel_signal(ylabel)
+//!     .line(&x, &y)
+//!     .save("dynamic_labels.png")?;
+//! ```
+//!
+//! ### Signal Composition
+//!
+//! Combine multiple signals for complex animations:
+//!
+//! ```rust,ignore
+//! use ruviz::animation::signal;
+//!
+//! // Basic signal constructors
+//! let constant = signal::constant(42.0);           // Always returns 42
+//! let time = signal::time();                       // Returns current time
+//! let linear = signal::lerp(0.0, 100.0, 2.0);     // Linear interpolation
+//! let eased = signal::ease(easing::ease_out_bounce, 100.0, 0.0, 2.0);
+//!
+//! // Transform signals
+//! let doubled = linear.map(|v| v * 2.0);
+//!
+//! // Combine two signals
+//! let combined = signal::zip(linear.clone(), eased, |a, b| a + b);
+//!
+//! // Combine three signals
+//! let rgb = signal::zip3(
+//!     signal::lerp(0.0, 255.0, 1.0),
+//!     signal::lerp(255.0, 0.0, 1.0),
+//!     signal::constant(128.0),
+//!     |r, g, b| (r as u8, g as u8, b as u8)
+//! );
+//!
+//! // Custom signal from closure
+//! let sine_wave = signal::of(|t| (t * std::f64::consts::TAU).sin());
+//! ```
 //!
 //! ## Gallery
 //!
@@ -519,6 +665,9 @@ pub mod text;
 #[cfg(feature = "interactive")]
 pub mod interactive;
 
+#[cfg(feature = "animation")]
+pub mod animation;
+
 /// Convenience re-exports for common usage
 pub mod prelude {
     pub use crate::axes::AxisScale;
@@ -538,6 +687,9 @@ pub mod prelude {
         Theme,
     };
 
+    // Top-level convenience functions
+    pub use crate::{bar, line, scatter};
+
     #[cfg(feature = "interactive")]
     pub use crate::interactive::{
         event::{InteractionEvent, Point2D, Rectangle, Vector2D},
@@ -545,4 +697,124 @@ pub mod prelude {
         state::InteractionState,
         window::{InteractiveWindow, InteractiveWindowBuilder, show_interactive},
     };
+
+    #[cfg(feature = "animation")]
+    #[allow(deprecated)]
+    pub use crate::animation::{
+        DurationExt, RecordConfig, Signal, Tick, easing, record_plot, record_simple, signal,
+    };
+}
+
+// =============================================================================
+// Top-Level Convenience Functions
+// =============================================================================
+
+use core::{Plot, PlotBuilder};
+use data::Data1D;
+use plots::{BarConfig, LineConfig, ScatterConfig};
+
+/// Create a line plot with the given data.
+///
+/// This is a convenience function equivalent to `Plot::new().line(x, y)`.
+///
+/// # Arguments
+///
+/// * `x` - X-axis data (any type implementing `Data1D<f64>`)
+/// * `y` - Y-axis data (any type implementing `Data1D<f64>`)
+///
+/// # Returns
+///
+/// A `PlotBuilder` that can be further configured.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::{line, prelude::*};
+///
+/// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+/// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+///
+/// line(&x, &y)
+///     .title("Sine Wave")
+///     .xlabel("x")
+///     .ylabel("sin(x)")
+///     .save("sine.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn line<X, Y>(x: &X, y: &Y) -> PlotBuilder<LineConfig>
+where
+    X: Data1D<f64>,
+    Y: Data1D<f64>,
+{
+    Plot::new().line(x, y)
+}
+
+/// Create a scatter plot with the given data.
+///
+/// This is a convenience function equivalent to `Plot::new().scatter(x, y)`.
+///
+/// # Arguments
+///
+/// * `x` - X-axis data (any type implementing `Data1D<f64>`)
+/// * `y` - Y-axis data (any type implementing `Data1D<f64>`)
+///
+/// # Returns
+///
+/// A `PlotBuilder` that can be further configured.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::{scatter, prelude::*};
+///
+/// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+/// let y = vec![2.0, 4.0, 1.0, 5.0, 3.0];
+///
+/// scatter(&x, &y)
+///     .title("Scatter Plot")
+///     .marker(MarkerStyle::Circle)
+///     .save("scatter.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn scatter<X, Y>(x: &X, y: &Y) -> PlotBuilder<ScatterConfig>
+where
+    X: Data1D<f64>,
+    Y: Data1D<f64>,
+{
+    Plot::new().scatter(x, y)
+}
+
+/// Create a bar plot with the given categories and values.
+///
+/// This is a convenience function equivalent to `Plot::new().bar(categories, values)`.
+///
+/// # Arguments
+///
+/// * `categories` - Category labels for the bars
+/// * `values` - Values for each bar (any type implementing `Data1D<f64>`)
+///
+/// # Returns
+///
+/// A `PlotBuilder` that can be further configured.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::{bar, prelude::*};
+///
+/// let categories = vec!["A", "B", "C", "D"];
+/// let values = vec![10.0, 25.0, 15.0, 30.0];
+///
+/// bar(&categories, &values)
+///     .title("Bar Chart")
+///     .ylabel("Count")
+///     .save("bar.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn bar<S, V>(categories: &[S], values: &V) -> PlotBuilder<BarConfig>
+where
+    S: ToString,
+    V: Data1D<f64>,
+{
+    Plot::new().bar(categories, values)
 }

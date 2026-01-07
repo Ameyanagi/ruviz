@@ -8,6 +8,7 @@ pub mod memory_pool;
 pub mod observable;
 pub mod platform;
 pub mod pooled_vec;
+pub mod signal;
 pub mod traits;
 pub mod transform;
 pub mod validation;
@@ -33,6 +34,7 @@ pub use platform::{
     get_platform_optimizer, initialize_platform_optimization,
 };
 pub use pooled_vec::{PooledVec, PooledVecIntoIter};
+pub use signal::Signal;
 pub use traits::Data1D;
 pub use validation::{collect_finite_values, collect_finite_values_sorted};
 pub use zero_copy::{DataView, DataViewIter, MappedDataView, MappedDataViewIter};

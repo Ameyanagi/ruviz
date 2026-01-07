@@ -21,6 +21,7 @@
 //!     .save("kde.png")?;    // auto-finalize and save
 //! ```
 
+use super::data::PlotData;
 use crate::render::{Color, LineStyle, MarkerStyle};
 
 /// Macro to generate terminal methods for PlotBuilder implementations
@@ -114,6 +115,13 @@ macro_rules! impl_terminal_methods {
                 self.finalize().scatter(x, y)
             }
 
+            /// Set legend position
+            ///
+            /// Finalizes the series and sets legend position on the resulting Plot.
+            pub fn legend_position(self, position: crate::core::LegendPosition) -> super::Plot {
+                self.finalize().legend_position(position)
+            }
+
             /// Add a bar series after finalizing the current series
             ///
             /// Enables chaining multiple series: `.line(...).bar(...).save()`
@@ -138,6 +146,12 @@ macro_rules! impl_terminal_methods {
             )]
             pub fn end_series(self) -> super::Plot {
                 self.finalize()
+            }
+        }
+
+        impl From<PlotBuilder<$config>> for super::Plot {
+            fn from(builder: PlotBuilder<$config>) -> super::Plot {
+                builder.finalize()
             }
         }
     };
@@ -1607,13 +1621,13 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// Finalize the line series and add it to the plot
     fn finalize(self) -> super::Plot {
         let (x_data, y_data) = match &self.input {
-            PlotInput::XY(x, y) => (x.clone(), y.clone()),
+            PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
             PlotInput::Single(y) => {
                 // Generate x values as indices
                 let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
-                (x, y.clone())
+                (PlotData::Static(x), PlotData::Static(y.clone()))
             }
-            _ => (vec![], vec![]),
+            _ => (PlotData::Static(vec![]), PlotData::Static(vec![])),
         };
 
         self.plot
@@ -1671,12 +1685,12 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// Finalize the scatter series and add it to the plot
     fn finalize(self) -> super::Plot {
         let (x_data, y_data) = match &self.input {
-            PlotInput::XY(x, y) => (x.clone(), y.clone()),
+            PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
             PlotInput::Single(y) => {
                 let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
-                (x, y.clone())
+                (PlotData::Static(x), PlotData::Static(y.clone()))
             }
-            _ => (vec![], vec![]),
+            _ => (PlotData::Static(vec![]), PlotData::Static(vec![])),
         };
 
         self.plot
@@ -1743,13 +1757,15 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
     /// Finalize the bar series and add it to the plot
     fn finalize(self) -> super::Plot {
         let (categories, values) = match &self.input {
-            PlotInput::Categorical { categories, values } => (categories.clone(), values.clone()),
+            PlotInput::Categorical { categories, values } => {
+                (categories.clone(), PlotData::Static(values.clone()))
+            }
             PlotInput::Single(y) => {
                 // Generate category labels as indices
                 let cats: Vec<String> = (0..y.len()).map(|i| i.to_string()).collect();
-                (cats, y.clone())
+                (cats, PlotData::Static(y.clone()))
             }
-            _ => (vec![], vec![]),
+            _ => (vec![], PlotData::Static(vec![])),
         };
 
         self.plot

@@ -1,176 +1,61 @@
 //! Documentation example: Contour Plot
 //!
 //! Generates docs/images/contour_plot.png for rustdoc
+//!
+//! This example demonstrates the high-level API for creating contour plots,
+//! including smoothing via interpolation.
 
-use ruviz::plots::continuous::contour::{ContourConfig, compute_contour_plot};
+use ruviz::plots::ContourInterpolation;
 use ruviz::prelude::*;
-use ruviz::render::SkiaRenderer;
 
 fn main() -> Result<()> {
-    let width = 800;
-    let height = 600;
-    let theme = Theme::default();
-
-    let mut renderer = SkiaRenderer::new(width, height, theme.clone())?;
-    renderer.clear();
-
-    // Generate 2D data (Gaussian surface)
-    let size = 50;
-    let x: Vec<f64> = (0..size).map(|i| (i as f64 - 25.0) / 5.0).collect();
-    let y: Vec<f64> = (0..size).map(|i| (i as f64 - 25.0) / 5.0).collect();
+    // Generate 2D data (Gaussian surface) - use smaller grid to show smoothing effect
+    let size = 20;
+    let x: Vec<f64> = (0..size).map(|i| (i as f64 - 10.0) / 2.0).collect();
+    let y: Vec<f64> = (0..size).map(|i| (i as f64 - 10.0) / 2.0).collect();
 
     // Z as flat array (row-major)
     let z: Vec<f64> = (0..size)
         .flat_map(|j| {
             (0..size).map(move |i| {
-                let xi = (i as f64 - 25.0) / 5.0;
-                let yj = (j as f64 - 25.0) / 5.0;
+                let xi = (i as f64 - 10.0) / 2.0;
+                let yj = (j as f64 - 10.0) / 2.0;
                 (-xi * xi - yj * yj).exp()
             })
         })
         .collect();
 
-    // Compute contour with explicit levels
+    // High-level API - smooth contour plot with colorbar
+    Plot::new()
+        .title("Contour Plot")
+        .xlabel("X")
+        .ylabel("Y")
+        .contour(&x, &y, &z)
+        .levels(10)
+        .filled(true)
+        .smooth(ContourInterpolation::Cubic, 4) // 4x upsampling with cubic interpolation
+        .colorbar(true)
+        .colorbar_label("Density")
+        .colormap_name("viridis")
+        .save("docs/images/contour_plot.png")?;
+
+    println!("Generated docs/images/contour_plot.png (high-level API)");
+
+    // Contour with explicit level values and linear interpolation
     let levels: Vec<f64> = (0..10).map(|i| i as f64 / 10.0 + 0.05).collect();
-    let config = ContourConfig::default().levels(levels.clone()).filled(true);
-    let contour = compute_contour_plot(&x, &y, &z, &config);
 
-    // Plot area
-    let margin = 70.0_f32;
-    let plot_width = width as f32 - 2.0 * margin;
-    let plot_height = height as f32 - 2.0 * margin;
+    Plot::new()
+        .title("Contour with Custom Levels")
+        .xlabel("X")
+        .ylabel("Y")
+        .contour(&x, &y, &z)
+        .level_values(levels)
+        .filled(true)
+        .smooth(ContourInterpolation::Linear, 4)
+        .colormap_name("plasma")
+        .save("docs/images/contour_custom_levels.png")?;
 
-    let x_min = -5.0_f64;
-    let x_max = 5.0_f64;
-    let y_min = -5.0_f64;
-    let y_max = 5.0_f64;
+    println!("Generated docs/images/contour_custom_levels.png");
 
-    let to_screen = |xv: f64, yv: f64| -> (f32, f32) {
-        let sx = margin + plot_width * ((xv - x_min) / (x_max - x_min)) as f32;
-        let sy = margin + plot_height * (1.0 - ((yv - y_min) / (y_max - y_min)) as f32);
-        (sx, sy)
-    };
-
-    // Draw axes
-    renderer.draw_rectangle(
-        margin,
-        margin,
-        plot_width,
-        plot_height,
-        theme.grid_color,
-        false,
-    )?;
-
-    // Grid
-    for i in 0..=5 {
-        let sx = margin + plot_width * i as f32 / 5.0;
-        renderer.draw_line(
-            sx,
-            margin,
-            sx,
-            margin + plot_height,
-            theme.grid_color,
-            0.5,
-            LineStyle::Solid,
-        )?;
-        let val = x_min + (x_max - x_min) * i as f64 / 5.0;
-        renderer.draw_text_centered(
-            &format!("{:.0}", val),
-            sx,
-            margin + plot_height + 15.0,
-            10.0,
-            theme.foreground,
-        )?;
-
-        let sy = margin + plot_height * i as f32 / 5.0;
-        renderer.draw_line(
-            margin,
-            sy,
-            margin + plot_width,
-            sy,
-            theme.grid_color,
-            0.5,
-            LineStyle::Solid,
-        )?;
-        let val = y_max - (y_max - y_min) * i as f64 / 5.0;
-        renderer.draw_text(
-            &format!("{:.0}", val),
-            margin - 25.0,
-            sy,
-            10.0,
-            theme.foreground,
-        )?;
-    }
-
-    // Draw contour lines
-    let colormap = ColorMap::viridis();
-    let z_min = 0.0_f64;
-    let z_max = 1.0_f64;
-
-    for contour_level in &contour.lines {
-        let t = ((contour_level.level - z_min) / (z_max - z_min)).clamp(0.0, 1.0);
-        let color = colormap.sample(t);
-
-        // Draw segments
-        for &(x1, y1, x2, y2) in &contour_level.segments {
-            let (sx1, sy1) = to_screen(x1, y1);
-            let (sx2, sy2) = to_screen(x2, y2);
-            renderer.draw_line(sx1, sy1, sx2, sy2, color, 1.5, LineStyle::Solid)?;
-        }
-    }
-
-    // Title and labels
-    renderer.draw_text_centered(
-        "Contour Plot",
-        width as f32 / 2.0,
-        25.0,
-        18.0,
-        theme.foreground,
-    )?;
-    renderer.draw_text_centered(
-        "X",
-        width as f32 / 2.0,
-        height as f32 - 15.0,
-        12.0,
-        theme.foreground,
-    )?;
-    renderer.draw_text_rotated("Y", 20.0, height as f32 / 2.0, 12.0, theme.foreground)?;
-
-    // Colorbar - use high number of segments for smooth gradient
-    let cb_x = width as f32 - 60.0;
-    let cb_y = margin;
-    let cb_height = plot_height;
-    let cb_width = 15.0;
-    let num_segments = cb_height as usize;
-    let segment_height = cb_height / num_segments as f32;
-
-    for i in 0..num_segments {
-        let t = i as f64 / num_segments as f64;
-        let color = colormap.sample(1.0 - t);
-        renderer.draw_solid_rectangle(
-            cb_x,
-            cb_y + i as f32 * segment_height,
-            cb_width,
-            segment_height + 0.5,
-            color,
-        )?;
-    }
-    renderer.draw_rectangle(cb_x, cb_y, cb_width, cb_height, theme.foreground, false)?;
-
-    // Colorbar tick labels
-    let cb_ticks = [0.0, 0.25, 0.5, 0.75, 1.0];
-    for &tick_val in &cb_ticks {
-        let tick_y = cb_y + cb_height * (1.0 - tick_val as f32);
-        renderer.draw_text(
-            &format!("{:.2}", tick_val),
-            cb_x + cb_width + 5.0,
-            tick_y,
-            10.0,
-            theme.foreground,
-        )?;
-    }
-
-    renderer.save_png("docs/images/contour_plot.png")?;
-    println!("Generated docs/images/contour_plot.png");
     Ok(())
 }
