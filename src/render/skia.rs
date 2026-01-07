@@ -1,8 +1,8 @@
 use crate::{
     core::{
-        ComputedMargins, LayoutRect, Legend, LegendItem, LegendItemType, LegendPosition,
-        LegendSpacingPixels, LegendStyle, PlottingError, Result, SpacingConfig, TextPosition,
-        TickFormatter, find_best_position, plot::Image, pt_to_px,
+        ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
+        LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, Result, SpacingConfig,
+        TextPosition, TickFormatter, find_best_position, plot::Image, pt_to_px,
     },
     render::{Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme},
 };
@@ -3156,6 +3156,9 @@ pub fn calculate_plot_area_config(
 }
 
 /// Helper function to map data coordinates to pixel coordinates
+///
+/// This function delegates to [`CoordinateTransform`] for the actual transformation,
+/// providing a unified coordinate mapping implementation across the codebase.
 pub fn map_data_to_pixels(
     data_x: f64,
     data_y: f64,
@@ -3165,20 +3168,26 @@ pub fn map_data_to_pixels(
     data_y_max: f64,
     plot_area: Rect,
 ) -> (f32, f32) {
-    let pixel_x = plot_area.left()
-        + ((data_x - data_x_min) / (data_x_max - data_x_min)) as f32 * plot_area.width();
-
-    // Note: Y axis is flipped in screen coordinates
-    let pixel_y = plot_area.bottom()
-        - ((data_y - data_y_min) / (data_y_max - data_y_min)) as f32 * plot_area.height();
-
-    (pixel_x, pixel_y)
+    // Note: tiny_skia Rect uses top() for minimum y, bottom() for maximum y
+    // CoordinateTransform expects screen_y as top..bottom (both increasing downward)
+    let transform = CoordinateTransform::from_plot_area(
+        plot_area.left(),
+        plot_area.top(),
+        plot_area.width(),
+        plot_area.height(),
+        data_x_min,
+        data_x_max,
+        data_y_min,
+        data_y_max,
+    );
+    transform.data_to_screen(data_x, data_y)
 }
 
 /// Map data coordinates to pixel coordinates with axis scale transformations
 ///
 /// This version applies logarithmic or symlog transformations to the data
-/// before mapping to pixel coordinates.
+/// before mapping to pixel coordinates. The base coordinate transformation
+/// is delegated to [`CoordinateTransform`].
 pub fn map_data_to_pixels_scaled(
     data_x: f64,
     data_y: f64,
@@ -3200,13 +3209,19 @@ pub fn map_data_to_pixels_scaled(
     let normalized_x = x_scale_obj.transform(data_x);
     let normalized_y = y_scale_obj.transform(data_y);
 
-    // Map normalized values to pixel coordinates
-    let pixel_x = plot_area.left() + normalized_x as f32 * plot_area.width();
-
-    // Note: Y axis is flipped in screen coordinates
-    let pixel_y = plot_area.bottom() - normalized_y as f32 * plot_area.height();
-
-    (pixel_x, pixel_y)
+    // Use CoordinateTransform with normalized [0, 1] data bounds
+    // since scaling has already been applied
+    let transform = CoordinateTransform::from_plot_area(
+        plot_area.left(),
+        plot_area.top(),
+        plot_area.width(),
+        plot_area.height(),
+        0.0, // normalized min
+        1.0, // normalized max
+        0.0, // normalized min
+        1.0, // normalized max
+    );
+    transform.data_to_screen(normalized_x, normalized_y)
 }
 
 /// Generate intelligent ticks using matplotlib's MaxNLocator algorithm

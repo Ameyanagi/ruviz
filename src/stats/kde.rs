@@ -43,9 +43,9 @@ pub fn kde_1d(data: &[f64], bandwidth: Option<f64>, n_points: Option<usize>) -> 
     let min_val = data.iter().copied().fold(f64::INFINITY, f64::min);
     let max_val = data.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
-    // Extend range by 3 bandwidths
-    let x_min = min_val - 3.0 * bw;
-    let x_max = max_val + 3.0 * bw;
+    // Extend range by 2 bandwidths (balances smoothness with avoiding overflow)
+    let x_min = min_val - 2.0 * bw;
+    let x_max = max_val + 2.0 * bw;
 
     // Create evaluation grid
     let step = (x_max - x_min) / (n_points - 1) as f64;

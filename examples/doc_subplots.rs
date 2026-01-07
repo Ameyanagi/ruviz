@@ -16,7 +16,7 @@ fn main() -> Result<()> {
         .ylabel("y")
         .line(&x, &y_sin)
         .color(Color::from_palette(0))
-        .width(2.0)
+        .line_width(2.0)
         .end_series();
 
     // Subplot 1: Scatter plot

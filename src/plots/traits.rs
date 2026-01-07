@@ -30,6 +30,7 @@
 //! ```
 
 use crate::core::error::Result;
+use crate::core::transform::CoordinateTransform;
 use crate::render::{Color, SkiaRenderer, Theme};
 
 /// Defines the plot area for rendering
@@ -80,6 +81,24 @@ impl PlotArea {
         }
     }
 
+    /// Create a [`CoordinateTransform`] from this plot area.
+    ///
+    /// This allows using the unified coordinate transformation API
+    /// while maintaining backward compatibility with `PlotArea`.
+    #[inline]
+    pub fn to_transform(self) -> CoordinateTransform {
+        CoordinateTransform::from_plot_area(
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            self.x_min,
+            self.x_max,
+            self.y_min,
+            self.y_max,
+        )
+    }
+
     /// Transform data coordinates to screen coordinates
     ///
     /// # Arguments
@@ -90,27 +109,7 @@ impl PlotArea {
     /// (screen_x, screen_y) in pixel coordinates
     #[inline]
     pub fn data_to_screen(&self, data_x: f64, data_y: f64) -> (f32, f32) {
-        let x_range = self.x_max - self.x_min;
-        let y_range = self.y_max - self.y_min;
-
-        // Avoid division by zero
-        let norm_x = if x_range.abs() > f64::EPSILON {
-            (data_x - self.x_min) / x_range
-        } else {
-            0.5
-        };
-
-        let norm_y = if y_range.abs() > f64::EPSILON {
-            (data_y - self.y_min) / y_range
-        } else {
-            0.5
-        };
-
-        let screen_x = self.x + (norm_x as f32) * self.width;
-        // Y is inverted in screen coordinates (0 at top)
-        let screen_y = self.y + (1.0 - norm_y as f32) * self.height;
-
-        (screen_x, screen_y)
+        self.to_transform().data_to_screen(data_x, data_y)
     }
 
     /// Transform screen coordinates to data coordinates
@@ -123,32 +122,23 @@ impl PlotArea {
     /// (data_x, data_y) in data space
     #[inline]
     pub fn screen_to_data(&self, screen_x: f32, screen_y: f32) -> (f64, f64) {
-        let norm_x = (screen_x - self.x) / self.width;
-        let norm_y = 1.0 - (screen_y - self.y) / self.height;
-
-        let data_x = self.x_min + (norm_x as f64) * (self.x_max - self.x_min);
-        let data_y = self.y_min + (norm_y as f64) * (self.y_max - self.y_min);
-
-        (data_x, data_y)
+        self.to_transform().screen_to_data(screen_x, screen_y)
     }
 
     /// Check if a data point is within the plot area bounds
     #[inline]
     pub fn contains_data(&self, data_x: f64, data_y: f64) -> bool {
-        data_x >= self.x_min && data_x <= self.x_max && data_y >= self.y_min && data_y <= self.y_max
+        self.to_transform().contains_data(data_x, data_y)
     }
 
     /// Get the center point of the plot area in screen coordinates
     pub fn center(&self) -> (f32, f32) {
-        (self.x + self.width / 2.0, self.y + self.height / 2.0)
+        self.to_transform().screen_center()
     }
 
     /// Get the center point of the plot area in data coordinates
     pub fn data_center(&self) -> (f64, f64) {
-        (
-            (self.x_min + self.x_max) / 2.0,
-            (self.y_min + self.y_max) / 2.0,
-        )
+        self.to_transform().data_center()
     }
 }
 

@@ -407,8 +407,10 @@ impl PlotCompute for PolarPlot {
 
 impl PlotData for PolarPlotData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // Polar plots use normalized -r_max to r_max range
-        ((-self.r_max, self.r_max), (-self.r_max, self.r_max))
+        // Polar plots need extra margin for axis labels positioned at r_max * 1.12
+        // Use r_max * 1.5 to ensure labels have enough room with layout adjustments
+        let label_margin = self.r_max * 1.5;
+        ((-label_margin, label_margin), (-label_margin, label_margin))
     }
 
     fn is_empty(&self) -> bool {
@@ -479,13 +481,25 @@ impl PlotRender for PolarPlotData {
         let label_color = theme.foreground;
         for label in &self.theta_labels {
             let (sx, sy) = area.data_to_screen(label.x, label.y);
-            renderer.draw_text(&label.text, sx, sy, config.label_font_size, label_color)?;
+            renderer.draw_text_centered(
+                &label.text,
+                sx,
+                sy,
+                config.label_font_size,
+                label_color,
+            )?;
         }
 
         // Draw radial labels
         for label in &self.r_labels {
             let (sx, sy) = area.data_to_screen(label.x, label.y);
-            renderer.draw_text(&label.text, sx, sy, config.label_font_size, label_color)?;
+            renderer.draw_text_centered(
+                &label.text,
+                sx,
+                sy,
+                config.label_font_size,
+                label_color,
+            )?;
         }
 
         Ok(())

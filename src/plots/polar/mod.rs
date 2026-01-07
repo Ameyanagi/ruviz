@@ -42,4 +42,7 @@ pub use polar_plot::{
     PolarPlot, PolarPlotConfig, PolarPlotData, PolarPlotInput, PolarPoint, PositionedLabel,
     circle_vertices, compute_polar_plot, polar_grid,
 };
-pub use radar::{Radar, RadarConfig, RadarInput, RadarPlotData, RadarSeries, compute_radar_chart};
+pub use radar::{
+    Radar, RadarConfig, RadarInput, RadarPlotData, RadarSeries, compute_radar_chart,
+    compute_radar_chart_with_labels,
+};

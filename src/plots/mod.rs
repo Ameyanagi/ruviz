@@ -25,6 +25,9 @@
 
 pub mod traits;
 
+// Basic plot types (line, scatter, bar)
+pub mod basic;
+
 pub mod boxplot;
 pub mod heatmap;
 pub mod histogram;
@@ -48,6 +51,9 @@ pub mod vector;
 // Core trait exports
 pub use traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, StyledShape};
 
+// Basic plot config exports
+pub use basic::{BarConfig, BarOrientation, LineConfig, ScatterConfig};
+
 // Distribution plot exports
 pub use distribution::{
     Boxen, BoxenConfig, BoxenData, Ecdf, EcdfConfig, EcdfData, EcdfStat, Kde, KdeConfig, KdeData,
@@ -60,3 +66,17 @@ pub use heatmap::{
 };
 pub use histogram::{BinMethod, HistogramConfig, HistogramData, calculate_histogram};
 pub use statistics::{iqr, mean, median, percentile, std_dev};
+
+// Contour plot exports
+pub use continuous::contour::{
+    ContourConfig, ContourInterpolation, ContourPlotData, compute_contour_plot,
+};
+
+// Pie chart exports
+pub use composition::pie::{PieConfig, PieData};
+
+// Polar and Radar exports
+pub use polar::polar_plot::{PolarPlotConfig, PolarPlotData, compute_polar_plot};
+pub use polar::radar::{
+    RadarConfig, RadarPlotData, compute_radar_chart, compute_radar_chart_with_labels,
+};

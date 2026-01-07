@@ -92,15 +92,15 @@ fn test_transparency_effects() {
         .ylabel("Y Values")
         .line(&x_data, &y1_data)
         .color(Color::RED.with_alpha(1.0)) // Opaque
-        .width(3.0)
+        .line_width(3.0)
         .label("Opaque Red")
         .line(&x_data, &y2_data)
         .color(Color::BLUE.with_alpha(0.7)) // Semi-transparent
-        .width(3.0)
+        .line_width(3.0)
         .label("70% Blue")
         .line(&x_data, &y3_data)
         .color(Color::GREEN.with_alpha(0.4)) // Very transparent
-        .width(3.0)
+        .line_width(3.0)
         .label("40% Green")
         .legend(ruviz::core::position::Position::TopRight)
         .save("tests/output/transparency.png");
@@ -125,35 +125,35 @@ fn test_colormap_visualization() {
             &x_data.iter().map(|&x| 1.0 + x * 0.5).collect::<Vec<_>>(),
         )
         .color(colormap.sample(0.0))
-        .width(3.0)
+        .line_width(3.0)
         .label("Line 1 (t=0.0)")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 2.0 + x * 0.5).collect::<Vec<_>>(),
         )
         .color(colormap.sample(0.25))
-        .width(3.0)
+        .line_width(3.0)
         .label("Line 2 (t=0.3)")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 3.0 + x * 0.5).collect::<Vec<_>>(),
         )
         .color(colormap.sample(0.5))
-        .width(3.0)
+        .line_width(3.0)
         .label("Line 3 (t=0.5)")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 4.0 + x * 0.5).collect::<Vec<_>>(),
         )
         .color(colormap.sample(0.75))
-        .width(3.0)
+        .line_width(3.0)
         .label("Line 4 (t=0.8)")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 5.0 + x * 0.5).collect::<Vec<_>>(),
         )
         .color(colormap.sample(1.0))
-        .width(3.0)
+        .line_width(3.0)
         .label("Line 5 (t=1.0)")
         .legend(ruviz::core::position::Position::TopRight)
         .save("tests/output/colormap_viridis.png");
@@ -183,35 +183,35 @@ fn test_different_colormaps() {
                 &x_data.iter().map(|&x| 1.0 + x * 0.3).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.0))
-            .width(2.0)
+            .line_width(2.0)
             .label("t=0.00")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 2.0 + x * 0.3).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.25))
-            .width(2.0)
+            .line_width(2.0)
             .label("t=0.25")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 3.0 + x * 0.3).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.5))
-            .width(2.0)
+            .line_width(2.0)
             .label("t=0.50")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 4.0 + x * 0.3).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.75))
-            .width(2.0)
+            .line_width(2.0)
             .label("t=0.75")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 5.0 + x * 0.3).collect::<Vec<_>>(),
             )
             .color(colormap.sample(1.0))
-            .width(2.0)
+            .line_width(2.0)
             .label("t=1.00")
             .legend(ruviz::core::position::Position::TopRight)
             .save(&format!("tests/output/colormap_{}.png", name));
@@ -244,35 +244,35 @@ fn test_hex_color_parsing() {
             &y_data.iter().map(|&y| y + 0.0 * 0.5).collect::<Vec<_>>(),
         )
         .color(Color::from_hex("#FF0000").unwrap())
-        .width(2.0)
+        .line_width(2.0)
         .label("#FF0000")
         .line(
             &x_data,
             &y_data.iter().map(|&y| y + 1.0 * 0.5).collect::<Vec<_>>(),
         )
         .color(Color::from_hex("#00ff00").unwrap())
-        .width(2.0)
+        .line_width(2.0)
         .label("#00ff00")
         .line(
             &x_data,
             &y_data.iter().map(|&y| y + 2.0 * 0.5).collect::<Vec<_>>(),
         )
         .color(Color::from_hex("#0080FF").unwrap())
-        .width(2.0)
+        .line_width(2.0)
         .label("#0080FF")
         .line(
             &x_data,
             &y_data.iter().map(|&y| y + 3.0 * 0.5).collect::<Vec<_>>(),
         )
         .color(Color::from_hex("#ff8040").unwrap())
-        .width(2.0)
+        .line_width(2.0)
         .label("#ff8040")
         .line(
             &x_data,
             &y_data.iter().map(|&y| y + 4.0 * 0.5).collect::<Vec<_>>(),
         )
         .color(Color::from_hex("#8040ff").unwrap())
-        .width(2.0)
+        .line_width(2.0)
         .label("#8040ff")
         .legend(ruviz::core::position::Position::TopRight)
         .save("tests/output/hex_colors.png");
@@ -296,84 +296,84 @@ fn test_color_palette_cycling() {
             &x_data.iter().map(|&x| 1.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(0))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 1")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 2.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(1))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 2")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 3.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(2))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 3")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 4.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(3))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 4")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 5.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(4))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 5")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 6.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(5))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 6")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 7.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(6))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 7")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 8.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(7))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 8")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 9.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(8))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 9")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 10.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(9))
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 10")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 11.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(10)) // Should cycle back to palette[0]
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 11")
         .line(
             &x_data,
             &x_data.iter().map(|&x| 12.0 + x * 0.1).collect::<Vec<_>>(),
         )
         .color(Color::from_palette(11)) // Should cycle to palette[1]
-        .width(1.5)
+        .line_width(1.5)
         .label("Series 12")
         .legend(ruviz::core::position::Position::TopRight)
         .save("tests/output/palette_cycling.png");
@@ -405,70 +405,70 @@ fn test_scientific_colormaps() {
                 &x_data.iter().map(|&x| 0.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.0))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.0")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 1.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.111))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.1")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 2.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.222))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.2")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 3.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.333))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.3")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 4.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.444))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.4")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 5.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.556))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.6")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 6.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.667))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.7")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 7.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.778))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.8")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 8.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(0.889))
-            .width(3.0)
+            .line_width(3.0)
             .label("0.9")
             .line(
                 &x_data,
                 &x_data.iter().map(|&x| 9.0 + x * 0.2).collect::<Vec<_>>(),
             )
             .color(colormap.sample(1.0))
-            .width(3.0)
+            .line_width(3.0)
             .label("1.0")
             .legend(ruviz::core::position::Position::TopRight)
             .save(&format!("tests/output/scientific_{}.png", name));

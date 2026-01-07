@@ -1,12 +1,64 @@
 //! Core Plot implementation and types
+//!
+//! This module provides the main [`Plot`] struct and related types for creating
+//! visualizations in ruviz.
+//!
+//! # Architecture
+//!
+//! The `Plot` struct is decomposed into focused component managers:
+//!
+//! - [`PlotConfiguration`] - Display settings (title, labels, dimensions, theme)
+//! - [`SeriesManager`] - Data series storage and auto-coloring
+//! - [`LayoutManager`] - Legend, grid, ticks, margins, axis limits/scales
+//! - [`RenderPipeline`] - Backend selection, parallel/pooled rendering
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! use ruviz::prelude::*;
+//!
+//! // Simple plot
+//! Plot::new()
+//!     .line(&x, &y)
+//!     .title("My Plot")
+//!     .save("plot.png")?;
+//!
+//! // Multi-series with styling
+//! Plot::new()
+//!     .line(&x, &y1)
+//!     .color(Color::RED)
+//!     .label("Series 1")
+//!     .line(&x, &y2)
+//!     .color(Color::BLUE)
+//!     .label("Series 2")
+//!     .legend(Position::TopRight)
+//!     .save("multi.png")?;
+//! ```
+//!
+//! # Builder Pattern
+//!
+//! Series methods return [`PlotBuilder<C>`] which provides:
+//! - Series-specific configuration (color, line_width, markers)
+//! - Plot-level methods forwarded to inner Plot (title, xlabel, theme)
+//! - Terminal methods (save, render) that auto-finalize series
+//!
+//! See [`PlotBuilder`] for details on the generic builder implementation.
 
 mod builder;
 mod config;
+mod configuration;
 mod image;
+mod layout_manager;
+mod render_pipeline;
+mod series_manager;
 
 pub use builder::{PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{BackendType, GridMode, TickDirection};
+pub use configuration::PlotConfiguration;
 pub use image::Image;
+pub use layout_manager::LayoutManager;
+pub use render_pipeline::RenderPipeline;
+pub use series_manager::SeriesManager;
 
 use crate::{
     axes::AxisScale,
@@ -35,69 +87,56 @@ use crate::render::{ParallelRenderer, SeriesRenderData};
 #[cfg(feature = "gpu")]
 use crate::render::gpu::GpuRenderer;
 
-/// Main Plot struct - the core API entry point
+/// Main Plot struct - the core API entry point for creating visualizations
 ///
-/// Provides a fluent builder interface for creating plots with multiple data series,
-/// styling options, and export capabilities.
+/// `Plot` provides a fluent builder interface for creating plots with multiple
+/// data series, styling options, and export capabilities.
+///
+/// # Architecture
+///
+/// The Plot struct delegates to focused component managers:
+/// - [`PlotConfiguration`] - Title, labels, dimensions, theme, DPI
+/// - [`SeriesManager`] - Data series storage, auto-color assignment
+/// - [`LayoutManager`] - Legend, grid, ticks, margins, axis limits/scales
+/// - [`RenderPipeline`] - Backend selection, parallel/pooled rendering
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use ruviz::prelude::*;
+///
+/// Plot::new()
+///     .line(&x, &y)
+///     .color(Color::BLUE)
+///     .line_width(2.0)
+///     .title("My Plot")
+///     .xlabel("X")
+///     .ylabel("Y")
+///     .save("plot.png")?;
+/// ```
+///
+/// # Builder Pattern
+///
+/// Series methods (`.line()`, `.scatter()`, `.bar()`) return a [`PlotBuilder<C>`]
+/// that auto-finalizes when terminal methods (`.save()`, `.render()`) are called.
+/// No explicit `.end_series()` is needed.
 #[derive(Clone, Debug)]
 pub struct Plot {
-    /// Plot title
-    title: Option<String>,
-    /// X-axis label
-    xlabel: Option<String>,
-    /// Y-axis label
-    ylabel: Option<String>,
-    /// Canvas dimensions (width, height) - DEPRECATED: use config.figure instead
-    dimensions: (u32, u32),
-    /// DPI for high-resolution export - DEPRECATED: use config.figure.dpi instead
-    dpi: u32,
-    /// Plot theme
-    theme: Theme,
-    /// DPI-independent plot configuration
-    config: PlotConfig,
-    /// Data series
-    series: Vec<PlotSeries>,
+    /// Display configuration (title, labels, dimensions, theme)
+    display: PlotConfiguration,
+    /// Series manager (handles all data series and auto-coloring)
+    series_mgr: SeriesManager,
+    /// Layout manager (handles legend, grid, ticks, margins, axis limits)
+    layout: LayoutManager,
+    /// Render pipeline (handles backend selection, parallel/pooled rendering)
+    render: RenderPipeline,
     /// Annotations (text, arrows, lines, shapes)
     annotations: Vec<Annotation>,
-    /// Legend configuration
-    legend: LegendConfig,
-    /// Grid styling configuration (using unified GridStyle)
-    grid_style: GridStyle,
-    /// Tick configuration
-    tick_config: TickConfig,
-    /// Margin around plot area (fraction of canvas)
-    margin: Option<f32>,
-    /// Whether to use scientific notation on axes
-    scientific_notation: bool,
-    /// Auto-generate colors for series without explicit colors
-    auto_color_index: usize,
-    /// Manual X-axis limits (min, max)
-    x_limits: Option<(f64, f64)>,
-    /// Manual Y-axis limits (min, max)
-    y_limits: Option<(f64, f64)>,
-    /// X-axis scale (linear, log, symlog)
-    x_scale: AxisScale,
-    /// Y-axis scale (linear, log, symlog)
-    y_scale: AxisScale,
-    #[cfg(feature = "parallel")]
-    /// Parallel renderer for performance optimization
-    parallel_renderer: ParallelRenderer,
-    /// Memory pool renderer for allocation optimization
-    pooled_renderer: Option<crate::render::PooledRenderer>,
-    /// Enable memory pooled rendering for performance
-    enable_pooled_rendering: bool,
-    /// Selected backend (None = auto-select)
-    backend: Option<BackendType>,
-    /// Whether auto-optimization has been applied
-    auto_optimized: bool,
-    /// Enable GPU acceleration for coordinate transformations
-    #[cfg(feature = "gpu")]
-    enable_gpu: bool,
 }
 
 /// Configuration for a single data series
 #[derive(Clone, Debug)]
-struct PlotSeries {
+pub(crate) struct PlotSeries {
     /// Series type
     series_type: SeriesType,
     /// Series label for legend
@@ -269,7 +308,7 @@ impl PlotSeries {
 
 /// Types of plot series
 #[derive(Clone, Debug)]
-enum SeriesType {
+pub(crate) enum SeriesType {
     Line {
         x_data: Vec<f64>,
         y_data: Vec<f64>,
@@ -340,7 +379,7 @@ enum SeriesType {
 
 /// Legend configuration (legacy, for backward compatibility)
 #[derive(Clone, Debug)]
-struct LegendConfig {
+pub(crate) struct LegendConfig {
     /// Whether to show legend
     enabled: bool,
     /// Legend position
@@ -351,6 +390,18 @@ struct LegendConfig {
     corner_radius: Option<f32>,
     /// Number of columns (1 = vertical, >1 = horizontal/multi-column)
     columns: Option<usize>,
+}
+
+impl Default for LegendConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            position: Position::TopRight,
+            font_size: None,
+            corner_radius: None,
+            columns: None,
+        }
+    }
 }
 
 impl LegendConfig {
@@ -377,7 +428,7 @@ impl LegendConfig {
 
 /// Tick configuration for axes
 #[derive(Clone, Debug)]
-struct TickConfig {
+pub(crate) struct TickConfig {
     /// Direction ticks point (inside or outside)
     direction: TickDirection,
     /// Number of major ticks on X axis
@@ -431,7 +482,7 @@ impl Plot {
     pub fn new() -> Self {
         let config = PlotConfig::default();
         let (width, height) = config.canvas_size();
-        Self {
+        let display = PlotConfiguration {
             title: None,
             xlabel: None,
             ylabel: None,
@@ -439,32 +490,13 @@ impl Plot {
             dpi: config.figure.dpi as u32,
             theme: Theme::default(),
             config,
-            series: Vec::new(),
+        };
+        Self {
+            display,
+            series_mgr: SeriesManager::new(),
+            layout: LayoutManager::new(),
+            render: RenderPipeline::new(),
             annotations: Vec::new(),
-            legend: LegendConfig {
-                enabled: false,
-                position: Position::TopRight,
-                font_size: None,
-                corner_radius: None,
-                columns: None,
-            },
-            grid_style: GridStyle::default(),
-            tick_config: TickConfig::default(),
-            margin: None,
-            scientific_notation: false,
-            auto_color_index: 0,
-            x_limits: None,
-            y_limits: None,
-            x_scale: AxisScale::Linear,
-            y_scale: AxisScale::Linear,
-            #[cfg(feature = "parallel")]
-            parallel_renderer: ParallelRenderer::new(),
-            pooled_renderer: None,
-            enable_pooled_rendering: false,
-            backend: None,
-            auto_optimized: false,
-            #[cfg(feature = "gpu")]
-            enable_gpu: false,
         }
     }
 
@@ -482,9 +514,9 @@ impl Plot {
     pub fn with_config(config: PlotConfig) -> Self {
         let (width, height) = config.canvas_size();
         let mut plot = Self::new();
-        plot.dimensions = (width, height);
-        plot.dpi = config.figure.dpi as u32;
-        plot.config = config;
+        plot.display.dimensions = (width, height);
+        plot.display.dpi = config.figure.dpi as u32;
+        plot.display.config = config;
         plot
     }
 
@@ -519,7 +551,7 @@ impl Plot {
     /// ```
     pub fn with_theme(theme: Theme) -> Self {
         let mut plot = Self::new();
-        plot.theme = theme;
+        plot.display.theme = theme;
         plot
     }
 
@@ -551,13 +583,13 @@ impl Plot {
     /// |---------|------|---------|-------------|
     /// | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png) |
     pub fn theme(mut self, theme: Theme) -> Self {
-        self.theme = theme;
+        self.display.theme = theme;
         self
     }
 
     /// Get the current theme
     pub fn get_theme(&self) -> Theme {
-        self.theme.clone()
+        self.display.theme.clone()
     }
 
     /// Scale typography by a factor
@@ -577,7 +609,7 @@ impl Plot {
     ///     .scale_typography(0.7); // 70% of normal font sizes
     /// ```
     pub fn scale_typography(mut self, factor: f32) -> Self {
-        self.config.typography = self.config.typography.scale(factor);
+        self.display.config.typography = self.display.config.typography.scale(factor);
         self
     }
 
@@ -585,7 +617,7 @@ impl Plot {
     #[cfg(feature = "parallel")]
     pub fn with_parallel(mut self, threads: Option<usize>) -> Self {
         if let Some(thread_count) = threads {
-            self.parallel_renderer = ParallelRenderer::with_threads(thread_count);
+            self.render.parallel_renderer = ParallelRenderer::with_threads(thread_count);
         }
         self
     }
@@ -593,7 +625,7 @@ impl Plot {
     /// Set parallel processing threshold
     #[cfg(feature = "parallel")]
     pub fn parallel_threshold(mut self, threshold: usize) -> Self {
-        self.parallel_renderer = self.parallel_renderer.with_threshold(threshold);
+        self.render.parallel_renderer = self.render.parallel_renderer.with_threshold(threshold);
         self
     }
 
@@ -602,9 +634,9 @@ impl Plot {
     /// This reduces allocation overhead by 30-50% for large datasets by reusing
     /// memory buffers for coordinate transformations and rendering operations.
     pub fn with_memory_pooling(mut self, enable: bool) -> Self {
-        self.enable_pooled_rendering = enable;
-        if enable && self.pooled_renderer.is_none() {
-            self.pooled_renderer = Some(crate::render::PooledRenderer::new());
+        self.render.enable_pooled_rendering = enable;
+        if enable && self.render.pooled_renderer.is_none() {
+            self.render.pooled_renderer = Some(crate::render::PooledRenderer::new());
         }
         self
     }
@@ -621,18 +653,19 @@ impl Plot {
         position_pool_size: usize,
         segment_pool_size: usize,
     ) -> Self {
-        self.pooled_renderer = Some(crate::render::PooledRenderer::with_pool_sizes(
+        self.render.pooled_renderer = Some(crate::render::PooledRenderer::with_pool_sizes(
             f32_pool_size,
             position_pool_size,
             segment_pool_size,
         ));
-        self.enable_pooled_rendering = true;
+        self.render.enable_pooled_rendering = true;
         self
     }
 
     /// Get memory pool statistics for monitoring and optimization
     pub fn pool_stats(&self) -> Option<crate::render::PooledRendererStats> {
-        self.pooled_renderer
+        self.render
+            .pooled_renderer
             .as_ref()
             .map(|renderer| renderer.get_pool_stats())
     }
@@ -652,7 +685,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn title<S: Into<String>>(mut self, title: S) -> Self {
-        self.title = Some(title.into());
+        self.display.title = Some(title.into());
         self
     }
 
@@ -672,7 +705,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.xlabel = Some(label.into());
+        self.display.xlabel = Some(label.into());
         self
     }
 
@@ -691,7 +724,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.ylabel = Some(label.into());
+        self.display.ylabel = Some(label.into());
         self
     }
 
@@ -712,7 +745,7 @@ impl Plot {
     /// ```
     pub fn xlim(mut self, min: f64, max: f64) -> Self {
         if min < max && min.is_finite() && max.is_finite() {
-            self.x_limits = Some((min, max));
+            self.layout.x_limits = Some((min, max));
         }
         self
     }
@@ -733,7 +766,7 @@ impl Plot {
     /// ```
     pub fn ylim(mut self, min: f64, max: f64) -> Self {
         if min < max && min.is_finite() && max.is_finite() {
-            self.y_limits = Some((min, max));
+            self.layout.y_limits = Some((min, max));
         }
         self
     }
@@ -758,7 +791,7 @@ impl Plot {
     ///     .save("symlog_x.png")?;
     /// ```
     pub fn xscale(mut self, scale: AxisScale) -> Self {
-        self.x_scale = scale;
+        self.layout.x_scale = scale;
         self
     }
 
@@ -783,7 +816,7 @@ impl Plot {
     ///     .save("loglog.png")?;
     /// ```
     pub fn yscale(mut self, scale: AxisScale) -> Self {
-        self.y_scale = scale;
+        self.layout.y_scale = scale;
         self
     }
 
@@ -798,7 +831,7 @@ impl Plot {
     /// DPI-independent sizing, or `size_pixels(width, height)` for pixel-based sizing.
     #[deprecated(since = "0.2.0", note = "Use size() or size_pixels() instead")]
     pub fn dimensions(mut self, width: u32, height: u32) -> Self {
-        self.dimensions = (width.max(100), height.max(100));
+        self.display.dimensions = (width.max(100), height.max(100));
 
         // Auto-scale DPI based on canvas size relative to reference (640x480)
         // This ensures text maintains proportional size on larger canvases
@@ -807,10 +840,10 @@ impl Plot {
         let scale_factor = (canvas_diagonal / reference_diagonal).max(1.0);
         let auto_dpi = (REFERENCE_DPI * scale_factor).round().max(100.0);
 
-        self.dpi = auto_dpi as u32;
-        self.config.figure.dpi = auto_dpi;
-        self.config.figure.width = width as f32 / auto_dpi;
-        self.config.figure.height = height as f32 / auto_dpi;
+        self.display.dpi = auto_dpi as u32;
+        self.display.config.figure.dpi = auto_dpi;
+        self.display.config.figure.width = width as f32 / auto_dpi;
+        self.display.config.figure.height = height as f32 / auto_dpi;
         self
     }
 
@@ -847,11 +880,11 @@ impl Plot {
     ///     .save("print.png")?;
     /// ```
     pub fn size(mut self, width: f32, height: f32) -> Self {
-        self.config.figure.width = width.max(1.0);
-        self.config.figure.height = height.max(1.0);
+        self.display.config.figure.width = width.max(1.0);
+        self.display.config.figure.height = height.max(1.0);
         // Update legacy fields for backward compatibility
-        let (w, h) = self.config.canvas_size();
-        self.dimensions = (w, h);
+        let (w, h) = self.display.config.canvas_size();
+        self.display.dimensions = (w, h);
         self
     }
 
@@ -874,11 +907,11 @@ impl Plot {
     /// ```
     pub fn size_px(mut self, width: u32, height: u32) -> Self {
         use crate::core::units::REFERENCE_DPI;
-        self.config.figure.width = width as f32 / REFERENCE_DPI;
-        self.config.figure.height = height as f32 / REFERENCE_DPI;
+        self.display.config.figure.width = width as f32 / REFERENCE_DPI;
+        self.display.config.figure.height = height as f32 / REFERENCE_DPI;
         // Update legacy fields
-        let (w, h) = self.config.canvas_size();
-        self.dimensions = (w, h);
+        let (w, h) = self.display.config.canvas_size();
+        self.display.dimensions = (w, h);
         self
     }
 
@@ -902,11 +935,11 @@ impl Plot {
     ///     .save("print.png")?;
     /// ```
     pub fn dpi(mut self, dpi: u32) -> Self {
-        self.config.figure.dpi = dpi.max(72) as f32;
-        self.dpi = dpi.max(72);
+        self.display.config.figure.dpi = dpi.max(72) as f32;
+        self.display.dpi = dpi.max(72);
         // Update dimensions to reflect new DPI
-        let (w, h) = self.config.canvas_size();
-        self.dimensions = (w, h);
+        let (w, h) = self.display.config.canvas_size();
+        self.display.dimensions = (w, h);
         self
     }
 
@@ -924,10 +957,10 @@ impl Plot {
     ///     .save("paper.png")?;
     /// ```
     pub fn plot_style(mut self, style: PlotStyle) -> Self {
-        self.config = style.config();
-        let (w, h) = self.config.canvas_size();
-        self.dimensions = (w, h);
-        self.dpi = self.config.figure.dpi as u32;
+        self.display.config = style.config();
+        let (w, h) = self.display.config.canvas_size();
+        self.display.dimensions = (w, h);
+        self.display.dpi = self.display.config.figure.dpi as u32;
         self
     }
 
@@ -944,9 +977,9 @@ impl Plot {
     /// ```
     pub fn plot_config(mut self, config: PlotConfig) -> Self {
         let (w, h) = config.canvas_size();
-        self.dimensions = (w, h);
-        self.dpi = config.figure.dpi as u32;
-        self.config = config;
+        self.display.dimensions = (w, h);
+        self.display.dpi = config.figure.dpi as u32;
+        self.display.config = config;
         self
     }
 
@@ -954,26 +987,27 @@ impl Plot {
     ///
     /// All other font sizes (title, labels, ticks) scale relative to this.
     pub fn font_size(mut self, size: f32) -> Self {
-        self.config.typography.base_size = size.max(4.0);
+        self.display.config.typography.base_size = size.max(4.0);
         self
     }
 
     /// Set the title font size in points (absolute)
     pub fn title_size(mut self, size: f32) -> Self {
         // Convert to scale factor
-        self.config.typography.title_scale = size / self.config.typography.base_size;
+        self.display.config.typography.title_scale =
+            size / self.display.config.typography.base_size;
         self
     }
 
     /// Set the data line width in points
     pub fn line_width_pt(mut self, width: f32) -> Self {
-        self.config.lines.data_width = width.max(0.1);
+        self.display.config.lines.data_width = width.max(0.1);
         self
     }
 
     /// Get the current PlotConfig
     pub fn get_config(&self) -> &PlotConfig {
-        &self.config
+        &self.display.config
     }
 
     /// Adjust margins to tightly fit text with custom padding
@@ -991,29 +1025,29 @@ impl Plot {
     ///     .save("plot.png")?;
     /// ```
     pub fn tight_layout_pad(mut self, pad: f32) -> Self {
-        let width = self.config.figure.width;
-        let height = self.config.figure.height;
+        let width = self.display.config.figure.width;
+        let height = self.display.config.figure.height;
 
         // Estimate text sizes in inches
         let pt_to_in = |pt: f32| pt / 72.0;
         let pad_in = pt_to_in(pad);
 
         // Calculate required top margin (title)
-        let top_margin = if self.title.is_some() {
-            let title_size = self.config.typography.title_size();
-            let title_pad = self.config.spacing.title_pad;
+        let top_margin = if self.display.title.is_some() {
+            let title_size = self.display.config.typography.title_size();
+            let title_pad = self.display.config.spacing.title_pad;
             pt_to_in(title_size) + pt_to_in(title_pad) + pad_in
         } else {
             pad_in.max(0.1) // Minimal margin
         };
 
         // Calculate required bottom margin (xlabel + tick labels)
-        let tick_size = self.config.typography.tick_size();
-        let label_size = self.config.typography.label_size();
-        let tick_pad = self.config.spacing.tick_pad;
-        let label_pad = self.config.spacing.label_pad;
+        let tick_size = self.display.config.typography.tick_size();
+        let label_size = self.display.config.typography.label_size();
+        let tick_pad = self.display.config.spacing.tick_pad;
+        let label_pad = self.display.config.spacing.label_pad;
 
-        let bottom_margin = if self.xlabel.is_some() {
+        let bottom_margin = if self.display.xlabel.is_some() {
             pt_to_in(tick_size)
                 + pt_to_in(tick_pad)
                 + pt_to_in(label_size)
@@ -1027,7 +1061,7 @@ impl Plot {
         // Y-axis tick labels are typically 4-5 characters wide
         let estimated_tick_width = pt_to_in(tick_size) * 4.0;
 
-        let left_margin = if self.ylabel.is_some() {
+        let left_margin = if self.display.ylabel.is_some() {
             estimated_tick_width
                 + pt_to_in(tick_pad)
                 + pt_to_in(label_size)
@@ -1044,7 +1078,7 @@ impl Plot {
         let max_horizontal = width * 0.4;
         let max_vertical = height * 0.4;
 
-        self.config.margins = MarginConfig::Fixed {
+        self.display.config.margins = MarginConfig::Fixed {
             left: left_margin.min(max_horizontal),
             right: right_margin.min(max_horizontal),
             top: top_margin.min(max_vertical),
@@ -1056,17 +1090,17 @@ impl Plot {
 
     /// Calculate canvas dimensions from config
     fn config_canvas_size(&self) -> (u32, u32) {
-        self.config.canvas_size()
+        self.display.config.canvas_size()
     }
 
     /// Get font size in pixels for rendering
     fn font_size_px(&self, points: f32) -> f32 {
-        pt_to_px(points, self.config.figure.dpi)
+        pt_to_px(points, self.display.config.figure.dpi)
     }
 
     /// Get line width in pixels for rendering
     fn line_width_px(&self, points: f32) -> f32 {
-        pt_to_px(points, self.config.figure.dpi)
+        pt_to_px(points, self.display.config.figure.dpi)
     }
 
     /// Calculate DPI-scaled canvas dimensions
@@ -1078,19 +1112,19 @@ impl Plot {
     /// Calculate DPI scaling factor
     /// **Deprecated**: Use config.figure.dpi with pt_to_px/in_to_px instead
     fn dpi_scale(&self) -> f32 {
-        self.config.figure.dpi / 72.0 // Scale relative to 72 DPI (1pt = 1px)
+        self.display.config.figure.dpi / 72.0 // Scale relative to 72 DPI (1pt = 1px)
     }
 
     /// Calculate DPI-scaled font size
     /// **Deprecated**: Use font_size_px() with config.typography instead
     pub fn dpi_scaled_font_size(&self, base_size: f32) -> f32 {
-        pt_to_px(base_size, self.config.figure.dpi)
+        pt_to_px(base_size, self.display.config.figure.dpi)
     }
 
     /// Calculate DPI-scaled line width
     /// **Deprecated**: Use line_width_px() with config.lines instead
     pub fn dpi_scaled_line_width(&self, base_width: f32) -> f32 {
-        pt_to_px(base_width, self.config.figure.dpi)
+        pt_to_px(base_width, self.display.config.figure.dpi)
     }
 
     /// Set margin around plot area
@@ -1110,19 +1144,20 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn margin(mut self, margin: f32) -> Self {
-        self.margin = Some(margin.clamp(0.0, 0.5));
+        self.layout.margin = Some(margin.clamp(0.0, 0.5));
         self
     }
 
     /// Enable/disable scientific notation on axes
     pub fn scientific_notation(mut self, enabled: bool) -> Self {
-        self.scientific_notation = enabled;
+        self.layout.scientific_notation = enabled;
         self
     }
 
     /// Add a line plot series
     ///
     /// Creates a line chart connecting data points in order.
+    /// Returns a `PlotBuilder<LineConfig>` for method chaining with line-specific options.
     ///
     /// # Example
     ///
@@ -1132,46 +1167,36 @@ impl Plot {
     /// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     /// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
     ///
+    /// // Simple usage - just call save() directly
     /// Plot::new()
     ///     .line(&x, &y)
-    ///     .end_series()
     ///     .save("line.png")?;
+    ///
+    /// // With configuration
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .line_width(2.0)
+    ///     .color(Color::BLUE)
+    ///     .marker(MarkerStyle::Circle)
+    ///     .title("Sine Wave")
+    ///     .save("line_styled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// ![Line plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)
-    pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
     {
-        // Validate data lengths match
-        if x_data.len() != y_data.len() {
-            // For now, we'll handle this in the builder
-            // In a real implementation, we might want to return Result
-        }
-
         let x_vec: Vec<f64> = x_data.iter().copied().collect();
         let y_vec: Vec<f64> = y_data.iter().copied().collect();
 
-        let series = PlotSeries {
-            series_type: SeriesType::Line {
-                x_data: x_vec,
-                y_data: y_vec,
-            },
-            label: None,
-            color: None,
-            line_width: None,
-            line_style: None,
-            marker_style: None,
-            marker_size: None,
-            alpha: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+        PlotBuilder::new(
+            self,
+            PlotInput::XY(x_vec, y_vec),
+            crate::plots::basic::LineConfig::default(),
+        )
     }
 
     /// Add a line plot series from streaming data
@@ -1236,6 +1261,7 @@ impl Plot {
     /// Add a scatter plot series
     ///
     /// Creates a scatter plot showing individual data points as markers.
+    /// Returns a `PlotBuilder<ScatterConfig>` for method chaining with scatter-specific options.
     ///
     /// # Example
     ///
@@ -1245,15 +1271,28 @@ impl Plot {
     /// let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
     /// let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
     ///
+    /// // Simple usage - just call save() directly
     /// Plot::new()
     ///     .scatter(&x, &y)
-    ///     .end_series()
     ///     .save("scatter.png")?;
+    ///
+    /// // With configuration
+    /// Plot::new()
+    ///     .scatter(&x, &y)
+    ///     .marker(MarkerStyle::Triangle)
+    ///     .marker_size(10.0)
+    ///     .color(Color::RED)
+    ///     .title("Data Points")
+    ///     .save("scatter_styled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// ![Scatter plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png)
-    pub fn scatter<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    pub fn scatter<X, Y>(
+        self,
+        x_data: &X,
+        y_data: &Y,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -1261,24 +1300,11 @@ impl Plot {
         let x_vec: Vec<f64> = x_data.iter().copied().collect();
         let y_vec: Vec<f64> = y_data.iter().copied().collect();
 
-        let series = PlotSeries {
-            series_type: SeriesType::Scatter {
-                x_data: x_vec,
-                y_data: y_vec,
-            },
-            label: None,
-            color: None,
-            line_width: None,
-            line_style: None,
-            marker_style: Some(MarkerStyle::Circle),
-            marker_size: None,
-            alpha: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+        PlotBuilder::new(
+            self,
+            PlotInput::XY(x_vec, y_vec),
+            crate::plots::basic::ScatterConfig::default(),
+        )
     }
 
     /// Add a scatter plot series from streaming data
@@ -1329,21 +1355,36 @@ impl Plot {
     ///
     /// # Example
     ///
+    /// Returns a `PlotBuilder<BarConfig>` for method chaining with bar-specific options.
+    ///
     /// ```rust,no_run
     /// use ruviz::prelude::*;
     ///
     /// let categories = vec!["A", "B", "C", "D", "E"];
     /// let values = vec![23.0, 45.0, 56.0, 78.0, 32.0];
     ///
+    /// // Simple usage - just call save() directly
     /// Plot::new()
     ///     .bar(&categories, &values)
-    ///     .end_series()
     ///     .save("bar.png")?;
+    ///
+    /// // With configuration
+    /// Plot::new()
+    ///     .bar(&categories, &values)
+    ///     .bar_width(0.6)
+    ///     .color(Color::GREEN)
+    ///     .edge_width(1.5)
+    ///     .title("Category Values")
+    ///     .save("bar_styled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// ![Bar chart example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png)
-    pub fn bar<S, V>(self, categories: &[S], values: &V) -> PlotSeriesBuilder
+    pub fn bar<S, V>(
+        self,
+        categories: &[S],
+        values: &V,
+    ) -> PlotBuilder<crate::plots::basic::BarConfig>
     where
         S: ToString,
         V: Data1D<f64>,
@@ -1351,24 +1392,14 @@ impl Plot {
         let cat_vec: Vec<String> = categories.iter().map(|s| s.to_string()).collect();
         let val_vec: Vec<f64> = values.iter().copied().collect();
 
-        let series = PlotSeries {
-            series_type: SeriesType::Bar {
+        PlotBuilder::new(
+            self,
+            PlotInput::Categorical {
                 categories: cat_vec,
                 values: val_vec,
             },
-            label: None,
-            color: None,
-            line_width: None,
-            line_style: None,
-            marker_style: None,
-            marker_size: None,
-            alpha: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+            crate::plots::basic::BarConfig::default(),
+        )
     }
 
     /// Add a histogram plot series
@@ -1513,7 +1544,7 @@ impl Plot {
         let heatmap_config = config.unwrap_or_default();
 
         // Disable grid for heatmaps (grid doesn't make sense behind heatmap cells)
-        self.grid_style.visible = false;
+        self.layout.grid_style.visible = false;
 
         // Process heatmap data
         match crate::plots::heatmap::process_heatmap(data, heatmap_config) {
@@ -1947,8 +1978,8 @@ impl Plot {
     /// For matplotlib-compatible position codes, use `legend_position()` with `LegendPosition`.
     /// For automatic positioning (like matplotlib's `plt.legend()`), use `legend_best()`.
     pub fn legend(mut self, position: Position) -> Self {
-        self.legend.enabled = true;
-        self.legend.position = position;
+        self.layout.legend.enabled = true;
+        self.layout.legend.position = position;
         self
     }
 
@@ -1979,9 +2010,9 @@ impl Plot {
     ///
     /// ![Legend example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend.png)
     pub fn legend_position(mut self, position: LegendPosition) -> Self {
-        self.legend.enabled = true;
+        self.layout.legend.enabled = true;
         // Convert LegendPosition to old Position for backward compatibility
-        self.legend.position = match position {
+        self.layout.legend.position = match position {
             LegendPosition::UpperRight | LegendPosition::Right => Position::TopRight,
             LegendPosition::UpperLeft => Position::TopLeft,
             LegendPosition::LowerLeft => Position::BottomLeft,
@@ -2028,14 +2059,14 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn legend_best(mut self) -> Self {
-        self.legend.enabled = true;
-        self.legend.position = Position::TopRight; // Actual best computed at render time
+        self.layout.legend.enabled = true;
+        self.layout.legend.position = Position::TopRight; // Actual best computed at render time
         self
     }
 
     /// Set legend font size
     pub fn legend_font_size(mut self, size: f32) -> Self {
-        self.legend.font_size = Some(size);
+        self.layout.legend.font_size = Some(size);
         self
     }
 
@@ -2044,7 +2075,7 @@ impl Plot {
     /// A value of 0.0 gives sharp corners (default).
     /// Typical values are 3.0 to 8.0 for subtle rounded corners.
     pub fn legend_corner_radius(mut self, radius: f32) -> Self {
-        self.legend.corner_radius = Some(radius);
+        self.layout.legend.corner_radius = Some(radius);
         self
     }
 
@@ -2055,7 +2086,7 @@ impl Plot {
     ///
     /// For a single-row layout with N items, use `legend_columns(N)`.
     pub fn legend_columns(mut self, columns: usize) -> Self {
-        self.legend.columns = Some(columns.max(1));
+        self.layout.legend.columns = Some(columns.max(1));
         self
     }
 
@@ -2075,7 +2106,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn grid(mut self, enabled: bool) -> Self {
-        self.grid_style.visible = enabled;
+        self.layout.grid_style.visible = enabled;
         self
     }
 
@@ -2097,75 +2128,75 @@ impl Plot {
     ///     .save("styled_grid.png")?;
     /// ```
     pub fn with_grid_style(mut self, style: GridStyle) -> Self {
-        self.grid_style = style;
+        self.layout.grid_style = style;
         self
     }
 
     /// Set tick direction to inside (default)
     pub fn tick_direction_inside(mut self) -> Self {
-        self.tick_config.direction = TickDirection::Inside;
+        self.layout.tick_config.direction = TickDirection::Inside;
         self
     }
 
     /// Set tick direction to outside
     pub fn tick_direction_outside(mut self) -> Self {
-        self.tick_config.direction = TickDirection::Outside;
+        self.layout.tick_config.direction = TickDirection::Outside;
         self
     }
 
     /// Set number of major ticks for both axes
     pub fn major_ticks(mut self, count: usize) -> Self {
-        self.tick_config.major_ticks_x = count;
-        self.tick_config.major_ticks_y = count;
+        self.layout.tick_config.major_ticks_x = count;
+        self.layout.tick_config.major_ticks_y = count;
         self
     }
 
     /// Set number of minor ticks between major ticks for both axes
     pub fn minor_ticks(mut self, count: usize) -> Self {
-        self.tick_config.minor_ticks_x = count;
-        self.tick_config.minor_ticks_y = count;
+        self.layout.tick_config.minor_ticks_x = count;
+        self.layout.tick_config.minor_ticks_y = count;
         self
     }
 
     /// Set number of major ticks for X axis
     pub fn major_ticks_x(mut self, count: usize) -> Self {
-        self.tick_config.major_ticks_x = count;
+        self.layout.tick_config.major_ticks_x = count;
         self
     }
 
     /// Set number of minor ticks between major ticks for X axis
     pub fn minor_ticks_x(mut self, count: usize) -> Self {
-        self.tick_config.minor_ticks_x = count;
+        self.layout.tick_config.minor_ticks_x = count;
         self
     }
 
     /// Set number of major ticks for Y axis
     pub fn major_ticks_y(mut self, count: usize) -> Self {
-        self.tick_config.major_ticks_y = count;
+        self.layout.tick_config.major_ticks_y = count;
         self
     }
 
     /// Set number of minor ticks between major ticks for Y axis
     pub fn minor_ticks_y(mut self, count: usize) -> Self {
-        self.tick_config.minor_ticks_y = count;
+        self.layout.tick_config.minor_ticks_y = count;
         self
     }
 
     /// Grid lines only at major ticks
     pub fn grid_major_only(mut self) -> Self {
-        self.tick_config.grid_mode = GridMode::MajorOnly;
+        self.layout.tick_config.grid_mode = GridMode::MajorOnly;
         self
     }
 
     /// Grid lines only at minor ticks
     pub fn grid_minor_only(mut self) -> Self {
-        self.tick_config.grid_mode = GridMode::MinorOnly;
+        self.layout.tick_config.grid_mode = GridMode::MinorOnly;
         self
     }
 
     /// Grid lines at both major and minor ticks
     pub fn grid_both(mut self) -> Self {
-        self.tick_config.grid_mode = GridMode::Both;
+        self.layout.tick_config.grid_mode = GridMode::Both;
         self
     }
 
@@ -2200,7 +2231,7 @@ impl Plot {
         } else {
             // Reset to default proportional margins
             let mut s = self;
-            s.config.margins = MarginConfig::default();
+            s.display.config.margins = MarginConfig::default();
             s
         }
     }
@@ -2213,7 +2244,7 @@ impl Plot {
     /// unified grid configuration.
     #[deprecated(since = "0.2.0", note = "Use with_grid_style() instead")]
     pub fn grid_color(mut self, color: Color) -> Self {
-        self.grid_style.color = color;
+        self.layout.grid_style.color = color;
         self
     }
 
@@ -2225,19 +2256,19 @@ impl Plot {
     /// unified grid configuration.
     #[deprecated(since = "0.2.0", note = "Use with_grid_style() instead")]
     pub fn grid_line_style(mut self, style: LineStyle) -> Self {
-        self.grid_style.line_style = style;
+        self.layout.grid_style.line_style = style;
         self
     }
 
     /// Set grid line width
     pub fn grid_line_width(mut self, width: f32) -> Self {
-        self.grid_style.line_width = width;
+        self.layout.grid_style.line_width = width;
         self
     }
 
     /// Set grid transparency
     pub fn grid_alpha(mut self, alpha: f32) -> Self {
-        self.grid_style.alpha = alpha;
+        self.layout.grid_style.alpha = alpha;
         self
     }
 
@@ -2576,7 +2607,11 @@ impl Plot {
                 y_data: y_vec,
             },
             label: None,
-            color: Some(self.theme.get_color(self.auto_color_index)),
+            color: Some(
+                self.display
+                    .theme
+                    .get_color(self.series_mgr.auto_color_index),
+            ),
             line_width: None,
             line_style: None,
             marker_style: None,
@@ -2587,8 +2622,8 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
 
         Ok(())
     }
@@ -2604,9 +2639,13 @@ impl Plot {
         let series = PlotSeries {
             series_type: SeriesType::Kde { data: kde_data },
             label: style.label,
-            color: style
-                .color
-                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
             line_width: style.line_width,
             line_style: style.line_style,
             marker_style: style.marker_style,
@@ -2617,8 +2656,8 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
         self
     }
 
@@ -2631,9 +2670,13 @@ impl Plot {
         let series = PlotSeries {
             series_type: SeriesType::Ecdf { data: ecdf_data },
             label: style.label,
-            color: style
-                .color
-                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
             line_width: style.line_width,
             line_style: style.line_style,
             marker_style: style.marker_style,
@@ -2644,8 +2687,8 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
         self
     }
 
@@ -2658,9 +2701,13 @@ impl Plot {
         let series = PlotSeries {
             series_type: SeriesType::Contour { data: contour_data },
             label: style.label,
-            color: style
-                .color
-                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
             line_width: style.line_width,
             line_style: style.line_style,
             marker_style: style.marker_style,
@@ -2671,8 +2718,8 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
         self
     }
 
@@ -2685,9 +2732,13 @@ impl Plot {
         let series = PlotSeries {
             series_type: SeriesType::Pie { data: pie_data },
             label: style.label,
-            color: style
-                .color
-                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
             line_width: style.line_width,
             line_style: style.line_style,
             marker_style: style.marker_style,
@@ -2698,8 +2749,8 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
         self
     }
 
@@ -2712,9 +2763,13 @@ impl Plot {
         let series = PlotSeries {
             series_type: SeriesType::Radar { data: radar_data },
             label: style.label,
-            color: style
-                .color
-                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
             line_width: style.line_width,
             line_style: style.line_style,
             marker_style: style.marker_style,
@@ -2725,8 +2780,8 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
         self
     }
 
@@ -2739,9 +2794,13 @@ impl Plot {
         let series = PlotSeries {
             series_type: SeriesType::Violin { data: violin_data },
             label: style.label,
-            color: style
-                .color
-                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
             line_width: style.line_width,
             line_style: style.line_style,
             marker_style: style.marker_style,
@@ -2752,8 +2811,8 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
         self
     }
 
@@ -2766,9 +2825,13 @@ impl Plot {
         let series = PlotSeries {
             series_type: SeriesType::Polar { data: polar_data },
             label: style.label,
-            color: style
-                .color
-                .or_else(|| Some(self.theme.get_color(self.auto_color_index))),
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
             line_width: style.line_width,
             line_style: style.line_style,
             marker_style: style.marker_style,
@@ -2779,8 +2842,117 @@ impl Plot {
             error_config: None,
         };
 
-        self.series.push(series);
-        self.auto_color_index += 1;
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Line series (used by PlotBuilder<LineConfig>)
+    ///
+    /// This method is called by the PlotBuilder when finalizing a line series.
+    pub(crate) fn add_line_series(
+        mut self,
+        x_data: Vec<f64>,
+        y_data: Vec<f64>,
+        config: &crate::plots::basic::LineConfig,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Line { x_data, y_data },
+            label: style.label,
+            color: style.color.or(config.color).or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
+            line_width: style.line_width.or(config.line_width),
+            line_style: style.line_style.or(Some(config.line_style.clone())),
+            marker_style: style.marker_style.or(config.marker),
+            marker_size: style.marker_size.or(if config.show_markers {
+                Some(config.marker_size)
+            } else {
+                None
+            }),
+            alpha: style.alpha.or(Some(config.alpha)),
+            y_errors: style.y_errors,
+            x_errors: style.x_errors,
+            error_config: style.error_config,
+        };
+
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Scatter series (used by PlotBuilder<ScatterConfig>)
+    ///
+    /// This method is called by the PlotBuilder when finalizing a scatter series.
+    pub(crate) fn add_scatter_series(
+        mut self,
+        x_data: Vec<f64>,
+        y_data: Vec<f64>,
+        config: &crate::plots::basic::ScatterConfig,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Scatter { x_data, y_data },
+            label: style.label,
+            color: style.color.or(config.color).or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
+            line_width: style.line_width.or(Some(config.edge_width)),
+            line_style: style.line_style,
+            marker_style: style.marker_style.or(Some(config.marker)),
+            marker_size: style.marker_size.or(Some(config.size)),
+            alpha: style.alpha.or(Some(config.alpha)),
+            y_errors: style.y_errors,
+            x_errors: style.x_errors,
+            error_config: style.error_config,
+        };
+
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Bar series (used by PlotBuilder<BarConfig>)
+    ///
+    /// This method is called by the PlotBuilder when finalizing a bar series.
+    pub(crate) fn add_bar_series(
+        mut self,
+        categories: Vec<String>,
+        values: Vec<f64>,
+        config: &crate::plots::basic::BarConfig,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        let series = PlotSeries {
+            series_type: SeriesType::Bar { categories, values },
+            label: style.label,
+            color: style.color.or(config.color).or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
+            line_width: style.line_width.or(Some(config.edge_width)),
+            line_style: style.line_style,
+            marker_style: style.marker_style,
+            marker_size: style.marker_size,
+            alpha: style.alpha.or(Some(config.alpha)),
+            y_errors: style.y_errors,
+            x_errors: style.x_errors,
+            error_config: style.error_config,
+        };
+
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
         self
     }
 
@@ -3249,7 +3421,7 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.theme, color)?;
+                data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
             SeriesType::Ecdf { data } => {
                 // Use PlotRender trait to render ECDF
@@ -3263,7 +3435,7 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.theme, color)?;
+                data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
             SeriesType::Violin { data } => {
                 // Use PlotRender trait to render Violin
@@ -3277,7 +3449,7 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.theme, color)?;
+                data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
             SeriesType::Boxen { data } => {
                 // Use PlotRender trait to render Boxen
@@ -3291,7 +3463,7 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.theme, color)?;
+                data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
             SeriesType::Contour { data } => {
                 // Use PlotRender trait to render Contour
@@ -3305,7 +3477,7 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &contour_plot_area, &self.theme, color)?;
+                data.render(renderer, &contour_plot_area, &self.display.theme, color)?;
 
                 // Draw colorbar if enabled
                 if data.config.colorbar {
@@ -3338,7 +3510,7 @@ impl Plot {
                         colorbar_width,
                         colorbar_height,
                         data.config.colorbar_label.as_deref(),
-                        self.theme.foreground,
+                        self.display.theme.foreground,
                         data.config.colorbar_tick_font_size,
                         Some(data.config.colorbar_label_font_size),
                     )?;
@@ -3356,7 +3528,7 @@ impl Plot {
                 let pie_plot_area = crate::plots::PlotArea::new(
                     pie_x, pie_y, pie_size, pie_size, 0.0, 1.0, 0.0, 1.0,
                 );
-                data.render(renderer, &pie_plot_area, &self.theme, color)?;
+                data.render(renderer, &pie_plot_area, &self.display.theme, color)?;
             }
             SeriesType::Radar { data } => {
                 // Use PlotRender trait to render Radar with 1:1 aspect ratio
@@ -3387,7 +3559,7 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &radar_plot_area, &self.theme, color)?;
+                data.render(renderer, &radar_plot_area, &self.display.theme, color)?;
             }
             SeriesType::Polar { data } => {
                 // Use PlotRender trait to render Polar with 1:1 aspect ratio
@@ -3401,7 +3573,7 @@ impl Plot {
                 let polar_plot_area = crate::plots::PlotArea::new(
                     polar_x, polar_y, polar_size, polar_size, x_min, x_max, y_min, y_max,
                 );
-                data.render(renderer, &polar_plot_area, &self.theme, color)?;
+                data.render(renderer, &polar_plot_area, &self.display.theme, color)?;
             }
         }
 
@@ -3500,12 +3672,12 @@ impl Plot {
     /// Internal validation logic for series data
     fn validate_series(&self) -> Result<()> {
         // Validate we have at least one series
-        if self.series.is_empty() {
+        if self.series_mgr.series.is_empty() {
             return Err(PlottingError::NoDataSeries);
         }
 
         // Validate all series data
-        for (idx, series) in self.series.iter().enumerate() {
+        for (idx, series) in self.series_mgr.series.iter().enumerate() {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     if x_data.len() != y_data.len() {
@@ -3649,8 +3821,9 @@ impl Plot {
         // Check if parallel processing should be used
         #[cfg(feature = "parallel")]
         {
-            let series_count = self.series.len();
+            let series_count = self.series_mgr.series.len();
             if self
+                .render
                 .parallel_renderer
                 .should_use_parallel(series_count, total_points)
             {
@@ -3660,21 +3833,22 @@ impl Plot {
 
         // Create renderer for standard rendering with DPI scaling
         let (scaled_width, scaled_height) = self.config_canvas_size();
-        let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
-        let dpi = self.config.figure.dpi;
+        let mut renderer =
+            SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
+        let dpi = self.display.config.figure.dpi;
 
         // Calculate or use manual data bounds
         let (mut x_min, mut x_max, mut y_min, mut y_max) =
             if let (Some((x_min_manual, x_max_manual)), Some((y_min_manual, y_max_manual))) =
-                (self.x_limits, self.y_limits)
+                (self.layout.x_limits, self.layout.y_limits)
             {
                 // Use both manual limits
                 (x_min_manual, x_max_manual, y_min_manual, y_max_manual)
-            } else if let Some((x_min_manual, x_max_manual)) = self.x_limits {
+            } else if let Some((x_min_manual, x_max_manual)) = self.layout.x_limits {
                 // Use manual X limits, calculate Y bounds from data
                 let (_, _, y_min_calc, y_max_calc) = self.calculate_data_bounds()?;
                 (x_min_manual, x_max_manual, y_min_calc, y_max_calc)
-            } else if let Some((y_min_manual, y_max_manual)) = self.y_limits {
+            } else if let Some((y_min_manual, y_max_manual)) = self.layout.y_limits {
                 // Use manual Y limits, calculate X bounds from data
                 let (x_min_calc, x_max_calc, _, _) = self.calculate_data_bounds()?;
                 (x_min_calc, x_max_calc, y_min_manual, y_max_manual)
@@ -3693,7 +3867,7 @@ impl Plot {
         }
 
         // Extract bar chart categories if present (for categorical x-axis labels)
-        let bar_categories: Option<Vec<String>> = self.series.iter().find_map(|s| {
+        let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
             if let SeriesType::Bar { categories, .. } = &s.series_type {
                 Some(categories.clone())
             } else {
@@ -3703,6 +3877,7 @@ impl Plot {
 
         // Extract violin categories and positions if present (for categorical x-axis labels)
         let violin_data: Vec<(String, f64)> = self
+            .series_mgr
             .series
             .iter()
             .filter_map(|s| {
@@ -3734,7 +3909,7 @@ impl Plot {
 
         // Choose layout method based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
-            match &self.config.margins {
+            match &self.display.config.margins {
                 MarginConfig::ContentDriven {
                     edge_buffer,
                     center_plot,
@@ -3750,8 +3925,8 @@ impl Plot {
                     let layout = calculator.compute(
                         (scaled_width, scaled_height),
                         &content,
-                        &self.config.typography,
-                        &self.config.spacing,
+                        &self.display.config.typography,
+                        &self.display.config.spacing,
                         dpi,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
@@ -3774,8 +3949,8 @@ impl Plot {
                     let layout = calculator.compute(
                         (scaled_width, scaled_height),
                         &content,
-                        &self.config.typography,
-                        &self.config.spacing,
+                        &self.display.config.typography,
+                        &self.display.config.spacing,
                         dpi,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
@@ -3811,15 +3986,15 @@ impl Plot {
 
         // Draw grid if enabled - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.grid_style.visible && self.needs_cartesian_axes() {
-            let grid_color = self.grid_style.effective_color();
-            let grid_width_px = self.line_width_px(self.grid_style.line_width);
+        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+            let grid_color = self.layout.grid_style.effective_color();
+            let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
                 grid_color,
-                self.grid_style.line_style.clone(),
+                self.layout.grid_style.line_style.clone(),
                 grid_width_px,
             )?;
         }
@@ -3827,7 +4002,7 @@ impl Plot {
         // Draw axes and labels using computed layout positions
         // Note: layout_opt is always Some since all render paths now compute layout
         let layout = layout_opt.expect("layout should always be computed");
-        let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
+        let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
         // Draw tick labels using layout positions
         // Use categorical labels for bar/violin charts, numeric for others
@@ -3845,7 +4020,7 @@ impl Plot {
                 layout.xtick_baseline_y,
                 layout.ytick_right_x,
                 tick_size_px,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 dpi,
             )?;
         } else if let Some(ref categories) = bar_categories {
@@ -3858,7 +4033,7 @@ impl Plot {
                 layout.xtick_baseline_y,
                 layout.ytick_right_x,
                 tick_size_px,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 dpi,
             )?;
         } else {
@@ -3873,41 +4048,43 @@ impl Plot {
                 layout.xtick_baseline_y,
                 layout.ytick_right_x,
                 tick_size_px,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 dpi,
             )?;
         }
 
         // Draw title if present
         if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.title {
-                renderer.draw_title_at(pos, title, self.theme.foreground)?;
+            if let Some(ref title) = self.display.title {
+                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
             }
         }
 
         // Draw xlabel if present
         if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(ref xlabel) = self.xlabel {
-                renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
+            if let Some(ref xlabel) = self.display.xlabel {
+                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
             }
         }
 
         // Draw ylabel if present
         if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ref ylabel) = self.ylabel {
-                renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
+            if let Some(ref ylabel) = self.display.ylabel {
+                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
             }
         }
 
         // Render each data series
-        for series in &self.series {
+        for series in &self.series_mgr.series {
             // Get series styling with defaults
             let color = series.color.unwrap_or_else(|| {
                 let palette = Color::default_palette();
-                palette[self.auto_color_index % palette.len()]
+                palette[self.series_mgr.auto_color_index % palette.len()]
             });
             // Use config data line width, or series override if specified
-            let line_width_pt = series.line_width.unwrap_or(self.config.lines.data_width);
+            let line_width_pt = series
+                .line_width
+                .unwrap_or(self.display.config.lines.data_width);
             let line_width = self.line_width_px(line_width_pt);
             let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
             let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
@@ -4119,12 +4296,12 @@ impl Plot {
     /// Render the plot to an external renderer (used for subplots)
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
         // Validate we have at least one series
-        if self.series.is_empty() {
+        if self.series_mgr.series.is_empty() {
             return Err(PlottingError::NoDataSeries);
         }
 
         // Validate all series data (same validation as render method)
-        for (idx, series) in self.series.iter().enumerate() {
+        for (idx, series) in self.series_mgr.series.iter().enumerate() {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     if x_data.len() != y_data.len() {
@@ -4242,7 +4419,7 @@ impl Plot {
         let (x_min, x_max, y_min, y_max) = self.calculate_data_bounds()?;
 
         // Extract bar chart categories if present (for categorical x-axis labels)
-        let bar_categories: Option<Vec<String>> = self.series.iter().find_map(|s| {
+        let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
             if let SeriesType::Bar { categories, .. } = &s.series_type {
                 Some(categories.clone())
             } else {
@@ -4252,6 +4429,7 @@ impl Plot {
 
         // Extract violin categories if present (for categorical x-axis labels)
         let violin_categories: Vec<String> = self
+            .series_mgr
             .series
             .iter()
             .filter_map(|s| {
@@ -4274,7 +4452,7 @@ impl Plot {
 
         // Choose layout method based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
-            match &self.config.margins {
+            match &self.display.config.margins {
                 MarginConfig::ContentDriven {
                     edge_buffer,
                     center_plot,
@@ -4290,8 +4468,8 @@ impl Plot {
                     let layout = calculator.compute(
                         (renderer.width(), renderer.height()),
                         &content,
-                        &self.config.typography,
-                        &self.config.spacing,
+                        &self.display.config.typography,
+                        &self.display.config.spacing,
                         dpi,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
@@ -4314,8 +4492,8 @@ impl Plot {
                     let layout = calculator.compute(
                         (renderer.width(), renderer.height()),
                         &content,
-                        &self.config.typography,
-                        &self.config.spacing,
+                        &self.display.config.typography,
+                        &self.display.config.spacing,
                         dpi,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
@@ -4351,15 +4529,15 @@ impl Plot {
 
         // Draw grid if enabled - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.grid_style.visible && self.needs_cartesian_axes() {
-            let grid_color = self.grid_style.effective_color();
-            let grid_width_px = pt_to_px(self.grid_style.line_width, dpi);
+        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+            let grid_color = self.layout.grid_style.effective_color();
+            let grid_width_px = pt_to_px(self.layout.grid_style.line_width, dpi);
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
                 grid_color,
-                self.grid_style.line_style.clone(),
+                self.layout.grid_style.line_style.clone(),
                 grid_width_px,
             )?;
         }
@@ -4367,7 +4545,7 @@ impl Plot {
         // Draw axes and labels using computed layout positions
         // Note: layout_opt is always Some since all render paths now compute layout
         let layout = layout_opt.expect("layout should always be computed");
-        let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
+        let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
         // Draw tick labels using layout positions
         // Use categorical labels for bar charts, numeric for others
@@ -4381,7 +4559,7 @@ impl Plot {
                 layout.xtick_baseline_y,
                 layout.ytick_right_x,
                 tick_size_px,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 dpi,
             )?;
         } else {
@@ -4396,41 +4574,43 @@ impl Plot {
                 layout.xtick_baseline_y,
                 layout.ytick_right_x,
                 tick_size_px,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 dpi,
             )?;
         }
 
         // Draw title if present
         if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.title {
-                renderer.draw_title_at(pos, title, self.theme.foreground)?;
+            if let Some(ref title) = self.display.title {
+                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
             }
         }
 
         // Draw xlabel if present
         if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(ref xlabel) = self.xlabel {
-                renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
+            if let Some(ref xlabel) = self.display.xlabel {
+                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
             }
         }
 
         // Draw ylabel if present
         if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ref ylabel) = self.ylabel {
-                renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
+            if let Some(ref ylabel) = self.display.ylabel {
+                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
             }
         }
 
         // Render each data series
-        for (color_index, series) in self.series.iter().enumerate() {
+        for (color_index, series) in self.series_mgr.series.iter().enumerate() {
             // Get series styling with defaults
             let color = series.color.unwrap_or_else(|| {
                 let palette = Color::default_palette();
                 palette[color_index % palette.len()]
             });
             // Use config data line width, or series override if specified
-            let line_width_pt = series.line_width.unwrap_or(self.config.lines.data_width);
+            let line_width_pt = series
+                .line_width
+                .unwrap_or(self.display.config.lines.data_width);
             let line_width = pt_to_px(line_width_pt, dpi);
             let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
             let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
@@ -4583,15 +4763,16 @@ impl Plot {
         // Collect legend items from series with labels
         // Use flat_map to expand Radar series into multiple legend entries
         let legend_items: Vec<LegendItem> = self
+            .series_mgr
             .series
             .iter()
             .enumerate()
-            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.theme))
+            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.display.theme))
             .collect();
 
         // Draw legend if there are labeled series and legend is enabled
-        if !legend_items.is_empty() && self.legend.enabled {
-            let mut legend = self.legend.to_legend();
+        if !legend_items.is_empty() && self.layout.legend.enabled {
+            let mut legend = self.layout.legend.to_legend();
             // Scale legend font size from points to pixels for proper DPI handling
             legend.font_size = pt_to_px(legend.font_size, dpi);
 
@@ -4599,7 +4780,8 @@ impl Plot {
             let data_bboxes: Vec<(f32, f32, f32, f32)> =
                 if matches!(legend.position, LegendPosition::Best) {
                     let marker_radius = 4.0_f32;
-                    self.series
+                    self.series_mgr
+                        .series
                         .iter()
                         .flat_map(|series| match &series.series_type {
                             SeriesType::Line { x_data, y_data }
@@ -4643,7 +4825,8 @@ impl Plot {
 
     /// Calculate total number of data points across all series
     fn calculate_total_points(&self) -> usize {
-        self.series
+        self.series_mgr
+            .series
             .iter()
             .map(|series| match &series.series_type {
                 SeriesType::Line { x_data, .. }
@@ -4672,7 +4855,7 @@ impl Plot {
     /// and don't use standard X/Y axes with tick labels.
     fn needs_cartesian_axes(&self) -> bool {
         // If any series is a non-Cartesian type, skip standard axes
-        for series in &self.series {
+        for series in &self.series_mgr.series {
             match &series.series_type {
                 SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. } => {
                     return false;
@@ -4928,9 +5111,9 @@ impl Plot {
             .unwrap_or(5);
 
         PlotContent {
-            title: self.title.clone(),
-            xlabel: self.xlabel.clone(),
-            ylabel: self.ylabel.clone(),
+            title: self.display.title.clone(),
+            xlabel: self.display.xlabel.clone(),
+            ylabel: self.display.ylabel.clone(),
             max_ytick_chars,
             max_xtick_chars: 5, // Reasonable default
         }
@@ -4942,7 +5125,7 @@ impl Plot {
         let mut all_points = Vec::new();
 
         // Collect all points from all series
-        for series in &self.series {
+        for series in &self.series_mgr.series {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     for i in 0..x_data.len() {
@@ -5095,8 +5278,10 @@ impl Plot {
         }
 
         // Simple DataShader implementation - create basic aggregated image
-        let mut datashader =
-            DataShader::with_canvas_size(self.dimensions.0 as usize, self.dimensions.1 as usize);
+        let mut datashader = DataShader::with_canvas_size(
+            self.display.dimensions.0 as usize,
+            self.display.dimensions.1 as usize,
+        );
 
         // Convert points to (f64, f64) format for aggregation
         let points_f64: Vec<(f64, f64)> = all_points
@@ -5131,7 +5316,8 @@ impl Plot {
 
         // Create renderer with DPI scaling
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
-        let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
+        let mut renderer =
+            SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         let plot_area = calculate_plot_area_dpi(scaled_width, scaled_height, self.dpi_scale());
 
         // Convert to parallel renderer format
@@ -5174,15 +5360,15 @@ impl Plot {
 
         // Draw grid if enabled - using unified GridStyle (sequential - UI elements)
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.grid_style.visible && self.needs_cartesian_axes() {
-            let grid_color = self.grid_style.effective_color();
+        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+            let grid_color = self.layout.grid_style.effective_color();
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
                 grid_color,
-                self.grid_style.line_style.clone(),
-                self.dpi_scaled_line_width(self.grid_style.line_width),
+                self.layout.grid_style.line_style.clone(),
+                self.dpi_scaled_line_width(self.layout.grid_style.line_width),
             )?;
         }
 
@@ -5192,33 +5378,39 @@ impl Plot {
                 plot_area,
                 &x_tick_pixels,
                 &y_tick_pixels,
-                self.theme.foreground,
+                self.display.theme.foreground,
             )?;
         }
 
         // Process all series in parallel
-        let processed_series = self.parallel_renderer.process_series_parallel(
-            &self.series,
+        let processed_series = self.render.parallel_renderer.process_series_parallel(
+            &self.series_mgr.series,
             |series, index| -> Result<SeriesRenderData> {
                 // Get series styling with defaults
-                let color = series.color.unwrap_or_else(|| self.theme.get_color(index));
-                let line_width =
-                    self.dpi_scaled_line_width(series.line_width.unwrap_or(self.theme.line_width));
+                let color = series
+                    .color
+                    .unwrap_or_else(|| self.display.theme.get_color(index));
+                let line_width = self.dpi_scaled_line_width(
+                    series.line_width.unwrap_or(self.display.theme.line_width),
+                );
                 let alpha = series.alpha.unwrap_or(1.0);
 
                 // Process each series type
                 let render_series_type = match &series.series_type {
                     SeriesType::Line { x_data, y_data } => {
                         // Transform coordinates in parallel
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            x_data,
-                            y_data,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                x_data,
+                                y_data,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
                         // Process line segments in parallel
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             series.line_style.clone().unwrap_or(LineStyle::Solid),
                             color,
@@ -5229,15 +5421,18 @@ impl Plot {
                     }
                     SeriesType::Scatter { x_data, y_data } => {
                         // Transform coordinates in parallel
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            x_data,
-                            y_data,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                x_data,
+                                y_data,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
                         // Process markers in parallel
-                        let markers = self.parallel_renderer.process_markers_parallel(
+                        let markers = self.render.parallel_renderer.process_markers_parallel(
                             &points,
                             series.marker_style.unwrap_or(MarkerStyle::Circle),
                             color,
@@ -5251,12 +5446,15 @@ impl Plot {
                         let x_data: Vec<f64> = (0..categories.len()).map(|i| i as f64).collect();
 
                         // Transform coordinates
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &x_data,
-                            values,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &x_data,
+                                values,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
                         // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
                         let bar_width_fraction = 0.8;
@@ -5294,14 +5492,17 @@ impl Plot {
                     | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
                         // For now, render error bars as scatter points
                         // Full error bar implementation would be added here
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            x_data,
-                            y_data,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                x_data,
+                                y_data,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
-                        let markers = self.parallel_renderer.process_markers_parallel(
+                        let markers = self.render.parallel_renderer.process_markers_parallel(
                             &points,
                             MarkerStyle::Circle,
                             color,
@@ -5327,12 +5528,15 @@ impl Plot {
                             .map(|w| (w[0] + w[1]) / 2.0) // bin centers
                             .collect();
 
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &x_data,
-                            &hist_data.counts,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &x_data,
+                                &hist_data.counts,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
                         // Create bar instances for histogram
                         let baseline_y = map_data_to_pixels(
@@ -5499,15 +5703,18 @@ impl Plot {
                     }
                     SeriesType::Kde { data: kde_data } => {
                         // Transform KDE coordinates in parallel
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &kde_data.x,
-                            &kde_data.y,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &kde_data.x,
+                                &kde_data.y,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
                         // Process line segments in parallel
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             series.line_style.clone().unwrap_or(LineStyle::Solid),
                             color,
@@ -5522,15 +5729,18 @@ impl Plot {
                             ecdf_data.step_vertices.iter().map(|(x, _)| *x).collect();
                         let step_y: Vec<f64> =
                             ecdf_data.step_vertices.iter().map(|(_, y)| *y).collect();
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &step_x,
-                            &step_y,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &step_x,
+                                &step_y,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
                         // Process line segments in parallel
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             series.line_style.clone().unwrap_or(LineStyle::Solid),
                             color,
@@ -5554,14 +5764,17 @@ impl Plot {
 
                         let poly_x: Vec<f64> = polygon.iter().map(|(x, _)| *x).collect();
                         let poly_y: Vec<f64> = polygon.iter().map(|(_, y)| *y).collect();
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &poly_x,
-                            &poly_y,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &poly_x,
+                                &poly_y,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             LineStyle::Solid,
                             color,
@@ -5587,14 +5800,17 @@ impl Plot {
 
                         let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
                         let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &poly_x,
-                            &poly_y,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &poly_x,
+                                &poly_y,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             LineStyle::Solid,
                             color,
@@ -5615,14 +5831,17 @@ impl Plot {
 
                         let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
                         let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &poly_x,
-                            &poly_y,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &poly_x,
+                                &poly_y,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             LineStyle::Solid,
                             color,
@@ -5648,14 +5867,17 @@ impl Plot {
 
                         let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
                         let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &poly_x,
-                            &poly_y,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &poly_x,
+                                &poly_y,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             LineStyle::Solid,
                             color,
@@ -5669,14 +5891,17 @@ impl Plot {
                         // Fall back to line rendering of polar points
                         let poly_x: Vec<f64> = polar_data.points.iter().map(|p| p.x).collect();
                         let poly_y: Vec<f64> = polar_data.points.iter().map(|p| p.y).collect();
-                        let points = self.parallel_renderer.transform_coordinates_parallel(
-                            &poly_x,
-                            &poly_y,
-                            data_bounds.clone(),
-                            parallel_plot_area.clone(),
-                        )?;
+                        let points = self
+                            .render
+                            .parallel_renderer
+                            .transform_coordinates_parallel(
+                                &poly_x,
+                                &poly_y,
+                                data_bounds.clone(),
+                                parallel_plot_area.clone(),
+                            )?;
 
-                        let segments = self.parallel_renderer.process_polyline_parallel(
+                        let segments = self.render.parallel_renderer.process_polyline_parallel(
                             &points,
                             LineStyle::Solid,
                             color,
@@ -5836,10 +6061,10 @@ impl Plot {
         let total_points = self.calculate_total_points();
 
         // Log performance info (could be optional/debug in production)
-        let stats = self.parallel_renderer.performance_stats();
+        let stats = self.render.parallel_renderer.performance_stats();
         println!(
             "⚡ Parallel: {} series, {} points in {:.1}ms ({:.1}x speedup, {} threads)",
-            self.series.len(),
+            self.series_mgr.series.len(),
             total_points,
             duration.as_millis(),
             stats.estimated_speedup,
@@ -5857,7 +6082,7 @@ impl Plot {
         let mut y_min = f64::INFINITY;
         let mut y_max = f64::NEG_INFINITY;
 
-        for series in &self.series {
+        for series in &self.series_mgr.series {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     for i in 0..x_data.len() {
@@ -6116,15 +6341,24 @@ impl Plot {
     /// - > 100K points: GPU/DataShader (hardware acceleration)
     ///
     /// If a backend was explicitly set with `.backend()`, that choice is respected.
-    pub fn auto_optimize(mut self) -> Self {
+    pub fn auto_optimize(self) -> Self {
+        self.auto_optimize_with_extra_points(0)
+    }
+
+    /// Auto-optimize with additional pending points from PlotBuilder
+    ///
+    /// This internal method is used by PlotBuilder to include points from
+    /// the current series that hasn't been finalized yet.
+    pub(crate) fn auto_optimize_with_extra_points(mut self, extra_points: usize) -> Self {
         // If backend already explicitly set, respect that choice
-        if self.backend.is_some() {
-            self.auto_optimized = true;
+        if self.render.backend.is_some() {
+            self.render.auto_optimized = true;
             return self;
         }
 
         // Count total data points across all series
-        let total_points = self
+        let series_points: usize = self
+            .series_mgr
             .series
             .iter()
             .map(|s| match &s.series_type {
@@ -6145,7 +6379,9 @@ impl Plot {
                 SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
                 SeriesType::Polar { data } => data.points.len(),
             })
-            .sum::<usize>();
+            .sum();
+
+        let total_points = series_points + extra_points;
 
         // Select backend based on data size
         let selected_backend = if total_points < 1000 {
@@ -6171,14 +6407,14 @@ impl Plot {
             }
         };
 
-        self.backend = Some(selected_backend);
-        self.auto_optimized = true;
+        self.render.backend = Some(selected_backend);
+        self.render.auto_optimized = true;
         self
     }
 
     /// Set backend explicitly (overrides auto-optimization)
     pub fn backend(mut self, backend: BackendType) -> Self {
-        self.backend = Some(backend);
+        self.render.backend = Some(backend);
         self
     }
 
@@ -6202,16 +6438,16 @@ impl Plot {
     /// - Falls back to CPU if GPU is not available
     #[cfg(feature = "gpu")]
     pub fn gpu(mut self, enabled: bool) -> Self {
-        self.enable_gpu = enabled;
+        self.render.enable_gpu = enabled;
         if enabled {
-            self.backend = Some(BackendType::GPU);
+            self.render.backend = Some(BackendType::GPU);
         }
         self
     }
 
     /// Get the current backend name (for testing)
     pub fn get_backend_name(&self) -> &'static str {
-        match self.backend {
+        match self.render.backend {
             Some(BackendType::Skia) => "skia",
             Some(BackendType::Parallel) => "parallel",
             Some(BackendType::GPU) => "gpu",
@@ -6240,7 +6476,7 @@ impl Plot {
         use crate::render::skia::SkiaRenderer;
 
         // Validate data before rendering
-        for series in &self.series {
+        for series in &self.series_mgr.series {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data }
                 | SeriesType::Scatter { x_data, y_data }
@@ -6334,7 +6570,8 @@ impl Plot {
 
         // Create renderer and render the plot with DPI scaling
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
-        let mut renderer = SkiaRenderer::new(scaled_width, scaled_height, self.theme.clone())?;
+        let mut renderer =
+            SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
 
         // Clear background
         renderer.clear();
@@ -6345,7 +6582,7 @@ impl Plot {
         let mut y_min = f64::INFINITY;
         let mut y_max = f64::NEG_INFINITY;
 
-        for series in &self.series {
+        for series in &self.series_mgr.series {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data }
                 | SeriesType::Scatter { x_data, y_data }
@@ -6511,7 +6748,7 @@ impl Plot {
         y_max += y_range * 0.05;
 
         // Extract bar chart categories if present (for categorical x-axis labels)
-        let bar_categories: Option<Vec<String>> = self.series.iter().find_map(|s| {
+        let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
             if let SeriesType::Bar { categories, .. } = &s.series_type {
                 Some(categories.clone())
             } else {
@@ -6521,6 +6758,7 @@ impl Plot {
 
         // Extract violin categories and positions if present (for categorical x-axis labels)
         let violin_data: Vec<(String, f64)> = self
+            .series_mgr
             .series
             .iter()
             .filter_map(|s| {
@@ -6550,11 +6788,11 @@ impl Plot {
             }
         });
 
-        let dpi = self.dpi as f32;
+        let dpi = self.display.dpi as f32;
 
         // Calculate plot area based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
-            match &self.config.margins {
+            match &self.display.config.margins {
                 MarginConfig::ContentDriven {
                     edge_buffer,
                     center_plot,
@@ -6570,8 +6808,8 @@ impl Plot {
                     let layout = calculator.compute(
                         (scaled_width, scaled_height),
                         &content,
-                        &self.config.typography,
-                        &self.config.spacing,
+                        &self.display.config.typography,
+                        &self.display.config.spacing,
                         dpi,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
@@ -6594,8 +6832,8 @@ impl Plot {
                     let layout = calculator.compute(
                         (scaled_width, scaled_height),
                         &content,
-                        &self.config.typography,
-                        &self.config.spacing,
+                        &self.display.config.typography,
+                        &self.display.config.spacing,
                         dpi,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
@@ -6616,34 +6854,34 @@ impl Plot {
         let x_major_ticks = crate::axes::generate_ticks_for_scale(
             x_min,
             x_max,
-            self.tick_config.major_ticks_x,
-            &self.x_scale,
+            self.layout.tick_config.major_ticks_x,
+            &self.layout.x_scale,
         );
         let y_major_ticks = crate::axes::generate_ticks_for_scale(
             y_min,
             y_max,
-            self.tick_config.major_ticks_y,
-            &self.y_scale,
+            self.layout.tick_config.major_ticks_y,
+            &self.layout.y_scale,
         );
 
         // Generate minor ticks if configured (using log-aware minor ticks for log scales)
-        let x_minor_ticks = if self.tick_config.minor_ticks_x > 0 {
-            match &self.x_scale {
+        let x_minor_ticks = if self.layout.tick_config.minor_ticks_x > 0 {
+            match &self.layout.x_scale {
                 AxisScale::Log => crate::axes::generate_log_minor_ticks(&x_major_ticks),
                 _ => crate::render::skia::generate_minor_ticks(
                     &x_major_ticks,
-                    self.tick_config.minor_ticks_x,
+                    self.layout.tick_config.minor_ticks_x,
                 ),
             }
         } else {
             Vec::new()
         };
-        let y_minor_ticks = if self.tick_config.minor_ticks_y > 0 {
-            match &self.y_scale {
+        let y_minor_ticks = if self.layout.tick_config.minor_ticks_y > 0 {
+            match &self.layout.y_scale {
                 AxisScale::Log => crate::axes::generate_log_minor_ticks(&y_major_ticks),
                 _ => crate::render::skia::generate_minor_ticks(
                     &y_major_ticks,
-                    self.tick_config.minor_ticks_y,
+                    self.layout.tick_config.minor_ticks_y,
                 ),
             }
         } else {
@@ -6651,7 +6889,7 @@ impl Plot {
         };
 
         // Combine ticks for rendering based on grid mode
-        let x_ticks = match self.tick_config.grid_mode {
+        let x_ticks = match self.layout.tick_config.grid_mode {
             GridMode::MajorOnly => x_major_ticks.clone(),
             GridMode::MinorOnly => x_minor_ticks.clone(),
             GridMode::Both => {
@@ -6661,7 +6899,7 @@ impl Plot {
                 combined
             }
         };
-        let y_ticks = match self.tick_config.grid_mode {
+        let y_ticks = match self.layout.tick_config.grid_mode {
             GridMode::MajorOnly => y_major_ticks.clone(),
             GridMode::MinorOnly => y_minor_ticks.clone(),
             GridMode::Both => {
@@ -6683,7 +6921,7 @@ impl Plot {
                     0.0,
                     1.0,
                     plot_area,
-                    &self.x_scale,
+                    &self.layout.x_scale,
                     &AxisScale::Linear,
                 )
                 .0
@@ -6701,7 +6939,7 @@ impl Plot {
                     y_max,
                     plot_area,
                     &AxisScale::Linear,
-                    &self.y_scale,
+                    &self.layout.y_scale,
                 )
                 .1
             })
@@ -6709,15 +6947,15 @@ impl Plot {
 
         // Render grid if enabled - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.grid_style.visible && self.needs_cartesian_axes() {
-            let grid_color = self.grid_style.effective_color();
+        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+            let grid_color = self.layout.grid_style.effective_color();
             renderer.draw_grid(
                 &x_tick_pixels,
                 &y_tick_pixels,
                 plot_area,
                 grid_color,
-                self.grid_style.line_style.clone(),
-                self.dpi_scaled_line_width(self.grid_style.line_width),
+                self.layout.grid_style.line_style.clone(),
+                self.dpi_scaled_line_width(self.layout.grid_style.line_width),
             )?;
         }
 
@@ -6733,7 +6971,7 @@ impl Plot {
                     0.0,
                     1.0,
                     plot_area,
-                    &self.x_scale,
+                    &self.layout.x_scale,
                     &AxisScale::Linear,
                 )
                 .0
@@ -6751,7 +6989,7 @@ impl Plot {
                     y_max,
                     plot_area,
                     &AxisScale::Linear,
-                    &self.y_scale,
+                    &self.layout.y_scale,
                 )
                 .1
             })
@@ -6768,7 +7006,7 @@ impl Plot {
                     0.0,
                     1.0,
                     plot_area,
-                    &self.x_scale,
+                    &self.layout.x_scale,
                     &AxisScale::Linear,
                 )
                 .0
@@ -6786,7 +7024,7 @@ impl Plot {
                     y_max,
                     plot_area,
                     &AxisScale::Linear,
-                    &self.y_scale,
+                    &self.layout.y_scale,
                 )
                 .1
             })
@@ -6803,15 +7041,15 @@ impl Plot {
                 &y_major_tick_pixels,
                 &x_minor_tick_pixels,
                 &y_minor_tick_pixels,
-                &self.tick_config.direction,
-                self.theme.foreground,
+                &self.layout.tick_config.direction,
+                self.display.theme.foreground,
             )?;
         }
 
         // Draw axis labels, tick values, and title using computed layout positions
         // Note: layout_opt is always Some since all render paths now compute layout
         let layout = layout_opt.expect("layout should always be computed");
-        let tick_size_px = pt_to_px(self.config.typography.tick_size(), dpi);
+        let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
         // Draw tick labels using layout positions (only for Cartesian plots)
         if draw_axes {
@@ -6830,7 +7068,7 @@ impl Plot {
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
-                    self.theme.foreground,
+                    self.display.theme.foreground,
                     dpi,
                 )?;
             } else if let Some(ref categories) = bar_categories {
@@ -6843,7 +7081,7 @@ impl Plot {
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
-                    self.theme.foreground,
+                    self.display.theme.foreground,
                     dpi,
                 )?;
             } else {
@@ -6858,7 +7096,7 @@ impl Plot {
                     layout.xtick_baseline_y,
                     layout.ytick_right_x,
                     tick_size_px,
-                    self.theme.foreground,
+                    self.display.theme.foreground,
                     dpi,
                 )?;
             }
@@ -6866,29 +7104,30 @@ impl Plot {
 
         // Draw title if present
         if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.title {
-                renderer.draw_title_at(pos, title, self.theme.foreground)?;
+            if let Some(ref title) = self.display.title {
+                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
             }
         }
 
         // Draw x-axis label if present (only for Cartesian plots)
         if draw_axes {
             if let Some(ref pos) = layout.xlabel_pos {
-                if let Some(ref xlabel) = self.xlabel {
-                    renderer.draw_xlabel_at(pos, xlabel, self.theme.foreground)?;
+                if let Some(ref xlabel) = self.display.xlabel {
+                    renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
                 }
             }
 
             // Draw y-axis label if present
             if let Some(ref pos) = layout.ylabel_pos {
-                if let Some(ref ylabel) = self.ylabel {
-                    renderer.draw_ylabel_at(pos, ylabel, self.theme.foreground)?;
+                if let Some(ref ylabel) = self.display.ylabel {
+                    renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
                 }
             }
         }
 
         // Check if we should use DataShader for large datasets
         let total_points: usize = self
+            .series_mgr
             .series
             .iter()
             .map(|series| match &series.series_type {
@@ -6919,7 +7158,7 @@ impl Plot {
             // Use DataShader for massive datasets - simplified version
             use crate::data::DataShader;
 
-            for series in &self.series {
+            for series in &self.series_mgr.series {
                 match &series.series_type {
                     SeriesType::Scatter { x_data, y_data }
                     | SeriesType::Line { x_data, y_data } => {
@@ -6980,7 +7219,7 @@ impl Plot {
         } else {
             // Check if GPU rendering should be used for medium datasets
             #[cfg(feature = "gpu")]
-            let use_gpu_rendering = self.enable_gpu && total_points >= GPU_THRESHOLD;
+            let use_gpu_rendering = self.render.enable_gpu && total_points >= GPU_THRESHOLD;
 
             #[cfg(feature = "gpu")]
             if use_gpu_rendering {
@@ -6992,7 +7231,7 @@ impl Plot {
                             total_points,
                             GPU_THRESHOLD
                         );
-                        for series in &self.series {
+                        for series in &self.series_mgr.series {
                             self.render_series_gpu(
                                 series,
                                 &mut renderer,
@@ -7008,7 +7247,7 @@ impl Plot {
                     Err(e) => {
                         log::warn!("GPU initialization failed, falling back to CPU: {}", e);
                         // Fall back to normal rendering
-                        for series in &self.series {
+                        for series in &self.series_mgr.series {
                             self.render_series_normal(
                                 series,
                                 &mut renderer,
@@ -7023,7 +7262,7 @@ impl Plot {
                 }
             } else {
                 // Use normal rendering for smaller datasets
-                for series in &self.series {
+                for series in &self.series_mgr.series {
                     self.render_series_normal(
                         series,
                         &mut renderer,
@@ -7039,7 +7278,7 @@ impl Plot {
             #[cfg(not(feature = "gpu"))]
             {
                 // Use normal rendering for smaller datasets (no GPU feature)
-                for series in &self.series {
+                for series in &self.series_mgr.series {
                     self.render_series_normal(
                         series,
                         &mut renderer,
@@ -7062,31 +7301,33 @@ impl Plot {
                 x_max,
                 y_min,
                 y_max,
-                self.config.figure.dpi,
+                self.display.config.figure.dpi,
             )?;
         }
 
         // Collect legend items from series with labels
         // Use flat_map to expand Radar series into multiple legend entries
         let legend_items: Vec<LegendItem> = self
+            .series_mgr
             .series
             .iter()
             .enumerate()
-            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.theme))
+            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.display.theme))
             .collect();
 
         // Draw legend if there are labeled series and legend is enabled
-        if !legend_items.is_empty() && self.legend.enabled {
+        if !legend_items.is_empty() && self.layout.legend.enabled {
             // Convert old LegendConfig to new Legend type with DPI scaling
-            let mut legend = self.legend.to_legend();
+            let mut legend = self.layout.legend.to_legend();
             // Scale legend font size from points to pixels for proper DPI handling
-            legend.font_size = pt_to_px(legend.font_size, self.config.figure.dpi);
+            legend.font_size = pt_to_px(legend.font_size, self.display.config.figure.dpi);
 
             // Collect data bounding boxes for best position algorithm
             let data_bboxes: Vec<(f32, f32, f32, f32)> =
                 if matches!(legend.position, LegendPosition::Best) {
                     let marker_radius = 4.0_f32; // Approximate marker radius in pixels
-                    self.series
+                    self.series_mgr
+                        .series
                         .iter()
                         .flat_map(|series| {
                             match &series.series_type {
@@ -7107,8 +7348,8 @@ impl Plot {
                                                     y_min,
                                                     y_max,
                                                     plot_area,
-                                                    &self.x_scale,
-                                                    &self.y_scale,
+                                                    &self.layout.x_scale,
+                                                    &self.layout.y_scale,
                                                 );
                                             // Create bounding box around each point
                                             (
@@ -7151,7 +7392,7 @@ impl Plot {
         height: u32,
     ) -> Result<()> {
         // Update dimensions
-        self.dimensions = (width, height);
+        self.display.dimensions = (width, height);
         self.save(path)
     }
 
@@ -7174,7 +7415,7 @@ impl Plot {
         use crate::export::SvgRenderer;
         use crate::render::skia::map_data_to_pixels;
 
-        let (width, height) = self.dimensions;
+        let (width, height) = self.display.dimensions;
         let width = width as f32;
         let height = height as f32;
 
@@ -7182,9 +7423,21 @@ impl Plot {
 
         // Calculate plot area with margins
         let margin = 0.12; // 12% margin
-        let left_margin = if self.ylabel.is_some() { 0.15 } else { margin };
-        let bottom_margin = if self.xlabel.is_some() { 0.15 } else { margin };
-        let top_margin = if self.title.is_some() { 0.12 } else { margin };
+        let left_margin = if self.display.ylabel.is_some() {
+            0.15
+        } else {
+            margin
+        };
+        let bottom_margin = if self.display.xlabel.is_some() {
+            0.15
+        } else {
+            margin
+        };
+        let top_margin = if self.display.title.is_some() {
+            0.12
+        } else {
+            margin
+        };
 
         let plot_left = width * left_margin;
         let plot_right = width * (1.0 - margin);
@@ -7204,10 +7457,10 @@ impl Plot {
             })?;
 
         // Draw background
-        svg.draw_rectangle(0.0, 0.0, width, height, self.theme.background, true);
+        svg.draw_rectangle(0.0, 0.0, width, height, self.display.theme.background, true);
 
         // Check if we have a bar chart (need special X-axis handling)
-        let bar_categories: Option<&Vec<String>> = self.series.iter().find_map(|s| {
+        let bar_categories: Option<&Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
             if let SeriesType::Bar { categories, .. } = &s.series_type {
                 Some(categories)
             } else {
@@ -7216,13 +7469,19 @@ impl Plot {
         });
 
         // Compute Y-axis tick layout (fix parameter order: pixel_top then pixel_bottom)
-        let y_tick_layout =
-            TickLayout::compute_y_axis(y_min, y_max, plot_top, plot_bottom, &self.y_scale, 6);
+        let y_tick_layout = TickLayout::compute_y_axis(
+            y_min,
+            y_max,
+            plot_top,
+            plot_bottom,
+            &self.layout.y_scale,
+            6,
+        );
 
         // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.grid_style.visible && self.needs_cartesian_axes() {
-            let grid_color = self.grid_style.effective_color();
+        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+            let grid_color = self.layout.grid_style.effective_color();
             if bar_categories.is_some() {
                 // For bar charts, only draw horizontal grid lines
                 svg.draw_grid(
@@ -7233,13 +7492,19 @@ impl Plot {
                     plot_top,
                     plot_bottom,
                     grid_color,
-                    self.grid_style.line_style.clone(),
-                    self.grid_style.line_width,
+                    self.layout.grid_style.line_style.clone(),
+                    self.layout.grid_style.line_width,
                 );
             } else {
                 // For other charts, compute X-axis ticks and draw full grid
-                let x_tick_layout =
-                    TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.x_scale, 7);
+                let x_tick_layout = TickLayout::compute(
+                    x_min,
+                    x_max,
+                    plot_left,
+                    plot_right,
+                    &self.layout.x_scale,
+                    7,
+                );
                 svg.draw_grid(
                     &x_tick_layout.pixel_positions,
                     &y_tick_layout.pixel_positions,
@@ -7248,8 +7513,8 @@ impl Plot {
                     plot_top,
                     plot_bottom,
                     grid_color,
-                    self.grid_style.line_style.clone(),
-                    self.grid_style.line_width,
+                    self.layout.grid_style.line_style.clone(),
+                    self.layout.grid_style.line_width,
                 );
             }
         }
@@ -7260,7 +7525,7 @@ impl Plot {
             plot_top,
             plot_width,
             plot_height,
-            self.theme.foreground,
+            self.display.theme.foreground,
             false,
         );
 
@@ -7274,7 +7539,7 @@ impl Plot {
                 plot_bottom,
                 &[], // no X ticks for bar chart
                 &y_tick_layout.pixel_positions,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 true,
             );
 
@@ -7288,7 +7553,7 @@ impl Plot {
                 plot_right,
                 plot_top,
                 plot_bottom,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 10.0,
             );
 
@@ -7297,12 +7562,12 @@ impl Plot {
             for (i, category) in categories.iter().enumerate() {
                 let x = plot_left + (i as f32 + 0.5) * (plot_width / num_categories as f32);
                 let y = plot_bottom + 15.0;
-                svg.draw_text_centered(category, x, y, 10.0, self.theme.foreground);
+                svg.draw_text_centered(category, x, y, 10.0, self.display.theme.foreground);
             }
         } else {
             // Normal chart: draw axes with numeric labels
             let x_tick_layout =
-                TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.x_scale, 7);
+                TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.layout.x_scale, 7);
             svg.draw_axes(
                 plot_left,
                 plot_right,
@@ -7310,7 +7575,7 @@ impl Plot {
                 plot_bottom,
                 &x_tick_layout.pixel_positions,
                 &y_tick_layout.pixel_positions,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 true,
             );
             svg.draw_tick_labels(
@@ -7322,7 +7587,7 @@ impl Plot {
                 plot_right,
                 plot_top,
                 plot_bottom,
-                self.theme.foreground,
+                self.display.theme.foreground,
                 10.0,
             );
         }
@@ -7335,14 +7600,14 @@ impl Plot {
         let mut legend_items: Vec<LegendItem> = Vec::new();
 
         // Render each series
-        for (idx, series) in self.series.iter().enumerate() {
-            let default_color = self.theme.get_color(idx);
+        for (idx, series) in self.series_mgr.series.iter().enumerate() {
+            let default_color = self.display.theme.get_color(idx);
             let color = series.color.unwrap_or(default_color);
-            let line_width = series.line_width.unwrap_or(self.theme.line_width);
+            let line_width = series.line_width.unwrap_or(self.display.theme.line_width);
             let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
 
             // Collect legend items (expands Radar series into multiple entries)
-            legend_items.extend(series.to_legend_items(idx, &self.theme));
+            legend_items.extend(series.to_legend_items(idx, &self.display.theme));
 
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } => {
@@ -7395,30 +7660,43 @@ impl Plot {
         svg.end_group(); // End clip group
 
         // Draw title
-        if let Some(ref title) = self.title {
+        if let Some(ref title) = self.display.title {
             let title_x = width / 2.0;
             let title_y = plot_top / 2.0;
-            svg.draw_text_centered(title, title_x, title_y, 14.0, self.theme.foreground);
+            svg.draw_text_centered(title, title_x, title_y, 14.0, self.display.theme.foreground);
         }
 
         // Draw X-axis label
-        if let Some(ref xlabel) = self.xlabel {
+        if let Some(ref xlabel) = self.display.xlabel {
             let label_x = plot_left + plot_width / 2.0;
             let label_y = height - 10.0;
-            svg.draw_text_centered(xlabel, label_x, label_y, 11.0, self.theme.foreground);
+            svg.draw_text_centered(
+                xlabel,
+                label_x,
+                label_y,
+                11.0,
+                self.display.theme.foreground,
+            );
         }
 
         // Draw Y-axis label (rotated)
-        if let Some(ref ylabel) = self.ylabel {
+        if let Some(ref ylabel) = self.display.ylabel {
             let label_x = 15.0;
             let label_y = plot_top + plot_height / 2.0;
-            svg.draw_text_rotated(ylabel, label_x, label_y, 11.0, self.theme.foreground, -90.0);
+            svg.draw_text_rotated(
+                ylabel,
+                label_x,
+                label_y,
+                11.0,
+                self.display.theme.foreground,
+                -90.0,
+            );
         }
 
         // Draw legend if we have labeled series and legend is enabled
-        if !legend_items.is_empty() && self.legend.enabled {
+        if !legend_items.is_empty() && self.layout.legend.enabled {
             // Convert old LegendConfig to new Legend type
-            let legend = self.legend.to_legend();
+            let legend = self.layout.legend.to_legend();
             // Use new legend rendering with proper handles
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
             svg.draw_legend_full(&legend_items, &legend, plot_bounds, None);
@@ -7469,7 +7747,7 @@ impl Plot {
         let height_px = page_sizes::mm_to_px(height_mm) as u32;
 
         // Update plot dimensions
-        self.dimensions = (width_px, height_px);
+        self.display.dimensions = (width_px, height_px);
 
         // Render to SVG
         let svg_content = self.render_to_svg()?;
@@ -7562,10 +7840,9 @@ impl PlotSeriesBuilder {
     ///
     /// Plot::new()
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
-    ///     .width(3.0)  // Thick line
+    ///     .line_width(3.0)  // Thick line
     ///     .line(&[1.0, 2.0, 3.0], &[0.5, 2.0, 4.5])
-    ///     .width(1.0)  // Thin line
-    ///     .end_series()
+    ///     .line_width(1.0)  // Thin line
     ///     .save("line_widths.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -7820,11 +8097,16 @@ impl PlotSeriesBuilder {
     pub fn end_series(mut self) -> Plot {
         // Auto-assign color if none specified
         if self.series.color.is_none() {
-            self.series.color = Some(self.plot.theme.get_color(self.plot.auto_color_index));
-            self.plot.auto_color_index += 1;
+            self.series.color = Some(
+                self.plot
+                    .display
+                    .theme
+                    .get_color(self.plot.series_mgr.auto_color_index),
+            );
+            self.plot.series_mgr.auto_color_index += 1;
         }
 
-        self.plot.series.push(self.series);
+        self.plot.series_mgr.series.push(self.series);
         self.plot
     }
 }
@@ -7841,7 +8123,7 @@ impl std::ops::Deref for PlotSeriesBuilder {
 // Implement most Plot methods for PlotSeriesBuilder to allow chaining
 impl PlotSeriesBuilder {
     /// Continue with a new line series
-    pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -7849,8 +8131,12 @@ impl PlotSeriesBuilder {
         self.end_series().line(x_data, y_data)
     }
 
-    /// Continue with a new scatter series  
-    pub fn scatter<X, Y>(self, x_data: &X, y_data: &Y) -> PlotSeriesBuilder
+    /// Continue with a new scatter series
+    pub fn scatter<X, Y>(
+        self,
+        x_data: &X,
+        y_data: &Y,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
     where
         X: Data1D<f64>,
         Y: Data1D<f64>,
@@ -7859,7 +8145,11 @@ impl PlotSeriesBuilder {
     }
 
     /// Continue with a new bar series
-    pub fn bar<S, V>(self, categories: &[S], values: &V) -> PlotSeriesBuilder
+    pub fn bar<S, V>(
+        self,
+        categories: &[S],
+        values: &V,
+    ) -> PlotBuilder<crate::plots::basic::BarConfig>
     where
         S: ToString,
         V: Data1D<f64>,
@@ -7949,42 +8239,42 @@ impl PlotSeriesBuilder {
 
     /// Set plot title
     pub fn title<S: Into<String>>(mut self, title: S) -> Self {
-        self.plot.title = Some(title.into());
+        self.plot.display.title = Some(title.into());
         self
     }
 
     /// Set X-axis label
     pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.plot.xlabel = Some(label.into());
+        self.plot.display.xlabel = Some(label.into());
         self
     }
 
     /// Set Y-axis label
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.plot.ylabel = Some(label.into());
+        self.plot.display.ylabel = Some(label.into());
         self
     }
 
     /// Configure legend with position
     pub fn legend(mut self, position: Position) -> Self {
-        self.plot.legend.enabled = true;
-        self.plot.legend.position = position;
+        self.plot.layout.legend.enabled = true;
+        self.plot.layout.legend.position = position;
         self
     }
 
     /// Enable/disable grid
     pub fn grid(mut self, enabled: bool) -> Self {
-        self.plot.grid_style.visible = enabled;
+        self.plot.layout.grid_style.visible = enabled;
         self
     }
 
     /// Set DPI for export quality
     pub fn dpi(mut self, dpi: u32) -> Self {
-        self.plot.config.figure.dpi = dpi.max(72) as f32;
-        self.plot.dpi = dpi.max(72);
+        self.plot.display.config.figure.dpi = dpi.max(72) as f32;
+        self.plot.display.dpi = dpi.max(72);
         // Update dimensions to reflect new DPI
-        let (w, h) = self.plot.config.canvas_size();
-        self.plot.dimensions = (w, h);
+        let (w, h) = self.plot.display.config.canvas_size();
+        self.plot.display.dimensions = (w, h);
         self
     }
 
@@ -8005,7 +8295,7 @@ impl PlotSeriesBuilder {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        self.plot.dimensions = (width, height);
+        self.plot.display.dimensions = (width, height);
         self.end_series().save(path)
     }
 
@@ -8177,20 +8467,20 @@ impl PlotSeriesBuilder {
 
     /// Set X-axis scale type
     pub fn xscale(mut self, scale: AxisScale) -> Self {
-        self.plot.x_scale = scale;
+        self.plot.layout.x_scale = scale;
         self
     }
 
     /// Set Y-axis scale type
     pub fn yscale(mut self, scale: AxisScale) -> Self {
-        self.plot.y_scale = scale;
+        self.plot.layout.y_scale = scale;
         self
     }
 
     /// Set X-axis limits
     pub fn xlim(mut self, min: f64, max: f64) -> Self {
         if min < max && min.is_finite() && max.is_finite() {
-            self.plot.x_limits = Some((min, max));
+            self.plot.layout.x_limits = Some((min, max));
         }
         self
     }
@@ -8198,7 +8488,7 @@ impl PlotSeriesBuilder {
     /// Set Y-axis limits
     pub fn ylim(mut self, min: f64, max: f64) -> Self {
         if min < max && min.is_finite() && max.is_finite() {
-            self.plot.y_limits = Some((min, max));
+            self.plot.layout.y_limits = Some((min, max));
         }
         self
     }
@@ -8314,7 +8604,7 @@ mod tests {
     fn test_gpu_method_sets_backend() {
         let plot = Plot::new().gpu(true);
         assert_eq!(plot.get_backend_name(), "gpu");
-        assert!(plot.enable_gpu);
+        assert!(plot.render.enable_gpu);
     }
 
     #[test]
@@ -8322,7 +8612,7 @@ mod tests {
     fn test_gpu_method_disabled() {
         let plot = Plot::new().gpu(false);
         // When disabled, backend should not be set to GPU
-        assert!(!plot.enable_gpu);
+        assert!(!plot.render.enable_gpu);
     }
 
     #[test]
@@ -8460,10 +8750,10 @@ mod tests {
             .title("Streaming Line Plot")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
+        assert_eq!(plot.series_mgr.series.len(), 1);
 
         // Verify data was captured
-        if let SeriesType::Line { x_data, y_data } = &plot.series[0].series_type {
+        if let SeriesType::Line { x_data, y_data } = &plot.series_mgr.series[0].series_type {
             assert_eq!(x_data.len(), 4);
             assert_eq!(y_data.len(), 4);
             assert_eq!(x_data[0], 0.0);
@@ -8485,9 +8775,9 @@ mod tests {
             .title("Streaming Scatter")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
+        assert_eq!(plot.series_mgr.series.len(), 1);
 
-        if let SeriesType::Scatter { x_data, y_data } = &plot.series[0].series_type {
+        if let SeriesType::Scatter { x_data, y_data } = &plot.series_mgr.series[0].series_type {
             assert_eq!(x_data.len(), 3);
             assert_eq!(y_data.len(), 3);
         } else {
@@ -8545,7 +8835,7 @@ mod tests {
 
         let plot = Plot::new().line_streaming(&stream).end_series();
 
-        if let SeriesType::Line { x_data, y_data } = &plot.series[0].series_type {
+        if let SeriesType::Line { x_data, y_data } = &plot.series_mgr.series[0].series_type {
             assert_eq!(x_data.len(), 3);
             // Should be the last 3 values
             assert_eq!(x_data[0], 2.0);
@@ -8568,9 +8858,9 @@ mod tests {
             .title("Empty Stream")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
+        assert_eq!(plot.series_mgr.series.len(), 1);
 
-        if let SeriesType::Line { x_data, y_data } = &plot.series[0].series_type {
+        if let SeriesType::Line { x_data, y_data } = &plot.series_mgr.series[0].series_type {
             assert!(x_data.is_empty());
             assert!(y_data.is_empty());
         }
@@ -8598,15 +8888,15 @@ mod tests {
             .title("Multiple Streaming Series")
             .end_series();
 
-        assert_eq!(plot.series.len(), 2);
+        assert_eq!(plot.series_mgr.series.len(), 2);
 
         // First series
-        if let SeriesType::Line { x_data, .. } = &plot.series[0].series_type {
+        if let SeriesType::Line { x_data, .. } = &plot.series_mgr.series[0].series_type {
             assert_eq!(x_data.len(), 3);
         }
 
         // Second series
-        if let SeriesType::Line { x_data, .. } = &plot.series[1].series_type {
+        if let SeriesType::Line { x_data, .. } = &plot.series_mgr.series[1].series_type {
             assert_eq!(x_data.len(), 3);
         }
 
@@ -8633,7 +8923,7 @@ mod tests {
             .title("Mixed Data Sources")
             .end_series();
 
-        assert_eq!(plot.series.len(), 2);
+        assert_eq!(plot.series_mgr.series.len(), 2);
 
         let result = plot.render();
         assert!(result.is_ok());
@@ -8656,8 +8946,8 @@ mod tests {
             .ylabel("Y Axis")
             .end_series();
 
-        assert_eq!(plot.series[0].color, Some(Color::new(255, 0, 0)));
-        assert_eq!(plot.series[0].line_width, Some(3.0));
+        assert_eq!(plot.series_mgr.series[0].color, Some(Color::new(255, 0, 0)));
+        assert_eq!(plot.series_mgr.series[0].line_width, Some(3.0));
 
         let result = plot.render();
         assert!(result.is_ok());
@@ -8676,8 +8966,8 @@ mod tests {
             .marker_size(10.0)
             .end_series();
 
-        assert_eq!(plot.series[0].color, Some(Color::new(0, 255, 0)));
-        assert_eq!(plot.series[0].marker_size, Some(10.0));
+        assert_eq!(plot.series_mgr.series[0].color, Some(Color::new(0, 255, 0)));
+        assert_eq!(plot.series_mgr.series[0].marker_size, Some(10.0));
 
         let result = plot.render();
         assert!(result.is_ok());
@@ -8719,12 +9009,12 @@ mod tests {
             .label("Test")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
-        assert!(plot.series[0].y_errors.is_some());
-        assert!(plot.series[0].x_errors.is_none());
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert!(plot.series_mgr.series[0].y_errors.is_some());
+        assert!(plot.series_mgr.series[0].x_errors.is_none());
 
         // Verify it's symmetric error values
-        if let Some(ErrorValues::Symmetric(errs)) = &plot.series[0].y_errors {
+        if let Some(ErrorValues::Symmetric(errs)) = &plot.series_mgr.series[0].y_errors {
             assert_eq!(errs.len(), 3);
             assert!((errs[0] - 0.3).abs() < 1e-10);
         } else {
@@ -8744,11 +9034,11 @@ mod tests {
             .label("Test")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
-        assert!(plot.series[0].x_errors.is_some());
-        assert!(plot.series[0].y_errors.is_none());
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert!(plot.series_mgr.series[0].x_errors.is_some());
+        assert!(plot.series_mgr.series[0].y_errors.is_none());
 
-        if let Some(ErrorValues::Symmetric(errs)) = &plot.series[0].x_errors {
+        if let Some(ErrorValues::Symmetric(errs)) = &plot.series_mgr.series[0].x_errors {
             assert_eq!(errs.len(), 3);
             assert!((errs[1] - 0.2).abs() < 1e-10);
         } else {
@@ -8769,10 +9059,10 @@ mod tests {
             .label("Test")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
-        assert!(plot.series[0].y_errors.is_some());
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert!(plot.series_mgr.series[0].y_errors.is_some());
 
-        if let Some(ErrorValues::Asymmetric(lo, hi)) = &plot.series[0].y_errors {
+        if let Some(ErrorValues::Asymmetric(lo, hi)) = &plot.series_mgr.series[0].y_errors {
             assert_eq!(lo.len(), 3);
             assert_eq!(hi.len(), 3);
             assert!((lo[0] - 0.2).abs() < 1e-10);
@@ -8795,10 +9085,10 @@ mod tests {
             .label("Test")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
-        assert!(plot.series[0].x_errors.is_some());
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert!(plot.series_mgr.series[0].x_errors.is_some());
 
-        if let Some(ErrorValues::Asymmetric(lo, hi)) = &plot.series[0].x_errors {
+        if let Some(ErrorValues::Asymmetric(lo, hi)) = &plot.series_mgr.series[0].x_errors {
             assert_eq!(lo.len(), 3);
             assert_eq!(hi.len(), 3);
             assert!((lo[1] - 0.15).abs() < 1e-10);
@@ -8823,8 +9113,8 @@ mod tests {
             .label("Test")
             .end_series();
 
-        assert!(plot.series[0].error_config.is_some());
-        let cfg = plot.series[0].error_config.as_ref().unwrap();
+        assert!(plot.series_mgr.series[0].error_config.is_some());
+        let cfg = plot.series_mgr.series[0].error_config.as_ref().unwrap();
         assert!((cfg.cap_size - 0.15).abs() < 1e-10);
         assert!((cfg.line_width - 2.0).abs() < 1e-10);
     }
@@ -8843,9 +9133,9 @@ mod tests {
             .label("Test")
             .end_series();
 
-        assert_eq!(plot.series.len(), 1);
-        assert!(plot.series[0].y_errors.is_some());
-        assert!(plot.series[0].x_errors.is_some());
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert!(plot.series_mgr.series[0].y_errors.is_some());
+        assert!(plot.series_mgr.series[0].x_errors.is_some());
     }
 
     #[test]
@@ -8863,13 +9153,13 @@ mod tests {
             .label("Series B")
             .end_series();
 
-        assert_eq!(plot.series.len(), 2);
+        assert_eq!(plot.series_mgr.series.len(), 2);
         assert!(matches!(
-            &plot.series[0].series_type,
+            &plot.series_mgr.series[0].series_type,
             SeriesType::ErrorBars { .. }
         ));
         assert!(matches!(
-            &plot.series[1].series_type,
+            &plot.series_mgr.series[1].series_type,
             SeriesType::ErrorBars { .. }
         ));
     }

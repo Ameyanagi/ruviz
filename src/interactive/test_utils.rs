@@ -2,6 +2,7 @@
 //!
 //! Provides mock objects, test fixtures, and validation utilities for
 //! testing interactive features without requiring actual windowing.
+#![allow(deprecated)]
 
 use crate::core::{Plot, Result};
 use std::time::{Duration, Instant};

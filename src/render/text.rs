@@ -376,8 +376,10 @@ impl TextRenderer {
 
         // Render each glyph
         for run in buffer.layout_runs() {
+            // Add line_y offset for multiline text support
+            let line_y = run.line_y;
             for glyph in run.glyphs.iter() {
-                let physical_glyph = glyph.physical((x, y), 1.0);
+                let physical_glyph = glyph.physical((x, y + line_y), 1.0);
 
                 swash_cache.with_pixels(
                     &mut font_system,
@@ -504,8 +506,9 @@ impl TextRenderer {
         let mut min_y = f32::MAX;
 
         for run in buffer.layout_runs() {
+            let line_y = run.line_y;
             for glyph in run.glyphs.iter() {
-                let physical_glyph = glyph.physical((0., 0.), 1.0);
+                let physical_glyph = glyph.physical((0., line_y), 1.0);
                 let gx = physical_glyph.x as f32;
                 let gy = physical_glyph.y as f32;
 
@@ -542,8 +545,9 @@ impl TextRenderer {
 
         // Render to temporary pixmap
         for run in buffer.layout_runs() {
+            let line_y = run.line_y;
             for glyph in run.glyphs.iter() {
-                let physical_glyph = glyph.physical((0., 0.), 1.0);
+                let physical_glyph = glyph.physical((0., line_y), 1.0);
 
                 swash_cache.with_pixels(
                     &mut font_system,

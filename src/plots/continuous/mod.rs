@@ -22,8 +22,8 @@ pub use area::{
     fill_between_polygon, fill_between_where,
 };
 pub use contour::{
-    Contour, ContourConfig, ContourInput, ContourPlotData, compute_contour_plot,
-    contour_fill_regions, contour_range,
+    Contour, ContourConfig, ContourInput, ContourInterpolation, ContourPlotData,
+    compute_contour_plot, contour_fill_regions, contour_range,
 };
 pub use hexbin::{
     HexBin, Hexbin, HexbinConfig, HexbinInput, HexbinPlotData, ReduceFunction, compute_hexbin,

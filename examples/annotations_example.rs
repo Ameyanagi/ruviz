@@ -20,7 +20,7 @@ fn main() -> Result<()> {
         .xlabel("X")
         .ylabel("Y = X² / 10")
         // Add text annotation at peak
-        .text(9.0, 8.0, "Peak region")
+        .annotate(Annotation::text(9.0, 8.0, "Peak region"))
         // Add an arrow pointing to a specific data point
         .arrow(4.0, 6.0, 6.0, 3.6)
         // Add horizontal reference line
@@ -41,7 +41,7 @@ fn main() -> Result<()> {
     Plot::new()
         .line(&x, &y)
         .title("Text and Arrow Annotations")
-        .text(5.0, 2.5, "Midpoint")
+        .annotate(Annotation::text(5.0, 2.5, "Midpoint"))
         .arrow(1.0, 0.5, 3.0, 0.9)
         .hline(4.0)
         .vline(7.0)

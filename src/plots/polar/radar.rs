@@ -64,6 +64,14 @@ pub struct RadarConfig {
     pub show_axis_labels: bool,
     /// Font size for axis labels
     pub label_font_size: f32,
+    /// Labels for each data series (for legend display)
+    pub series_labels: Vec<String>,
+    /// Per-series fill alpha overrides (None = use default fill_alpha)
+    pub per_series_fill_alphas: Vec<Option<f32>>,
+    /// Per-series line width overrides (None = use default line_width)
+    pub per_series_line_widths: Vec<Option<f32>>,
+    /// Index of the current series for chained styling
+    pub(crate) current_series_idx: Option<usize>,
 }
 
 impl Default for RadarConfig {
@@ -81,6 +89,10 @@ impl Default for RadarConfig {
             value_range: None,
             show_axis_labels: true,
             label_font_size: 10.0,
+            series_labels: vec![],
+            per_series_fill_alphas: vec![],
+            per_series_line_widths: vec![],
+            current_series_idx: None,
         }
     }
 }
@@ -200,10 +212,15 @@ pub struct RadarPlotData {
 /// # Arguments
 /// * `data` - Multiple series of values \[series\]\[axis\]
 /// * `config` - Radar chart configuration
+/// * `series_labels` - Optional labels for each series
 ///
 /// # Returns
 /// RadarPlotData for rendering
-pub fn compute_radar_chart(data: &[Vec<f64>], config: &RadarConfig) -> RadarPlotData {
+pub fn compute_radar_chart_with_labels(
+    data: &[Vec<f64>],
+    config: &RadarConfig,
+    series_labels: Option<&[String]>,
+) -> RadarPlotData {
     if data.is_empty() {
         return RadarPlotData {
             series: vec![],
@@ -290,7 +307,7 @@ pub fn compute_radar_chart(data: &[Vec<f64>], config: &RadarConfig) -> RadarPlot
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| format!("Axis {}", i + 1));
-            let label_r = 1.1; // Slightly outside
+            let label_r = 1.15; // Slightly outside the chart
             (label, label_r * theta.cos(), label_r * theta.sin())
         })
         .collect();
@@ -310,11 +327,16 @@ pub fn compute_radar_chart(data: &[Vec<f64>], config: &RadarConfig) -> RadarPlot
 
             let markers = polygon.clone();
 
+            // Use provided label if available, otherwise default to "Series N"
+            let label = series_labels
+                .and_then(|labels| labels.get(series_idx).cloned())
+                .unwrap_or_else(|| format!("Series {}", series_idx + 1));
+
             RadarSeries {
                 values: normalized,
                 polygon,
                 markers,
-                label: format!("Series {}", series_idx + 1),
+                label,
             }
         })
         .collect();
@@ -327,6 +349,18 @@ pub fn compute_radar_chart(data: &[Vec<f64>], config: &RadarConfig) -> RadarPlot
         value_range: (v_min, v_max),
         config: config.clone(),
     }
+}
+
+/// Compute radar chart data (backward-compatible wrapper)
+///
+/// # Arguments
+/// * `data` - Multiple series of values \[series\]\[axis\]
+/// * `config` - Radar chart configuration
+///
+/// # Returns
+/// RadarPlotData for rendering
+pub fn compute_radar_chart(data: &[Vec<f64>], config: &RadarConfig) -> RadarPlotData {
+    compute_radar_chart_with_labels(data, config, None)
 }
 
 // ============================================================================
@@ -397,26 +431,23 @@ impl PlotRender for RadarPlotData {
             }
         }
 
-        // Draw axis labels
+        // Draw axis labels (centered for proper positioning)
         if config.show_axis_labels {
             let label_color = theme.foreground;
             for (label, x, y) in &self.axis_labels {
                 let (sx, sy) = area.data_to_screen(*x, *y);
-                renderer.draw_text(label, sx, sy, config.label_font_size, label_color)?;
+                renderer.draw_text_centered(label, sx, sy, config.label_font_size, label_color)?;
             }
         }
 
         // Draw each series
-        let colors = config.colors.clone().unwrap_or_else(|| {
-            // Use color cycle
-            vec![color]
-        });
-
         for (series_idx, series) in self.series.iter().enumerate() {
-            let series_color = colors
-                .get(series_idx % colors.len())
-                .copied()
-                .unwrap_or(color);
+            // Get color from config.colors if provided, otherwise use theme color cycle
+            let series_color = config
+                .colors
+                .as_ref()
+                .and_then(|colors| colors.get(series_idx).copied())
+                .unwrap_or_else(|| theme.get_color(series_idx));
 
             // Draw fill if enabled
             if config.fill && !series.polygon.is_empty() {
@@ -512,26 +543,23 @@ impl PlotRender for RadarPlotData {
             }
         }
 
-        // Draw axis labels
+        // Draw axis labels (centered for proper positioning)
         if config.show_axis_labels {
             let label_color = theme.foreground;
             for (label, x, y) in &self.axis_labels {
                 let (sx, sy) = area.data_to_screen(*x, *y);
-                renderer.draw_text(label, sx, sy, config.label_font_size, label_color)?;
+                renderer.draw_text_centered(label, sx, sy, config.label_font_size, label_color)?;
             }
         }
 
         // Draw each series
-        let colors = config.colors.clone().unwrap_or_else(|| {
-            // Use color cycle
-            vec![color]
-        });
-
         for (series_idx, series) in self.series.iter().enumerate() {
-            let series_color = colors
-                .get(series_idx % colors.len())
-                .copied()
-                .unwrap_or(color);
+            // Get color from config.colors if provided, otherwise use theme color cycle
+            let series_color = config
+                .colors
+                .as_ref()
+                .and_then(|colors| colors.get(series_idx).copied())
+                .unwrap_or_else(|| theme.get_color(series_idx));
 
             // Draw fill if enabled - use provided alpha
             if config.fill && !series.polygon.is_empty() {
@@ -686,5 +714,41 @@ mod tests {
 
         // Test is_empty
         assert!(!radar_data.is_empty());
+    }
+
+    #[test]
+    fn test_radar_per_series_config() {
+        // Test that RadarConfig can store per-series styling
+        let mut config = RadarConfig::default();
+        config.series_labels = vec!["Series A".to_string(), "Series B".to_string()];
+        config.colors = Some(vec![Color::RED, Color::BLUE]);
+        config.per_series_fill_alphas = vec![Some(0.3), Some(0.5)];
+        config.per_series_line_widths = vec![Some(2.0), None];
+
+        assert_eq!(config.series_labels.len(), 2);
+        assert_eq!(config.series_labels[0], "Series A");
+        assert_eq!(config.series_labels[1], "Series B");
+
+        assert!(config.colors.is_some());
+        let colors = config.colors.as_ref().unwrap();
+        assert_eq!(colors.len(), 2);
+
+        assert_eq!(config.per_series_fill_alphas[0], Some(0.3));
+        assert_eq!(config.per_series_fill_alphas[1], Some(0.5));
+
+        assert_eq!(config.per_series_line_widths[0], Some(2.0));
+        assert_eq!(config.per_series_line_widths[1], None);
+    }
+
+    #[test]
+    fn test_radar_with_series_labels() {
+        let data = vec![vec![1.0, 2.0, 3.0], vec![3.0, 2.0, 1.0]];
+        let series_labels = vec!["Team A".to_string(), "Team B".to_string()];
+        let config = RadarConfig::default();
+        let plot = compute_radar_chart_with_labels(&data, &config, Some(&series_labels));
+
+        assert_eq!(plot.series.len(), 2);
+        assert_eq!(plot.series[0].label, "Team A");
+        assert_eq!(plot.series[1].label, "Team B");
     }
 }

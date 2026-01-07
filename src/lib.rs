@@ -513,6 +513,7 @@ pub mod plots;
 pub mod render;
 pub mod simple;
 pub mod stats;
+pub mod style;
 pub mod text;
 
 #[cfg(feature = "interactive")]
@@ -529,7 +530,8 @@ pub mod prelude {
     };
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
     pub use crate::plots::{
-        HeatmapConfig, Interpolation, PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender,
+        ContourConfig, HeatmapConfig, Interpolation, PieConfig, PlotArea, PlotCompute, PlotConfig,
+        PlotData, PlotRender, PolarPlotConfig, RadarConfig, ViolinConfig,
     };
     pub use crate::render::{
         Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,
