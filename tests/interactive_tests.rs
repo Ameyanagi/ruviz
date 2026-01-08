@@ -20,7 +20,7 @@ fn test_zoom_coordinate_transformation() {
     // Original bounds: (0, 0, 100, 100)
     // After 2x zoom at center: should show region around center
     CoordinateTestHelper::assert_coordinate_transform(
-        (25.0, 25.0),             // Data point that should be at screen center after zoom
+        (50.0, 50.0),             // Data point at center of zoomed bounds
         (25.0, 25.0, 75.0, 75.0), // New data bounds after zoom
         (0.0, 0.0, 100.0, 100.0), // Screen bounds unchanged
         (50.0, 50.0),             // Should appear at screen center
