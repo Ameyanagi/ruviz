@@ -96,10 +96,17 @@ macro_rules! record {
         $crate::animation::_record_duration_fps($path, $duration as f64, $fps, $closure)
     };
 
-    // With config: record!("out.gif", 60, config: $cfg, |t| plot)
+    // With config (frames): record!("out.gif", 60, config: $cfg, |t| plot)
     ($path:expr, $frames:expr, config: $config:expr, $closure:expr) => {
         $crate::animation::_record_frames_config($path, $frames, $config, $closure)
     };
+
+    // With config (duration): record!("out.gif", 2 secs, config: $cfg, |t| plot)
+    ($path:expr, $duration:tt secs, config: $config:expr, $closure:expr) => {{
+        let cfg: $crate::animation::RecordConfig = $config;
+        let frames = ($duration as f64 * cfg.framerate as f64).ceil() as usize;
+        $crate::animation::_record_frames_config($path, frames, cfg, $closure)
+    }};
 
     // =========== Reactive plot (Plot created once) ===========
 

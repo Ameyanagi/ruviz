@@ -318,11 +318,45 @@ impl RecordConfig {
         self
     }
 
+    /// Calculate DPI for figure-preserving mode
+    fn calculate_dpi(&self) -> u32 {
+        (self.width as f32 / self.figure_width)
+            .max(self.height as f32 / self.figure_height)
+            .ceil() as u32
+    }
+
+    /// Calculate actual output dimensions accounting for DPI rounding
+    ///
+    /// When preserve_figure is enabled, the actual dimensions may differ slightly
+    /// from the requested dimensions due to DPI being an integer.
+    fn actual_dimensions(&self) -> (u32, u32) {
+        if self.preserve_figure {
+            let dpi = self.calculate_dpi() as f32;
+            // Calculate actual pixel dimensions from figure size * DPI
+            // Uses truncation (floor) to match Plot::config_canvas_size behavior
+            let actual_width = (self.figure_width * dpi) as u32;
+            let actual_height = (self.figure_height * dpi) as u32;
+            (actual_width, actual_height)
+        } else {
+            (self.width, self.height)
+        }
+    }
+
+    /// Get figure parameters for capture (width, height, dpi) or None if not using figure mode
+    fn figure_params(&self) -> Option<(f32, f32, u32)> {
+        if self.preserve_figure {
+            Some((self.figure_width, self.figure_height, self.calculate_dpi()))
+        } else {
+            None
+        }
+    }
+
     /// Convert to VideoConfig
     fn to_video_config(&self) -> VideoConfig {
+        let (width, height) = self.actual_dimensions();
         VideoConfig {
-            width: self.width,
-            height: self.height,
+            width,
+            height,
             framerate: self.framerate,
             quality: self.quality,
             ..Default::default()
@@ -419,22 +453,14 @@ where
 {
     let video_config = config.to_video_config();
     let mut stream = VideoStream::new(&path, video_config)?;
-    let mut capture = FrameCapture::new(config.width, config.height);
+    let (actual_width, actual_height) = config.actual_dimensions();
+    let mut capture = FrameCapture::new(actual_width, actual_height);
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
-    // Determine figure size for capture
-    let figure_size = if config.preserve_figure {
-        Some((config.figure_width, config.figure_height))
-    } else {
-        None
-    };
+    // Determine figure parameters for capture (includes pre-calculated DPI)
+    let figure_size = config.figure_params();
 
-    let frames_iter = frames.into_iter();
-
-    // Try to get size hint for progress reporting
-    let _size_hint = frames_iter.size_hint();
-
-    for item in frames_iter {
+    for item in frames {
         let tick = ticker.tick_immediate();
         let plot: Plot = frame_fn(item, &tick).into();
         let frame_data = capture.capture_with_figure(&plot, figure_size)?;
@@ -577,15 +603,12 @@ where
 {
     let video_config = config.to_video_config();
     let mut stream = VideoStream::new(&path, video_config)?;
-    let mut capture = FrameCapture::new(config.width, config.height);
+    let (actual_width, actual_height) = config.actual_dimensions();
+    let mut capture = FrameCapture::new(actual_width, actual_height);
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
-    // Determine figure size for capture
-    let figure_size = if config.preserve_figure {
-        Some((config.figure_width, config.figure_height))
-    } else {
-        None
-    };
+    // Determine figure parameters for capture (includes pre-calculated DPI)
+    let figure_size = config.figure_params();
 
     let delta_time = 1.0 / config.framerate as f64;
     let mut frame_count = 0;
@@ -709,15 +732,12 @@ where
 
     let video_config = config.to_video_config();
     let mut stream = VideoStream::new(&path, video_config)?;
-    let mut capture = FrameCapture::new(config.width, config.height);
+    let (actual_width, actual_height) = config.actual_dimensions();
+    let mut capture = FrameCapture::new(actual_width, actual_height);
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
-    // Determine figure size for capture
-    let figure_size = if config.preserve_figure {
-        Some((config.figure_width, config.figure_height))
-    } else {
-        None
-    };
+    // Determine figure parameters for capture (includes pre-calculated DPI)
+    let figure_size = config.figure_params();
 
     for _ in 0..total_frames {
         let tick = ticker.tick_immediate();

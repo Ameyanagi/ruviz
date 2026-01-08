@@ -44,20 +44,22 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("  Saved: export_output/gif/animation_basic.gif");
 
     // ==========================================================
-    // Alternative: Duration-based recording (simple syntax)
+    // Alternative: Duration-based recording with config
     // ==========================================================
     println!("\nRecording duration-based animation...");
 
-    // Duration syntax without config (uses default 30 fps)
+    // Duration syntax with config for matplotlib-style visual weight
+    let config2 = RecordConfig::new().max_resolution(800, 600).framerate(30);
+
     record!(
         "export_output/gif/animation_basic_duration.gif",
         2 secs,
+        config: config2,
         |t| {
             let phase = t.time * 2.0 * std::f64::consts::PI;
             let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
 
             Plot::new()
-                .max_resolution(800, 600) // Set resolution on plot instead
                 .line(&x, &y)
                 .title(format!("Duration-Based (t={:.2}s)", t.time))
                 .xlabel("x")

@@ -191,12 +191,11 @@ impl FrameCapture {
     pub fn capture_with_figure(
         &mut self,
         plot: &Plot,
-        figure_size: Option<(f32, f32)>,
+        figure_size: Option<(f32, f32, u32)>, // (width, height, dpi)
     ) -> Result<&[u8]> {
-        let sized_plot = if let Some((fig_width, fig_height)) = figure_size {
-            // Calculate DPI to achieve target pixel dimensions with figure size
-            let dpi = (self.width as f32 / fig_width).max(self.height as f32 / fig_height);
-            plot.clone().size(fig_width, fig_height).dpi(dpi as u32)
+        let sized_plot = if let Some((fig_width, fig_height, dpi)) = figure_size {
+            // Use pre-calculated DPI for consistent dimensions
+            plot.clone().size(fig_width, fig_height).dpi(dpi)
         } else {
             // Standard behavior: just set pixel dimensions
             plot.clone().size_px(self.width, self.height)
@@ -206,9 +205,19 @@ impl FrameCapture {
         let image = sized_plot.render()?;
         let rgba_data = &image.pixels;
 
+        // Use actual rendered dimensions
+        let actual_pixels = (image.width * image.height) as usize;
+
+        // Resize buffer if needed (safety check - dimensions should match)
+        let required_size = actual_pixels * 3;
+        if self.buffer.len() != required_size {
+            self.buffer.resize(required_size, 0);
+            self.width = image.width;
+            self.height = image.height;
+        }
+
         // Convert RGBA to RGB
-        let pixels = (self.width * self.height) as usize;
-        for i in 0..pixels {
+        for i in 0..actual_pixels {
             self.buffer[i * 3] = rgba_data[i * 4]; // R
             self.buffer[i * 3 + 1] = rgba_data[i * 4 + 1]; // G
             self.buffer[i * 3 + 2] = rgba_data[i * 4 + 2]; // B
