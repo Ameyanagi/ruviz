@@ -49,3 +49,4 @@ AGENTS.md
 CLAUDE.md
 export_output/
 .playwright-mcp
+.playwright-mcp/
