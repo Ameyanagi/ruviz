@@ -3,41 +3,57 @@
 //! Run with: cargo run --features animation --example generate_animation_gallery
 //!
 //! This generates GIF animations in docs/images/ for documentation.
+//! Animations are generated in parallel for faster execution.
 
+use rayon::prelude::*;
 use ruviz::animation::{RecordConfig, easing};
 use ruviz::prelude::*;
 use ruviz::record;
 use std::f64::consts::PI;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn main() -> Result<()> {
-    println!("Generating animation gallery images...\n");
+    println!("Generating animation gallery images in parallel...\n");
 
     let output_dir = "docs/images";
     std::fs::create_dir_all(output_dir)?;
 
-    // Use max_resolution for matplotlib-style visual weight
-    let config = RecordConfig::new().max_resolution(1024, 768).framerate(30);
+    // Use smaller resolution for faster generation while maintaining quality
+    let config = RecordConfig::new().max_resolution(640, 480).framerate(30);
 
-    // 1. Basic sine wave animation
-    generate_sine_wave(output_dir, config.clone())?;
+    // Counter for progress
+    let completed = AtomicUsize::new(0);
+    let total = 7;
 
-    // 2. Growing scatter animation
-    generate_growing_scatter(output_dir, config.clone())?;
+    // Define all generators
+    let generators: Vec<(
+        &str,
+        Box<dyn Fn(&str, RecordConfig) -> Result<()> + Send + Sync>,
+    )> = vec![
+        ("sine wave", Box::new(generate_sine_wave)),
+        ("growing scatter", Box::new(generate_growing_scatter)),
+        ("animated bars", Box::new(generate_animated_bars)),
+        ("spiral", Box::new(generate_spiral)),
+        ("signal composition", Box::new(generate_signal_composition)),
+        ("wave interference", Box::new(generate_wave_interference)),
+        ("easing demo", Box::new(generate_easing_demo)),
+    ];
 
-    // 3. Animated bar chart
-    generate_animated_bars(output_dir, config.clone())?;
+    // Run all generators in parallel
+    let results: Vec<Result<()>> = generators
+        .into_par_iter()
+        .map(|(name, generator)| {
+            let result = generator(output_dir, config.clone());
+            let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
+            println!("  [{}/{}] Completed: {}", done, total, name);
+            result
+        })
+        .collect();
 
-    // 4. Spiral animation (polar coordinates)
-    generate_spiral(output_dir, config.clone())?;
-
-    // 5. Signal composition example
-    generate_signal_composition(output_dir, config.clone())?;
-
-    // 6. Wave interference animation (multiple series)
-    generate_wave_interference(output_dir, config.clone())?;
-
-    // 7. Easing animation (bouncing circle)
-    generate_easing_demo(output_dir, config)?;
+    // Check for errors
+    for result in results {
+        result?;
+    }
 
     println!("\nAll animation gallery images generated successfully!");
     Ok(())
