@@ -46,5 +46,6 @@ memory/
 plans/
 claudedocs/
 AGENTS.md
-CLAUDE.mdexport_output/
+CLAUDE.md
+export_output/
 .playwright-mcp

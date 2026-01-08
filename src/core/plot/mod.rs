@@ -8075,7 +8075,7 @@ impl Plot {
     ///
     /// # Returns
     ///
-    /// RGB pixel data as a Vec<u8> (width * height * 3 bytes)
+    /// RGB pixel data as a `Vec<u8>` (width * height * 3 bytes)
     #[cfg(feature = "animation")]
     pub fn render_frame(&self, width: u32, height: u32) -> Result<Vec<u8>> {
         // Create a sized version of the plot
@@ -8850,6 +8850,7 @@ impl PlotSeriesBuilder {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

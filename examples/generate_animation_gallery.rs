@@ -4,7 +4,7 @@
 //!
 //! This generates GIF animations in docs/images/ for documentation.
 
-use ruviz::animation::RecordConfig;
+use ruviz::animation::{RecordConfig, easing};
 use ruviz::prelude::*;
 use ruviz::record;
 use std::f64::consts::PI;
@@ -16,9 +16,7 @@ fn main() -> Result<()> {
     std::fs::create_dir_all(output_dir)?;
 
     // Use higher resolution for better text quality
-    let config = RecordConfig::new()
-        .dimensions(1024, 768)
-        .framerate(30);
+    let config = RecordConfig::new().dimensions(1024, 768).framerate(30);
 
     // 1. Basic sine wave animation
     generate_sine_wave(output_dir, config.clone())?;
@@ -33,7 +31,13 @@ fn main() -> Result<()> {
     generate_spiral(output_dir, config.clone())?;
 
     // 5. Signal composition example
-    generate_signal_composition(output_dir, config)?;
+    generate_signal_composition(output_dir, config.clone())?;
+
+    // 6. Wave interference animation (multiple series)
+    generate_wave_interference(output_dir, config.clone())?;
+
+    // 7. Easing animation (bouncing circle)
+    generate_easing_demo(output_dir, config)?;
 
     println!("\nAll animation gallery images generated successfully!");
     Ok(())
@@ -196,6 +200,95 @@ fn generate_signal_composition(output_dir: &str, config: RecordConfig) -> Result
                 .ylabel("Voltage (V)")
                 .xlim(0.0, 10.0)
                 .ylim(-2.5, 2.5)
+        }
+    )?;
+
+    println!("    -> {}", path);
+    Ok(())
+}
+
+/// Generate wave interference animation with multiple series
+fn generate_wave_interference(output_dir: &str, config: RecordConfig) -> Result<()> {
+    println!("  Generating wave interference animation...");
+
+    let path = format!("{}/animation_interference.gif", output_dir);
+
+    record!(
+        &path,
+        90,
+        config: config,
+        |t| {
+            let time = t.time;
+            let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
+
+            // Traveling wave
+            let y1: Vec<f64> = x.iter().map(|&xi| (xi - time * 2.0).sin()).collect();
+
+            // Standing wave (sum of two opposing waves)
+            let y2: Vec<f64> = x
+                .iter()
+                .map(|&xi| (xi - time * 2.0).sin() + (xi + time * 2.0).sin())
+                .collect();
+
+            // Damped wave
+            let y3: Vec<f64> = x
+                .iter()
+                .map(|&xi| (-xi * 0.1).exp() * (xi - time * 2.0).sin())
+                .collect();
+
+            Plot::new()
+                .line(&x, &y1)
+                .line(&x, &y2)
+                .line(&x, &y3)
+                .title("Wave Interference Patterns")
+                .xlabel("Position (x)")
+                .ylabel("Amplitude")
+                .xlim(0.0, 10.0)
+                .ylim(-2.5, 2.5)
+        }
+    )?;
+
+    println!("    -> {}", path);
+    Ok(())
+}
+
+/// Generate easing demo with bouncing circles
+fn generate_easing_demo(output_dir: &str, config: RecordConfig) -> Result<()> {
+    println!("  Generating easing demo animation...");
+
+    let path = format!("{}/animation_easing.gif", output_dir);
+
+    record!(
+        &path,
+        90,
+        config: config,
+        |t| {
+            let time = t.time;
+            let cycle = (time % 3.0) / 3.0; // 0 to 1 over 3 seconds
+
+            // Different easing functions
+            let linear = cycle;
+            let ease_out = easing::ease_out_cubic(cycle);
+            let elastic = easing::ease_out_elastic(cycle);
+            let bounce = easing::ease_out_bounce(cycle);
+
+            // Create scatter points for each easing type
+            let x = vec![1.0, 2.0, 3.0, 4.0];
+            let y = vec![
+                linear * 8.0,
+                ease_out * 8.0,
+                elastic * 8.0,
+                bounce * 8.0,
+            ];
+
+            // Add labels as title
+            Plot::new()
+                .scatter(&x, &y)
+                .title(format!("Easing Functions (t = {:.2})", cycle))
+                .xlabel("Linear | EaseOut | Elastic | Bounce")
+                .ylabel("Progress")
+                .xlim(0.0, 5.0)
+                .ylim(-1.0, 10.0)
         }
     )?;
 

@@ -284,6 +284,37 @@ name = "reactive_example"
 path = "examples/reactive_example.rs"
 required-features = ["interactive"]
 
+# Animation examples (require animation feature)
+[[example]]
+name = "animation_basic"
+path = "examples/animation_basic.rs"
+required-features = ["animation"]
+
+[[example]]
+name = "animation_easing"
+path = "examples/animation_easing.rs"
+required-features = ["animation"]
+
+[[example]]
+name = "animation_reactive"
+path = "examples/animation_reactive.rs"
+required-features = ["animation"]
+
+[[example]]
+name = "animation_simple"
+path = "examples/animation_simple.rs"
+required-features = ["animation"]
+
+[[example]]
+name = "animation_wave"
+path = "examples/animation_wave.rs"
+required-features = ["animation"]
+
+[[example]]
+name = "generate_animation_gallery"
+path = "examples/generate_animation_gallery.rs"
+required-features = ["animation"]
+
 # Benchmarks
 [[bench]]
 name = "memory_pool_benchmarks"

@@ -23,6 +23,7 @@ use std::ops::Index;
 use std::path::Path;
 
 use super::interpolation::{EasingFn, easing};
+#[allow(deprecated)]
 use super::recorder::{IntoFrameCount, RecordConfig, record_simple_with_config};
 use super::tick::Tick;
 use crate::core::{Plot, Result};
@@ -261,6 +262,7 @@ impl Animation {
     ///         Plot::new().scatter(&[values["x"]], &[0.0])
     ///     })?;
     /// ```
+    #[allow(deprecated)]
     pub fn record<P, F, R>(self, path: P, mut frame_fn: F) -> Result<()>
     where
         P: AsRef<Path>,
@@ -289,6 +291,7 @@ impl Animation {
     }
 
     /// Record with explicit frame count or duration
+    #[allow(deprecated)]
     pub fn record_frames<P, D, F, R>(self, path: P, frames: D, mut frame_fn: F) -> Result<()>
     where
         P: AsRef<Path>,

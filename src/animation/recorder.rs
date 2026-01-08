@@ -3,6 +3,10 @@
 //! Provides the main `record()` function and related utilities for
 //! creating animated plots.
 //!
+// Allow deprecated usage within this module - it contains backward-compatible
+// wrapper functions that internally use deprecated APIs
+#![allow(deprecated)]
+//!
 //! # Simplified API
 //!
 //! The simplified API reduces boilerplate for common animation tasks:

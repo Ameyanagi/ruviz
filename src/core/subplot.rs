@@ -455,6 +455,7 @@ pub fn subplots_default(rows: usize, cols: usize) -> Result<SubplotFigure> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

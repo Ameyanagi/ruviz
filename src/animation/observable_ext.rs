@@ -34,6 +34,7 @@ use crate::data::observable::{Observable, SubscriberId};
 ///     // Use current value...
 /// }
 /// ```
+#[allow(clippy::type_complexity)]
 pub struct AnimatedObservable<T> {
     /// Current interpolated value
     current: Observable<T>,

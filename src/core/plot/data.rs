@@ -6,7 +6,7 @@
 //!
 //! # Overview
 //!
-//! - `PlotData` - Wraps numeric data (Vec<f64>) that can be static or reactive
+//! - `PlotData` - Wraps numeric data (`Vec<f64>`) that can be static or reactive
 //! - `PlotText` - Wraps text (String) that can be static or reactive
 //! - `IntoPlotData` - Trait for converting various types into PlotData
 //!
@@ -59,7 +59,7 @@ pub enum PlotData {
 }
 
 impl PlotData {
-    /// Resolve the data to a concrete Vec<f64> at the given time.
+    /// Resolve the data to a concrete `Vec<f64>` at the given time.
     ///
     /// - `Static` - Returns a clone of the stored data
     /// - `Temporal` - Evaluates the signal at the given time

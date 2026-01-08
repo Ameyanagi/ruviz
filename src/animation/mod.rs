@@ -84,6 +84,7 @@ pub mod encoders;
 pub use encoders::{Codec, Encoder, Quality};
 pub use interpolation::{Interpolate, easing};
 pub use observable_ext::{AnimatedObservable, AnimationGroup, Tickable};
+#[allow(deprecated)]
 pub use recorder::{
     _record_duration,
     _record_duration_fps,
@@ -95,7 +96,7 @@ pub use recorder::{
     DurationExt,
     IntoFrameCount,
     RecordConfig,
-    // Original API
+    // Original API (deprecated but kept for backwards compatibility)
     record,
     record_animated,
     record_animated_with_config,
@@ -104,7 +105,7 @@ pub use recorder::{
     // Reactive plot recording
     record_plot,
     record_plot_with_config,
-    // Simplified API
+    // Simplified API (deprecated but kept for backwards compatibility)
     record_simple,
     record_simple_with_config,
     record_with_config,

@@ -573,8 +573,7 @@ impl TextRenderer {
                         let glyph_y = glyph_y_calc as u32;
 
                         if glyph_x < text_width_2x && glyph_y < text_height_2x {
-                            let idx =
-                                glyph_y as usize * text_width_2x as usize + glyph_x as usize;
+                            let idx = glyph_y as usize * text_width_2x as usize + glyph_x as usize;
                             if idx < temp_pixmap.pixels().len() {
                                 if let Some(rgba_pixel) = PremultipliedColorU8::from_rgba(
                                     glyph_color.r(),
@@ -612,8 +611,7 @@ impl TextRenderer {
                     let new_y = text_width_2x - 1 - orig_x;
 
                     if new_x < rotated_width_2x && new_y < rotated_height_2x {
-                        let new_idx =
-                            new_y as usize * rotated_width_2x as usize + new_x as usize;
+                        let new_idx = new_y as usize * rotated_width_2x as usize + new_x as usize;
                         if new_idx < rotated_pixmap_2x.pixels().len() {
                             rotated_pixmap_2x.pixels_mut()[new_idx] = src_pixel;
                         }
@@ -656,7 +654,7 @@ impl TextRenderer {
                                 r_sum += (pixel.red() as u32 * 255) / a.max(1);
                                 g_sum += (pixel.green() as u32 * 255) / a.max(1);
                                 b_sum += (pixel.blue() as u32 * 255) / a.max(1);
-                                a_sum += a as u32;
+                                a_sum += a;
                                 count += 1;
                             }
                         }
