@@ -168,6 +168,55 @@ impl FrameCapture {
         Ok(&self.buffer)
     }
 
+    /// Capture a frame with figure-preserving mode
+    ///
+    /// When `figure_size` is provided, renders the plot with that figure size
+    /// and automatically calculates DPI to achieve the target pixel dimensions.
+    /// This produces animation frames with the same visual styling as static plots.
+    ///
+    /// # Arguments
+    ///
+    /// * `plot` - The plot to capture
+    /// * `figure_size` - Optional (width, height) in inches. If provided, uses figure-preserving mode.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Without figure preservation (lighter styling)
+    /// let frame = capture.capture(&plot)?;
+    ///
+    /// // With figure preservation (matches static plot styling)
+    /// let frame = capture.capture_with_figure(&plot, Some((6.4, 4.8)))?;
+    /// ```
+    pub fn capture_with_figure(
+        &mut self,
+        plot: &Plot,
+        figure_size: Option<(f32, f32)>,
+    ) -> Result<&[u8]> {
+        let sized_plot = if let Some((fig_width, fig_height)) = figure_size {
+            // Calculate DPI to achieve target pixel dimensions with figure size
+            let dpi = (self.width as f32 / fig_width).max(self.height as f32 / fig_height);
+            plot.clone().size(fig_width, fig_height).dpi(dpi as u32)
+        } else {
+            // Standard behavior: just set pixel dimensions
+            plot.clone().size_px(self.width, self.height)
+        };
+
+        // Render plot to RGBA buffer
+        let image = sized_plot.render()?;
+        let rgba_data = &image.pixels;
+
+        // Convert RGBA to RGB
+        let pixels = (self.width * self.height) as usize;
+        for i in 0..pixels {
+            self.buffer[i * 3] = rgba_data[i * 4]; // R
+            self.buffer[i * 3 + 1] = rgba_data[i * 4 + 1]; // G
+            self.buffer[i * 3 + 2] = rgba_data[i * 4 + 2]; // B
+        }
+
+        Ok(&self.buffer)
+    }
+
     /// Capture with explicit dimensions
     ///
     /// Resizes if necessary before capturing.

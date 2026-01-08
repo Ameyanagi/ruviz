@@ -1082,6 +1082,71 @@ impl Plot {
         self
     }
 
+    /// Set maximum output resolution while preserving figure aspect ratio
+    ///
+    /// This method provides intuitive pixel-based sizing for screen outputs
+    /// (PNG, GIF, video) while maintaining consistent visual styling with
+    /// matplotlib/seaborn conventions.
+    ///
+    /// # How it works
+    ///
+    /// The `max_width` and `max_height` define a bounding box. The output
+    /// dimensions are calculated to fit within this box while preserving
+    /// the figure's aspect ratio. The internal DPI is automatically set
+    /// to achieve the target pixel size.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Fit within 1920×1080 (e.g., for HD video)
+    /// // Default 4:3 figure → outputs 1440×1080 (height-constrained)
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .max_resolution(1920, 1080)
+    ///     .save("plot.png")?;
+    ///
+    /// // Fit within 1920×1440 (exact fit for 4:3)
+    /// // → outputs 1920×1440 at 300 DPI
+    /// Plot::new()
+    ///     .line(&x, &y)
+    ///     .max_resolution(1920, 1440)
+    ///     .save("hires.png")?;
+    /// ```
+    ///
+    /// # Comparison with `dpi()`
+    ///
+    /// - Use `max_resolution()` for screen outputs where you care about pixel dimensions
+    /// - Use `dpi()` for print outputs where you care about physical size and resolution
+    ///
+    /// Both produce identical results when properly configured:
+    /// - `.max_resolution(1920, 1440)` ≈ `.dpi(300)` for default 6.4×4.8 figure
+    pub fn max_resolution(mut self, max_width: u32, max_height: u32) -> Self {
+        let fig_width = self.display.config.figure.width;
+        let fig_height = self.display.config.figure.height;
+        let aspect = fig_width / fig_height;
+
+        // Try fitting to max_width
+        let by_width = (max_width, (max_width as f32 / aspect).round() as u32);
+
+        // Try fitting to max_height
+        let by_height = ((max_height as f32 * aspect).round() as u32, max_height);
+
+        // Choose the one that fits within both constraints
+        let (width, height) = if by_width.1 <= max_height {
+            by_width // Width-constrained
+        } else {
+            by_height // Height-constrained
+        };
+
+        // Calculate DPI to achieve these dimensions with current figure size
+        let dpi = width as f32 / fig_width;
+
+        self.display.config.figure.dpi = dpi;
+        self.display.dpi = dpi as u32;
+        self.display.dimensions = (width, height);
+        self
+    }
+
     /// Apply a style preset
     ///
     /// Style presets configure typography, line widths, and spacing
@@ -5568,7 +5633,38 @@ impl Plot {
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
-        let plot_area = calculate_plot_area_dpi(scaled_width, scaled_height, self.dpi_scale());
+        let dpi = self.display.dpi as f32;
+
+        // Calculate data bounds across all series (sequential - small operation)
+        let bounds = self.calculate_data_bounds()?;
+
+        // Compute content-driven layout FIRST for consistent positioning
+        let content = self.create_plot_content(bounds.2, bounds.3);
+        let layout_config = LayoutConfig {
+            edge_buffer_pt: 8.0,
+            center_plot: true,
+            max_margin_fraction: 0.4,
+        };
+        let layout_calculator = LayoutCalculator::new(layout_config);
+        let layout = layout_calculator.compute(
+            (scaled_width, scaled_height),
+            &content,
+            &self.display.config.typography,
+            &self.display.config.spacing,
+            dpi,
+        );
+
+        // Convert layout plot_area to tiny_skia::Rect for series rendering
+        let plot_area = tiny_skia::Rect::from_ltrb(
+            layout.plot_area.left,
+            layout.plot_area.top,
+            layout.plot_area.right,
+            layout.plot_area.bottom,
+        )
+        .unwrap_or_else(|| {
+            // Fallback to simple calculation if layout rect is invalid
+            calculate_plot_area_dpi(scaled_width, scaled_height, self.dpi_scale())
+        });
 
         // Convert to parallel renderer format
         let parallel_plot_area = PlotArea {
@@ -5577,9 +5673,6 @@ impl Plot {
             top: plot_area.top(),
             bottom: plot_area.bottom(),
         };
-
-        // Calculate data bounds across all series (sequential - small operation)
-        let bounds = self.calculate_data_bounds()?;
         let data_bounds = DataBounds {
             x_min: bounds.0,
             x_max: bounds.1,
@@ -6315,20 +6408,62 @@ impl Plot {
             }
         }
 
+        // Draw tick labels (only for Cartesian plots)
+        if self.needs_cartesian_axes() {
+            let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
+            renderer.draw_axis_labels_at(
+                &layout.plot_area,
+                bounds.0,
+                bounds.1,
+                bounds.2,
+                bounds.3,
+                &x_ticks,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.display.theme.foreground,
+                dpi,
+            )?;
+        }
+
+        // Draw title if present
+        if let Some(ref pos) = layout.title_pos {
+            if let Some(ref title) = self.display.title {
+                let title_str = title.resolve(0.0);
+                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
+            }
+        }
+
+        // Draw xlabel if present (only for Cartesian plots)
+        if self.needs_cartesian_axes() {
+            if let Some(ref pos) = layout.xlabel_pos {
+                if let Some(ref xlabel) = self.display.xlabel {
+                    let xlabel_str = xlabel.resolve(0.0);
+                    renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
+                }
+            }
+
+            // Draw ylabel if present
+            if let Some(ref pos) = layout.ylabel_pos {
+                if let Some(ref ylabel) = self.display.ylabel {
+                    let ylabel_str = ylabel.resolve(0.0);
+                    renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
+                }
+            }
+        }
+
         // Record performance statistics
         let duration = start_time.elapsed();
         let total_points = self.calculate_total_points();
 
-        // Log performance info (could be optional/debug in production)
-        let stats = self.render.parallel_renderer.performance_stats();
-        println!(
-            "⚡ Parallel: {} series, {} points in {:.1}ms ({:.1}x speedup, {} threads)",
-            self.series_mgr.series.len(),
-            total_points,
-            duration.as_millis(),
-            stats.estimated_speedup,
-            stats.configured_threads
-        );
+        // Performance stats available via self.render.parallel_renderer.performance_stats()
+        // Uncomment for debugging:
+        // let stats = self.render.parallel_renderer.performance_stats();
+        // println!("⚡ Parallel: {} series, {} points in {:.1}ms ({:.1}x speedup, {} threads)",
+        //     self.series_mgr.series.len(), total_points, duration.as_millis(),
+        //     stats.estimated_speedup, stats.configured_threads);
+        let _ = (start_time, total_points); // suppress unused warnings
 
         // Convert renderer output to Image
         Ok(renderer.into_image())
@@ -8633,6 +8768,14 @@ impl PlotSeriesBuilder {
         self
     }
 
+    /// Set maximum output resolution while preserving figure aspect ratio
+    ///
+    /// See [`Plot::max_resolution`] for details.
+    pub fn max_resolution(mut self, max_width: u32, max_height: u32) -> Self {
+        self.plot = self.plot.max_resolution(max_width, max_height);
+        self
+    }
+
     /// Render the plot
     pub fn render(self) -> Result<Image> {
         self.end_series().render()
@@ -9586,5 +9729,64 @@ mod tests {
         let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
         let result = plot.render_to_renderer(&mut renderer, 96.0);
         assert!(result.is_ok());
+    }
+
+    // ========== max_resolution Tests ==========
+
+    #[test]
+    fn test_max_resolution_height_constrained() {
+        // Default 4:3 figure (6.4x4.8) fitting into 1920x1080 (16:9)
+        // Should be height-constrained → 1440x1080
+        let plot = Plot::new().max_resolution(1920, 1080);
+
+        assert_eq!(plot.display.dimensions, (1440, 1080));
+        // DPI should be 1080 / 4.8 = 225
+        assert!((plot.display.config.figure.dpi - 225.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_max_resolution_width_constrained() {
+        // 4:3 figure fitting into 800x800 (square)
+        // Should be width-constrained → 800x600
+        let plot = Plot::new().max_resolution(800, 800);
+
+        assert_eq!(plot.display.dimensions, (800, 600));
+        // DPI should be 800 / 6.4 = 125
+        assert!((plot.display.config.figure.dpi - 125.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_max_resolution_exact_fit() {
+        // 4:3 figure fitting into 1920x1440 (exactly 4:3)
+        // Should fit exactly → 1920x1440
+        let plot = Plot::new().max_resolution(1920, 1440);
+
+        assert_eq!(plot.display.dimensions, (1920, 1440));
+        // DPI should be 1920 / 6.4 = 300
+        assert!((plot.display.config.figure.dpi - 300.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_max_resolution_custom_figure() {
+        // 16:9 figure fitting into 1920x1080
+        let plot = Plot::new().size(16.0, 9.0).max_resolution(1920, 1080);
+
+        // Should fit exactly for 16:9
+        assert_eq!(plot.display.dimensions, (1920, 1080));
+        // DPI should be 1920 / 16.0 = 120
+        assert!((plot.display.config.figure.dpi - 120.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_max_resolution_equivalent_to_dpi() {
+        // max_resolution(1920, 1440) should produce same result as dpi(300)
+        let plot_max_res = Plot::new().max_resolution(1920, 1440);
+        let plot_dpi = Plot::new().dpi(300);
+
+        assert_eq!(plot_max_res.display.dimensions, plot_dpi.display.dimensions);
+        assert!(
+            (plot_max_res.display.config.figure.dpi - plot_dpi.display.config.figure.dpi).abs()
+                < 1.0
+        );
     }
 }

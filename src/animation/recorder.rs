@@ -140,6 +140,11 @@ impl DurationExt for i32 {
 // Original API (preserved for backwards compatibility)
 // ============================================================================
 
+/// Default figure width in inches (matplotlib default)
+pub const DEFAULT_FIGURE_WIDTH: f32 = 6.4;
+/// Default figure height in inches (matplotlib default)
+pub const DEFAULT_FIGURE_HEIGHT: f32 = 4.8;
+
 /// Configuration for animation recording
 #[derive(Clone, Debug)]
 pub struct RecordConfig {
@@ -155,6 +160,12 @@ pub struct RecordConfig {
     pub progress: bool,
     /// Automatically update plot limits per frame
     pub update_limits: bool,
+    /// When true, render with figure size proportions (matplotlib style)
+    pub preserve_figure: bool,
+    /// Figure width in inches for preserve_figure mode
+    pub figure_width: f32,
+    /// Figure height in inches for preserve_figure mode
+    pub figure_height: f32,
 }
 
 impl Default for RecordConfig {
@@ -166,6 +177,9 @@ impl Default for RecordConfig {
             quality: Quality::Medium,
             progress: false,
             update_limits: false,
+            preserve_figure: false,
+            figure_width: DEFAULT_FIGURE_WIDTH,
+            figure_height: DEFAULT_FIGURE_HEIGHT,
         }
     }
 }
@@ -204,6 +218,103 @@ impl RecordConfig {
     /// Enable automatic limit updates per frame
     pub fn with_auto_limits(mut self) -> Self {
         self.update_limits = true;
+        self
+    }
+
+    /// Set maximum output resolution while preserving figure aspect ratio
+    ///
+    /// This method provides intuitive pixel-based sizing for animations while
+    /// maintaining consistent visual styling with static plots.
+    ///
+    /// # How it works
+    ///
+    /// The `max_width` and `max_height` define a bounding box. The output
+    /// dimensions are calculated to fit within this box while preserving
+    /// the figure's aspect ratio (default 4:3). This also enables
+    /// `preserve_figure` mode for consistent styling.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use ruviz::animation::RecordConfig;
+    ///
+    /// // Fit within 1920×1080 (e.g., for HD video)
+    /// // Default 4:3 figure → outputs 1440×1080 (height-constrained)
+    /// let config = RecordConfig::new()
+    ///     .max_resolution(1920, 1080);
+    ///
+    /// // For exact 4:3 output at 1024×768
+    /// let config = RecordConfig::new()
+    ///     .max_resolution(1024, 768);  // exact fit
+    /// ```
+    ///
+    /// # Comparison with `dimensions()`
+    ///
+    /// - Use `max_resolution()` when you want animations that look like static plots
+    /// - Use `dimensions()` for exact pixel control (may result in lighter styling)
+    pub fn max_resolution(mut self, max_width: u32, max_height: u32) -> Self {
+        let aspect = self.figure_width / self.figure_height;
+
+        // Try fitting to max_width
+        let by_width = (max_width, (max_width as f32 / aspect).round() as u32);
+
+        // Try fitting to max_height
+        let by_height = ((max_height as f32 * aspect).round() as u32, max_height);
+
+        // Choose the one that fits within both constraints
+        let (width, height) = if by_width.1 <= max_height {
+            by_width // Width-constrained
+        } else {
+            by_height // Height-constrained
+        };
+
+        self.width = width;
+        self.height = height;
+        self.preserve_figure = true;
+        self
+    }
+
+    /// Preserve figure size proportions when rendering
+    ///
+    /// When enabled, animation frames are rendered with the same figure
+    /// dimensions as static plots (default 6.4×4.8 inches), with DPI
+    /// calculated to achieve the target pixel dimensions.
+    ///
+    /// This makes animations visually consistent with static plots that
+    /// use `.dpi()` or `.max_resolution()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ruviz::animation::RecordConfig;
+    ///
+    /// let config = RecordConfig::new()
+    ///     .dimensions(1920, 1080)
+    ///     .preserve_figure_size();  // Use 6.4×4.8 figure internally
+    /// ```
+    pub fn preserve_figure_size(mut self) -> Self {
+        self.preserve_figure = true;
+        self
+    }
+
+    /// Set custom figure dimensions for preserve_figure mode
+    ///
+    /// By default, the figure size is 6.4×4.8 inches (matplotlib's default).
+    /// Use this method to customize the figure proportions.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ruviz::animation::RecordConfig;
+    ///
+    /// // Use 16:9 figure for widescreen video
+    /// let config = RecordConfig::new()
+    ///     .figure_size(16.0, 9.0)
+    ///     .max_resolution(1920, 1080);  // exact fit for 16:9
+    /// ```
+    pub fn figure_size(mut self, width: f32, height: f32) -> Self {
+        self.figure_width = width.max(1.0);
+        self.figure_height = height.max(1.0);
         self
     }
 
@@ -311,6 +422,13 @@ where
     let mut capture = FrameCapture::new(config.width, config.height);
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
+    // Determine figure size for capture
+    let figure_size = if config.preserve_figure {
+        Some((config.figure_width, config.figure_height))
+    } else {
+        None
+    };
+
     let frames_iter = frames.into_iter();
 
     // Try to get size hint for progress reporting
@@ -319,7 +437,7 @@ where
     for item in frames_iter {
         let tick = ticker.tick_immediate();
         let plot: Plot = frame_fn(item, &tick).into();
-        let frame_data = capture.capture(&plot)?;
+        let frame_data = capture.capture_with_figure(&plot, figure_size)?;
         stream.record_frame(frame_data, &tick)?;
     }
 
@@ -462,6 +580,13 @@ where
     let mut capture = FrameCapture::new(config.width, config.height);
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
+    // Determine figure size for capture
+    let figure_size = if config.preserve_figure {
+        Some((config.figure_width, config.figure_height))
+    } else {
+        None
+    };
+
     let delta_time = 1.0 / config.framerate as f64;
     let mut frame_count = 0;
 
@@ -480,7 +605,7 @@ where
 
         // Render frame
         let plot: Plot = frame_fn(&tick).into();
-        let frame_data = capture.capture(&plot)?;
+        let frame_data = capture.capture_with_figure(&plot, figure_size)?;
         stream.record_frame(frame_data, &tick)?;
 
         frame_count += 1;
@@ -587,10 +712,17 @@ where
     let mut capture = FrameCapture::new(config.width, config.height);
     let mut ticker = TickGenerator::new(config.framerate as f64);
 
+    // Determine figure size for capture
+    let figure_size = if config.preserve_figure {
+        Some((config.figure_width, config.figure_height))
+    } else {
+        None
+    };
+
     for _ in 0..total_frames {
         let tick = ticker.tick_immediate();
         let plot: Plot = frame_fn(&tick).into();
-        let frame_data = capture.capture(&plot)?;
+        let frame_data = capture.capture_with_figure(&plot, figure_size)?;
         stream.record_frame(frame_data, &tick)?;
     }
 
@@ -665,7 +797,16 @@ pub fn record_plot_with_config<P: AsRef<Path>>(
         let tick = ticker.tick_immediate();
 
         // Render plot at this time (resolves reactive data)
-        let sized_plot = plot.clone().size_px(width, height);
+        let sized_plot = if config.preserve_figure {
+            // Calculate DPI to achieve target dimensions with figure size
+            let dpi =
+                (width as f32 / config.figure_width).max(height as f32 / config.figure_height);
+            plot.clone()
+                .size(config.figure_width, config.figure_height)
+                .dpi(dpi as u32)
+        } else {
+            plot.clone().size_px(width, height)
+        };
         let image = sized_plot.render_at(time)?;
 
         // Convert to frame data and record
@@ -776,6 +917,73 @@ mod tests {
         assert_eq!(config.framerate, 60);
         assert!(config.progress);
         assert!(config.update_limits);
+    }
+
+    #[test]
+    fn test_record_config_max_resolution_height_constrained() {
+        // 4:3 figure (6.4x4.8) fitting into 1920x1080 (16:9)
+        // Should be height-constrained → 1440x1080
+        let config = RecordConfig::new().max_resolution(1920, 1080);
+
+        assert_eq!(config.width, 1440);
+        assert_eq!(config.height, 1080);
+        assert!(config.preserve_figure);
+    }
+
+    #[test]
+    fn test_record_config_max_resolution_width_constrained() {
+        // 4:3 figure fitting into 800x800 (square)
+        // Should be width-constrained → 800x600
+        let config = RecordConfig::new().max_resolution(800, 800);
+
+        assert_eq!(config.width, 800);
+        assert_eq!(config.height, 600);
+        assert!(config.preserve_figure);
+    }
+
+    #[test]
+    fn test_record_config_max_resolution_exact_fit() {
+        // 4:3 figure fitting into 1024x768 (exactly 4:3)
+        // Should fit exactly → 1024x768
+        let config = RecordConfig::new().max_resolution(1024, 768);
+
+        assert_eq!(config.width, 1024);
+        assert_eq!(config.height, 768);
+        assert!(config.preserve_figure);
+    }
+
+    #[test]
+    fn test_record_config_max_resolution_custom_figure() {
+        // 16:9 figure fitting into 1920x1080
+        // Should fit exactly → 1920x1080
+        let config = RecordConfig::new()
+            .figure_size(16.0, 9.0)
+            .max_resolution(1920, 1080);
+
+        assert_eq!(config.width, 1920);
+        assert_eq!(config.height, 1080);
+        assert!(config.preserve_figure);
+    }
+
+    #[test]
+    fn test_record_config_preserve_figure_size() {
+        let config = RecordConfig::new()
+            .dimensions(1920, 1080)
+            .preserve_figure_size();
+
+        assert_eq!(config.width, 1920);
+        assert_eq!(config.height, 1080);
+        assert!(config.preserve_figure);
+        assert!((config.figure_width - 6.4).abs() < 0.001);
+        assert!((config.figure_height - 4.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_record_config_figure_size() {
+        let config = RecordConfig::new().figure_size(16.0, 9.0);
+
+        assert!((config.figure_width - 16.0).abs() < 0.001);
+        assert!((config.figure_height - 9.0).abs() < 0.001);
     }
 
     #[test]
