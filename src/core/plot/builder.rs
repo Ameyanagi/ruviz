@@ -493,7 +493,7 @@ where
 
     /// Set maximum output resolution while preserving figure aspect ratio
     ///
-    /// This method forwards to the inner Plot. See [`Plot::max_resolution`] for details.
+    /// This method forwards to the inner Plot. See [`super::Plot::max_resolution`] for details.
     pub fn max_resolution(mut self, max_width: u32, max_height: u32) -> Self {
         self.plot = self.plot.max_resolution(max_width, max_height);
         self
