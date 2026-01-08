@@ -5,7 +5,7 @@
 [![Crates.io](https://img.shields.io/crates/v/ruviz)](https://crates.io/crates/ruviz)
 [![Documentation](https://docs.rs/ruviz/badge.svg)](https://docs.rs/ruviz)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
-[![Build Status](https://img.shields.io/github/workflow/status/ruviz/ruviz/CI)](https://github.com/ruviz/ruviz/actions)
+[![CI](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml/badge.svg)](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml)
 
 ## Quick Start
 
@@ -17,7 +17,7 @@ use ruviz::simple::*;
 let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
 let y: Vec<f64> = x.iter().map(|&x| x * x).collect();
 
-// One line with automatic optimization
+// One line to create a plot
 line_plot_with_title(&x, &y, "Quadratic Function", "plot.png")?;
 ```
 
@@ -34,7 +34,6 @@ Plot::new()
     .title("Quadratic Function")
     .xlabel("x")
     .ylabel("y = x²")
-    .auto_optimize()  // Intelligent backend selection
     .save("plot.png")?;
 ```
 
@@ -42,19 +41,13 @@ Plot::new()
 
 ## Features
 
-### 🚀 Performance First
-- **<100ms** for 100K points with parallel rendering
-- **<1s** for 1M points with SIMD optimization
-- **<2s** for 100M+ points with DataShader aggregation
-- Zero-copy data handling with ndarray/polars integration
-
 ### 🛡️ Safety & Quality
 - **Zero unsafe** in public API
 - Strong type system prevents runtime errors
 - Comprehensive error handling with `Result` types
 - Memory-safe by design
 
-### 📊 Rich Plot Types (30+)
+### 📊 Rich Plot Types (25+)
 **Basic**: Line, Scatter, Bar, Histogram, Box Plot, Heatmap
 **Distribution**: Violin, KDE (1D/2D), Boxen, ECDF, Strip, Swarm
 **Categorical**: Grouped Bar, Stacked Bar, Horizontal Bar
@@ -73,16 +66,15 @@ Plot::new()
 - **Multiple formats**: PNG, SVG *(SVG in development)*
 - **Professional themes**: Light, Dark, Publication, Seaborn-style
 - **Custom styling**: Colors, fonts, markers, line styles
-- **Unicode text**: Full UTF-8 support with cosmic-text
+- **International text**: Full UTF-8 support (Japanese, Chinese, Korean, etc.) with cosmic-text
 
 ### ⚡ Advanced Features
-- **Auto-optimization**: Intelligent backend selection based on data size
 - **Simple API**: One-liner functions for quick plotting
-- **Parallel rendering**: Multi-threaded for large datasets
-- **GPU acceleration**: Optional wgpu backend for real-time
-- **Interactive plots**: Optional winit integration
-- **Memory optimization**: Pooled buffers, adaptive strategies
-- **Cross-platform**: Linux, macOS, Windows, WASM
+- **Parallel rendering**: Multi-threaded for large datasets (rayon)
+- **GPU acceleration**: Optional wgpu backend (experimental)
+- **Interactive plots**: Optional winit window integration
+- **Animation**: GIF export with `record!` macro and easing functions
+- **Cross-platform**: Linux, macOS, Windows
 
 ## Installation
 
@@ -102,16 +94,18 @@ Choose features based on your needs:
 ruviz = { version = "0.1", features = ["parallel", "simd"] }
 ```
 
-| Feature | Description | Use When | Compile Time |
-|---------|-------------|----------|--------------|
-| `default` | ndarray + parallel | General use | +5s |
-| `parallel` | Multi-threaded rendering | >10K points | +3s |
-| `simd` | Vectorized transforms | >100K points | +1s |
-| `gpu` | GPU acceleration | Real-time/interactive | +30s |
-| `interactive` | winit window support | Interactive plots | +15s |
-| `ndarray_support` | ndarray types | Scientific computing | +2s |
-| `polars_support` | DataFrame support | Data analysis | +10s |
-| `full` | All features | Power users | +45s |
+| Feature | Description | Use When |
+|---------|-------------|----------|
+| `default` | ndarray + parallel | General use |
+| `parallel` | Multi-threaded rendering | Large datasets |
+| `simd` | Vectorized transforms | Performance-critical |
+| `animation` | GIF animation export | Animated plots |
+| `gpu` | GPU acceleration (experimental) | Real-time rendering |
+| `interactive` | winit window support | Interactive plots |
+| `ndarray_support` | ndarray types | Scientific computing |
+| `polars_support` | DataFrame support | Data analysis |
+| `pdf` | PDF export | Publication output |
+| `full` | All features | Power users |
 
 For minimal builds: `default-features = false`
 
@@ -157,61 +151,62 @@ Plot::new()
 ```rust
 use ruviz::prelude::*;
 
-let (mut fig, axes) = subplots(2, 2)?;
+let plot1 = Plot::new().line(&x, &y).title("Line").end_series();
+let plot2 = Plot::new().scatter(&x, &y).title("Scatter").end_series();
+let plot3 = Plot::new().bar(&["A", "B", "C"], &[1.0, 2.0, 3.0]).title("Bar").end_series();
+let plot4 = Plot::new().histogram(&data).title("Histogram").end_series();
 
-axes[0][0].line(&x, &y_linear).title("Linear");
-axes[0][1].scatter(&x, &y_scatter).title("Scatter");
-axes[1][0].bar(&categories, &values).title("Bar Chart");
-axes[1][1].histogram(&data).title("Distribution");
-
-fig.suptitle("Scientific Analysis")
+subplots(2, 2, 800, 600)?
+    .suptitle("Scientific Analysis")
+    .subplot(0, 0, plot1)?
+    .subplot(0, 1, plot2)?
+    .subplot(1, 0, plot3)?
+    .subplot(1, 1, plot4)?
     .save("subplots.png")?;
 ```
 
-### Large Dataset with Auto-Optimization
+### Large Dataset
 
 ```rust
 use ruviz::prelude::*;
 
-// 100K points - automatically uses parallel rendering
+// 100K points with parallel rendering (enable "parallel" feature)
 let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
 let y: Vec<f64> = x.iter().map(|&x| x.sin()).collect();
 
 Plot::new()
-    .line(&x, &y)  // Automatically optimized for size
+    .line(&x, &y)
     .title("Large Dataset")
-    .save("large.png")?;  // Renders in <100ms
+    .save("large.png")?;
 ```
 
-## Performance
+### Animation
 
-Measured on AMD Ryzen 9 5950X, 64GB RAM, Ubuntu 22.04:
+```rust
+use ruviz::prelude::*;
+use ruviz::animation::RecordConfig;
+use ruviz::record;
 
-| Dataset Size | Render Time | Backend | Status |
-|--------------|-------------|---------|--------|
-| 1K points | 5ms | Default (Skia) | ✅ |
-| 10K points | 18ms | Default | ✅ |
-| 100K points | 85ms | Parallel | ✅ |
-| 1M points | 720ms | Parallel + SIMD | ✅ |
-| 100M points | 1.8s | DataShader | ✅ |
+let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
-See [Performance Guide](docs/performance/PERFORMANCE.md) for detailed benchmarks.
+record!(
+    "wave.gif",
+    2 secs,
+    config: config,
+    |t| {
+        let phase = t.time * 2.0 * std::f64::consts::PI;
+        let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
+        Plot::new()
+            .line(&x, &y)
+            .title(format!("Wave Animation (t={:.2}s)", t.time))
+            .xlim(0.0, 10.0)
+            .ylim(-1.5, 1.5)
+    }
+)?;
+```
 
-## Backend Selection
-
-ruviz provides multiple rendering backends optimized for different scenarios:
-
-| Dataset Size | Recommended Backend | How to Enable |
-|--------------|-------------------|---------------|
-| <10K points | Default (Skia) | Automatic |
-| 10K-100K | Parallel | `features = ["parallel"]` |
-| 100K-1M | Parallel + SIMD | `features = ["parallel", "simd"]` |
-| >1M points | DataShader | Automatic aggregation |
-| Interactive | GPU | `features = ["gpu", "interactive"]` |
-
-**Coming soon**: Auto-optimization with `.auto_optimize()` to automatically select the best backend.
-
-See [Backend Guide](docs/guide/07_backends.md) for detailed selection criteria.
+![Animation Example](docs/images/animation_sine_wave.gif)
 
 ## Documentation
 
@@ -225,22 +220,19 @@ See [Backend Guide](docs/guide/07_backends.md) for detailed selection criteria.
 ## Comparison
 
 ### vs matplotlib (Python)
-- **Speed**: 10-100x faster (native Rust vs Python)
 - **Safety**: Compile-time checks vs runtime errors
 - **Memory**: Explicit control vs GC overhead
 - **API**: Similar builder pattern, type-safe
+- **Performance**: Native Rust vs Python interpreter
 
 ### vs plotters (Rust)
-- **Performance**: Optimized for large datasets (100M+ points)
-- **Features**: More plot types, advanced styling
-- **Quality**: Publication-grade output with professional themes
-- **Backends**: Multiple rendering strategies (CPU/GPU/DataShader)
+- **Plot types**: More built-in plot types (25+)
+- **Themes**: Professional publication-ready themes
+- **API**: High-level matplotlib-style API
 
 ### vs plotly (JavaScript/Python)
-- **Performance**: Native speed vs interpreted
 - **Deployment**: No runtime dependencies
-- **Size**: Smaller binary size
-- **Use case**: Server-side rendering vs web-based
+- **Use case**: Server-side static rendering
 
 ## Contributing
 
@@ -250,7 +242,7 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidel
 
 ```bash
 # Clone repository
-git clone https://github.com/ruviz/ruviz.git
+git clone https://github.com/Ameyanagi/ruviz.git
 cd ruviz
 
 # Setup pre-commit hooks (recommended)
@@ -279,7 +271,7 @@ The pre-commit hooks will automatically run `cargo fmt --check` and `cargo clipp
 - [x] GPU acceleration (experimental)
 - [x] Professional themes
 - [x] Subplots and multi-panel figures
-- [x] **Comprehensive plot types (30+)** - matplotlib/seaborn/Makie parity
+- [x] **Comprehensive plot types (25+)** - matplotlib/seaborn/Makie parity
   - [x] Distribution: Violin, KDE, Boxen, ECDF, Strip, Swarm
   - [x] Categorical: Grouped/Stacked/Horizontal Bar
   - [x] Composition: Pie, Donut, Area
@@ -318,4 +310,4 @@ at your option.
 
 **Status**: v0.1 - Early development, API may change. Production use at your own risk.
 
-**Support**: [Open an issue](https://github.com/ruviz/ruviz/issues) or [start a discussion](https://github.com/ruviz/ruviz/discussions)
+**Support**: [Open an issue](https://github.com/Ameyanagi/ruviz/issues) or [start a discussion](https://github.com/Ameyanagi/ruviz/discussions)
