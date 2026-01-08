@@ -4,6 +4,7 @@
 //!
 //! This generates GIF animations in docs/images/ for documentation.
 
+use ruviz::animation::RecordConfig;
 use ruviz::prelude::*;
 use ruviz::record;
 use std::f64::consts::PI;
@@ -14,34 +15,40 @@ fn main() -> Result<()> {
     let output_dir = "docs/images";
     std::fs::create_dir_all(output_dir)?;
 
+    // Use higher resolution for better text quality
+    let config = RecordConfig::new()
+        .dimensions(1024, 768)
+        .framerate(30);
+
     // 1. Basic sine wave animation
-    generate_sine_wave(output_dir)?;
+    generate_sine_wave(output_dir, config.clone())?;
 
     // 2. Growing scatter animation
-    generate_growing_scatter(output_dir)?;
+    generate_growing_scatter(output_dir, config.clone())?;
 
     // 3. Animated bar chart
-    generate_animated_bars(output_dir)?;
+    generate_animated_bars(output_dir, config.clone())?;
 
     // 4. Spiral animation (polar coordinates)
-    generate_spiral(output_dir)?;
+    generate_spiral(output_dir, config.clone())?;
 
     // 5. Signal composition example
-    generate_signal_composition(output_dir)?;
+    generate_signal_composition(output_dir, config)?;
 
     println!("\nAll animation gallery images generated successfully!");
     Ok(())
 }
 
 /// Generate animated sine wave
-fn generate_sine_wave(output_dir: &str) -> Result<()> {
+fn generate_sine_wave(output_dir: &str, config: RecordConfig) -> Result<()> {
     println!("  Generating sine wave animation...");
 
     let path = format!("{}/animation_sine_wave.gif", output_dir);
 
     record!(
         &path,
-        2.0 secs,
+        60,
+        config: config,
         |t| {
             let time = t.time;
             let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
@@ -49,9 +56,9 @@ fn generate_sine_wave(output_dir: &str) -> Result<()> {
 
             Plot::new()
                 .line(&x, &y)
-                .title(format!("Sine Wave (t = {:.2}s)", time))
-                .xlabel("x")
-                .ylabel("sin(x + t)")
+                .title(format!("Traveling Sine Wave (t = {:.2}s)", time))
+                .xlabel("Position (x)")
+                .ylabel("Amplitude")
                 .xlim(0.0, 10.0)
                 .ylim(-1.5, 1.5)
         }
@@ -62,14 +69,15 @@ fn generate_sine_wave(output_dir: &str) -> Result<()> {
 }
 
 /// Generate growing scatter plot
-fn generate_growing_scatter(output_dir: &str) -> Result<()> {
+fn generate_growing_scatter(output_dir: &str, config: RecordConfig) -> Result<()> {
     println!("  Generating growing scatter animation...");
 
     let path = format!("{}/animation_growing_scatter.gif", output_dir);
 
     record!(
         &path,
-        3.0 secs,
+        90,
+        config: config,
         |t| {
             let time = t.time;
             let n = ((time + 0.1) * 50.0) as usize;
@@ -78,9 +86,11 @@ fn generate_growing_scatter(output_dir: &str) -> Result<()> {
 
             Plot::new()
                 .scatter(&x, &y)
-                .title(format!("Growing Points: {} points", n))
-                .xlabel("x")
-                .ylabel("y")
+                .title(format!("Expanding Spiral Pattern ({} points)", n))
+                .xlabel("X Coordinate")
+                .ylabel("Y Coordinate")
+                .xlim(-8.0, 8.0)
+                .ylim(-8.0, 8.0)
         }
     )?;
 
@@ -89,15 +99,16 @@ fn generate_growing_scatter(output_dir: &str) -> Result<()> {
 }
 
 /// Generate animated bar chart
-fn generate_animated_bars(output_dir: &str) -> Result<()> {
+fn generate_animated_bars(output_dir: &str, config: RecordConfig) -> Result<()> {
     println!("  Generating animated bar chart...");
 
     let path = format!("{}/animation_bars.gif", output_dir);
-    let categories = ["A", "B", "C", "D", "E"];
+    let categories = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
     record!(
         &path,
-        2.0 secs,
+        60,
+        config: config,
         |t| {
             let time = t.time;
             let values: Vec<f64> = categories
@@ -111,9 +122,9 @@ fn generate_animated_bars(output_dir: &str) -> Result<()> {
 
             Plot::new()
                 .bar(&categories, &values)
-                .title("Animated Bar Chart")
-                .xlabel("Category")
-                .ylabel("Value")
+                .title("Weekly Sales Fluctuation")
+                .xlabel("Day of Week")
+                .ylabel("Sales ($)")
                 .ylim(0.0, 110.0)
         }
     )?;
@@ -123,14 +134,15 @@ fn generate_animated_bars(output_dir: &str) -> Result<()> {
 }
 
 /// Generate spiral animation
-fn generate_spiral(output_dir: &str) -> Result<()> {
+fn generate_spiral(output_dir: &str, config: RecordConfig) -> Result<()> {
     println!("  Generating spiral animation...");
 
     let path = format!("{}/animation_spiral.gif", output_dir);
 
     record!(
         &path,
-        3.0 secs,
+        90,
+        config: config,
         |t| {
             let time = t.time;
             let n = 200;
@@ -143,9 +155,11 @@ fn generate_spiral(output_dir: &str) -> Result<()> {
 
             Plot::new()
                 .line(&x, &y)
-                .title("Spiral Growth")
-                .xlabel("x")
-                .ylabel("y")
+                .title("Archimedean Spiral Growth")
+                .xlabel("X Position")
+                .ylabel("Y Position")
+                .xlim(-4.0, 4.0)
+                .ylim(-4.0, 4.0)
         }
     )?;
 
@@ -154,7 +168,7 @@ fn generate_spiral(output_dir: &str) -> Result<()> {
 }
 
 /// Generate signal composition example
-fn generate_signal_composition(output_dir: &str) -> Result<()> {
+fn generate_signal_composition(output_dir: &str, config: RecordConfig) -> Result<()> {
     println!("  Generating signal composition animation...");
 
     let path = format!("{}/animation_composition.gif", output_dir);
@@ -165,7 +179,8 @@ fn generate_signal_composition(output_dir: &str) -> Result<()> {
 
     record!(
         &path,
-        3.0 secs,
+        90,
+        config: config,
         |t| {
             let time = t.time;
             let amp = amplitude.at(time);
@@ -176,9 +191,9 @@ fn generate_signal_composition(output_dir: &str) -> Result<()> {
 
             Plot::new()
                 .line(&x, &y)
-                .title(format!("A={:.1}, f={:.1}", amp, freq))
-                .xlabel("x")
-                .ylabel("y")
+                .title(format!("Signal: Amp={:.2}, Freq={:.2}", amp, freq))
+                .xlabel("Time (s)")
+                .ylabel("Voltage (V)")
                 .xlim(0.0, 10.0)
                 .ylim(-2.5, 2.5)
         }

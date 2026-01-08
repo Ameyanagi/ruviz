@@ -478,6 +478,9 @@ impl TextRenderer {
             return Ok(());
         }
 
+        // Use 2x supersampling for better quality rotated text
+        const SUPERSAMPLE: u32 = 2;
+
         let mut font_system = get_font_system()
             .lock()
             .map_err(|e| PlottingError::RenderError(format!("Failed to lock FontSystem: {}", e)))?;
@@ -486,20 +489,25 @@ impl TextRenderer {
             .lock()
             .map_err(|e| PlottingError::RenderError(format!("Failed to lock SwashCache: {}", e)))?;
 
-        let metrics = Metrics::new(config.size, config.size * 1.2);
+        // Render at 2x size for supersampling
+        let scaled_size = config.size * SUPERSAMPLE as f32;
+        let metrics = Metrics::new(scaled_size, scaled_size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
 
-        let dpi_scale = config.size / 12.0;
-        let buffer_width = (text.len() as f32 * config.size * 2.5 * dpi_scale).max(800.0);
-        let buffer_height = (config.size * 6.0 * dpi_scale).max(180.0);
+        let dpi_scale = scaled_size / 12.0;
+        let buffer_width = (text.len() as f32 * scaled_size * 2.5 * dpi_scale).max(1600.0);
+        let buffer_height = (scaled_size * 6.0 * dpi_scale).max(360.0);
 
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
-        let attrs = config.to_cosmic_attrs();
+        let scaled_config = FontConfig::new(config.family.clone(), scaled_size)
+            .weight(config.weight)
+            .style(config.style);
+        let attrs = scaled_config.to_cosmic_attrs();
         buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
         buffer.shape_until_scroll(&mut font_system, false);
 
-        // Calculate text bounds
+        // Calculate text bounds at 2x scale
         let mut max_x = 0.0f32;
         let mut max_y = 0.0f32;
         let mut min_x = f32::MAX;
@@ -514,7 +522,7 @@ impl TextRenderer {
 
                 min_x = min_x.min(gx);
                 min_y = min_y.min(gy);
-                max_x = max_x.max(gx + 20.0);
+                max_x = max_x.max(gx + 40.0);
                 max_y = max_y.max(gy + run.line_height);
             }
         }
@@ -522,28 +530,28 @@ impl TextRenderer {
         if min_x == f32::MAX {
             min_x = 0.0;
             min_y = 0.0;
-            max_x = text.len() as f32 * config.size * 0.6;
-            max_y = config.size * 1.2;
+            max_x = text.len() as f32 * scaled_size * 0.6;
+            max_y = scaled_size * 1.2;
         }
 
-        let padding = 30.0 * dpi_scale;
+        let padding = 60.0 * dpi_scale / SUPERSAMPLE as f32;
         min_x -= padding;
         min_y -= padding;
         max_x += padding;
         max_y += padding;
 
-        let text_width = (max_x - min_x).ceil().max(1.0) as u32;
-        let text_height = (max_y - min_y).ceil().max(1.0) as u32;
+        let text_width_2x = (max_x - min_x).ceil().max(1.0) as u32;
+        let text_height_2x = (max_y - min_y).ceil().max(1.0) as u32;
 
-        // Create temporary pixmap for horizontal text
-        let mut temp_pixmap = Pixmap::new(text_width, text_height).ok_or_else(|| {
+        // Create temporary pixmap for horizontal text at 2x
+        let mut temp_pixmap = Pixmap::new(text_width_2x, text_height_2x).ok_or_else(|| {
             PlottingError::RenderError("Failed to create temp pixmap".to_string())
         })?;
         temp_pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
         let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
 
-        // Render to temporary pixmap
+        // Render to temporary pixmap at 2x
         for run in buffer.layout_runs() {
             let line_y = run.line_y;
             for glyph in run.glyphs.iter() {
@@ -564,8 +572,9 @@ impl TextRenderer {
                         let glyph_x = glyph_x_calc as u32;
                         let glyph_y = glyph_y_calc as u32;
 
-                        if glyph_x < text_width && glyph_y < text_height {
-                            let idx = glyph_y as usize * text_width as usize + glyph_x as usize;
+                        if glyph_x < text_width_2x && glyph_y < text_height_2x {
+                            let idx =
+                                glyph_y as usize * text_width_2x as usize + glyph_x as usize;
                             if idx < temp_pixmap.pixels().len() {
                                 if let Some(rgba_pixel) = PremultipliedColorU8::from_rgba(
                                     glyph_color.r(),
@@ -584,51 +593,110 @@ impl TextRenderer {
             }
         }
 
-        // Apply 90° counterclockwise rotation
-        let rotated_width = text_height;
-        let rotated_height = text_width;
+        // Apply 90° counterclockwise rotation at 2x scale
+        let rotated_width_2x = text_height_2x;
+        let rotated_height_2x = text_width_2x;
 
-        let mut rotated_pixmap = Pixmap::new(rotated_width, rotated_height).ok_or_else(|| {
-            PlottingError::RenderError("Failed to create rotated pixmap".to_string())
-        })?;
-        rotated_pixmap.fill(tiny_skia::Color::TRANSPARENT);
+        let mut rotated_pixmap_2x =
+            Pixmap::new(rotated_width_2x, rotated_height_2x).ok_or_else(|| {
+                PlottingError::RenderError("Failed to create rotated pixmap".to_string())
+            })?;
+        rotated_pixmap_2x.fill(tiny_skia::Color::TRANSPARENT);
 
-        for orig_y in 0..text_height {
-            for orig_x in 0..text_width {
-                let src_pixel =
-                    temp_pixmap.pixels()[orig_y as usize * text_width as usize + orig_x as usize];
+        for orig_y in 0..text_height_2x {
+            for orig_x in 0..text_width_2x {
+                let src_pixel = temp_pixmap.pixels()
+                    [orig_y as usize * text_width_2x as usize + orig_x as usize];
                 if src_pixel.alpha() > 0 {
                     let new_x = orig_y;
-                    let new_y = text_width - 1 - orig_x;
+                    let new_y = text_width_2x - 1 - orig_x;
 
-                    if new_x < rotated_width && new_y < rotated_height {
-                        let new_idx = new_y as usize * rotated_width as usize + new_x as usize;
-                        if new_idx < rotated_pixmap.pixels().len() {
-                            rotated_pixmap.pixels_mut()[new_idx] = src_pixel;
+                    if new_x < rotated_width_2x && new_y < rotated_height_2x {
+                        let new_idx =
+                            new_y as usize * rotated_width_2x as usize + new_x as usize;
+                        if new_idx < rotated_pixmap_2x.pixels().len() {
+                            rotated_pixmap_2x.pixels_mut()[new_idx] = src_pixel;
                         }
                     }
                 }
             }
         }
 
-        // Draw rotated text to main pixmap
+        // Downsample 2x -> 1x with box filter (averaging 2x2 pixels)
+        let final_width = rotated_width_2x / SUPERSAMPLE;
+        let final_height = rotated_height_2x / SUPERSAMPLE;
+
+        let mut final_pixmap = Pixmap::new(final_width, final_height).ok_or_else(|| {
+            PlottingError::RenderError("Failed to create final pixmap".to_string())
+        })?;
+        final_pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+        for fy in 0..final_height {
+            for fx in 0..final_width {
+                // Sample 2x2 pixels from the rotated 2x image
+                let sx = fx * SUPERSAMPLE;
+                let sy = fy * SUPERSAMPLE;
+
+                let mut r_sum: u32 = 0;
+                let mut g_sum: u32 = 0;
+                let mut b_sum: u32 = 0;
+                let mut a_sum: u32 = 0;
+                let mut count: u32 = 0;
+
+                for dy in 0..SUPERSAMPLE {
+                    for dx in 0..SUPERSAMPLE {
+                        let px = sx + dx;
+                        let py = sy + dy;
+                        if px < rotated_width_2x && py < rotated_height_2x {
+                            let idx = py as usize * rotated_width_2x as usize + px as usize;
+                            let pixel = rotated_pixmap_2x.pixels()[idx];
+                            if pixel.alpha() > 0 {
+                                // Unpremultiply for correct averaging
+                                let a = pixel.alpha() as u32;
+                                r_sum += (pixel.red() as u32 * 255) / a.max(1);
+                                g_sum += (pixel.green() as u32 * 255) / a.max(1);
+                                b_sum += (pixel.blue() as u32 * 255) / a.max(1);
+                                a_sum += a as u32;
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+
+                if count > 0 {
+                    let r = (r_sum / count).min(255) as u8;
+                    let g = (g_sum / count).min(255) as u8;
+                    let b = (b_sum / count).min(255) as u8;
+                    let a = (a_sum / (SUPERSAMPLE * SUPERSAMPLE)).min(255) as u8;
+
+                    if let Some(pixel) = PremultipliedColorU8::from_rgba(r, g, b, a) {
+                        let final_idx = fy as usize * final_width as usize + fx as usize;
+                        if final_idx < final_pixmap.pixels().len() {
+                            final_pixmap.pixels_mut()[final_idx] = pixel;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw final text to main pixmap
         let canvas_width = pixmap.width();
         let canvas_height = pixmap.height();
 
-        let margin_x = (rotated_width / 2) as i32;
-        let margin_y = (rotated_height / 2) as i32;
+        let margin_x = (final_width / 2) as i32;
+        let margin_y = (final_height / 2) as i32;
 
         let target_x = (x as i32 - margin_x)
             .max(0)
-            .min((canvas_width as i32) - (rotated_width as i32));
+            .min((canvas_width as i32) - (final_width as i32));
         let target_y = (y as i32 - margin_y)
             .max(0)
-            .min((canvas_height as i32) - (rotated_height as i32));
+            .min((canvas_height as i32) - (final_height as i32));
 
-        for py in 0..rotated_height {
-            for px in 0..rotated_width {
+        for py in 0..final_height {
+            for px in 0..final_width {
                 let src_pixel =
-                    rotated_pixmap.pixels()[py as usize * rotated_width as usize + px as usize];
+                    final_pixmap.pixels()[py as usize * final_width as usize + px as usize];
                 if src_pixel.alpha() > 0 {
                     let final_x = target_x + px as i32;
                     let final_y = target_y + py as i32;
