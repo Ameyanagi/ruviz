@@ -3193,6 +3193,7 @@ impl Plot {
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
+                    let dpi_scale = self.dpi_scale();
                     Self::render_attached_error_bars(
                         renderer,
                         &x_data,
@@ -3207,6 +3208,7 @@ impl Plot {
                         y_max,
                         plot_area,
                         line_width,
+                        dpi_scale,
                     )?;
                 }
             }
@@ -3225,6 +3227,7 @@ impl Plot {
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
+                    let dpi_scale = self.dpi_scale();
                     Self::render_attached_error_bars(
                         renderer,
                         &x_data,
@@ -3239,6 +3242,7 @@ impl Plot {
                         y_max,
                         plot_area,
                         line_width,
+                        dpi_scale,
                     )?;
                 }
             }
@@ -3569,6 +3573,7 @@ impl Plot {
 
                 // Draw Y error bars
                 let y_err_values = ErrorValues::symmetric(y_errors);
+                let dpi_scale = self.dpi_scale();
                 Self::render_attached_error_bars(
                     renderer,
                     &x_data,
@@ -3583,6 +3588,7 @@ impl Plot {
                     y_max,
                     plot_area,
                     line_width,
+                    dpi_scale,
                 )?;
             }
             SeriesType::ErrorBarsXY {
@@ -3611,6 +3617,7 @@ impl Plot {
                 // Draw X and Y error bars
                 let x_err_values = ErrorValues::symmetric(x_errors);
                 let y_err_values = ErrorValues::symmetric(y_errors);
+                let dpi_scale = self.dpi_scale();
                 Self::render_attached_error_bars(
                     renderer,
                     &x_data,
@@ -3625,6 +3632,7 @@ impl Plot {
                     y_max,
                     plot_area,
                     line_width,
+                    dpi_scale,
                 )?;
             }
             SeriesType::Kde { data } => {
@@ -4064,6 +4072,8 @@ impl Plot {
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         let dpi = self.display.config.figure.dpi;
+        let dpi_scale = dpi / 100.0;
+        renderer.set_dpi_scale(dpi_scale);
 
         // Calculate or use manual data bounds
         let (mut x_min, mut x_max, mut y_min, mut y_max) =
@@ -4343,6 +4353,7 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
+                        let dpi_scale = self.dpi_scale();
                         Self::render_attached_error_bars(
                             &mut renderer,
                             &x_data,
@@ -4357,6 +4368,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
+                            dpi_scale,
                         )?;
                     }
                 }
@@ -4378,6 +4390,7 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
+                        let dpi_scale = self.dpi_scale();
                         Self::render_attached_error_bars(
                             &mut renderer,
                             &x_data,
@@ -4392,6 +4405,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
+                            dpi_scale,
                         )?;
                     }
                 }
@@ -4936,6 +4950,7 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
+                        let dpi_scale = self.dpi_scale();
                         Self::render_attached_error_bars(
                             renderer,
                             &x_data,
@@ -4950,6 +4965,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
+                            dpi_scale,
                         )?;
                     }
                 }
@@ -4971,6 +4987,7 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
+                        let dpi_scale = dpi / 100.0;
                         Self::render_attached_error_bars(
                             renderer,
                             &x_data,
@@ -4985,6 +5002,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
+                            dpi_scale,
                         )?;
                     }
                 }
@@ -5191,16 +5209,19 @@ impl Plot {
         y_max: f64,
         plot_area: tiny_skia::Rect,
         default_line_width: f32,
+        dpi_scale: f32,
     ) -> Result<()> {
         let config = error_config.cloned().unwrap_or_default();
         let bar_color = config
             .color
             .unwrap_or(series_color)
             .with_alpha(config.alpha);
-        let line_width = config.line_width.max(default_line_width * 0.75); // Slightly thinner than data line
+        // Scale error bar line width by DPI (config.line_width is in pt at 100 DPI base)
+        let scaled_config_width = config.line_width * dpi_scale;
+        let line_width = scaled_config_width.max(default_line_width * 0.75); // Slightly thinner than data line
 
-        // Cap size is directly in pixels (matplotlib-style, typical: 4-6 pixels)
-        let cap_size_px = config.cap_size;
+        // Scale cap size by DPI (config.cap_size is in pt at 100 DPI base)
+        let cap_size_px = config.cap_size * dpi_scale;
         let half_cap = cap_size_px / 2.0;
 
         let n = x_data.len().min(y_data.len());
@@ -5634,6 +5655,8 @@ impl Plot {
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         let dpi = self.display.dpi as f32;
+        let dpi_scale = dpi / 100.0;
+        renderer.set_dpi_scale(dpi_scale);
 
         // Calculate data bounds across all series (sequential - small operation)
         let bounds = self.calculate_data_bounds()?;
@@ -7200,6 +7223,8 @@ impl Plot {
         });
 
         let dpi = self.display.dpi as f32;
+        let dpi_scale = dpi / 100.0;
+        renderer.set_dpi_scale(dpi_scale);
 
         // Calculate plot area based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
@@ -7445,6 +7470,8 @@ impl Plot {
         let draw_axes = self.needs_cartesian_axes();
 
         if draw_axes {
+            // Calculate DPI scale for tick rendering (base 100 DPI)
+            let dpi_scale = dpi / 100.0;
             // Always draw axes with enhanced tick system
             renderer.draw_axes_with_config(
                 plot_area,
@@ -7454,6 +7481,7 @@ impl Plot {
                 &y_minor_tick_pixels,
                 &self.layout.tick_config.direction,
                 self.display.theme.foreground,
+                dpi_scale,
             )?;
         }
 
@@ -7839,6 +7867,8 @@ impl Plot {
         let height = height as f32;
 
         let mut svg = SvgRenderer::new(width, height);
+        let dpi_scale = self.display.config.figure.dpi / 100.0;
+        svg.set_dpi_scale(dpi_scale);
 
         // Calculate plot area with margins
         let margin = 0.12; // 12% margin

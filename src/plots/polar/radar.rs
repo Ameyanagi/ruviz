@@ -409,6 +409,8 @@ impl PlotRender for RadarPlotData {
         // Draw grid rings
         if config.show_grid {
             let grid_color = theme.grid_color;
+            // Scale grid line width by DPI (base 0.5pt at 100 DPI)
+            let grid_line_width = 0.5 * renderer.dpi_scale();
             for ring in &self.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -419,7 +421,15 @@ impl PlotRender for RadarPlotData {
                     let (x2, y2) = ring[(i + 1) % ring.len()];
                     let (sx1, sy1) = area.data_to_screen(x1, y1);
                     let (sx2, sy2) = area.data_to_screen(x2, y2);
-                    renderer.draw_line(sx1, sy1, sx2, sy2, grid_color, 0.5, LineStyle::Solid)?;
+                    renderer.draw_line(
+                        sx1,
+                        sy1,
+                        sx2,
+                        sy2,
+                        grid_color,
+                        grid_line_width,
+                        LineStyle::Solid,
+                    )?;
                 }
             }
 
@@ -427,7 +437,15 @@ impl PlotRender for RadarPlotData {
             for &((x1, y1), (x2, y2)) in &self.axes {
                 let (sx1, sy1) = area.data_to_screen(x1, y1);
                 let (sx2, sy2) = area.data_to_screen(x2, y2);
-                renderer.draw_line(sx1, sy1, sx2, sy2, grid_color, 0.5, LineStyle::Solid)?;
+                renderer.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    grid_color,
+                    grid_line_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 
@@ -439,6 +457,11 @@ impl PlotRender for RadarPlotData {
                 renderer.draw_text_centered(label, sx, sy, config.label_font_size, label_color)?;
             }
         }
+
+        // Scale line width and marker size by DPI
+        let dpi_scale = renderer.dpi_scale();
+        let scaled_line_width = config.line_width * dpi_scale;
+        let scaled_marker_size = config.marker_size * dpi_scale;
 
         // Draw each series
         for (series_idx, series) in self.series.iter().enumerate() {
@@ -474,7 +497,7 @@ impl PlotRender for RadarPlotData {
                         sx2,
                         sy2,
                         series_color,
-                        config.line_width,
+                        scaled_line_width,
                         LineStyle::Solid,
                     )?;
                 }
@@ -487,7 +510,7 @@ impl PlotRender for RadarPlotData {
                     renderer.draw_marker(
                         sx,
                         sy,
-                        config.marker_size,
+                        scaled_marker_size,
                         MarkerStyle::Circle,
                         series_color,
                     )?;
@@ -514,13 +537,17 @@ impl PlotRender for RadarPlotData {
         let config = &self.config;
         let resolver = StyleResolver::new(theme);
 
-        // Use StyleResolver for line width
+        // Use StyleResolver for line width and scale by DPI
+        let dpi_scale = renderer.dpi_scale();
         let effective_line_width =
-            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))) * dpi_scale;
+        let scaled_marker_size = config.marker_size * dpi_scale;
 
         // Draw grid rings
         if config.show_grid {
             let grid_color = theme.grid_color;
+            // Scale grid line width by DPI (base 0.5pt at 100 DPI)
+            let grid_line_width = 0.5 * renderer.dpi_scale();
             for ring in &self.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -531,7 +558,15 @@ impl PlotRender for RadarPlotData {
                     let (x2, y2) = ring[(i + 1) % ring.len()];
                     let (sx1, sy1) = area.data_to_screen(x1, y1);
                     let (sx2, sy2) = area.data_to_screen(x2, y2);
-                    renderer.draw_line(sx1, sy1, sx2, sy2, grid_color, 0.5, LineStyle::Solid)?;
+                    renderer.draw_line(
+                        sx1,
+                        sy1,
+                        sx2,
+                        sy2,
+                        grid_color,
+                        grid_line_width,
+                        LineStyle::Solid,
+                    )?;
                 }
             }
 
@@ -539,7 +574,15 @@ impl PlotRender for RadarPlotData {
             for &((x1, y1), (x2, y2)) in &self.axes {
                 let (sx1, sy1) = area.data_to_screen(x1, y1);
                 let (sx2, sy2) = area.data_to_screen(x2, y2);
-                renderer.draw_line(sx1, sy1, sx2, sy2, grid_color, 0.5, LineStyle::Solid)?;
+                renderer.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    grid_color,
+                    grid_line_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 
@@ -604,7 +647,7 @@ impl PlotRender for RadarPlotData {
                     renderer.draw_marker(
                         sx,
                         sy,
-                        config.marker_size,
+                        scaled_marker_size,
                         MarkerStyle::Circle,
                         series_color,
                     )?;

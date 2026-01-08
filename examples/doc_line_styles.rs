@@ -19,7 +19,7 @@ fn main() -> Result<()> {
         .title("Line Styles")
         .xlabel("x")
         .ylabel("y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .legend_position(LegendPosition::Best)
         .line(&x, &y_solid)
         .label("Solid")
@@ -36,7 +36,6 @@ fn main() -> Result<()> {
         .line(&x, &y_dashdotdot)
         .label("DashDotDot")
         .style(LineStyle::DashDotDot)
-        .end_series()
         .save("docs/images/line_styles.png")?;
 
     println!("✓ Generated docs/images/line_styles.png");

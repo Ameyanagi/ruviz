@@ -1,82 +1,81 @@
 //! Basic animation example
 //!
-//! Demonstrates both the original and simplified animation APIs with a sine wave.
+//! Demonstrates the recommended animation API using the record! macro.
 //!
 //! Run with: cargo run --example animation_basic --features animation
 
-use ruviz::animation::{DurationExt, Quality, RecordConfig, record_simple_with_config};
+use ruviz::animation::RecordConfig;
 use ruviz::prelude::*;
+use ruviz::record;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
     std::fs::create_dir_all("export_output/gif").ok();
 
-    // Generate x data points (shared by both examples)
+    // Generate x data points
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 
     // ==========================================================
-    // ORIGINAL API (verbose but flexible)
+    // RECOMMENDED: record! macro with max_resolution()
     // ==========================================================
-    println!("Recording with original API...");
+    println!("Recording animation with record! macro...");
 
-    let config = RecordConfig::new()
-        .dimensions(800, 600)
-        .framerate(30)
-        .quality(Quality::Medium);
+    // Use max_resolution() for matplotlib-style visual weight
+    let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
-    ruviz::animation::record_with_config(
-        "export_output/gif/animation_basic_original.gif",
-        0..60, // Explicit frame range
-        config.clone(),
-        |_frame, tick| {
-            let phase = tick.time * 2.0 * std::f64::consts::PI;
+    record!(
+        "export_output/gif/animation_basic.gif",
+        60, // 60 frames = 2 seconds at 30 FPS
+        config: config,
+        |t| {
+            let phase = t.time * 2.0 * std::f64::consts::PI;
             let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
 
             Plot::new()
                 .line(&x, &y)
-                .title(format!("Original API (t={:.2}s)", tick.time))
+                .title(format!("Sine Wave Animation (t={:.2}s)", t.time))
                 .xlabel("x")
                 .ylabel("sin(x + phase)")
                 .xlim(0.0, 10.0)
                 .ylim(-1.5, 1.5)
-        },
+        }
     )?;
 
-    println!("  Saved: export_output/gif/animation_basic_original.gif");
+    println!("  Saved: export_output/gif/animation_basic.gif");
 
     // ==========================================================
-    // SIMPLIFIED API (recommended)
+    // Alternative: Duration-based recording (simple syntax)
     // ==========================================================
-    println!("\nRecording with simplified API...");
+    println!("\nRecording duration-based animation...");
 
-    record_simple_with_config(
-        "export_output/gif/animation_basic_simple.gif",
-        2.0.secs(), // Duration syntax instead of frame count
-        config,
-        |tick| {
-            // Use lerp_over for phase calculation
-            let phase = tick.lerp_over(0.0, 2.0 * std::f64::consts::PI, 2.0);
+    // Duration syntax without config (uses default 30 fps)
+    record!(
+        "export_output/gif/animation_basic_duration.gif",
+        2 secs,
+        |t| {
+            let phase = t.time * 2.0 * std::f64::consts::PI;
             let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
 
             Plot::new()
+                .max_resolution(800, 600) // Set resolution on plot instead
                 .line(&x, &y)
-                .title(format!("Simplified API (t={:.2}s)", tick.time))
+                .title(format!("Duration-Based (t={:.2}s)", t.time))
                 .xlabel("x")
                 .ylabel("sin(x + phase)")
                 .xlim(0.0, 10.0)
                 .ylim(-1.5, 1.5)
-        },
+        }
     )?;
 
-    println!("  Saved: export_output/gif/animation_basic_simple.gif");
+    println!("  Saved: export_output/gif/animation_basic_duration.gif");
 
     // ==========================================================
     // Summary
     // ==========================================================
-    println!("\n=== API Comparison ===");
-    println!("Original: record_with_config(path, 0..60, config, |frame, tick| ...)");
-    println!("Simple:   record_simple_with_config(path, 2.0.secs(), config, |tick| ...)");
-    println!("\nBoth produce identical 2-second animations at 30 FPS.");
+    println!("\n=== Recommended Animation API ===");
+    println!("record!(path, frames, config: cfg, |t| plot)  - Frame-based");
+    println!("record!(path, 2.0 secs, config: cfg, |t| plot) - Duration-based");
+    println!("\nUse max_resolution() for consistent matplotlib-style rendering.");
 
     Ok(())
 }

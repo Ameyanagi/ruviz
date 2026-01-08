@@ -22,7 +22,7 @@ fn main() -> Result<()> {
         .title("Empirical Cumulative Distribution Function")
         .xlabel("Value")
         .ylabel("Proportion")
-        .size(8.0, 5.0)
+        .max_resolution(1920, 1440)
         .ecdf_line_width(2.0)
         .label("Sample Distribution")
         .color(Color::from_palette(0))

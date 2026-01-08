@@ -18,6 +18,8 @@ pub struct SvgRenderer {
     content: String,
     defs: String,
     clip_id_counter: u32,
+    /// DPI scale factor (1.0 = 100 DPI base)
+    dpi_scale: f32,
 }
 
 impl SvgRenderer {
@@ -29,7 +31,18 @@ impl SvgRenderer {
             content: String::new(),
             defs: String::new(),
             clip_id_counter: 0,
+            dpi_scale: 1.0, // Default to 100 DPI base
         }
+    }
+
+    /// Set the DPI scale factor (dpi / 100.0)
+    pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
+        self.dpi_scale = dpi_scale;
+    }
+
+    /// Get the DPI scale factor
+    pub fn dpi_scale(&self) -> f32 {
+        self.dpi_scale
     }
 
     /// Get a unique clip path ID
@@ -325,8 +338,10 @@ impl SvgRenderer {
         color: Color,
         tick_outside: bool,
     ) {
-        let axis_width = 1.5;
-        let major_tick_size = 6.0;
+        // Scale widths and sizes by DPI (base values at 100 DPI)
+        let axis_width = 1.5 * self.dpi_scale;
+        let major_tick_size = 6.0 * self.dpi_scale;
+        let tick_width = 1.0 * self.dpi_scale;
         let tick_dir = if tick_outside { 1.0 } else { -1.0 };
 
         // Draw X-axis (bottom)
@@ -355,7 +370,15 @@ impl SvgRenderer {
         for &x in x_ticks {
             if x >= plot_left && x <= plot_right {
                 let tick_end = plot_bottom + major_tick_size * tick_dir;
-                self.draw_line(x, plot_bottom, x, tick_end, color, 1.0, LineStyle::Solid);
+                self.draw_line(
+                    x,
+                    plot_bottom,
+                    x,
+                    tick_end,
+                    color,
+                    tick_width,
+                    LineStyle::Solid,
+                );
             }
         }
 
@@ -363,7 +386,15 @@ impl SvgRenderer {
         for &y in y_ticks {
             if y >= plot_top && y <= plot_bottom {
                 let tick_end = plot_left - major_tick_size * tick_dir;
-                self.draw_line(plot_left, y, tick_end, y, color, 1.0, LineStyle::Solid);
+                self.draw_line(
+                    plot_left,
+                    y,
+                    tick_end,
+                    y,
+                    color,
+                    tick_width,
+                    LineStyle::Solid,
+                );
             }
         }
     }

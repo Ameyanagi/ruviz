@@ -28,20 +28,18 @@ fn main() -> Result<()> {
         .title("Error Bars on Line and Scatter Plots")
         .xlabel("X")
         .ylabel("Y")
-        .size(8.0, 5.0)
+        .max_resolution(1920, 1440)
         // Line plot with Y error bars (modifier pattern) - NO markers
         .line(&x, &y_line)
         .with_yerr(&y_line_err)
         .label("Line + Y Errors")
         .color(Color::from_palette(0))
-        .end_series()
         // Scatter plot with both X and Y error bars (modifier pattern)
         .scatter(&x, &y_scatter)
         .with_yerr(&y_scatter_err)
         .with_xerr(&x_scatter_err)
         .label("Scatter + XY Errors")
         .color(Color::from_palette(1))
-        .end_series()
         .legend_best()
         .save("docs/images/errorbar_plot.png")?;
 
@@ -57,12 +55,11 @@ fn main() -> Result<()> {
         .title("Standalone Error Bars")
         .xlabel("X")
         .ylabel("Y")
-        .size(8.0, 5.0)
+        .max_resolution(1920, 1440)
         .error_bars(&x, &y_standalone, &y_standalone_err)
         .label("Standalone")
         .color(Color::from_palette(2))
         .marker(MarkerStyle::Triangle)
-        .end_series()
         .save("docs/images/errorbar_standalone.png")?;
 
     println!("Generated docs/images/errorbar_standalone.png");
@@ -78,13 +75,12 @@ fn main() -> Result<()> {
         .title("Asymmetric Error Bars")
         .xlabel("X")
         .ylabel("Y")
-        .size(8.0, 5.0)
+        .max_resolution(1920, 1440)
         .line(&x, &y_asym)
         .with_yerr_asymmetric(&y_lower, &y_upper)
         .label("Asymmetric Errors")
         .color(Color::from_palette(3))
         .marker(MarkerStyle::Diamond)
-        .end_series()
         .save("docs/images/errorbar_asymmetric.png")?;
 
     println!("Generated docs/images/errorbar_asymmetric.png");
@@ -101,15 +97,14 @@ fn main() -> Result<()> {
         .title("Multiple Error Bar Series (Continuation)")
         .xlabel("X")
         .ylabel("Y")
-        .size(8.0, 5.0)
+        .max_resolution(1920, 1440)
+        .legend_best()
         .error_bars(&x, &y_a, &y_a_err)
         .label("Dataset A")
         .color(Color::from_palette(0))
-        .error_bars(&x, &y_b, &y_b_err) // Continuation method - no .end_series() needed!
+        .error_bars(&x, &y_b, &y_b_err)
         .label("Dataset B")
         .color(Color::from_palette(1))
-        .end_series()
-        .legend_best()
         .save("docs/images/errorbar_continuation.png")?;
 
     println!("Generated docs/images/errorbar_continuation.png");

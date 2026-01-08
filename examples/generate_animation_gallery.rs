@@ -15,8 +15,8 @@ fn main() -> Result<()> {
     let output_dir = "docs/images";
     std::fs::create_dir_all(output_dir)?;
 
-    // Use higher resolution for better text quality
-    let config = RecordConfig::new().dimensions(1024, 768).framerate(30);
+    // Use max_resolution for matplotlib-style visual weight
+    let config = RecordConfig::new().max_resolution(1024, 768).framerate(30);
 
     // 1. Basic sine wave animation
     generate_sine_wave(output_dir, config.clone())?;

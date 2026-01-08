@@ -18,6 +18,8 @@ pub struct SkiaRenderer {
     theme: Theme,
     text_renderer: TextRenderer,
     font_config: FontConfig,
+    /// DPI scale factor (1.0 = 100 DPI base)
+    dpi_scale: f32,
 }
 
 impl SkiaRenderer {
@@ -53,7 +55,18 @@ impl SkiaRenderer {
             theme,
             text_renderer,
             font_config,
+            dpi_scale: 1.0, // Default to 100 DPI base
         })
+    }
+
+    /// Set the DPI scale factor (dpi / 100.0)
+    pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
+        self.dpi_scale = dpi_scale;
+    }
+
+    /// Get the DPI scale factor
+    pub fn dpi_scale(&self) -> f32 {
+        self.dpi_scale
     }
 
     /// Clear the canvas with background color
@@ -664,12 +677,30 @@ impl SkiaRenderer {
                 );
             }
             MarkerStyle::Plus => {
-                // Draw cross with lines
-                self.draw_line(x - radius, y, x + radius, y, color, 2.0, LineStyle::Solid)?;
-                self.draw_line(x, y - radius, x, y + radius, color, 2.0, LineStyle::Solid)?;
+                // Draw cross with lines - line width proportional to marker size
+                let marker_line_width = (size * 0.25).max(1.0);
+                self.draw_line(
+                    x - radius,
+                    y,
+                    x + radius,
+                    y,
+                    color,
+                    marker_line_width,
+                    LineStyle::Solid,
+                )?;
+                self.draw_line(
+                    x,
+                    y - radius,
+                    x,
+                    y + radius,
+                    color,
+                    marker_line_width,
+                    LineStyle::Solid,
+                )?;
             }
             MarkerStyle::Cross => {
-                // Draw X with lines
+                // Draw X with lines - line width proportional to marker size
+                let marker_line_width = (size * 0.25).max(1.0);
                 let offset = radius * 0.707; // sin(45°)
                 self.draw_line(
                     x - offset,
@@ -677,7 +708,7 @@ impl SkiaRenderer {
                     x + offset,
                     y + offset,
                     color,
-                    2.0,
+                    marker_line_width,
                     LineStyle::Solid,
                 )?;
                 self.draw_line(
@@ -686,7 +717,7 @@ impl SkiaRenderer {
                     x + offset,
                     y - offset,
                     color,
-                    2.0,
+                    marker_line_width,
                     LineStyle::Solid,
                 )?;
             }
@@ -750,8 +781,11 @@ impl SkiaRenderer {
         y_ticks: &[f32],
         color: Color,
     ) -> Result<()> {
-        let axis_width = 1.5;
-        let tick_size = 5.0;
+        // Scale widths and sizes by DPI (base values at 100 DPI)
+        let dpi_scale = self.dpi_scale;
+        let axis_width = 1.5 * dpi_scale;
+        let tick_size = 5.0 * dpi_scale;
+        let tick_width = 1.0 * dpi_scale;
 
         // Draw main axis lines
         // X-axis (bottom)
@@ -786,7 +820,7 @@ impl SkiaRenderer {
                     x,
                     plot_area.bottom() + tick_size,
                     color,
-                    1.0,
+                    tick_width,
                     LineStyle::Solid,
                 )?;
             }
@@ -801,7 +835,7 @@ impl SkiaRenderer {
                     plot_area.left(),
                     y,
                     color,
-                    1.0,
+                    tick_width,
                     LineStyle::Solid,
                 )?;
             }
@@ -820,10 +854,14 @@ impl SkiaRenderer {
         y_minor_ticks: &[f32],
         tick_direction: &crate::core::plot::TickDirection,
         color: Color,
+        dpi_scale: f32,
     ) -> Result<()> {
-        let axis_width = 1.5;
-        let major_tick_size = 8.0;
-        let minor_tick_size = 4.0;
+        // Scale tick widths and sizes based on DPI (base values at 100 DPI)
+        let axis_width = 1.5 * dpi_scale;
+        let major_tick_size = 8.0 * dpi_scale;
+        let minor_tick_size = 4.0 * dpi_scale;
+        let major_tick_width = 1.5 * dpi_scale;
+        let minor_tick_width = 1.0 * dpi_scale;
 
         // Draw main axis lines
         // X-axis (bottom)
@@ -859,7 +897,15 @@ impl SkiaRenderer {
             if x >= plot_area.left() && x <= plot_area.right() {
                 let tick_start = plot_area.bottom();
                 let tick_end = plot_area.bottom() + major_tick_size * tick_dir_multiplier;
-                self.draw_line(x, tick_start, x, tick_end, color, 1.5, LineStyle::Solid)?;
+                self.draw_line(
+                    x,
+                    tick_start,
+                    x,
+                    tick_end,
+                    color,
+                    major_tick_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 
@@ -868,7 +914,15 @@ impl SkiaRenderer {
             if x >= plot_area.left() && x <= plot_area.right() {
                 let tick_start = plot_area.bottom();
                 let tick_end = plot_area.bottom() + minor_tick_size * tick_dir_multiplier;
-                self.draw_line(x, tick_start, x, tick_end, color, 1.0, LineStyle::Solid)?;
+                self.draw_line(
+                    x,
+                    tick_start,
+                    x,
+                    tick_end,
+                    color,
+                    minor_tick_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 
@@ -877,7 +931,15 @@ impl SkiaRenderer {
             if y >= plot_area.top() && y <= plot_area.bottom() {
                 let tick_start = plot_area.left();
                 let tick_end = plot_area.left() + major_tick_size * -tick_dir_multiplier; // Opposite direction for Y-axis
-                self.draw_line(tick_start, y, tick_end, y, color, 1.5, LineStyle::Solid)?;
+                self.draw_line(
+                    tick_start,
+                    y,
+                    tick_end,
+                    y,
+                    color,
+                    major_tick_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 
@@ -886,7 +948,15 @@ impl SkiaRenderer {
             if y >= plot_area.top() && y <= plot_area.bottom() {
                 let tick_start = plot_area.left();
                 let tick_end = plot_area.left() + minor_tick_size * -tick_dir_multiplier; // Opposite direction for Y-axis
-                self.draw_line(tick_start, y, tick_end, y, color, 1.0, LineStyle::Solid)?;
+                self.draw_line(
+                    tick_start,
+                    y,
+                    tick_end,
+                    y,
+                    color,
+                    minor_tick_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 
@@ -1910,14 +1980,24 @@ impl SkiaRenderer {
     ) -> Result<()> {
         let handle_length = spacing.handle_length;
         let handle_height = spacing.handle_height;
+        let dpi_scale = self.dpi_scale;
 
         // First draw the base type
         match &item.item_type {
             LegendItemType::Line { style, width } => {
-                self.draw_legend_line_handle(x, y, handle_length, item.color, style, *width)?;
+                let scaled_width = *width * dpi_scale;
+                self.draw_legend_line_handle(x, y, handle_length, item.color, style, scaled_width)?;
             }
             LegendItemType::Scatter { marker, size } => {
-                self.draw_legend_scatter_handle(x, y, handle_length, item.color, marker, *size)?;
+                let scaled_size = *size * dpi_scale;
+                self.draw_legend_scatter_handle(
+                    x,
+                    y,
+                    handle_length,
+                    item.color,
+                    marker,
+                    scaled_size,
+                )?;
             }
             LegendItemType::LineMarker {
                 line_style,
@@ -1925,15 +2005,17 @@ impl SkiaRenderer {
                 marker,
                 marker_size,
             } => {
+                let scaled_line_width = *line_width * dpi_scale;
+                let scaled_marker_size = *marker_size * dpi_scale;
                 self.draw_legend_line_marker_handle(
                     x,
                     y,
                     handle_length,
                     item.color,
                     line_style,
-                    *line_width,
+                    scaled_line_width,
                     marker,
-                    *marker_size,
+                    scaled_marker_size,
                 )?;
             }
             LegendItemType::Bar | LegendItemType::Histogram => {
@@ -1945,13 +2027,14 @@ impl SkiaRenderer {
                 if let Some(edge) = edge_color {
                     // Draw edge around the rectangle
                     let rect_y = y - handle_height / 2.0;
+                    let scaled_edge_width = 1.0 * dpi_scale;
                     self.draw_rectangle_outline(
                         x,
                         rect_y,
                         handle_length,
                         handle_height,
                         *edge,
-                        1.0,
+                        scaled_edge_width,
                     )?;
                 }
             }
@@ -1962,6 +2045,7 @@ impl SkiaRenderer {
                 let half_error = error_height / 2.0;
                 let cap_width = handle_height * 0.5;
                 let half_cap = cap_width / 2.0;
+                let error_line_width = 1.5 * dpi_scale;
 
                 // Vertical error bar line
                 self.draw_line(
@@ -1970,7 +2054,7 @@ impl SkiaRenderer {
                     center_x,
                     y + half_error,
                     item.color,
-                    1.5,
+                    error_line_width,
                     LineStyle::Solid,
                 )?;
                 // Top cap (horizontal)
@@ -1980,7 +2064,7 @@ impl SkiaRenderer {
                     center_x + half_cap,
                     y - half_error,
                     item.color,
-                    1.5,
+                    error_line_width,
                     LineStyle::Solid,
                 )?;
                 // Bottom cap (horizontal)
@@ -1990,17 +2074,12 @@ impl SkiaRenderer {
                     center_x + half_cap,
                     y + half_error,
                     item.color,
-                    1.5,
+                    error_line_width,
                     LineStyle::Solid,
                 )?;
-                // Draw marker in center
-                self.draw_marker(
-                    center_x,
-                    y,
-                    handle_height * 0.4,
-                    MarkerStyle::Circle,
-                    item.color,
-                )?;
+                // Draw marker in center (handle_height is already in pixels, scale marker proportionally)
+                let marker_size = handle_height * 0.4;
+                self.draw_marker(center_x, y, marker_size, MarkerStyle::Circle, item.color)?;
             }
         }
 
@@ -2011,6 +2090,7 @@ impl SkiaRenderer {
             let half_error = error_height / 2.0;
             let cap_width = handle_height * 0.4;
             let half_cap = cap_width / 2.0;
+            let overlay_line_width = 1.0 * dpi_scale;
 
             // Vertical error bar line
             self.draw_line(
@@ -2019,7 +2099,7 @@ impl SkiaRenderer {
                 center_x,
                 y + half_error,
                 item.color,
-                1.0,
+                overlay_line_width,
                 LineStyle::Solid,
             )?;
             // Top cap (horizontal)
@@ -2029,7 +2109,7 @@ impl SkiaRenderer {
                 center_x + half_cap,
                 y - half_error,
                 item.color,
-                1.0,
+                overlay_line_width,
                 LineStyle::Solid,
             )?;
             // Bottom cap (horizontal)
@@ -2039,7 +2119,7 @@ impl SkiaRenderer {
                 center_x + half_cap,
                 y + half_error,
                 item.color,
-                1.0,
+                overlay_line_width,
                 LineStyle::Solid,
             )?;
         }

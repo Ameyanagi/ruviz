@@ -4,8 +4,9 @@
 //!
 //! Run with: cargo run --example animation_wave --features animation
 
-use ruviz::animation::{Quality, RecordConfig};
+use ruviz::animation::RecordConfig;
 use ruviz::prelude::*;
+use ruviz::record;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate x data points
@@ -16,14 +17,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     println!("Recording wave animation to export_output/gif/animation_wave.gif...");
 
-    // Record for 3 seconds at 30 FPS
-    ruviz::animation::record_duration_with_config(
+    // Use max_resolution for matplotlib-style visual weight
+    let config = RecordConfig::new().max_resolution(1000, 600).framerate(30);
+
+    record!(
         "export_output/gif/animation_wave.gif",
-        3.0, // 3 seconds
-        RecordConfig::new()
-            .dimensions(1000, 600)
-            .framerate(30)
-            .quality(Quality::Medium),
+        90, // 3 seconds at 30 FPS
+        config: config,
         |tick| {
             let t = tick.time;
             let omega = 2.0 * std::f64::consts::PI;
@@ -51,29 +51,25 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .collect();
 
             // Create plot with multiple series
-            #[allow(deprecated)]
             Plot::new()
                 .line(&x, &y1)
                 .label("Traveling Wave")
-                .end_series()
                 .line(&x, &y2)
                 .label("Standing Wave")
-                .end_series()
                 .line(&x, &y3)
                 .label("Damped Wave")
-                .end_series()
                 .title(format!("Wave Interference (t = {:.2}s)", t))
                 .xlabel("Position")
                 .ylabel("Amplitude")
                 .xlim(0.0, 10.0)
                 .ylim(-1.5, 1.5)
                 .legend_position(LegendPosition::UpperRight)
-        },
+        }
     )?;
 
     println!("Animation saved to export_output/gif/animation_wave.gif");
     println!("  - 90 frames at 30 FPS = 3 seconds");
-    println!("  - Resolution: 1000x600");
+    println!("  - Resolution: 1000x750 (4:3 aspect from max_resolution)");
     println!("  - Shows traveling, standing, and damped waves");
 
     Ok(())

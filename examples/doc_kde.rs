@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         .title("Kernel Density Estimation")
         .xlabel("Value")
         .ylabel("Density")
-        .size(8.0, 5.0)
+        .max_resolution(1920, 1440)
         .n_points(200)
         .fill(true)
         .fill_alpha(0.4)

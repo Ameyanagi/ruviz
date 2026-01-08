@@ -17,9 +17,8 @@ fn main() -> Result<()> {
         .title("Box Plot")
         .xlabel("Distribution")
         .ylabel("Values")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .boxplot(&data, Some(BoxPlotConfig::new()))
-        .end_series()
         .save("docs/images/boxplot.png")?;
 
     println!("✓ Generated docs/images/boxplot.png");

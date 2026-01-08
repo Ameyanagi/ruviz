@@ -12,9 +12,8 @@ fn main() -> Result<()> {
         .title("Bar Chart")
         .xlabel("Category")
         .ylabel("Value")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .bar(&categories, &values)
-        .end_series()
         .save("docs/images/bar_chart.png")?;
 
     println!("✓ Generated docs/images/bar_chart.png");

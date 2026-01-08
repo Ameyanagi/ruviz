@@ -1,30 +1,24 @@
 //! Reactive animation example
 //!
 //! Demonstrates two approaches to multi-value animations:
-//! 1. AnimatedObservable pattern (original, more control)
+//! 1. AnimatedObservable pattern (fine-grained control)
 //! 2. Animation::build() pattern (simplified, declarative)
 //!
 //! Run with: cargo run --example animation_reactive --features animation
 
-use ruviz::animation::{
-    // Original API
-    AnimatedObservable,
-    // Simplified API
-    Animation,
-    AnimationGroup,
-    Quality,
-    RecordConfig,
-    easing,
-    record_animated_with_config,
-};
+use ruviz::animation::{AnimatedObservable, Animation, AnimationGroup, RecordConfig, easing};
 use ruviz::prelude::*;
+use ruviz::record;
 use ruviz::render::Color;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all("export_output/gif").ok();
 
+    // Use max_resolution for matplotlib-style visual weight
+    let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
+
     // ==========================================================
-    // APPROACH 1: AnimatedObservable (original, fine-grained control)
+    // APPROACH 1: AnimatedObservable (fine-grained control)
     // ==========================================================
     println!("Recording with AnimatedObservable pattern...");
 
@@ -49,20 +43,25 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     y_pos.animate_to_with_easing(6.0, 1500, easing::ease_in_out_cubic);
     radius.animate_to_with_easing(2.0, 1000, easing::ease_out_bounce);
 
-    let config = RecordConfig::new()
-        .dimensions(800, 600)
-        .framerate(30)
-        .quality(Quality::Medium);
+    // Record using the animation group's tick method
+    let delta_time = 1.0 / 30.0;
+    let mut frame_count = 0;
+    let max_frames = 120;
 
-    record_animated_with_config(
+    record!(
         "export_output/gif/reactive_observable.gif",
-        &group,
-        120,
-        config.clone(),
+        max_frames,
+        config: config.clone(),
         |tick| {
+            // Tick the animations (side effect)
+            if frame_count < max_frames {
+                group.tick(delta_time);
+                frame_count += 1;
+            }
+
             let (x, y, r) = (x_ref.get(), y_ref.get(), r_ref.get());
             create_circle_plot(x, y, r, tick.time, "Observable Pattern")
-        },
+        }
     )?;
 
     println!("  Saved: export_output/gif/reactive_observable.gif");

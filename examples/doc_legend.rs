@@ -18,7 +18,7 @@ fn main() -> Result<()> {
         .label("sin(x)")
         .line(&x, &cos_y)
         .label("cos(x)")
-        .end_series()
+        .max_resolution(1920, 1440)
         .save("docs/images/legend.png")?;
 
     println!("✓ Generated docs/images/legend.png");

@@ -18,8 +18,7 @@ fn main() -> Result<()> {
         .color(Color::from_palette(0))
         .line(&x, &y_cos)
         .label("cos(x)")
-        .color(Color::from_palette(1))
-        .end_series();
+        .color(Color::from_palette(1));
 
     let plot_ur = Plot::new()
         .title("UpperRight")
@@ -29,8 +28,7 @@ fn main() -> Result<()> {
         .color(Color::from_palette(0))
         .line(&x, &y_cos)
         .label("cos(x)")
-        .color(Color::from_palette(1))
-        .end_series();
+        .color(Color::from_palette(1));
 
     let plot_ll = Plot::new()
         .title("LowerLeft")
@@ -40,8 +38,7 @@ fn main() -> Result<()> {
         .color(Color::from_palette(0))
         .line(&x, &y_cos)
         .label("cos(x)")
-        .color(Color::from_palette(1))
-        .end_series();
+        .color(Color::from_palette(1));
 
     let plot_lr = Plot::new()
         .title("LowerRight")
@@ -51,17 +48,16 @@ fn main() -> Result<()> {
         .color(Color::from_palette(0))
         .line(&x, &y_cos)
         .label("cos(x)")
-        .color(Color::from_palette(1))
-        .end_series();
+        .color(Color::from_palette(1));
 
-    // Create a 2x2 subplot figure with larger size at 300 DPI
+    // Create a 2x2 subplot figure
     subplots(2, 2, 800, 600)?
         .suptitle("Legend Positions")
-        .subplot_at(0, plot_ul)?
-        .subplot_at(1, plot_ur)?
-        .subplot_at(2, plot_ll)?
-        .subplot_at(3, plot_lr)?
-        .save_with_dpi("docs/images/legend_positions.png", 300.0)?;
+        .subplot_at(0, plot_ul.into())?
+        .subplot_at(1, plot_ur.into())?
+        .subplot_at(2, plot_ll.into())?
+        .subplot_at(3, plot_lr.into())?
+        .save("docs/images/legend_positions.png")?;
 
     println!("✓ Generated docs/images/legend_positions.png");
     Ok(())

@@ -14,7 +14,7 @@ fn main() -> Result<()> {
         .title("Marker Styles")
         .xlabel("x")
         .ylabel("y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .legend_position(LegendPosition::Best)
         // Row 11: Circle
         .scatter(&x, &vec![11.0; 5])
@@ -71,7 +71,6 @@ fn main() -> Result<()> {
         .label("DiamondOpen")
         .marker(MarkerStyle::DiamondOpen)
         .marker_size(10.0)
-        .end_series()
         .save("docs/images/marker_styles.png")?;
 
     println!("✓ Generated docs/images/marker_styles.png");

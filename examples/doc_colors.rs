@@ -23,7 +23,7 @@ fn main() -> Result<()> {
         .title("Default Color Palette")
         .xlabel("x")
         .ylabel("y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .legend_position(LegendPosition::Best)
         .line(&x, &y1)
         .label("Color 1")
@@ -49,7 +49,6 @@ fn main() -> Result<()> {
         .line(&x, &y8)
         .label("Color 8")
         .color(palette[7])
-        .end_series()
         .save("docs/images/colors.png")?;
 
     println!("✓ Generated docs/images/colors.png");

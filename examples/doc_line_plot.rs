@@ -12,9 +12,8 @@ fn main() -> Result<()> {
         .title("Sine Wave")
         .xlabel("x")
         .ylabel("sin(x)")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .line(&x, &y)
-        .end_series()
         .save("docs/images/line_plot.png")?;
 
     println!("✓ Generated docs/images/line_plot.png");

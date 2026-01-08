@@ -13,9 +13,8 @@ fn main() -> Result<()> {
         .title("Default Theme")
         .xlabel("x")
         .ylabel("y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .line(&x, &y)
-        .end_series()
         .save("docs/images/theme_default.png")?;
     println!("✓ Generated docs/images/theme_default.png");
 
@@ -24,10 +23,9 @@ fn main() -> Result<()> {
         .title("Dark Theme")
         .xlabel("x")
         .ylabel("y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .theme(Theme::dark())
         .line(&x, &y)
-        .end_series()
         .save("docs/images/theme_dark.png")?;
     println!("✓ Generated docs/images/theme_dark.png");
 
@@ -36,10 +34,9 @@ fn main() -> Result<()> {
         .title("Seaborn Theme")
         .xlabel("x")
         .ylabel("y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .theme(Theme::seaborn())
         .line(&x, &y)
-        .end_series()
         .save("docs/images/theme_seaborn.png")?;
     println!("✓ Generated docs/images/theme_seaborn.png");
 
@@ -48,10 +45,9 @@ fn main() -> Result<()> {
         .title("Publication Theme")
         .xlabel("x")
         .ylabel("y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .theme(Theme::publication())
         .line(&x, &y)
-        .end_series()
         .save("docs/images/theme_publication.png")?;
     println!("✓ Generated docs/images/theme_publication.png");
 

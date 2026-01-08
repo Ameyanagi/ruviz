@@ -18,9 +18,8 @@ fn main() -> Result<()> {
         .title("Heatmap")
         .xlabel("X")
         .ylabel("Y")
-        .dpi(300)
+        .max_resolution(1920, 1440)
         .heatmap(&data, None)
-        .end_series()
         .save("docs/images/heatmap.png")?;
 
     println!("✓ Generated docs/images/heatmap.png");

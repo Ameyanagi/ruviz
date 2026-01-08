@@ -4,8 +4,9 @@
 //!
 //! Run with: cargo run --example animation_easing --features animation
 
-use ruviz::animation::{Quality, RecordConfig, easing};
+use ruviz::animation::{RecordConfig, easing};
 use ruviz::prelude::*;
+use ruviz::record;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
@@ -13,19 +14,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     println!("Recording easing demo to export_output/gif/animation_easing.gif...");
 
-    // Animation duration in frames (3 seconds at 30 FPS)
-    let total_frames = 90;
+    // Use max_resolution for matplotlib-style visual weight
+    let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
-    let config = RecordConfig::new()
-        .dimensions(800, 600)
-        .framerate(30)
-        .quality(Quality::Medium);
-
-    ruviz::animation::record_with_config(
+    record!(
         "export_output/gif/animation_easing.gif",
-        0..total_frames,
-        config,
-        |_frame, tick| {
+        90, // 3 seconds at 30 FPS
+        config: config,
+        |tick| {
             // Normalized progress [0, 1]
             let t = tick.time / 3.0;
 
@@ -43,21 +39,16 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 easing::ease_in_out_cubic(t),
             ];
 
-            // Scale Y from 0 to 1 range
-            let y_scaled: Vec<f64> = y_vals.iter().map(|&y| y).collect();
-
             // Create scatter plot showing current position of each easing
-            #[allow(deprecated)]
             Plot::new()
-                .scatter(&x_vals, &y_scaled)
+                .scatter(&x_vals, &y_vals)
                 .marker_size(15.0)
-                .end_series()
                 .title(format!("Easing Functions (t = {:.0}%)", t * 100.0))
                 .xlabel("Easing Type")
                 .ylabel("Progress")
                 .xlim(-0.5, 6.5)
                 .ylim(-0.1, 1.1)
-        },
+        }
     )?;
 
     println!("Animation saved to export_output/gif/animation_easing.gif");

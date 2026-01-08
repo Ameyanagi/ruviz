@@ -16,8 +16,7 @@ fn main() -> Result<()> {
         .ylabel("y")
         .line(&x, &y_sin)
         .color(Color::from_palette(0))
-        .line_width(2.0)
-        .end_series();
+        .line_width(2.0);
 
     // Subplot 1: Scatter plot
     let x_scatter: Vec<f64> = (0..30).map(|i| i as f64 * 0.3).collect();
@@ -31,8 +30,7 @@ fn main() -> Result<()> {
         .ylabel("y")
         .scatter(&x_scatter, &y_scatter)
         .color(Color::from_palette(1))
-        .marker_size(6.0)
-        .end_series();
+        .marker_size(6.0);
 
     // Subplot 2: Bar chart
     let categories = vec!["Q1", "Q2", "Q3", "Q4"];
@@ -42,8 +40,7 @@ fn main() -> Result<()> {
         .xlabel("Quarter")
         .ylabel("Sales")
         .bar(&categories, &values)
-        .color(Color::from_palette(2))
-        .end_series();
+        .color(Color::from_palette(2));
 
     // Subplot 3: Multiple series with legend
     let plot_multi = Plot::new()
@@ -56,17 +53,16 @@ fn main() -> Result<()> {
         .color(Color::from_palette(0))
         .line(&x, &y_cos)
         .label("cos(x)")
-        .color(Color::from_palette(1))
-        .end_series();
+        .color(Color::from_palette(1));
 
-    // Create a 2x2 subplot figure at 300 DPI
+    // Create a 2x2 subplot figure
     subplots(2, 2, 800, 600)?
         .suptitle("Subplot Gallery")
-        .subplot_at(0, plot_line)?
-        .subplot_at(1, plot_scatter)?
-        .subplot_at(2, plot_bar)?
-        .subplot_at(3, plot_multi)?
-        .save_with_dpi("docs/images/subplots.png", 300.0)?;
+        .subplot_at(0, plot_line.into())?
+        .subplot_at(1, plot_scatter.into())?
+        .subplot_at(2, plot_bar.into())?
+        .subplot_at(3, plot_multi.into())?
+        .save("docs/images/subplots.png")?;
 
     println!("✓ Generated docs/images/subplots.png");
     Ok(())

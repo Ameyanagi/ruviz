@@ -1,100 +1,82 @@
 //! Simplified animation API example
 //!
-//! Demonstrates the new streamlined animation API with:
-//! - `record_simple()` for minimal boilerplate
+//! Demonstrates the record! macro with various features:
+//! - Frame count and duration syntax
 //! - Tick interpolation helpers (`lerp_over`, `ease_over`)
-//! - Duration syntax (`2.0.secs()`)
-//! - Animation builder for multi-value animations
+//! - max_resolution() for matplotlib-style rendering
 //!
 //! Run with: cargo run --example animation_simple --features animation
 
-use ruviz::animation::{
-    Animation, DurationExt, RecordConfig, easing, record_simple, record_simple_with_config,
-};
+use ruviz::animation::{RecordConfig, easing};
 use ruviz::prelude::*;
+use ruviz::record;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
     std::fs::create_dir_all("export_output/gif").ok();
 
     // ==========================================================
-    // Example 1: Simplest possible animation
+    // Example 1: Simple bounce animation
     // ==========================================================
     println!("Recording Example 1: Bouncing ball with ease_over...");
 
-    record_simple("export_output/gif/simple_bounce.gif", 60, |t| {
-        // Use ease_over for automatic progress calculation
-        let y = t.ease_over(easing::ease_out_bounce, 100.0, 0.0, 2.0);
+    let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
-        // PlotBuilder converts to Plot automatically via Into<Plot>
-        Plot::new()
-            .scatter(&[50.0], &[y])
-            .marker_size(15.0)
-            .title(format!("Bounce (t={:.2}s)", t.time))
-            .xlim(0.0, 100.0)
-            .ylim(-10.0, 110.0)
-    })?;
+    record!(
+        "export_output/gif/simple_bounce.gif",
+        60, // 2 seconds at 30 FPS
+        config: config.clone(),
+        |t| {
+            // Use ease_over for automatic progress calculation
+            let y = t.ease_over(easing::ease_out_bounce, 100.0, 0.0, 2.0);
+
+            Plot::new()
+                .scatter(&[50.0], &[y])
+                .marker_size(15.0)
+                .title(format!("Bounce (t={:.2}s)", t.time))
+                .xlim(0.0, 100.0)
+                .ylim(-10.0, 110.0)
+        }
+    )?;
 
     println!("  Saved: export_output/gif/simple_bounce.gif");
 
     // ==========================================================
-    // Example 2: Using duration syntax
+    // Example 2: Wave with duration syntax
     // ==========================================================
     println!("\nRecording Example 2: Wave with duration syntax...");
 
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 
-    record_simple("export_output/gif/simple_wave.gif", 2.0.secs(), |t| {
-        let phase = t.lerp_over(0.0, 2.0 * std::f64::consts::PI, 2.0);
-        let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
+    record!(
+        "export_output/gif/simple_wave.gif",
+        60, // 2 seconds at 30 FPS
+        config: config.clone(),
+        |t| {
+            let phase = t.lerp_over(0.0, 2.0 * std::f64::consts::PI, 2.0);
+            let y: Vec<f64> = x.iter().map(|&xi| (xi + phase).sin()).collect();
 
-        Plot::new()
-            .line(&x, &y)
-            .title(format!("Wave (t={:.2}s)", t.time))
-            .xlim(0.0, 10.0)
-            .ylim(-1.5, 1.5)
-    })?;
+            Plot::new()
+                .line(&x, &y)
+                .title(format!("Wave (t={:.2}s)", t.time))
+                .xlim(0.0, 10.0)
+                .ylim(-1.5, 1.5)
+        }
+    )?;
 
     println!("  Saved: export_output/gif/simple_wave.gif");
 
     // ==========================================================
-    // Example 3: Animation Builder for multi-value animation
+    // Example 3: Comparing easing functions
     // ==========================================================
-    println!("\nRecording Example 3: Multi-value animation with builder...");
+    println!("\nRecording Example 3: Easing comparison...");
 
-    Animation::build()
-        .value("x", 0.0)
-        .to(100.0)
-        .duration_secs(2.0)
-        .value("y", 100.0)
-        .to(0.0)
-        .ease(easing::ease_out_elastic)
-        .value("size", 5.0)
-        .to(20.0)
-        .ease(easing::ease_in_out_quad)
-        .config(RecordConfig::new().framerate(30))
-        .record("export_output/gif/simple_multi.gif", |values, _tick| {
-            Plot::new()
-                .scatter(&[values["x"]], &[values["y"]])
-                .marker_size(values["size"] as f32)
-                .title(format!("x={:.1}, y={:.1}", values["x"], values["y"]))
-                .xlim(-10.0, 110.0)
-                .ylim(-20.0, 120.0)
-        })?;
+    let wide_config = RecordConfig::new().max_resolution(1000, 400).framerate(30);
 
-    println!("  Saved: export_output/gif/simple_multi.gif");
-
-    // ==========================================================
-    // Example 4: Comparing easing functions
-    // ==========================================================
-    println!("\nRecording Example 4: Easing comparison...");
-
-    let config = RecordConfig::new().dimensions(1000, 400).framerate(30);
-
-    record_simple_with_config(
+    record!(
         "export_output/gif/simple_easing.gif",
-        3.0.secs(),
-        config,
+        90, // 3 seconds at 30 FPS
+        config: wide_config,
         |t| {
             let duration = 3.0;
 
@@ -127,7 +109,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 .xlim(-10.0, 120.0)
                 .ylim(0.0, 6.0)
                 .legend_position(LegendPosition::UpperRight)
-        },
+        }
     )?;
 
     println!("  Saved: export_output/gif/simple_easing.gif");
