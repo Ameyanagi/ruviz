@@ -57,7 +57,8 @@ jobs:
         run: cargo build --release --all-features
 
       - name: Run tests
-        run: cargo test --release --all-features
+        # Limit parallelism to prevent OOM with large dataset tests
+        run: cargo test --release --all-features -- --test-threads=2
 
       - name: Build documentation
         run: cargo doc --no-deps --all-features

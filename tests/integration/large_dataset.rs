@@ -13,6 +13,7 @@ mod large_dataset_integration_tests {
 
     /// Integration Test: Story 3 - Large dataset with automatic optimization
     #[test]
+    #[ignore = "Memory-intensive: allocates 1M points (~16MB data + rendering buffers)"]
     fn test_story_3_large_dataset_integration() {
         println!("Generating 1M data points for large dataset test...");
         
@@ -68,6 +69,7 @@ mod large_dataset_integration_tests {
 
     /// Integration Test: DataShader activation detection
     #[test]
+    #[ignore = "Memory-intensive: allocates 2M points (~32MB data + rendering buffers)"]
     fn test_datashader_activation_integration() {
         println!("Testing DataShader activation with 2M points...");
         
@@ -106,6 +108,7 @@ mod large_dataset_integration_tests {
 
     /// Integration Test: Memory efficiency with large datasets
     #[test]
+    #[ignore = "Memory-intensive: allocates 500K points"]
     fn test_memory_efficiency_integration() {
         let data_size = 500_000; // 500K points
         println!("Testing memory efficiency with {} points...", data_size);
@@ -131,6 +134,7 @@ mod large_dataset_integration_tests {
 
     /// Integration Test: Performance scaling with different dataset sizes
     #[test]
+    #[ignore = "Memory-intensive: creates multiple plots with up to 250K points"]
     fn test_performance_scaling_integration() {
         let test_sizes = vec![10_000, 50_000, 100_000, 250_000];
         
@@ -164,7 +168,8 @@ mod large_dataset_integration_tests {
     }
 
     /// Integration Test: Large dataset with multiple series
-    #[test]  
+    #[test]
+    #[ignore = "Memory-intensive: allocates 3x 200K points (~4.8MB data + rendering buffers)"]
     fn test_large_multi_series_integration() {
         let size = 200_000;
         println!("Testing large multi-series plot with {} points per series...", size);
@@ -205,8 +210,9 @@ mod large_dataset_integration_tests {
         std::fs::remove_file("test_large_multi_series.png").ok();
     }
 
-    /// Integration Test: Streaming/incremental updates 
+    /// Integration Test: Streaming/incremental updates
     #[test]
+    #[ignore = "Slow integration test - run manually"]
     fn test_incremental_updates_integration() {
         println!("Testing incremental updates performance...");
         

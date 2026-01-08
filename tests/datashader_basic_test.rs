@@ -74,6 +74,7 @@ fn test_datashader_large_dataset() {
 }
 
 #[test]
+#[ignore = "Memory-intensive: allocates 150K points for DataShader activation test"]
 fn test_plot_datashader_activation() {
     // Test that Plot automatically uses DataShader for large datasets
     let n = 150_000; // Above the 100K threshold

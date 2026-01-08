@@ -75,6 +75,23 @@ impl MockEventHandler {
     pub fn assert_event_order(&self, expected: &[MockEvent]) {
         assert_eq!(self.events_received, expected, "Event order mismatch");
     }
+
+    /// Simulate a selection region (data brushing)
+    pub fn simulate_selection_region(&mut self, region: (f64, f64, f64, f64)) {
+        self.events_received.push(MockEvent::Select { region });
+    }
+
+    /// Simulate a reset operation
+    pub fn simulate_reset(&mut self) {
+        self.events_received.push(MockEvent::Reset);
+    }
+
+    /// Get mock selected points (for testing brush selection logic)
+    /// In real implementation, this would calculate which points are in brush region
+    pub fn get_selected_points(&self) -> Vec<usize> {
+        // Simulate a reasonable number of selected points for testing
+        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    }
 }
 
 /// Test fixture for creating plots with known data patterns

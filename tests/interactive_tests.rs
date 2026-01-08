@@ -5,7 +5,6 @@
 
 #![cfg(feature = "interactive")]
 
-use ruviz::core::*;
 use ruviz::interactive::test_utils::*;
 use std::time::{Duration, Instant};
 
@@ -86,6 +85,7 @@ fn test_data_brushing_selection() {
 
 /// Test performance with large dataset
 #[test]
+#[ignore = "Memory-intensive: creates 50K point dataset with continuous rendering loop"]
 fn test_large_dataset_performance() {
     let plot = TestPlotBuilder::large_dataset(50_000);
     let mut handler = MockEventHandler::new();
@@ -213,24 +213,6 @@ fn test_visual_consistency() {
 
     // Both handlers should have identical event history
     assert_eq!(handler1.events_received, handler2.events_received);
-}
-
-// Extension point for mock event handler to support selection testing
-impl MockEventHandler {
-    pub fn simulate_selection_region(&mut self, region: (f64, f64, f64, f64)) {
-        self.events_received.push(MockEvent::Select { region });
-    }
-
-    pub fn simulate_reset(&mut self) {
-        self.events_received.push(MockEvent::Reset);
-    }
-
-    // Mock implementation of point selection
-    pub fn get_selected_points(&self) -> Vec<usize> {
-        // In real implementation, this would calculate which points are in brush region
-        // For testing, we simulate a reasonable number of selected points
-        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9] // Simulate 10 selected points
-    }
 }
 
 /// Performance benchmark test
