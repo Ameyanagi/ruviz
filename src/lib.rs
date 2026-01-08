@@ -629,6 +629,19 @@
 //!
 //! </details>
 //!
+//! ### Animation
+//!
+//! Smooth animations with the `record!` macro (requires `animation` feature):
+//!
+//! | | | |
+//! |:---:|:---:|:---:|
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_sine_wave.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_sine_wave.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_bars.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_bars.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_spiral.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_spiral.gif" width="250"></a> |
+//! | Traveling Wave | Animated Bars | Spiral Growth |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_easing.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_easing.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_interference.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_interference.gif" width="250"></a> | |
+//! | Easing Functions | Wave Interference | |
+//!
+//! See [Animation Gallery](https://github.com/Ameyanagi/ruviz/blob/main/docs/gallery/animation/README.md) for more examples.
+//!
 //! ## Quick Start
 //!
 //! ```rust,no_run
