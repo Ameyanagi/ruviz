@@ -9,20 +9,6 @@
 
 ## Quick Start
 
-### Simple API (One-Liner)
-
-```rust
-use ruviz::simple::*;
-
-let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
-let y: Vec<f64> = x.iter().map(|&x| x * x).collect();
-
-// One line to create a plot
-line_plot_with_title(&x, &y, "Quadratic Function", "plot.png")?;
-```
-
-### Builder API (Full Control)
-
 ```rust
 use ruviz::prelude::*;
 
