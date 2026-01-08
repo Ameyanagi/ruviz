@@ -581,6 +581,54 @@
 //!
 //! </details>
 //!
+//! ### Internationalization
+//!
+//! | | | |
+//! |:---:|:---:|:---:|
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_japanese.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_japanese.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_chinese.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_chinese.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_korean.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_korean.png" width="250"></a> |
+//! | 日本語 (Japanese) | 中文 (Chinese) | 한국어 (Korean) |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_comparison.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_comparison.png" width="350"></a> | | |
+//! | Multi-language Comparison | | |
+//!
+//! <details>
+//! <summary>Internationalization Code Examples</summary>
+//!
+//! **Japanese Labels**
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+//! let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+//!
+//! Plot::new()
+//!     .title("サイン波 (Sine Wave)")
+//!     .xlabel("時間 (s)")
+//!     .ylabel("振幅")
+//!     .line(&x, &y)
+//!     .label("sin(x)")
+//!     .legend_best()
+//!     .save("japanese_plot.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! **Chinese Labels**
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! let categories = vec!["一月", "二月", "三月", "四月", "五月", "六月"];
+//! let values = vec![28.0, 45.0, 38.0, 52.0, 47.0, 63.0];
+//!
+//! Plot::new()
+//!     .title("月度销售数据")
+//!     .xlabel("月份")
+//!     .ylabel("销售额 (万元)")
+//!     .bar(&categories, &values)
+//!     .save("chinese_plot.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! </details>
+//!
 //! ## Quick Start
 //!
 //! ```rust,no_run

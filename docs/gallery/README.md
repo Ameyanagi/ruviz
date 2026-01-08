@@ -2,7 +2,7 @@
 
 Comprehensive visual showcase of ruviz plotting capabilities.
 
-**Total Examples**: 28
+**Total Examples**: 32
 
 ## Gallery Categories
 
@@ -41,6 +41,12 @@ Complex visualizations and customization
 Animated visualizations with the `record!` macro
 
 [View Animation Examples →](animation/README.md)
+
+### 🌍 Internationalization (4 examples)
+
+CJK (Chinese, Japanese, Korean) and multi-language text support
+
+[View Internationalization Examples →](internationalization/README.md)
 
 ---
 
