@@ -90,12 +90,20 @@ impl GridSpec {
     }
 
     /// Calculate subplot rectangle for given index
+    ///
+    /// # Arguments
+    /// * `index` - Subplot index (row * cols + col)
+    /// * `figure_width` - Total figure width in pixels
+    /// * `figure_height` - Total figure height in pixels
+    /// * `margin` - Margin as fraction of figure size
+    /// * `top_offset` - Additional top offset for suptitle (in pixels)
     pub fn subplot_rect(
         &self,
         index: usize,
         figure_width: u32,
         figure_height: u32,
         margin: f32,
+        top_offset: f32,
     ) -> Result<Rect> {
         if index >= self.total_subplots() {
             return Err(PlottingError::InvalidInput(format!(
@@ -111,7 +119,8 @@ impl GridSpec {
         // Calculate available space after margins
         let margin_px = margin * figure_width.min(figure_height) as f32;
         let available_width = figure_width as f32 - 2.0 * margin_px;
-        let available_height = figure_height as f32 - 2.0 * margin_px;
+        // Subtract top_offset from available height to reserve space for suptitle
+        let available_height = figure_height as f32 - 2.0 * margin_px - top_offset;
 
         // Calculate subplot dimensions with spacing
         let subplot_width = available_width / self.cols as f32;
@@ -123,9 +132,9 @@ impl GridSpec {
         let plot_width = subplot_width - spacing_x;
         let plot_height = subplot_height - spacing_y;
 
-        // Calculate subplot position
+        // Calculate subplot position (add top_offset to y position)
         let x = margin_px + col as f32 * subplot_width + spacing_x / 2.0;
-        let y = margin_px + row as f32 * subplot_height + spacing_y / 2.0;
+        let y = margin_px + top_offset + row as f32 * subplot_height + spacing_y / 2.0;
 
         Rect::from_xywh(x, y, plot_width, plot_height).ok_or_else(|| {
             PlottingError::InvalidInput("Invalid subplot dimensions calculated".to_string())
@@ -335,6 +344,13 @@ impl SubplotFigure {
         let theme = crate::render::Theme::default();
         let mut renderer = SkiaRenderer::new(self.width, self.height, theme)?;
 
+        // Calculate suptitle height to reserve space for it
+        let suptitle_height = if self.suptitle.is_some() {
+            45.0_f32 // Reserve space for title (30px position + 15px padding)
+        } else {
+            0.0_f32
+        };
+
         // Render figure title if present
         // Use fixed pixel sizes since main renderer uses figure dimensions (not DPI-scaled)
         if let Some(title) = &self.suptitle {
@@ -353,10 +369,14 @@ impl SubplotFigure {
         // Render each subplot
         for (index, plot_opt) in self.plots.iter().enumerate() {
             if let Some(plot) = plot_opt {
-                // Calculate subplot area
-                let subplot_rect =
-                    self.grid
-                        .subplot_rect(index, self.width, self.height, self.margin)?;
+                // Calculate subplot area with suptitle offset
+                let subplot_rect = self.grid.subplot_rect(
+                    index,
+                    self.width,
+                    self.height,
+                    self.margin,
+                    suptitle_height,
+                )?;
 
                 // Calculate typography scale factor based on subplot size and DPI
                 // Subplots are rendered to fixed-size canvases, so we need to:
@@ -486,9 +506,10 @@ mod tests {
     fn test_subplot_rect_calculation() {
         let grid = GridSpec::new(2, 2);
         let margin = 0.1;
+        let top_offset = 0.0; // No suptitle
 
         // Test first subplot (top-left)
-        let rect = grid.subplot_rect(0, 800, 600, margin).unwrap();
+        let rect = grid.subplot_rect(0, 800, 600, margin, top_offset).unwrap();
         // With 0.1 margin on 600px min dimension: margin_px = 60px
         // With 0.1 spacing: x = 60 + spacing/2 ≈ 77px
         assert!(rect.left() >= 60.0); // Should be past margin
@@ -497,9 +518,20 @@ mod tests {
         assert!(rect.height() > 0.0);
 
         // Test last subplot (bottom-right)
-        let rect = grid.subplot_rect(3, 800, 600, margin).unwrap();
+        let rect = grid.subplot_rect(3, 800, 600, margin, top_offset).unwrap();
         assert!(rect.right() <= 740.0); // Should fit within margins (800 - 60)
         assert!(rect.bottom() <= 540.0); // Should fit within margins (600 - 60)
+    }
+
+    #[test]
+    fn test_subplot_rect_with_suptitle_offset() {
+        let grid = GridSpec::new(2, 2);
+        let margin = 0.1;
+        let top_offset = 45.0; // With suptitle
+
+        // Test first subplot with suptitle - should start below the suptitle area
+        let rect = grid.subplot_rect(0, 800, 600, margin, top_offset).unwrap();
+        assert!(rect.top() >= 60.0 + top_offset); // Should be past margin + suptitle
     }
 
     #[test]

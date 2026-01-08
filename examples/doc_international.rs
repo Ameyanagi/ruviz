@@ -133,8 +133,9 @@ fn generate_multilang_comparison() -> Result<()> {
         .line(&x, &y_sin)
         .label("Wave");
 
-    // Create 2x2 subplot (suptitle has rendering bug, omitting for now)
+    // Create 2x2 subplot
     subplots(2, 2, 1000, 800)?
+        .suptitle("International Text Support")
         .subplot_at(0, plot_jp.into())?
         .subplot_at(1, plot_cn.into())?
         .subplot_at(2, plot_kr.into())?
