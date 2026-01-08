@@ -203,22 +203,30 @@ record!(
 - **[Migration from seaborn](docs/migration/seaborn.md)** - Statistical plots
 - **[Performance Guide](docs/performance/PERFORMANCE.md)** - Optimization techniques
 
-## Comparison
+## Why ruviz?
 
-### vs matplotlib (Python)
-- **Safety**: Compile-time checks vs runtime errors
-- **Memory**: Explicit control vs GC overhead
-- **API**: Similar builder pattern, type-safe
-- **Performance**: Native Rust vs Python interpreter
+Rust's plotting ecosystem has several options, but each has trade-offs:
 
-### vs plotters (Rust)
-- **Plot types**: More built-in plot types (25+)
-- **Themes**: Professional publication-ready themes
-- **API**: High-level matplotlib-style API
+| Library | Approach | Limitation |
+|---------|----------|------------|
+| [plotters](https://github.com/plotters-rs/plotters) | Low-level drawing API | Verbose, requires boilerplate for common plots |
+| [plotly.rs](https://github.com/plotly/plotly.rs) | JavaScript bindings | Requires JS runtime, web-focused |
+| [plotpy](https://github.com/cpmech/plotpy) | Python/matplotlib wrapper | Requires Python installed |
 
-### vs plotly (JavaScript/Python)
-- **Deployment**: No runtime dependencies
-- **Use case**: Server-side static rendering
+**ruviz fills the gap** with:
+- **High-level API**: matplotlib-style `Plot::new().line().title().save()` - no boilerplate
+- **Pure Rust**: No Python, JavaScript, or external runtime needed
+- **Built-in plot types**: 25+ plot types out of the box (violin, KDE, radar, etc.)
+- **Publication quality**: Professional themes and high-DPI export
+
+```rust
+// plotters: ~30 lines for a simple line plot
+// ruviz: 4 lines
+Plot::new()
+    .line(&x, &y)
+    .title("My Plot")
+    .save("plot.png")?;
+```
 
 ## Contributing
 
