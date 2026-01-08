@@ -190,7 +190,7 @@ pub fn compute_boxen(data: &[f64], config: &BoxenConfig) -> BoxenData {
     }
 
     // Compute median
-    let median = if n % 2 == 0 {
+    let median = if n.is_multiple_of(2) {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     } else {
         sorted[n / 2]
