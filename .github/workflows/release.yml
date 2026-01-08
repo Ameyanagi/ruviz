@@ -17,13 +17,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for CI to complete
-        uses: lewagon/wait-on-check-action@v1.3.4
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-for-ci
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: 'Test Suite'
           ref: ${{ github.sha }}
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          check-name: 'Test Suite'
-          wait-interval: 10
-          allowed-conclusions: success
+          timeoutSeconds: 600
+          intervalSeconds: 15
+
+      - name: Fail if CI failed
+        if: steps.wait-for-ci.outputs.conclusion != 'success'
+        run: |
+          echo "CI check failed with conclusion: ${{ steps.wait-for-ci.outputs.conclusion }}"
+          exit 1
 
   generate-doc-images:
     name: Generate Documentation Images
