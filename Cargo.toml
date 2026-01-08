@@ -1,6 +1,6 @@
 [package]
 name = "ruviz"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.87"
 authors = ["Ruviz Contributors"]
@@ -8,7 +8,7 @@ description = "High-performance 2D plotting library for Rust"
 license = "MIT OR Apache-2.0"
 keywords = ["plotting", "visualization", "graphics", "charts"]
 categories = ["visualization", "graphics"]
-repository = "https://github.com/ruviz/ruviz"
+repository = "https://github.com/Ameyanagi/ruviz"
 readme = "README.md"
 exclude = [
     "export_output/",
