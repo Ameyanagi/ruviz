@@ -33,19 +33,13 @@ Plot::new()
 - Comprehensive error handling with `Result` types
 - Memory-safe by design
 
-### 📊 Rich Plot Types (25+)
+### 📊 Plot Types
 **Basic**: Line, Scatter, Bar, Histogram, Box Plot, Heatmap
-**Distribution**: Violin, KDE (1D/2D), Boxen, ECDF, Strip, Swarm
-**Categorical**: Grouped Bar, Stacked Bar, Horizontal Bar
-**Composition**: Pie, Donut, Area, Stacked Area
-**Continuous**: Contour, Hexbin, Fill Between
+**Distribution**: Violin, KDE, ECDF
+**Composition**: Pie, Donut
+**Continuous**: Contour
+**Polar**: Polar Plot, Radar Chart
 **Error**: Error Bars (symmetric/asymmetric)
-**Discrete**: Step, Stem
-**Regression**: Regression Plot, Residual Plot
-**Polar**: Polar Plot, Radar/Spider Chart
-**Composite**: Joint Plot, Pair Plot
-**Vector**: Quiver Plot
-**Hierarchical**: Dendrogram
 
 ### 🎨 Publication Quality
 - **High-DPI export**: 72, 96, 300, 600 DPI for print
@@ -216,7 +210,7 @@ Rust's plotting ecosystem has several options, but each has trade-offs:
 **ruviz fills the gap** with:
 - **High-level API**: matplotlib-style `Plot::new().line().title().save()` - no boilerplate
 - **Pure Rust**: No Python, JavaScript, or external runtime needed
-- **Built-in plot types**: 25+ plot types out of the box (violin, KDE, radar, etc.)
+- **Built-in plot types**: 15+ plot types out of the box (violin, KDE, radar, etc.)
 - **Publication quality**: Professional themes and high-DPI export
 
 ```rust
@@ -265,24 +259,17 @@ The pre-commit hooks will automatically run `cargo fmt --check` and `cargo clipp
 - [x] GPU acceleration (experimental)
 - [x] Professional themes
 - [x] Subplots and multi-panel figures
-- [x] **Comprehensive plot types (25+)** - matplotlib/seaborn/Makie parity
-  - [x] Distribution: Violin, KDE, Boxen, ECDF, Strip, Swarm
-  - [x] Categorical: Grouped/Stacked/Horizontal Bar
-  - [x] Composition: Pie, Donut, Area
-  - [x] Continuous: Contour, Hexbin
-  - [x] Error: Error Bars
-  - [x] Discrete: Step, Stem
-  - [x] Regression: Regplot, Residplot
-  - [x] Polar: Polar, Radar
-  - [x] Composite: Joint, Pair
-  - [x] Vector: Quiver
-  - [x] Hierarchical: Dendrogram
-- [ ] Auto-backend selection (v0.2)
+- [x] Distribution plots: Violin, KDE, ECDF
+- [x] Composition plots: Pie, Donut
+- [x] Continuous plots: Contour
+- [x] Polar plots: Polar, Radar
+- [x] Error bars
+- [ ] More plot types: Area, Hexbin, Step, Stem (v0.2)
+- [ ] Regression plots: Regplot, Residplot (v0.2)
+- [ ] Composite plots: Joint, Pair (v0.2)
 - [ ] SVG export (v0.2)
 - [ ] Interactive plots with zoom/pan (v0.3)
 - [ ] 3D plotting (v1.0+)
-
-See [MASTER_ROADMAP.md](plans/00_MASTER_ROADMAP.md) for detailed plans.
 
 ## License
 
