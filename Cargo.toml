@@ -10,6 +10,15 @@ keywords = ["plotting", "visualization", "graphics", "charts"]
 categories = ["visualization", "graphics"]
 repository = "https://github.com/ruviz/ruviz"
 readme = "README.md"
+exclude = [
+    "export_output/",
+    "docs/images/",
+    "docs/gallery/",
+    "tests/",
+    "benches/",
+    "*.log",
+    ".github/",
+]
 
 [dependencies]
 # Core rendering
