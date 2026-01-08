@@ -76,7 +76,7 @@ crossbeam-channel = { version = "0.5", optional = true }
 gifski = { version = "1.32", optional = true }
 
 # Pure Rust video encoding (optional)
-rav1e = { version = "0.7", optional = true }
+rav1e = { version = "0.7", optional = true, default-features = false }
 av1-grain = { version = "0.2", optional = true }
 
 [dev-dependencies]
