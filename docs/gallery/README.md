@@ -2,7 +2,7 @@
 
 Comprehensive visual showcase of ruviz plotting capabilities.
 
-**Total Examples**: 21
+**Total Examples**: 28
 
 ## Gallery Categories
 
@@ -35,6 +35,12 @@ Large dataset handling and optimization
 Complex visualizations and customization
 
 [View Advanced Techniques Examples →](advanced/README.md)
+
+### 🎬 Animation (7 examples)
+
+Animated visualizations with the `record!` macro
+
+[View Animation Examples →](animation/README.md)
 
 ---
 
