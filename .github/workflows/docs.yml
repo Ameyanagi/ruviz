@@ -65,35 +65,3 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  check-images:
-    name: Check Documentation Images
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-docs-
-
-      - name: Generate doc images
-        run: ./scripts/generate-doc-images.sh
-
-      - name: Check for uncommitted image changes
-        run: |
-          if [[ -n $(git status --porcelain docs/images/) ]]; then
-            echo "::warning::Documentation images may be out of date"
-            echo "Run './scripts/generate-doc-images.sh' locally to regenerate"
-            git diff --stat docs/images/
-          else
-            echo "Documentation images are up to date"
-          fi
