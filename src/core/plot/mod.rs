@@ -53,7 +53,7 @@ mod layout_manager;
 mod render_pipeline;
 mod series_manager;
 
-pub use builder::{PlotBuilder, PlotInput, SeriesStyle};
+pub use builder::{IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{BackendType, GridMode, TickDirection};
 pub use configuration::PlotConfiguration;
 pub use data::{IntoPlotData, PlotData, PlotText};
@@ -8579,23 +8579,33 @@ impl PlotSeriesBuilder {
     /// Finish configuring this series and return to the main Plot
     ///
     /// This consumes the builder and adds the series to the plot.
-    /// Call this when you're done configuring the series and want to
-    /// either save the plot or add more series.
+    ///
+    /// **Deprecated**: Series finalize automatically via `Into<Plot>`.
+    /// Use `.save()` directly or `.into()` for explicit conversion.
     ///
     /// # Example
     ///
     /// ```rust,no_run
     /// use ruviz::prelude::*;
     ///
+    /// // Preferred: Use .save() directly (auto-finalizes)
     /// Plot::new()
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
     ///     .label("Series 1")
     ///     .color(Color::BLUE)
-    ///     .end_series()  // Finalize first series
     ///     .title("My Plot")
     ///     .save("plot.png")?;
+    ///
+    /// // Or use .into() for explicit conversion
+    /// let plot: Plot = Plot::new()
+    ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+    ///     .into();
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[deprecated(
+        since = "0.9.0",
+        note = "Not needed - series finalize automatically. Use .save() directly or .into() for explicit conversion."
+    )]
     pub fn end_series(mut self) -> Plot {
         // Auto-assign color if none specified
         if self.series.color.is_none() {
@@ -8622,7 +8632,47 @@ impl std::ops::Deref for PlotSeriesBuilder {
     }
 }
 
+/// Enable implicit conversion from PlotSeriesBuilder to Plot
+///
+/// This implementation allows PlotSeriesBuilder to be converted to Plot
+/// automatically when needed, eliminating the need for explicit `.end_series()` calls.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+/// use ruviz::core::Result;
+///
+/// // Implicit conversion via .into()
+/// let plot: Plot = Plot::new()
+///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
+///     .color(Color::BLUE)
+///     .into();
+///
+/// // Implicit conversion in function parameters
+/// fn save_plot(p: impl Into<Plot>) -> Result<()> {
+///     p.into().save("plot.png")
+/// }
+/// ```
+impl From<PlotSeriesBuilder> for Plot {
+    fn from(builder: PlotSeriesBuilder) -> Plot {
+        #[allow(deprecated)]
+        builder.end_series()
+    }
+}
+
+impl builder::IntoPlot for PlotSeriesBuilder {
+    fn into_plot(self) -> Plot {
+        self.into()
+    }
+
+    fn as_plot(&self) -> &Plot {
+        &self.plot
+    }
+}
+
 // Implement most Plot methods for PlotSeriesBuilder to allow chaining
+#[allow(deprecated)]
 impl PlotSeriesBuilder {
     /// Continue with a new line series
     pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
@@ -8779,6 +8829,24 @@ impl PlotSeriesBuilder {
     pub fn legend(mut self, position: Position) -> Self {
         self.plot.layout.legend.enabled = true;
         self.plot.layout.legend.position = position;
+        self
+    }
+
+    /// Set legend font size
+    pub fn legend_font_size(mut self, size: f32) -> Self {
+        self.plot.layout.legend.font_size = Some(size);
+        self
+    }
+
+    /// Set legend corner radius for rounded corners
+    pub fn legend_corner_radius(mut self, radius: f32) -> Self {
+        self.plot.layout.legend.corner_radius = Some(radius);
+        self
+    }
+
+    /// Set number of legend columns
+    pub fn legend_columns(mut self, columns: usize) -> Self {
+        self.plot.layout.legend.columns = Some(columns.max(1));
         self
     }
 
@@ -9817,6 +9885,160 @@ mod tests {
         assert!(
             (plot_max_res.display.config.figure.dpi - plot_dpi.display.config.figure.dpi).abs()
                 < 1.0
+        );
+    }
+
+    // ========== IntoPlot Trait Tests ==========
+
+    #[test]
+    fn test_from_plot_series_builder_for_plot() {
+        // Test From<PlotSeriesBuilder> for Plot
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+
+        let builder = Plot::new()
+            .line(&x_data, &y_data)
+            .color(crate::render::Color::RED)
+            .label("Test Series");
+
+        // Convert via .into()
+        let plot: Plot = builder.into();
+
+        // Verify the series was added
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert_eq!(
+            plot.series_mgr.series[0].label,
+            Some("Test Series".to_string())
+        );
+    }
+
+    #[test]
+    fn test_into_plot_trait_for_plot() {
+        use builder::IntoPlot;
+
+        let plot = Plot::new().title("Test");
+        let converted = plot.into_plot();
+
+        // Verify title is set (PlotText doesn't impl PartialEq, so check via pattern match)
+        match &converted.display.title {
+            Some(data::PlotText::Static(s)) => assert_eq!(s, "Test"),
+            _ => panic!("Expected Static PlotText with 'Test'"),
+        }
+    }
+
+    #[test]
+    fn test_into_plot_trait_for_plot_series_builder() {
+        use builder::IntoPlot;
+
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+
+        let builder = Plot::new().line(&x_data, &y_data).label("Via IntoPlot");
+
+        let plot = builder.into_plot();
+
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert_eq!(
+            plot.series_mgr.series[0].label,
+            Some("Via IntoPlot".to_string())
+        );
+    }
+
+    #[test]
+    fn test_as_plot_for_plot_series_builder() {
+        use builder::IntoPlot;
+
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+
+        let builder = Plot::new().title("Inspectable").line(&x_data, &y_data);
+
+        // as_plot() allows inspection without consuming
+        let plot_ref = builder.as_plot();
+        match &plot_ref.display.title {
+            Some(data::PlotText::Static(s)) => assert_eq!(s, "Inspectable"),
+            _ => panic!("Expected Static PlotText with 'Inspectable'"),
+        }
+
+        // Builder is still usable after as_plot()
+        let plot = builder.into_plot();
+        assert_eq!(plot.series_mgr.series.len(), 1);
+    }
+
+    #[test]
+    fn test_order_independent_method_chaining() {
+        // Test that plot-level methods can be called in any order
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+
+        // Version 1: Plot config before series
+        let plot1: Plot = Plot::new()
+            .title("My Plot")
+            .xlabel("X")
+            .line(&x_data, &y_data)
+            .into();
+
+        // Version 2: Plot config after series
+        let plot2: Plot = Plot::new()
+            .line(&x_data, &y_data)
+            .title("My Plot")
+            .xlabel("X")
+            .into();
+
+        // Both should have the same configuration
+        // Verify titles match (PlotText doesn't impl PartialEq)
+        match (&plot1.display.title, &plot2.display.title) {
+            (Some(data::PlotText::Static(s1)), Some(data::PlotText::Static(s2))) => {
+                assert_eq!(s1, s2);
+            }
+            _ => panic!("Expected matching Static PlotText titles"),
+        }
+        match (&plot1.display.xlabel, &plot2.display.xlabel) {
+            (Some(data::PlotText::Static(s1)), Some(data::PlotText::Static(s2))) => {
+                assert_eq!(s1, s2);
+            }
+            _ => panic!("Expected matching Static PlotText xlabels"),
+        }
+        assert_eq!(plot1.series_mgr.series.len(), plot2.series_mgr.series.len());
+    }
+
+    #[test]
+    fn test_generic_function_with_into_plot() {
+        use builder::IntoPlot;
+
+        // Function that accepts any IntoPlot type
+        fn count_series(p: impl IntoPlot) -> usize {
+            p.into_plot().series_mgr.series.len()
+        }
+
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+
+        // Works with Plot
+        assert_eq!(count_series(Plot::new()), 0);
+
+        // Works with PlotSeriesBuilder
+        let builder = Plot::new().line(&x_data, &y_data);
+        assert_eq!(count_series(builder), 1);
+    }
+
+    #[test]
+    fn test_implicit_conversion_in_function_param() {
+        // Test that Into<Plot> works for function parameters
+        fn accepts_into_plot(p: impl Into<Plot>) -> Plot {
+            p.into()
+        }
+
+        let x_data = vec![1.0, 2.0, 3.0];
+        let y_data = vec![2.0, 4.0, 3.0];
+
+        let builder = Plot::new().line(&x_data, &y_data).label("Implicit");
+        let plot = accepts_into_plot(builder);
+
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert_eq!(
+            plot.series_mgr.series[0].label,
+            Some("Implicit".to_string())
         );
     }
 }

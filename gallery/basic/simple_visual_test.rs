@@ -12,10 +12,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Create a plot with high contrast
     Plot::new()
-        .title("Visual Test - Cosmic-Text Rendering".to_string())
+        .title("Visual Test - Cosmic-Text Rendering")
         .line(&x_data, &y_data)
         .color(Color::new(255, 0, 0)) // Bright red line
-        .end_series()
         .save("gallery/basic/simple_visual_test.png")?;
 
     println!("✅ Created gallery/basic/simple_visual_test.png");
@@ -28,10 +27,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Also create one without any data to see just axes/grid
     Plot::new()
-        .title("Cosmic-Text Typography Demo".to_string())
-        .dimensions(400, 300)
+        .title("Cosmic-Text Typography Demo")
+        .size_px(400, 300)
         .line(&vec![0.0], &vec![0.0]) // Single point (will be barely visible)
-        .end_series()
         .save("gallery/basic/simple_visual_test_typography.png")?;
 
     println!(

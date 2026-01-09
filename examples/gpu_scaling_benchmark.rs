@@ -21,35 +21,34 @@ struct BenchmarkResult {
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
+    std::fs::create_dir_all("examples/output").ok();
 
-    println!("📊 GPU vs CPU Scaling Analysis");
-    println!("===============================\n");
+    println!("GPU vs CPU Scaling Analysis");
+    println!("===========================\n");
 
-    // Initialize renderers
     let mut cpu_renderer = PooledRenderer::new();
-    println!("✅ CPU Renderer initialized");
+    println!("CPU Renderer initialized");
 
     let mut gpu_renderer = match initialize_gpu_backend().await {
         Ok(_) => match GpuRenderer::new().await {
             Ok(renderer) => {
                 println!(
-                    "✅ GPU Renderer initialized - threshold: {}",
+                    "GPU Renderer initialized - threshold: {}",
                     renderer.gpu_threshold()
                 );
                 Some(renderer)
             }
             Err(e) => {
-                println!("⚠️ GPU Renderer failed: {}", e);
+                println!("GPU Renderer failed: {}", e);
                 None
             }
         },
         Err(e) => {
-            println!("⚠️ GPU Backend failed: {}", e);
+            println!("GPU Backend failed: {}", e);
             None
         }
     };
 
-    // Test datasets from small to very large
     let test_sizes = vec![
         500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000,
         2_000_000, 5_000_000,
@@ -58,9 +57,8 @@ async fn main() -> Result<()> {
     let mut results = Vec::new();
 
     for &point_count in &test_sizes {
-        println!("\n🔍 Testing {} points", format_number(point_count as u64));
+        println!("\nTesting {} points", format_number(point_count as u64));
 
-        // Generate test data
         let x_data: Vec<f64> = (0..point_count).map(|i| i as f64 * 0.001).collect();
         let y_data: Vec<f64> = x_data
             .iter()
@@ -83,7 +81,7 @@ async fn main() -> Result<()> {
         let cpu_throughput = point_count as f64 / cpu_time.as_secs_f64();
 
         println!(
-            "{:>10.0} μs ({:>12.0} pts/sec)",
+            "{:>10.0} us ({:>12.0} pts/sec)",
             cpu_time_us, cpu_throughput
         );
 
@@ -102,10 +100,9 @@ async fn main() -> Result<()> {
                     let speedup = cpu_time.as_secs_f64() / gpu_time.as_secs_f64();
 
                     println!(
-                        "{:>10.0} μs ({:>12.0} pts/sec) [{:.2}x speedup]",
+                        "{:>10.0} us ({:>12.0} pts/sec) [{:.2}x speedup]",
                         gpu_time_us, gpu_throughput, speedup
                     );
-
                     (gpu_time_us, gpu_throughput, speedup, true)
                 }
                 Err(e) => {
@@ -128,23 +125,21 @@ async fn main() -> Result<()> {
             gpu_success,
         });
 
-        // Memory usage estimate
         let data_size = point_count * std::mem::size_of::<f64>() * 2;
         println!("   Memory: {:.1} MB", data_size as f64 / 1_000_000.0);
 
-        // Early exit for very slow operations
         if cpu_time.as_secs_f64() > 5.0 {
-            println!("   ⏰ CPU time > 5s, skipping larger datasets");
+            println!("   CPU time > 5s, skipping larger datasets");
             break;
         }
     }
 
-    // Print summary table
-    println!("\n📈 Performance Summary Table");
-    println!("============================");
+    // Print summary
+    println!("\nPerformance Summary Table");
+    println!("=========================");
     println!(
         "{:>10} {:>12} {:>12} {:>12} {:>12} {:>10}",
-        "Points", "CPU (μs)", "GPU (μs)", "CPU (Mpts/s)", "GPU (Mpts/s)", "Speedup"
+        "Points", "CPU (us)", "GPU (us)", "CPU (Mpts/s)", "GPU (Mpts/s)", "Speedup"
     );
     println!("{}", "-".repeat(80));
 
@@ -176,76 +171,32 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Create performance plot
     create_performance_plot(&results)?;
-
-    // Print analysis
-    println!("\n🔬 Performance Analysis");
-    println!("=======================");
 
     if let Some(gpu) = &gpu_renderer {
         let stats = gpu.get_stats();
-        println!("GPU Operations: {}", stats.gpu_operations);
-        println!("CPU Fallbacks: {}", stats.cpu_operations);
+        println!("\nGPU Statistics:");
+        println!("  GPU Operations: {}", stats.gpu_operations);
+        println!("  CPU Fallbacks: {}", stats.cpu_operations);
         println!(
-            "GPU Points Processed: {}",
+            "  GPU Points: {}",
             format_number(stats.gpu_points_processed)
         );
         println!(
-            "CPU Points Processed: {}",
+            "  CPU Points: {}",
             format_number(stats.cpu_points_processed)
         );
-        println!("Average GPU Time: {:.1}μs", stats.avg_gpu_time);
-        println!("Average CPU Time: {:.1}μs", stats.avg_cpu_time);
     }
 
-    // Find optimal breakpoint
-    let successful_gpu_results: Vec<_> = results
-        .iter()
-        .filter(|r| r.gpu_success && r.gpu_speedup > 1.0)
-        .collect();
-
-    if let Some(best_result) = successful_gpu_results
-        .iter()
-        .max_by(|a, b| a.gpu_speedup.partial_cmp(&b.gpu_speedup).unwrap())
-    {
-        println!("\n🏆 Best GPU Performance:");
-        println!(
-            "  {} points: {:.2}x speedup ({:.1}M pts/sec)",
-            format_number(best_result.point_count as u64),
-            best_result.gpu_speedup,
-            best_result.gpu_throughput / 1_000_000.0
-        );
-    }
-
-    // Efficiency analysis
-    let gpu_efficiency_range: Vec<_> = successful_gpu_results
-        .iter()
-        .filter(|r| r.gpu_speedup > 1.1) // Only meaningful speedups
-        .map(|r| r.point_count)
-        .collect();
-
-    if !gpu_efficiency_range.is_empty() {
-        let min_efficient = *gpu_efficiency_range.iter().min().unwrap();
-        let max_efficient = *gpu_efficiency_range.iter().max().unwrap();
-        println!("\n⚡ GPU Efficiency Range:");
-        println!(
-            "  {} - {} points show meaningful speedup (>1.1x)",
-            format_number(min_efficient as u64),
-            format_number(max_efficient as u64)
-        );
-    }
-
-    println!("\n✅ Scaling analysis complete! Check 'gpu_scaling_plot.png'");
+    println!("\nScaling analysis complete! Check examples/output/ for plots");
     Ok(())
 }
 
 fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
-    // Extract data for plotting
     let point_counts: Vec<f64> = results.iter().map(|r| r.point_count as f64).collect();
     let cpu_throughput: Vec<f64> = results
         .iter()
-        .map(|r| r.cpu_throughput / 1_000_000.0) // Convert to Mpts/sec
+        .map(|r| r.cpu_throughput / 1_000_000.0)
         .collect();
     let gpu_throughput: Vec<f64> = results
         .iter()
@@ -257,12 +208,7 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
             }
         })
         .collect();
-    let gpu_speedup: Vec<f64> = results
-        .iter()
-        .map(|r| if r.gpu_success { r.gpu_speedup } else { 0.0 })
-        .collect();
 
-    // Create throughput comparison plot
     Plot::new()
         .title("GPU vs CPU Performance Scaling")
         .xlabel("Dataset Size (points)")
@@ -274,10 +220,8 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         .label("CPU")
         .line(&point_counts, &gpu_throughput)
         .label("GPU")
-        .end_series()
         .save("examples/output/gpu_throughput_scaling.png")?;
 
-    // Create speedup plot
     let valid_speedups: Vec<_> = results.iter().filter(|r| r.gpu_success).collect();
 
     if !valid_speedups.is_empty() {
@@ -294,18 +238,16 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
             .size(12.0, 6.0)
             .dpi(150)
             .scatter(&speedup_points, &speedup_values)
-            .end_series()
             .save("examples/output/gpu_speedup_scaling.png")?;
     }
 
-    println!("📊 Performance plots saved:");
-    println!("  - examples/output/gpu_throughput_scaling.png (throughput comparison)");
-    println!("  - examples/output/gpu_speedup_scaling.png (speedup analysis)");
+    println!("\nPerformance plots saved:");
+    println!("  examples/output/gpu_throughput_scaling.png");
+    println!("  examples/output/gpu_speedup_scaling.png");
 
     Ok(())
 }
 
-/// Format numbers with thousand separators
 fn format_number(n: u64) -> String {
     let s = n.to_string();
     let chars: Vec<char> = s.chars().collect();

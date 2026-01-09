@@ -17,8 +17,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("振幅 (Amplitude)")
         .theme(Theme::publication())
         .line(&x_data, &y_data)
-            .label("テストライン (Test Line)")
-            .end_series()
+        .label("テストライン (Test Line)")
         .save_with_size("test_output/test_text_rotation.png", 1000, 700)?;
     
     println!("✅ Generated test_output/test_text_rotation.png with UTF-8 text and rotation");

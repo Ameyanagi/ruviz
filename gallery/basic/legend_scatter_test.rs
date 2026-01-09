@@ -27,17 +27,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .label("Data A - circles")
         .color(Color::BLUE)
         .marker(MarkerStyle::Circle)
-        .end_series()
         .scatter(&x2, &y2)
         .label("Data B - squares")
         .color(Color::RED)
         .marker(MarkerStyle::Square)
-        .end_series()
         .scatter(&x3, &y3)
         .label("Data C - triangles")
         .color(Color::GREEN)
         .marker(MarkerStyle::Triangle)
-        .end_series()
         .legend(Position::Best) // Auto-positioning to minimize overlap
         .save("gallery/basic/legend_scatter_test.png")?;
 

@@ -733,10 +733,10 @@ pub mod animation;
 pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
-        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern, Legend,
-        LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInput,
-        Position, Result, SeriesStyle, ShapeStyle, SubplotFigure, TextAlign, TextStyle, TextVAlign,
-        subplots, subplots_default,
+        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern,
+        IntoPlot, Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot,
+        PlotBuilder, PlotInput, Position, Result, SeriesStyle, ShapeStyle, SubplotFigure,
+        TextAlign, TextStyle, TextVAlign, subplots, subplots_default,
     };
     pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
     pub use crate::plots::{

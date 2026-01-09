@@ -20,17 +20,16 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     
     for (name, font_family) in font_tests {
         println!("Testing {} font...", name);
-        
+
         Plot::new()
             .title(&format!("Font Test: {} Family", name))
             .xlabel("X Values")
             .ylabel("Y Values")
             .theme(Theme::publication())
             .line(&x_data, &y_data)
-                .label(&format!("{} line", name))
-                .end_series()
+            .label(&format!("{} line", name))
             .save_with_size(&format!("test_output/font_test_{}.png", name), 800, 600)?;
-        
+
         println!("✅ Generated test_output/font_test_{}.png", name);
     }
     

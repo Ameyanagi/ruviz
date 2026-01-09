@@ -18,11 +18,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Y Axis (amplitude)")
         .theme(Theme::publication())
         .line(&x_data, &y1_data)
-            .label("sin(x)")
-            .end_series()
-        .line(&x_data, &y2_data)  
-            .label("cos(x)")
-            .end_series()
+        .label("sin(x)")
+        .line(&x_data, &y2_data)
+        .label("cos(x)")
         .save_with_size("test_output/test_axis_labels.png", 1200, 900)?;
     
     println!("✅ Generated test_output/test_axis_labels.png with axis labels and legend");

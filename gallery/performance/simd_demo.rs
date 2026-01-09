@@ -64,13 +64,10 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     plot = plot
         .scatter(&x1, &y1)
         .label("Sine + Noise")
-        .end_series()
         .line(&x2, &y2)
         .label("Log Spiral")
-        .end_series()
         .scatter(&x3, &y3)
         .label("Damped Oscillation")
-        .end_series()
         .legend(Position::TopRight)
         .grid(true);
     

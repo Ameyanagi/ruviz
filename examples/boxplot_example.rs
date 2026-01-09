@@ -9,19 +9,14 @@ fn main() -> ruviz::core::Result<()> {
         35.0, 40.0, -5.0,
     ];
 
-    let result = Plot::new()
-        .dimensions(800, 600)
+    Plot::new()
         .title("Box Plot Example")
         .xlabel("Distribution")
         .ylabel("Values")
+        .size_px(800, 600)
         .boxplot(&data, Some(BoxPlotConfig::new()))
-        .end_series()
-        .save("examples/output/boxplot_example.png");
+        .save("examples/output/boxplot_example.png")?;
 
-    match result {
-        Ok(_) => println!("Box plot saved as boxplot_example.png"),
-        Err(e) => println!("Error: {}", e),
-    }
-
+    println!("Box plot saved as boxplot_example.png");
     Ok(())
 }

@@ -53,12 +53,10 @@ fn generate_error_bars_example() -> std::result::Result<(), Box<dyn std::error::
         .line(&x_data, &theoretical)
         .label("Theoretical Model")
         .style(LineStyle::Solid)
-        .end_series()
         // Experimental data with error bars
         .error_bars(&x_data, &experimental, &y_errors)
         .label("Experimental Data")
         .marker(MarkerStyle::Circle)
-        .end_series()
         .save_with_size("test_output/scientific_error_bars.png", 1200, 900)?;
 
     Ok(())
@@ -86,13 +84,10 @@ fn generate_multi_series_with_errors() -> std::result::Result<(), Box<dyn std::e
         .legend(Position::TopLeft)
         .error_bars(&x_data, &technique_a, &errors_a)
         .label("High Precision (±0.2)")
-        .end_series()
         .error_bars(&x_data, &technique_b, &errors_b)
         .label("Medium Precision (±0.5)")
-        .end_series()
         .error_bars(&x_data, &technique_c, &errors_c)
         .label("Low Precision (±0.8)")
-        .end_series()
         .save_with_size("test_output/scientific_multi_series_errors.png", 1200, 900)?;
 
     Ok(())
@@ -119,15 +114,12 @@ fn generate_statistical_plots() -> std::result::Result<(), Box<dyn std::error::E
         .line(&x_range, &normal_1)
         .label("μ=0, σ=1.0")
         .style(LineStyle::Solid)
-        .end_series()
         .line(&x_range, &normal_2)
         .label("μ=1, σ=0.5")
         .style(LineStyle::Dashed)
-        .end_series()
         .line(&x_range, &normal_3)
         .label("μ=-0.5, σ=1.5")
         .style(LineStyle::Dotted)
-        .end_series()
         .save_with_size("test_output/scientific_distributions.png", 1200, 900)?;
 
     Ok(())
@@ -174,22 +166,18 @@ fn generate_publication_figure() -> std::result::Result<(), Box<dyn std::error::
         .line(&time, &primary_signal)
         .label("Primary Signal (f₁)")
         .style(LineStyle::Solid)
-        .end_series()
         // Secondary continuous signal
         .line(&time, &secondary_signal)
         .label("Secondary Signal (f₂)")
         .style(LineStyle::Dashed)
-        .end_series()
         // Background noise level
         .line(&time, &noise_floor)
         .label("Noise Floor")
         .style(LineStyle::Dotted)
-        .end_series()
         // Discrete measurements with error bars
         .error_bars(&measurement_times, &measurements, &measurement_errors)
         .label("Measured Data Points")
         .marker(MarkerStyle::Square)
-        .end_series()
         .save_with_size("test_output/scientific_publication_quality.png", 1400, 1000)?;
 
     Ok(())

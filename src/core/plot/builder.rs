@@ -20,9 +20,77 @@
 //!     .title("KDE Plot")    // -> PlotBuilder<KdeConfig> (forwards to Plot)
 //!     .save("kde.png")?;    // auto-finalize and save
 //! ```
+//!
+//! # IntoPlot Trait
+//!
+//! The [`IntoPlot`] trait provides a unified interface for all builder types,
+//! enabling generic functions to accept any builder:
+//!
+//! ```rust,ignore
+//! fn process_plot(p: impl IntoPlot) {
+//!     let plot = p.into_plot();
+//!     // ... process the plot
+//! }
+//! ```
 
 use super::data::PlotData;
 use crate::render::{Color, LineStyle, MarkerStyle};
+
+/// Trait for types that can be converted to a finalized [`Plot`](super::Plot)
+///
+/// This trait enables uniform handling of all builder types (`Plot`, `PlotBuilder<C>`,
+/// `PlotSeriesBuilder`) and allows functions to accept any builder generically.
+///
+/// # When to Use
+///
+/// Use `IntoPlot` when you want to write a function that accepts any plot builder type:
+///
+/// ```rust,ignore
+/// use ruviz::prelude::*;
+///
+/// fn save_with_title(builder: impl IntoPlot, title: &str) -> Result<(), PlottingError> {
+///     let plot = builder.into_plot().title(title);
+///     plot.save("output.png")
+/// }
+///
+/// // Works with Plot
+/// save_with_title(Plot::new(), "Direct Plot")?;
+///
+/// // Works with PlotBuilder
+/// save_with_title(Plot::new().kde(&data), "KDE Plot")?;
+///
+/// // Works with PlotSeriesBuilder
+/// save_with_title(Plot::new().line(&x, &y), "Line Plot")?;
+/// ```
+///
+/// # Relationship to `Into<Plot>`
+///
+/// All `IntoPlot` implementors also implement `Into<Plot>`. The `IntoPlot` trait
+/// provides additional functionality:
+/// - `into_plot()`: Explicit conversion method (more discoverable than `.into()`)
+/// - `as_plot()`: Read-only access to the inner Plot without consuming the builder
+pub trait IntoPlot: Sized {
+    /// Consume this builder and return the finalized Plot
+    ///
+    /// Any pending series configuration is committed before returning.
+    fn into_plot(self) -> super::Plot;
+
+    /// Get a reference to the inner Plot
+    ///
+    /// This allows inspecting the plot configuration without consuming the builder.
+    fn as_plot(&self) -> &super::Plot;
+}
+
+/// Implementation for Plot itself (identity conversion)
+impl IntoPlot for super::Plot {
+    fn into_plot(self) -> super::Plot {
+        self
+    }
+
+    fn as_plot(&self) -> &super::Plot {
+        self
+    }
+}
 
 /// Macro to generate terminal methods for PlotBuilder implementations
 ///
@@ -137,6 +205,37 @@ macro_rules! impl_terminal_methods {
                 self.finalize().bar(categories, values)
             }
 
+            /// Add an error bars series after finalizing the current series
+            ///
+            /// Enables chaining multiple series: `.line(...).error_bars(...).save()`
+            pub fn error_bars<X, Y, E>(self, x: &X, y: &Y, y_errors: &E) -> super::PlotSeriesBuilder
+            where
+                X: crate::data::Data1D<f64>,
+                Y: crate::data::Data1D<f64>,
+                E: crate::data::Data1D<f64>,
+            {
+                self.finalize().error_bars(x, y, y_errors)
+            }
+
+            /// Add an error bars series with X and Y errors after finalizing the current series
+            ///
+            /// Enables chaining multiple series: `.line(...).error_bars_xy(...).save()`
+            pub fn error_bars_xy<X, Y, EX, EY>(
+                self,
+                x: &X,
+                y: &Y,
+                x_errors: &EX,
+                y_errors: &EY,
+            ) -> super::PlotSeriesBuilder
+            where
+                X: crate::data::Data1D<f64>,
+                Y: crate::data::Data1D<f64>,
+                EX: crate::data::Data1D<f64>,
+                EY: crate::data::Data1D<f64>,
+            {
+                self.finalize().error_bars_xy(x, y, x_errors, y_errors)
+            }
+
             /// Finish configuring this series and return to the main Plot
             ///
             /// **Deprecated**: Series finalize automatically. Use `.save()` directly.
@@ -152,6 +251,16 @@ macro_rules! impl_terminal_methods {
         impl From<PlotBuilder<$config>> for super::Plot {
             fn from(builder: PlotBuilder<$config>) -> super::Plot {
                 builder.finalize()
+            }
+        }
+
+        impl IntoPlot for PlotBuilder<$config> {
+            fn into_plot(self) -> super::Plot {
+                self.finalize()
+            }
+
+            fn as_plot(&self) -> &super::Plot {
+                &self.plot
             }
         }
     };
@@ -464,6 +573,30 @@ where
     /// This method forwards to the inner Plot.
     pub fn legend(mut self, position: crate::core::Position) -> Self {
         self.plot = self.plot.legend(position);
+        self
+    }
+
+    /// Set legend font size
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn legend_font_size(mut self, size: f32) -> Self {
+        self.plot = self.plot.legend_font_size(size);
+        self
+    }
+
+    /// Set legend corner radius for rounded corners
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn legend_corner_radius(mut self, radius: f32) -> Self {
+        self.plot = self.plot.legend_corner_radius(radius);
+        self
+    }
+
+    /// Set number of legend columns
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn legend_columns(mut self, columns: usize) -> Self {
+        self.plot = self.plot.legend_columns(columns);
         self
     }
 

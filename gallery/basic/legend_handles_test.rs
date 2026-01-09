@@ -20,17 +20,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .line(&x_data, &y1)
         .label("sin(x) - solid")
         .color(Color::BLUE)
-        .end_series()
         .line(&x_data, &y2)
         .label("cos(x) - dashed")
         .color(Color::RED)
         .style(LineStyle::Dashed)
-        .end_series()
         .line(&x_data, &y3)
         .label("sin(x/2) - dotted")
         .color(Color::GREEN)
         .style(LineStyle::Dotted)
-        .end_series()
         .legend(Position::TopRight)
         .save("gallery/basic/legend_handles_test.png")?;
 

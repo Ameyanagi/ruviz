@@ -14,12 +14,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("1. Testing FontFamily::SansSerif");
     Plot::new()
         .title("SansSerif Font Family Test")
-        .xlabel("X Values") 
+        .xlabel("X Values")
         .ylabel("Y Values")
         .theme(Theme::publication())
         .line(&x_data, &y_data)
-            .label("Sans-serif line")
-            .end_series()
+        .label("Sans-serif line")
         .save_with_size("test_output/plotters_sans_serif.png", 800, 600)?;
     
     println!("2. Testing FontFamily from string");

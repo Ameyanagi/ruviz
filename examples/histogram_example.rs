@@ -2,8 +2,7 @@ use ruviz::plots::histogram::HistogramConfig;
 use ruviz::prelude::*;
 
 fn main() -> ruviz::core::Result<()> {
-    // Create test_output directory
-    std::fs::create_dir_all("test_output").ok();
+    std::fs::create_dir_all("examples/output").ok();
 
     // Generate sample data - normal distribution-like
     let data = vec![
@@ -12,20 +11,15 @@ fn main() -> ruviz::core::Result<()> {
         9.6, 9.8, 10.0, 10.2, 10.5, 10.7, 10.9, 11.1, 11.4, 11.6, 11.8, 12.0,
     ];
 
-    let result = Plot::new()
-        .dimensions(800, 600)
-        .title("Professional Histogram Example - Improved Styling")
+    Plot::new()
+        .title("Professional Histogram Example")
         .xlabel("Value Bins")
         .ylabel("Frequency")
-        .histogram(&data, Some(HistogramConfig::new()))
-        .end_series()
+        .size_px(800, 600)
         .theme(Theme::publication())
-        .save("examples/output/histogram_example.png");
+        .histogram(&data, Some(HistogramConfig::new()))
+        .save("examples/output/histogram_example.png")?;
 
-    match result {
-        Ok(_) => println!("✅ Professional histogram saved as test_output/histogram_example.png"),
-        Err(e) => println!("❌ Error: {}", e),
-    }
-
+    println!("Professional histogram saved as examples/output/histogram_example.png");
     Ok(())
 }

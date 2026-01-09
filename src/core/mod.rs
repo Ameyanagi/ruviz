@@ -38,7 +38,7 @@ pub use legend::{
     Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, LegendSpacing,
     LegendSpacingPixels, LegendStyle, find_best_position,
 };
-pub use plot::{BackendType, Plot, PlotBuilder, PlotInput, SeriesStyle};
+pub use plot::{BackendType, IntoPlot, Plot, PlotBuilder, PlotInput, SeriesStyle};
 pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;

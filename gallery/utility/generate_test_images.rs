@@ -18,61 +18,55 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // 1. Basic line plot - PNG
     println!("Creating basic line plot...");
     Plot::new()
-        .title("Basic Sine Wave".to_string())
-        .xlabel("X Values".to_string())
-        .ylabel("Y Values".to_string())
+        .title("Basic Sine Wave")
+        .xlabel("X Values")
+        .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .end_series()
         .save("test_output/01_basic_line_plot.png")?;
-    
+
     // 2. Scatter plot
     println!("Creating scatter plot...");
     let scatter_x: Vec<f64> = (0..50).map(|i| i as f64).collect();
     let scatter_y: Vec<f64> = scatter_x.iter().map(|x| x * 2.0 + 10.0).collect();
-    
+
     Plot::new()
-        .title("Scatter Plot Example".to_string())
+        .title("Scatter Plot Example")
         .scatter(&scatter_x, &scatter_y)
-        .end_series()
         .save("test_output/02_scatter_plot.png")?;
-    
+
     // 3. Multiple series
     println!("Creating multi-series plot...");
     let y2_data: Vec<f64> = x_data.iter().map(|x| x.cos()).collect();
-    
+
     Plot::new()
-        .title("Multiple Series".to_string())
+        .title("Multiple Series")
         .line(&x_data, &y_data)
         .color(Color::new(255, 0, 0))
-        .end_series()
         .line(&x_data, &y2_data)
         .color(Color::new(0, 0, 255))
-        .end_series()
         .save("test_output/03_multi_series.png")?;
-    
+
     // 4. Test different themes (simplified - just use default for now)
     println!("Creating themed plots...");
-    
+
     // Light theme (default)
     Plot::new()
-        .title("Light Theme".to_string())
+        .title("Light Theme")
         .line(&x_data, &y_data)
-        .end_series()
         .save("export_output/png/light_theme.png")?;
-    
+
     // For now, just create multiple copies with different names
     Plot::new()
-        .title("Dark Theme".to_string())
+        .title("Dark Theme")
         .line(&x_data, &y_data)
-        .end_series()
         .save("export_output/png/dark_theme.png")?;
-    
+
     // 5. Test SVG export
     println!("Testing SVG export...");
-    let plot = Plot::new()
-        .title("SVG Export Test".to_string())
+    let plot: Plot = Plot::new()
+        .title("SVG Export Test")
         .line(&x_data, &y_data)
-        .end_series();
+        .into();
     
     let image = plot.render()?;
     let renderer = SkiaRenderer::new(800, 600, Theme::light())?;
@@ -88,12 +82,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing performance with 10K points...");
     let large_x: Vec<f64> = (0..10000).map(|i| i as f64 * 0.001).collect();
     let large_y: Vec<f64> = large_x.iter().map(|x| (x * 10.0).sin() * x.exp()).collect();
-    
+
     let start = std::time::Instant::now();
     Plot::new()
-        .title("Performance Test - 10K Points".to_string())
+        .title("Performance Test - 10K Points")
         .line(&large_x, &large_y)
-        .end_series()
         .save("test_output/04_performance_test.png")?;
     let duration = start.elapsed();
     println!("10K points rendered in: {:?}", duration);
