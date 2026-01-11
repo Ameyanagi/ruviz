@@ -1,4 +1,0 @@
-Resolution: 1200x900
-Megapixels: 1.1
-File size: 4315200 bytes
-Format: RGBA

@@ -29,6 +29,7 @@ pub struct PlatformInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub enum OSType {
     Linux,
+    FreeBSD,
     MacOS,
     Windows,
     Other(String),
@@ -123,13 +124,21 @@ fn detect_os_type() -> OSType {
     #[cfg(target_os = "linux")]
     return OSType::Linux;
 
+    #[cfg(target_os = "freebsd")]
+    return OSType::FreeBSD;
+
     #[cfg(target_os = "macos")]
     return OSType::MacOS;
 
     #[cfg(target_os = "windows")]
     return OSType::Windows;
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "windows"
+    )))]
     return OSType::Other(std::env::consts::OS.to_string());
 }
 
@@ -226,6 +235,10 @@ pub fn initialize_platform_optimization() -> Result<(), crate::core::error::Plot
 #[path = "linux.rs"]
 mod platform;
 
+#[cfg(target_os = "freebsd")]
+#[path = "freebsd.rs"]
+mod platform;
+
 #[cfg(target_os = "macos")]
 #[path = "macos.rs"]
 mod platform;
@@ -234,7 +247,12 @@ mod platform;
 #[path = "windows.rs"]
 mod platform;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "windows"
+)))]
 mod platform {
     use crate::core::error::PlottingError;
 
