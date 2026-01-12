@@ -1,4 +1,0 @@
-Small Plot Raw Data
-Size: 400x300
-Bytes: 480000
-Format: RGBA

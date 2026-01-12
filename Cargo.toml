@@ -25,7 +25,7 @@ exclude = [
 tiny-skia = "0.11"
 tiny-skia-path = "0.11"
 
-# Math & geometry  
+# Math & geometry
 glam = "0.25"
 nalgebra = { version = "0.32", optional = true }
 
@@ -87,6 +87,10 @@ gifski = { version = "1.32", optional = true }
 # Pure Rust video encoding (optional)
 rav1e = { version = "0.7", optional = true, default-features = false }
 av1-grain = { version = "0.2", optional = true }
+
+# FreeBSD support
+[target.'cfg(target_os = "freebsd")'.dependencies]
+ctor = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
