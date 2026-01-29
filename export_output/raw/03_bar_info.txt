@@ -1,5 +1,0 @@
-Bar Chart Raw Data
-Size: 640x480
-Bytes: 1228800
-Format: RGBA
-Categories: 5

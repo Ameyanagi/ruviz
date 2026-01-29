@@ -711,6 +711,28 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#[cfg(target_os = "freebsd")]
+fn setup_freebsd_fontconfig() {
+    use std::env;
+
+    // Set FONTCONFIG_FILE if not already set
+    if env::var("FONTCONFIG_FILE").is_err() {
+        let fontconfig_path = "/usr/local/etc/fonts/fonts.conf";
+        if std::path::Path::new(fontconfig_path).exists() {
+            unsafe {
+                env::set_var("FONTCONFIG_FILE", fontconfig_path);
+            }
+        }
+    }
+}
+
+// Call it using ctor to run before any cosmic-text initialization
+#[cfg(target_os = "freebsd")]
+#[ctor::ctor]
+fn init_freebsd_fonts() {
+    setup_freebsd_fontconfig();
+}
+
 pub mod axes;
 pub mod core;
 pub mod data;
