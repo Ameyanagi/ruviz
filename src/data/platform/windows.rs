@@ -59,7 +59,7 @@ struct PERFORMANCE_INFORMATION {
     ThreadCount: DWORD,
 }
 
-extern "system" {
+unsafe extern "system" {
     fn GlobalMemoryStatusEx(lpBuffer: *mut MEMORYSTATUSEX) -> BOOL;
     fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO) -> ();
     fn GetPerformanceInfo(pPerformanceInformation: *mut PERFORMANCE_INFORMATION, cb: DWORD)
@@ -201,6 +201,11 @@ pub fn get_system_info() -> Result<WindowsSystemInfo, PlottingError> {
             processor_revision: sys_info.wProcessorRevision,
         })
     }
+}
+
+/// Check if huge pages are supported on Windows
+pub fn check_hugepage_support() -> bool {
+    check_large_page_support()
 }
 
 /// Check if large pages are supported on Windows
