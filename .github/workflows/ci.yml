@@ -7,6 +7,7 @@ on:
       - 'v*'
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -104,6 +105,57 @@ jobs:
 
       - name: Check MSRV
         run: cargo check --all-features
+
+  platform-build:
+    name: Build (${{ matrix.platform.name }})
+    runs-on: ${{ matrix.platform.os }}
+    needs: [fmt, clippy]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: macOS
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - name: FreeBSD
+            os: ubuntu-latest
+            target: x86_64-unknown-freebsd
+            cross: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install cross
+        if: matrix.platform.cross
+        run: cargo install cross --version 0.2.5 --locked
+
+      - name: Build (cross)
+        if: matrix.platform.cross
+        run: cross check --target ${{ matrix.platform.target }}
+
+      - name: Build (native)
+        if: ${{ !matrix.platform.cross }}
+        run: cargo check --target ${{ matrix.platform.target }}
 
   docs:
     name: Documentation

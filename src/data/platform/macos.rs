@@ -19,7 +19,7 @@ struct VMSwapUsage {
     encrypted: u32,
 }
 
-extern "C" {
+unsafe extern "C" {
     fn sysctl(
         name: *const i32,
         namelen: u32,
@@ -261,6 +261,16 @@ pub fn get_page_size() -> usize {
     }
 }
 
+/// Get number of NUMA nodes on macOS (macOS does not support NUMA)
+pub fn get_numa_nodes() -> usize {
+    1
+}
+
+/// Check if huge pages are supported on macOS
+pub fn check_hugepage_support() -> bool {
+    check_large_page_support()
+}
+
 /// Check if large pages (super pages) are supported on macOS
 pub fn check_large_page_support() -> bool {
     unsafe {
@@ -295,7 +305,7 @@ pub fn get_cache_info() -> Result<CacheInfo, PlottingError> {
         let mut cache_line_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
 
-        let names = [
+        let mut names = [
             (
                 CStr::from_bytes_with_nul(b"hw.l1dcachesize\0").unwrap(),
                 &mut l1_cache_size,
@@ -314,7 +324,7 @@ pub fn get_cache_info() -> Result<CacheInfo, PlottingError> {
             ),
         ];
 
-        for (name, value) in names.iter() {
+        for (name, value) in names.iter_mut() {
             sysctlbyname(
                 name.as_ptr(),
                 *value as *mut i32 as *mut std::ffi::c_void,
