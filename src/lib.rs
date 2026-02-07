@@ -719,6 +719,8 @@ fn setup_freebsd_fontconfig() {
     if env::var("FONTCONFIG_FILE").is_err() {
         let fontconfig_path = "/usr/local/etc/fonts/fonts.conf";
         if std::path::Path::new(fontconfig_path).exists() {
+            // SAFETY: This runs in a process constructor before worker threads start.
+            // Setting process env vars at that point avoids concurrent env mutation.
             unsafe {
                 env::set_var("FONTCONFIG_FILE", fontconfig_path);
             }

@@ -1122,10 +1122,6 @@ impl<T: Clone> Clone for StreamingBuffer<T> {
     }
 }
 
-// Thread-safety: All internal state is protected by Arc/RwLock/Atomic
-unsafe impl<T: Send> Send for StreamingBuffer<T> {}
-unsafe impl<T: Send + Sync> Sync for StreamingBuffer<T> {}
-
 /// Paired streaming buffers for X/Y time-series data
 ///
 /// Provides synchronized updates and version tracking for plot integration

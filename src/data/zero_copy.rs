@@ -1,246 +1,205 @@
-use std::marker::PhantomData;
-use std::ptr::NonNull;
 use std::slice;
 
 use crate::data::{Data1D, PooledVec};
 
-/// Zero-copy view into data that implements Data1D trait
-/// Provides access to data without copying, using lifetime safety
-pub struct DataView<T> {
-    /// Non-owning pointer to the data
-    data: NonNull<T>,
-    /// Length of the data
-    len: usize,
-    /// Phantom data for proper lifetime management
-    _phantom: PhantomData<*const [T]>,
+/// Zero-copy view into borrowed data.
+#[derive(Clone, Copy)]
+pub struct DataView<'a, T> {
+    slice: &'a [T],
 }
 
-impl<T> DataView<T> {
-    /// Create a new DataView from a raw pointer and length
-    ///
-    /// # Safety
-    /// - `data` must be valid for reads for `len * std::mem::size_of::<T>()` bytes
-    /// - The data must remain valid for the lifetime of this DataView
-    /// - The memory referenced by `data` must not be mutated while this DataView exists
-    pub unsafe fn from_raw_parts(data: *const T, len: usize) -> Self {
-        Self {
-            data: NonNull::new(data as *mut T)
-                .expect("DataView cannot be created from null pointer"),
-            len,
-            _phantom: PhantomData,
-        }
+impl<'a, T> DataView<'a, T> {
+    /// Create a zero-copy DataView from a slice.
+    pub fn from_slice(slice: &'a [T]) -> Self {
+        Self { slice }
     }
 
-    /// Create a zero-copy DataView from a slice
-    /// The DataView will live as long as the slice
-    pub fn from_slice(slice: &[T]) -> DataView<T> {
-        unsafe { Self::from_raw_parts(slice.as_ptr(), slice.len()) }
-    }
-
-    /// Create a zero-copy DataView from a PooledVec
-    /// The DataView borrows from the PooledVec without copying
-    pub fn from_pooled_vec(pooled_vec: &PooledVec<T>) -> DataView<T> {
+    /// Create a zero-copy DataView from a PooledVec.
+    pub fn from_pooled_vec(pooled_vec: &'a PooledVec<T>) -> Self {
         Self::from_slice(pooled_vec.as_slice())
     }
 
-    /// Create a zero-copy DataView from a regular Vec
-    pub fn from_vec(vec: &Vec<T>) -> DataView<T> {
+    /// Create a zero-copy DataView from a regular Vec.
+    pub fn from_vec(vec: &'a Vec<T>) -> Self {
         Self::from_slice(vec.as_slice())
     }
 
-    /// Get the length of the data view
     pub fn len(&self) -> usize {
-        self.len
+        self.slice.len()
     }
 
-    /// Check if the data view is empty
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.slice.is_empty()
     }
 
-    /// Get a raw pointer to the data
     pub fn as_ptr(&self) -> *const T {
-        self.data.as_ptr()
+        self.slice.as_ptr()
     }
 
-    /// Convert to a slice with the same lifetime as the original data
-    ///
-    /// # Safety
-    /// The returned slice is only valid as long as the original data remains valid
-    pub fn as_slice(&self) -> &[T] {
-        unsafe { slice::from_raw_parts(self.data.as_ptr(), self.len) }
+    pub fn as_slice(&self) -> &'a [T] {
+        self.slice
     }
 
-    /// Get an element at the specified index
-    pub fn get(&self, index: usize) -> Option<&T> {
-        if index < self.len {
-            Some(unsafe { &*self.data.as_ptr().add(index) })
-        } else {
-            None
+    pub fn get(&self, index: usize) -> Option<&'a T> {
+        self.slice.get(index)
+    }
+
+    pub fn iter(&self) -> DataViewIter<'a, T> {
+        self.slice.iter()
+    }
+
+    /// Iterate over copied values.
+    pub fn iter_copied(&self) -> DataViewCopiedIter<'a, T>
+    where
+        T: Copy,
+    {
+        DataViewCopiedIter {
+            inner: self.slice.iter(),
         }
     }
 
-    /// Get an iterator over the data view
-    pub fn iter(&self) -> DataViewIter<T> {
-        DataViewIter {
-            data: self.data,
-            len: self.len,
-            index: 0,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Map this DataView to a new DataView with a different type
-    /// using the provided mapping function
-    pub fn map<U, F>(self, f: F) -> MappedDataView<T, U, F>
+    pub fn map<U, F>(self, f: F) -> MappedDataView<'a, T, U, F>
     where
         F: Fn(&T) -> U,
     {
         MappedDataView {
             original: self,
             mapper: f,
-            _phantom: PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 
-    /// Create a sub-view of this DataView
-    pub fn sub_view(&self, start: usize, len: usize) -> Option<DataView<T>> {
-        if start + len <= self.len {
-            Some(unsafe { Self::from_raw_parts(self.data.as_ptr().add(start), len) })
-        } else {
-            None
-        }
+    pub fn sub_view(&self, start: usize, len: usize) -> Option<Self> {
+        let end = start.checked_add(len)?;
+        self.slice.get(start..end).map(Self::from_slice)
+    }
+
+    pub fn from_array<const N: usize>(array: &'a [T; N]) -> Self {
+        Self::from_slice(array.as_slice())
+    }
+
+    pub fn from_multi_slice(data: &[&'a [T]]) -> Vec<Self> {
+        data.iter().copied().map(Self::from_slice).collect()
     }
 }
 
-// Implement Data1D for DataView
-impl<T> Data1D<T> for DataView<T> {
+impl<'a, T> Data1D<T> for DataView<'a, T> {
     fn len(&self) -> usize {
-        self.len
+        self.slice.len()
     }
 
     fn get(&self, idx: usize) -> Option<&T> {
-        if idx < self.len {
-            Some(unsafe { &*self.data.as_ptr().add(idx) })
-        } else {
-            None
-        }
+        self.slice.get(idx)
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &T> + '_> {
-        // Create an iterator over the slice, which properly handles lifetimes
-        Box::new(self.as_slice().iter())
+        Box::new(self.slice.iter())
     }
 }
 
-// DataViewRefIter removed - Data1D::iter() uses slice iterator directly
-
-/// Iterator over a DataView that returns owned values (for Copy types)
-pub struct DataViewIter<T> {
-    data: NonNull<T>,
-    len: usize,
-    index: usize,
-    _phantom: PhantomData<*const T>,
+/// Owned view storage for materialized data sources.
+pub struct OwnedDataView<T> {
+    storage: Box<[T]>,
 }
 
-impl<T: Copy> Iterator for DataViewIter<T> {
-    type Item = T;
+impl<T> OwnedDataView<T> {
+    pub fn new(storage: Box<[T]>) -> Self {
+        Self { storage }
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.len {
-            let item = unsafe { *self.data.as_ptr().add(self.index) };
-            self.index += 1;
-            Some(item)
-        } else {
-            None
+    pub fn from_range<R>(range: R) -> Self
+    where
+        R: Iterator<Item = T>,
+    {
+        let data: Vec<T> = range.collect();
+        Self {
+            storage: data.into_boxed_slice(),
         }
     }
 
+    pub fn view(&self) -> DataView<'_, T> {
+        DataView::from_slice(&self.storage)
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        &self.storage
+    }
+}
+
+/// Borrowed iterator over a DataView.
+pub type DataViewIter<'a, T> = slice::Iter<'a, T>;
+
+/// Iterator over copied values from a DataView.
+pub struct DataViewCopiedIter<'a, T>
+where
+    T: Copy,
+{
+    inner: slice::Iter<'a, T>,
+}
+
+impl<'a, T> Iterator for DataViewCopiedIter<'a, T>
+where
+    T: Copy,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().copied()
+    }
+
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.len - self.index;
-        (remaining, Some(remaining))
+        self.inner.size_hint()
     }
 }
 
-impl<T: Copy> ExactSizeIterator for DataViewIter<T> {}
+impl<'a, T> ExactSizeIterator for DataViewCopiedIter<'a, T> where T: Copy {}
 
-// Safety: DataView is safe to send between threads if T is Send
-unsafe impl<T: Send> Send for DataView<T> {}
-
-// Safety: DataView is safe to share between threads if T is Sync
-unsafe impl<T: Sync> Sync for DataView<T> {}
-
-impl<T> Clone for DataView<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for DataView<T> {}
-
-/// A DataView that applies a mapping function to each element
-/// This allows zero-copy transformation of data types
-pub struct MappedDataView<T, U, F> {
-    original: DataView<T>,
+/// A DataView that applies a mapping function to each element.
+pub struct MappedDataView<'a, T, U, F> {
+    original: DataView<'a, T>,
     mapper: F,
-    _phantom: PhantomData<U>,
+    _phantom: std::marker::PhantomData<U>,
 }
 
-impl<T, U, F> MappedDataView<T, U, F>
+impl<'a, T, U, F> MappedDataView<'a, T, U, F>
 where
     F: Fn(&T) -> U,
 {
-    /// Get the length of the mapped view
     pub fn len(&self) -> usize {
         self.original.len()
     }
 
-    /// Check if the mapped view is empty
     pub fn is_empty(&self) -> bool {
         self.original.is_empty()
     }
 
-    /// Get an element at the specified index, applying the mapper function
     pub fn get(&self, index: usize) -> Option<U> {
         self.original.get(index).map(&self.mapper)
     }
 
-    /// Get an iterator over the mapped view
-    pub fn iter(&self) -> MappedDataViewIter<'_, T, U, F>
-    where
-        T: Copy,
-    {
+    pub fn iter(&self) -> MappedDataViewIter<'_, 'a, T, U, F> {
         MappedDataViewIter {
             original_iter: self.original.iter(),
             mapper: &self.mapper,
-            _phantom: PhantomData,
+            _phantom: std::marker::PhantomData,
         }
     }
 }
 
-// Note: MappedDataView cannot implement Data1D directly because it transforms T -> U
-// and Data1D expects to return &T references, not owned U values.
-// For Data1D compatibility, users should materialize the mapped data into a container first.
-
-/// Iterator for MappedDataView
-pub struct MappedDataViewIter<'a, T, U, F>
-where
-    T: Copy,
-{
-    original_iter: DataViewIter<T>,
-    mapper: &'a F,
-    _phantom: PhantomData<U>,
+pub struct MappedDataViewIter<'m, 'a, T, U, F> {
+    original_iter: DataViewIter<'a, T>,
+    mapper: &'m F,
+    _phantom: std::marker::PhantomData<U>,
 }
 
-impl<'a, T, U, F> Iterator for MappedDataViewIter<'a, T, U, F>
+impl<'m, 'a, T, U, F> Iterator for MappedDataViewIter<'m, 'a, T, U, F>
 where
-    T: Copy,
     F: Fn(&T) -> U,
 {
     type Item = U;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.original_iter.next().map(|item| (self.mapper)(&item))
+        self.original_iter.next().map(|item| (self.mapper)(item))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -248,43 +207,7 @@ where
     }
 }
 
-impl<'a, T, U, F> ExactSizeIterator for MappedDataViewIter<'a, T, U, F>
-where
-    T: Copy,
-    F: Fn(&T) -> U,
-{
-}
-
-/// Utility functions for creating DataViews from common data sources
-impl<T> DataView<T> {
-    /// Create a DataView from an array reference
-    pub fn from_array<const N: usize>(array: &[T; N]) -> DataView<T> {
-        Self::from_slice(array.as_slice())
-    }
-
-    /// Create multiple DataViews from a slice of slices (for multi-series data)
-    pub fn from_multi_slice(data: &[&[T]]) -> Vec<DataView<T>> {
-        data.iter().map(|slice| Self::from_slice(slice)).collect()
-    }
-
-    /// Create a DataView from a range iterator (materialized into a temporary allocation)
-    /// Note: This is not zero-copy but provides a consistent interface
-    pub fn from_range<R>(range: R) -> DataView<T>
-    where
-        R: Iterator<Item = T>,
-        T: Clone,
-    {
-        let vec: Vec<T> = range.collect();
-        // This creates a leak, but in practice this method should be avoided
-        // for true zero-copy scenarios. It's provided for API completeness.
-        let boxed = vec.into_boxed_slice();
-        let ptr = boxed.as_ptr();
-        let len = boxed.len();
-        std::mem::forget(boxed); // Leak the memory to maintain pointer validity
-
-        unsafe { Self::from_raw_parts(ptr, len) }
-    }
-}
+impl<'m, 'a, T, U, F> ExactSizeIterator for MappedDataViewIter<'m, 'a, T, U, F> where F: Fn(&T) -> U {}
 
 #[cfg(test)]
 mod tests {
@@ -307,18 +230,16 @@ mod tests {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let view = DataView::from_slice(&data);
 
-        // Test Data1D implementation
         use crate::data::Data1D;
         assert_eq!(view.len(), 5);
-        assert_eq!(*view.get(0).unwrap(), 1.0);
-        assert_eq!(*view.get(4).unwrap(), 5.0);
+        assert_eq!(*view.get(0).expect("missing item"), 1.0);
+        assert_eq!(*view.get(4).expect("missing item"), 5.0);
         assert!(view.get(5).is_none());
 
-        // Test iterator from Data1D trait
-        let collected: Vec<f64> = view.iter().collect();
+        let collected: Vec<&f64> = view.iter().collect();
         assert_eq!(collected.len(), 5);
-        assert_eq!(collected[0], 1.0);
-        assert_eq!(collected[4], 5.0);
+        assert_eq!(*collected[0], 1.0);
+        assert_eq!(*collected[4], 5.0);
     }
 
     #[test]
@@ -331,9 +252,6 @@ mod tests {
 
         assert_eq!(view.len(), 5);
         assert_eq!(view.as_ptr(), pooled_vec.as_ptr());
-
-        // Verify zero-copy (same memory address)
-        assert_eq!(view.as_ptr(), pooled_vec.as_ptr());
     }
 
     #[test]
@@ -341,11 +259,25 @@ mod tests {
         let data = vec![1, 2, 3, 4, 5];
         let view = DataView::from_slice(&data);
 
-        let collected: Vec<i32> = view.iter().collect();
-        assert_eq!(collected, vec![1, 2, 3, 4, 5]);
+        let collected: Vec<&i32> = view.iter().collect();
+        assert_eq!(collected, vec![&1, &2, &3, &4, &5]);
 
-        let sum: i32 = view.iter().sum();
+        let copied: Vec<i32> = view.iter_copied().collect();
+        assert_eq!(copied, vec![1, 2, 3, 4, 5]);
+
+        let sum: i32 = view.iter_copied().sum();
         assert_eq!(sum, 15);
+    }
+
+    #[test]
+    fn test_data_view_borrowed_iter_works_for_non_copy() {
+        let data = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let view = DataView::from_slice(&data);
+
+        let collected: Vec<&String> = view.iter().collect();
+        assert_eq!(collected.len(), 3);
+        assert_eq!(collected[0], "a");
+        assert_eq!(collected[2], "c");
     }
 
     #[test]
@@ -358,10 +290,6 @@ mod tests {
         assert_eq!(mapped.len(), 5);
         assert_eq!(mapped.get(0), Some(2.0));
         assert_eq!(mapped.get(4), Some(10.0));
-
-        // Test Data1D implementation on mapped view
-        assert_eq!(mapped.get(0).unwrap(), 2.0);
-        assert_eq!(mapped.get(4).unwrap(), 10.0);
     }
 
     #[test]
@@ -369,12 +297,11 @@ mod tests {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let view = DataView::from_slice(&data);
 
-        let sub_view = view.sub_view(1, 3).unwrap();
+        let sub_view = view.sub_view(1, 3).expect("subview should exist");
         assert_eq!(sub_view.len(), 3);
         assert_eq!(sub_view.get(0), Some(&2.0));
         assert_eq!(sub_view.get(2), Some(&4.0));
 
-        // Test bounds checking
         assert!(view.sub_view(3, 5).is_none());
     }
 
@@ -406,28 +333,35 @@ mod tests {
     #[test]
     fn test_data_view_thread_safety() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let view = DataView::from_slice(&data);
 
-        // Test that DataView can be sent between threads
-        let handle = std::thread::spawn(move || {
-            let sum: f64 = view.iter().sum();
-            sum
+        std::thread::scope(|scope| {
+            let view = DataView::from_slice(&data);
+            let handle = scope.spawn(move || {
+                let sum: f64 = view.iter_copied().sum();
+                sum
+            });
+
+            assert_eq!(handle.join().expect("thread panicked"), 15.0);
         });
-
-        let result = handle.join().unwrap();
-        assert_eq!(result, 15.0);
     }
 
     #[test]
     fn test_data_view_clone_copy() {
         let data = vec![1.0, 2.0, 3.0];
         let view1 = DataView::from_slice(&data);
-        let view2 = view1; // Copy
-        let view3 = view1; // Clone
+        let view2 = view1;
+        let view3 = view1;
 
         assert_eq!(view1.len(), view2.len());
         assert_eq!(view2.len(), view3.len());
         assert_eq!(view1.as_ptr(), view2.as_ptr());
         assert_eq!(view2.as_ptr(), view3.as_ptr());
+    }
+
+    #[test]
+    fn test_owned_data_view_from_range() {
+        let owned = OwnedDataView::from_range(0..5);
+        let view = owned.view();
+        assert_eq!(view.as_slice(), &[0, 1, 2, 3, 4]);
     }
 }

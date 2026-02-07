@@ -1,4 +1,4 @@
-use ruviz::data::{Data1D, DataView, MemoryPool, PooledVec, SharedMemoryPool};
+use ruviz::data::{Data1D, DataView, MemoryPool, PooledBuffer, PooledVec, SharedMemoryPool};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,11 +13,11 @@ mod memory_pool_tests {
 
         // Test basic allocation
         let buffer1 = pool.acquire(100);
-        assert_eq!(buffer1.len(), 100);
+        assert!(buffer1.capacity() >= 100);
 
         // Test multiple allocations
         let buffer2 = pool.acquire(200);
-        assert_eq!(buffer2.len(), 200);
+        assert!(buffer2.capacity() >= 200);
 
         // Buffers should be different
         assert_ne!(buffer1.as_ptr(), buffer2.as_ptr());
@@ -122,7 +122,7 @@ mod memory_pool_tests {
         assert_eq!(data_view.as_ptr(), pooled_data.as_ptr());
 
         // Test iterator
-        let collected: Vec<f64> = data_view.iter().collect();
+        let collected: Vec<f64> = data_view.iter_copied().collect();
         assert_eq!(collected, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
@@ -194,19 +194,19 @@ mod memory_pool_tests {
         // Test f64 pool for coordinates
         let mut f64_pool = MemoryPool::<f64>::new(1000);
         let coord_buffer = f64_pool.acquire(1000);
-        assert_eq!(std::mem::size_of_val(&*coord_buffer), 1000 * 8);
+        assert!(coord_buffer.capacity() * std::mem::size_of::<f64>() >= 1000 * 8);
         f64_pool.release(coord_buffer);
 
         // Test u8 pool for pixel data
         let mut u8_pool = MemoryPool::<u8>::new(1000);
         let pixel_buffer = u8_pool.acquire(1920 * 1080 * 4);
-        assert_eq!(pixel_buffer.len(), 1920 * 1080 * 4);
+        assert!(pixel_buffer.capacity() >= 1920 * 1080 * 4);
         u8_pool.release(pixel_buffer);
 
         // Test string pool for text data
         let mut string_pool = MemoryPool::<char>::new(1000);
         let text_buffer = string_pool.acquire(256);
-        assert_eq!(text_buffer.len(), 256);
+        assert!(text_buffer.capacity() >= 256);
         string_pool.release(text_buffer);
     }
 
@@ -228,6 +228,31 @@ mod memory_pool_tests {
             .save("tests/output/pool_integration_test.png");
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_managed_buffer_drop_cleans_in_use_via_shared_pool() {
+        let shared = SharedMemoryPool::<u8>::new(32);
+        let managed = shared.acquire(32);
+
+        drop(managed);
+
+        let stats = shared.statistics();
+        assert_eq!(stats.in_use_count, 0);
+        assert!(stats.available_count >= 1);
+    }
+
+    #[test]
+    fn test_managed_buffer_resize_clamps_and_keeps_pointer() {
+        let shared = SharedMemoryPool::<u8>::new(16);
+        let mut buffer = shared.acquire(16);
+        let ptr = buffer.as_ptr();
+        let cap = buffer.capacity();
+
+        buffer.resize_clamped(cap + 10, 1);
+
+        assert_eq!(buffer.len(), cap);
+        assert_eq!(buffer.as_ptr(), ptr);
     }
 }
 

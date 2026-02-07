@@ -405,10 +405,6 @@ impl GpuDevice {
     }
 }
 
-// Implement Send and Sync for GpuDevice (wgpu types are thread-safe)
-unsafe impl Send for GpuDevice {}
-unsafe impl Sync for GpuDevice {}
-
 impl std::ops::Deref for GpuDevice {
     type Target = wgpu::Device;
 

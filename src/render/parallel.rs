@@ -593,18 +593,21 @@ impl RenderStats {
     }
 
     pub fn get_stats(&self) -> (usize, usize, std::time::Duration) {
-        let series = *self
+        let series = self
             .series_processed
             .lock()
-            .unwrap_or_else(|_| panic!("Mutex poisoned"));
-        let points = *self
+            .map(|v| *v)
+            .unwrap_or_else(|e| *e.into_inner());
+        let points = self
             .points_processed
             .lock()
-            .unwrap_or_else(|_| panic!("Mutex poisoned"));
-        let time = *self
+            .map(|v| *v)
+            .unwrap_or_else(|e| *e.into_inner());
+        let time = self
             .processing_time
             .lock()
-            .unwrap_or_else(|_| panic!("Mutex poisoned"));
+            .map(|v| *v)
+            .unwrap_or_else(|e| *e.into_inner());
         (series, points, time)
     }
 }
@@ -692,5 +695,25 @@ mod tests {
         assert_eq!(series, 3);
         assert_eq!(points, 1000);
         assert_eq!(time, duration);
+    }
+
+    #[test]
+    fn test_render_stats_recovers_from_poisoned_lock() {
+        let stats = RenderStats::new();
+        *stats.series_processed.lock().unwrap() = 7;
+        *stats.points_processed.lock().unwrap() = 77;
+        *stats.processing_time.lock().unwrap() = std::time::Duration::from_millis(17);
+
+        let processing_time = stats.processing_time.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = processing_time.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+
+        let (series, points, time) = stats.get_stats();
+        assert_eq!(series, 7);
+        assert_eq!(points, 77);
+        assert_eq!(time, std::time::Duration::from_millis(17));
     }
 }

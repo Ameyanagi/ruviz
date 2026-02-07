@@ -1,42 +1,36 @@
 use std::fmt;
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
+use std::ptr;
 use std::slice::{Iter, IterMut};
 
-use super::memory_pool::{PooledBuffer, SharedMemoryPool};
+use super::memory_pool::SharedMemoryPool;
 
-/// A Vec-like container that uses pooled memory for efficient allocation
-/// Provides the same interface as `Vec<T>` but with memory pool backing
+/// A Vec-like container that uses pooled memory for efficient allocation.
 pub struct PooledVec<T> {
-    /// The underlying pooled buffer
-    buffer: PooledBuffer<T>,
-    /// Current length (number of initialized elements)
-    len: usize,
-    /// Shared reference to the memory pool for growth
+    buffer: Vec<T>,
     pool: SharedMemoryPool<T>,
+    recycle_on_drop: bool,
 }
 
 impl<T> PooledVec<T> {
-    /// Create a new empty PooledVec with a shared memory pool
+    /// Create a new empty PooledVec with a shared memory pool.
     pub fn new(pool: SharedMemoryPool<T>) -> Self {
-        let buffer = pool.acquire(16); // Start with reasonable capacity
-        Self {
-            buffer,
-            len: 0,
-            pool,
-        }
+        Self::with_capacity(16, pool)
     }
 
-    /// Create a new PooledVec with specified initial capacity
+    /// Create a new PooledVec with specified initial capacity.
     pub fn with_capacity(capacity: usize, pool: SharedMemoryPool<T>) -> Self {
-        let buffer = pool.acquire(capacity);
+        let mut vec = pool.acquire(capacity).into_inner();
+        vec.clear();
         Self {
-            buffer,
-            len: 0,
+            buffer: vec,
             pool,
+            recycle_on_drop: true,
         }
     }
 
-    /// Create a PooledVec from existing data
+    /// Create a PooledVec from existing data.
     pub fn from_slice(data: &[T], pool: SharedMemoryPool<T>) -> Self
     where
         T: Clone,
@@ -46,180 +40,108 @@ impl<T> PooledVec<T> {
         vec
     }
 
-    /// Get the number of elements in the vector
     pub fn len(&self) -> usize {
-        self.len
+        self.buffer.len()
     }
 
-    /// Check if the vector is empty
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.buffer.is_empty()
     }
 
-    /// Get the capacity of the vector
     pub fn capacity(&self) -> usize {
         self.buffer.capacity()
     }
 
-    /// Add an element to the end of the vector
     pub fn push(&mut self, value: T) {
-        if self.len >= self.capacity() {
+        if self.buffer.len() == self.buffer.capacity() {
             self.grow();
         }
-
-        unsafe {
-            std::ptr::write(self.buffer.as_mut_ptr().add(self.len), value);
-        }
-        self.len += 1;
+        self.buffer.push(value);
     }
 
-    /// Remove and return the last element
     pub fn pop(&mut self) -> Option<T> {
-        if self.len == 0 {
-            None
-        } else {
-            self.len -= 1;
-            Some(unsafe { std::ptr::read(self.buffer.as_ptr().add(self.len)) })
-        }
+        self.buffer.pop()
     }
 
-    /// Extend the vector with elements from a slice
     pub fn extend_from_slice(&mut self, other: &[T])
     where
         T: Clone,
     {
         self.reserve(other.len());
-        for item in other {
-            self.push(item.clone());
-        }
+        self.buffer.extend_from_slice(other);
     }
 
-    /// Reserve capacity for at least additional elements
     pub fn reserve(&mut self, additional: usize) {
-        let required_capacity = self.len + additional;
+        let required_capacity = self.len().saturating_add(additional);
         if required_capacity > self.capacity() {
             self.grow_to(required_capacity);
         }
     }
 
-    /// Clear all elements from the vector
     pub fn clear(&mut self) {
-        // Drop all elements in reverse order
-        while self.pop().is_some() {}
+        self.buffer.clear();
     }
 
-    /// Get a slice of all elements
     pub fn as_slice(&self) -> &[T] {
-        unsafe { std::slice::from_raw_parts(self.buffer.as_ptr(), self.len) }
+        self.buffer.as_slice()
     }
 
-    /// Get a mutable slice of all elements  
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe { std::slice::from_raw_parts_mut(self.buffer.as_mut_ptr(), self.len) }
+        self.buffer.as_mut_slice()
     }
 
-    /// Get a raw pointer to the underlying data
     pub fn as_ptr(&self) -> *const T {
         self.buffer.as_ptr()
     }
 
-    /// Get a mutable raw pointer to the underlying data
     pub fn as_mut_ptr(&mut self) -> *mut T {
         self.buffer.as_mut_ptr()
     }
 
-    /// Insert an element at the specified index
     pub fn insert(&mut self, index: usize, element: T) {
-        assert!(index <= self.len, "Index out of bounds");
-
-        if self.len >= self.capacity() {
-            self.grow();
-        }
-
-        unsafe {
-            // Shift elements to the right
-            let ptr = self.buffer.as_mut_ptr().add(index);
-            std::ptr::copy(ptr, ptr.add(1), self.len - index);
-            // Insert the new element
-            std::ptr::write(ptr, element);
-        }
-        self.len += 1;
+        self.buffer.insert(index, element);
     }
 
-    /// Remove and return the element at the specified index
     pub fn remove(&mut self, index: usize) -> T {
-        assert!(index < self.len, "Index out of bounds");
-
-        unsafe {
-            let ptr = self.buffer.as_mut_ptr().add(index);
-            let element = std::ptr::read(ptr);
-
-            // Shift elements to the left
-            std::ptr::copy(ptr.add(1), ptr, self.len - index - 1);
-
-            self.len -= 1;
-            element
-        }
+        self.buffer.remove(index)
     }
 
-    /// Resize the vector to the specified length
     pub fn resize(&mut self, new_len: usize, value: T)
     where
         T: Clone,
     {
-        if new_len > self.len {
-            self.reserve(new_len - self.len);
-            while self.len < new_len {
-                self.push(value.clone());
-            }
-        } else {
-            self.truncate(new_len);
+        if new_len > self.capacity() {
+            self.grow_to(new_len);
         }
+        self.buffer.resize(new_len, value);
     }
 
-    /// Truncate the vector to the specified length
     pub fn truncate(&mut self, len: usize) {
-        if len < self.len {
-            // Drop elements beyond the new length
-            for i in len..self.len {
-                unsafe {
-                    std::ptr::drop_in_place(self.buffer.as_mut_ptr().add(i));
-                }
-            }
-            self.len = len;
-        }
+        self.buffer.truncate(len);
     }
 
-    /// Get an iterator over the elements
     pub fn iter(&self) -> Iter<'_, T> {
-        self.as_slice().iter()
+        self.buffer.iter()
     }
 
-    /// Get a mutable iterator over the elements
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-        self.as_mut_slice().iter_mut()
+        self.buffer.iter_mut()
     }
 
-    /// Grow the buffer to accommodate more elements
     fn grow(&mut self) {
         let new_capacity = (self.capacity() * 2).max(8);
         self.grow_to(new_capacity);
     }
 
-    /// Grow the buffer to at least the specified capacity
     fn grow_to(&mut self, min_capacity: usize) {
-        let new_capacity = min_capacity.max(self.capacity() * 2);
+        let target = min_capacity.max(self.capacity().saturating_mul(2)).max(8);
+        let mut new_vec = self.pool.acquire(target).into_inner();
+        new_vec.clear();
+        new_vec.reserve(self.buffer.len());
+        new_vec.append(&mut self.buffer);
 
-        // Get a new larger buffer from the pool
-        let new_buffer = self.pool.acquire(new_capacity);
-
-        // Copy existing elements to the new buffer
-        unsafe {
-            std::ptr::copy_nonoverlapping(self.buffer.as_ptr(), new_buffer.as_mut_ptr(), self.len);
-        }
-
-        // Replace the old buffer with the new one
-        self.buffer = new_buffer;
+        let old_vec = std::mem::replace(&mut self.buffer, new_vec);
+        self.pool.release_vec(old_vec);
     }
 }
 
@@ -253,8 +175,13 @@ impl<T> IndexMut<usize> for PooledVec<T> {
 
 impl<T> Drop for PooledVec<T> {
     fn drop(&mut self) {
-        self.clear(); // Drop all elements
-        // Buffer will be returned to pool automatically
+        if !self.recycle_on_drop {
+            return;
+        }
+
+        let mut vec = Vec::new();
+        std::mem::swap(&mut vec, &mut self.buffer);
+        self.pool.release_vec(vec);
     }
 }
 
@@ -278,20 +205,17 @@ impl<T: PartialEq> PartialEq for PooledVec<T> {
 
 impl<T: Eq> Eq for PooledVec<T> {}
 
-// Implement IntoIterator for owned PooledVec
 impl<T> IntoIterator for PooledVec<T> {
     type Item = T;
     type IntoIter = PooledVecIntoIter<T>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        PooledVecIntoIter {
-            vec: self,
-            index: 0,
-        }
+    fn into_iter(mut self) -> Self::IntoIter {
+        let owned = std::mem::take(&mut self.buffer);
+        self.recycle_on_drop = false;
+        PooledVecIntoIter::new(owned, self.pool.clone())
     }
 }
 
-// Implement IntoIterator for borrowed PooledVec
 impl<'a, T> IntoIterator for &'a PooledVec<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;
@@ -301,7 +225,6 @@ impl<'a, T> IntoIterator for &'a PooledVec<T> {
     }
 }
 
-// Implement IntoIterator for mutably borrowed PooledVec
 impl<'a, T> IntoIterator for &'a mut PooledVec<T> {
     type Item = &'a mut T;
     type IntoIter = IterMut<'a, T>;
@@ -311,27 +234,47 @@ impl<'a, T> IntoIterator for &'a mut PooledVec<T> {
     }
 }
 
-/// Iterator that owns the PooledVec and yields owned elements
 pub struct PooledVecIntoIter<T> {
-    vec: PooledVec<T>,
-    index: usize,
+    ptr: *mut T,
+    len: usize,
+    cap: usize,
+    next_index: usize,
+    pool: Option<SharedMemoryPool<T>>,
+}
+
+impl<T> PooledVecIntoIter<T> {
+    fn new(buffer: Vec<T>, pool: SharedMemoryPool<T>) -> Self {
+        let mut buffer = ManuallyDrop::new(buffer);
+        let len = buffer.len();
+        let cap = buffer.capacity();
+        let ptr = buffer.as_mut_ptr();
+
+        Self {
+            ptr,
+            len,
+            cap,
+            next_index: 0,
+            pool: Some(pool),
+        }
+    }
 }
 
 impl<T> Iterator for PooledVecIntoIter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.vec.len() {
-            let item = unsafe { std::ptr::read(self.vec.buffer.as_ptr().add(self.index)) };
-            self.index += 1;
-            Some(item)
-        } else {
-            None
+        if self.next_index >= self.len {
+            return None;
         }
+
+        // SAFETY: `next_index` is always < len, each element is moved out at most once.
+        let item = unsafe { self.ptr.add(self.next_index).read() };
+        self.next_index += 1;
+        Some(item)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.vec.len() - self.index;
+        let remaining = self.len.saturating_sub(self.next_index);
         (remaining, Some(remaining))
     }
 }
@@ -340,36 +283,52 @@ impl<T> ExactSizeIterator for PooledVecIntoIter<T> {}
 
 impl<T> Drop for PooledVecIntoIter<T> {
     fn drop(&mut self) {
-        // Drop any remaining elements
-        while self.next().is_some() {}
+        // SAFETY: unread elements are dropped exactly once; consumed elements were moved out by `next`.
+        // Reconstructing `Vec` with len=0 preserves allocation for recycling back to the pool.
+        unsafe {
+            let remaining = self.len.saturating_sub(self.next_index);
+            if remaining > 0 {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                    self.ptr.add(self.next_index),
+                    remaining,
+                ));
+            }
+
+            let recycle = Vec::from_raw_parts(self.ptr, 0, self.cap);
+
+            if let Some(pool) = self.pool.take() {
+                pool.release_vec(recycle);
+            } else {
+                drop(recycle);
+            }
+        }
     }
 }
 
-// Conversion from Vec<T>
 impl<T> From<Vec<T>> for PooledVec<T> {
     fn from(vec: Vec<T>) -> Self {
-        // This creates a new pool for the conversion
         let pool = SharedMemoryPool::new(vec.len().max(16));
         let mut pooled = Self::with_capacity(vec.len(), pool);
-
-        // Move elements from Vec to PooledVec
-        for item in vec {
-            pooled.push(item);
-        }
+        // Keep pool tracking coherent by moving elements into pool-backed storage.
+        pooled.buffer.extend(vec);
         pooled
     }
 }
 
-// Conversion to Vec<T>
-impl<T: Clone> From<PooledVec<T>> for Vec<T> {
-    fn from(pooled_vec: PooledVec<T>) -> Self {
-        pooled_vec.as_slice().to_vec()
+impl<T> From<PooledVec<T>> for Vec<T> {
+    fn from(mut pooled_vec: PooledVec<T>) -> Self {
+        pooled_vec.recycle_on_drop = false;
+        let mut out = Vec::new();
+        std::mem::swap(&mut out, &mut pooled_vec.buffer);
+        out
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_pooled_vec_basic_operations() {
@@ -394,14 +353,14 @@ mod tests {
 
     #[test]
     fn test_pooled_vec_growth() {
-        let pool = SharedMemoryPool::new(2); // Pool with small chunks
+        let pool = SharedMemoryPool::new(2);
         let mut vec = PooledVec::with_capacity(2, pool);
 
         vec.push(1);
         vec.push(2);
         let initial_capacity = vec.capacity();
 
-        vec.push(3); // Should trigger growth
+        vec.push(3);
         assert!(vec.capacity() >= initial_capacity);
         assert_eq!(vec.len(), 3);
         assert_eq!(vec[2], 3);
@@ -468,5 +427,80 @@ mod tests {
 
         let back_to_vec: Vec<i32> = pooled_vec.into();
         assert_eq!(back_to_vec, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_from_vec_keeps_pool_backed_allocation() {
+        let source = vec![1, 2, 3, 4];
+        let source_ptr = source.as_ptr();
+        let pooled: PooledVec<i32> = source.into();
+
+        assert_eq!(pooled.as_slice(), &[1, 2, 3, 4]);
+        assert_ne!(pooled.as_ptr(), source_ptr);
+    }
+
+    #[test]
+    fn test_into_iter_recycles_allocation_when_fully_consumed() {
+        let pool = SharedMemoryPool::new(8);
+        let mut vec = PooledVec::with_capacity(8, pool.clone());
+        vec.extend_from_slice(&[1, 2, 3, 4]);
+        let cap = vec.capacity();
+
+        let collected: Vec<_> = vec.into_iter().collect();
+        assert_eq!(collected, vec![1, 2, 3, 4]);
+
+        let stats = pool.statistics();
+        assert!(stats.available_count >= 1);
+        assert!(stats.total_capacity >= cap);
+    }
+
+    #[test]
+    fn test_into_iter_recycles_allocation_when_partially_consumed() {
+        let pool = SharedMemoryPool::new(8);
+        let mut vec = PooledVec::with_capacity(8, pool.clone());
+        vec.extend_from_slice(&[10, 20, 30, 40]);
+        let cap = vec.capacity();
+
+        let mut iter = vec.into_iter();
+        assert_eq!(iter.next(), Some(10));
+        assert_eq!(iter.next(), Some(20));
+        drop(iter);
+
+        let stats = pool.statistics();
+        assert!(stats.available_count >= 1);
+        assert!(stats.total_capacity >= cap);
+    }
+
+    #[test]
+    fn test_into_iter_partial_drop_releases_unread_elements_once() {
+        struct DropCounter {
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let pool = SharedMemoryPool::new(8);
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut vec = PooledVec::with_capacity(8, pool.clone());
+        for _ in 0..4 {
+            vec.push(DropCounter {
+                drops: Arc::clone(&drops),
+            });
+        }
+
+        let mut iter = vec.into_iter();
+        let first = iter.next().expect("first item should exist");
+        drop(first);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+
+        drop(iter);
+        assert_eq!(drops.load(Ordering::SeqCst), 4);
+
+        let stats = pool.statistics();
+        assert!(stats.available_count >= 1);
     }
 }
