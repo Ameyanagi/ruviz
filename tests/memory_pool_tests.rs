@@ -194,7 +194,8 @@ mod memory_pool_tests {
         // Test f64 pool for coordinates
         let mut f64_pool = MemoryPool::<f64>::new(1000);
         let coord_buffer = f64_pool.acquire(1000);
-        assert_eq!(std::mem::size_of_val(&*coord_buffer), 1000 * 8);
+        assert_eq!(coord_buffer.len(), 1000);
+        assert!(coord_buffer.capacity() >= 1000);
         f64_pool.release(coord_buffer);
 
         // Test u8 pool for pixel data

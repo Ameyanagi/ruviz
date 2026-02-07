@@ -1,53 +1,52 @@
 use std::collections::{HashSet, VecDeque};
+use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
-/// A memory pool for efficient allocation and reuse of typed buffers
-/// Reduces allocation overhead by reusing previously allocated memory
+/// A memory pool for efficient allocation and reuse of typed buffers.
+///
+/// The pool stores empty vectors with preserved capacity. This avoids unsafe
+/// uninitialized `Vec<T>` construction while still enabling cheap capacity reuse.
 pub struct MemoryPool<T> {
-    /// Available buffers ready for reuse
-    available: VecDeque<Box<[T]>>,
-    /// Pointers to buffers currently in use (for leak detection)
+    /// Available raw buffers ready for reuse.
+    available: VecDeque<Vec<MaybeUninit<T>>>,
+    /// Pointers to buffers currently checked out (for diagnostics/statistics).
     in_use: HashSet<usize>,
-    /// Default chunk size for new allocations
+    /// Default chunk size for new allocations.
     chunk_size: usize,
-    /// Maximum number of buffers to keep in the pool
+    /// Maximum number of buffers kept in the pool.
     max_pools: usize,
-    /// Total capacity across all buffers
+    /// Total capacity tracked across allocated raw buffers.
     total_capacity: usize,
 }
 
-/// RAII wrapper for pooled memory that automatically returns buffer to pool on drop
-pub struct PooledBuffer<T> {
-    /// Non-null pointer to the buffer data
-    data: NonNull<T>,
-    /// Length of the buffer
-    len: usize,
-    /// Capacity of the underlying allocation
-    capacity: usize,
-    /// Reference to the pool for returning the buffer
-    pool: Option<Arc<Mutex<MemoryPool<T>>>>,
-    /// Underlying box for memory management
-    _box: Option<Box<[T]>>,
+enum BufferStorage<T> {
+    Initialized(Vec<T>),
+    Raw(Vec<MaybeUninit<T>>),
 }
 
-unsafe impl<T: Send> Send for PooledBuffer<T> {}
-unsafe impl<T: Sync> Sync for PooledBuffer<T> {}
+/// RAII wrapper for pooled memory that automatically returns buffer to pool on drop.
+pub struct PooledBuffer<T> {
+    storage: Option<BufferStorage<T>>,
+    /// Logical length expected by callers.
+    len: usize,
+    /// Reference to the pool for returning managed buffers.
+    pool: Option<Arc<Mutex<MemoryPool<T>>>>,
+}
 
 impl<T> MemoryPool<T> {
-    /// Create a new memory pool with the specified initial capacity
+    /// Create a new memory pool with the specified initial capacity.
     pub fn new(initial_capacity: usize) -> Self {
         Self {
             available: VecDeque::new(),
             in_use: HashSet::new(),
             chunk_size: initial_capacity,
-            max_pools: 10, // Default maximum of 10 buffers
+            max_pools: 10,
             total_capacity: 0,
         }
     }
 
-    /// Create a memory pool with custom configuration
+    /// Create a memory pool with custom configuration.
     pub fn with_config(chunk_size: usize, max_pools: usize) -> Self {
         Self {
             available: VecDeque::new(),
@@ -58,101 +57,75 @@ impl<T> MemoryPool<T> {
         }
     }
 
-    /// Acquire a buffer from the pool or allocate a new one
+    /// Acquire a buffer from the pool or allocate a new one.
+    ///
+    /// Returned pooled buffers provide capacity for `len` elements. Logical length is set
+    /// to `len`, but pooled storage is raw/uninitialized and intended for pointer-based writes.
     pub fn acquire(&mut self, len: usize) -> PooledBuffer<T> {
-        // Try to reuse an existing buffer that's large enough
-        for i in 0..self.available.len() {
-            if self.available[i].len() >= len {
-                let buffer = self.available.remove(i).unwrap();
-                let ptr = NonNull::new(buffer.as_ptr() as *mut T).unwrap();
-                self.in_use.insert(ptr.as_ptr() as usize);
-
-                return PooledBuffer {
-                    data: ptr,
-                    len,
-                    capacity: buffer.len(),
-                    pool: None, // Set when converting to managed buffer
-                    _box: Some(buffer),
-                };
-            }
-        }
-
-        // No suitable buffer found, allocate a new one
-        self.grow_pool(len);
-
-        // Try again after growing
-        if let Some(buffer) = self.available.pop_front() {
-            let ptr = NonNull::new(buffer.as_ptr() as *mut T).unwrap();
-            self.in_use.insert(ptr.as_ptr() as usize);
-
-            PooledBuffer {
-                data: ptr,
-                len,
-                capacity: buffer.len(),
-                pool: None,
-                _box: Some(buffer),
-            }
+        let mut raw = if let Some(pos) = self
+            .available
+            .iter()
+            .position(|buf| buf.capacity() >= len)
+        {
+            self.available.swap_remove_back(pos).unwrap()
         } else {
-            panic!("Failed to allocate buffer after growing pool");
+            let capacity = len.max(self.chunk_size);
+            self.total_capacity += capacity;
+            Vec::with_capacity(capacity)
+        };
+
+        raw.clear();
+        self.in_use.insert(raw.as_ptr() as usize);
+
+        PooledBuffer {
+            storage: Some(BufferStorage::Raw(raw)),
+            len,
+            pool: None,
         }
     }
 
-    /// Release a buffer back to the pool for reuse
+    /// Release a buffer back to the pool for reuse.
     pub fn release(&mut self, mut buffer: PooledBuffer<T>) {
-        if let Some(boxed) = buffer._box.take() {
-            let ptr_addr = boxed.as_ptr() as usize;
-            self.in_use.remove(&ptr_addr);
-
-            // Only keep the buffer if we haven't exceeded max_pools
-            if self.available.len() < self.max_pools {
-                self.available.push_back(boxed);
-            } else {
-                // Let the buffer drop naturally, reducing total capacity
-                self.total_capacity -= boxed.len();
-            }
+        if let Some(raw) = buffer.take_raw_storage() {
+            self.return_raw(raw);
         }
     }
 
-    /// Get the number of available buffers in the pool
+    /// Get the number of available buffers in the pool.
     pub fn available_count(&self) -> usize {
         self.available.len()
     }
 
-    /// Get the total capacity across all buffers
+    /// Get the total tracked capacity across all buffers.
     pub fn total_capacity(&self) -> usize {
         self.total_capacity
     }
 
-    /// Get the number of buffers currently in use
+    /// Get the number of buffers currently in use.
     pub fn in_use_count(&self) -> usize {
         self.in_use.len()
     }
 
-    /// Shrink the pool by removing unused buffers
+    /// Shrink the pool by removing unused buffers.
     pub fn shrink_unused(&mut self) {
-        // Keep only half of the available buffers
-        let target_size = (self.available.len() / 2).max(1);
-
+        let target_size = self.available.len() / 2;
         while self.available.len() > target_size {
             if let Some(buffer) = self.available.pop_back() {
-                self.total_capacity -= buffer.len();
+                self.total_capacity = self.total_capacity.saturating_sub(buffer.capacity());
             }
         }
     }
 
-    /// Grow the pool by adding a new buffer
-    #[allow(clippy::uninit_vec)]
-    fn grow_pool(&mut self, min_size: usize) {
-        let size = min_size.max(self.chunk_size);
-        // Allocate uninitialized memory - users must initialize before use
-        // Safety: callers must ensure they initialize the buffer before reading
-        let mut vec = Vec::with_capacity(size);
-        unsafe {
-            vec.set_len(size);
+    fn return_raw(&mut self, mut raw: Vec<MaybeUninit<T>>) {
+        let ptr_addr = raw.as_ptr() as usize;
+        self.in_use.remove(&ptr_addr);
+        raw.clear();
+
+        if self.available.len() < self.max_pools {
+            self.available.push_back(raw);
+        } else {
+            self.total_capacity = self.total_capacity.saturating_sub(raw.capacity());
         }
-        let buffer = vec.into_boxed_slice();
-        self.total_capacity += buffer.len();
-        self.available.push_back(buffer);
     }
 }
 
@@ -163,71 +136,112 @@ impl<T> Default for MemoryPool<T> {
 }
 
 impl<T> PooledBuffer<T> {
-    /// Create a new unmanaged buffer (for direct usage)
+    /// Create a new unmanaged, initialized buffer.
     pub fn new_unmanaged(data: Box<[T]>) -> Self {
-        let len = data.len();
-        let ptr = NonNull::new(data.as_ptr() as *mut T).unwrap();
-
+        let vec = data.into_vec();
+        let len = vec.len();
         Self {
-            data: ptr,
+            storage: Some(BufferStorage::Initialized(vec)),
             len,
-            capacity: len,
             pool: None,
-            _box: Some(data),
         }
     }
 
-    /// Create a managed buffer that will be returned to the pool on drop
+    /// Create a managed buffer that will be returned to the pool on drop.
     pub fn new_managed(mut buffer: PooledBuffer<T>, pool: Arc<Mutex<MemoryPool<T>>>) -> Self {
-        let boxed = buffer._box.take();
-        Self {
-            data: buffer.data,
-            len: buffer.len,
-            capacity: buffer.capacity,
-            pool: Some(pool),
-            _box: boxed,
-        }
+        buffer.pool = Some(pool);
+        buffer
     }
 
-    /// Get the length of the buffer
+    /// Get the logical length of the buffer.
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// Check if the buffer is empty
+    /// Check if the logical length is zero.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
-    /// Get the capacity of the buffer
+    /// Get the capacity of the underlying allocation.
     pub fn capacity(&self) -> usize {
-        self.capacity
+        match self.storage.as_ref() {
+            Some(BufferStorage::Initialized(vec)) => vec.capacity(),
+            Some(BufferStorage::Raw(vec)) => vec.capacity(),
+            None => 0,
+        }
     }
 
-    /// Get a raw pointer to the buffer data
+    /// Get a raw pointer to the buffer data.
     pub fn as_ptr(&self) -> *const T {
-        self.data.as_ptr()
+        match self.storage.as_ref() {
+            Some(BufferStorage::Initialized(vec)) => vec.as_ptr(),
+            Some(BufferStorage::Raw(vec)) => vec.as_ptr() as *const T,
+            None => std::ptr::null(),
+        }
     }
 
-    /// Get a mutable raw pointer to the buffer data
+    /// Get a mutable raw pointer to the buffer data.
     pub fn as_mut_ptr(&self) -> *mut T {
-        self.data.as_ptr()
+        match self.storage.as_ref() {
+            Some(BufferStorage::Initialized(vec)) => vec.as_ptr() as *mut T,
+            Some(BufferStorage::Raw(vec)) => vec.as_ptr() as *mut T,
+            None => std::ptr::null_mut(),
+        }
     }
 
-    /// Resize the logical length of the buffer (must be <= capacity)
+    /// Resize logical length (must not exceed capacity).
     pub fn resize(&mut self, new_len: usize) {
-        assert!(new_len <= self.capacity, "Cannot resize beyond capacity");
+        assert!(new_len <= self.capacity(), "Cannot resize beyond capacity");
+
+        if let Some(BufferStorage::Initialized(vec)) = self.storage.as_mut() {
+            if new_len < vec.len() {
+                vec.truncate(new_len);
+            } else {
+                panic!("Cannot grow initialized unmanaged buffer without a fill value");
+            }
+        }
+
         self.len = new_len;
     }
 
-    /// Convert to a slice
+    /// Convert to a slice.
+    ///
+    /// Panics for managed pooled buffers, because pooled storage may be uninitialized and
+    /// must be accessed through explicit pointer operations by higher-level containers.
     pub fn as_slice(&self) -> &[T] {
-        unsafe { std::slice::from_raw_parts(self.data.as_ptr(), self.len) }
+        match self.storage.as_ref() {
+            Some(BufferStorage::Initialized(vec)) => &vec[..self.len],
+            Some(BufferStorage::Raw(_)) => {
+                panic!("as_slice() is only valid for initialized unmanaged buffers")
+            }
+            None => &[],
+        }
     }
 
-    /// Convert to a mutable slice
+    /// Convert to a mutable slice.
+    ///
+    /// Panics for managed pooled buffers, because pooled storage may be uninitialized and
+    /// must be accessed through explicit pointer operations by higher-level containers.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe { std::slice::from_raw_parts_mut(self.data.as_ptr(), self.len) }
+        match self.storage.as_mut() {
+            Some(BufferStorage::Initialized(vec)) => &mut vec[..self.len],
+            Some(BufferStorage::Raw(_)) => {
+                panic!("as_mut_slice() is only valid for initialized unmanaged buffers")
+            }
+            None => &mut [],
+        }
+    }
+
+    fn take_raw_storage(&mut self) -> Option<Vec<MaybeUninit<T>>> {
+        match self.storage.take() {
+            Some(BufferStorage::Raw(raw)) => Some(raw),
+            Some(initialized) => {
+                self.storage = Some(initialized);
+                None
+            }
+            None => None,
+        }
     }
 }
 
@@ -247,61 +261,58 @@ impl<T> DerefMut for PooledBuffer<T> {
 
 impl<T> Drop for PooledBuffer<T> {
     fn drop(&mut self) {
-        // If this buffer is managed by a pool, return it
-        if let Some(pool) = &self.pool {
-            if let Ok(mut p) = pool.try_lock() {
-                // Move the box out and release it
-                if let Some(boxed) = self._box.take() {
-                    let ptr_addr = boxed.as_ptr() as usize;
-                    p.in_use.remove(&ptr_addr);
-
-                    if p.available.len() < p.max_pools {
-                        p.available.push_back(boxed);
-                    } else {
-                        p.total_capacity -= boxed.len();
-                    }
-                }
+        let pool = self.pool.clone();
+        if let Some(pool) = pool {
+            if let Some(raw) = self.take_raw_storage() {
+                let mut guard = pool.lock().unwrap();
+                guard.return_raw(raw);
             }
-            // If pool is locked, just let the buffer drop naturally
         }
-        // For unmanaged buffers, _box will drop automatically
     }
 }
 
 impl<T: Clone> Clone for PooledBuffer<T> {
     fn clone(&self) -> Self {
-        // Create a new unmanaged buffer with cloned data
-        let cloned_data: Vec<T> = self.as_slice().to_vec();
-        Self::new_unmanaged(cloned_data.into_boxed_slice())
+        match self.storage.as_ref() {
+            Some(BufferStorage::Initialized(vec)) => {
+                Self::new_unmanaged(vec[..self.len].to_vec().into_boxed_slice())
+            }
+            Some(BufferStorage::Raw(_)) => {
+                panic!("cannot clone raw pooled buffer safely")
+            }
+            None => Self {
+                storage: Some(BufferStorage::Initialized(Vec::new())),
+                len: 0,
+                pool: None,
+            },
+        }
     }
 }
 
-// Thread-safe wrapper for cross-thread pool sharing
+/// Thread-safe wrapper for cross-thread pool sharing.
 #[derive(Clone)]
 pub struct SharedMemoryPool<T> {
     inner: Arc<Mutex<MemoryPool<T>>>,
 }
 
 impl<T> SharedMemoryPool<T> {
-    /// Create a new shared memory pool
+    /// Create a new shared memory pool.
     pub fn new(initial_capacity: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(MemoryPool::new(initial_capacity))),
         }
     }
 
-    /// Acquire a buffer from the shared pool
+    /// Acquire a buffer from the shared pool.
     pub fn acquire(&self, len: usize) -> PooledBuffer<T> {
         let buffer = {
             let mut pool = self.inner.lock().unwrap();
             pool.acquire(len)
         };
-
-        // Convert to managed buffer
         PooledBuffer::new_managed(buffer, self.inner.clone())
     }
 
-    /// Get pool statistics
+    /// Get pool statistics.
     pub fn statistics(&self) -> PoolStatistics {
         let pool = self.inner.lock().unwrap();
         PoolStatistics {
@@ -311,14 +322,14 @@ impl<T> SharedMemoryPool<T> {
         }
     }
 
-    /// Shrink the pool
+    /// Shrink the pool.
     pub fn shrink(&self) {
         let mut pool = self.inner.lock().unwrap();
         pool.shrink_unused();
     }
 }
 
-/// Statistics about memory pool usage
+/// Statistics about memory pool usage.
 #[derive(Debug, Clone)]
 pub struct PoolStatistics {
     pub available_count: usize,
@@ -329,6 +340,8 @@ pub struct PoolStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_pool_creation() {
@@ -346,20 +359,41 @@ mod tests {
         assert_eq!(buffer.len(), 5);
         assert_eq!(buffer[0], 1.0);
         assert_eq!(buffer[4], 5.0);
-
-        let slice = buffer.as_slice();
-        assert_eq!(slice.len(), 5);
-        assert_eq!(slice, &[1.0, 2.0, 3.0, 4.0, 5.0]);
+        assert_eq!(buffer.as_slice(), &[1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
     #[test]
-    fn test_shared_pool() {
-        let shared_pool = SharedMemoryPool::<f64>::new(1000);
-        let buffer = shared_pool.acquire(100);
+    fn test_shared_pool_reuse_updates_in_use() {
+        let shared_pool = SharedMemoryPool::<f64>::new(16);
+        let ptr = {
+            let buffer = shared_pool.acquire(8);
+            assert_eq!(shared_pool.statistics().in_use_count, 1);
+            buffer.as_ptr()
+        };
+        let after_drop = shared_pool.statistics();
+        assert_eq!(after_drop.in_use_count, 0);
+        assert!(after_drop.available_count >= 1);
 
-        assert_eq!(buffer.len(), 100);
+        let reused = shared_pool.acquire(8);
+        assert_eq!(reused.as_ptr(), ptr);
+    }
 
-        let stats = shared_pool.statistics();
-        assert_eq!(stats.in_use_count, 1);
+    #[test]
+    fn test_drop_blocks_on_lock_and_preserves_pool_return() {
+        let shared_pool = SharedMemoryPool::<u64>::new(8);
+        let buffer = shared_pool.acquire(8);
+        let ptr = buffer.as_ptr();
+        let pool_for_thread = shared_pool.clone();
+
+        let holder = thread::spawn(move || {
+            let _lock = pool_for_thread.inner.lock().unwrap();
+            thread::sleep(Duration::from_millis(25));
+        });
+
+        drop(buffer);
+        holder.join().unwrap();
+
+        let reused = shared_pool.acquire(8);
+        assert_eq!(reused.as_ptr(), ptr);
     }
 }
