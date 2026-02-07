@@ -113,29 +113,19 @@ impl Data1D<f64> for polars::series::Series {
         self.len()
     }
 
-    fn get(&self, _index: usize) -> Option<&f64> {
-        // Polars Series doesn't provide stable references to its data
-        // This would require storing values elsewhere to provide references
-        // TODO: Implement proper polars integration with value storage
-        None
+    fn get(&self, index: usize) -> Option<&f64> {
+        let chunked = self.f64().ok()?;
+        let slice = chunked.cont_slice().ok()?;
+        slice.get(index)
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &f64> + '_> {
-        // Simplified iterator - real implementation would handle all numeric types
-        match self.dtype() {
-            polars::datatypes::DataType::Float64 => {
-                let values: Vec<f64> = self
-                    .f64()
-                    .unwrap()
-                    .into_iter()
-                    .map(|opt| opt.unwrap_or(0.0))
-                    .collect();
-                // Note: This creates owned values, not references
-                // In a real implementation, we'd need a different approach
-                Box::new(std::iter::empty())
+        if let Ok(chunked) = self.f64() {
+            if let Ok(slice) = chunked.cont_slice() {
+                return Box::new(slice.iter());
             }
-            _ => Box::new(std::iter::empty()),
         }
+        Box::new(std::iter::empty())
     }
 }
 

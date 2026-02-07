@@ -4,6 +4,7 @@
 //! such as coordinate transformations, aggregations, and filtering.
 
 use crate::core::error::{PlottingError, Result};
+use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use wgpu::*;
@@ -357,7 +358,7 @@ pub struct ComputeStats {
 
 /// Transform parameters for coordinate transformation shader
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TransformParams {
     pub scale_x: f32,       // 4 bytes
     pub scale_y: f32,       // 4 bytes
@@ -370,7 +371,7 @@ pub struct TransformParams {
 
 /// Aggregation parameters for DataShader-style operations
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct AggregationParams {
     pub canvas_width: u32,
     pub canvas_height: u32,
@@ -380,9 +381,3 @@ pub struct AggregationParams {
     pub y_max: f32,
     pub _padding: [u32; 2], // Align to 32 bytes
 }
-
-unsafe impl bytemuck::Pod for TransformParams {}
-unsafe impl bytemuck::Zeroable for TransformParams {}
-
-unsafe impl bytemuck::Pod for AggregationParams {}
-unsafe impl bytemuck::Zeroable for AggregationParams {}

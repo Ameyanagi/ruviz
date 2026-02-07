@@ -31,7 +31,7 @@ struct BufferPools {
     /// Pool for Point2f vectors
     point_buffers: BufferPool<Point2f>,
     /// Pool for large allocation blocks
-    block_pool: BlockPool,
+    block_pool: Arc<Mutex<BlockPool>>,
 }
 
 /// Generic buffer pool for reusable vectors
@@ -48,7 +48,7 @@ struct BufferPool<T> {
 }
 
 /// Pool for large memory blocks
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct BlockPool {
     /// Available memory blocks
     blocks: Vec<MemoryBlock>,
@@ -67,9 +67,10 @@ struct MemoryBlock {
     layout: Layout,
 }
 
-// SAFETY: MemoryBlock is Send/Sync because the raw pointer is managed carefully
-// and the memory is owned by the manager with proper synchronization
+// SAFETY: MemoryBlock owns an allocation descriptor only; access is synchronized
+// by surrounding Mutexes in BlockPool.
 unsafe impl Send for MemoryBlock {}
+// SAFETY: Shared references are only used under synchronization.
 unsafe impl Sync for MemoryBlock {}
 
 /// Memory usage statistics
@@ -131,11 +132,18 @@ pub struct MemoryConfig {
 }
 
 /// Managed buffer that returns to pool when dropped
-#[derive(Debug)]
 pub struct ManagedBuffer<T> {
     buffer: Option<Vec<T>>,
-    pool: Arc<Mutex<BufferPools>>,
+    recycler: Option<Arc<dyn Fn(Vec<T>) + Send + Sync>>,
     stats: Arc<Mutex<MemoryStats>>,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for ManagedBuffer<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManagedBuffer")
+            .field("buffer", &self.buffer)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for MemoryManager {
@@ -170,11 +178,12 @@ impl MemoryManager {
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
 
-        let buffer = pools.f32_buffers.get_buffer(min_capacity);
+        let (buffer, reused) = pools.f32_buffers.get_buffer(min_capacity);
+        let pool_arc = self.buffer_pools.clone();
 
         // Update statistics
         stats.active_allocations += 1;
-        if buffer.capacity() >= min_capacity && !buffer.is_empty() {
+        if reused {
             stats.update_pool_hit();
         }
 
@@ -183,7 +192,11 @@ impl MemoryManager {
 
         ManagedBuffer {
             buffer: Some(buffer),
-            pool: self.buffer_pools.clone(),
+            recycler: Some(Arc::new(move |buffer: Vec<f32>| {
+                if let Ok(mut pools) = pool_arc.lock() {
+                    pools.f32_buffers.return_buffer(buffer);
+                }
+            })),
             stats: self.stats.clone(),
         }
     }
@@ -197,10 +210,11 @@ impl MemoryManager {
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
 
-        let buffer = pools.f64_buffers.get_buffer(min_capacity);
+        let (buffer, reused) = pools.f64_buffers.get_buffer(min_capacity);
+        let pool_arc = self.buffer_pools.clone();
 
         stats.active_allocations += 1;
-        if buffer.capacity() >= min_capacity && !buffer.is_empty() {
+        if reused {
             stats.update_pool_hit();
         }
 
@@ -209,7 +223,11 @@ impl MemoryManager {
 
         ManagedBuffer {
             buffer: Some(buffer),
-            pool: self.buffer_pools.clone(),
+            recycler: Some(Arc::new(move |buffer: Vec<f64>| {
+                if let Ok(mut pools) = pool_arc.lock() {
+                    pools.f64_buffers.return_buffer(buffer);
+                }
+            })),
             stats: self.stats.clone(),
         }
     }
@@ -223,10 +241,11 @@ impl MemoryManager {
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
 
-        let buffer = pools.point_buffers.get_buffer(min_capacity);
+        let (buffer, reused) = pools.point_buffers.get_buffer(min_capacity);
+        let pool_arc = self.buffer_pools.clone();
 
         stats.active_allocations += 1;
-        if buffer.capacity() >= min_capacity && !buffer.is_empty() {
+        if reused {
             stats.update_pool_hit();
         }
 
@@ -235,7 +254,11 @@ impl MemoryManager {
 
         ManagedBuffer {
             buffer: Some(buffer),
-            pool: self.buffer_pools.clone(),
+            recycler: Some(Arc::new(move |buffer: Vec<Point2f>| {
+                if let Ok(mut pools) = pool_arc.lock() {
+                    pools.point_buffers.return_buffer(buffer);
+                }
+            })),
             stats: self.stats.clone(),
         }
     }
@@ -249,10 +272,11 @@ impl MemoryManager {
         let mut pools = self.buffer_pools.lock().unwrap();
         let mut stats = self.stats.lock().unwrap();
 
-        let buffer = pools.u8_buffers.get_buffer(min_capacity);
+        let (buffer, reused) = pools.u8_buffers.get_buffer(min_capacity);
+        let pool_arc = self.buffer_pools.clone();
 
         stats.active_allocations += 1;
-        if buffer.capacity() >= min_capacity && !buffer.is_empty() {
+        if reused {
             stats.update_pool_hit();
         }
 
@@ -261,7 +285,11 @@ impl MemoryManager {
 
         ManagedBuffer {
             buffer: Some(buffer),
-            pool: self.buffer_pools.clone(),
+            recycler: Some(Arc::new(move |buffer: Vec<u8>| {
+                if let Ok(mut pools) = pool_arc.lock() {
+                    pools.u8_buffers.return_buffer(buffer);
+                }
+            })),
             stats: self.stats.clone(),
         }
     }
@@ -273,8 +301,12 @@ impl MemoryManager {
         alignment: usize,
     ) -> Result<ManagedBlock, MemoryError> {
         if size >= self.config.large_alloc_threshold {
-            let mut pools = self.buffer_pools.lock().unwrap();
-            return pools.block_pool.allocate_block(size, alignment);
+            let pool_arc = {
+                let pools = self.buffer_pools.lock().unwrap();
+                pools.block_pool.clone()
+            };
+            let mut pool = pool_arc.lock().unwrap();
+            return pool.allocate_block(size, alignment, pool_arc.clone());
         }
 
         // For smaller allocations, use regular allocation
@@ -361,7 +393,7 @@ impl<T> BufferPool<T> {
         }
     }
 
-    fn get_buffer(&mut self, min_capacity: usize) -> Vec<T> {
+    fn get_buffer(&mut self, min_capacity: usize) -> (Vec<T>, bool) {
         // Try to find a suitable buffer in the pool
         if min_capacity >= self.min_capacity {
             if let Some(pos) = self
@@ -371,13 +403,13 @@ impl<T> BufferPool<T> {
             {
                 let mut buffer = self.available.swap_remove(pos);
                 buffer.clear();
-                return buffer;
+                return (buffer, true);
             }
         }
 
         // No suitable buffer found, allocate new one
         self.allocated_count += 1;
-        Vec::with_capacity(min_capacity)
+        (Vec::with_capacity(min_capacity), false)
     }
 
     fn return_buffer(&mut self, mut buffer: Vec<T>) {
@@ -425,7 +457,7 @@ impl BufferPools {
             u8_buffers: BufferPool::new(config.max_pool_size, config.min_pool_capacity),
             u32_buffers: BufferPool::new(config.max_pool_size, config.min_pool_capacity),
             point_buffers: BufferPool::new(config.max_pool_size, config.min_pool_capacity),
-            block_pool: BlockPool::new(),
+            block_pool: Arc::new(Mutex::new(BlockPool::new())),
         }
     }
 
@@ -435,28 +467,45 @@ impl BufferPools {
         self.u8_buffers.clear();
         self.u32_buffers.clear();
         self.point_buffers.clear();
-        self.block_pool.clear();
+        if let Ok(mut block_pool) = self.block_pool.lock() {
+            block_pool.clear();
+        }
     }
 
     fn get_pool_stats(&self) -> PoolStats {
+        let block_pool_mem = self
+            .block_pool
+            .lock()
+            .map(|pool| (pool.blocks.len(), pool.memory_usage()))
+            .unwrap_or((0, 0));
         PoolStats {
             f32_pool_size: self.f32_buffers.available.len(),
             f64_pool_size: self.f64_buffers.available.len(),
             u8_pool_size: self.u8_buffers.available.len(),
             u32_pool_size: self.u32_buffers.available.len(),
             point_pool_size: self.point_buffers.available.len(),
-            block_pool_size: self.block_pool.blocks.len(),
-            total_pool_memory: self.total_memory_usage(),
+            block_pool_size: block_pool_mem.0,
+            total_pool_memory: self.f32_buffers.memory_usage()
+                + self.f64_buffers.memory_usage()
+                + self.u8_buffers.memory_usage()
+                + self.u32_buffers.memory_usage()
+                + self.point_buffers.memory_usage()
+                + block_pool_mem.1,
         }
     }
 
     fn total_memory_usage(&self) -> usize {
+        let block_mem = self
+            .block_pool
+            .lock()
+            .map(|pool| pool.memory_usage())
+            .unwrap_or(0);
         self.f32_buffers.memory_usage()
             + self.f64_buffers.memory_usage()
             + self.u8_buffers.memory_usage()
             + self.u32_buffers.memory_usage()
             + self.point_buffers.memory_usage()
-            + self.block_pool.memory_usage()
+            + block_mem
     }
 }
 
@@ -476,6 +525,7 @@ impl BlockPool {
         &mut self,
         size: usize,
         alignment: usize,
+        pool: Arc<Mutex<BlockPool>>,
     ) -> Result<ManagedBlock, MemoryError> {
         // Try to find a suitable existing block
         if let Some(pos) = self.blocks.iter().position(|block| block.size >= size) {
@@ -486,7 +536,7 @@ impl BlockPool {
                 ptr: block.ptr,
                 size: block.size,
                 layout: block.layout,
-                pool: Some(Arc::new(Mutex::new(self.clone()))),
+                pool: Some(pool),
             });
         }
 
@@ -507,7 +557,7 @@ impl BlockPool {
                 ptr: NonNull::new_unchecked(ptr),
                 size,
                 layout,
-                pool: Some(Arc::new(Mutex::new(self.clone()))),
+                pool: Some(pool),
             })
         }
     }
@@ -583,7 +633,7 @@ impl<T> ManagedBuffer<T> {
     fn new_unmanaged(buffer: Vec<T>) -> Self {
         Self {
             buffer: Some(buffer),
-            pool: Arc::new(Mutex::new(BufferPools::new(&MemoryConfig::default()))),
+            recycler: None,
             stats: Arc::new(Mutex::new(MemoryStats::new())),
         }
     }
@@ -607,14 +657,12 @@ impl<T> ManagedBuffer<T> {
 impl<T> Drop for ManagedBuffer<T> {
     fn drop(&mut self) {
         if let Some(buffer) = self.buffer.take() {
-            // Return buffer to pool
-            let pools = self.pool.lock().unwrap();
+            if let Some(recycler) = &self.recycler {
+                recycler(buffer);
+            }
+
             let mut stats = self.stats.lock().unwrap();
-
             stats.active_allocations = stats.active_allocations.saturating_sub(1);
-
-            // Return to appropriate pool based on type
-            // This is a simplified version - in practice would need type-specific handling
         }
     }
 }

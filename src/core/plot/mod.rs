@@ -459,28 +459,44 @@ impl SeriesType {
         }
     }
 
-    /// Get resolved x_data as Vec<f64> (panics if not Line/Scatter/ErrorBars)
+    /// Get resolved x_data as Vec<f64> for series that carry x-data.
     #[inline]
-    pub fn x_data_resolved(&self, time: f64) -> Vec<f64> {
+    pub fn try_x_data_resolved(&self, time: f64) -> Option<Vec<f64>> {
         match self {
             SeriesType::Line { x_data, .. }
             | SeriesType::Scatter { x_data, .. }
             | SeriesType::ErrorBars { x_data, .. }
-            | SeriesType::ErrorBarsXY { x_data, .. } => x_data.resolve(time),
-            _ => panic!("x_data not available for this series type"),
+            | SeriesType::ErrorBarsXY { x_data, .. } => Some(x_data.resolve(time)),
+            _ => None,
         }
     }
 
-    /// Get resolved y_data as Vec<f64> (panics if not Line/Scatter/ErrorBars)
+    /// Get resolved y_data as Vec<f64> for series that carry y-data.
     #[inline]
-    pub fn y_data_resolved(&self, time: f64) -> Vec<f64> {
+    pub fn try_y_data_resolved(&self, time: f64) -> Option<Vec<f64>> {
         match self {
             SeriesType::Line { y_data, .. }
             | SeriesType::Scatter { y_data, .. }
             | SeriesType::ErrorBars { y_data, .. }
-            | SeriesType::ErrorBarsXY { y_data, .. } => y_data.resolve(time),
-            _ => panic!("y_data not available for this series type"),
+            | SeriesType::ErrorBarsXY { y_data, .. } => Some(y_data.resolve(time)),
+            _ => None,
         }
+    }
+
+    /// Get resolved x_data as Vec<f64> (panics if not Line/Scatter/ErrorBars).
+    #[deprecated(note = "Use try_x_data_resolved() for non-panicking behavior")]
+    #[inline]
+    pub fn x_data_resolved(&self, time: f64) -> Vec<f64> {
+        self.try_x_data_resolved(time)
+            .expect("x_data not available for this series type")
+    }
+
+    /// Get resolved y_data as Vec<f64> (panics if not Line/Scatter/ErrorBars).
+    #[deprecated(note = "Use try_y_data_resolved() for non-panicking behavior")]
+    #[inline]
+    pub fn y_data_resolved(&self, time: f64) -> Vec<f64> {
+        self.try_y_data_resolved(time)
+            .expect("y_data not available for this series type")
     }
 }
 

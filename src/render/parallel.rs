@@ -593,18 +593,13 @@ impl RenderStats {
     }
 
     pub fn get_stats(&self) -> (usize, usize, std::time::Duration) {
-        let series = *self
-            .series_processed
-            .lock()
-            .unwrap_or_else(|_| panic!("Mutex poisoned"));
-        let points = *self
-            .points_processed
-            .lock()
-            .unwrap_or_else(|_| panic!("Mutex poisoned"));
-        let time = *self
+        let series = self.series_processed.lock().map(|v| *v).unwrap_or_default();
+        let points = self.points_processed.lock().map(|v| *v).unwrap_or_default();
+        let time = self
             .processing_time
             .lock()
-            .unwrap_or_else(|_| panic!("Mutex poisoned"));
+            .map(|v| *v)
+            .unwrap_or(std::time::Duration::ZERO);
         (series, points, time)
     }
 }
