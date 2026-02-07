@@ -184,7 +184,9 @@ impl<T> PooledBuffer<T> {
         T: Clone,
     {
         if let Some(vec) = self.vec.as_mut() {
-            vec.resize(new_len, value);
+            // Keep pointer identity stable while this buffer is tracked in `in_use`.
+            let target_len = new_len.min(vec.capacity());
+            vec.resize(target_len, value);
         }
     }
 
@@ -223,9 +225,8 @@ impl<T> Drop for PooledBuffer<T> {
     fn drop(&mut self) {
         if let Some(pool) = &self.pool {
             if let Some(vec) = self.vec.take() {
-                if let Ok(mut p) = pool.try_lock() {
-                    p.release_vec(vec);
-                }
+                let mut p = pool.lock().unwrap_or_else(|e| e.into_inner());
+                p.release_vec(vec);
             }
         }
     }
@@ -295,6 +296,9 @@ pub struct PoolStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::channel;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_pool_creation() {
@@ -328,5 +332,46 @@ mod tests {
 
         let stats = shared_pool.statistics();
         assert_eq!(stats.in_use_count, 1);
+    }
+
+    #[test]
+    fn test_resize_clamps_to_capacity_without_reallocation() {
+        let shared_pool = SharedMemoryPool::<u8>::new(8);
+        let mut buffer = shared_pool.acquire(8);
+        let ptr_before = buffer.as_ptr();
+        let cap = buffer.capacity();
+
+        buffer.resize(cap + 32, 7);
+
+        assert_eq!(buffer.len(), cap);
+        assert_eq!(buffer.as_ptr(), ptr_before);
+    }
+
+    #[test]
+    fn test_drop_waits_for_lock_and_cleans_in_use() {
+        let pool = Arc::new(Mutex::new(MemoryPool::<u8>::new(16)));
+        let managed = {
+            let mut guard = pool.lock().unwrap();
+            let raw = guard.acquire(16);
+            PooledBuffer::new_managed(raw, pool.clone())
+        };
+
+        let hold_lock = pool.lock().unwrap();
+        let (tx, rx) = channel();
+        let handle = thread::spawn(move || {
+            drop(managed);
+            tx.send(()).unwrap();
+        });
+
+        thread::sleep(Duration::from_millis(25));
+        assert!(rx.try_recv().is_err());
+        drop(hold_lock);
+
+        rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        handle.join().unwrap();
+
+        let stats = pool.lock().unwrap();
+        assert_eq!(stats.in_use_count(), 0);
+        assert!(stats.available_count() >= 1);
     }
 }

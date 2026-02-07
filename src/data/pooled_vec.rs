@@ -1,5 +1,7 @@
 use std::fmt;
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
+use std::ptr;
 use std::slice::{Iter, IterMut};
 
 use super::memory_pool::SharedMemoryPool;
@@ -196,12 +198,14 @@ impl<T: Eq> Eq for PooledVec<T> {}
 
 impl<T> IntoIterator for PooledVec<T> {
     type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
+    type IntoIter = PooledVecIntoIter<T>;
 
-    fn into_iter(mut self) -> Self::IntoIter {
-        let mut owned = Vec::new();
-        std::mem::swap(&mut owned, &mut self.buffer);
-        owned.into_iter()
+    fn into_iter(self) -> Self::IntoIter {
+        let mut this = ManuallyDrop::new(self);
+        let owned = std::mem::take(&mut this.buffer);
+        // SAFETY: `this` is `ManuallyDrop`, so moving out `pool` this way is sound.
+        let pool = unsafe { ptr::read(&this.pool) };
+        PooledVecIntoIter::new(owned, pool)
     }
 }
 
@@ -223,7 +227,67 @@ impl<'a, T> IntoIterator for &'a mut PooledVec<T> {
     }
 }
 
-pub type PooledVecIntoIter<T> = std::vec::IntoIter<T>;
+pub struct PooledVecIntoIter<T> {
+    buffer: ManuallyDrop<Vec<T>>,
+    next_index: usize,
+    pool: Option<SharedMemoryPool<T>>,
+}
+
+impl<T> PooledVecIntoIter<T> {
+    fn new(buffer: Vec<T>, pool: SharedMemoryPool<T>) -> Self {
+        Self {
+            buffer: ManuallyDrop::new(buffer),
+            next_index: 0,
+            pool: Some(pool),
+        }
+    }
+}
+
+impl<T> Iterator for PooledVecIntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_index >= self.buffer.len() {
+            return None;
+        }
+
+        // SAFETY: `next_index` is always < len, each element is read at most once.
+        let item = unsafe { self.buffer.as_ptr().add(self.next_index).read() };
+        self.next_index += 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.buffer.len().saturating_sub(self.next_index);
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T> ExactSizeIterator for PooledVecIntoIter<T> {}
+
+impl<T> Drop for PooledVecIntoIter<T> {
+    fn drop(&mut self) {
+        // SAFETY: We drop only the unread tail. The read prefix was moved out by `next`.
+        // Then we reconstruct an empty Vec from the original allocation and return it to the pool.
+        unsafe {
+            let len = self.buffer.len();
+            let cap = self.buffer.capacity();
+            let raw = self.buffer.as_mut_ptr();
+
+            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                raw.add(self.next_index),
+                len.saturating_sub(self.next_index),
+            ));
+
+            let mut recycle = Vec::from_raw_parts(raw, 0, cap);
+            recycle.clear();
+
+            if let Some(pool) = self.pool.take() {
+                pool.release_vec(recycle);
+            }
+        }
+    }
+}
 
 impl<T> From<Vec<T>> for PooledVec<T> {
     fn from(vec: Vec<T>) -> Self {
@@ -343,5 +407,37 @@ mod tests {
 
         let back_to_vec: Vec<i32> = pooled_vec.into();
         assert_eq!(back_to_vec, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_into_iter_recycles_allocation_when_fully_consumed() {
+        let pool = SharedMemoryPool::new(8);
+        let mut vec = PooledVec::with_capacity(8, pool.clone());
+        vec.extend_from_slice(&[1, 2, 3, 4]);
+        let cap = vec.capacity();
+
+        let collected: Vec<_> = vec.into_iter().collect();
+        assert_eq!(collected, vec![1, 2, 3, 4]);
+
+        let stats = pool.statistics();
+        assert!(stats.available_count >= 1);
+        assert!(stats.total_capacity >= cap);
+    }
+
+    #[test]
+    fn test_into_iter_recycles_allocation_when_partially_consumed() {
+        let pool = SharedMemoryPool::new(8);
+        let mut vec = PooledVec::with_capacity(8, pool.clone());
+        vec.extend_from_slice(&[10, 20, 30, 40]);
+        let cap = vec.capacity();
+
+        let mut iter = vec.into_iter();
+        assert_eq!(iter.next(), Some(10));
+        assert_eq!(iter.next(), Some(20));
+        drop(iter);
+
+        let stats = pool.statistics();
+        assert!(stats.available_count >= 1);
+        assert!(stats.total_capacity >= cap);
     }
 }

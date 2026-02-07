@@ -58,13 +58,17 @@ struct BlockPool {
 /// Memory block for large allocations
 #[derive(Debug, Clone)]
 struct MemoryBlock {
-    /// Address of allocated memory
-    ptr_addr: usize,
+    /// Pointer to allocated memory
+    ptr: *mut u8,
     /// Size of the allocation
     size: usize,
     /// Layout used for allocation
     layout: Layout,
 }
+
+// SAFETY: `ptr` is treated as an owning allocation handle and all access/deallocation
+// is synchronized through `Mutex<BlockPool>` or RAII `ManagedBlock` drop paths.
+unsafe impl Send for MemoryBlock {}
 
 /// Memory usage statistics
 #[derive(Debug, Clone)]
@@ -314,7 +318,7 @@ impl MemoryManager {
             }
 
             Ok(ManagedBlock {
-                ptr_addr: ptr as usize,
+                ptr,
                 size,
                 layout,
                 pool: None,
@@ -527,7 +531,7 @@ impl BlockPool {
             self.stats.total_blocks_reused += 1;
 
             return Ok(ManagedBlock {
-                ptr_addr: block.ptr_addr,
+                ptr: block.ptr,
                 size: block.size,
                 layout: block.layout,
                 pool: Some(pool),
@@ -549,7 +553,7 @@ impl BlockPool {
             self.stats.peak_block_count = self.stats.peak_block_count.max(self.blocks.len() + 1);
 
             Ok(ManagedBlock {
-                ptr_addr: ptr as usize,
+                ptr,
                 size,
                 layout,
                 pool: Some(pool),
@@ -565,7 +569,7 @@ impl BlockPool {
         for block in self.blocks.drain(..) {
             // SAFETY: each block was allocated with this exact layout and is deallocated once.
             unsafe {
-                dealloc(block.ptr_addr as *mut u8, block.layout);
+                dealloc(block.ptr, block.layout);
             }
         }
         self.stats = BlockStats {
@@ -665,25 +669,29 @@ impl<T> Drop for ManagedBuffer<T> {
 
 /// Managed memory block
 pub struct ManagedBlock {
-    ptr_addr: usize,
+    ptr: *mut u8,
     size: usize,
     layout: Layout,
     pool: Option<Arc<Mutex<BlockPool>>>,
 }
+
+// SAFETY: `ManagedBlock` only carries ownership metadata for an allocation and does not
+// provide unsynchronized shared mutation of pointee memory.
+unsafe impl Send for ManagedBlock {}
 
 impl Drop for ManagedBlock {
     fn drop(&mut self) {
         if let Some(pool_arc) = &self.pool {
             let mut pool = pool_arc.lock().unwrap();
             pool.return_block(MemoryBlock {
-                ptr_addr: self.ptr_addr,
+                ptr: self.ptr,
                 size: self.size,
                 layout: self.layout,
             });
         } else {
             // SAFETY: this block was allocated by `alloc(layout)` and not returned to pool.
             unsafe {
-                dealloc(self.ptr_addr as *mut u8, self.layout);
+                dealloc(self.ptr, self.layout);
             }
         }
     }
@@ -803,5 +811,13 @@ mod tests {
         let manager = MemoryManager::with_config(config);
         assert!(!manager.config().enable_pooling);
         assert_eq!(manager.config().max_pool_size, 5);
+    }
+
+    #[test]
+    fn test_allocate_block_smoke() {
+        let manager = MemoryManager::new();
+        let block = manager.allocate_block(64, 8);
+        assert!(block.is_ok());
+        drop(block);
     }
 }

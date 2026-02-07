@@ -1,4 +1,4 @@
-use ruviz::data::{Data1D, DataView, MemoryPool, PooledVec, SharedMemoryPool};
+use ruviz::data::{Data1D, DataView, MemoryPool, PooledBuffer, PooledVec, SharedMemoryPool};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -228,6 +228,43 @@ mod memory_pool_tests {
             .save("tests/output/pool_integration_test.png");
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_managed_buffer_drop_under_contention_cleans_in_use() {
+        let pool = Arc::new(Mutex::new(MemoryPool::<u8>::new(32)));
+        let managed = {
+            let mut locked = pool.lock().unwrap();
+            let raw = locked.acquire(32);
+            PooledBuffer::new_managed(raw, pool.clone())
+        };
+
+        let lock_guard = pool.lock().unwrap();
+        let handle = thread::spawn(move || {
+            drop(managed);
+        });
+
+        thread::sleep(Duration::from_millis(20));
+        drop(lock_guard);
+        handle.join().unwrap();
+
+        let mut locked = pool.lock().unwrap();
+        assert_eq!(locked.in_use_count(), 0);
+        let reused = locked.acquire(32);
+        assert!(reused.capacity() >= 32);
+    }
+
+    #[test]
+    fn test_managed_buffer_resize_clamps_and_keeps_pointer() {
+        let shared = SharedMemoryPool::<u8>::new(16);
+        let mut buffer = shared.acquire(16);
+        let ptr = buffer.as_ptr();
+        let cap = buffer.capacity();
+
+        buffer.resize(cap + 10, 1);
+
+        assert_eq!(buffer.len(), cap);
+        assert_eq!(buffer.as_ptr(), ptr);
     }
 }
 
