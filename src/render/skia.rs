@@ -2,10 +2,16 @@ use crate::{
     core::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
         LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, Result, SpacingConfig,
-        TextPosition, TickFormatter, find_best_position, plot::Image, pt_to_px,
+        TextPosition, TickFormatter, find_best_position,
+        plot::{Image, TextEngineMode},
+        pt_to_px,
     },
-    render::{Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme},
+    render::{
+        Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme,
+        typst_text::{self, TypstBackendKind},
+    },
 };
+use std::borrow::Cow;
 use std::path::Path;
 use tiny_skia::*;
 
@@ -20,6 +26,8 @@ pub struct SkiaRenderer {
     font_config: FontConfig,
     /// DPI scale factor (1.0 = 100 DPI base)
     dpi_scale: f32,
+    /// Active text rendering engine.
+    text_engine_mode: TextEngineMode,
 }
 
 impl SkiaRenderer {
@@ -56,6 +64,7 @@ impl SkiaRenderer {
             text_renderer,
             font_config,
             dpi_scale: 1.0, // Default to 100 DPI base
+            text_engine_mode: TextEngineMode::Plain,
         })
     }
 
@@ -67,6 +76,16 @@ impl SkiaRenderer {
     /// Get the DPI scale factor
     pub fn dpi_scale(&self) -> f32 {
         self.dpi_scale
+    }
+
+    /// Set text rendering backend mode.
+    pub fn set_text_engine_mode(&mut self, mode: TextEngineMode) {
+        self.text_engine_mode = mode;
+    }
+
+    /// Get text rendering backend mode.
+    pub fn text_engine_mode(&self) -> TextEngineMode {
+        self.text_engine_mode
     }
 
     /// Clear the canvas with background color
@@ -1026,9 +1045,27 @@ impl SkiaRenderer {
 
     /// Draw text at the specified position using cosmic-text (professional quality)
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
-        let config = FontConfig::new(self.font_config.family.clone(), size);
-        self.text_renderer
-            .render_text(&mut self.pixmap, text, x, y, &config, color)
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let config = FontConfig::new(self.font_config.family.clone(), size);
+                self.text_renderer
+                    .render_text(&mut self.pixmap, text, x, y, &config, color)
+            }
+            TextEngineMode::Typst => {
+                let rendered =
+                    typst_text::render_raster(text, size, color, 0.0, "Skia text rendering")?;
+                let draw_y = y - rendered.height * 0.8;
+                self.pixmap.draw_pixmap(
+                    x.round() as i32,
+                    draw_y.round() as i32,
+                    rendered.pixmap.as_ref(),
+                    &PixmapPaint::default(),
+                    Transform::identity(),
+                    None,
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Draw text rotated 90 degrees counterclockwise using cosmic-text
@@ -1040,9 +1077,33 @@ impl SkiaRenderer {
         size: f32,
         color: Color,
     ) -> Result<()> {
-        let config = FontConfig::new(self.font_config.family.clone(), size);
-        self.text_renderer
-            .render_text_rotated(&mut self.pixmap, text, x, y, &config, color)
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let config = FontConfig::new(self.font_config.family.clone(), size);
+                self.text_renderer
+                    .render_text_rotated(&mut self.pixmap, text, x, y, &config, color)
+            }
+            TextEngineMode::Typst => {
+                let rendered = typst_text::render_raster(
+                    text,
+                    size,
+                    color,
+                    -90.0,
+                    "Skia rotated text rendering",
+                )?;
+                let draw_x = x - rendered.width / 2.0;
+                let draw_y = y - rendered.height / 2.0;
+                self.pixmap.draw_pixmap(
+                    draw_x.round() as i32,
+                    draw_y.round() as i32,
+                    rendered.pixmap.as_ref(),
+                    &PixmapPaint::default(),
+                    Transform::identity(),
+                    None,
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Draw text centered horizontally at the given position
@@ -1054,15 +1115,66 @@ impl SkiaRenderer {
         size: f32,
         color: Color,
     ) -> Result<()> {
-        let config = FontConfig::new(self.font_config.family.clone(), size);
-        self.text_renderer
-            .render_text_centered(&mut self.pixmap, text, center_x, y, &config, color)
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let config = FontConfig::new(self.font_config.family.clone(), size);
+                self.text_renderer.render_text_centered(
+                    &mut self.pixmap,
+                    text,
+                    center_x,
+                    y,
+                    &config,
+                    color,
+                )
+            }
+            TextEngineMode::Typst => {
+                let rendered = typst_text::render_raster(
+                    text,
+                    size,
+                    color,
+                    0.0,
+                    "Skia centered text rendering",
+                )?;
+                let draw_x = center_x - rendered.width / 2.0;
+                // Layout positions for centered text use top-origin semantics.
+                let draw_y = y;
+                self.pixmap.draw_pixmap(
+                    draw_x.round() as i32,
+                    draw_y.round() as i32,
+                    rendered.pixmap.as_ref(),
+                    &PixmapPaint::default(),
+                    Transform::identity(),
+                    None,
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Measure text dimensions
     pub fn measure_text(&self, text: &str, size: f32) -> Result<(f32, f32)> {
-        let config = FontConfig::new(self.font_config.family.clone(), size);
-        self.text_renderer.measure_text(text, &config)
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let config = FontConfig::new(self.font_config.family.clone(), size);
+                self.text_renderer.measure_text(text, &config)
+            }
+            TextEngineMode::Typst => typst_text::measure_text(
+                text,
+                size,
+                self.theme.foreground,
+                0.0,
+                TypstBackendKind::Raster,
+                "Skia text measurement",
+            ),
+        }
+    }
+
+    fn generated_label<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        if matches!(self.text_engine_mode, TextEngineMode::Typst) {
+            Cow::Owned(typst_text::literal_text_snippet(text))
+        } else {
+            Cow::Borrowed(text)
+        }
     }
 
     /// Draw axis labels and tick values using spacing configuration
@@ -1109,7 +1221,8 @@ impl SkiaRenderer {
             // Position tick labels with tick_pad below the axis
             let label_y = (plot_area.bottom() + tick_pad_px + tick_size)
                 .min(self.height() as f32 - tick_size - 5.0);
-            self.draw_text(label_text, label_x, label_y, tick_size, color)?;
+            let label_snippet = self.generated_label(label_text);
+            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
         }
 
         // Draw Y-axis tick labels
@@ -1120,8 +1233,9 @@ impl SkiaRenderer {
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             // Position tick labels with tick_pad left of the axis
             let label_x = (plot_area.left() - text_width_estimate - tick_pad_px).max(5.0);
+            let label_snippet = self.generated_label(label_text);
             self.draw_text(
-                label_text,
+                &label_snippet,
                 label_x,
                 y_pixel - tick_size / 3.0,
                 tick_size,
@@ -1185,7 +1299,8 @@ impl SkiaRenderer {
                 .min(self.width() as f32 - text_width_estimate * 2.0);
             let label_y =
                 (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0);
-            self.draw_text(label_text, label_x, label_y, tick_size, color)?;
+            let label_snippet = self.generated_label(label_text);
+            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
         }
 
         for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
@@ -1193,8 +1308,9 @@ impl SkiaRenderer {
                 - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             let label_x = (plot_area.left() - text_width_estimate - 15.0 * dpi_scale).max(5.0);
+            let label_snippet = self.generated_label(label_text);
             self.draw_text(
-                label_text,
+                &label_snippet,
                 label_x,
                 y_pixel - tick_size / 3.0,
                 tick_size,
@@ -1258,7 +1374,8 @@ impl SkiaRenderer {
                 .min(self.width() as f32 - text_width_estimate * 2.0);
             let label_y =
                 (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0); // Ensure within canvas
-            self.draw_text(label_text, label_x, label_y, tick_size, color)?;
+            let label_snippet = self.generated_label(label_text);
+            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
         }
 
         // Draw Y-axis tick labels using provided major ticks
@@ -1270,8 +1387,9 @@ impl SkiaRenderer {
             // Ensure labels fit within the left margin space
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0); // Ensure minimum 5px from canvas edge
+            let label_snippet = self.generated_label(label_text);
             self.draw_text(
-                label_text,
+                &label_snippet,
                 label_x,
                 y_pixel + tick_size * 0.3,
                 tick_size,
@@ -1359,8 +1477,9 @@ impl SkiaRenderer {
 
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
             let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0);
+            let label_snippet = self.generated_label(label_text);
             self.draw_text(
-                label_text,
+                &label_snippet,
                 label_x,
                 y_pixel + tick_size * 0.3,
                 tick_size,
@@ -1511,7 +1630,8 @@ impl SkiaRenderer {
             let label_x = (x_pixel - text_width_estimate)
                 .max(0.0)
                 .min(self.width() as f32 - text_width_estimate * 2.0);
-            self.draw_text(label_text, label_x, xtick_baseline_y, tick_size, color)?;
+            let label_snippet = self.generated_label(label_text);
+            self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
         }
 
         // Draw Y-axis tick labels using provided ticks
@@ -1527,7 +1647,8 @@ impl SkiaRenderer {
             // Center text vertically on tick: move up by half the text height
             // Text height is approximately tick_size * 1.2, so half is tick_size * 0.6
             let centered_y = y_pixel - tick_size * 0.5;
-            self.draw_text(label_text, label_x, centered_y, tick_size, color)?;
+            let label_snippet = self.generated_label(label_text);
+            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
         // Draw border around plot area
@@ -1609,7 +1730,8 @@ impl SkiaRenderer {
             let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
             // Center text vertically on tick
             let centered_y = y_pixel - tick_size * 0.5;
-            self.draw_text(label_text, label_x, centered_y, tick_size, color)?;
+            let label_snippet = self.generated_label(label_text);
+            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
         // Draw border around plot area
@@ -1697,7 +1819,8 @@ impl SkiaRenderer {
             let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
             // Center text vertically on tick
             let centered_y = y_pixel - tick_size * 0.5;
-            self.draw_text(label_text, label_x, centered_y, tick_size, color)?;
+            let label_snippet = self.generated_label(label_text);
+            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
         // Draw border around plot area

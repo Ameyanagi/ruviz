@@ -1,0 +1,488 @@
+use crate::{
+    core::{PlottingError, Result},
+    render::Color,
+};
+use tiny_skia::{IntSize, Pixmap};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypstBackendKind {
+    Raster,
+    Svg,
+}
+
+#[derive(Debug)]
+pub struct TypstRasterOutput {
+    pub pixmap: Pixmap,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypstSvgOutput {
+    pub svg: String,
+    pub width: f32,
+    pub height: f32,
+}
+
+pub fn literal_text_snippet(text: &str) -> String {
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("#text(\"{}\")", escaped)
+}
+
+#[cfg(not(feature = "typst-math"))]
+pub fn render_raster(
+    _snippet: &str,
+    _size_pt: f32,
+    _color: Color,
+    _rotation_deg: f32,
+    operation: &str,
+) -> Result<TypstRasterOutput> {
+    Err(PlottingError::FeatureNotEnabled {
+        feature: "typst-math".to_string(),
+        operation: operation.to_string(),
+    })
+}
+
+#[cfg(not(feature = "typst-math"))]
+pub fn render_svg(
+    _snippet: &str,
+    _size_pt: f32,
+    _color: Color,
+    _rotation_deg: f32,
+    operation: &str,
+) -> Result<TypstSvgOutput> {
+    Err(PlottingError::FeatureNotEnabled {
+        feature: "typst-math".to_string(),
+        operation: operation.to_string(),
+    })
+}
+
+#[cfg(not(feature = "typst-math"))]
+pub fn measure_text(
+    _snippet: &str,
+    _size_pt: f32,
+    _color: Color,
+    _rotation_deg: f32,
+    _backend: TypstBackendKind,
+    operation: &str,
+) -> Result<(f32, f32)> {
+    Err(PlottingError::FeatureNotEnabled {
+        feature: "typst-math".to_string(),
+        operation: operation.to_string(),
+    })
+}
+
+#[cfg(feature = "typst-math")]
+mod imp {
+    use super::{TypstBackendKind, TypstRasterOutput, TypstSvgOutput};
+    use crate::{
+        core::{PlottingError, Result},
+        render::Color,
+    };
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+    };
+    use tiny_skia::{IntSize, Pixmap};
+    use typst::{
+        Library, World, compile,
+        diag::FileError,
+        foundations::{Bytes, Datetime},
+        layout::{Page, PagedDocument},
+        syntax::{FileId, Source, VirtualPath},
+        text::{Font, FontBook},
+        utils::LazyHash,
+    };
+    use typst_kit::fonts::{FontSearcher, FontSlot};
+
+    const MAX_CACHE_ENTRIES: usize = 256;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    struct CacheKey {
+        snippet: String,
+        size_bits: u32,
+        color: (u8, u8, u8, u8),
+        rotation_bits: u32,
+        backend: TypstBackendKind,
+    }
+
+    #[derive(Debug, Clone)]
+    enum CachedValue {
+        Raster {
+            pixels: Vec<u8>,
+            width: u32,
+            height: u32,
+        },
+        Svg {
+            svg: String,
+            width: f32,
+            height: f32,
+        },
+    }
+
+    #[derive(Debug)]
+    struct FontContext {
+        book: LazyHash<FontBook>,
+        fonts: Vec<FontSlot>,
+        sans_family: String,
+    }
+
+    #[derive(Debug)]
+    struct TypstWorld {
+        library: &'static LazyHash<Library>,
+        book: &'static LazyHash<FontBook>,
+        fonts: &'static [FontSlot],
+        main: FileId,
+        source: Source,
+    }
+
+    impl World for TypstWorld {
+        fn library(&self) -> &LazyHash<Library> {
+            self.library
+        }
+
+        fn book(&self) -> &LazyHash<FontBook> {
+            self.book
+        }
+
+        fn main(&self) -> FileId {
+            self.main
+        }
+
+        fn source(&self, id: FileId) -> typst::diag::FileResult<Source> {
+            if id == self.main {
+                Ok(self.source.clone())
+            } else {
+                Err(FileError::NotFound(PathBuf::from("<memory>")))
+            }
+        }
+
+        fn file(&self, _id: FileId) -> typst::diag::FileResult<Bytes> {
+            Err(FileError::NotFound(PathBuf::from("<memory>")))
+        }
+
+        fn font(&self, index: usize) -> Option<Font> {
+            self.fonts.get(index).and_then(FontSlot::get)
+        }
+
+        fn today(&self, _offset: Option<i64>) -> Option<Datetime> {
+            None
+        }
+    }
+
+    fn library() -> &'static LazyHash<Library> {
+        static LIB: OnceLock<LazyHash<Library>> = OnceLock::new();
+        LIB.get_or_init(|| LazyHash::new(Library::default()))
+    }
+
+    fn fonts() -> &'static FontContext {
+        static FONTS: OnceLock<FontContext> = OnceLock::new();
+        FONTS.get_or_init(|| {
+            let mut searcher = FontSearcher::new();
+            let found = searcher.search();
+            let sans_family = select_sans_family(&found.book);
+            FontContext {
+                book: LazyHash::new(found.book),
+                fonts: found.fonts,
+                sans_family,
+            }
+        })
+    }
+
+    fn select_sans_family(book: &FontBook) -> String {
+        const PREFERRED: &[&str] = &[
+            "noto sans",
+            "dejavu sans",
+            "liberation sans",
+            "arial",
+            "helvetica",
+            "new computer modern sans",
+            "latin modern sans",
+        ];
+
+        for candidate in PREFERRED {
+            if book.contains_family(candidate) {
+                return (*candidate).to_string();
+            }
+        }
+
+        let mut first_family: Option<String> = None;
+        for (family, _) in book.families() {
+            if first_family.is_none() {
+                first_family = Some(family.to_string());
+            }
+            if family.to_ascii_lowercase().contains("sans") {
+                return family.to_string();
+            }
+        }
+
+        first_family.unwrap_or_else(|| "New Computer Modern Sans".to_string())
+    }
+
+    fn escape_typst_string(value: &str) -> String {
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn cache() -> &'static Mutex<HashMap<CacheKey, CachedValue>> {
+        static CACHE: OnceLock<Mutex<HashMap<CacheKey, CachedValue>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn make_key(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        backend: TypstBackendKind,
+    ) -> CacheKey {
+        CacheKey {
+            snippet: snippet.to_string(),
+            size_bits: size_pt.to_bits(),
+            color: (color.r, color.g, color.b, color.a),
+            rotation_bits: rotation_deg.to_bits(),
+            backend,
+        }
+    }
+
+    fn maybe_evict(cache: &mut HashMap<CacheKey, CachedValue>) {
+        if cache.len() < MAX_CACHE_ENTRIES {
+            return;
+        }
+        if let Some(first_key) = cache.keys().next().cloned() {
+            cache.remove(&first_key);
+        }
+    }
+
+    fn snippet_excerpt(snippet: &str) -> String {
+        let compact = snippet.trim().replace('\n', " ");
+        let mut chars = compact.chars();
+        let excerpt: String = chars.by_ref().take(80).collect();
+        if chars.next().is_some() {
+            format!("{}...", excerpt)
+        } else {
+            excerpt
+        }
+    }
+
+    fn build_document_source(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        font_family: &str,
+    ) -> String {
+        let size_pt = size_pt.max(1.0);
+        let font_family = escape_typst_string(font_family);
+        if rotation_deg.abs() > f32::EPSILON {
+            format!(
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}))\n#rotate({rotation_deg}deg, reflow: true)[{snippet}]",
+                r = color.r,
+                g = color.g,
+                b = color.b,
+            )
+        } else {
+            format!(
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}))\n{snippet}",
+                r = color.r,
+                g = color.g,
+                b = color.b,
+            )
+        }
+    }
+
+    fn compile_single_page(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        operation: &str,
+    ) -> Result<Page> {
+        let font_ctx = fonts();
+        let source_text =
+            build_document_source(snippet, size_pt, color, rotation_deg, &font_ctx.sans_family);
+        let main = FileId::new_fake(VirtualPath::new("/main.typ"));
+        let source = Source::new(main, source_text);
+        let world = TypstWorld {
+            library: library(),
+            book: &font_ctx.book,
+            fonts: &font_ctx.fonts,
+            main,
+            source,
+        };
+
+        let warned = compile::<PagedDocument>(&world);
+        let document = warned.output.map_err(|errors| {
+            let details = errors
+                .iter()
+                .map(|diag| diag.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; ");
+            PlottingError::TypstError(format!(
+                "{} failed: {}; snippet=`{}`",
+                operation,
+                details,
+                snippet_excerpt(snippet)
+            ))
+        })?;
+
+        document.pages.first().cloned().ok_or_else(|| {
+            PlottingError::TypstError(format!(
+                "{} failed: Typst produced no pages; snippet=`{}`",
+                operation,
+                snippet_excerpt(snippet)
+            ))
+        })
+    }
+
+    pub fn render_raster(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        operation: &str,
+    ) -> Result<TypstRasterOutput> {
+        if snippet.trim().is_empty() {
+            let pixmap = Pixmap::new(1, 1).ok_or_else(|| {
+                PlottingError::RenderError("Failed to allocate pixmap".to_string())
+            })?;
+            return Ok(TypstRasterOutput {
+                pixmap,
+                width: 0.0,
+                height: 0.0,
+            });
+        }
+
+        let key = make_key(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            TypstBackendKind::Raster,
+        );
+
+        if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
+            if let CachedValue::Raster {
+                pixels,
+                width,
+                height,
+            } = cached
+            {
+                let size = IntSize::from_wh(*width, *height).ok_or_else(|| {
+                    PlottingError::RenderError("Invalid cached typst raster size".to_string())
+                })?;
+                let pixmap = Pixmap::from_vec(pixels.clone(), size).ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "Failed to create pixmap from cached Typst raster".to_string(),
+                    )
+                })?;
+                return Ok(TypstRasterOutput {
+                    pixmap,
+                    width: *width as f32,
+                    height: *height as f32,
+                });
+            }
+        }
+
+        let page = compile_single_page(snippet, size_pt, color, rotation_deg, operation)?;
+        let pixmap = typst_render::render(&page, 1.0);
+        let width = pixmap.width();
+        let height = pixmap.height();
+        let pixels = pixmap.data().to_vec();
+
+        let mut cache = cache().lock().expect("cache lock poisoned");
+        maybe_evict(&mut cache);
+        cache.insert(
+            key,
+            CachedValue::Raster {
+                pixels,
+                width,
+                height,
+            },
+        );
+
+        Ok(TypstRasterOutput {
+            pixmap,
+            width: width as f32,
+            height: height as f32,
+        })
+    }
+
+    pub fn render_svg(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        operation: &str,
+    ) -> Result<TypstSvgOutput> {
+        if snippet.trim().is_empty() {
+            return Ok(TypstSvgOutput {
+                svg: String::new(),
+                width: 0.0,
+                height: 0.0,
+            });
+        }
+
+        let key = make_key(snippet, size_pt, color, rotation_deg, TypstBackendKind::Svg);
+        if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
+            if let CachedValue::Svg { svg, width, height } = cached {
+                return Ok(TypstSvgOutput {
+                    svg: svg.clone(),
+                    width: *width,
+                    height: *height,
+                });
+            }
+        }
+
+        let page = compile_single_page(snippet, size_pt, color, rotation_deg, operation)?;
+        let raw_svg = typst_svg::svg(&page);
+        let size = page.frame.size();
+        let width = size.x.to_pt() as f32;
+        let height = size.y.to_pt() as f32;
+
+        let mut cache = cache().lock().expect("cache lock poisoned");
+        maybe_evict(&mut cache);
+        cache.insert(
+            key,
+            CachedValue::Svg {
+                svg: raw_svg.clone(),
+                width,
+                height,
+            },
+        );
+
+        Ok(TypstSvgOutput {
+            svg: raw_svg,
+            width,
+            height,
+        })
+    }
+
+    pub fn measure_text(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        backend: TypstBackendKind,
+        operation: &str,
+    ) -> Result<(f32, f32)> {
+        match backend {
+            TypstBackendKind::Raster => {
+                let rendered = render_raster(snippet, size_pt, color, rotation_deg, operation)?;
+                Ok((rendered.width, rendered.height))
+            }
+            TypstBackendKind::Svg => {
+                let rendered = render_svg(snippet, size_pt, color, rotation_deg, operation)?;
+                Ok((rendered.width, rendered.height))
+            }
+        }
+    }
+}
+
+#[cfg(feature = "typst-math")]
+pub use imp::{measure_text, render_raster, render_svg};

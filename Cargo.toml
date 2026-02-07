@@ -35,6 +35,10 @@ palette = "0.7"
 # Text rendering - unified on cosmic-text (pure Rust)
 cosmic-text = "0.13"  # Professional text layout, shaping, and font discovery
 unicode-width = "0.1"
+typst = { version = "0.13.1", optional = true }
+typst-svg = { version = "0.13.1", optional = true }
+typst-render = { version = "0.13.1", optional = true }
+typst-kit = { version = "0.13.1", default-features = false, features = ["fonts", "embed-fonts"], optional = true }
 
 # Data structures (optional)
 ndarray = { version = "0.15", optional = true }
@@ -126,6 +130,7 @@ performance = ["parallel", "simd"]
 # Export format features
 svg = []
 pdf = ["printpdf", "svg2pdf"]
+typst-math = ["dep:typst", "dep:typst-svg", "dep:typst-render", "dep:typst-kit"]
 
 # Animation export features
 animation = ["gif", "color_quant", "crossbeam-channel"]
@@ -134,7 +139,7 @@ animation-hq-gif = ["animation", "gifski"]
 animation-video = ["animation", "rav1e", "av1-grain"]
 
 # Full feature set
-full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive-gpu", "animation"]
+full = ["ndarray_support", "polars_support", "nalgebra", "window", "serde", "performance", "gpu", "svg", "pdf", "interactive-gpu", "animation", "typst-math"]
 
 [profile.release]
 lto = true

@@ -256,27 +256,73 @@ mod publication_integration_tests {
         std::fs::remove_file("test_scientific_small.png").ok();
     }
 
-    /// Integration Test: LaTeX-style mathematical expressions
+    /// Integration Test: Typst-style mathematical expressions
     #[test]
-    fn test_latex_expressions_integration() {
+    fn test_typst_expressions_integration() {
         let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
         let y: Vec<f64> = x.iter().map(|&x| (-x).exp()).collect();
-        
-        // Will fail until LaTeX rendering support is implemented
-        let result = Plot::new()
+
+        let plot = Plot::new()
             .line(&x, &y)
-            .title(r"Exponential Decay: $f(x) = e^{-x}$")
-            .xlabel(r"Time $t$ (seconds)")
-            .ylabel(r"Amplitude $A(t)$")
-            .latex(true)
-            .save("test_latex_expressions.png");
-        
-        // Note: LaTeX support might be optional/future feature
-        if result.is_ok() {
-            println!("✅ LaTeX expressions supported");
-            std::fs::remove_file("test_latex_expressions.png").ok();
-        } else {
-            println!("⚠️  LaTeX expressions not yet implemented (acceptable)");
+            .title("Exponential Decay: $f(x) = e^(-x)$")
+            .xlabel("Time $t$ (seconds)")
+            .ylabel("Amplitude $A(t)$")
+            .typst(true);
+
+        #[cfg(feature = "typst-math")]
+        {
+            let png_result = plot.clone().save("test_typst_expressions.png");
+            assert!(
+                png_result.is_ok(),
+                "Typst PNG expressions failed: {:?}",
+                png_result.err()
+            );
+
+            let svg_result = plot.clone().export_svg("test_typst_expressions.svg");
+            assert!(
+                svg_result.is_ok(),
+                "Typst SVG expressions failed: {:?}",
+                svg_result.err()
+            );
+
+            let svg_inline = plot
+                .clone()
+                .render_to_svg()
+                .expect("Typst SVG inline rendering should succeed");
+            assert!(
+                svg_inline.contains("data-ruviz-text-engine=\"typst\""),
+                "Expected Typst SVG groups in render_to_svg output"
+            );
+
+            #[cfg(feature = "pdf")]
+            {
+                let pdf_result = plot.clone().save_pdf("test_typst_expressions.pdf");
+                assert!(
+                    pdf_result.is_ok(),
+                    "Typst PDF expressions failed: {:?}",
+                    pdf_result.err()
+                );
+                std::fs::remove_file("test_typst_expressions.pdf").ok();
+            }
+
+            std::fs::remove_file("test_typst_expressions.png").ok();
+            std::fs::remove_file("test_typst_expressions.svg").ok();
+        }
+
+        #[cfg(not(feature = "typst-math"))]
+        {
+            let png_result = plot.clone().save("test_typst_expressions.png");
+            assert!(png_result.is_err(), "Expected typst-math feature gate error");
+
+            let svg_result = plot.clone().export_svg("test_typst_expressions.svg");
+            assert!(svg_result.is_err(), "Expected typst-math feature gate error");
+
+            if std::path::Path::new("test_typst_expressions.png").exists() {
+                std::fs::remove_file("test_typst_expressions.png").ok();
+            }
+            if std::path::Path::new("test_typst_expressions.svg").exists() {
+                std::fs::remove_file("test_typst_expressions.svg").ok();
+            }
         }
     }
 

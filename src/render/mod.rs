@@ -15,6 +15,7 @@ pub mod skia;
 pub mod style;
 pub mod text;
 pub mod theme;
+pub mod typst_text;
 
 pub use backend::Renderer;
 pub use color::{Color, ColorError, ColorMap};

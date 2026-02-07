@@ -223,6 +223,47 @@ fn test_custom_dimensions() -> std::result::Result<(), Box<dyn std::error::Error
 }
 
 #[test]
+fn test_typst_text_rendering() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    setup_output_dir()?;
+
+    let x_data: Vec<f64> = (0..40).map(|i| i as f64 * 0.1).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|&x| (x * 1.5).sin()).collect();
+    let output_path = "tests/output/15_typst_text.png";
+
+    let result = Plot::new()
+        .title("$f(x) = sin(1.5x)$".to_string())
+        .xlabel("$x$".to_string())
+        .ylabel("$f(x)$".to_string())
+        .line(&x_data, &y_data)
+        .label("$sin(1.5x)$".to_string())
+        .typst(true)
+        .save(output_path);
+
+    #[cfg(feature = "typst-math")]
+    {
+        result?;
+        let size = fs::metadata(output_path)?.len();
+        assert!(
+            size > 2000,
+            "Typst output file unexpectedly small: {} bytes",
+            size
+        );
+        println!("✓ Saved: {}", output_path);
+        fs::remove_file(output_path).ok();
+    }
+
+    #[cfg(not(feature = "typst-math"))]
+    {
+        assert!(result.is_err(), "Expected typst-math feature gate error");
+        if fs::metadata(output_path).is_ok() {
+            fs::remove_file(output_path).ok();
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 #[ignore] // Edge case with single point may produce NaN coordinates
 fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;

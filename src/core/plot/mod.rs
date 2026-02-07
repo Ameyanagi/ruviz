@@ -55,7 +55,7 @@ mod series_manager;
 
 pub use builder::{IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{BackendType, GridMode, TickDirection};
-pub use configuration::PlotConfiguration;
+pub use configuration::{PlotConfiguration, TextEngineMode};
 pub use data::{IntoPlotData, PlotData, PlotText};
 pub use image::Image;
 pub use layout_manager::LayoutManager;
@@ -612,6 +612,7 @@ impl Plot {
             dimensions: (width, height),
             dpi: config.figure.dpi as u32,
             theme: Theme::default(),
+            text_engine: TextEngineMode::Plain,
             config,
         };
         Self {
@@ -2786,10 +2787,16 @@ impl Plot {
 
     // ========== End Annotation Methods ==========
 
-    /// Enable LaTeX rendering (placeholder - requires latex feature)
-    pub fn latex(self, _enabled: bool) -> Self {
-        // Placeholder for future LaTeX support
-        // Would require additional dependencies and rendering backend
+    /// Enable or disable Typst rendering for all plot text surfaces.
+    ///
+    /// When enabled, all static text surfaces (title, axis labels, tick labels,
+    /// legend labels, category labels, and annotations) are rendered through Typst.
+    pub fn typst(mut self, enabled: bool) -> Self {
+        self.display.text_engine = if enabled {
+            TextEngineMode::Typst
+        } else {
+            TextEngineMode::Plain
+        };
         self
     }
 
@@ -4087,6 +4094,7 @@ impl Plot {
         let (scaled_width, scaled_height) = self.config_canvas_size();
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
+        renderer.set_text_engine_mode(self.display.text_engine);
         let dpi = self.display.config.figure.dpi;
         let dpi_scale = dpi / 100.0;
         renderer.set_dpi_scale(dpi_scale);
@@ -4620,6 +4628,8 @@ impl Plot {
 
     /// Render the plot to an external renderer (used for subplots)
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
+        renderer.set_text_engine_mode(self.display.text_engine);
+
         // Validate we have at least one series
         if self.series_mgr.series.is_empty() {
             return Err(PlottingError::NoDataSeries);
@@ -5670,6 +5680,7 @@ impl Plot {
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
+        renderer.set_text_engine_mode(self.display.text_engine);
         let dpi = self.display.dpi as f32;
         let dpi_scale = dpi / 100.0;
         renderer.set_dpi_scale(dpi_scale);
@@ -7017,6 +7028,7 @@ impl Plot {
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
+        renderer.set_text_engine_mode(self.display.text_engine);
 
         // Clear background
         renderer.clear();
@@ -7885,6 +7897,7 @@ impl Plot {
         let mut svg = SvgRenderer::new(width, height);
         let dpi_scale = self.display.config.figure.dpi / 100.0;
         svg.set_dpi_scale(dpi_scale);
+        svg.set_text_engine_mode(self.display.text_engine);
 
         // Calculate plot area with margins
         let margin = 0.12; // 12% margin
@@ -8020,14 +8033,14 @@ impl Plot {
                 plot_bottom,
                 self.display.theme.foreground,
                 10.0,
-            );
+            )?;
 
             // Draw category labels on X-axis
             let num_categories = categories.len();
             for (i, category) in categories.iter().enumerate() {
                 let x = plot_left + (i as f32 + 0.5) * (plot_width / num_categories as f32);
                 let y = plot_bottom + 15.0;
-                svg.draw_text_centered(category, x, y, 10.0, self.display.theme.foreground);
+                svg.draw_text_centered(category, x, y, 10.0, self.display.theme.foreground)?;
             }
         } else {
             // Normal chart: draw axes with numeric labels
@@ -8054,7 +8067,7 @@ impl Plot {
                 plot_bottom,
                 self.display.theme.foreground,
                 10.0,
-            );
+            )?;
         }
 
         // Create clip path for data
@@ -8140,7 +8153,7 @@ impl Plot {
                 title_y,
                 14.0,
                 self.display.theme.foreground,
-            );
+            )?;
         }
 
         // Draw X-axis label
@@ -8154,7 +8167,7 @@ impl Plot {
                 label_y,
                 11.0,
                 self.display.theme.foreground,
-            );
+            )?;
         }
 
         // Draw Y-axis label (rotated)
@@ -8169,7 +8182,7 @@ impl Plot {
                 11.0,
                 self.display.theme.foreground,
                 -90.0,
-            );
+            )?;
         }
 
         // Draw legend if we have labeled series and legend is enabled
@@ -8178,7 +8191,7 @@ impl Plot {
             let legend = self.layout.legend.to_legend();
             // Use new legend rendering with proper handles
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
-            svg.draw_legend_full(&legend_items, &legend, plot_bounds, None);
+            svg.draw_legend_full(&legend_items, &legend, plot_bounds, None)?;
         }
 
         Ok(svg.to_svg_string())
@@ -8869,6 +8882,12 @@ impl PlotSeriesBuilder {
     /// Enable/disable grid
     pub fn grid(mut self, enabled: bool) -> Self {
         self.plot.layout.grid_style.visible = enabled;
+        self
+    }
+
+    /// Enable or disable Typst text rendering mode.
+    pub fn typst(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.typst(enabled);
         self
     }
 
@@ -10056,5 +10075,65 @@ mod tests {
             plot.series_mgr.series[0].label,
             Some("Implicit".to_string())
         );
+    }
+
+    #[test]
+    fn test_typst_toggle_mode_switch() {
+        let plot = Plot::new().typst(true);
+        assert_eq!(plot.display.text_engine, TextEngineMode::Typst);
+
+        let plot = plot.typst(false);
+        assert_eq!(plot.display.text_engine, TextEngineMode::Plain);
+    }
+
+    #[test]
+    fn test_plot_builder_typst_forwarding() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 3.0];
+
+        let plot: Plot = Plot::new().line(&x, &y).typst(true).into();
+        assert_eq!(plot.display.text_engine, TextEngineMode::Typst);
+    }
+
+    #[test]
+    fn test_plot_series_builder_typst_forwarding() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 3.0];
+
+        let plot = Plot::new()
+            .line(&x, &y)
+            .label("Series")
+            .typst(true)
+            .end_series();
+        assert_eq!(plot.display.text_engine, TextEngineMode::Typst);
+    }
+
+    #[cfg(not(feature = "typst-math"))]
+    #[test]
+    fn test_typst_feature_gate_error() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 3.0];
+
+        let result = Plot::new().line(&x, &y).title("Title").typst(true).render();
+
+        assert!(matches!(
+            result,
+            Err(PlottingError::FeatureNotEnabled { ref feature, .. }) if feature == "typst-math"
+        ));
+    }
+
+    #[cfg(feature = "typst-math")]
+    #[test]
+    fn test_invalid_typst_snippet_returns_typst_error() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![1.0, 2.0, 3.0];
+
+        let result = Plot::new()
+            .line(&x, &y)
+            .title("#let broken =")
+            .typst(true)
+            .render();
+
+        assert!(matches!(result, Err(PlottingError::TypstError(_))));
     }
 }
