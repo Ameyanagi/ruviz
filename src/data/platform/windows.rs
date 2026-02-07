@@ -59,6 +59,8 @@ struct PERFORMANCE_INFORMATION {
     ThreadCount: DWORD,
 }
 
+// SAFETY: These are FFI declarations for stable Win32 APIs. Callers validate
+// all pointers, sizes, and return codes at each call site.
 unsafe extern "system" {
     fn GlobalMemoryStatusEx(lpBuffer: *mut MEMORYSTATUSEX) -> BOOL;
     fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO) -> ();
@@ -93,6 +95,8 @@ const PAGE_READWRITE: DWORD = 0x04;
 
 /// Get total system memory on Windows
 pub fn get_total_memory() -> Result<u64, PlottingError> {
+    // SAFETY: `memory_status` is a valid initialized struct with correct
+    // `dwLength`; Windows API writes into provided mutable pointer.
     unsafe {
         let mut memory_status: MEMORYSTATUSEX = mem::zeroed();
         memory_status.dwLength = mem::size_of::<MEMORYSTATUSEX>() as DWORD;
@@ -110,6 +114,7 @@ pub fn get_total_memory() -> Result<u64, PlottingError> {
 
 /// Get available system memory on Windows
 pub fn get_available_memory() -> Result<u64, PlottingError> {
+    // SAFETY: same contract as `get_total_memory`; output buffer and size are valid.
     unsafe {
         let mut memory_status: MEMORYSTATUSEX = mem::zeroed();
         memory_status.dwLength = mem::size_of::<MEMORYSTATUSEX>() as DWORD;
@@ -127,6 +132,7 @@ pub fn get_available_memory() -> Result<u64, PlottingError> {
 
 /// Get detailed memory status on Windows
 pub fn get_memory_status() -> Result<WindowsMemoryStatus, PlottingError> {
+    // SAFETY: same contract as `get_total_memory`; output buffer and size are valid.
     unsafe {
         let mut memory_status: MEMORYSTATUSEX = mem::zeroed();
         memory_status.dwLength = mem::size_of::<MEMORYSTATUSEX>() as DWORD;
@@ -153,6 +159,7 @@ pub fn get_memory_status() -> Result<WindowsMemoryStatus, PlottingError> {
 
 /// Get performance information on Windows
 pub fn get_performance_info() -> Result<WindowsPerformanceInfo, PlottingError> {
+    // SAFETY: `perf_info` is properly sized and mutable for `GetPerformanceInfo`.
     unsafe {
         let mut perf_info: PERFORMANCE_INFORMATION = mem::zeroed();
         perf_info.cb = mem::size_of::<PERFORMANCE_INFORMATION>() as DWORD;
@@ -184,6 +191,7 @@ pub fn get_performance_info() -> Result<WindowsPerformanceInfo, PlottingError> {
 
 /// Get system information on Windows
 pub fn get_system_info() -> Result<WindowsSystemInfo, PlottingError> {
+    // SAFETY: `GetSystemInfo` expects a valid mutable pointer to `SYSTEM_INFO`.
     unsafe {
         let mut sys_info: SYSTEM_INFO = mem::zeroed();
         GetSystemInfo(&mut sys_info);
@@ -210,6 +218,7 @@ pub fn check_hugepage_support() -> bool {
 
 /// Check if large pages are supported on Windows
 pub fn check_large_page_support() -> bool {
+    // SAFETY: `GetLargePageMinimum` has no preconditions.
     unsafe {
         let min_large_page = GetLargePageMinimum();
         min_large_page > 0
@@ -218,6 +227,7 @@ pub fn check_large_page_support() -> bool {
 
 /// Get minimum large page size on Windows
 pub fn get_large_page_minimum() -> usize {
+    // SAFETY: `GetLargePageMinimum` has no preconditions.
     unsafe { GetLargePageMinimum() }
 }
 
@@ -226,6 +236,8 @@ pub fn configure_working_set(
     min_size: Option<usize>,
     max_size: Option<usize>,
 ) -> Result<(), PlottingError> {
+    // SAFETY: `GetCurrentProcess` returns a pseudo handle valid for this process,
+    // and the working set sizes are passed directly as documented values.
     unsafe {
         let process = GetCurrentProcess();
         let min_ws = min_size.unwrap_or(0);
@@ -246,6 +258,8 @@ pub fn configure_working_set(
 pub fn get_numa_nodes() -> usize {
     // This is a simplified implementation
     // A full implementation would use GetLogicalProcessorInformationEx
+    // SAFETY: first call passes null buffer to query required size; second call
+    // uses a valid allocated buffer and checks API result.
     unsafe {
         let mut buffer_length: DWORD = 0;
 
@@ -282,6 +296,7 @@ pub fn allocate_large_pages(size: usize) -> Result<*mut std::ffi::c_void, Plotti
         ));
     }
 
+    // SAFETY: `VirtualAlloc` is called with documented flags; null result is handled.
     unsafe {
         let ptr = VirtualAlloc(
             ptr::null_mut(),
@@ -302,6 +317,8 @@ pub fn allocate_large_pages(size: usize) -> Result<*mut std::ffi::c_void, Plotti
 
 /// Free large page memory on Windows
 pub fn free_large_pages(ptr: *mut std::ffi::c_void) -> Result<(), PlottingError> {
+    // SAFETY: caller provides a pointer returned by `VirtualAlloc`; `VirtualFree`
+    // return value is checked.
     unsafe {
         let result = VirtualFree(ptr, 0, MEM_RELEASE);
         if result != FALSE {

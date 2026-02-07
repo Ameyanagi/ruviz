@@ -1,6 +1,5 @@
 use crate::core::types::Point2f;
 use std::alloc::{Layout, alloc, dealloc};
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// High-performance memory management system for plotting operations
@@ -59,19 +58,13 @@ struct BlockPool {
 /// Memory block for large allocations
 #[derive(Debug, Clone)]
 struct MemoryBlock {
-    /// Pointer to allocated memory
-    ptr: NonNull<u8>,
+    /// Address of allocated memory
+    ptr_addr: usize,
     /// Size of the allocation
     size: usize,
     /// Layout used for allocation
     layout: Layout,
 }
-
-// SAFETY: MemoryBlock owns an allocation descriptor only; access is synchronized
-// by surrounding Mutexes in BlockPool.
-unsafe impl Send for MemoryBlock {}
-// SAFETY: Shared references are only used under synchronization.
-unsafe impl Sync for MemoryBlock {}
 
 /// Memory usage statistics
 #[derive(Debug, Clone)]
@@ -313,6 +306,7 @@ impl MemoryManager {
         let layout =
             Layout::from_size_align(size, alignment).map_err(|_| MemoryError::InvalidLayout)?;
 
+        // SAFETY: `layout` is validated above, and we check null before storing `ptr`.
         unsafe {
             let ptr = alloc(layout);
             if ptr.is_null() {
@@ -320,7 +314,7 @@ impl MemoryManager {
             }
 
             Ok(ManagedBlock {
-                ptr: NonNull::new_unchecked(ptr),
+                ptr_addr: ptr as usize,
                 size,
                 layout,
                 pool: None,
@@ -533,7 +527,7 @@ impl BlockPool {
             self.stats.total_blocks_reused += 1;
 
             return Ok(ManagedBlock {
-                ptr: block.ptr,
+                ptr_addr: block.ptr_addr,
                 size: block.size,
                 layout: block.layout,
                 pool: Some(pool),
@@ -544,6 +538,7 @@ impl BlockPool {
         let layout =
             Layout::from_size_align(size, alignment).map_err(|_| MemoryError::InvalidLayout)?;
 
+        // SAFETY: `layout` is validated above, and `ptr` is checked for null before use.
         unsafe {
             let ptr = alloc(layout);
             if ptr.is_null() {
@@ -554,7 +549,7 @@ impl BlockPool {
             self.stats.peak_block_count = self.stats.peak_block_count.max(self.blocks.len() + 1);
 
             Ok(ManagedBlock {
-                ptr: NonNull::new_unchecked(ptr),
+                ptr_addr: ptr as usize,
                 size,
                 layout,
                 pool: Some(pool),
@@ -568,8 +563,9 @@ impl BlockPool {
 
     fn clear(&mut self) {
         for block in self.blocks.drain(..) {
+            // SAFETY: each block was allocated with this exact layout and is deallocated once.
             unsafe {
-                dealloc(block.ptr.as_ptr(), block.layout);
+                dealloc(block.ptr_addr as *mut u8, block.layout);
             }
         }
         self.stats = BlockStats {
@@ -669,7 +665,7 @@ impl<T> Drop for ManagedBuffer<T> {
 
 /// Managed memory block
 pub struct ManagedBlock {
-    ptr: NonNull<u8>,
+    ptr_addr: usize,
     size: usize,
     layout: Layout,
     pool: Option<Arc<Mutex<BlockPool>>>,
@@ -680,13 +676,14 @@ impl Drop for ManagedBlock {
         if let Some(pool_arc) = &self.pool {
             let mut pool = pool_arc.lock().unwrap();
             pool.return_block(MemoryBlock {
-                ptr: self.ptr,
+                ptr_addr: self.ptr_addr,
                 size: self.size,
                 layout: self.layout,
             });
         } else {
+            // SAFETY: this block was allocated by `alloc(layout)` and not returned to pool.
             unsafe {
-                dealloc(self.ptr.as_ptr(), self.layout);
+                dealloc(self.ptr_addr as *mut u8, self.layout);
             }
         }
     }

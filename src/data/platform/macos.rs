@@ -19,6 +19,8 @@ struct VMSwapUsage {
     encrypted: u32,
 }
 
+// SAFETY: These are FFI declarations for Darwin libc/mach APIs. Each call site
+// validates pointers, sizes, and return codes.
 unsafe extern "C" {
     fn sysctl(
         name: *const i32,
@@ -80,6 +82,7 @@ struct VMStatistics64 {
 
 /// Get total system memory on macOS using sysctl
 pub fn get_total_memory() -> Result<u64, PlottingError> {
+    // SAFETY: `mib`/`size` are valid and `mem_size` points to writable storage.
     unsafe {
         let mut mem_size: u64 = 0;
         let mut size = mem::size_of::<u64>();
@@ -106,6 +109,7 @@ pub fn get_total_memory() -> Result<u64, PlottingError> {
 
 /// Get available memory on macOS by calculating from VM statistics
 pub fn get_available_memory() -> Result<u64, PlottingError> {
+    // SAFETY: `vm_stat` and `count` are valid output buffers for `host_statistics64`.
     unsafe {
         let mut vm_stat: VMStatistics64 = mem::zeroed();
         let mut count = HOST_VM_INFO64_COUNT;
@@ -137,6 +141,7 @@ pub fn get_available_memory() -> Result<u64, PlottingError> {
 
 /// Get detailed VM statistics on macOS
 pub fn get_vm_statistics() -> Result<MacOSVMStats, PlottingError> {
+    // SAFETY: `vm_stat` and `count` are valid output buffers for `host_statistics64`.
     unsafe {
         let mut vm_stat: VMStatistics64 = mem::zeroed();
         let mut count = HOST_VM_INFO64_COUNT;
@@ -179,6 +184,7 @@ pub fn get_vm_statistics() -> Result<MacOSVMStats, PlottingError> {
 
 /// Get swap usage on macOS
 pub fn get_swap_usage() -> Result<SwapUsage, PlottingError> {
+    // SAFETY: `mib`/`size` are valid and `swap_usage` points to writable storage.
     unsafe {
         let mut swap_usage: VMSwapUsage = mem::zeroed();
         let mut size = mem::size_of::<VMSwapUsage>();
@@ -240,6 +246,7 @@ pub fn get_memory_pressure() -> Result<MemoryPressureLevel, PlottingError> {
 
 /// Get system page size on macOS
 pub fn get_page_size() -> usize {
+    // SAFETY: `name` is a valid nul-terminated sysctl key and output buffers are valid.
     unsafe {
         let mut page_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
@@ -273,6 +280,7 @@ pub fn check_hugepage_support() -> bool {
 
 /// Check if large pages (super pages) are supported on macOS
 pub fn check_large_page_support() -> bool {
+    // SAFETY: `name` is a valid nul-terminated sysctl key and output buffers are valid.
     unsafe {
         let mut super_page_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
@@ -298,6 +306,8 @@ pub fn check_memory_mapping_support() -> Result<bool, PlottingError> {
 
 /// Get CPU cache information on macOS
 pub fn get_cache_info() -> Result<CacheInfo, PlottingError> {
+    // SAFETY: all sysctl names are static nul-terminated strings and destination
+    // pointers are valid writable `i32` values.
     unsafe {
         let mut l1_cache_size: i32 = 0;
         let mut l2_cache_size: i32 = 0;
@@ -416,6 +426,7 @@ pub struct CacheInfo {
 
 /// Get thermal state (relevant for performance scaling)
 pub fn get_thermal_state() -> Result<ThermalState, PlottingError> {
+    // SAFETY: `name` is a valid nul-terminated sysctl key and output buffers are valid.
     unsafe {
         let mut thermal_state: i32 = 0;
         let mut size = mem::size_of::<i32>();
