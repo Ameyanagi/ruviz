@@ -1,5 +1,4 @@
 use std::fmt;
-use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::ptr;
 use std::slice::{Iter, IterMut};
@@ -10,6 +9,7 @@ use super::memory_pool::SharedMemoryPool;
 pub struct PooledVec<T> {
     buffer: Vec<T>,
     pool: SharedMemoryPool<T>,
+    recycle_on_drop: bool,
 }
 
 impl<T> PooledVec<T> {
@@ -22,7 +22,11 @@ impl<T> PooledVec<T> {
     pub fn with_capacity(capacity: usize, pool: SharedMemoryPool<T>) -> Self {
         let mut vec = pool.acquire(capacity).into_inner();
         vec.clear();
-        Self { buffer: vec, pool }
+        Self {
+            buffer: vec,
+            pool,
+            recycle_on_drop: true,
+        }
     }
 
     /// Create a PooledVec from existing data.
@@ -170,6 +174,10 @@ impl<T> IndexMut<usize> for PooledVec<T> {
 
 impl<T> Drop for PooledVec<T> {
     fn drop(&mut self) {
+        if !self.recycle_on_drop {
+            return;
+        }
+
         let mut vec = Vec::new();
         std::mem::swap(&mut vec, &mut self.buffer);
         self.pool.release_vec(vec);
@@ -200,12 +208,10 @@ impl<T> IntoIterator for PooledVec<T> {
     type Item = T;
     type IntoIter = PooledVecIntoIter<T>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        let mut this = ManuallyDrop::new(self);
-        let owned = std::mem::take(&mut this.buffer);
-        // SAFETY: `this` is `ManuallyDrop`, so moving out `pool` this way is sound.
-        let pool = unsafe { ptr::read(&this.pool) };
-        PooledVecIntoIter::new(owned, pool)
+    fn into_iter(mut self) -> Self::IntoIter {
+        let owned = std::mem::take(&mut self.buffer);
+        self.recycle_on_drop = false;
+        PooledVecIntoIter::new(owned, self.pool.clone())
     }
 }
 
@@ -228,15 +234,23 @@ impl<'a, T> IntoIterator for &'a mut PooledVec<T> {
 }
 
 pub struct PooledVecIntoIter<T> {
-    buffer: ManuallyDrop<Vec<T>>,
+    ptr: *mut T,
+    len: usize,
+    cap: usize,
     next_index: usize,
     pool: Option<SharedMemoryPool<T>>,
 }
 
 impl<T> PooledVecIntoIter<T> {
     fn new(buffer: Vec<T>, pool: SharedMemoryPool<T>) -> Self {
+        let len = buffer.len();
+        let cap = buffer.capacity();
+        let ptr = Vec::into_raw_parts(buffer).0;
+
         Self {
-            buffer: ManuallyDrop::new(buffer),
+            ptr,
+            len,
+            cap,
             next_index: 0,
             pool: Some(pool),
         }
@@ -247,18 +261,18 @@ impl<T> Iterator for PooledVecIntoIter<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next_index >= self.buffer.len() {
+        if self.next_index >= self.len {
             return None;
         }
 
-        // SAFETY: `next_index` is always < len, each element is read at most once.
-        let item = unsafe { self.buffer.as_ptr().add(self.next_index).read() };
+        // SAFETY: `next_index` is always < len, each element is moved out at most once.
+        let item = unsafe { self.ptr.add(self.next_index).read() };
         self.next_index += 1;
         Some(item)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.buffer.len().saturating_sub(self.next_index);
+        let remaining = self.len.saturating_sub(self.next_index);
         (remaining, Some(remaining))
     }
 }
@@ -267,23 +281,23 @@ impl<T> ExactSizeIterator for PooledVecIntoIter<T> {}
 
 impl<T> Drop for PooledVecIntoIter<T> {
     fn drop(&mut self) {
-        // SAFETY: We drop only the unread tail. The read prefix was moved out by `next`.
-        // Then we reconstruct an empty Vec from the original allocation and return it to the pool.
+        // SAFETY: unread elements are dropped exactly once; consumed elements were moved out by `next`.
+        // Reconstructing `Vec` with len=0 preserves allocation for recycling back to the pool.
         unsafe {
-            let len = self.buffer.len();
-            let cap = self.buffer.capacity();
-            let raw = self.buffer.as_mut_ptr();
+            let remaining = self.len.saturating_sub(self.next_index);
+            if remaining > 0 {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                    self.ptr.add(self.next_index),
+                    remaining,
+                ));
+            }
 
-            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
-                raw.add(self.next_index),
-                len.saturating_sub(self.next_index),
-            ));
-
-            let mut recycle = Vec::from_raw_parts(raw, 0, cap);
-            recycle.clear();
+            let recycle = Vec::from_raw_parts(self.ptr, 0, self.cap);
 
             if let Some(pool) = self.pool.take() {
                 pool.release_vec(recycle);
+            } else {
+                drop(recycle);
             }
         }
     }
@@ -293,13 +307,15 @@ impl<T> From<Vec<T>> for PooledVec<T> {
     fn from(vec: Vec<T>) -> Self {
         let pool = SharedMemoryPool::new(vec.len().max(16));
         let mut pooled = Self::with_capacity(vec.len(), pool);
-        pooled.buffer = vec;
+        // Keep pool tracking coherent by moving elements into pool-backed storage.
+        pooled.buffer.extend(vec);
         pooled
     }
 }
 
 impl<T> From<PooledVec<T>> for Vec<T> {
     fn from(mut pooled_vec: PooledVec<T>) -> Self {
+        pooled_vec.recycle_on_drop = false;
         let mut out = Vec::new();
         std::mem::swap(&mut out, &mut pooled_vec.buffer);
         out
@@ -309,6 +325,8 @@ impl<T> From<PooledVec<T>> for Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[test]
     fn test_pooled_vec_basic_operations() {
@@ -410,6 +428,16 @@ mod tests {
     }
 
     #[test]
+    fn test_from_vec_keeps_pool_backed_allocation() {
+        let source = vec![1, 2, 3, 4];
+        let source_ptr = source.as_ptr();
+        let pooled: PooledVec<i32> = source.into();
+
+        assert_eq!(pooled.as_slice(), &[1, 2, 3, 4]);
+        assert_ne!(pooled.as_ptr(), source_ptr);
+    }
+
+    #[test]
     fn test_into_iter_recycles_allocation_when_fully_consumed() {
         let pool = SharedMemoryPool::new(8);
         let mut vec = PooledVec::with_capacity(8, pool.clone());
@@ -439,5 +467,38 @@ mod tests {
         let stats = pool.statistics();
         assert!(stats.available_count >= 1);
         assert!(stats.total_capacity >= cap);
+    }
+
+    #[test]
+    fn test_into_iter_partial_drop_releases_unread_elements_once() {
+        struct DropCounter {
+            drops: Arc<AtomicUsize>,
+        }
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let pool = SharedMemoryPool::new(8);
+        let drops = Arc::new(AtomicUsize::new(0));
+        let mut vec = PooledVec::with_capacity(8, pool.clone());
+        for _ in 0..4 {
+            vec.push(DropCounter {
+                drops: Arc::clone(&drops),
+            });
+        }
+
+        let mut iter = vec.into_iter();
+        let first = iter.next().expect("first item should exist");
+        drop(first);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+
+        drop(iter);
+        assert_eq!(drops.load(Ordering::SeqCst), 4);
+
+        let stats = pool.statistics();
+        assert!(stats.available_count >= 1);
     }
 }

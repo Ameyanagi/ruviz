@@ -44,11 +44,16 @@ impl<'a, T> DataView<'a, T> {
         self.slice.get(index)
     }
 
-    pub fn iter(&self) -> DataViewIter<'a, T>
+    pub fn iter(&self) -> DataViewIter<'a, T> {
+        self.slice.iter()
+    }
+
+    /// Iterate over copied values.
+    pub fn iter_copied(&self) -> DataViewCopiedIter<'a, T>
     where
         T: Copy,
     {
-        DataViewIter {
+        DataViewCopiedIter {
             inner: self.slice.iter(),
         }
     }
@@ -121,15 +126,18 @@ impl<T> OwnedDataView<T> {
     }
 }
 
-/// Iterator over a DataView that returns owned values (for Copy types).
-pub struct DataViewIter<'a, T>
+/// Borrowed iterator over a DataView.
+pub type DataViewIter<'a, T> = slice::Iter<'a, T>;
+
+/// Iterator over copied values from a DataView.
+pub struct DataViewCopiedIter<'a, T>
 where
     T: Copy,
 {
     inner: slice::Iter<'a, T>,
 }
 
-impl<'a, T> Iterator for DataViewIter<'a, T>
+impl<'a, T> Iterator for DataViewCopiedIter<'a, T>
 where
     T: Copy,
 {
@@ -144,7 +152,7 @@ where
     }
 }
 
-impl<'a, T> ExactSizeIterator for DataViewIter<'a, T> where T: Copy {}
+impl<'a, T> ExactSizeIterator for DataViewCopiedIter<'a, T> where T: Copy {}
 
 /// A DataView that applies a mapping function to each element.
 pub struct MappedDataView<'a, T, U, F> {
@@ -169,10 +177,7 @@ where
         self.original.get(index).map(&self.mapper)
     }
 
-    pub fn iter(&self) -> MappedDataViewIter<'_, 'a, T, U, F>
-    where
-        T: Copy,
-    {
+    pub fn iter(&self) -> MappedDataViewIter<'_, 'a, T, U, F> {
         MappedDataViewIter {
             original_iter: self.original.iter(),
             mapper: &self.mapper,
@@ -182,8 +187,6 @@ where
 }
 
 pub struct MappedDataViewIter<'m, 'a, T, U, F>
-where
-    T: Copy,
 {
     original_iter: DataViewIter<'a, T>,
     mapper: &'m F,
@@ -192,13 +195,12 @@ where
 
 impl<'m, 'a, T, U, F> Iterator for MappedDataViewIter<'m, 'a, T, U, F>
 where
-    T: Copy,
     F: Fn(&T) -> U,
 {
     type Item = U;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.original_iter.next().map(|item| (self.mapper)(&item))
+        self.original_iter.next().map(|item| (self.mapper)(item))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -208,7 +210,6 @@ where
 
 impl<'m, 'a, T, U, F> ExactSizeIterator for MappedDataViewIter<'m, 'a, T, U, F>
 where
-    T: Copy,
     F: Fn(&T) -> U,
 {
 }
@@ -240,10 +241,10 @@ mod tests {
         assert_eq!(*view.get(4).expect("missing item"), 5.0);
         assert!(view.get(5).is_none());
 
-        let collected: Vec<f64> = view.iter().collect();
+        let collected: Vec<&f64> = view.iter().collect();
         assert_eq!(collected.len(), 5);
-        assert_eq!(collected[0], 1.0);
-        assert_eq!(collected[4], 5.0);
+        assert_eq!(*collected[0], 1.0);
+        assert_eq!(*collected[4], 5.0);
     }
 
     #[test]
@@ -263,11 +264,25 @@ mod tests {
         let data = vec![1, 2, 3, 4, 5];
         let view = DataView::from_slice(&data);
 
-        let collected: Vec<i32> = view.iter().collect();
-        assert_eq!(collected, vec![1, 2, 3, 4, 5]);
+        let collected: Vec<&i32> = view.iter().collect();
+        assert_eq!(collected, vec![&1, &2, &3, &4, &5]);
 
-        let sum: i32 = view.iter().sum();
+        let copied: Vec<i32> = view.iter_copied().collect();
+        assert_eq!(copied, vec![1, 2, 3, 4, 5]);
+
+        let sum: i32 = view.iter_copied().sum();
         assert_eq!(sum, 15);
+    }
+
+    #[test]
+    fn test_data_view_borrowed_iter_works_for_non_copy() {
+        let data = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let view = DataView::from_slice(&data);
+
+        let collected: Vec<&String> = view.iter().collect();
+        assert_eq!(collected.len(), 3);
+        assert_eq!(collected[0], "a");
+        assert_eq!(collected[2], "c");
     }
 
     #[test]
@@ -327,7 +342,7 @@ mod tests {
         std::thread::scope(|scope| {
             let view = DataView::from_slice(&data);
             let handle = scope.spawn(move || {
-                let sum: f64 = view.iter().sum();
+                let sum: f64 = view.iter_copied().sum();
                 sum
             });
 

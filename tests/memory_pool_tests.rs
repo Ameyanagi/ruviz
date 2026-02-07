@@ -122,7 +122,7 @@ mod memory_pool_tests {
         assert_eq!(data_view.as_ptr(), pooled_data.as_ptr());
 
         // Test iterator
-        let collected: Vec<f64> = data_view.iter().collect();
+        let collected: Vec<f64> = data_view.iter_copied().collect();
         assert_eq!(collected, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
@@ -231,27 +231,15 @@ mod memory_pool_tests {
     }
 
     #[test]
-    fn test_managed_buffer_drop_under_contention_cleans_in_use() {
-        let pool = Arc::new(Mutex::new(MemoryPool::<u8>::new(32)));
-        let managed = {
-            let mut locked = pool.lock().unwrap();
-            let raw = locked.acquire(32);
-            PooledBuffer::new_managed(raw, pool.clone())
-        };
+    fn test_managed_buffer_drop_cleans_in_use_via_shared_pool() {
+        let shared = SharedMemoryPool::<u8>::new(32);
+        let managed = shared.acquire(32);
 
-        let lock_guard = pool.lock().unwrap();
-        let handle = thread::spawn(move || {
-            drop(managed);
-        });
+        drop(managed);
 
-        thread::sleep(Duration::from_millis(20));
-        drop(lock_guard);
-        handle.join().unwrap();
-
-        let mut locked = pool.lock().unwrap();
-        assert_eq!(locked.in_use_count(), 0);
-        let reused = locked.acquire(32);
-        assert!(reused.capacity() >= 32);
+        let stats = shared.statistics();
+        assert_eq!(stats.in_use_count, 0);
+        assert!(stats.available_count >= 1);
     }
 
     #[test]
@@ -261,7 +249,7 @@ mod memory_pool_tests {
         let ptr = buffer.as_ptr();
         let cap = buffer.capacity();
 
-        buffer.resize(cap + 10, 1);
+        buffer.resize_clamped(cap + 10, 1);
 
         assert_eq!(buffer.len(), cap);
         assert_eq!(buffer.as_ptr(), ptr);

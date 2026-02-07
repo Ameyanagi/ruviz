@@ -145,7 +145,9 @@ impl<T> PooledBuffer<T> {
     }
 
     /// Create a managed buffer that will be returned to the pool on drop.
-    pub fn new_managed(mut buffer: PooledBuffer<T>, pool: Arc<Mutex<MemoryPool<T>>>) -> Self {
+    ///
+    /// This is crate-internal to keep managed construction on lock-order-safe paths.
+    pub(crate) fn new_managed(mut buffer: PooledBuffer<T>, pool: Arc<Mutex<MemoryPool<T>>>) -> Self {
         let vec = buffer.vec.take();
         Self {
             vec,
@@ -184,7 +186,23 @@ impl<T> PooledBuffer<T> {
         T: Clone,
     {
         if let Some(vec) = self.vec.as_mut() {
-            // Keep pointer identity stable while this buffer is tracked in `in_use`.
+            assert!(
+                new_len <= vec.capacity(),
+                "requested length {new_len} exceeds pooled buffer capacity {}",
+                vec.capacity()
+            );
+            vec.resize(new_len, value);
+        }
+    }
+
+    /// Resize the logical length of the buffer, clamping to current capacity.
+    ///
+    /// This keeps pointer identity stable while the buffer is tracked in `in_use`.
+    pub fn resize_clamped(&mut self, new_len: usize, value: T)
+    where
+        T: Clone,
+    {
+        if let Some(vec) = self.vec.as_mut() {
             let target_len = new_len.min(vec.capacity());
             vec.resize(target_len, value);
         }
@@ -239,9 +257,16 @@ impl<T: Clone> Clone for PooledBuffer<T> {
 }
 
 /// Thread-safe wrapper for cross-thread pool sharing.
-#[derive(Clone)]
 pub struct SharedMemoryPool<T> {
     inner: Arc<Mutex<MemoryPool<T>>>,
+}
+
+impl<T> Clone for SharedMemoryPool<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl<T> SharedMemoryPool<T> {
@@ -263,9 +288,8 @@ impl<T> SharedMemoryPool<T> {
 
     /// Release a vector back to the shared pool.
     pub fn release_vec(&self, vec: Vec<T>) {
-        if let Ok(mut pool) = self.inner.lock() {
-            pool.release_vec(vec);
-        }
+        let mut pool = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        pool.release_vec(vec);
     }
 
     /// Get pool statistics.
@@ -335,16 +359,37 @@ mod tests {
     }
 
     #[test]
-    fn test_resize_clamps_to_capacity_without_reallocation() {
+    fn test_resize_clamped_to_capacity_without_reallocation() {
         let shared_pool = SharedMemoryPool::<u8>::new(8);
         let mut buffer = shared_pool.acquire(8);
         let ptr_before = buffer.as_ptr();
         let cap = buffer.capacity();
 
-        buffer.resize(cap + 32, 7);
+        buffer.resize_clamped(cap + 32, 7);
 
         assert_eq!(buffer.len(), cap);
         assert_eq!(buffer.as_ptr(), ptr_before);
+    }
+
+    #[test]
+    fn test_resize_preserves_requested_len_within_capacity() {
+        let shared_pool = SharedMemoryPool::<u8>::new(8);
+        let mut buffer = shared_pool.acquire(8);
+
+        buffer.resize(6, 3);
+
+        assert_eq!(buffer.len(), 6);
+        assert_eq!(buffer.as_slice(), &[3, 3, 3, 3, 3, 3]);
+    }
+
+    #[test]
+    #[should_panic(expected = "requested length")]
+    fn test_resize_panics_when_requested_len_exceeds_capacity() {
+        let shared_pool = SharedMemoryPool::<u8>::new(8);
+        let mut buffer = shared_pool.acquire(8);
+        let cap = buffer.capacity();
+
+        buffer.resize(cap + 1, 9);
     }
 
     #[test]

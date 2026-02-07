@@ -37,4 +37,6 @@ pub use pooled_vec::{PooledVec, PooledVecIntoIter};
 pub use signal::Signal;
 pub use traits::Data1D;
 pub use validation::{collect_finite_values, collect_finite_values_sorted};
-pub use zero_copy::{DataView, DataViewIter, MappedDataView, MappedDataViewIter, OwnedDataView};
+pub use zero_copy::{
+    DataView, DataViewCopiedIter, DataViewIter, MappedDataView, MappedDataViewIter, OwnedDataView,
+};
