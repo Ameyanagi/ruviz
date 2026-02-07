@@ -1,7 +1,6 @@
 //! macOS-specific memory optimization implementations
 
 use crate::core::error::PlottingError;
-use std::ffi::CStr;
 use std::mem;
 use std::ptr;
 
@@ -251,7 +250,7 @@ pub fn get_page_size() -> usize {
         let mut page_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
 
-        let name = CStr::from_bytes_with_nul(b"hw.pagesize\0").unwrap();
+        let name = c"hw.pagesize";
         let result = sysctlbyname(
             name.as_ptr(),
             &mut page_size as *mut i32 as *mut std::ffi::c_void,
@@ -285,7 +284,7 @@ pub fn check_large_page_support() -> bool {
         let mut super_page_size: i32 = 0;
         let mut size = mem::size_of::<i32>();
 
-        let name = CStr::from_bytes_with_nul(b"vm.superpages_size\0").unwrap();
+        let name = c"vm.superpages_size";
         let result = sysctlbyname(
             name.as_ptr(),
             &mut super_page_size as *mut i32 as *mut std::ffi::c_void,
@@ -316,22 +315,10 @@ pub fn get_cache_info() -> Result<CacheInfo, PlottingError> {
         let mut size = mem::size_of::<i32>();
 
         let mut names = [
-            (
-                CStr::from_bytes_with_nul(b"hw.l1dcachesize\0").unwrap(),
-                &mut l1_cache_size,
-            ),
-            (
-                CStr::from_bytes_with_nul(b"hw.l2cachesize\0").unwrap(),
-                &mut l2_cache_size,
-            ),
-            (
-                CStr::from_bytes_with_nul(b"hw.l3cachesize\0").unwrap(),
-                &mut l3_cache_size,
-            ),
-            (
-                CStr::from_bytes_with_nul(b"hw.cachelinesize\0").unwrap(),
-                &mut cache_line_size,
-            ),
+            (c"hw.l1dcachesize", &mut l1_cache_size),
+            (c"hw.l2cachesize", &mut l2_cache_size),
+            (c"hw.l3cachesize", &mut l3_cache_size),
+            (c"hw.cachelinesize", &mut cache_line_size),
         ];
 
         for (name, value) in names.iter_mut() {
@@ -431,7 +418,7 @@ pub fn get_thermal_state() -> Result<ThermalState, PlottingError> {
         let mut thermal_state: i32 = 0;
         let mut size = mem::size_of::<i32>();
 
-        let name = CStr::from_bytes_with_nul(b"machdep.xcpm.cpu_thermal_level\0").unwrap();
+        let name = c"machdep.xcpm.cpu_thermal_level";
         let result = sysctlbyname(
             name.as_ptr(),
             &mut thermal_state as *mut i32 as *mut std::ffi::c_void,

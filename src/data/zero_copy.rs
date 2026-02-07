@@ -186,8 +186,7 @@ where
     }
 }
 
-pub struct MappedDataViewIter<'m, 'a, T, U, F>
-{
+pub struct MappedDataViewIter<'m, 'a, T, U, F> {
     original_iter: DataViewIter<'a, T>,
     mapper: &'m F,
     _phantom: std::marker::PhantomData<U>,
@@ -208,11 +207,7 @@ where
     }
 }
 
-impl<'m, 'a, T, U, F> ExactSizeIterator for MappedDataViewIter<'m, 'a, T, U, F>
-where
-    F: Fn(&T) -> U,
-{
-}
+impl<'m, 'a, T, U, F> ExactSizeIterator for MappedDataViewIter<'m, 'a, T, U, F> where F: Fn(&T) -> U {}
 
 #[cfg(test)]
 mod tests {

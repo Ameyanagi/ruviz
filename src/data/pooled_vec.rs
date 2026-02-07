@@ -1,4 +1,5 @@
 use std::fmt;
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
 use std::ptr;
 use std::slice::{Iter, IterMut};
@@ -243,9 +244,10 @@ pub struct PooledVecIntoIter<T> {
 
 impl<T> PooledVecIntoIter<T> {
     fn new(buffer: Vec<T>, pool: SharedMemoryPool<T>) -> Self {
+        let mut buffer = ManuallyDrop::new(buffer);
         let len = buffer.len();
         let cap = buffer.capacity();
-        let ptr = Vec::into_raw_parts(buffer).0;
+        let ptr = buffer.as_mut_ptr();
 
         Self {
             ptr,
@@ -325,8 +327,8 @@ impl<T> From<PooledVec<T>> for Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_pooled_vec_basic_operations() {

@@ -147,7 +147,10 @@ impl<T> PooledBuffer<T> {
     /// Create a managed buffer that will be returned to the pool on drop.
     ///
     /// This is crate-internal to keep managed construction on lock-order-safe paths.
-    pub(crate) fn new_managed(mut buffer: PooledBuffer<T>, pool: Arc<Mutex<MemoryPool<T>>>) -> Self {
+    pub(crate) fn new_managed(
+        mut buffer: PooledBuffer<T>,
+        pool: Arc<Mutex<MemoryPool<T>>>,
+    ) -> Self {
         let vec = buffer.vec.take();
         Self {
             vec,
