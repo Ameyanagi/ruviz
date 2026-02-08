@@ -490,13 +490,26 @@ fn test_typst_png_output_scales_with_dpi() -> std::result::Result<(), Box<dyn st
         .dpi(300)
         .save(path_300)?;
 
-    let size_100 = fs::metadata(path_100)?.len();
-    let size_300 = fs::metadata(path_300)?.len();
-    assert!(
-        size_300 > size_100,
-        "higher DPI Typst PNG should be larger: 100dpi={} 300dpi={}",
-        size_100,
-        size_300
+    let img_100 = image::open(path_100)?;
+    let img_300 = image::open(path_300)?;
+    let w_100 = img_100.width();
+    let h_100 = img_100.height();
+    let w_300 = img_300.width();
+    let h_300 = img_300.height();
+
+    assert_eq!(
+        w_300,
+        w_100 * 3,
+        "Expected 300 DPI image width to be 3x 100 DPI width: {} vs {}",
+        w_300,
+        w_100
+    );
+    assert_eq!(
+        h_300,
+        h_100 * 3,
+        "Expected 300 DPI image height to be 3x 100 DPI height: {} vs {}",
+        h_300,
+        h_100
     );
 
     fs::remove_file(path_100).ok();

@@ -662,7 +662,7 @@ impl TextRenderer {
     /// Measure text placement metrics for layout/anchor conversion.
     ///
     /// Returns width/height and baseline offset from top origin.
-    pub fn measure_text_placement(
+    pub(crate) fn measure_text_placement(
         &self,
         text: &str,
         config: &FontConfig,
