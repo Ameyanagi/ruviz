@@ -29,8 +29,8 @@ pub use constants::{dimensions, dpi, font_scales, font_sizes, line_widths, margi
 pub use error::{PlottingError, Result};
 pub use grid_style::GridStyle;
 pub use layout::{
-    ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, PlotContent, PlotLayout,
-    TextPosition,
+    ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, MeasuredDimensions,
+    PlotContent, PlotLayout, TextPosition,
 };
 #[allow(deprecated)]
 pub use legend::LegendFrame; // Deprecated alias for backward compatibility
@@ -38,7 +38,7 @@ pub use legend::{
     Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, LegendSpacing,
     LegendSpacingPixels, LegendStyle, find_best_position,
 };
-pub use plot::{BackendType, IntoPlot, Plot, PlotBuilder, PlotInput, SeriesStyle};
+pub use plot::{BackendType, IntoPlot, Plot, PlotBuilder, PlotInput, SeriesStyle, TextEngineMode};
 pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;

@@ -7,6 +7,15 @@ use super::data::PlotText;
 use crate::core::config::PlotConfig;
 use crate::render::Theme;
 
+/// Text rendering backend mode for plot text surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextEngineMode {
+    /// Existing cosmic-text based renderer.
+    Plain,
+    /// Typst-based renderer (requires `typst-math` feature at render/export time).
+    Typst,
+}
+
 /// Configuration for plot display settings
 ///
 /// This struct holds the basic display configuration for a plot:
@@ -41,6 +50,8 @@ pub struct PlotConfiguration {
     pub(crate) dpi: u32,
     /// Plot theme
     pub(crate) theme: Theme,
+    /// Active text engine mode for all static text surfaces.
+    pub(crate) text_engine: TextEngineMode,
     /// DPI-independent plot configuration
     pub(crate) config: PlotConfig,
 }
@@ -61,6 +72,7 @@ impl PlotConfiguration {
             dimensions: (800, 600),
             dpi: 100,
             theme: Theme::default(),
+            text_engine: TextEngineMode::Plain,
             config: PlotConfig::default(),
         }
     }
@@ -198,6 +210,11 @@ impl PlotConfiguration {
         &self.theme
     }
 
+    /// Get the text rendering backend mode.
+    pub fn text_engine(&self) -> TextEngineMode {
+        self.text_engine
+    }
+
     /// Get the DPI-independent configuration
     pub fn config(&self) -> &PlotConfig {
         &self.config
@@ -254,6 +271,11 @@ impl PlotConfiguration {
     pub(crate) fn set_theme(&mut self, theme: Theme) {
         self.theme = theme;
     }
+
+    /// Set text rendering backend mode.
+    pub(crate) fn set_text_engine(&mut self, mode: TextEngineMode) {
+        self.text_engine = mode;
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +290,7 @@ mod tests {
         assert!(config.ylabel().is_none());
         assert_eq!(config.dimensions(), (800, 600));
         assert_eq!(config.dpi(), 100);
+        assert_eq!(config.text_engine(), TextEngineMode::Plain);
     }
 
     #[test]
@@ -309,12 +332,14 @@ mod tests {
         config.set_ylabel("New Y");
         config.set_dimensions(1024, 768);
         config.set_dpi(150);
+        config.set_text_engine(TextEngineMode::Typst);
 
         assert_eq!(config.title(), Some("New Title"));
         assert_eq!(config.xlabel(), Some("New X"));
         assert_eq!(config.ylabel(), Some("New Y"));
         assert_eq!(config.dimensions(), (1024, 768));
         assert_eq!(config.dpi(), 150);
+        assert_eq!(config.text_engine(), TextEngineMode::Typst);
     }
 
     #[test]

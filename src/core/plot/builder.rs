@@ -686,6 +686,14 @@ where
         self
     }
 
+    /// Enable or disable Typst text rendering mode.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn typst(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.typst(enabled);
+        self
+    }
+
     /// Set theme
     ///
     /// This method forwards to the inner Plot.

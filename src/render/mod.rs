@@ -14,7 +14,9 @@ pub mod simd;
 pub mod skia;
 pub mod style;
 pub mod text;
+pub(crate) mod text_anchor;
 pub mod theme;
+pub mod typst_text;
 
 pub use backend::Renderer;
 pub use color::{Color, ColorError, ColorMap};

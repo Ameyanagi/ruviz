@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed `Plot::latex(...)` API. Use `Plot::typst(true)` for Typst text rendering.
+
+### Added
+
+- Added global Typst text mode via `Plot::typst(bool)` and builder forwarding.
+- Added optional `typst-math` feature for Typst-backed text rendering across PNG/SVG/PDF export.
+- Added strict Typst error behavior: invalid Typst now fails render/export with `TypstError`.
+
+### Changed
+
+- Improved Typst text layout fidelity by aligning baseline/anchor semantics across layout, raster, and SVG paths.
+- Fixed Typst title/label clipping and spacing drift in visual outputs (no public API changes).
+
 ## [0.1.2] - 2026-01-30
 
 ### Platform Fixes
