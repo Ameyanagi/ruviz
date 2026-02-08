@@ -8,7 +8,7 @@ use crate::{
     },
     render::{
         Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme,
-        typst_text::{self, TypstBackendKind},
+        typst_text::{self, TypstBackendKind, TypstTextAnchor},
     },
 };
 use std::borrow::Cow;
@@ -86,6 +86,14 @@ impl SkiaRenderer {
     /// Get text rendering backend mode.
     pub fn text_engine_mode(&self) -> TextEngineMode {
         self.text_engine_mode
+    }
+
+    /// Map renderer font size to Typst size units.
+    ///
+    /// Typst raster output at scale 1.0 matches existing renderer sizing most closely
+    /// when we pass through the size value directly.
+    fn typst_size_pt(&self, size_px: f32) -> f32 {
+        size_px.max(0.1)
     }
 
     /// Clear the canvas with background color
@@ -1043,7 +1051,8 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Draw text at the specified position using cosmic-text (professional quality)
+    /// Draw text at the specified position using cosmic-text (professional quality).
+    /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
@@ -1052,11 +1061,18 @@ impl SkiaRenderer {
                     .render_text(&mut self.pixmap, text, x, y, &config, color)
             }
             TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
                 let rendered =
-                    typst_text::render_raster(text, size, color, 0.0, "Skia text rendering")?;
-                let draw_y = y - rendered.height * 0.8;
+                    typst_text::render_raster(text, size_pt, color, 0.0, "Skia text rendering")?;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::TopLeft,
+                );
                 self.pixmap.draw_pixmap(
-                    x.round() as i32,
+                    draw_x.round() as i32,
                     draw_y.round() as i32,
                     rendered.pixmap.as_ref(),
                     &PixmapPaint::default(),
@@ -1084,15 +1100,21 @@ impl SkiaRenderer {
                     .render_text_rotated(&mut self.pixmap, text, x, y, &config, color)
             }
             TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_raster(
                     text,
-                    size,
+                    size_pt,
                     color,
                     -90.0,
                     "Skia rotated text rendering",
                 )?;
-                let draw_x = x - rendered.width / 2.0;
-                let draw_y = y - rendered.height / 2.0;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::Center,
+                );
                 self.pixmap.draw_pixmap(
                     draw_x.round() as i32,
                     draw_y.round() as i32,
@@ -1106,7 +1128,8 @@ impl SkiaRenderer {
         }
     }
 
-    /// Draw text centered horizontally at the given position
+    /// Draw text centered horizontally at the given position.
+    /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text_centered(
         &mut self,
         text: &str,
@@ -1128,16 +1151,21 @@ impl SkiaRenderer {
                 )
             }
             TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_raster(
                     text,
-                    size,
+                    size_pt,
                     color,
                     0.0,
                     "Skia centered text rendering",
                 )?;
-                let draw_x = center_x - rendered.width / 2.0;
-                // Layout positions for centered text use top-origin semantics.
-                let draw_y = y;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    center_x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::TopCenter,
+                );
                 self.pixmap.draw_pixmap(
                     draw_x.round() as i32,
                     draw_y.round() as i32,
@@ -1158,14 +1186,17 @@ impl SkiaRenderer {
                 let config = FontConfig::new(self.font_config.family.clone(), size);
                 self.text_renderer.measure_text(text, &config)
             }
-            TextEngineMode::Typst => typst_text::measure_text(
-                text,
-                size,
-                self.theme.foreground,
-                0.0,
-                TypstBackendKind::Raster,
-                "Skia text measurement",
-            ),
+            TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
+                typst_text::measure_text(
+                    text,
+                    size_pt,
+                    self.theme.foreground,
+                    0.0,
+                    TypstBackendKind::Raster,
+                    "Skia text measurement",
+                )
+            }
         }
     }
 

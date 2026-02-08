@@ -9,7 +9,7 @@ use crate::core::{
 };
 use crate::render::{
     Color, LineStyle, MarkerStyle,
-    typst_text::{self, TypstBackendKind},
+    typst_text::{self, TypstBackendKind, TypstTextAnchor},
 };
 use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
@@ -60,6 +60,14 @@ impl SvgRenderer {
     /// Get text rendering backend mode.
     pub fn text_engine_mode(&self) -> TextEngineMode {
         self.text_engine_mode
+    }
+
+    /// Map renderer font size to Typst size units.
+    ///
+    /// Typst SVG output aligns with existing plot sizing when using the
+    /// same numeric size value.
+    fn typst_size_pt(&self, size_px: f32) -> f32 {
+        size_px.max(0.1)
     }
 
     /// Get a unique clip path ID
@@ -129,14 +137,17 @@ impl SvgRenderer {
     fn measure_text_for_layout(&self, text: &str, font_size: f32) -> Result<(f32, f32)> {
         match self.text_engine_mode {
             TextEngineMode::Plain => Ok((text.chars().count() as f32 * font_size * 0.6, font_size)),
-            TextEngineMode::Typst => typst_text::measure_text(
-                text,
-                font_size,
-                Color::BLACK,
-                0.0,
-                TypstBackendKind::Svg,
-                "SVG text measurement",
-            ),
+            TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(font_size);
+                typst_text::measure_text(
+                    text,
+                    size_pt,
+                    Color::BLACK,
+                    0.0,
+                    TypstBackendKind::Svg,
+                    "SVG text measurement",
+                )
+            }
         }
     }
 
@@ -285,7 +296,8 @@ impl SvgRenderer {
         self.draw_circle(x, y, size / 2.0, color, true);
     }
 
-    /// Draw text at specified position
+    /// Draw text at specified position.
+    /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
@@ -300,14 +312,21 @@ impl SvgRenderer {
                 Ok(())
             }
             TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
                 let rendered =
-                    typst_text::render_svg(text, size, color, 0.0, "SVG text rendering")?;
-                let draw_y = y - rendered.height * 0.8;
+                    typst_text::render_svg(text, size_pt, color, 0.0, "SVG text rendering")?;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::TopLeft,
+                );
                 let embedded_svg = self.strip_xml_declaration(&rendered.svg);
                 writeln!(
                     self.content,
                     r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
-                    x, draw_y, embedded_svg
+                    draw_x, draw_y, embedded_svg
                 )
                 .unwrap();
                 Ok(())
@@ -315,7 +334,8 @@ impl SvgRenderer {
         }
     }
 
-    /// Draw text centered at specified position
+    /// Draw text centered at specified position.
+    /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text_centered(
         &mut self,
         text: &str,
@@ -337,10 +357,21 @@ impl SvgRenderer {
                 Ok(())
             }
             TextEngineMode::Typst => {
-                let rendered =
-                    typst_text::render_svg(text, size, color, 0.0, "SVG centered text rendering")?;
-                let draw_x = x - rendered.width / 2.0;
-                let draw_y = y - rendered.height / 2.0;
+                let size_pt = self.typst_size_pt(size);
+                let rendered = typst_text::render_svg(
+                    text,
+                    size_pt,
+                    color,
+                    0.0,
+                    "SVG centered text rendering",
+                )?;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::TopCenter,
+                );
                 let embedded_svg = self.strip_xml_declaration(&rendered.svg);
                 writeln!(
                     self.content,
@@ -376,10 +407,21 @@ impl SvgRenderer {
                 Ok(())
             }
             TextEngineMode::Typst => {
-                let rendered =
-                    typst_text::render_svg(text, size, color, 0.0, "SVG rotated text rendering")?;
-                let draw_x = x - rendered.width / 2.0;
-                let draw_y = y - rendered.height / 2.0;
+                let size_pt = self.typst_size_pt(size);
+                let rendered = typst_text::render_svg(
+                    text,
+                    size_pt,
+                    color,
+                    0.0,
+                    "SVG rotated text rendering",
+                )?;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::Center,
+                );
                 let embedded_svg = self.strip_xml_declaration(&rendered.svg);
                 writeln!(
                     self.content,
@@ -558,9 +600,10 @@ impl SvgRenderer {
                             .unwrap();
                         }
                         TextEngineMode::Typst => {
+                            let size_pt = self.typst_size_pt(font_size);
                             let rendered = typst_text::render_svg(
                                 &label_snippet,
-                                font_size,
+                                size_pt,
                                 color,
                                 0.0,
                                 "SVG y-axis tick label rendering",

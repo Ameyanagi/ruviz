@@ -34,6 +34,35 @@ pub fn literal_text_snippet(text: &str) -> String {
     format!("#text(\"{}\")", escaped)
 }
 
+/// Text anchor semantics used when positioning rendered Typst output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypstTextAnchor {
+    /// Horizontal text anchored at the top-left corner.
+    TopLeft,
+    /// Horizontal text anchored at the top-center point.
+    TopCenter,
+    /// Text anchored at geometric center (used for rotated/centered content).
+    Center,
+}
+
+/// Convert anchor coordinates into top-left draw coordinates.
+pub fn anchored_top_left(
+    anchor_x: f32,
+    anchor_y: f32,
+    rendered_width: f32,
+    rendered_height: f32,
+    anchor: TypstTextAnchor,
+) -> (f32, f32) {
+    match anchor {
+        TypstTextAnchor::TopLeft => (anchor_x, anchor_y),
+        TypstTextAnchor::TopCenter => (anchor_x - rendered_width / 2.0, anchor_y),
+        TypstTextAnchor::Center => (
+            anchor_x - rendered_width / 2.0,
+            anchor_y - rendered_height / 2.0,
+        ),
+    }
+}
+
 #[cfg(not(feature = "typst-math"))]
 pub fn render_raster(
     _snippet: &str,
@@ -281,17 +310,19 @@ mod imp {
         let font_family = escape_typst_string(font_family);
         if rotation_deg.abs() > f32::EPSILON {
             format!(
-                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}))\n#rotate({rotation_deg}deg, reflow: true)[{snippet}]",
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}))\n#rotate({rotation_deg}deg, reflow: true)[{snippet}]",
                 r = color.r,
                 g = color.g,
                 b = color.b,
+                a = color.a,
             )
         } else {
             format!(
-                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}))\n{snippet}",
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}))\n{snippet}",
                 r = color.r,
                 g = color.g,
                 b = color.b,
+                a = color.a,
             )
         }
     }

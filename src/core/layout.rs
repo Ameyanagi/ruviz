@@ -25,7 +25,7 @@ use crate::core::{SpacingConfig, TypographyConfig};
 pub struct TextPosition {
     /// Horizontal position (center for centered text, left edge otherwise)
     pub x: f32,
-    /// Vertical position (baseline for horizontal text, center for rotated)
+    /// Vertical position (top for horizontal text, center for rotated)
     pub y: f32,
     /// Font size in pixels
     pub size: f32,
@@ -73,16 +73,16 @@ pub struct PlotLayout {
     /// The plotting area where data is drawn
     pub plot_area: LayoutRect,
 
-    /// Title position (baseline center point), None if no title
+    /// Title position (top center point), None if no title
     pub title_pos: Option<TextPosition>,
 
-    /// X-axis label position (baseline center point)
+    /// X-axis label position (top center point)
     pub xlabel_pos: Option<TextPosition>,
 
     /// Y-axis label position (center point, rotated 90° CCW)
     pub ylabel_pos: Option<TextPosition>,
 
-    /// Y-coordinate for x-axis tick label baselines
+    /// Y-coordinate for x-axis tick label top positions
     pub xtick_baseline_y: f32,
 
     /// X-coordinate for right edge of y-axis tick labels
@@ -297,7 +297,7 @@ impl LayoutCalculator {
         };
 
         // Step 5: Position elements - centered on PLOT AREA, not canvas
-        // Note: y positions are the TOP of the text rendering area
+        // Note: y positions are the TOP of the text rendering area.
         let title_pos = content.title.as_ref().map(|_| TextPosition {
             x: plot_area.center_x(), // Centered on plot area
             y: edge_buffer,          // Title top at edge buffer
@@ -397,6 +397,30 @@ mod tests {
         // Labels should be present
         assert!(layout.xlabel_pos.is_some());
         assert!(layout.ylabel_pos.is_some());
+    }
+
+    #[test]
+    fn test_layout_horizontal_text_positions_use_top_origin() {
+        let calculator = LayoutCalculator::default();
+        let content = PlotContent::new()
+            .with_title("Baseline Title")
+            .with_xlabel("Baseline X");
+        let typography = default_typography();
+        let spacing = default_spacing();
+
+        let layout = calculator.compute((640, 480), &content, &typography, &spacing, 100.0);
+
+        let pt_to_px = |pt: f32| pt * 100.0 / 72.0;
+        let edge_buffer = pt_to_px(LayoutConfig::default().edge_buffer_pt);
+        let expected_title_top = edge_buffer;
+        let expected_xlabel_top =
+            480.0 - edge_buffer - estimate_text_height(pt_to_px(typography.label_size()));
+
+        let title = layout.title_pos.expect("title should be present");
+        let xlabel = layout.xlabel_pos.expect("xlabel should be present");
+
+        assert!((title.y - expected_title_top).abs() < 1.0);
+        assert!((xlabel.y - expected_xlabel_top).abs() < 1.0);
     }
 
     #[test]

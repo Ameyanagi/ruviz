@@ -1,4 +1,5 @@
 use ruviz::prelude::*;
+#[cfg(feature = "typst-math")]
 use std::fs;
 
 #[cfg(feature = "typst-math")]
@@ -9,7 +10,15 @@ fn run() -> Result<()> {
     let x: Vec<f64> = (0..80).map(|i| i as f64 * 0.05).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
-    let plot = Plot::new()
+    // Plain and Typst outputs are generated side-by-side for visual parity checks.
+    let plain_plot = Plot::new()
+        .line(&x, &y)
+        .label("exp(-x)")
+        .title("Plain Check: f(x) = exp(-x)")
+        .xlabel("Time t")
+        .ylabel("Amplitude A(t)");
+
+    let typst_plot = Plot::new()
         .line(&x, &y)
         .label("$e^{-x}$")
         .title("Typst Check: $f(x) = e^{-x}$")
@@ -17,13 +26,16 @@ fn run() -> Result<()> {
         .ylabel("Amplitude $A(t)$")
         .typst(true);
 
+    let plain_png_path = format!("{out_dir}/plain_check.png");
     let png_path = format!("{out_dir}/typst_check.png");
     let svg_path = format!("{out_dir}/typst_check.svg");
 
-    plot.clone().save(&png_path)?;
-    plot.clone().export_svg(&svg_path)?;
+    plain_plot.save(&plain_png_path)?;
+    typst_plot.clone().save(&png_path)?;
+    typst_plot.clone().export_svg(&svg_path)?;
 
     println!("Generated:");
+    println!("  {plain_png_path}");
     println!("  {png_path}");
     println!("  {svg_path}");
     Ok(())
