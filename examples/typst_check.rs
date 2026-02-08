@@ -11,19 +11,28 @@ fn run() -> Result<()> {
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
     // Plain and Typst outputs are generated side-by-side for visual parity checks.
+    let title_plain = "Parity Check: f(x) = e^-x";
+    let title_typst = "Parity Check: $f(x) = e^{-x}$";
+    let xlabel_plain = "Time t";
+    let xlabel_typst = "Time $t$";
+    let ylabel_plain = "Amplitude A(t)";
+    let ylabel_typst = "Amplitude $A(t)$";
+    let legend_plain = "e^-x";
+    let legend_typst = "$e^{-x}$";
+
     let plain_plot = Plot::new()
         .line(&x, &y)
-        .label("exp(-x)")
-        .title("Plain Check: f(x) = exp(-x)")
-        .xlabel("Time t")
-        .ylabel("Amplitude A(t)");
+        .label(legend_plain)
+        .title(title_plain)
+        .xlabel(xlabel_plain)
+        .ylabel(ylabel_plain);
 
     let typst_plot = Plot::new()
         .line(&x, &y)
-        .label("$e^{-x}$")
-        .title("Typst Check: $f(x) = e^{-x}$")
-        .xlabel("Time $t$")
-        .ylabel("Amplitude $A(t)$")
+        .label(legend_typst)
+        .title(title_typst)
+        .xlabel(xlabel_typst)
+        .ylabel(ylabel_typst)
         .typst(true);
 
     let plain_png_path = format!("{out_dir}/plain_check.png");

@@ -106,6 +106,10 @@ Standard DPI settings:
 - 300 DPI: IEEE publications, journals
 - 600 DPI: High-resolution printing
 
+For Typst text specifically:
+- PNG output uses rasterized Typst text, so higher DPI improves text smoothness.
+- SVG/PDF exports preserve vector text and are preferred for publication workflows.
+
 ### API Issues
 
 **Q: Which backend should I use?**

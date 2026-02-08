@@ -66,9 +66,9 @@ use crate::{
     axes::AxisScale,
     core::{
         Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig, Legend,
-        LegendItem, LegendItemType, LegendPosition, MarginConfig, PlotConfig, PlotContent,
-        PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, Result, ShapeStyle,
-        TextStyle, pt_to_px,
+        LegendItem, LegendItemType, LegendPosition, MarginConfig, MeasuredDimensions, PlotConfig,
+        PlotContent, PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, Result,
+        ShapeStyle, TextStyle, pt_to_px,
     },
     data::{Data1D, DataShader, StreamingXY},
     plots::boxplot::BoxPlotConfig,
@@ -4168,6 +4168,9 @@ impl Plot {
                 None
             }
         });
+        let content = self.create_plot_content(y_min, y_max);
+        let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
+        let measurements = measured_dimensions.as_ref();
 
         // Choose layout method based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
@@ -4177,7 +4180,6 @@ impl Plot {
                     center_plot,
                 } => {
                     // Use content-driven layout calculator
-                    let content = self.create_plot_content(y_min, y_max);
                     let layout_config = LayoutConfig {
                         edge_buffer_pt: *edge_buffer,
                         center_plot: *center_plot,
@@ -4190,6 +4192,7 @@ impl Plot {
                         &self.display.config.typography,
                         &self.display.config.spacing,
                         dpi,
+                        measurements,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
                         layout.plot_area.left,
@@ -4205,7 +4208,6 @@ impl Plot {
                 }
                 _ => {
                     // Always use LayoutCalculator for consistent plot area and title/label positioning
-                    let content = self.create_plot_content(y_min, y_max);
                     let layout_config = LayoutConfig::default();
                     let calculator = LayoutCalculator::new(layout_config);
                     let layout = calculator.compute(
@@ -4214,6 +4216,7 @@ impl Plot {
                         &self.display.config.typography,
                         &self.display.config.spacing,
                         dpi,
+                        measurements,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
                         layout.plot_area.left,
@@ -4784,6 +4787,9 @@ impl Plot {
                 None
             }
         });
+        let content = self.create_plot_content(y_min, y_max);
+        let measured_dimensions = self.measure_layout_text(renderer, &content, dpi)?;
+        let measurements = measured_dimensions.as_ref();
 
         // Choose layout method based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
@@ -4793,7 +4799,6 @@ impl Plot {
                     center_plot,
                 } => {
                     // Use content-driven layout calculator
-                    let content = self.create_plot_content(y_min, y_max);
                     let layout_config = LayoutConfig {
                         edge_buffer_pt: *edge_buffer,
                         center_plot: *center_plot,
@@ -4806,6 +4811,7 @@ impl Plot {
                         &self.display.config.typography,
                         &self.display.config.spacing,
                         dpi,
+                        measurements,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
                         layout.plot_area.left,
@@ -4821,7 +4827,6 @@ impl Plot {
                 }
                 _ => {
                     // Always use LayoutCalculator for consistent plot area and title/label positioning
-                    let content = self.create_plot_content(y_min, y_max);
                     let layout_config = LayoutConfig::default();
                     let calculator = LayoutCalculator::new(layout_config);
                     let layout = calculator.compute(
@@ -4830,6 +4835,7 @@ impl Plot {
                         &self.display.config.typography,
                         &self.display.config.spacing,
                         dpi,
+                        measurements,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
                         layout.plot_area.left,
@@ -5475,6 +5481,31 @@ impl Plot {
         }
     }
 
+    /// Pre-measure title/xlabel/ylabel for Typst layout parity.
+    fn measure_layout_text(
+        &self,
+        renderer: &SkiaRenderer,
+        content: &PlotContent,
+        dpi: f32,
+    ) -> Result<Option<MeasuredDimensions>> {
+        let title_size_px = pt_to_px(self.display.config.typography.title_size(), dpi);
+        let label_size_px = pt_to_px(self.display.config.typography.label_size(), dpi);
+
+        let mut measurements = MeasuredDimensions::default();
+
+        if let Some(title) = content.title.as_deref() {
+            measurements.title = Some(renderer.measure_text(title, title_size_px)?);
+        }
+        if let Some(xlabel) = content.xlabel.as_deref() {
+            measurements.xlabel = Some(renderer.measure_text(xlabel, label_size_px)?);
+        }
+        if let Some(ylabel) = content.ylabel.as_deref() {
+            measurements.ylabel = Some(renderer.measure_text(ylabel, label_size_px)?);
+        }
+
+        Ok(Some(measurements))
+    }
+
     /// Render plot using DataShader optimization for large datasets
     fn render_with_datashader(&self) -> Result<Image> {
         // Calculate combined data bounds across all series
@@ -5696,12 +5727,14 @@ impl Plot {
             max_margin_fraction: 0.4,
         };
         let layout_calculator = LayoutCalculator::new(layout_config);
+        let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
         let layout = layout_calculator.compute(
             (scaled_width, scaled_height),
             &content,
             &self.display.config.typography,
             &self.display.config.spacing,
             dpi,
+            measured_dimensions.as_ref(),
         );
 
         // Convert layout plot_area to tiny_skia::Rect for series rendering
@@ -7253,6 +7286,9 @@ impl Plot {
         let dpi = self.display.dpi as f32;
         let dpi_scale = dpi / 100.0;
         renderer.set_dpi_scale(dpi_scale);
+        let content = self.create_plot_content(y_min, y_max);
+        let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
+        let measurements = measured_dimensions.as_ref();
 
         // Calculate plot area based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
@@ -7262,7 +7298,6 @@ impl Plot {
                     center_plot,
                 } => {
                     // Use content-driven layout calculator
-                    let content = self.create_plot_content(y_min, y_max);
                     let layout_config = LayoutConfig {
                         edge_buffer_pt: *edge_buffer,
                         center_plot: *center_plot,
@@ -7275,6 +7310,7 @@ impl Plot {
                         &self.display.config.typography,
                         &self.display.config.spacing,
                         dpi,
+                        measurements,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
                         layout.plot_area.left,
@@ -7290,7 +7326,6 @@ impl Plot {
                 }
                 _ => {
                     // Always use LayoutCalculator for consistent plot area and title/label positioning
-                    let content = self.create_plot_content(y_min, y_max);
                     let layout_config = LayoutConfig::default();
                     let calculator = LayoutCalculator::new(layout_config);
                     let layout = calculator.compute(
@@ -7299,6 +7334,7 @@ impl Plot {
                         &self.display.config.typography,
                         &self.display.config.spacing,
                         dpi,
+                        measurements,
                     );
                     let skia_rect = tiny_skia::Rect::from_ltrb(
                         layout.plot_area.left,
@@ -7899,38 +7935,56 @@ impl Plot {
         svg.set_dpi_scale(dpi_scale);
         svg.set_text_engine_mode(self.display.text_engine);
 
-        // Calculate plot area with margins
-        let margin = 0.12; // 12% margin
-        let left_margin = if self.display.ylabel.is_some() {
-            0.15
-        } else {
-            margin
-        };
-        let bottom_margin = if self.display.xlabel.is_some() {
-            0.15
-        } else {
-            margin
-        };
-        let top_margin = if self.display.title.is_some() {
-            0.12
-        } else {
-            margin
-        };
-
-        let plot_left = width * left_margin;
-        let plot_right = width * (1.0 - margin);
-        let plot_top = height * top_margin;
-        let plot_bottom = height * (1.0 - bottom_margin);
-        let plot_width = plot_right - plot_left;
-        let plot_height = plot_bottom - plot_top;
-
         // Calculate data bounds
         let (x_min, x_max, y_min, y_max) = self.calculate_data_bounds()?;
 
+        // Use the same content-driven layout path as PNG rendering.
+        let content = self.create_plot_content(y_min, y_max);
+        let mut measurement_renderer = SkiaRenderer::new(
+            self.display.dimensions.0,
+            self.display.dimensions.1,
+            self.display.theme.clone(),
+        )?;
+        measurement_renderer.set_text_engine_mode(self.display.text_engine);
+        measurement_renderer.set_dpi_scale(dpi_scale);
+        let measured_dimensions = self.measure_layout_text(
+            &measurement_renderer,
+            &content,
+            self.display.config.figure.dpi,
+        )?;
+        let measurements = measured_dimensions.as_ref();
+
+        let layout_config = match &self.display.config.margins {
+            MarginConfig::ContentDriven {
+                edge_buffer,
+                center_plot,
+            } => LayoutConfig {
+                edge_buffer_pt: *edge_buffer,
+                center_plot: *center_plot,
+                ..Default::default()
+            },
+            _ => LayoutConfig::default(),
+        };
+        let calculator = LayoutCalculator::new(layout_config);
+        let layout = calculator.compute(
+            self.display.dimensions,
+            &content,
+            &self.display.config.typography,
+            &self.display.config.spacing,
+            self.display.config.figure.dpi,
+            measurements,
+        );
+        let plot_left = layout.plot_area.left;
+        let plot_right = layout.plot_area.right;
+        let plot_top = layout.plot_area.top;
+        let plot_bottom = layout.plot_area.bottom;
+        let plot_width = layout.plot_area.width();
+        let plot_height = layout.plot_area.height();
+
         // Create plot area rectangle for coordinate mapping
-        let plot_area = tiny_skia::Rect::from_xywh(plot_left, plot_top, plot_width, plot_height)
+        let plot_area = tiny_skia::Rect::from_ltrb(plot_left, plot_top, plot_right, plot_bottom)
             .ok_or(PlottingError::InvalidData {
-                message: "Invalid plot area".to_string(),
+                message: "Invalid plot area from layout".to_string(),
                 position: None,
             })?;
 
@@ -7960,6 +8014,7 @@ impl Plot {
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         if self.layout.grid_style.visible && self.needs_cartesian_axes() {
             let grid_color = self.layout.grid_style.effective_color();
+            let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
             if bar_categories.is_some() {
                 // For bar charts, only draw horizontal grid lines
                 svg.draw_grid(
@@ -7971,7 +8026,7 @@ impl Plot {
                     plot_bottom,
                     grid_color,
                     self.layout.grid_style.line_style.clone(),
-                    self.layout.grid_style.line_width,
+                    grid_width_px,
                 );
             } else {
                 // For other charts, compute X-axis ticks and draw full grid
@@ -7992,7 +8047,7 @@ impl Plot {
                     plot_bottom,
                     grid_color,
                     self.layout.grid_style.line_style.clone(),
-                    self.layout.grid_style.line_width,
+                    grid_width_px,
                 );
             }
         }
@@ -8005,6 +8060,11 @@ impl Plot {
             plot_height,
             self.display.theme.foreground,
             false,
+        );
+
+        let tick_size_px = pt_to_px(
+            self.display.config.typography.tick_size(),
+            self.display.config.figure.dpi,
         );
 
         // Draw axes and tick labels
@@ -8031,16 +8091,23 @@ impl Plot {
                 plot_right,
                 plot_top,
                 plot_bottom,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
                 self.display.theme.foreground,
-                10.0,
+                tick_size_px,
             )?;
 
             // Draw category labels on X-axis
             let num_categories = categories.len();
             for (i, category) in categories.iter().enumerate() {
                 let x = plot_left + (i as f32 + 0.5) * (plot_width / num_categories as f32);
-                let y = plot_bottom + 15.0;
-                svg.draw_text_centered(category, x, y, 10.0, self.display.theme.foreground)?;
+                svg.draw_text_centered(
+                    category,
+                    x,
+                    layout.xtick_baseline_y,
+                    tick_size_px,
+                    self.display.theme.foreground,
+                )?;
             }
         } else {
             // Normal chart: draw axes with numeric labels
@@ -8065,8 +8132,10 @@ impl Plot {
                 plot_right,
                 plot_top,
                 plot_bottom,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
                 self.display.theme.foreground,
-                10.0,
+                tick_size_px,
             )?;
         }
 
@@ -8142,47 +8211,43 @@ impl Plot {
 
         svg.end_group(); // End clip group
 
-        // Draw title (resolve at t=0)
-        if let Some(ref title) = self.display.title {
-            let title_str = title.resolve(0.0);
-            let title_x = width / 2.0;
-            let title_y = plot_top / 2.0;
-            svg.draw_text_centered(
-                &title_str,
-                title_x,
-                title_y,
-                14.0,
-                self.display.theme.foreground,
-            )?;
+        // Draw title/xlabel/ylabel using layout-computed positions.
+        if let Some(ref pos) = layout.title_pos {
+            if let Some(ref title) = self.display.title {
+                let title_str = title.resolve(0.0);
+                svg.draw_text_centered(
+                    &title_str,
+                    pos.x,
+                    pos.y,
+                    pos.size,
+                    self.display.theme.foreground,
+                )?;
+            }
         }
-
-        // Draw X-axis label
-        if let Some(ref xlabel) = self.display.xlabel {
-            let xlabel_str = xlabel.resolve(0.0);
-            let label_x = plot_left + plot_width / 2.0;
-            let label_y = height - 10.0;
-            svg.draw_text_centered(
-                &xlabel_str,
-                label_x,
-                label_y,
-                11.0,
-                self.display.theme.foreground,
-            )?;
+        if let Some(ref pos) = layout.xlabel_pos {
+            if let Some(ref xlabel) = self.display.xlabel {
+                let xlabel_str = xlabel.resolve(0.0);
+                svg.draw_text_centered(
+                    &xlabel_str,
+                    pos.x,
+                    pos.y,
+                    pos.size,
+                    self.display.theme.foreground,
+                )?;
+            }
         }
-
-        // Draw Y-axis label (rotated)
-        if let Some(ref ylabel) = self.display.ylabel {
-            let ylabel_str = ylabel.resolve(0.0);
-            let label_x = 15.0;
-            let label_y = plot_top + plot_height / 2.0;
-            svg.draw_text_rotated(
-                &ylabel_str,
-                label_x,
-                label_y,
-                11.0,
-                self.display.theme.foreground,
-                -90.0,
-            )?;
+        if let Some(ref pos) = layout.ylabel_pos {
+            if let Some(ref ylabel) = self.display.ylabel {
+                let ylabel_str = ylabel.resolve(0.0);
+                svg.draw_text_rotated(
+                    &ylabel_str,
+                    pos.x,
+                    pos.y,
+                    pos.size,
+                    self.display.theme.foreground,
+                    -90.0,
+                )?;
+            }
         }
 
         // Draw legend if we have labeled series and legend is enabled
@@ -9130,6 +9195,107 @@ impl PlotSeriesBuilder {
 mod tests {
     use super::*;
 
+    fn parse_svg_attr(line: &str, attr: &str) -> f32 {
+        let marker = format!(r#"{}=""#, attr);
+        let start = line
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing {} in line: {}", attr, line))
+            + marker.len();
+        let end = line[start..]
+            .find('"')
+            .unwrap_or_else(|| panic!("unterminated {} in line: {}", attr, line))
+            + start;
+        line[start..end]
+            .parse::<f32>()
+            .unwrap_or_else(|_| panic!("invalid {} value in line: {}", attr, line))
+    }
+
+    fn extract_svg_text_xy(svg: &str, text: &str) -> (f32, f32) {
+        let marker = format!(">{}</text>", text);
+        let line = svg
+            .lines()
+            .find(|line| line.contains(&marker))
+            .unwrap_or_else(|| panic!("missing text node for {}", text));
+        (parse_svg_attr(line, "x"), parse_svg_attr(line, "y"))
+    }
+
+    fn extract_svg_group_translate_xy(svg: &str, text: &str) -> (f32, f32) {
+        let marker = format!(">{}</text>", text);
+        let line = svg
+            .lines()
+            .find(|line| line.contains(&marker))
+            .unwrap_or_else(|| panic!("missing grouped text node for {}", text));
+        let transform_marker = r#"transform="translate("#;
+        let start = line
+            .find(transform_marker)
+            .unwrap_or_else(|| panic!("missing translate transform for {}", text))
+            + transform_marker.len();
+        let end = line[start..]
+            .find(')')
+            .unwrap_or_else(|| panic!("unterminated translate transform for {}", text))
+            + start;
+        let coords = &line[start..end];
+        let mut parts = coords.split(',');
+        let x = parts
+            .next()
+            .unwrap_or_else(|| panic!("missing translate x for {}", text))
+            .parse::<f32>()
+            .unwrap_or_else(|_| panic!("invalid translate x for {}", text));
+        let y = parts
+            .next()
+            .unwrap_or_else(|| panic!("missing translate y for {}", text))
+            .parse::<f32>()
+            .unwrap_or_else(|_| panic!("invalid translate y for {}", text));
+        (x, y)
+    }
+
+    fn parse_svg_attr_pt(line: &str, attr: &str) -> f32 {
+        let marker = format!(r#"{}=""#, attr);
+        let start = line
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing {} in line: {}", attr, line))
+            + marker.len();
+        let end = line[start..]
+            .find('"')
+            .unwrap_or_else(|| panic!("unterminated {} in line: {}", attr, line))
+            + start;
+        let value = line[start..end].trim_end_matches("pt");
+        value
+            .parse::<f32>()
+            .unwrap_or_else(|_| panic!("invalid {} value in line: {}", attr, line))
+    }
+
+    fn extract_typst_group_boxes(svg: &str) -> Vec<(f32, f32, f32, f32)> {
+        svg.lines()
+            .filter(|line| line.contains(r#"data-ruviz-text-engine="typst""#))
+            .map(|line| {
+                let transform_marker = r#"transform="translate("#;
+                let start = line
+                    .find(transform_marker)
+                    .unwrap_or_else(|| panic!("missing translate transform in line: {}", line))
+                    + transform_marker.len();
+                let end = line[start..].find(')').unwrap_or_else(|| {
+                    panic!("unterminated translate transform in line: {}", line)
+                }) + start;
+                let coords = &line[start..end];
+                let mut parts = coords.split(',');
+                let tx = parts
+                    .next()
+                    .unwrap_or_else(|| panic!("missing translate x in line: {}", line))
+                    .parse::<f32>()
+                    .unwrap_or_else(|_| panic!("invalid translate x in line: {}", line));
+                let ty = parts
+                    .next()
+                    .unwrap_or_else(|| panic!("missing translate y in line: {}", line))
+                    .parse::<f32>()
+                    .unwrap_or_else(|_| panic!("invalid translate y in line: {}", line));
+                let width = parse_svg_attr_pt(line, "width");
+                let height = parse_svg_attr_pt(line, "height");
+                (tx, ty, width, height)
+            })
+            .collect()
+    }
+
     #[test]
     fn test_get_theme_method() {
         use crate::render::Theme;
@@ -9227,6 +9393,220 @@ mod tests {
 
         let result_300 = plot.render_to_renderer(&mut renderer, 300.0);
         assert!(result_300.is_ok());
+    }
+
+    #[test]
+    fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
+        use crate::render::{FontConfig, FontFamily, TextRenderer};
+
+        let x_data = vec![0.0, 1.0, 2.0, 3.0];
+        let y_data = vec![1.0, 3.0, 2.0, 4.0];
+        let plot = Plot::new()
+            .line(&x_data, &y_data)
+            .title("SVG_LAYOUT_TITLE")
+            .xlabel("SVG_LAYOUT_X")
+            .ylabel("SVG_LAYOUT_Y")
+            .end_series();
+
+        let svg = plot.render_to_svg().expect("SVG render should succeed");
+
+        let (_x_min, _x_max, y_min, y_max) = plot
+            .calculate_data_bounds()
+            .expect("data bounds should be available");
+        let content = plot.create_plot_content(y_min, y_max);
+        let layout_config = match &plot.display.config.margins {
+            MarginConfig::ContentDriven {
+                edge_buffer,
+                center_plot,
+            } => LayoutConfig {
+                edge_buffer_pt: *edge_buffer,
+                center_plot: *center_plot,
+                ..Default::default()
+            },
+            _ => LayoutConfig::default(),
+        };
+        let calculator = LayoutCalculator::new(layout_config);
+        let mut measurement_renderer = crate::render::SkiaRenderer::new(
+            plot.display.dimensions.0,
+            plot.display.dimensions.1,
+            plot.display.theme.clone(),
+        )
+        .expect("measurement renderer");
+        let dpi_scale = plot.display.config.figure.dpi / 100.0;
+        measurement_renderer.set_dpi_scale(dpi_scale);
+        measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+        let measured_dimensions = plot
+            .measure_layout_text(
+                &measurement_renderer,
+                &content,
+                plot.display.config.figure.dpi,
+            )
+            .expect("layout text measurements");
+        let layout = calculator.compute(
+            plot.display.dimensions,
+            &content,
+            &plot.display.config.typography,
+            &plot.display.config.spacing,
+            plot.display.config.figure.dpi,
+            measured_dimensions.as_ref(),
+        );
+
+        let title_pos = layout.title_pos.expect("title position");
+        let xlabel_pos = layout.xlabel_pos.expect("xlabel position");
+        let ylabel_pos = layout.ylabel_pos.expect("ylabel position");
+        let text_renderer = TextRenderer::new();
+        let title_metrics = text_renderer
+            .measure_text_placement(
+                "SVG_LAYOUT_TITLE",
+                &FontConfig::new(FontFamily::SansSerif, title_pos.size),
+            )
+            .expect("title metrics");
+        let xlabel_metrics = text_renderer
+            .measure_text_placement(
+                "SVG_LAYOUT_X",
+                &FontConfig::new(FontFamily::SansSerif, xlabel_pos.size),
+            )
+            .expect("xlabel metrics");
+
+        let (title_x, title_y) = extract_svg_text_xy(&svg, "SVG_LAYOUT_TITLE");
+        let (xlabel_x, xlabel_y) = extract_svg_text_xy(&svg, "SVG_LAYOUT_X");
+        let (ylabel_x, ylabel_y) = extract_svg_group_translate_xy(&svg, "SVG_LAYOUT_Y");
+
+        assert!(
+            (title_x - title_pos.x).abs() <= 0.6
+                && (title_y - (title_pos.y + title_metrics.baseline_from_top)).abs() <= 0.6,
+            "title should follow layout position: svg=({}, {}), layout=({}, {})",
+            title_x,
+            title_y,
+            title_pos.x,
+            title_pos.y + title_metrics.baseline_from_top
+        );
+        assert!(
+            (xlabel_x - xlabel_pos.x).abs() <= 0.6
+                && (xlabel_y - (xlabel_pos.y + xlabel_metrics.baseline_from_top)).abs() <= 0.6,
+            "xlabel should follow layout position: svg=({}, {}), layout=({}, {})",
+            xlabel_x,
+            xlabel_y,
+            xlabel_pos.x,
+            xlabel_pos.y + xlabel_metrics.baseline_from_top
+        );
+        assert!(
+            (ylabel_x - ylabel_pos.x).abs() <= 0.6 && (ylabel_y - ylabel_pos.y).abs() <= 0.6,
+            "ylabel should follow layout position: svg=({}, {}), layout=({}, {})",
+            ylabel_x,
+            ylabel_y,
+            ylabel_pos.x,
+            ylabel_pos.y
+        );
+    }
+
+    #[cfg(feature = "typst-math")]
+    #[test]
+    fn test_render_to_svg_typst_uses_layout_anchor_contract() {
+        let x_data = vec![0.0, 1.0, 2.0, 3.0];
+        let y_data = vec![1.0, 3.0, 2.0, 4.0];
+        let plot = Plot::new()
+            .line(&x_data, &y_data)
+            .title("SVG_LAYOUT_TITLE")
+            .xlabel("SVG_LAYOUT_X")
+            .ylabel("SVG_LAYOUT_Y")
+            .typst(true)
+            .end_series();
+
+        let svg = plot.render_to_svg().expect("SVG render should succeed");
+
+        let (_x_min, _x_max, y_min, y_max) = plot
+            .calculate_data_bounds()
+            .expect("data bounds should be available");
+        let content = plot.create_plot_content(y_min, y_max);
+        let layout_config = match &plot.display.config.margins {
+            MarginConfig::ContentDriven {
+                edge_buffer,
+                center_plot,
+            } => LayoutConfig {
+                edge_buffer_pt: *edge_buffer,
+                center_plot: *center_plot,
+                ..Default::default()
+            },
+            _ => LayoutConfig::default(),
+        };
+        let calculator = LayoutCalculator::new(layout_config);
+        let mut measurement_renderer = crate::render::SkiaRenderer::new(
+            plot.display.dimensions.0,
+            plot.display.dimensions.1,
+            plot.display.theme.clone(),
+        )
+        .expect("measurement renderer");
+        let dpi_scale = plot.display.config.figure.dpi / 100.0;
+        measurement_renderer.set_dpi_scale(dpi_scale);
+        measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+        let measured_dimensions = plot
+            .measure_layout_text(
+                &measurement_renderer,
+                &content,
+                plot.display.config.figure.dpi,
+            )
+            .expect("layout text measurements");
+        let layout = calculator.compute(
+            plot.display.dimensions,
+            &content,
+            &plot.display.config.typography,
+            &plot.display.config.spacing,
+            plot.display.config.figure.dpi,
+            measured_dimensions.as_ref(),
+        );
+
+        let title_pos = layout.title_pos.expect("title position");
+        let xlabel_pos = layout.xlabel_pos.expect("xlabel position");
+        let ylabel_pos = layout.ylabel_pos.expect("ylabel position");
+
+        let typst_groups = extract_typst_group_boxes(&svg);
+        assert!(
+            typst_groups.len() >= 3,
+            "expected at least three typst text groups, found {}",
+            typst_groups.len()
+        );
+        let n = typst_groups.len();
+        let title = typst_groups[n - 3];
+        let xlabel = typst_groups[n - 2];
+        let ylabel = typst_groups[n - 1];
+
+        let title_center_x = title.0 + title.2 / 2.0;
+        let xlabel_center_x = xlabel.0 + xlabel.2 / 2.0;
+        let ylabel_center_x = ylabel.0 + ylabel.2 / 2.0;
+        let ylabel_center_y = ylabel.1 + ylabel.3 / 2.0;
+
+        assert!(
+            (title_center_x - title_pos.x).abs() <= 0.8 && (title.1 - title_pos.y).abs() <= 0.8,
+            "typst title should follow top-center anchor: group=({}, {}, {}x{}), layout=({}, {})",
+            title.0,
+            title.1,
+            title.2,
+            title.3,
+            title_pos.x,
+            title_pos.y
+        );
+        assert!(
+            (xlabel_center_x - xlabel_pos.x).abs() <= 0.8 && (xlabel.1 - xlabel_pos.y).abs() <= 0.8,
+            "typst xlabel should follow top-center anchor: group=({}, {}, {}x{}), layout=({}, {})",
+            xlabel.0,
+            xlabel.1,
+            xlabel.2,
+            xlabel.3,
+            xlabel_pos.x,
+            xlabel_pos.y
+        );
+        assert!(
+            (ylabel_center_x - ylabel_pos.x).abs() <= 0.8
+                && (ylabel_center_y - ylabel_pos.y).abs() <= 0.8,
+            "typst ylabel should follow center anchor: group=({}, {}, {}x{}), layout=({}, {})",
+            ylabel.0,
+            ylabel.1,
+            ylabel.2,
+            ylabel.3,
+            ylabel_pos.x,
+            ylabel_pos.y
+        );
     }
 
     // ========== GPU Integration Tests ==========

@@ -89,11 +89,52 @@ impl SkiaRenderer {
     }
 
     /// Map renderer font size to Typst size units.
-    ///
-    /// Typst raster output at scale 1.0 matches existing renderer sizing most closely
-    /// when we pass through the size value directly.
     fn typst_size_pt(&self, size_px: f32) -> f32 {
         size_px.max(0.1)
+    }
+
+    /// Typst raster scale for PNG text rendering.
+    ///
+    /// Keep this at native 1x to avoid supersampling/downscaling softness.
+    fn typst_effective_raster_scale(&self) -> f32 {
+        1.0
+    }
+
+    /// Draw a Typst raster at subpixel-aligned coordinates.
+    fn draw_typst_raster(&mut self, rendered: &typst_text::TypstRasterOutput, x: f32, y: f32) {
+        let logical_w = rendered.width.max(1e-6);
+        let logical_h = rendered.height.max(1e-6);
+        let pixel_w = rendered.pixmap.width().max(1) as f32;
+        let pixel_h = rendered.pixmap.height().max(1) as f32;
+        let scale_x = (pixel_w / logical_w).max(1e-6);
+        let scale_y = (pixel_h / logical_h).max(1e-6);
+        // Native 1x path: bypass resampling and snap to whole pixels for crisper text.
+        if (scale_x - 1.0).abs() <= 0.02 && (scale_y - 1.0).abs() <= 0.02 {
+            self.pixmap.draw_pixmap(
+                x.round() as i32,
+                y.round() as i32,
+                rendered.pixmap.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+            return;
+        }
+
+        // Fallback for any backend/unit mismatch between logical and pixel extents.
+        let transform = Transform::from_scale(1.0 / scale_x, 1.0 / scale_y).post_translate(x, y);
+        let paint = PixmapPaint {
+            quality: FilterQuality::Bilinear,
+            ..PixmapPaint::default()
+        };
+        self.pixmap.draw_pixmap(
+            0,
+            0,
+            rendered.pixmap.as_ref(),
+            &paint,
+            transform,
+            None,
+        );
     }
 
     /// Clear the canvas with background color
@@ -1062,8 +1103,15 @@ impl SkiaRenderer {
             }
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered =
-                    typst_text::render_raster(text, size_pt, color, 0.0, "Skia text rendering")?;
+                let raster_scale = self.typst_effective_raster_scale();
+                let rendered = typst_text::render_raster(
+                    text,
+                    size_pt,
+                    color,
+                    0.0,
+                    raster_scale,
+                    "Skia text rendering",
+                )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
                     x,
                     y,
@@ -1071,14 +1119,7 @@ impl SkiaRenderer {
                     rendered.height,
                     TypstTextAnchor::TopLeft,
                 );
-                self.pixmap.draw_pixmap(
-                    draw_x.round() as i32,
-                    draw_y.round() as i32,
-                    rendered.pixmap.as_ref(),
-                    &PixmapPaint::default(),
-                    Transform::identity(),
-                    None,
-                );
+                self.draw_typst_raster(&rendered, draw_x, draw_y);
                 Ok(())
             }
         }
@@ -1101,11 +1142,13 @@ impl SkiaRenderer {
             }
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
+                let raster_scale = self.typst_effective_raster_scale();
                 let rendered = typst_text::render_raster(
                     text,
                     size_pt,
                     color,
                     -90.0,
+                    raster_scale,
                     "Skia rotated text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1115,14 +1158,7 @@ impl SkiaRenderer {
                     rendered.height,
                     TypstTextAnchor::Center,
                 );
-                self.pixmap.draw_pixmap(
-                    draw_x.round() as i32,
-                    draw_y.round() as i32,
-                    rendered.pixmap.as_ref(),
-                    &PixmapPaint::default(),
-                    Transform::identity(),
-                    None,
-                );
+                self.draw_typst_raster(&rendered, draw_x, draw_y);
                 Ok(())
             }
         }
@@ -1152,11 +1188,13 @@ impl SkiaRenderer {
             }
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
+                let raster_scale = self.typst_effective_raster_scale();
                 let rendered = typst_text::render_raster(
                     text,
                     size_pt,
                     color,
                     0.0,
+                    raster_scale,
                     "Skia centered text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1166,14 +1204,7 @@ impl SkiaRenderer {
                     rendered.height,
                     TypstTextAnchor::TopCenter,
                 );
-                self.pixmap.draw_pixmap(
-                    draw_x.round() as i32,
-                    draw_y.round() as i32,
-                    rendered.pixmap.as_ref(),
-                    &PixmapPaint::default(),
-                    Transform::identity(),
-                    None,
-                );
+                self.draw_typst_raster(&rendered, draw_x, draw_y);
                 Ok(())
             }
         }
@@ -1633,8 +1664,6 @@ impl SkiaRenderer {
         dpi: f32,
     ) -> Result<()> {
         let dpi_scale = dpi / 100.0;
-        // Character width is approximately 0.6 * font_size for most fonts
-        let char_width_estimate = tick_size * 0.6;
 
         // Convert LayoutRect to tiny_skia Rect for border drawing
         let skia_plot_area = Rect::from_ltrb(
@@ -1657,11 +1686,11 @@ impl SkiaRenderer {
             let x_pixel = plot_area.left
                 + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
 
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            let label_x = (x_pixel - text_width_estimate)
-                .max(0.0)
-                .min(self.width() as f32 - text_width_estimate * 2.0);
             let label_snippet = self.generated_label(label_text);
+            let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+            let label_x = (x_pixel - text_width / 2.0)
+                .max(0.0)
+                .min(self.width() as f32 - text_width);
             self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
         }
 
@@ -1670,15 +1699,14 @@ impl SkiaRenderer {
             let y_pixel = plot_area.bottom
                 - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            let label_snippet = self.generated_label(label_text);
+            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
             // Position so the right edge of the text is at ytick_right_x with a gap
             let gap = tick_size * 0.5; // Gap between labels and axis
             let min_x = tick_size * 0.5; // Minimum distance from left edge
-            let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
-            // Center text vertically on tick: move up by half the text height
-            // Text height is approximately tick_size * 1.2, so half is tick_size * 0.6
-            let centered_y = y_pixel - tick_size * 0.5;
-            let label_snippet = self.generated_label(label_text);
+            let label_x = (ytick_right_x - text_width - gap).max(min_x);
+            // Center text vertically on tick using measured text height.
+            let centered_y = y_pixel - text_height / 2.0;
             self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
@@ -1709,7 +1737,6 @@ impl SkiaRenderer {
         dpi: f32,
     ) -> Result<()> {
         let dpi_scale = dpi / 100.0;
-        let char_width_estimate = tick_size * 0.6;
 
         // Convert LayoutRect to tiny_skia Rect for border drawing
         let skia_plot_area = Rect::from_ltrb(
@@ -1737,13 +1764,13 @@ impl SkiaRenderer {
                 let x_center =
                     plot_area.left + ((x_data - x_min) / x_range) as f32 * plot_area.width();
 
-                // Estimate text width for centering
-                let text_width_estimate = category.len() as f32 * char_width_estimate;
-                let label_x = (x_center - text_width_estimate / 2.0)
+                let label_snippet = self.generated_label(category);
+                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+                let label_x = (x_center - text_width / 2.0)
                     .max(0.0)
-                    .min(self.width() as f32 - text_width_estimate);
+                    .min(self.width() as f32 - text_width);
 
-                self.draw_text(category, label_x, xtick_baseline_y, tick_size, color)?;
+                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
             }
         }
 
@@ -1755,13 +1782,13 @@ impl SkiaRenderer {
             let y_pixel = plot_area.bottom
                 - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            let label_snippet = self.generated_label(label_text);
+            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
             let gap = tick_size * 0.5;
             let min_x = tick_size * 0.5;
-            let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
-            // Center text vertically on tick
-            let centered_y = y_pixel - tick_size * 0.5;
-            let label_snippet = self.generated_label(label_text);
+            let label_x = (ytick_right_x - text_width - gap).max(min_x);
+            // Center text vertically on tick using measured text height.
+            let centered_y = y_pixel - text_height / 2.0;
             self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
@@ -1804,7 +1831,6 @@ impl SkiaRenderer {
         dpi: f32,
     ) -> Result<()> {
         let dpi_scale = dpi / 100.0;
-        let char_width_estimate = tick_size * 0.6;
 
         // Convert LayoutRect to tiny_skia Rect for border drawing
         let skia_plot_area = Rect::from_ltrb(
@@ -1826,13 +1852,13 @@ impl SkiaRenderer {
                 let x_center =
                     plot_area.left + ((x_pos - x_min) / x_range) as f32 * plot_area.width();
 
-                // Estimate text width for centering
-                let text_width_estimate = category.len() as f32 * char_width_estimate;
-                let label_x = (x_center - text_width_estimate / 2.0)
+                let label_snippet = self.generated_label(category);
+                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+                let label_x = (x_center - text_width / 2.0)
                     .max(0.0)
-                    .min(self.width() as f32 - text_width_estimate);
+                    .min(self.width() as f32 - text_width);
 
-                self.draw_text(category, label_x, xtick_baseline_y, tick_size, color)?;
+                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
             }
         }
 
@@ -1844,13 +1870,13 @@ impl SkiaRenderer {
             let y_pixel = plot_area.bottom
                 - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
 
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
+            let label_snippet = self.generated_label(label_text);
+            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
             let gap = tick_size * 0.5;
             let min_x = tick_size * 0.5;
-            let label_x = (ytick_right_x - text_width_estimate - gap).max(min_x);
-            // Center text vertically on tick
-            let centered_y = y_pixel - tick_size * 0.5;
-            let label_snippet = self.generated_label(label_text);
+            let label_x = (ytick_right_x - text_width - gap).max(min_x);
+            // Center text vertically on tick using measured text height.
+            let centered_y = y_pixel - text_height / 2.0;
             self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
@@ -3731,5 +3757,45 @@ mod tests {
         // Test edge case
         let ticks = generate_ticks(5.0, 5.0, 3);
         assert_eq!(ticks, vec![5.0, 5.0]);
+    }
+
+    #[test]
+    fn test_typst_effective_raster_scale_bounds() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(800, 600, theme).unwrap();
+
+        renderer.set_dpi_scale(1.0);
+        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
+
+        renderer.set_dpi_scale(0.5);
+        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
+
+        renderer.set_dpi_scale(3.0);
+        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
+
+        renderer.set_dpi_scale(1.26);
+        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
+    }
+
+    #[test]
+    fn test_typst_raster_transform_scales_to_logical_size() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(400, 300, theme).unwrap();
+        renderer.set_dpi_scale(1.0);
+        renderer.set_text_engine_mode(TextEngineMode::Typst);
+
+        let rendered = typst_text::render_raster(
+            "scale-check",
+            12.0,
+            Color::BLACK,
+            0.0,
+            2.0,
+            "typst transform test",
+        )
+        .unwrap();
+
+        // Ensure supersampled pixmap has larger pixel dimensions than logical size.
+        assert!(rendered.pixmap.width() as f32 > rendered.width);
+        assert!(rendered.pixmap.height() as f32 > rendered.height);
     }
 }

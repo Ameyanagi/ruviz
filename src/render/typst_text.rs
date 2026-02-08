@@ -1,6 +1,9 @@
 use crate::{
     core::{PlottingError, Result},
-    render::Color,
+    render::{
+        Color,
+        text_anchor::{TextAnchorKind, anchor_to_top_left},
+    },
 };
 use tiny_skia::{IntSize, Pixmap};
 
@@ -53,14 +56,18 @@ pub fn anchored_top_left(
     rendered_height: f32,
     anchor: TypstTextAnchor,
 ) -> (f32, f32) {
-    match anchor {
-        TypstTextAnchor::TopLeft => (anchor_x, anchor_y),
-        TypstTextAnchor::TopCenter => (anchor_x - rendered_width / 2.0, anchor_y),
-        TypstTextAnchor::Center => (
-            anchor_x - rendered_width / 2.0,
-            anchor_y - rendered_height / 2.0,
-        ),
-    }
+    let shared_anchor = match anchor {
+        TypstTextAnchor::TopLeft => TextAnchorKind::TopLeft,
+        TypstTextAnchor::TopCenter => TextAnchorKind::TopCenter,
+        TypstTextAnchor::Center => TextAnchorKind::Center,
+    };
+    anchor_to_top_left(
+        anchor_x,
+        anchor_y,
+        rendered_width,
+        rendered_height,
+        shared_anchor,
+    )
 }
 
 #[cfg(not(feature = "typst-math"))]
@@ -69,6 +76,7 @@ pub fn render_raster(
     _size_pt: f32,
     _color: Color,
     _rotation_deg: f32,
+    _raster_scale: f32,
     operation: &str,
 ) -> Result<TypstRasterOutput> {
     Err(PlottingError::FeatureNotEnabled {
@@ -138,6 +146,7 @@ mod imp {
         size_bits: u32,
         color: (u8, u8, u8, u8),
         rotation_bits: u32,
+        raster_scale_bits: u32,
         backend: TypstBackendKind,
     }
 
@@ -145,8 +154,10 @@ mod imp {
     enum CachedValue {
         Raster {
             pixels: Vec<u8>,
-            width: u32,
-            height: u32,
+            pixel_width: u32,
+            pixel_height: u32,
+            logical_width: f32,
+            logical_height: f32,
         },
         Svg {
             svg: String,
@@ -268,6 +279,7 @@ mod imp {
         size_pt: f32,
         color: Color,
         rotation_deg: f32,
+        raster_scale: f32,
         backend: TypstBackendKind,
     ) -> CacheKey {
         CacheKey {
@@ -275,6 +287,7 @@ mod imp {
             size_bits: size_pt.to_bits(),
             color: (color.r, color.g, color.b, color.a),
             rotation_bits: rotation_deg.to_bits(),
+            raster_scale_bits: raster_scale.to_bits(),
             backend,
         }
     }
@@ -310,7 +323,7 @@ mod imp {
         let font_family = escape_typst_string(font_family);
         if rotation_deg.abs() > f32::EPSILON {
             format!(
-                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}))\n#rotate({rotation_deg}deg, reflow: true)[{snippet}]",
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}), top-edge: \"ascender\", bottom-edge: \"descender\")\n#rotate({rotation_deg}deg, reflow: true)[{snippet}]",
                 r = color.r,
                 g = color.g,
                 b = color.b,
@@ -318,7 +331,7 @@ mod imp {
             )
         } else {
             format!(
-                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}))\n{snippet}",
+                "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#set text(font: \"{font_family}\", size: {size_pt}pt, fill: rgb({r}, {g}, {b}, {a}), top-edge: \"ascender\", bottom-edge: \"descender\")\n{snippet}",
                 r = color.r,
                 g = color.g,
                 b = color.b,
@@ -376,6 +389,7 @@ mod imp {
         size_pt: f32,
         color: Color,
         rotation_deg: f32,
+        raster_scale: f32,
         operation: &str,
     ) -> Result<TypstRasterOutput> {
         if snippet.trim().is_empty() {
@@ -389,22 +403,26 @@ mod imp {
             });
         }
 
+        let raster_scale = raster_scale.clamp(1.0, 4.0);
         let key = make_key(
             snippet,
             size_pt,
             color,
             rotation_deg,
+            raster_scale,
             TypstBackendKind::Raster,
         );
 
         if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
             if let CachedValue::Raster {
                 pixels,
-                width,
-                height,
+                pixel_width,
+                pixel_height,
+                logical_width,
+                logical_height,
             } = cached
             {
-                let size = IntSize::from_wh(*width, *height).ok_or_else(|| {
+                let size = IntSize::from_wh(*pixel_width, *pixel_height).ok_or_else(|| {
                     PlottingError::RenderError("Invalid cached typst raster size".to_string())
                 })?;
                 let pixmap = Pixmap::from_vec(pixels.clone(), size).ok_or_else(|| {
@@ -414,16 +432,20 @@ mod imp {
                 })?;
                 return Ok(TypstRasterOutput {
                     pixmap,
-                    width: *width as f32,
-                    height: *height as f32,
+                    width: *logical_width,
+                    height: *logical_height,
                 });
             }
         }
 
         let page = compile_single_page(snippet, size_pt, color, rotation_deg, operation)?;
-        let pixmap = typst_render::render(&page, 1.0);
-        let width = pixmap.width();
-        let height = pixmap.height();
+        let size = page.frame.size();
+        let logical_width = size.x.to_pt() as f32;
+        let logical_height = size.y.to_pt() as f32;
+
+        let pixmap = typst_render::render(&page, raster_scale);
+        let pixel_width = pixmap.width();
+        let pixel_height = pixmap.height();
         let pixels = pixmap.data().to_vec();
 
         let mut cache = cache().lock().expect("cache lock poisoned");
@@ -432,15 +454,17 @@ mod imp {
             key,
             CachedValue::Raster {
                 pixels,
-                width,
-                height,
+                pixel_width,
+                pixel_height,
+                logical_width,
+                logical_height,
             },
         );
 
         Ok(TypstRasterOutput {
             pixmap,
-            width: width as f32,
-            height: height as f32,
+            width: logical_width,
+            height: logical_height,
         })
     }
 
@@ -459,7 +483,14 @@ mod imp {
             });
         }
 
-        let key = make_key(snippet, size_pt, color, rotation_deg, TypstBackendKind::Svg);
+        let key = make_key(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            1.0,
+            TypstBackendKind::Svg,
+        );
         if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
             if let CachedValue::Svg { svg, width, height } = cached {
                 return Ok(TypstSvgOutput {
@@ -504,7 +535,8 @@ mod imp {
     ) -> Result<(f32, f32)> {
         match backend {
             TypstBackendKind::Raster => {
-                let rendered = render_raster(snippet, size_pt, color, rotation_deg, operation)?;
+                let rendered =
+                    render_raster(snippet, size_pt, color, rotation_deg, 1.0, operation)?;
                 Ok((rendered.width, rendered.height))
             }
             TypstBackendKind::Svg => {
