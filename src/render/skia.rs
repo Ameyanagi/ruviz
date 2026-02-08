@@ -120,14 +120,8 @@ impl SkiaRenderer {
             quality: FilterQuality::Bilinear,
             ..PixmapPaint::default()
         };
-        self.pixmap.draw_pixmap(
-            0,
-            0,
-            rendered.pixmap.as_ref(),
-            &paint,
-            transform,
-            None,
-        );
+        self.pixmap
+            .draw_pixmap(0, 0, rendered.pixmap.as_ref(), &paint, transform, None);
     }
 
     /// Clear the canvas with background color
@@ -1096,13 +1090,8 @@ impl SkiaRenderer {
             }
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered = typst_text::render_raster(
-                    text,
-                    size_pt,
-                    color,
-                    0.0,
-                    "Skia text rendering",
-                )?;
+                let rendered =
+                    typst_text::render_raster(text, size_pt, color, 0.0, "Skia text rendering")?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
                     x,
                     y,

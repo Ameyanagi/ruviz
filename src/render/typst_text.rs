@@ -476,13 +476,7 @@ mod imp {
             });
         }
 
-        let key = make_key(
-            snippet,
-            size_pt,
-            color,
-            rotation_deg,
-            TypstBackendKind::Svg,
-        );
+        let key = make_key(snippet, size_pt, color, rotation_deg, TypstBackendKind::Svg);
         if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
             if let CachedValue::Svg { svg, width, height } = cached {
                 return Ok(TypstSvgOutput {

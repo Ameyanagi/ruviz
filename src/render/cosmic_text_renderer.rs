@@ -13,9 +13,7 @@ use crate::{
         text::{FontConfig, FontFamily, TextRenderer, get_font_system, get_swash_cache},
     },
 };
-use cosmic_text::{
-    Attrs, Buffer, Color as CosmicColor, Family, Metrics, Shaping,
-};
+use cosmic_text::{Attrs, Buffer, Color as CosmicColor, Family, Metrics, Shaping};
 use tiny_skia::{Pixmap, PremultipliedColorU8};
 
 /// High-quality text renderer using cosmic-text for professional typography
