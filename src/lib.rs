@@ -762,7 +762,9 @@ pub mod prelude {
         PlotBuilder, PlotInput, Position, Result, SeriesStyle, ShapeStyle, SubplotFigure,
         TextAlign, TextStyle, TextVAlign, subplots, subplots_default,
     };
-    pub use crate::data::{Data1D, DataShader, DataShaderCanvas};
+    pub use crate::data::{
+        Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,
+    };
     pub use crate::plots::{
         ContourConfig, HeatmapConfig, Interpolation, PieConfig, PlotArea, PlotCompute, PlotConfig,
         PlotData, PlotRender, PolarPlotConfig, RadarConfig, ViolinConfig,
@@ -795,7 +797,7 @@ pub mod prelude {
 // =============================================================================
 
 use core::{Plot, PlotBuilder};
-use data::Data1D;
+use data::NumericData1D;
 use plots::{BarConfig, LineConfig, ScatterConfig};
 
 /// Create a line plot with the given data.
@@ -804,8 +806,8 @@ use plots::{BarConfig, LineConfig, ScatterConfig};
 ///
 /// # Arguments
 ///
-/// * `x` - X-axis data (any type implementing `Data1D<f64>`)
-/// * `y` - Y-axis data (any type implementing `Data1D<f64>`)
+/// * `x` - X-axis data (any type implementing `NumericData1D`)
+/// * `y` - Y-axis data (any type implementing `NumericData1D`)
 ///
 /// # Returns
 ///
@@ -828,8 +830,8 @@ use plots::{BarConfig, LineConfig, ScatterConfig};
 /// ```
 pub fn line<X, Y>(x: &X, y: &Y) -> PlotBuilder<LineConfig>
 where
-    X: Data1D<f64>,
-    Y: Data1D<f64>,
+    X: NumericData1D,
+    Y: NumericData1D,
 {
     Plot::new().line(x, y)
 }
@@ -840,8 +842,8 @@ where
 ///
 /// # Arguments
 ///
-/// * `x` - X-axis data (any type implementing `Data1D<f64>`)
-/// * `y` - Y-axis data (any type implementing `Data1D<f64>`)
+/// * `x` - X-axis data (any type implementing `NumericData1D`)
+/// * `y` - Y-axis data (any type implementing `NumericData1D`)
 ///
 /// # Returns
 ///
@@ -863,8 +865,8 @@ where
 /// ```
 pub fn scatter<X, Y>(x: &X, y: &Y) -> PlotBuilder<ScatterConfig>
 where
-    X: Data1D<f64>,
-    Y: Data1D<f64>,
+    X: NumericData1D,
+    Y: NumericData1D,
 {
     Plot::new().scatter(x, y)
 }
@@ -876,7 +878,7 @@ where
 /// # Arguments
 ///
 /// * `categories` - Category labels for the bars
-/// * `values` - Values for each bar (any type implementing `Data1D<f64>`)
+/// * `values` - Values for each bar (any type implementing `NumericData1D`)
 ///
 /// # Returns
 ///
@@ -899,7 +901,7 @@ where
 pub fn bar<S, V>(categories: &[S], values: &V) -> PlotBuilder<BarConfig>
 where
     S: ToString,
-    V: Data1D<f64>,
+    V: NumericData1D,
 {
     Plot::new().bar(categories, values)
 }

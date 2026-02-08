@@ -65,13 +65,9 @@ fn test_integer_data() {
     let x: Vec<i32> = vec![0, 1, 2, 3, 4];
     let y: Vec<i32> = vec![0, 1, 4, 9, 16];
 
-    // Convert to f64 as required by API
-    let x_f64: Vec<f64> = x.iter().map(|&v| v as f64).collect();
-    let y_f64: Vec<f64> = y.iter().map(|&v| v as f64).collect();
-
     // WHEN: Plotting with integer data
     let result = Plot::new()
-        .line(&x_f64, &y_f64)
+        .line(&x, &y)
         .title("Integer Data")
         .save("tests/output/data_integer.png");
 

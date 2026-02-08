@@ -70,7 +70,10 @@ use crate::{
         PlotContent, PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, Result,
         ShapeStyle, TextStyle, pt_to_px,
     },
-    data::{Data1D, DataShader, StreamingXY},
+    data::{
+        Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,
+        collect_numeric_data_1d, collect_numeric_data_2d,
+    },
     plots::boxplot::BoxPlotConfig,
     plots::error::errorbar::{ErrorBarConfig, ErrorValues},
     plots::histogram::HistogramConfig,
@@ -134,6 +137,125 @@ pub struct Plot {
     render: RenderPipeline,
     /// Annotations (text, arrows, lines, shapes)
     annotations: Vec<Annotation>,
+    /// Null policy for dataframe-backed numeric ingestion.
+    null_policy: NullPolicy,
+    /// Deferred ingestion error captured during builder-style API calls.
+    pending_ingestion_error: Option<PendingIngestionError>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingIngestionError {
+    kind: PendingIngestionErrorKind,
+    additional_count: usize,
+}
+
+#[derive(Clone, Debug)]
+enum PendingIngestionErrorKind {
+    DataTypeUnsupported {
+        source: String,
+        dtype: String,
+        expected: String,
+    },
+    NullValueNotAllowed {
+        source: String,
+        column: Option<String>,
+        null_count: usize,
+    },
+    DataExtractionFailed {
+        source: String,
+        message: String,
+    },
+    InvalidInput(String),
+}
+
+impl PendingIngestionError {
+    fn from_plotting_error(err: PlottingError) -> Self {
+        let kind = match err {
+            PlottingError::DataTypeUnsupported {
+                source,
+                dtype,
+                expected,
+            } => PendingIngestionErrorKind::DataTypeUnsupported {
+                source,
+                dtype,
+                expected,
+            },
+            PlottingError::NullValueNotAllowed {
+                source,
+                column,
+                null_count,
+            } => PendingIngestionErrorKind::NullValueNotAllowed {
+                source,
+                column,
+                null_count,
+            },
+            PlottingError::DataExtractionFailed { source, message } => {
+                PendingIngestionErrorKind::DataExtractionFailed { source, message }
+            }
+            PlottingError::InvalidInput(message) => {
+                PendingIngestionErrorKind::InvalidInput(message)
+            }
+            other => PendingIngestionErrorKind::DataExtractionFailed {
+                source: "ruviz::plot-ingestion".to_string(),
+                message: other.to_string(),
+            },
+        };
+
+        Self {
+            kind,
+            additional_count: 0,
+        }
+    }
+
+    fn record_additional_error(&mut self) {
+        self.additional_count = self.additional_count.saturating_add(1);
+    }
+
+    fn to_plotting_error(&self) -> PlottingError {
+        let primary_error = match &self.kind {
+            PendingIngestionErrorKind::DataTypeUnsupported {
+                source,
+                dtype,
+                expected,
+            } => PlottingError::DataTypeUnsupported {
+                source: source.clone(),
+                dtype: dtype.clone(),
+                expected: expected.clone(),
+            },
+            PendingIngestionErrorKind::NullValueNotAllowed {
+                source,
+                column,
+                null_count,
+            } => PlottingError::NullValueNotAllowed {
+                source: source.clone(),
+                column: column.clone(),
+                null_count: *null_count,
+            },
+            PendingIngestionErrorKind::DataExtractionFailed { source, message } => {
+                PlottingError::DataExtractionFailed {
+                    source: source.clone(),
+                    message: message.clone(),
+                }
+            }
+            PendingIngestionErrorKind::InvalidInput(message) => {
+                PlottingError::InvalidInput(message.clone())
+            }
+        };
+
+        if self.additional_count == 0 {
+            return primary_error;
+        }
+
+        PlottingError::DataExtractionFailed {
+            source: "ruviz::plot-ingestion".to_string(),
+            message: format!(
+                "{} (and {} additional ingestion error{})",
+                primary_error,
+                self.additional_count,
+                if self.additional_count == 1 { "" } else { "s" }
+            ),
+        }
+    }
 }
 
 /// Configuration for a single data series
@@ -621,6 +743,8 @@ impl Plot {
             layout: LayoutManager::new(),
             render: RenderPipeline::new(),
             annotations: Vec::new(),
+            null_policy: NullPolicy::Error,
+            pending_ingestion_error: None,
         }
     }
 
@@ -677,6 +801,29 @@ impl Plot {
         let mut plot = Self::new();
         plot.display.theme = theme;
         plot
+    }
+
+    /// Set null handling policy for dataframe-backed numeric ingestion.
+    ///
+    /// Default is [`NullPolicy::Error`], which fails on null values with
+    /// an explicit plotting error.
+    pub fn null_policy(mut self, policy: NullPolicy) -> Self {
+        self.null_policy = policy;
+        self
+    }
+
+    fn set_pending_ingestion_error(&mut self, err: PlottingError) {
+        if let Some(existing) = &mut self.pending_ingestion_error {
+            existing.record_additional_error();
+        } else {
+            self.pending_ingestion_error = Some(PendingIngestionError::from_plotting_error(err));
+        }
+    }
+
+    fn pending_ingestion_error(&self) -> Option<PlottingError> {
+        self.pending_ingestion_error
+            .as_ref()
+            .map(PendingIngestionError::to_plotting_error)
     }
 
     /// Set the theme for the plot (fluent API)
@@ -1407,14 +1554,27 @@ impl Plot {
     /// ![Line plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)
     pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
     {
-        let x_vec: Vec<f64> = x_data.iter().copied().collect();
-        let y_vec: Vec<f64> = y_data.iter().copied().collect();
+        let mut plot = self;
+        let x_vec = match collect_numeric_data_1d(x_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let y_vec = match collect_numeric_data_1d(y_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
 
         PlotBuilder::new(
-            self,
+            plot,
             PlotInput::XY(x_vec, y_vec),
             crate::plots::basic::LineConfig::default(),
         )
@@ -1515,14 +1675,27 @@ impl Plot {
         y_data: &Y,
     ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
     {
-        let x_vec: Vec<f64> = x_data.iter().copied().collect();
-        let y_vec: Vec<f64> = y_data.iter().copied().collect();
+        let mut plot = self;
+        let x_vec = match collect_numeric_data_1d(x_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let y_vec = match collect_numeric_data_1d(y_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
 
         PlotBuilder::new(
-            self,
+            plot,
             PlotInput::XY(x_vec, y_vec),
             crate::plots::basic::ScatterConfig::default(),
         )
@@ -1608,13 +1781,20 @@ impl Plot {
     ) -> PlotBuilder<crate::plots::basic::BarConfig>
     where
         S: ToString,
-        V: Data1D<f64>,
+        V: NumericData1D,
     {
+        let mut plot = self;
         let cat_vec: Vec<String> = categories.iter().map(|s| s.to_string()).collect();
-        let val_vec: Vec<f64> = values.iter().copied().collect();
+        let val_vec = match collect_numeric_data_1d(values, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
 
         PlotBuilder::new(
-            self,
+            plot,
             PlotInput::Categorical {
                 categories: cat_vec,
                 values: val_vec,
@@ -1642,20 +1822,19 @@ impl Plot {
     /// ```
     ///
     /// ![Histogram example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png)
-    pub fn histogram<T, D: Data1D<T>>(
+    pub fn histogram<D: NumericData1D>(
         self,
         data: &D,
         config: Option<HistogramConfig>,
-    ) -> PlotSeriesBuilder
-    where
-        T: Into<f64> + Copy,
-    {
-        let mut data_vec = Vec::with_capacity(data.len());
-        for i in 0..data.len() {
-            if let Some(val) = data.get(i) {
-                data_vec.push((*val).into());
+    ) -> PlotSeriesBuilder {
+        let mut plot = self;
+        let data_vec = match collect_numeric_data_1d(data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
             }
-        }
+        };
         let hist_config = config.unwrap_or_default();
 
         let series = PlotSeries {
@@ -1675,7 +1854,7 @@ impl Plot {
             error_config: None,
         };
 
-        PlotSeriesBuilder::new(self, series)
+        PlotSeriesBuilder::new(plot, series)
     }
 
     /// Add a box plot series
@@ -1700,20 +1879,19 @@ impl Plot {
     /// ```
     ///
     /// ![Box plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png)
-    pub fn boxplot<T, D: Data1D<T>>(
+    pub fn boxplot<D: NumericData1D>(
         self,
         data: &D,
         config: Option<BoxPlotConfig>,
-    ) -> PlotSeriesBuilder
-    where
-        T: Into<f64> + Copy,
-    {
-        let mut data_vec = Vec::with_capacity(data.len());
-        for i in 0..data.len() {
-            if let Some(val) = data.get(i) {
-                data_vec.push((*val).into());
+    ) -> PlotSeriesBuilder {
+        let mut plot = self;
+        let data_vec = match collect_numeric_data_1d(data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
             }
-        }
+        };
         let box_config = config.unwrap_or_default();
 
         let series = PlotSeries {
@@ -1733,7 +1911,7 @@ impl Plot {
             error_config: None,
         };
 
-        PlotSeriesBuilder::new(self, series)
+        PlotSeriesBuilder::new(plot, series)
     }
 
     /// Add a heatmap visualization for 2D array data
@@ -1757,18 +1935,28 @@ impl Plot {
     /// ```
     ///
     /// ![Heatmap example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png)
-    pub fn heatmap(
+    pub fn heatmap<D>(
         mut self,
-        data: &[Vec<f64>],
+        data: &D,
         config: Option<crate::plots::heatmap::HeatmapConfig>,
-    ) -> PlotSeriesBuilder {
+    ) -> PlotSeriesBuilder
+    where
+        D: NumericData2D + ?Sized,
+    {
         let heatmap_config = config.unwrap_or_default();
 
         // Disable grid for heatmaps (grid doesn't make sense behind heatmap cells)
         self.layout.grid_style.visible = false;
 
         // Process heatmap data
-        match crate::plots::heatmap::process_heatmap(data, heatmap_config) {
+        let (flat, rows, cols) = match collect_numeric_data_2d(data) {
+            Ok(values) => values,
+            Err(err) => {
+                self.set_pending_ingestion_error(err);
+                (vec![], 0, 0)
+            }
+        };
+        match crate::plots::heatmap::process_heatmap_flat(&flat, rows, cols, heatmap_config) {
             Ok(heatmap_data) => {
                 let series = PlotSeries {
                     series_type: SeriesType::Heatmap { data: heatmap_data },
@@ -1785,9 +1973,13 @@ impl Plot {
                 };
                 PlotSeriesBuilder::new(self, series)
             }
-            Err(_) => {
+            Err(err) => {
                 // Return empty plot if data processing fails
                 // This allows chaining to continue without panicking
+                self.set_pending_ingestion_error(PlottingError::DataExtractionFailed {
+                    source: "heatmap".to_string(),
+                    message: err,
+                });
                 let series = PlotSeries {
                     series_type: SeriesType::Heatmap {
                         data: crate::plots::heatmap::HeatmapData {
@@ -1820,13 +2012,32 @@ impl Plot {
     /// Add error bars (Y-direction only)
     pub fn error_bars<X, Y, E>(self, x_data: &X, y_data: &Y, y_errors: &E) -> PlotSeriesBuilder
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
-        E: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
+        E: NumericData1D,
     {
-        let x_vec: Vec<f64> = x_data.iter().copied().collect();
-        let y_vec: Vec<f64> = y_data.iter().copied().collect();
-        let e_vec: Vec<f64> = y_errors.iter().copied().collect();
+        let mut plot = self;
+        let x_vec = match collect_numeric_data_1d(x_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let y_vec = match collect_numeric_data_1d(y_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let e_vec = match collect_numeric_data_1d(y_errors, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
 
         let series = PlotSeries {
             series_type: SeriesType::ErrorBars {
@@ -1846,7 +2057,7 @@ impl Plot {
             error_config: None,
         };
 
-        PlotSeriesBuilder::new(self, series)
+        PlotSeriesBuilder::new(plot, series)
     }
 
     /// Add error bars in both X and Y directions
@@ -1858,15 +2069,40 @@ impl Plot {
         y_errors: &EY,
     ) -> PlotSeriesBuilder
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
-        EX: Data1D<f64>,
-        EY: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
+        EX: NumericData1D,
+        EY: NumericData1D,
     {
-        let x_vec: Vec<f64> = x_data.iter().copied().collect();
-        let y_vec: Vec<f64> = y_data.iter().copied().collect();
-        let ex_vec: Vec<f64> = x_errors.iter().copied().collect();
-        let ey_vec: Vec<f64> = y_errors.iter().copied().collect();
+        let mut plot = self;
+        let x_vec = match collect_numeric_data_1d(x_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let y_vec = match collect_numeric_data_1d(y_data, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let ex_vec = match collect_numeric_data_1d(x_errors, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let ey_vec = match collect_numeric_data_1d(y_errors, plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
 
         let series = PlotSeries {
             series_type: SeriesType::ErrorBarsXY {
@@ -1887,7 +2123,7 @@ impl Plot {
             error_config: None,
         };
 
-        PlotSeriesBuilder::new(self, series)
+        PlotSeriesBuilder::new(plot, series)
     }
 
     /// Add a KDE (Kernel Density Estimation) plot
@@ -2810,23 +3046,23 @@ impl Plot {
     /// Add a new line to existing plot (for incremental updates)
     pub fn add_line<X, Y>(&mut self, x_data: &X, y_data: &Y) -> Result<()>
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
     {
-        if x_data.len() != y_data.len() {
+        let x_vec = collect_numeric_data_1d(x_data, self.null_policy)?;
+        let y_vec = collect_numeric_data_1d(y_data, self.null_policy)?;
+
+        if x_vec.len() != y_vec.len() {
             return Err(PlottingError::DataLengthMismatch {
-                x_len: x_data.len(),
-                y_len: y_data.len(),
+                x_len: x_vec.len(),
+                y_len: y_vec.len(),
                 series_index: None,
             });
         }
 
-        if x_data.is_empty() {
+        if x_vec.is_empty() {
             return Err(PlottingError::EmptyDataSet);
         }
-
-        let x_vec: Vec<f64> = x_data.iter().copied().collect();
-        let y_vec: Vec<f64> = y_data.iter().copied().collect();
 
         let series = PlotSeries {
             series_type: SeriesType::Line {
@@ -3928,6 +4164,10 @@ impl Plot {
 
     /// Internal validation logic for series data
     fn validate_series(&self) -> Result<()> {
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
         // Validate we have at least one series
         if self.series_mgr.series.is_empty() {
             return Err(PlottingError::NoDataSeries);
@@ -4631,6 +4871,9 @@ impl Plot {
 
     /// Render the plot to an external renderer (used for subplots)
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
         renderer.set_text_engine_mode(self.display.text_engine);
 
         // Validate we have at least one series
@@ -6554,6 +6797,10 @@ impl Plot {
 
     /// Calculate data bounds across all series
     fn calculate_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
         let mut x_min = f64::INFINITY;
         let mut x_max = f64::NEG_INFINITY;
         let mut y_min = f64::INFINITY;
@@ -6963,6 +7210,10 @@ impl Plot {
     /// ```
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         use crate::render::skia::SkiaRenderer;
+
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
 
         // Validate data before rendering
         for series in &self.series_mgr.series {
@@ -8556,8 +8807,15 @@ impl PlotSeriesBuilder {
     ///     .save("line_with_errors.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn with_yerr<E: Data1D<f64>>(mut self, errors: &E) -> Self {
-        self.series.y_errors = Some(ErrorValues::symmetric(errors.iter().copied().collect()));
+    pub fn with_yerr<E: NumericData1D>(mut self, errors: &E) -> Self {
+        match collect_numeric_data_1d(errors, self.plot.null_policy) {
+            Ok(values) => {
+                self.series.y_errors = Some(ErrorValues::symmetric(values));
+            }
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -8583,8 +8841,15 @@ impl PlotSeriesBuilder {
     ///     .save("scatter_with_xerr.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn with_xerr<E: Data1D<f64>>(mut self, errors: &E) -> Self {
-        self.series.x_errors = Some(ErrorValues::symmetric(errors.iter().copied().collect()));
+    pub fn with_xerr<E: NumericData1D>(mut self, errors: &E) -> Self {
+        match collect_numeric_data_1d(errors, self.plot.null_policy) {
+            Ok(values) => {
+                self.series.x_errors = Some(ErrorValues::symmetric(values));
+            }
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -8616,13 +8881,19 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn with_yerr_asymmetric<E1, E2>(mut self, lower: &E1, upper: &E2) -> Self
     where
-        E1: Data1D<f64>,
-        E2: Data1D<f64>,
+        E1: NumericData1D,
+        E2: NumericData1D,
     {
-        self.series.y_errors = Some(ErrorValues::asymmetric(
-            lower.iter().copied().collect(),
-            upper.iter().copied().collect(),
-        ));
+        let lower_values = collect_numeric_data_1d(lower, self.plot.null_policy);
+        let upper_values = collect_numeric_data_1d(upper, self.plot.null_policy);
+        match (lower_values, upper_values) {
+            (Ok(lower), Ok(upper)) => {
+                self.series.y_errors = Some(ErrorValues::asymmetric(lower, upper));
+            }
+            (Err(err), _) | (_, Err(err)) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -8635,13 +8906,19 @@ impl PlotSeriesBuilder {
     /// * `right` - Error values extending right of each point
     pub fn with_xerr_asymmetric<E1, E2>(mut self, left: &E1, right: &E2) -> Self
     where
-        E1: Data1D<f64>,
-        E2: Data1D<f64>,
+        E1: NumericData1D,
+        E2: NumericData1D,
     {
-        self.series.x_errors = Some(ErrorValues::asymmetric(
-            left.iter().copied().collect(),
-            right.iter().copied().collect(),
-        ));
+        let left_values = collect_numeric_data_1d(left, self.plot.null_policy);
+        let right_values = collect_numeric_data_1d(right, self.plot.null_policy);
+        match (left_values, right_values) {
+            (Ok(left), Ok(right)) => {
+                self.series.x_errors = Some(ErrorValues::asymmetric(left, right));
+            }
+            (Err(err), _) | (_, Err(err)) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -8771,8 +9048,8 @@ impl PlotSeriesBuilder {
     /// Continue with a new line series
     pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
     {
         self.end_series().line(x_data, y_data)
     }
@@ -8784,8 +9061,8 @@ impl PlotSeriesBuilder {
         y_data: &Y,
     ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
     {
         self.end_series().scatter(x_data, y_data)
     }
@@ -8798,7 +9075,7 @@ impl PlotSeriesBuilder {
     ) -> PlotBuilder<crate::plots::basic::BarConfig>
     where
         S: ToString,
-        V: Data1D<f64>,
+        V: NumericData1D,
     {
         self.end_series().bar(categories, values)
     }
@@ -8840,9 +9117,9 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn error_bars<X, Y, E>(self, x_data: &X, y_data: &Y, y_errors: &E) -> PlotSeriesBuilder
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
-        E: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
+        E: NumericData1D,
     {
         self.end_series().error_bars(x_data, y_data, y_errors)
     }
@@ -8874,10 +9151,10 @@ impl PlotSeriesBuilder {
         y_errors: &EY,
     ) -> PlotSeriesBuilder
     where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
-        EX: Data1D<f64>,
-        EY: Data1D<f64>,
+        X: NumericData1D,
+        Y: NumericData1D,
+        EX: NumericData1D,
+        EY: NumericData1D,
     {
         self.end_series()
             .error_bars_xy(x_data, y_data, x_errors, y_errors)
@@ -8910,6 +9187,12 @@ impl PlotSeriesBuilder {
     /// Set Y-axis label
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
         self.plot.display.ylabel = Some(data::PlotText::Static(label.into()));
+        self
+    }
+
+    /// Set null handling policy for dataframe-backed numeric inputs.
+    pub fn null_policy(mut self, policy: NullPolicy) -> Self {
+        self.plot = self.plot.null_policy(policy);
         self
     }
 
@@ -9195,6 +9478,25 @@ impl PlotSeriesBuilder {
 mod tests {
     use super::*;
 
+    #[derive(Debug)]
+    struct FailingIngestionData;
+
+    impl crate::data::NumericData1D for FailingIngestionData {
+        fn len(&self) -> usize {
+            3
+        }
+
+        fn try_collect_f64_with_policy(
+            &self,
+            _null_policy: crate::data::NullPolicy,
+        ) -> crate::core::Result<Vec<f64>> {
+            Err(PlottingError::DataExtractionFailed {
+                source: "test::failing-ingestion".to_string(),
+                message: "forced ingestion failure".to_string(),
+            })
+        }
+    }
+
     fn parse_svg_attr(line: &str, attr: &str) -> f32 {
         let marker = format!(r#"{}=""#, attr);
         let start = line
@@ -9311,6 +9613,36 @@ mod tests {
         let plot = Plot::new().theme(custom_theme);
         let _retrieved_theme = plot.get_theme();
         // Test passes if no panic occurs
+    }
+
+    #[test]
+    fn test_pending_ingestion_error_preserves_single_error_shape() {
+        let bad = FailingIngestionData;
+        let y = vec![1.0, 2.0, 3.0];
+
+        let err = Plot::new().line(&bad, &y).render().unwrap_err();
+        match err {
+            PlottingError::DataExtractionFailed { source, message } => {
+                assert_eq!(source, "test::failing-ingestion");
+                assert_eq!(message, "forced ingestion failure");
+            }
+            other => panic!("expected DataExtractionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pending_ingestion_error_reports_additional_failures() {
+        let bad = FailingIngestionData;
+
+        let err = Plot::new().line(&bad, &bad).render().unwrap_err();
+        match err {
+            PlottingError::DataExtractionFailed { source, message } => {
+                assert_eq!(source, "ruviz::plot-ingestion");
+                assert!(message.contains("forced ingestion failure"));
+                assert!(message.contains("1 additional ingestion error"));
+            }
+            other => panic!("expected DataExtractionFailed, got {other:?}"),
+        }
     }
 
     #[test]

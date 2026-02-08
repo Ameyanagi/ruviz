@@ -91,6 +91,7 @@ ruviz = "0.1"  # Includes: ndarray, parallel
 | Feature | Description | Use Case |
 |---------|-------------|----------|
 | `ndarray_support` | ndarray integration | Scientific computing, numpy-like arrays |
+| `nalgebra_support` | nalgebra integration | Dense vectors/matrices, linear algebra |
 | `polars_support` | polars integration | Data analysis, DataFrame support |
 | `parallel` | Multi-core rendering | >10K points, batch processing |
 | `simd` | SIMD optimization | >100K points, maximum speed |
