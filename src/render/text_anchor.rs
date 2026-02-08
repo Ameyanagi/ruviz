@@ -3,6 +3,7 @@
 /// Static layout in ruviz uses:
 /// - horizontal text anchors at top origin,
 /// - rotated axis-label anchors at geometric center.
+///
 /// These helpers convert those layout anchors into draw coordinates.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
