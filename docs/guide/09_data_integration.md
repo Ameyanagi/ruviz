@@ -10,6 +10,7 @@ ruviz works seamlessly with Rust's data ecosystem:
 |-------------|----------|--------------|
 | **Vec/Arrays** | Basic Rust data | Built-in |
 | **ndarray** | Scientific computing | `ndarray_support` |
+| **nalgebra** | Linear algebra | `nalgebra_support` |
 | **polars** | DataFrame analysis | `polars_support` |
 | **CSV files** | File I/O | Standard library |
 | **JSON** | Web data | `serde_json` |
@@ -174,6 +175,39 @@ Plot::new()
     .save("normal_dist.png")?;
 ```
 
+## nalgebra Integration
+
+`nalgebra` vectors and matrices are supported directly in plotting APIs.
+
+### Setup
+
+```toml
+[dependencies]
+ruviz = { version = "0.1", features = ["nalgebra_support"] }
+nalgebra = "0.32"
+```
+
+### Vector and Matrix Usage
+
+```rust
+use ruviz::prelude::*;
+use nalgebra::{DMatrix, DVector};
+
+let x = DVector::from_vec(vec![0.0, 1.0, 2.0, 3.0]);
+let y = DVector::from_vec(vec![0.0, 1.0, 4.0, 9.0]);
+
+Plot::new()
+    .line(&x, &y)
+    .title("nalgebra DVector")
+    .save("nalgebra_line.png")?;
+
+let z = DMatrix::from_row_slice(2, 3, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+Plot::new()
+    .heatmap(&z, None)
+    .title("nalgebra DMatrix Heatmap")
+    .save("nalgebra_heatmap.png")?;
+```
+
 ## polars Integration
 
 **polars** provides high-performance DataFrames similar to pandas.
@@ -214,6 +248,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+```
+
+### Null Handling Policy
+
+`polars` inputs default to strict null handling. If a numeric column contains nulls,
+plot creation/rendering returns an explicit error unless a different policy is selected.
+For paired numeric plots (for example, `line(x, y)`), keep null positions aligned across
+paired columns so lengths remain compatible after applying the selected policy.
+
+```rust
+use ruviz::prelude::*;
+use polars::prelude::*;
+
+let x = Series::new("x", &[Some(1.0), None, Some(3.0)]);
+let y = Series::new("y", &[Some(2.0), None, Some(6.0)]);
+
+// Default: strict error on nulls
+assert!(Plot::new().line(&x, &y).render().is_err());
+
+// Optional: drop null values
+Plot::new()
+    .null_policy(NullPolicy::Drop)
+    .line(&x, &y)
+    .save("polars_drop_nulls.png")?;
 ```
 
 ### DataFrame Aggregation

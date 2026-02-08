@@ -19,6 +19,7 @@ pub use elements::{
     ErrorBar, LineSegment, MarkerInstance, PlotElementStats, PlotElementStorage, Polygon,
     PoolStats, TextAlignment, TextElement, get_plot_element_storage,
 };
+pub use impls::{collect_numeric_data_1d, collect_numeric_data_2d};
 pub use memory::{
     ManagedBuffer, MemoryConfig, MemoryManager, MemoryStats, get_memory_manager,
     initialize_memory_manager,
@@ -35,7 +36,7 @@ pub use platform::{
 };
 pub use pooled_vec::{PooledVec, PooledVecIntoIter};
 pub use signal::Signal;
-pub use traits::Data1D;
+pub use traits::{Data1D, NullPolicy, NumericData1D, NumericData2D};
 pub use validation::{collect_finite_values, collect_finite_values_sorted};
 pub use zero_copy::{
     DataView, DataViewCopiedIter, DataViewIter, MappedDataView, MappedDataViewIter, OwnedDataView,

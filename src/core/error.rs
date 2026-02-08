@@ -51,6 +51,20 @@ pub enum PlottingError {
         message: String,
         position: Option<usize>,
     },
+    /// Unsupported data type for numeric plotting ingestion
+    DataTypeUnsupported {
+        source: String,
+        dtype: String,
+        expected: String,
+    },
+    /// Null values are disallowed under current null policy
+    NullValueNotAllowed {
+        source: String,
+        column: Option<String>,
+        null_count: usize,
+    },
+    /// Failed to extract numeric values from an external data source
+    DataExtractionFailed { source: String, message: String },
     /// LaTeX rendering error (when feature enabled)
     LatexError(String),
     /// Performance limit exceeded
@@ -228,6 +242,40 @@ impl fmt::Display for PlottingError {
                 Some(pos) => write!(f, "Invalid data at position {}: {}", pos, message),
                 None => write!(f, "Invalid data: {}", message),
             },
+            PlottingError::DataTypeUnsupported {
+                source,
+                dtype,
+                expected,
+            } => {
+                write!(
+                    f,
+                    "Unsupported data type from {}: {} (expected {})",
+                    source, dtype, expected
+                )
+            }
+            PlottingError::NullValueNotAllowed {
+                source,
+                column,
+                null_count,
+            } => match column {
+                Some(name) => write!(
+                    f,
+                    "Null values are not allowed for {}.{} ({} null values found)",
+                    source, name, null_count
+                ),
+                None => write!(
+                    f,
+                    "Null values are not allowed for {} ({} null values found)",
+                    source, null_count
+                ),
+            },
+            PlottingError::DataExtractionFailed { source, message } => {
+                write!(
+                    f,
+                    "Failed to extract numeric data from {}: {}",
+                    source, message
+                )
+            }
             PlottingError::LatexError(msg) => {
                 write!(f, "LaTeX rendering error: {}", msg)
             }

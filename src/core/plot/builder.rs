@@ -162,8 +162,8 @@ macro_rules! impl_terminal_methods {
             /// Enables chaining multiple series: `.line(...).scatter(...).save()`
             pub fn line<X, Y>(self, x: &X, y: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
             where
-                X: crate::data::Data1D<f64>,
-                Y: crate::data::Data1D<f64>,
+                X: crate::data::NumericData1D,
+                Y: crate::data::NumericData1D,
             {
                 self.finalize().line(x, y)
             }
@@ -177,8 +177,8 @@ macro_rules! impl_terminal_methods {
                 y: &Y,
             ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
             where
-                X: crate::data::Data1D<f64>,
-                Y: crate::data::Data1D<f64>,
+                X: crate::data::NumericData1D,
+                Y: crate::data::NumericData1D,
             {
                 self.finalize().scatter(x, y)
             }
@@ -200,7 +200,7 @@ macro_rules! impl_terminal_methods {
             ) -> PlotBuilder<crate::plots::basic::BarConfig>
             where
                 S: ToString,
-                V: crate::data::Data1D<f64>,
+                V: crate::data::NumericData1D,
             {
                 self.finalize().bar(categories, values)
             }
@@ -210,9 +210,9 @@ macro_rules! impl_terminal_methods {
             /// Enables chaining multiple series: `.line(...).error_bars(...).save()`
             pub fn error_bars<X, Y, E>(self, x: &X, y: &Y, y_errors: &E) -> super::PlotSeriesBuilder
             where
-                X: crate::data::Data1D<f64>,
-                Y: crate::data::Data1D<f64>,
-                E: crate::data::Data1D<f64>,
+                X: crate::data::NumericData1D,
+                Y: crate::data::NumericData1D,
+                E: crate::data::NumericData1D,
             {
                 self.finalize().error_bars(x, y, y_errors)
             }
@@ -228,10 +228,10 @@ macro_rules! impl_terminal_methods {
                 y_errors: &EY,
             ) -> super::PlotSeriesBuilder
             where
-                X: crate::data::Data1D<f64>,
-                Y: crate::data::Data1D<f64>,
-                EX: crate::data::Data1D<f64>,
-                EY: crate::data::Data1D<f64>,
+                X: crate::data::NumericData1D,
+                Y: crate::data::NumericData1D,
+                EX: crate::data::NumericData1D,
+                EY: crate::data::NumericData1D,
             {
                 self.finalize().error_bars_xy(x, y, x_errors, y_errors)
             }
@@ -473,10 +473,15 @@ where
     ///
     /// # Arguments
     /// * `errors` - Error values (same magnitude for +/-)
-    pub fn with_yerr<E: crate::data::Data1D<f64>>(mut self, errors: &E) -> Self {
-        self.style.y_errors = Some(crate::plots::error::ErrorValues::symmetric(
-            errors.iter().copied().collect(),
-        ));
+    pub fn with_yerr<E: crate::data::NumericData1D>(mut self, errors: &E) -> Self {
+        match crate::data::collect_numeric_data_1d(errors, self.plot.null_policy) {
+            Ok(values) => {
+                self.style.y_errors = Some(crate::plots::error::ErrorValues::symmetric(values));
+            }
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -484,10 +489,15 @@ where
     ///
     /// # Arguments
     /// * `errors` - Error values (same magnitude for +/-)
-    pub fn with_xerr<E: crate::data::Data1D<f64>>(mut self, errors: &E) -> Self {
-        self.style.x_errors = Some(crate::plots::error::ErrorValues::symmetric(
-            errors.iter().copied().collect(),
-        ));
+    pub fn with_xerr<E: crate::data::NumericData1D>(mut self, errors: &E) -> Self {
+        match crate::data::collect_numeric_data_1d(errors, self.plot.null_policy) {
+            Ok(values) => {
+                self.style.x_errors = Some(crate::plots::error::ErrorValues::symmetric(values));
+            }
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -498,13 +508,20 @@ where
     /// * `upper` - Upper error values (extending upward)
     pub fn with_yerr_asymmetric<E1, E2>(mut self, lower: &E1, upper: &E2) -> Self
     where
-        E1: crate::data::Data1D<f64>,
-        E2: crate::data::Data1D<f64>,
+        E1: crate::data::NumericData1D,
+        E2: crate::data::NumericData1D,
     {
-        self.style.y_errors = Some(crate::plots::error::ErrorValues::asymmetric(
-            lower.iter().copied().collect(),
-            upper.iter().copied().collect(),
-        ));
+        let lower_values = crate::data::collect_numeric_data_1d(lower, self.plot.null_policy);
+        let upper_values = crate::data::collect_numeric_data_1d(upper, self.plot.null_policy);
+        match (lower_values, upper_values) {
+            (Ok(lower), Ok(upper)) => {
+                self.style.y_errors =
+                    Some(crate::plots::error::ErrorValues::asymmetric(lower, upper));
+            }
+            (Err(err), _) | (_, Err(err)) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -515,13 +532,20 @@ where
     /// * `upper` - Upper error values (extending right)
     pub fn with_xerr_asymmetric<E1, E2>(mut self, lower: &E1, upper: &E2) -> Self
     where
-        E1: crate::data::Data1D<f64>,
-        E2: crate::data::Data1D<f64>,
+        E1: crate::data::NumericData1D,
+        E2: crate::data::NumericData1D,
     {
-        self.style.x_errors = Some(crate::plots::error::ErrorValues::asymmetric(
-            lower.iter().copied().collect(),
-            upper.iter().copied().collect(),
-        ));
+        let lower_values = crate::data::collect_numeric_data_1d(lower, self.plot.null_policy);
+        let upper_values = crate::data::collect_numeric_data_1d(upper, self.plot.null_policy);
+        match (lower_values, upper_values) {
+            (Ok(lower), Ok(upper)) => {
+                self.style.x_errors =
+                    Some(crate::plots::error::ErrorValues::asymmetric(lower, upper));
+            }
+            (Err(err), _) | (_, Err(err)) => {
+                self.plot.set_pending_ingestion_error(err);
+            }
+        }
         self
     }
 
@@ -557,6 +581,12 @@ where
     /// This method forwards to the inner Plot.
     pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
         self.plot = self.plot.ylabel(label);
+        self
+    }
+
+    /// Set null handling policy for dataframe-backed numeric inputs.
+    pub fn null_policy(mut self, policy: crate::data::NullPolicy) -> Self {
+        self.plot = self.plot.null_policy(policy);
         self
     }
 

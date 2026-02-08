@@ -83,6 +83,7 @@ ruviz = { version = "0.1", features = ["parallel", "simd"] }
 | `gpu` | GPU acceleration (experimental) | Real-time rendering |
 | `interactive` | winit window support | Interactive plots |
 | `ndarray_support` | ndarray types | Scientific computing |
+| `nalgebra_support` | nalgebra vectors/matrices | Linear algebra workloads |
 | `polars_support` | DataFrame support | Data analysis |
 | `pdf` | PDF export | Publication output |
 | `full` | All features | Power users |
