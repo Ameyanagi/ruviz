@@ -93,13 +93,6 @@ impl SkiaRenderer {
         size_px.max(0.1)
     }
 
-    /// Typst raster scale for PNG text rendering.
-    ///
-    /// Keep this at native 1x to avoid supersampling/downscaling softness.
-    fn typst_effective_raster_scale(&self) -> f32 {
-        1.0
-    }
-
     /// Draw a Typst raster at subpixel-aligned coordinates.
     fn draw_typst_raster(&mut self, rendered: &typst_text::TypstRasterOutput, x: f32, y: f32) {
         let logical_w = rendered.width.max(1e-6);
@@ -1103,13 +1096,11 @@ impl SkiaRenderer {
             }
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let raster_scale = self.typst_effective_raster_scale();
                 let rendered = typst_text::render_raster(
                     text,
                     size_pt,
                     color,
                     0.0,
-                    raster_scale,
                     "Skia text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1142,13 +1133,11 @@ impl SkiaRenderer {
             }
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let raster_scale = self.typst_effective_raster_scale();
                 let rendered = typst_text::render_raster(
                     text,
                     size_pt,
                     color,
                     -90.0,
-                    raster_scale,
                     "Skia rotated text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -1188,13 +1177,11 @@ impl SkiaRenderer {
             }
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let raster_scale = self.typst_effective_raster_scale();
                 let rendered = typst_text::render_raster(
                     text,
                     size_pt,
                     color,
                     0.0,
-                    raster_scale,
                     "Skia centered text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -3760,42 +3747,48 @@ mod tests {
     }
 
     #[test]
-    fn test_typst_effective_raster_scale_bounds() {
-        let theme = Theme::default();
-        let mut renderer = SkiaRenderer::new(800, 600, theme).unwrap();
-
-        renderer.set_dpi_scale(1.0);
-        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
-
-        renderer.set_dpi_scale(0.5);
-        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
-
-        renderer.set_dpi_scale(3.0);
-        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
-
-        renderer.set_dpi_scale(1.26);
-        assert_eq!(renderer.typst_effective_raster_scale(), 1.0);
-    }
-
-    #[test]
-    fn test_typst_raster_transform_scales_to_logical_size() {
+    fn test_typst_raster_uses_native_1x_scale() {
         let theme = Theme::default();
         let mut renderer = SkiaRenderer::new(400, 300, theme).unwrap();
         renderer.set_dpi_scale(1.0);
         renderer.set_text_engine_mode(TextEngineMode::Typst);
 
-        let rendered = typst_text::render_raster(
+        let rendered_native = typst_text::render_raster(
             "scale-check",
             12.0,
             Color::BLACK,
             0.0,
-            2.0,
-            "typst transform test",
+            "typst native scale test",
+        )
+        .unwrap();
+        let rendered_second = typst_text::render_raster(
+            "scale-check",
+            12.0,
+            Color::BLACK,
+            0.0,
+            "typst native scale test",
         )
         .unwrap();
 
-        // Ensure supersampled pixmap has larger pixel dimensions than logical size.
-        assert!(rendered.pixmap.width() as f32 > rendered.width);
-        assert!(rendered.pixmap.height() as f32 > rendered.height);
+        assert_eq!(
+            rendered_native.pixmap.width(),
+            rendered_second.pixmap.width()
+        );
+        assert_eq!(
+            rendered_native.pixmap.height(),
+            rendered_second.pixmap.height()
+        );
+        assert!(
+            (rendered_native.pixmap.width() as f32 - rendered_native.width).abs() <= 1.0,
+            "native raster width should align with logical width: pixel={} logical={}",
+            rendered_native.pixmap.width(),
+            rendered_native.width
+        );
+        assert!(
+            (rendered_native.pixmap.height() as f32 - rendered_native.height).abs() <= 1.0,
+            "native raster height should align with logical height: pixel={} logical={}",
+            rendered_native.pixmap.height(),
+            rendered_native.height
+        );
     }
 }

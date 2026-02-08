@@ -76,7 +76,6 @@ pub fn render_raster(
     _size_pt: f32,
     _color: Color,
     _rotation_deg: f32,
-    _raster_scale: f32,
     operation: &str,
 ) -> Result<TypstRasterOutput> {
     Err(PlottingError::FeatureNotEnabled {
@@ -146,7 +145,6 @@ mod imp {
         size_bits: u32,
         color: (u8, u8, u8, u8),
         rotation_bits: u32,
-        raster_scale_bits: u32,
         backend: TypstBackendKind,
     }
 
@@ -279,7 +277,6 @@ mod imp {
         size_pt: f32,
         color: Color,
         rotation_deg: f32,
-        raster_scale: f32,
         backend: TypstBackendKind,
     ) -> CacheKey {
         CacheKey {
@@ -287,7 +284,6 @@ mod imp {
             size_bits: size_pt.to_bits(),
             color: (color.r, color.g, color.b, color.a),
             rotation_bits: rotation_deg.to_bits(),
-            raster_scale_bits: raster_scale.to_bits(),
             backend,
         }
     }
@@ -389,7 +385,6 @@ mod imp {
         size_pt: f32,
         color: Color,
         rotation_deg: f32,
-        raster_scale: f32,
         operation: &str,
     ) -> Result<TypstRasterOutput> {
         if snippet.trim().is_empty() {
@@ -403,13 +398,11 @@ mod imp {
             });
         }
 
-        let raster_scale = raster_scale.clamp(1.0, 4.0);
         let key = make_key(
             snippet,
             size_pt,
             color,
             rotation_deg,
-            raster_scale,
             TypstBackendKind::Raster,
         );
 
@@ -443,7 +436,7 @@ mod imp {
         let logical_width = size.x.to_pt() as f32;
         let logical_height = size.y.to_pt() as f32;
 
-        let pixmap = typst_render::render(&page, raster_scale);
+        let pixmap = typst_render::render(&page, 1.0);
         let pixel_width = pixmap.width();
         let pixel_height = pixmap.height();
         let pixels = pixmap.data().to_vec();
@@ -488,7 +481,6 @@ mod imp {
             size_pt,
             color,
             rotation_deg,
-            1.0,
             TypstBackendKind::Svg,
         );
         if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
@@ -535,8 +527,7 @@ mod imp {
     ) -> Result<(f32, f32)> {
         match backend {
             TypstBackendKind::Raster => {
-                let rendered =
-                    render_raster(snippet, size_pt, color, rotation_deg, 1.0, operation)?;
+                let rendered = render_raster(snippet, size_pt, color, rotation_deg, operation)?;
                 Ok((rendered.width, rendered.height))
             }
             TypstBackendKind::Svg => {

@@ -121,7 +121,7 @@ Notes:
 - Invalid Typst snippets fail render/export with a `TypstError`.
 - If `typst-math` is not enabled, `.typst(true)` returns `FeatureNotEnabled` at render/export.
 - Migration: `.latex(true)` has been removed; use `.typst(true)` instead.
-- Typst text in PNG output is rasterized (quality tracks DPI and internal supersampling).
+- Typst text in PNG output is rasterized at native output scale (1x).
 - For maximum text sharpness, prefer higher DPI (for example `.dpi(300)`) or vector export (`.export_svg(...)` / `.save_pdf(...)`).
 
 ## Examples

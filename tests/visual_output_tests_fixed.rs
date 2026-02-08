@@ -367,7 +367,7 @@ fn test_typst_measurement_backend_consistency()
 
 #[cfg(feature = "typst-math")]
 #[test]
-fn test_typst_raster_scale_affects_pixel_density()
+fn test_typst_raster_is_stable_for_identical_inputs()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     use ruviz::render::typst_text::{self, TypstTextAnchor};
 
@@ -379,7 +379,6 @@ fn test_typst_raster_scale_affects_pixel_density()
         size_pt,
         Color::BLACK,
         0.0,
-        1.0,
         "typst raster scale test",
     )?;
     let scale_3 = typst_text::render_raster(
@@ -387,19 +386,18 @@ fn test_typst_raster_scale_affects_pixel_density()
         size_pt,
         Color::BLACK,
         0.0,
-        3.0,
         "typst raster scale test",
     )?;
 
     assert!(
         (scale_1.width - scale_3.width).abs() <= 0.5,
-        "logical widths should remain stable across raster scales: s1={} s3={}",
+        "logical widths should remain stable with native raster behavior: s1={} s3={}",
         scale_1.width,
         scale_3.width
     );
     assert!(
         (scale_1.height - scale_3.height).abs() <= 0.5,
-        "logical heights should remain stable across raster scales: s1={} s3={}",
+        "logical heights should remain stable with native raster behavior: s1={} s3={}",
         scale_1.height,
         scale_3.height
     );
@@ -436,26 +434,26 @@ fn test_typst_raster_scale_affects_pixel_density()
     assert!(
         (top_center_s1.0 - top_center_s3.0).abs() <= 0.1
             && (top_center_s1.1 - top_center_s3.1).abs() <= 0.1,
-        "top-center anchor should be supersampling invariant: s1={:?} s3={:?}",
+        "top-center anchor should be raster-scale invariant: s1={:?} s3={:?}",
         top_center_s1,
         top_center_s3
     );
     assert!(
         (center_s1.0 - center_s3.0).abs() <= 0.1 && (center_s1.1 - center_s3.1).abs() <= 0.1,
-        "center anchor should be supersampling invariant: s1={:?} s3={:?}",
+        "center anchor should be raster-scale invariant: s1={:?} s3={:?}",
         center_s1,
         center_s3
     );
 
     assert!(
-        scale_3.pixmap.width() > scale_1.pixmap.width(),
-        "higher raster scale should increase pixel width: s1={} s3={}",
+        scale_3.pixmap.width() == scale_1.pixmap.width(),
+        "pixel width should stay stable for identical render inputs: s1={} s3={}",
         scale_1.pixmap.width(),
         scale_3.pixmap.width()
     );
     assert!(
-        scale_3.pixmap.height() > scale_1.pixmap.height(),
-        "higher raster scale should increase pixel height: s1={} s3={}",
+        scale_3.pixmap.height() == scale_1.pixmap.height(),
+        "pixel height should stay stable for identical render inputs: s1={} s3={}",
         scale_1.pixmap.height(),
         scale_3.pixmap.height()
     );
