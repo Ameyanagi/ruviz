@@ -5,9 +5,14 @@
 
 use crate::core::{
     Legend, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels, LegendStyle,
-    PlottingError, Result, find_best_position,
+    PlottingError, Result, find_best_position, plot::TextEngineMode,
 };
-use crate::render::{Color, LineStyle, MarkerStyle};
+use crate::render::{
+    Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer,
+    text_anchor::{TextPlacementMetrics, center_anchor_to_baseline, top_anchor_to_baseline},
+    typst_text::{self, TypstBackendKind, TypstTextAnchor},
+};
+use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
 use std::path::Path;
 
@@ -20,6 +25,10 @@ pub struct SvgRenderer {
     clip_id_counter: u32,
     /// DPI scale factor (1.0 = 100 DPI base)
     dpi_scale: f32,
+    /// Active text rendering engine.
+    text_engine_mode: TextEngineMode,
+    /// Plain text metrics for anchor conversion.
+    text_renderer: TextRenderer,
 }
 
 impl SvgRenderer {
@@ -32,6 +41,8 @@ impl SvgRenderer {
             defs: String::new(),
             clip_id_counter: 0,
             dpi_scale: 1.0, // Default to 100 DPI base
+            text_engine_mode: TextEngineMode::Plain,
+            text_renderer: TextRenderer::new(),
         }
     }
 
@@ -43,6 +54,24 @@ impl SvgRenderer {
     /// Get the DPI scale factor
     pub fn dpi_scale(&self) -> f32 {
         self.dpi_scale
+    }
+
+    /// Set text rendering backend mode.
+    pub fn set_text_engine_mode(&mut self, mode: TextEngineMode) {
+        self.text_engine_mode = mode;
+    }
+
+    /// Get text rendering backend mode.
+    pub fn text_engine_mode(&self) -> TextEngineMode {
+        self.text_engine_mode
+    }
+
+    /// Map renderer font size to Typst size units.
+    ///
+    /// Typst SVG output aligns with existing plot sizing when using the
+    /// same numeric size value.
+    fn typst_size_pt(&self, size_px: f32) -> f32 {
+        size_px.max(0.1)
     }
 
     /// Get a unique clip path ID
@@ -91,6 +120,47 @@ impl SvgRenderer {
             .replace('>', "&gt;")
             .replace('"', "&quot;")
             .replace('\'', "&apos;")
+    }
+
+    fn strip_xml_declaration<'a>(&self, svg: &'a str) -> &'a str {
+        if let Some(start) = svg.find("<svg") {
+            &svg[start..]
+        } else {
+            svg
+        }
+    }
+
+    fn generated_label<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        if matches!(self.text_engine_mode, TextEngineMode::Typst) {
+            Cow::Owned(typst_text::literal_text_snippet(text))
+        } else {
+            Cow::Borrowed(text)
+        }
+    }
+
+    fn plain_text_metrics(&self, text: &str, font_size: f32) -> Result<TextPlacementMetrics> {
+        let config = FontConfig::new(FontFamily::SansSerif, font_size);
+        self.text_renderer.measure_text_placement(text, &config)
+    }
+
+    fn measure_text_for_layout(&self, text: &str, font_size: f32) -> Result<(f32, f32)> {
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let metrics = self.plain_text_metrics(text, font_size)?;
+                Ok((metrics.width, metrics.height))
+            }
+            TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(font_size);
+                typst_text::measure_text(
+                    text,
+                    size_pt,
+                    Color::BLACK,
+                    0.0,
+                    TypstBackendKind::Svg,
+                    "SVG text measurement",
+                )
+            }
+        }
     }
 
     /// Draw a filled or stroked rectangle
@@ -238,28 +308,96 @@ impl SvgRenderer {
         self.draw_circle(x, y, size / 2.0, color, true);
     }
 
-    /// Draw text at specified position
-    pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
-        let color_str = self.color_to_svg(color);
-        let escaped_text = self.escape_xml(text);
-        writeln!(
-            self.content,
-            r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}">{}</text>"#,
-            x, y, size, color_str, escaped_text
-        )
-        .unwrap();
+    /// Draw text at specified position.
+    /// `y` is interpreted as the top of the text rendering area.
+    pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let color_str = self.color_to_svg(color);
+                let escaped_text = self.escape_xml(text);
+                let metrics = self.plain_text_metrics(text, size)?;
+                let baseline_y = top_anchor_to_baseline(y, metrics);
+                writeln!(
+                    self.content,
+                    r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}">{}</text>"#,
+                    x, baseline_y, size, color_str, escaped_text
+                )
+                .unwrap();
+                Ok(())
+            }
+            TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
+                let rendered =
+                    typst_text::render_svg(text, size_pt, color, 0.0, "SVG text rendering")?;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::TopLeft,
+                );
+                let embedded_svg = self.strip_xml_declaration(&rendered.svg);
+                writeln!(
+                    self.content,
+                    r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
+                    draw_x, draw_y, embedded_svg
+                )
+                .unwrap();
+                Ok(())
+            }
+        }
     }
 
-    /// Draw text centered at specified position
-    pub fn draw_text_centered(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
-        let color_str = self.color_to_svg(color);
-        let escaped_text = self.escape_xml(text);
-        writeln!(
-            self.content,
-            r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" text-anchor="middle" dominant-baseline="central">{}</text>"#,
-            x, y, size, color_str, escaped_text
-        )
-        .unwrap();
+    /// Draw text centered at specified position.
+    /// `y` is interpreted as the top of the text rendering area.
+    pub fn draw_text_centered(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+    ) -> Result<()> {
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let color_str = self.color_to_svg(color);
+                let escaped_text = self.escape_xml(text);
+                let metrics = self.plain_text_metrics(text, size)?;
+                let baseline_y = top_anchor_to_baseline(y, metrics);
+                writeln!(
+                    self.content,
+                    r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text>"#,
+                    x, baseline_y, size, color_str, escaped_text
+                )
+                .unwrap();
+                Ok(())
+            }
+            TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
+                let rendered = typst_text::render_svg(
+                    text,
+                    size_pt,
+                    color,
+                    0.0,
+                    "SVG centered text rendering",
+                )?;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::TopCenter,
+                );
+                let embedded_svg = self.strip_xml_declaration(&rendered.svg);
+                writeln!(
+                    self.content,
+                    r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
+                    draw_x, draw_y, embedded_svg
+                )
+                .unwrap();
+                Ok(())
+            }
+        }
     }
 
     /// Draw rotated text (typically for Y-axis labels)
@@ -271,15 +409,47 @@ impl SvgRenderer {
         size: f32,
         color: Color,
         angle: f32,
-    ) {
-        let color_str = self.color_to_svg(color);
-        let escaped_text = self.escape_xml(text);
-        writeln!(
-            self.content,
-            r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" text-anchor="middle" dominant-baseline="central" transform="rotate({:.1},{:.2},{:.2})">{}</text>"#,
-            x, y, size, color_str, angle, x, y, escaped_text
-        )
-        .unwrap();
+    ) -> Result<()> {
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let color_str = self.color_to_svg(color);
+                let escaped_text = self.escape_xml(text);
+                let metrics = self.plain_text_metrics(text, size)?;
+                let center_baseline_y = center_anchor_to_baseline(0.0, metrics);
+                writeln!(
+                    self.content,
+                    r#"  <g transform="translate({:.2},{:.2}) rotate({:.1})"><text x="0" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text></g>"#,
+                    x, y, angle, center_baseline_y, size, color_str, escaped_text
+                )
+                .unwrap();
+                Ok(())
+            }
+            TextEngineMode::Typst => {
+                let size_pt = self.typst_size_pt(size);
+                let rendered = typst_text::render_svg(
+                    text,
+                    size_pt,
+                    color,
+                    angle,
+                    "SVG rotated text rendering",
+                )?;
+                let (draw_x, draw_y) = typst_text::anchored_top_left(
+                    x,
+                    y,
+                    rendered.width,
+                    rendered.height,
+                    TypstTextAnchor::Center,
+                );
+                let embedded_svg = self.strip_xml_declaration(&rendered.svg);
+                writeln!(
+                    self.content,
+                    r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
+                    draw_x, draw_y, embedded_svg
+                )
+                .unwrap();
+                Ok(())
+            }
+        }
     }
 
     /// Draw grid lines
@@ -410,47 +580,53 @@ impl SvgRenderer {
         plot_right: f32,
         plot_top: f32,
         plot_bottom: f32,
+        xtick_baseline_y: f32,
+        ytick_right_x: f32,
         color: Color,
         font_size: f32,
-    ) {
-        let tick_label_offset = 15.0;
-
+    ) -> Result<()> {
         // X-axis labels
         for (i, &x) in x_ticks.iter().enumerate() {
             if x >= plot_left && x <= plot_right {
                 if let Some(label) = x_labels.get(i) {
-                    self.draw_text_centered(
-                        label,
-                        x,
-                        plot_bottom + tick_label_offset,
-                        font_size,
-                        color,
-                    );
+                    let label_snippet = self.generated_label(label);
+                    let (text_width, _) =
+                        self.measure_text_for_layout(&label_snippet, font_size)?;
+                    let label_x = (x - text_width / 2.0).max(0.0).min(self.width - text_width);
+                    self.draw_text(&label_snippet, label_x, xtick_baseline_y, font_size, color)?;
                 }
             }
         }
 
-        // Y-axis labels (right-aligned)
+        // Y-axis labels
         for (i, &y) in y_ticks.iter().enumerate() {
             if y >= plot_top && y <= plot_bottom {
                 if let Some(label) = y_labels.get(i) {
-                    let color_str = self.color_to_svg(color);
-                    let escaped_label = self.escape_xml(label);
-                    writeln!(
-                        self.content,
-                        r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" text-anchor="end" dominant-baseline="central">{}</text>"#,
-                        plot_left - 8.0, y, font_size, color_str, escaped_label
-                    )
-                    .unwrap();
+                    let label_snippet = self.generated_label(label);
+                    let (text_width, text_height) =
+                        self.measure_text_for_layout(&label_snippet, font_size)?;
+                    let gap = font_size * 0.5;
+                    let min_x = font_size * 0.5;
+                    let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                    let centered_y = y - text_height / 2.0;
+                    self.draw_text(&label_snippet, label_x, centered_y, font_size, color)?;
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Draw legend
-    pub fn draw_legend(&mut self, items: &[(String, Color)], x: f32, y: f32, font_size: f32) {
+    pub fn draw_legend(
+        &mut self,
+        items: &[(String, Color)],
+        x: f32,
+        y: f32,
+        font_size: f32,
+    ) -> Result<()> {
         if items.is_empty() {
-            return;
+            return Ok(());
         }
 
         let item_height = font_size + 6.0;
@@ -485,15 +661,16 @@ impl SvgRenderer {
             self.draw_rectangle(x + 8.0, item_y, swatch_size, swatch_size, *color, true);
 
             // Draw label
-            let color_str = self.color_to_svg(Color::BLACK);
-            let escaped_label = self.escape_xml(label);
-            writeln!(
-                self.content,
-                r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" dominant-baseline="central">{}</text>"#,
-                x + 8.0 + swatch_size + swatch_gap, item_y + swatch_size / 2.0, font_size, color_str, escaped_label
-            )
-            .unwrap();
+            self.draw_text(
+                label,
+                x + 8.0 + swatch_size + swatch_gap,
+                item_y + swatch_size / 2.0 - font_size * 0.5,
+                font_size,
+                Color::BLACK,
+            )?;
         }
+
+        Ok(())
     }
 
     // =========================================================================
@@ -809,16 +986,41 @@ impl SvgRenderer {
         legend: &Legend,
         plot_area: (f32, f32, f32, f32), // (left, top, right, bottom)
         data_bboxes: Option<&[(f32, f32, f32, f32)]>,
-    ) {
+    ) -> Result<()> {
         if items.is_empty() || !legend.enabled {
-            return;
+            return Ok(());
         }
 
         let spacing = legend.spacing.to_pixels(legend.font_size);
-        let char_width = legend.font_size * 0.6;
-
-        // Calculate legend size
-        let (legend_width, legend_height) = legend.calculate_size(items, char_width);
+        let (legend_width, legend_height, label_width) = match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let char_width = legend.font_size * 0.6;
+                let (width, height) = legend.calculate_size(items, char_width);
+                let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
+                (width, height, max_label_len as f32 * char_width)
+            }
+            TextEngineMode::Typst => {
+                let mut max_label_width = 0.0_f32;
+                for item in items {
+                    let (w, _) = self.measure_text_for_layout(&item.label, legend.font_size)?;
+                    max_label_width = max_label_width.max(w);
+                }
+                let item_width = spacing.handle_length + spacing.handle_text_pad + max_label_width;
+                let items_per_col = items.len().div_ceil(legend.columns);
+                let content_width = item_width * legend.columns as f32
+                    + (legend.columns.saturating_sub(1)) as f32 * spacing.column_spacing;
+                let content_height = items_per_col as f32 * legend.font_size
+                    + (items_per_col.saturating_sub(1)) as f32 * spacing.label_spacing;
+                let title_height = if legend.title.is_some() {
+                    legend.font_size + spacing.label_spacing
+                } else {
+                    0.0
+                };
+                let width = content_width + spacing.border_pad * 2.0;
+                let height = content_height + title_height + spacing.border_pad * 2.0;
+                (width, height, max_label_width)
+            }
+        };
 
         // Determine position
         let position = if matches!(legend.position, LegendPosition::Best) {
@@ -862,7 +1064,7 @@ impl SvgRenderer {
         // Draw title if present
         if let Some(ref title) = legend.title {
             let title_x = legend_x + legend_width / 2.0;
-            self.draw_text_centered(title, title_x, item_y, legend.font_size, legend.text_color);
+            self.draw_text_centered(title, title_x, item_y, legend.font_size, legend.text_color)?;
             item_y += legend.font_size + spacing.label_spacing;
         }
 
@@ -870,8 +1072,6 @@ impl SvgRenderer {
         let items_per_col = items.len().div_ceil(legend.columns);
 
         // Calculate column width
-        let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
-        let label_width = max_label_len as f32 * char_width;
         let col_width = spacing.handle_length + spacing.handle_text_pad + label_width;
 
         // Draw items column by column
@@ -892,18 +1092,20 @@ impl SvgRenderer {
 
                 // Draw label
                 let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
-                let color_str = self.color_to_svg(legend.text_color);
-                let escaped_label = self.escape_xml(&item.label);
-                writeln!(
-                    self.content,
-                    r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" dominant-baseline="central">{}</text>"#,
-                    text_x, row_y, legend.font_size, color_str, escaped_label
-                )
-                .unwrap();
+                let centered_y = row_y - legend.font_size * 0.65;
+                self.draw_text(
+                    &item.label,
+                    text_x,
+                    centered_y,
+                    legend.font_size,
+                    legend.text_color,
+                )?;
 
                 row_y += legend.font_size + spacing.label_spacing;
             }
         }
+
+        Ok(())
     }
 
     /// Add a clip path definition and return the ID
@@ -975,6 +1177,59 @@ impl SvgRenderer {
 mod tests {
     use super::*;
 
+    fn parse_svg_attr(line: &str, attr: &str) -> f32 {
+        let marker = format!(r#"{}=""#, attr);
+        let start = line
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing {} in line: {}", attr, line))
+            + marker.len();
+        let end = line[start..]
+            .find('"')
+            .unwrap_or_else(|| panic!("unterminated {} in line: {}", attr, line))
+            + start;
+        line[start..end]
+            .parse::<f32>()
+            .unwrap_or_else(|_| panic!("invalid {} in line: {}", attr, line))
+    }
+
+    fn extract_svg_text_xy(svg: &str, text: &str) -> (f32, f32) {
+        let marker = format!(">{}</text>", text);
+        let line = svg
+            .lines()
+            .find(|line| line.contains(&marker))
+            .unwrap_or_else(|| panic!("missing text node for {}", text));
+        (parse_svg_attr(line, "x"), parse_svg_attr(line, "y"))
+    }
+
+    fn extract_typst_group_translates(svg: &str) -> Vec<(f32, f32)> {
+        svg.lines()
+            .filter(|line| line.contains(r#"data-ruviz-text-engine="typst""#))
+            .map(|line| {
+                let marker = r#"transform="translate("#;
+                let start = line
+                    .find(marker)
+                    .unwrap_or_else(|| panic!("missing translate transform in line: {}", line))
+                    + marker.len();
+                let end = line[start..].find(')').unwrap_or_else(|| {
+                    panic!("unterminated translate transform in line: {}", line)
+                }) + start;
+                let coords = &line[start..end];
+                let mut parts = coords.split(',');
+                let x = parts
+                    .next()
+                    .unwrap_or_else(|| panic!("missing translate x in line: {}", line))
+                    .parse::<f32>()
+                    .unwrap_or_else(|_| panic!("invalid translate x in line: {}", line));
+                let y = parts
+                    .next()
+                    .unwrap_or_else(|| panic!("missing translate y in line: {}", line))
+                    .parse::<f32>()
+                    .unwrap_or_else(|_| panic!("invalid translate y in line: {}", line));
+                (x, y)
+            })
+            .collect()
+    }
+
     #[test]
     fn test_svg_renderer_creation() {
         let renderer = SvgRenderer::new(800.0, 600.0);
@@ -1029,5 +1284,163 @@ mod tests {
         assert!(svg.contains("svg"));
         assert!(svg.contains("rect"));
         assert!(svg.contains("line"));
+    }
+
+    #[test]
+    fn test_plain_text_uses_top_origin_baseline() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer
+            .draw_text("Top Origin", 10.0, 20.0, 12.0, Color::BLACK)
+            .unwrap();
+        renderer
+            .draw_text_centered("Centered Top", 100.0, 25.0, 12.0, Color::BLACK)
+            .unwrap();
+
+        let svg = renderer.to_svg_string();
+        assert!(!svg.contains("dominant-baseline=\"text-before-edge\""));
+
+        let (x1, y1) = extract_svg_text_xy(&svg, "Top Origin");
+        let (x2, y2) = extract_svg_text_xy(&svg, "Centered Top");
+        let metrics1 = renderer.plain_text_metrics("Top Origin", 12.0).unwrap();
+        let metrics2 = renderer.plain_text_metrics("Centered Top", 12.0).unwrap();
+
+        assert!((x1 - 10.0).abs() <= 0.01);
+        assert!((x2 - 100.0).abs() <= 0.01);
+        assert!((y1 - top_anchor_to_baseline(20.0, metrics1)).abs() <= 0.6);
+        assert!((y2 - top_anchor_to_baseline(25.0, metrics2)).abs() <= 0.6);
+    }
+
+    #[test]
+    fn test_tick_labels_use_layout_positions() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        let x_ticks = vec![100.0];
+        let x_labels = vec!["1.0".to_string()];
+        let y_ticks = vec![75.0];
+        let y_labels = vec!["2.0".to_string()];
+
+        renderer
+            .draw_tick_labels(
+                &x_ticks,
+                &x_labels,
+                &y_ticks,
+                &y_labels,
+                40.0,
+                160.0,
+                20.0,
+                120.0,
+                120.0,
+                35.0,
+                Color::BLACK,
+                10.0,
+            )
+            .unwrap();
+
+        let svg = renderer.to_svg_string();
+        let (x_tick_x, x_tick_y) = extract_svg_text_xy(&svg, "1.0");
+        let (y_tick_x, y_tick_y) = extract_svg_text_xy(&svg, "2.0");
+        let x_metrics = renderer.plain_text_metrics("1.0", 10.0).unwrap();
+        let y_metrics = renderer.plain_text_metrics("2.0", 10.0).unwrap();
+
+        let x_top = 120.0;
+        let expected_x_tick_x = (100.0 - x_metrics.width / 2.0)
+            .max(0.0)
+            .min(renderer.width - x_metrics.width);
+        let expected_x_tick_y = top_anchor_to_baseline(x_top, x_metrics);
+
+        let y_top = 75.0 - y_metrics.height / 2.0;
+        let expected_y_tick_x = (35.0 - y_metrics.width - 5.0).max(5.0);
+        let expected_y_tick_y = top_anchor_to_baseline(y_top, y_metrics);
+
+        assert!(
+            (x_tick_x - expected_x_tick_x).abs() <= 0.6
+                && (x_tick_y - expected_x_tick_y).abs() <= 0.6,
+            "x-axis tick label should use layout xtick baseline"
+        );
+        assert!(
+            (y_tick_x - expected_y_tick_x).abs() <= 0.6
+                && (y_tick_y - expected_y_tick_y).abs() <= 0.6,
+            "y-axis tick label should use layout ytick anchor and centered y"
+        );
+    }
+
+    #[cfg(feature = "typst-math")]
+    #[test]
+    fn test_typst_tick_labels_follow_plain_anchor_math() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.set_text_engine_mode(TextEngineMode::Typst);
+        let x_ticks = vec![100.0];
+        let x_labels = vec!["1.0".to_string()];
+        let y_ticks = vec![75.0];
+        let y_labels = vec!["2.0".to_string()];
+
+        renderer
+            .draw_tick_labels(
+                &x_ticks,
+                &x_labels,
+                &y_ticks,
+                &y_labels,
+                40.0,
+                160.0,
+                20.0,
+                120.0,
+                120.0,
+                35.0,
+                Color::BLACK,
+                10.0,
+            )
+            .unwrap();
+
+        let svg = renderer.to_svg_string();
+        assert!(svg.contains("data-ruviz-text-engine=\"typst\""));
+
+        let translates = extract_typst_group_translates(&svg);
+        assert_eq!(translates.len(), 2, "expected two typst text groups");
+
+        let x_snippet = typst_text::literal_text_snippet("1.0");
+        let y_snippet = typst_text::literal_text_snippet("2.0");
+        let (x_w, _x_h) = typst_text::measure_text(
+            &x_snippet,
+            10.0,
+            Color::BLACK,
+            0.0,
+            TypstBackendKind::Svg,
+            "typst tick test",
+        )
+        .unwrap();
+        let (y_w, y_h) = typst_text::measure_text(
+            &y_snippet,
+            10.0,
+            Color::BLACK,
+            0.0,
+            TypstBackendKind::Svg,
+            "typst tick test",
+        )
+        .unwrap();
+
+        let expected_x = (100.0 - x_w / 2.0).max(0.0).min(renderer.width - x_w);
+        let expected_y = (35.0 - y_w - 5.0).max(5.0);
+        let expected_y_top = 75.0 - y_h / 2.0;
+
+        assert!(
+            (translates[0].0 - expected_x).abs() <= 0.6 && (translates[0].1 - 120.0).abs() <= 0.6
+        );
+        assert!(
+            (translates[1].0 - expected_y).abs() <= 0.6
+                && (translates[1].1 - expected_y_top).abs() <= 0.6
+        );
+    }
+
+    #[cfg(feature = "typst-math")]
+    #[test]
+    fn test_typst_rotated_text_uses_typst_rotation_path() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.set_text_engine_mode(TextEngineMode::Typst);
+        renderer
+            .draw_text_rotated("Y Axis", 100.0, 75.0, 12.0, Color::BLACK, -90.0)
+            .unwrap();
+
+        let svg = renderer.to_svg_string();
+        assert!(svg.contains("data-ruviz-text-engine=\"typst\""));
+        assert!(!svg.contains("data-ruviz-text-engine=\"typst\" transform=\"rotate("));
     }
 }

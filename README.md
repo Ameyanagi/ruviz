@@ -85,9 +85,44 @@ ruviz = { version = "0.1", features = ["parallel", "simd"] }
 | `ndarray_support` | ndarray types | Scientific computing |
 | `polars_support` | DataFrame support | Data analysis |
 | `pdf` | PDF export | Publication output |
+| `typst-math` | Typst text engine for all plot text | Math-heavy publication plots |
 | `full` | All features | Power users |
 
 For minimal builds: `default-features = false`
+
+### Typst Text Mode
+
+Enable Typst text rendering:
+
+```toml
+[dependencies]
+ruviz = { version = "0.1", features = ["typst-math"] }
+```
+
+Use `.typst(true)` on a plot to render all static text surfaces (titles, axis labels, ticks,
+legend labels, and annotations) through Typst:
+
+```rust
+use ruviz::prelude::*;
+
+let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
+
+Plot::new()
+    .line(&x, &y)
+    .title("$f(x) = e^{-x}$")
+    .xlabel("$x$")
+    .ylabel("$f(x)$")
+    .typst(true)
+    .save("typst_plot.png")?;
+```
+
+Notes:
+- Invalid Typst snippets fail render/export with a `TypstError`.
+- If `typst-math` is not enabled, `.typst(true)` returns `FeatureNotEnabled` at render/export.
+- Migration: `.latex(true)` has been removed; use `.typst(true)` instead.
+- Typst text in PNG output is rasterized at native output scale (1x).
+- For maximum text sharpness, prefer higher DPI (for example `.dpi(300)`) or vector export (`.export_svg(...)` / `.save_pdf(...)`).
 
 ## Examples
 
@@ -187,6 +222,14 @@ record!(
 ```
 
 ![Animation Example](docs/images/animation_sine_wave.gif)
+
+### Typst Text Example
+
+Run:
+
+```bash
+cargo run --example doc_typst_text --features typst-math
+```
 
 ## Documentation
 

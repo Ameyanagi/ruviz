@@ -25,7 +25,7 @@ use crate::core::{SpacingConfig, TypographyConfig};
 pub struct TextPosition {
     /// Horizontal position (center for centered text, left edge otherwise)
     pub x: f32,
-    /// Vertical position (baseline for horizontal text, center for rotated)
+    /// Vertical position (top for horizontal text, center for rotated)
     pub y: f32,
     /// Font size in pixels
     pub size: f32,
@@ -73,16 +73,16 @@ pub struct PlotLayout {
     /// The plotting area where data is drawn
     pub plot_area: LayoutRect,
 
-    /// Title position (baseline center point), None if no title
+    /// Title position (top center point), None if no title
     pub title_pos: Option<TextPosition>,
 
-    /// X-axis label position (baseline center point)
+    /// X-axis label position (top center point)
     pub xlabel_pos: Option<TextPosition>,
 
     /// Y-axis label position (center point, rotated 90° CCW)
     pub ylabel_pos: Option<TextPosition>,
 
-    /// Y-coordinate for x-axis tick label baselines
+    /// Y-coordinate for x-axis tick label top positions
     pub xtick_baseline_y: f32,
 
     /// X-coordinate for right edge of y-axis tick labels
@@ -129,6 +129,17 @@ impl PlotContent {
         self.max_xtick_chars = max_xtick;
         self
     }
+}
+
+/// Optional pre-measured text dimensions `(width, height)` in pixels.
+///
+/// `ylabel` is measured in its unrotated orientation; layout uses its measured
+/// height as horizontal footprint because ylabel is rendered rotated.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MeasuredDimensions {
+    pub title: Option<(f32, f32)>,
+    pub xlabel: Option<(f32, f32)>,
+    pub ylabel: Option<(f32, f32)>,
 }
 
 // =============================================================================
@@ -204,6 +215,7 @@ impl LayoutCalculator {
     /// * `typography` - Font size configuration
     /// * `spacing` - Padding configuration
     /// * `dpi` - Dots per inch for unit conversion
+    /// * `measurements` - Optional pre-measured text dimensions in pixels
     pub fn compute(
         &self,
         canvas_size: (u32, u32),
@@ -211,6 +223,7 @@ impl LayoutCalculator {
         typography: &TypographyConfig,
         spacing: &SpacingConfig,
         dpi: f32,
+        measurements: Option<&MeasuredDimensions>,
     ) -> PlotLayout {
         let (canvas_width, canvas_height) = (canvas_size.0 as f32, canvas_size.1 as f32);
 
@@ -228,21 +241,31 @@ impl LayoutCalculator {
         let tick_size_px = pt_to_px(typography.tick_size());
 
         // Step 1: Measure/estimate content sizes
+        let measured_title = measurements.and_then(|m| m.title);
+        let measured_xlabel = measurements.and_then(|m| m.xlabel);
+        let measured_ylabel = measurements.and_then(|m| m.ylabel);
+
         let title_height = if content.title.is_some() {
-            estimate_text_height(title_size_px)
+            measured_title
+                .map(|(_, h)| h)
+                .unwrap_or_else(|| estimate_text_height(title_size_px))
         } else {
             0.0
         };
 
         let xlabel_height = if content.xlabel.is_some() {
-            estimate_text_height(label_size_px)
+            measured_xlabel
+                .map(|(_, h)| h)
+                .unwrap_or_else(|| estimate_text_height(label_size_px))
         } else {
             0.0
         };
 
         let ylabel_width = if content.ylabel.is_some() {
             // Rotated text: height becomes width
-            estimate_text_height(label_size_px)
+            measured_ylabel
+                .map(|(_, h)| h)
+                .unwrap_or_else(|| estimate_text_height(label_size_px))
         } else {
             0.0
         };
@@ -297,7 +320,7 @@ impl LayoutCalculator {
         };
 
         // Step 5: Position elements - centered on PLOT AREA, not canvas
-        // Note: y positions are the TOP of the text rendering area
+        // Note: y positions are the TOP of the text rendering area.
         let title_pos = content.title.as_ref().map(|_| TextPosition {
             x: plot_area.center_x(), // Centered on plot area
             y: edge_buffer,          // Title top at edge buffer
@@ -383,6 +406,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // Plot area should have positive dimensions
@@ -400,6 +424,95 @@ mod tests {
     }
 
     #[test]
+    fn test_layout_horizontal_text_positions_use_top_origin() {
+        let calculator = LayoutCalculator::default();
+        let content = PlotContent::new()
+            .with_title("Baseline Title")
+            .with_xlabel("Baseline X");
+        let typography = default_typography();
+        let spacing = default_spacing();
+
+        let layout = calculator.compute((640, 480), &content, &typography, &spacing, 100.0, None);
+
+        let pt_to_px = |pt: f32| pt * 100.0 / 72.0;
+        let edge_buffer = pt_to_px(LayoutConfig::default().edge_buffer_pt);
+        let expected_title_top = edge_buffer;
+        let expected_xlabel_top =
+            480.0 - edge_buffer - estimate_text_height(pt_to_px(typography.label_size()));
+
+        let title = layout.title_pos.expect("title should be present");
+        let xlabel = layout.xlabel_pos.expect("xlabel should be present");
+
+        assert!((title.y - expected_title_top).abs() < 1.0);
+        assert!((xlabel.y - expected_xlabel_top).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_layout_uses_measured_dimensions_when_provided() {
+        let calculator = LayoutCalculator::default();
+        let content = PlotContent::new()
+            .with_title("Measured Title")
+            .with_xlabel("Measured X")
+            .with_ylabel("Measured Y");
+
+        let estimated = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        let measured_dims = MeasuredDimensions {
+            title: Some((180.0, 42.0)),
+            xlabel: Some((120.0, 34.0)),
+            ylabel: Some((140.0, 50.0)),
+        };
+        let measured = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            Some(&measured_dims),
+        );
+
+        assert!(measured.margins.top > estimated.margins.top);
+        assert!(measured.margins.bottom > estimated.margins.bottom);
+        assert!(measured.margins.left > estimated.margins.left);
+    }
+
+    #[test]
+    fn test_layout_empty_measurements_match_estimates() {
+        let calculator = LayoutCalculator::default();
+        let content = PlotContent::new()
+            .with_title("Title")
+            .with_xlabel("X")
+            .with_ylabel("Y");
+
+        let estimated = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+        let empty = MeasuredDimensions::default();
+        let with_empty = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            Some(&empty),
+        );
+
+        assert_eq!(estimated, with_empty);
+    }
+
+    #[test]
     fn test_layout_no_title() {
         let calculator = LayoutCalculator::default();
         let content = PlotContent::new().with_xlabel("X").with_ylabel("Y");
@@ -410,6 +523,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // No title position
@@ -430,6 +544,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // No title or label positions
@@ -456,6 +571,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // At 100 DPI, 10pt = ~14px
@@ -479,6 +595,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // With centering enabled, right margin should equal left margin
@@ -519,6 +636,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // Margin should be clamped to 30% of width = 60px
@@ -539,6 +657,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // Plot area should still have positive dimensions
@@ -567,6 +686,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // Plot area should still have positive dimensions
@@ -593,6 +713,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         // Even on very small canvas, plot area should be valid
@@ -618,6 +739,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             100.0,
+            None,
         );
 
         let layout_200dpi = calculator.compute(
@@ -626,6 +748,7 @@ mod tests {
             &default_typography(),
             &default_spacing(),
             200.0,
+            None,
         );
 
         // At 2x DPI with 2x canvas, proportions should be similar

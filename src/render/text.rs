@@ -30,6 +30,7 @@ use tiny_skia::{Pixmap, PremultipliedColorU8};
 
 use crate::core::error::{PlottingError, Result};
 use crate::render::Color;
+use crate::render::text_anchor::TextPlacementMetrics;
 
 // =============================================================================
 // Global Singletons
@@ -325,7 +326,7 @@ impl TextRenderer {
     /// * `pixmap` - Target pixmap to render into
     /// * `text` - Text string to render (supports Unicode)
     /// * `x` - X coordinate for text origin
-    /// * `y` - Y coordinate for text baseline
+    /// * `y` - Y coordinate for text top origin
     /// * `config` - Font configuration (family, size, weight, style)
     /// * `color` - Text color
     ///
@@ -436,7 +437,7 @@ impl TextRenderer {
     /// * `pixmap` - Target pixmap to render into
     /// * `text` - Text string to render
     /// * `center_x` - X coordinate for horizontal center
-    /// * `y` - Y coordinate for text baseline
+    /// * `y` - Y coordinate for text top origin
     /// * `config` - Font configuration
     /// * `color` - Text color
     pub fn render_text_centered(
@@ -478,8 +479,6 @@ impl TextRenderer {
             return Ok(());
         }
 
-        // Native resolution rendering - font rasterizer provides anti-aliasing
-        // 90° rotation is lossless (pixel coordinate swap)
         let mut font_system = get_font_system()
             .lock()
             .map_err(|e| PlottingError::RenderError(format!("Failed to lock FontSystem: {}", e)))?;
@@ -491,10 +490,10 @@ impl TextRenderer {
         let metrics = Metrics::new(config.size, config.size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
 
-        // Use generous buffer size to avoid clipping
-        let dpi_scale = config.size / 12.0;
-        let buffer_width = (text.len() as f32 * config.size * 2.5 * dpi_scale).max(800.0);
-        let buffer_height = (config.size * 6.0 * dpi_scale).max(180.0);
+        // Use a generous shaping buffer. Tight placement bounds are computed from
+        // rasterized glyph pixels rather than heuristic constants.
+        let buffer_width = (text.len() as f32 * config.size * 3.0).max(800.0);
+        let buffer_height = (config.size * 6.0).max(180.0);
 
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
@@ -502,42 +501,42 @@ impl TextRenderer {
         buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
         buffer.shape_until_scroll(&mut font_system, false);
 
-        // Calculate text bounds
-        let mut max_x = 0.0f32;
-        let mut max_y = 0.0f32;
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
+        let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
 
+        // Compute tight bounds from rasterized glyph pixels.
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
         for run in buffer.layout_runs() {
             let line_y = run.line_y;
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((0., line_y), 1.0);
-                let gx = physical_glyph.x as f32;
-                let gy = physical_glyph.y as f32;
-
-                min_x = min_x.min(gx);
-                min_y = min_y.min(gy);
-                max_x = max_x.max(gx + 20.0); // Glyph width estimate
-                max_y = max_y.max(gy + run.line_height);
+                swash_cache.with_pixels(
+                    &mut font_system,
+                    physical_glyph.cache_key,
+                    cosmic_color,
+                    |dx, dy, glyph_color| {
+                        if glyph_color.a() == 0 {
+                            return;
+                        }
+                        let px = physical_glyph.x + dx;
+                        let py = physical_glyph.y + dy;
+                        min_x = min_x.min(px);
+                        min_y = min_y.min(py);
+                        max_x = max_x.max(px);
+                        max_y = max_y.max(py);
+                    },
+                );
             }
         }
 
-        if min_x == f32::MAX {
-            min_x = 0.0;
-            min_y = 0.0;
-            max_x = text.len() as f32 * config.size * 0.6;
-            max_y = config.size * 1.2;
+        if min_x == i32::MAX || min_y == i32::MAX {
+            return Ok(());
         }
 
-        // Generous padding to prevent clipping
-        let padding = 30.0 * dpi_scale;
-        min_x -= padding;
-        min_y -= padding;
-        max_x += padding;
-        max_y += padding;
-
-        let text_width = (max_x - min_x).ceil().max(1.0) as u32;
-        let text_height = (max_y - min_y).ceil().max(1.0) as u32;
+        let text_width = (max_x - min_x + 1).max(1) as u32;
+        let text_height = (max_y - min_y + 1).max(1) as u32;
 
         // Create temporary pixmap for horizontal text
         let mut temp_pixmap = Pixmap::new(text_width, text_height).ok_or_else(|| {
@@ -545,9 +544,7 @@ impl TextRenderer {
         })?;
         temp_pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
-        let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
-
-        // Render glyphs to temporary pixmap
+        // Render glyphs to tight temporary pixmap.
         for run in buffer.layout_runs() {
             let line_y = run.line_y;
             for glyph in run.glyphs.iter() {
@@ -558,15 +555,12 @@ impl TextRenderer {
                     physical_glyph.cache_key,
                     cosmic_color,
                     |dx, dy, glyph_color| {
-                        let glyph_x_calc = (physical_glyph.x as f32 - min_x) as i32 + dx;
-                        let glyph_y_calc = (physical_glyph.y as f32 - min_y) as i32 + dy;
-
-                        if glyph_x_calc < 0 || glyph_y_calc < 0 {
+                        if glyph_color.a() == 0 {
                             return;
                         }
 
-                        let glyph_x = glyph_x_calc as u32;
-                        let glyph_y = glyph_y_calc as u32;
+                        let glyph_x = (physical_glyph.x + dx - min_x) as u32;
+                        let glyph_y = (physical_glyph.y + dy - min_y) as u32;
 
                         if glyph_x < text_width && glyph_y < text_height {
                             let idx = glyph_y as usize * text_width as usize + glyph_x as usize;
@@ -577,9 +571,7 @@ impl TextRenderer {
                                     glyph_color.b(),
                                     glyph_color.a(),
                                 ) {
-                                    if rgba_pixel.alpha() > 0 {
-                                        temp_pixmap.pixels_mut()[idx] = rgba_pixel;
-                                    }
+                                    temp_pixmap.pixels_mut()[idx] = rgba_pixel;
                                 }
                             }
                         }
@@ -615,19 +607,13 @@ impl TextRenderer {
             }
         }
 
-        // Composite to main pixmap with alpha blending
+        // Composite to main pixmap with alpha blending. Keep center anchor
+        // stable by avoiding clamp-based position adjustments.
         let canvas_width = pixmap.width();
         let canvas_height = pixmap.height();
 
-        let margin_x = (rotated_width / 2) as i32;
-        let margin_y = (rotated_height / 2) as i32;
-
-        let target_x = (x as i32 - margin_x)
-            .max(0)
-            .min((canvas_width as i32) - (rotated_width as i32));
-        let target_y = (y as i32 - margin_y)
-            .max(0)
-            .min((canvas_height as i32) - (rotated_height as i32));
+        let target_x = (x - rotated_width as f32 / 2.0).floor() as i32;
+        let target_y = (y - rotated_height as f32 / 2.0).floor() as i32;
 
         for py in 0..rotated_height {
             for px in 0..rotated_width {
@@ -673,19 +659,16 @@ impl TextRenderer {
         Ok(())
     }
 
-    /// Measure text dimensions for layout calculations
+    /// Measure text placement metrics for layout/anchor conversion.
     ///
-    /// # Arguments
-    ///
-    /// * `text` - Text string to measure
-    /// * `config` - Font configuration
-    ///
-    /// # Returns
-    ///
-    /// Returns `(width, height)` in pixels.
-    pub fn measure_text(&self, text: &str, config: &FontConfig) -> Result<(f32, f32)> {
+    /// Returns width/height and baseline offset from top origin.
+    pub(crate) fn measure_text_placement(
+        &self,
+        text: &str,
+        config: &FontConfig,
+    ) -> Result<TextPlacementMetrics> {
         if text.is_empty() {
-            return Ok((0.0, config.size));
+            return Ok(TextPlacementMetrics::new(0.0, config.size, config.size));
         }
 
         let mut font_system = get_font_system()
@@ -705,13 +688,33 @@ impl TextRenderer {
 
         let mut width: f32 = 0.0;
         let mut height: f32 = 0.0;
+        let mut baseline_from_top: Option<f32> = None;
 
         for run in buffer.layout_runs() {
             width = width.max(run.line_w);
             height = height.max(run.line_height);
+            if baseline_from_top.is_none() {
+                baseline_from_top = Some(run.line_y);
+            }
         }
 
-        Ok((width, height))
+        let baseline_from_top = baseline_from_top.unwrap_or(height);
+        Ok(TextPlacementMetrics::new(width, height, baseline_from_top))
+    }
+
+    /// Measure text dimensions for layout calculations
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - Text string to measure
+    /// * `config` - Font configuration
+    ///
+    /// # Returns
+    ///
+    /// Returns `(width, height)` in pixels.
+    pub fn measure_text(&self, text: &str, config: &FontConfig) -> Result<(f32, f32)> {
+        let placement = self.measure_text_placement(text, config)?;
+        Ok((placement.width, placement.height))
     }
 }
 

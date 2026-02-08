@@ -53,6 +53,8 @@ pub enum PlottingError {
     },
     /// LaTeX rendering error (when feature enabled)
     LatexError(String),
+    /// Typst rendering error
+    TypstError(String),
     /// Performance limit exceeded
     PerformanceLimit {
         limit_type: String,
@@ -230,6 +232,9 @@ impl fmt::Display for PlottingError {
             },
             PlottingError::LatexError(msg) => {
                 write!(f, "LaTeX rendering error: {}", msg)
+            }
+            PlottingError::TypstError(msg) => {
+                write!(f, "Typst rendering error: {}", msg)
             }
             PlottingError::PerformanceLimit {
                 limit_type,
