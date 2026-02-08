@@ -207,6 +207,109 @@ where
     }
 }
 
+macro_rules! impl_numeric_data_1d_for_primitive_collections {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl NumericData1D for Vec<$ty> {
+                fn len(&self) -> usize {
+                    Vec::len(self)
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok(self.iter().map(|v| *v as f64).collect())
+                }
+            }
+
+            impl NumericData1D for &Vec<$ty> {
+                fn len(&self) -> usize {
+                    (**self).len()
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok((**self).iter().map(|v| *v as f64).collect())
+                }
+            }
+
+            impl<const N: usize> NumericData1D for [$ty; N] {
+                fn len(&self) -> usize {
+                    N
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok(self.iter().map(|v| *v as f64).collect())
+                }
+            }
+
+            impl<const N: usize> NumericData1D for &[$ty; N] {
+                fn len(&self) -> usize {
+                    N
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok((**self).iter().map(|v| *v as f64).collect())
+                }
+            }
+
+            impl NumericData1D for &[$ty] {
+                fn len(&self) -> usize {
+                    (**self).len()
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok((**self).iter().map(|v| *v as f64).collect())
+                }
+            }
+
+            #[cfg(feature = "ndarray_support")]
+            impl NumericData1D for ndarray::Array1<$ty> {
+                fn len(&self) -> usize {
+                    self.len()
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok(self.iter().map(|v| *v as f64).collect())
+                }
+            }
+
+            #[cfg(feature = "ndarray_support")]
+            impl<'a> NumericData1D for ndarray::ArrayView1<'a, $ty> {
+                fn len(&self) -> usize {
+                    self.len()
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok(self.iter().map(|v| *v as f64).collect())
+                }
+            }
+        )+
+    };
+}
+
+impl_numeric_data_1d_for_primitive_collections!(
+    f32, i64, i32, i16, i8, u64, u32, u16, u8, isize, usize
+);
+
 /// Fallible numeric ingestion contract for 2D plotting data (heatmap-style).
 pub trait NumericData2D {
     /// Returns `(rows, cols)`.
@@ -634,6 +737,13 @@ mod tests {
         let data = vec![1.0, 2.0, 3.0];
         let collected = data.try_collect_f64().unwrap();
         assert_eq!(collected, data);
+    }
+
+    #[test]
+    fn test_numeric_data1d_collect_integer() {
+        let data = vec![1_i32, 2, 3];
+        let collected = data.try_collect_f64().unwrap();
+        assert_eq!(collected, vec![1.0, 2.0, 3.0]);
     }
 
     #[test]

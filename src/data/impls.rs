@@ -18,7 +18,13 @@ where
 {
     let (rows, cols) = data.shape();
     let values = data.try_collect_row_major_f64()?;
-    if rows.checked_mul(cols).unwrap_or(usize::MAX) != values.len() {
+    let Some(expected_len) = rows.checked_mul(cols) else {
+        return Err(PlottingError::DataExtractionFailed {
+            source: "NumericData2D".to_string(),
+            message: format!("shape {}x{} causes integer overflow", rows, cols),
+        });
+    };
+    if expected_len != values.len() {
         return Err(PlottingError::DataExtractionFailed {
             source: "NumericData2D".to_string(),
             message: format!(
@@ -30,4 +36,57 @@ where
         });
     }
     Ok((values, rows, cols))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct OverflowShapeData;
+
+    impl NumericData2D for OverflowShapeData {
+        fn shape(&self) -> (usize, usize) {
+            (usize::MAX, 2)
+        }
+
+        fn try_collect_row_major_f64(&self) -> Result<Vec<f64>> {
+            Ok(vec![])
+        }
+    }
+
+    struct MismatchShapeData;
+
+    impl NumericData2D for MismatchShapeData {
+        fn shape(&self) -> (usize, usize) {
+            (2, 2)
+        }
+
+        fn try_collect_row_major_f64(&self) -> Result<Vec<f64>> {
+            Ok(vec![1.0, 2.0, 3.0])
+        }
+    }
+
+    #[test]
+    fn test_collect_numeric_data_2d_overflow_shape() {
+        let err = collect_numeric_data_2d(&OverflowShapeData).unwrap_err();
+        match err {
+            PlottingError::DataExtractionFailed { source, message } => {
+                assert_eq!(source, "NumericData2D");
+                assert!(message.contains("integer overflow"));
+            }
+            other => panic!("expected DataExtractionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_collect_numeric_data_2d_shape_mismatch() {
+        let err = collect_numeric_data_2d(&MismatchShapeData).unwrap_err();
+        match err {
+            PlottingError::DataExtractionFailed { source, message } => {
+                assert_eq!(source, "NumericData2D");
+                assert!(message.contains("does not match collected length"));
+            }
+            other => panic!("expected DataExtractionFailed, got {other:?}"),
+        }
+    }
 }
