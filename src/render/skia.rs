@@ -3735,6 +3735,7 @@ mod tests {
         assert_eq!(ticks, vec![5.0, 5.0]);
     }
 
+    #[cfg(feature = "typst-math")]
     #[test]
     fn test_typst_raster_uses_native_1x_scale() {
         let theme = Theme::default();
