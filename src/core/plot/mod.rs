@@ -146,6 +146,7 @@ pub struct Plot {
 #[derive(Clone, Debug)]
 struct PendingIngestionError {
     kind: PendingIngestionErrorKind,
+    additional_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -200,11 +201,18 @@ impl PendingIngestionError {
             },
         };
 
-        Self { kind }
+        Self {
+            kind,
+            additional_count: 0,
+        }
+    }
+
+    fn record_additional_error(&mut self) {
+        self.additional_count = self.additional_count.saturating_add(1);
     }
 
     fn to_plotting_error(&self) -> PlottingError {
-        match &self.kind {
+        let primary_error = match &self.kind {
             PendingIngestionErrorKind::DataTypeUnsupported {
                 source,
                 dtype,
@@ -232,6 +240,20 @@ impl PendingIngestionError {
             PendingIngestionErrorKind::InvalidInput(message) => {
                 PlottingError::InvalidInput(message.clone())
             }
+        };
+
+        if self.additional_count == 0 {
+            return primary_error;
+        }
+
+        PlottingError::DataExtractionFailed {
+            source: "ruviz::plot-ingestion".to_string(),
+            message: format!(
+                "{} (and {} additional ingestion error{})",
+                primary_error,
+                self.additional_count,
+                if self.additional_count == 1 { "" } else { "s" }
+            ),
         }
     }
 }
@@ -790,7 +812,9 @@ impl Plot {
     }
 
     fn set_pending_ingestion_error(&mut self, err: PlottingError) {
-        if self.pending_ingestion_error.is_none() {
+        if let Some(existing) = &mut self.pending_ingestion_error {
+            existing.record_additional_error();
+        } else {
             self.pending_ingestion_error = Some(PendingIngestionError::from_plotting_error(err));
         }
     }
@@ -9371,6 +9395,25 @@ impl PlotSeriesBuilder {
 mod tests {
     use super::*;
 
+    #[derive(Debug)]
+    struct FailingIngestionData;
+
+    impl crate::data::NumericData1D for FailingIngestionData {
+        fn len(&self) -> usize {
+            3
+        }
+
+        fn try_collect_f64_with_policy(
+            &self,
+            _null_policy: crate::data::NullPolicy,
+        ) -> crate::core::Result<Vec<f64>> {
+            Err(PlottingError::DataExtractionFailed {
+                source: "test::failing-ingestion".to_string(),
+                message: "forced ingestion failure".to_string(),
+            })
+        }
+    }
+
     #[test]
     fn test_get_theme_method() {
         use crate::render::Theme;
@@ -9386,6 +9429,36 @@ mod tests {
         let plot = Plot::new().theme(custom_theme);
         let _retrieved_theme = plot.get_theme();
         // Test passes if no panic occurs
+    }
+
+    #[test]
+    fn test_pending_ingestion_error_preserves_single_error_shape() {
+        let bad = FailingIngestionData;
+        let y = vec![1.0, 2.0, 3.0];
+
+        let err = Plot::new().line(&bad, &y).render().unwrap_err();
+        match err {
+            PlottingError::DataExtractionFailed { source, message } => {
+                assert_eq!(source, "test::failing-ingestion");
+                assert_eq!(message, "forced ingestion failure");
+            }
+            other => panic!("expected DataExtractionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pending_ingestion_error_reports_additional_failures() {
+        let bad = FailingIngestionData;
+
+        let err = Plot::new().line(&bad, &bad).render().unwrap_err();
+        match err {
+            PlottingError::DataExtractionFailed { source, message } => {
+                assert_eq!(source, "ruviz::plot-ingestion");
+                assert!(message.contains("forced ingestion failure"));
+                assert!(message.contains("1 additional ingestion error"));
+            }
+            other => panic!("expected DataExtractionFailed, got {other:?}"),
+        }
     }
 
     #[test]
