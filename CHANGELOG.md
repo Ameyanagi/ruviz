@@ -13,11 +13,14 @@ All notable changes to this project will be documented in this file.
 - Added global Typst text mode via `Plot::typst(bool)` and builder forwarding.
 - Added optional `typst-math` feature for Typst-backed text rendering across PNG/SVG/PDF export.
 - Added strict Typst error behavior: invalid Typst now fails render/export with `TypstError`.
+- Added ecosystem data ingestion support for `polars`, `ndarray`, and `nalgebra`.
 
 ### Changed
 
 - Improved Typst text layout fidelity by aligning baseline/anchor semantics across layout, raster, and SVG paths.
 - Fixed Typst title/label clipping and spacing drift in visual outputs (no public API changes).
+- Removed Typst raster text oversampling and simplified native-scale raster handling.
+- Stabilized the test suite and split CI into focused lanes for more reliable export and visual checks.
 
 ## [0.1.2] - 2026-01-30
 
