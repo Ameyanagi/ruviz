@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 cargo run
 ```
 
-**Output**: `my_first_plot.png` with a line plot of y = x²
+**Output**: `my_first_plot.png` with a line plot of y = x^2
 
 ## Understanding the Code
 

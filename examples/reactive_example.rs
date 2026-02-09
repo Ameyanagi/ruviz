@@ -72,15 +72,15 @@ fn derived_observables() {
     let cubed = lift(&x, |v| v * v * v);
 
     println!("x = {}", *x.read());
-    println!("x² = {} (auto-computed)", *squared.read());
-    println!("x³ = {} (auto-computed)", *cubed.read());
+    println!("x^2 = {} (auto-computed)", *squared.read());
+    println!("x^3 = {} (auto-computed)", *cubed.read());
 
     // Update x - derived values update automatically!
     x.set(4.0);
     println!("\nAfter x.set(4.0):");
     println!("x = {}", *x.read());
-    println!("x² = {} (auto-updated)", *squared.read());
-    println!("x³ = {} (auto-updated)", *cubed.read());
+    println!("x^2 = {} (auto-updated)", *squared.read());
+    println!("x^3 = {} (auto-updated)", *cubed.read());
 
     // lift2 for combining two observables
     let a = Observable::new(10.0);

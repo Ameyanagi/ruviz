@@ -14,11 +14,16 @@ fn main() -> Result<()> {
     let y_lower: Vec<f64> = y.iter().map(|&yi| (yi - 1.0).max(0.0)).collect();
 
     // Create plot with annotations
-    Plot::new()
+    let plot = Plot::new()
         .line(&x, &y)
         .title("Annotations Demo")
-        .xlabel("X")
-        .ylabel("Y = X² / 10")
+        .xlabel("X");
+    #[cfg(feature = "typst-math")]
+    let plot = plot.ylabel("$Y = X^2 / 10$").typst(true);
+    #[cfg(not(feature = "typst-math"))]
+    let plot = plot.ylabel("Y = X^2 / 10");
+
+    plot
         // Add text annotation at peak
         .annotate(Annotation::text(9.0, 8.0, "Peak region"))
         // Add an arrow pointing to a specific data point

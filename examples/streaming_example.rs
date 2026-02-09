@@ -52,13 +52,17 @@ fn basic_streaming() {
     println!("Total length: {}", stream.len());
 
     // Create a plot from streaming data
-    Plot::new()
+    let plot = Plot::new()
         .line_streaming(&stream)
         .color(Color::new(31, 119, 180))
-        .title("Streaming Line Plot (x²)")
         .xlabel("X")
-        .ylabel("Y")
-        .save("examples/output/streaming_basic.png")
+        .ylabel("Y");
+    #[cfg(feature = "typst-math")]
+    let plot = plot.title("Streaming Line Plot ($x^2$)").typst(true);
+    #[cfg(not(feature = "typst-math"))]
+    let plot = plot.title("Streaming Line Plot (x^2)");
+
+    plot.save("examples/output/streaming_basic.png")
         .expect("Failed to save plot");
 
     println!("Saved: examples/output/streaming_basic.png\n");

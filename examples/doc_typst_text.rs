@@ -11,8 +11,8 @@ fn run() -> Result<()> {
 
     Plot::new()
         .line(&x, &y)
-        .label("$e^{-x}$")
-        .title("Exponential Decay: $f(x) = e^{-x}$")
+        .label("$e^(-x)$")
+        .title("Exponential Decay: $f(x) = e^(-x)$")
         .xlabel("Time $t$")
         .ylabel("Amplitude $A(t)$")
         .typst(true)

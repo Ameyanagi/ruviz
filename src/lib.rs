@@ -654,7 +654,7 @@
 //!     .line(&x, &y)
 //!     .title("Quadratic Function")
 //!     .xlabel("x")
-//!     .ylabel("y = x²")
+//!     .ylabel("y = x^2")
 //!     .save("plot.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

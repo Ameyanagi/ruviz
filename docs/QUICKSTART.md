@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         .line(&x, &y)
         .title("My First Plot")
         .xlabel("x")
-        .ylabel("y = x²")
+        .ylabel("y = x^2")
         .save("plot.png")?;
 
     println!("Plot saved to plot.png!");
@@ -44,6 +44,34 @@ cargo run --release
 ```
 
 You should now have a `plot.png` file in your project directory!
+
+## Optional: Math Labels with Typst
+
+If you want publication-style math in labels and titles, enable Typst text rendering:
+
+```toml
+[dependencies]
+ruviz = { version = "0.1", features = ["typst-math"] }
+```
+
+```rust
+use ruviz::prelude::*;
+
+fn main() -> Result<()> {
+    let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
+
+    Plot::new()
+        .line(&x, &y)
+        .title("Quadratic: $y = x^2$")
+        .xlabel("$x$")
+        .ylabel("$y$")
+        .typst(true)
+        .save("plot_typst.png")?;
+
+    Ok(())
+}
+```
 
 ## Your First Real Plot
 

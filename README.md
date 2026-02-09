@@ -19,9 +19,11 @@ Plot::new()
     .line(&x, &y)
     .title("Quadratic Function")
     .xlabel("x")
-    .ylabel("y = x²")
+    .ylabel("y = x^2")
     .save("plot.png")?;
 ```
+
+Need typeset math labels? See [Typst Text Mode](#typst-text-mode) below.
 
 ![Example Plot](assets/readme_example.png)
 
@@ -111,7 +113,7 @@ let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
 Plot::new()
     .line(&x, &y)
-    .title("$f(x) = e^{-x}$")
+    .title("$f(x) = e^(-x)$")
     .xlabel("$x$")
     .ylabel("$f(x)$")
     .typst(true)

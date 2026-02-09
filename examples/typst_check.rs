@@ -12,13 +12,13 @@ fn run() -> Result<()> {
 
     // Plain and Typst outputs are generated side-by-side for visual parity checks.
     let title_plain = "Parity Check: f(x) = e^-x";
-    let title_typst = "Parity Check: $f(x) = e^{-x}$";
+    let title_typst = "Parity Check: $f(x) = e^(-x)$";
     let xlabel_plain = "Time t";
     let xlabel_typst = "Time $t$";
     let ylabel_plain = "Amplitude A(t)";
     let ylabel_typst = "Amplitude $A(t)$";
     let legend_plain = "e^-x";
-    let legend_typst = "$e^{-x}$";
+    let legend_typst = "$e^(-x)$";
 
     let plain_plot = Plot::new()
         .line(&x, &y)
