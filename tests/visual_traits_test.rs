@@ -75,7 +75,6 @@ fn test_line_visual() {
             .ylabel("Y")
             .line(&x, &y)
             .label("sin(x)")
-            .end_series()
             .legend_best()
             .grid(true)
             .save(path)?;
@@ -109,7 +108,6 @@ fn test_kde_visual() {
             .xlabel("Value")
             .ylabel("Density")
             .histogram(&data, Some(hist_config))
-            .end_series()
             .grid(true)
             .save(path)?;
         Ok(())
@@ -140,7 +138,6 @@ fn test_ecdf_visual() {
             .xlabel("Value")
             .ylabel("Cumulative Probability")
             .line(&sorted, &y)
-            .end_series()
             .grid(true)
             .save(path)?;
         Ok(())
@@ -169,7 +166,6 @@ fn test_step_visual() {
             .xlabel("X")
             .ylabel("Y")
             .line(&x, &y)
-            .end_series()
             .grid(true)
             .save(path)?;
         Ok(())
@@ -199,7 +195,6 @@ fn test_errorbar_visual() {
             .xlabel("X")
             .ylabel("Y")
             .error_bars(&x, &y, &y_err)
-            .end_series()
             .grid(true)
             .save(path)?;
         Ok(())
@@ -226,7 +221,6 @@ fn test_scatter_visual() {
             .xlabel("X")
             .ylabel("Y")
             .scatter(&x, &y)
-            .end_series()
             .grid(true)
             .save(path)?;
         Ok(())
@@ -256,7 +250,6 @@ fn test_histogram_visual() {
             .xlabel("Value")
             .ylabel("Frequency")
             .histogram(&data, Some(hist_config))
-            .end_series()
             .grid(true)
             .save(path)?;
         Ok(())
@@ -282,7 +275,6 @@ fn test_boxplot_visual() {
             .title("Box Plot")
             .ylabel("Value")
             .boxplot(&data, None)
-            .end_series()
             .grid(true)
             .save(path)?;
         Ok(())
@@ -309,7 +301,7 @@ fn test_boxplot_visual() {
 //             .title("Violin Plot")
 //             .ylabel("Value")
 //             .violin(&data, None)
-//             .end_series()
+//
 //             .grid(true)
 //             .save(path)?;
 //         Ok(())
@@ -351,7 +343,7 @@ fn test_boxplot_visual() {
 //             .xlabel("X")
 //             .ylabel("Y")
 //             .contour(&x, &y, &z, None)
-//             .end_series()
+//
 //             .save(path)?;
 //         Ok(())
 //     });
@@ -383,7 +375,7 @@ fn test_boxplot_visual() {
 //         Plot::new()
 //             .title("Heatmap")
 //             .heatmap(&matrix, None)
-//             .end_series()
+//
 //             .save(path)?;
 //         Ok(())
 //     });
@@ -410,7 +402,7 @@ fn test_boxplot_visual() {
 //         Plot::new()
 //             .title("Radar Chart")
 //             .radar(&categories, &values, None)
-//             .end_series()
+//
 //             .save(path)?;
 //         Ok(())
 //     });

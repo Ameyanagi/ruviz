@@ -152,13 +152,12 @@ fn test_render_to_svg_method() {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
 
-    // Use end_series() to finalize the plot
+    // Build the plot directly; series finalization is implicit.
     let plot = Plot::new()
         .line(&x, &y)
         .title("Render to SVG Test")
         .xlabel("X")
-        .ylabel("Y")
-        .end_series();
+        .ylabel("Y");
 
     let result = plot.render_to_svg();
     assert!(

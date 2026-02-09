@@ -8,6 +8,8 @@ on:
   pull_request:
     branches: [ main, develop ]
   workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'
 
 env:
   CARGO_TERM_COLOR: always
@@ -53,8 +55,8 @@ jobs:
       - name: Run clippy
         run: cargo clippy -- -D warnings
 
-  test:
-    name: Test Suite
+  test-fast:
+    name: Test Fast Lane
     runs-on: ubuntu-latest
     needs: [fmt, clippy]
     steps:
@@ -73,14 +75,57 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Create test output directory
-        run: mkdir -p tests/output
+      - name: Create test output directories
+        run: |
+          mkdir -p tests/output
+          mkdir -p export_test_output/{png,svg,raw,direct}
 
-      - name: Run tests
-        run: cargo test --verbose
+      - name: Run library tests
+        run: cargo test --lib --verbose
+
+      - name: Compile integration tests
+        run: cargo test --tests --no-run --verbose
+
+      - name: Run fast deterministic integration suites
+        run: cargo test --test simple_api_test --test data_format_compatibility_test --test backend_parity_test --verbose
 
       - name: Run doc tests
         run: cargo test --doc --verbose
+
+  test-visual-heavy:
+    name: Test Visual Heavy Lane
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy]
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-visual-heavy-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Create test output directories
+        run: |
+          mkdir -p tests/output
+          mkdir -p export_test_output/{png,svg,raw,direct}
+
+      - name: Run visual output suite
+        run: cargo test --test visual_output_tests_fixed --verbose
+
+      - name: Run export format suite
+        run: cargo test --test export_format_tests --verbose
+
+      - name: Run heavy validation suites
+        run: cargo test --test performance_validation --verbose
 
   msrv:
     name: MSRV (1.87)

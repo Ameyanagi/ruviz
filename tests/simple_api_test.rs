@@ -14,7 +14,11 @@ fn test_line_plot_one_liner() {
     let result = line_plot(&x, &y, "tests/output/simple_line.png");
 
     // THEN: Should succeed and create file
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/simple_line.png").exists());
 }
 
@@ -28,7 +32,11 @@ fn test_scatter_plot_one_liner() {
     let result = scatter_plot(&x, &y, "tests/output/simple_scatter.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/simple_scatter.png").exists());
 }
 
@@ -42,7 +50,11 @@ fn test_bar_chart_one_liner() {
     let result = bar_chart(&categories, &values, "tests/output/simple_bar.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/simple_bar.png").exists());
 }
 
@@ -55,7 +67,11 @@ fn test_histogram_one_liner() {
     let result = histogram(&data, "tests/output/simple_histogram.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/simple_histogram.png").exists());
 }
 
@@ -74,7 +90,11 @@ fn test_line_plot_with_title() {
     );
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/simple_line_titled.png").exists());
 }
 
@@ -93,7 +113,11 @@ fn test_scatter_plot_with_title() {
     );
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -111,7 +135,11 @@ fn test_bar_chart_with_title() {
     );
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -127,7 +155,11 @@ fn test_histogram_with_title() {
     );
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -140,7 +172,11 @@ fn test_simple_api_auto_optimizes() {
     let result = line_plot(&x, &y, "tests/output/simple_optimized.png");
 
     // THEN: Should succeed (optimization happens internally)
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
 }
 
 #[test]

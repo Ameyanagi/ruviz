@@ -2,6 +2,9 @@
 //!
 //! Tests all available export formats: PNG, SVG, raw RGBA data, and direct SkiaRenderer exports
 
+mod common;
+
+use common::{assert_file_non_empty, assert_png_dimensions_with_tolerance, assert_png_rendered};
 use ruviz::prelude::*;
 use ruviz::render::skia::{SkiaRenderer, calculate_plot_area};
 use std::fs;
@@ -30,6 +33,10 @@ fn test_png_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .line(&x_data, &y_data);
 
     plot.save("export_test_output/png/01_plot_save_method.png")?;
+    assert_png_rendered(
+        "export_test_output/png/01_plot_save_method.png",
+        Some((640, 480)),
+    );
 
     // Test PNG export via render + manual save
     let plot2 = Plot::new()
@@ -37,10 +44,16 @@ fn test_png_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .scatter(&x_data, &y_data);
 
     let image = plot2.render()?;
+    let (image_width, image_height) = (image.width, image.height);
 
-    // Create renderer and save PNG directly
-    let mut renderer = SkiaRenderer::new(image.width, image.height, Theme::default())?;
+    // Draw rendered plot image into a renderer and save PNG
+    let mut renderer = SkiaRenderer::new(image_width, image_height, Theme::default())?;
+    renderer.draw_subplot(image, 0, 0)?;
     renderer.save_png("export_test_output/png/02_renderer_direct.png")?;
+    assert_png_rendered(
+        "export_test_output/png/02_renderer_direct.png",
+        Some((image_width, image_height)),
+    );
 
     println!("✅ PNG Export Tests Complete");
     Ok(())
@@ -50,24 +63,27 @@ fn test_png_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
 fn test_svg_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_export_dirs()?;
 
-    let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-    let y_data = vec![10.0, 25.0, 15.0, 30.0, 20.0];
-
     // Create renderer and test SVG export
-    let mut renderer = SkiaRenderer::new(800, 600, Theme::light())?;
+    let renderer = SkiaRenderer::new(800, 600, Theme::light())?;
 
     // Export SVG with different sizes
     renderer.export_svg("export_test_output/svg/01_standard_800x600.svg", 800, 600)?;
+    assert_file_non_empty("export_test_output/svg/01_standard_800x600.svg");
     renderer.export_svg("export_test_output/svg/02_large_1200x800.svg", 1200, 800)?;
+    assert_file_non_empty("export_test_output/svg/02_large_1200x800.svg");
     renderer.export_svg("export_test_output/svg/03_square_600x600.svg", 600, 600)?;
+    assert_file_non_empty("export_test_output/svg/03_square_600x600.svg");
     renderer.export_svg("export_test_output/svg/04_wide_1000x400.svg", 1000, 400)?;
+    assert_file_non_empty("export_test_output/svg/04_wide_1000x400.svg");
 
     // Test SVG with different themes
     let dark_renderer = SkiaRenderer::new(800, 600, Theme::dark())?;
     dark_renderer.export_svg("export_test_output/svg/05_dark_theme.svg", 800, 600)?;
+    assert_file_non_empty("export_test_output/svg/05_dark_theme.svg");
 
     let pub_renderer = SkiaRenderer::new(800, 600, Theme::publication())?;
     pub_renderer.export_svg("export_test_output/svg/06_publication_theme.svg", 800, 600)?;
+    assert_file_non_empty("export_test_output/svg/06_publication_theme.svg");
 
     println!("✅ SVG Export Tests Complete");
     Ok(())
@@ -89,6 +105,7 @@ fn test_raw_data_export() -> std::result::Result<(), Box<dyn std::error::Error>>
 
     // Save raw RGBA data
     fs::write("export_test_output/raw/01_rgba_data.bin", &image.pixels)?;
+    assert_file_non_empty("export_test_output/raw/01_rgba_data.bin");
 
     // Save image metadata
     let metadata = format!(
@@ -98,10 +115,11 @@ fn test_raw_data_export() -> std::result::Result<(), Box<dyn std::error::Error>>
         image.pixels.len()
     );
     fs::write("export_test_output/raw/01_rgba_data.txt", metadata)?;
+    assert_file_non_empty("export_test_output/raw/01_rgba_data.txt");
 
     // Test different sizes
     let small_plot = Plot::new()
-        .dimensions(400, 300)
+        .size_px(400, 300)
         .title("Small Raw Export".to_string())
         .scatter(&x_data, &y_data);
 
@@ -110,9 +128,10 @@ fn test_raw_data_export() -> std::result::Result<(), Box<dyn std::error::Error>>
         "export_test_output/raw/02_small_rgba.bin",
         &small_image.pixels,
     )?;
+    assert_file_non_empty("export_test_output/raw/02_small_rgba.bin");
 
     let large_plot = Plot::new()
-        .dimensions(1600, 1200)
+        .size_px(1600, 1200)
         .title("Large Raw Export".to_string())
         .bar(&["A", "B", "C", "D", "E"], &y_data);
 
@@ -121,6 +140,7 @@ fn test_raw_data_export() -> std::result::Result<(), Box<dyn std::error::Error>>
         "export_test_output/raw/03_large_rgba.bin",
         &large_image.pixels,
     )?;
+    assert_file_non_empty("export_test_output/raw/03_large_rgba.bin");
 
     println!("✅ Raw Data Export Tests Complete");
     Ok(())
@@ -151,6 +171,10 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
 
     // Save as PNG
     renderer.save_png("export_test_output/direct/01_manual_drawing.png")?;
+    assert_png_rendered(
+        "export_test_output/direct/01_manual_drawing.png",
+        Some((800, 600)),
+    );
 
     // Test different renderer configurations
     let mut dark_renderer = SkiaRenderer::new(600, 400, Theme::dark())?;
@@ -167,6 +191,10 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
         LineStyle::Dashed,
     )?;
     dark_renderer.save_png("export_test_output/direct/02_dark_polyline.png")?;
+    assert_png_rendered(
+        "export_test_output/direct/02_dark_polyline.png",
+        Some((600, 400)),
+    );
 
     // Test grid rendering
     let mut grid_renderer = SkiaRenderer::new(800, 600, Theme::light())?;
@@ -183,6 +211,10 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
     )?;
     grid_renderer.draw_axes(plot_area, &x_ticks, &y_ticks, Color::new(0, 0, 0))?;
     grid_renderer.save_png("export_test_output/direct/03_grid_and_axes.png")?;
+    assert_png_rendered(
+        "export_test_output/direct/03_grid_and_axes.png",
+        Some((800, 600)),
+    );
 
     println!("✅ Direct Renderer Export Tests Complete");
     Ok(())
@@ -208,28 +240,27 @@ fn test_all_themes_all_formats() -> std::result::Result<(), Box<dyn std::error::
             .title(format!("{} Theme PNG Test", theme_name))
             .line(&x_data, &y_data);
 
-        plot_png.save(&format!(
-            "export_test_output/png/theme_{}_{}.png",
-            theme_name, "line"
-        ))?;
+        let line_png = format!("export_test_output/png/theme_{}_{}.png", theme_name, "line");
+        plot_png.save(&line_png)?;
+        assert_png_rendered(&line_png, Some((640, 480)));
 
         // Test scatter with same theme
         let plot_scatter = Plot::with_theme(theme.clone())
             .title(format!("{} Theme Scatter Test", theme_name))
             .scatter(&x_data, &y_data);
 
-        plot_scatter.save(&format!(
+        let scatter_png = format!(
             "export_test_output/png/theme_{}_{}.png",
             theme_name, "scatter"
-        ))?;
+        );
+        plot_scatter.save(&scatter_png)?;
+        assert_png_rendered(&scatter_png, Some((640, 480)));
 
         // Test SVG export
         let renderer = SkiaRenderer::new(800, 600, theme.clone())?;
-        renderer.export_svg(
-            &format!("export_test_output/svg/theme_{}.svg", theme_name),
-            800,
-            600,
-        )?;
+        let svg_path = format!("export_test_output/svg/theme_{}.svg", theme_name);
+        renderer.export_svg(&svg_path, 800, 600)?;
+        assert_file_non_empty(&svg_path);
 
         // Test raw data export
         let plot_raw = Plot::with_theme(theme)
@@ -237,10 +268,9 @@ fn test_all_themes_all_formats() -> std::result::Result<(), Box<dyn std::error::
             .bar(&["A", "B", "C", "D", "E"], &y_data);
 
         let image = plot_raw.render()?;
-        fs::write(
-            &format!("export_test_output/raw/theme_{}.bin", theme_name),
-            &image.pixels,
-        )?;
+        let raw_path = format!("export_test_output/raw/theme_{}.bin", theme_name);
+        fs::write(&raw_path, &image.pixels)?;
+        assert_file_non_empty(&raw_path);
     }
 
     println!("✅ All Themes All Formats Tests Complete");
@@ -316,44 +346,43 @@ fn test_high_resolution_exports() -> std::result::Result<(), Box<dyn std::error:
     for (width, height, name) in resolutions {
         // Create plot for PNG save
         let plot = Plot::new()
-            .dimensions(width, height)
+            .size_px(width, height)
             .title(format!("High Resolution Test - {}", name.to_uppercase()))
             .xlabel("X Values".to_string())
             .ylabel("Sin(X) * 10".to_string())
             .line(&x_data, &y_data);
 
         // Save PNG
-        plot.save(&format!(
+        let png_path = format!(
             "export_test_output/png/resolution_{}_{}_{}x{}.png",
             name, "png", width, height
-        ))?;
+        );
+        plot.save(&png_path)?;
+        assert_png_dimensions_with_tolerance(&png_path, (width, height), 1);
 
         // Save SVG
         let renderer = SkiaRenderer::new(width, height, Theme::default())?;
-        renderer.export_svg(
-            &format!(
-                "export_test_output/svg/resolution_{}_{}_{}x{}.svg",
-                name, "svg", width, height
-            ),
-            width,
-            height,
-        )?;
+        let svg_path = format!(
+            "export_test_output/svg/resolution_{}_{}_{}x{}.svg",
+            name, "svg", width, height
+        );
+        renderer.export_svg(&svg_path, width, height)?;
+        assert_file_non_empty(&svg_path);
 
         // Create fresh plot for render
         let plot = Plot::new()
-            .dimensions(width, height)
+            .size_px(width, height)
             .title(format!("High Resolution Test - {}", name.to_uppercase()))
             .xlabel("X Values".to_string())
             .ylabel("Sin(X) * 10".to_string())
             .line(&x_data, &y_data);
         let image = plot.render()?;
-        fs::write(
-            &format!(
-                "export_test_output/raw/resolution_{}_{}_{}x{}.bin",
-                name, "raw", width, height
-            ),
-            &image.pixels,
-        )?;
+        let raw_path = format!(
+            "export_test_output/raw/resolution_{}_{}_{}x{}.bin",
+            name, "raw", width, height
+        );
+        fs::write(&raw_path, &image.pixels)?;
+        assert_file_non_empty(&raw_path);
 
         let size_info = format!(
             "Resolution: {}x{}\nSize: {} MB\nPixels: {}\nBytes: {}",
@@ -363,13 +392,12 @@ fn test_high_resolution_exports() -> std::result::Result<(), Box<dyn std::error:
             width * height,
             image.pixels.len()
         );
-        fs::write(
-            &format!(
-                "export_test_output/raw/resolution_{}_{}_{}x{}.txt",
-                name, "info", width, height
-            ),
-            size_info,
-        )?;
+        let info_path = format!(
+            "export_test_output/raw/resolution_{}_{}_{}x{}.txt",
+            name, "info", width, height
+        );
+        fs::write(&info_path, size_info)?;
+        assert_file_non_empty(&info_path);
     }
 
     println!("✅ High Resolution Export Tests Complete");

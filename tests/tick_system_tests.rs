@@ -7,7 +7,7 @@ fn test_default_tick_system() {
     let y_data = vec![0.0, 2.0, 4.0, 6.0, 8.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Default Tick System")
         .xlabel("X Axis")
         .ylabel("Y Axis")
@@ -23,7 +23,7 @@ fn test_ticks_inside_direction() {
     let y_data = vec![0.0, 25.0, 50.0, 75.0, 100.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Ticks Inside (Default)")
         .xlabel("Time (seconds)")
         .ylabel("Value")
@@ -40,7 +40,7 @@ fn test_ticks_outside_direction() {
     let y_data = vec![0.0, 25.0, 50.0, 75.0, 100.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Ticks Outside")
         .xlabel("Time (seconds)")
         .ylabel("Value")
@@ -57,7 +57,7 @@ fn test_major_minor_ticks() {
     let y_data = vec![0.0, 12.5, 25.0, 37.5, 50.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Major and Minor Ticks")
         .xlabel("Position")
         .ylabel("Measurement")
@@ -75,7 +75,7 @@ fn test_custom_tick_configuration() {
     let y_data = vec![0.0, 4.0, 8.0, 12.0, 16.0, 20.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Custom Tick Configuration")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -96,7 +96,7 @@ fn test_grid_with_major_ticks_only() {
     let y_data = vec![0.0, 10.0, 20.0, 30.0, 40.0, 50.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Grid with Major Ticks Only")
         .xlabel("X Axis")
         .ylabel("Y Axis")
@@ -116,7 +116,7 @@ fn test_grid_with_minor_ticks_only() {
     let y_data = vec![0.0, 7.5, 15.0, 22.5, 30.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Grid with Minor Ticks Only")
         .xlabel("X Axis")
         .ylabel("Y Axis")
@@ -136,7 +136,7 @@ fn test_grid_with_both_major_and_minor() {
     let y_data = vec![0.0, 16.0, 32.0, 48.0, 64.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Grid with Both Major and Minor Ticks")
         .xlabel("Time")
         .ylabel("Value")
@@ -159,7 +159,7 @@ fn test_tick_labels_positioning() {
     let y_data = vec![0.0, 100.0, 200.0, 300.0, 400.0, 500.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Tick Labels Properly Positioned")
         .xlabel("Input Values")
         .ylabel("Output Values")
@@ -178,7 +178,7 @@ fn test_scatter_with_improved_ticks() {
     let y_data = vec![2.3, 6.7, 12.1, 18.9, 25.6];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Scatter Plot with Improved Ticks")
         .xlabel("X Position")
         .ylabel("Y Position")
@@ -204,7 +204,7 @@ fn test_tight_layout_like_matplotlib() {
     let y_data = vec![0.0, 100.0, 200.0, 300.0, 400.0, 500.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Tight Layout Test - Auto Margin Adjustment")
         .xlabel("Very Long X Axis Label That Should Not Be Cut Off")
         .ylabel("Very Long Y Axis Label That Should Be Fully Visible")

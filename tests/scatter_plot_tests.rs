@@ -7,7 +7,7 @@ fn test_basic_scatter_plot() {
     let y_data = vec![2.0, 4.0, 1.0, 3.0, 5.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Basic Scatter Plot")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -44,7 +44,7 @@ fn test_scatter_plot_different_dpi() {
 
     for (dpi, filename) in dpi_values.iter().zip(filenames.iter()) {
         let result = Plot::new()
-            .dimensions(800, 600)
+            .size_px(800, 600)
             .dpi(*dpi)
             .title("DPI Scaling Test - Scatter")
             .xlabel("X Axis")
@@ -77,7 +77,7 @@ fn test_scatter_plot_with_custom_colors() {
     let y_data = vec![1.0, 4.0, 2.0, 3.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Custom Color Scatter Plot")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -99,7 +99,7 @@ fn test_multiple_scatter_series() {
     let y2_data = vec![1.0, 3.0, 2.0, 4.0, 1.5];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Multiple Scatter Series")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -126,7 +126,7 @@ fn test_scatter_plot_large_dataset() {
         .collect();
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Large Dataset Scatter Plot (1000 points)")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -146,7 +146,7 @@ fn test_scatter_plot_empty_data() {
 
     // This should fail when trying to render, not when creating the plot
     let plot = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Empty Scatter Plot")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -165,7 +165,7 @@ fn test_scatter_plot_mismatched_data() {
     let y_data = vec![1.0, 2.0]; // Different length
 
     // This should work at plot creation but fail at render/save due to validation
-    let plot = Plot::new().dimensions(800, 600).scatter(&x_data, &y_data);
+    let plot = Plot::new().size_px(800, 600).scatter(&x_data, &y_data);
 
     let result = plot.save("tests/output/scatter_mismatched.png");
     assert!(

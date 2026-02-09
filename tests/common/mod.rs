@@ -1,8 +1,8 @@
 //! Common test utilities for ruviz tests
 //!
-//! Provides helper functions for test output paths and other shared functionality.
+//! Provides helper functions for test output paths and output artifact validation.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Get the path for a test output file.
 ///
@@ -54,6 +54,100 @@ pub fn test_output_path_in(subdir: &str, filename: &str) -> PathBuf {
     }
 
     output_dir.join(filename)
+}
+
+/// Assert that a file exists and is non-empty.
+#[allow(dead_code)]
+pub fn assert_file_non_empty(path: impl AsRef<Path>) {
+    let path = path.as_ref();
+    assert!(path.exists(), "Expected file to exist: {}", path.display());
+    let metadata = std::fs::metadata(path)
+        .unwrap_or_else(|e| panic!("Failed to stat {}: {}", path.display(), e));
+    assert!(
+        metadata.len() > 0,
+        "Expected non-empty file, got {} bytes: {}",
+        metadata.len(),
+        path.display()
+    );
+}
+
+/// Assert that a PNG exists, decodes, and contains non-background pixels.
+/// Optionally verifies exact dimensions.
+#[allow(dead_code)]
+pub fn assert_png_rendered(path: impl AsRef<Path>, expected_dims: Option<(u32, u32)>) {
+    let path = path.as_ref();
+    assert_file_non_empty(path);
+
+    let img = image::open(path)
+        .unwrap_or_else(|e| panic!("Expected valid PNG at {}: {}", path.display(), e))
+        .to_rgba8();
+
+    if let Some((expected_w, expected_h)) = expected_dims {
+        assert_eq!(
+            img.width(),
+            expected_w,
+            "Unexpected PNG width for {}",
+            path.display()
+        );
+        assert_eq!(
+            img.height(),
+            expected_h,
+            "Unexpected PNG height for {}",
+            path.display()
+        );
+    }
+
+    let bg = *img.get_pixel(0, 0);
+    let has_non_bg = img.pixels().any(|p| *p != bg);
+    assert!(
+        has_non_bg,
+        "Expected rendered non-background pixels in {}",
+        path.display()
+    );
+}
+
+/// Assert PNG dimensions with tolerance while also ensuring decode/content checks.
+#[allow(dead_code)]
+pub fn assert_png_dimensions_with_tolerance(
+    path: impl AsRef<Path>,
+    expected_dims: (u32, u32),
+    tolerance: u32,
+) {
+    let path = path.as_ref();
+    assert_file_non_empty(path);
+
+    let img = image::open(path)
+        .unwrap_or_else(|e| panic!("Expected valid PNG at {}: {}", path.display(), e))
+        .to_rgba8();
+
+    let (expected_w, expected_h) = expected_dims;
+    let width_diff = img.width().abs_diff(expected_w);
+    let height_diff = img.height().abs_diff(expected_h);
+
+    assert!(
+        width_diff <= tolerance,
+        "Width mismatch for {}: got {}, expected {}, tolerance {}",
+        path.display(),
+        img.width(),
+        expected_w,
+        tolerance
+    );
+    assert!(
+        height_diff <= tolerance,
+        "Height mismatch for {}: got {}, expected {}, tolerance {}",
+        path.display(),
+        img.height(),
+        expected_h,
+        tolerance
+    );
+
+    let bg = *img.get_pixel(0, 0);
+    let has_non_bg = img.pixels().any(|p| *p != bg);
+    assert!(
+        has_non_bg,
+        "Expected rendered non-background pixels in {}",
+        path.display()
+    );
 }
 
 #[cfg(test)]

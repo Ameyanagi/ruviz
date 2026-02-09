@@ -110,7 +110,7 @@ proptest! {
 
         // Should be able to create plot (bounds calculation doesn't fail)
         let result = Plot::new().line(&x, &y).save("tests/output/prop_bounds.png");
-        prop_assert!(result.is_ok());
+        prop_assert!(result.is_ok(), "expected operation to succeed: {:?}", result);
     }
 }
 

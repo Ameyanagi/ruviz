@@ -9,7 +9,7 @@ fn test_solid_line_style() {
     let y_data = vec![0.0, 2.0, 1.0, 4.0, 3.0, 5.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Solid Line Style (Default)")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -26,7 +26,7 @@ fn test_dashed_line_style() {
     let y_data = vec![1.0, 3.0, 2.0, 5.0, 4.0, 6.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Dashed Line Style")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -44,7 +44,7 @@ fn test_dotted_line_style() {
     let y_data = vec![0.5, 2.5, 1.5, 4.5, 3.5, 5.5];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Dotted Line Style")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -62,7 +62,7 @@ fn test_dash_dot_line_style() {
     let y_data = vec![2.0, 4.0, 3.0, 6.0, 5.0, 7.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Dash-Dot Line Style")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -80,7 +80,7 @@ fn test_dash_dot_dot_line_style() {
     let y_data = vec![1.5, 3.5, 2.5, 5.5, 4.5, 6.5];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Dash-Dot-Dot Line Style")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -101,7 +101,7 @@ fn test_custom_line_style() {
     let custom_pattern = vec![20.0, 5.0, 10.0, 5.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Custom Line Style Pattern")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -121,7 +121,7 @@ fn test_multiple_line_styles() {
     let y3_data = vec![3.0, 3.5, 3.2, 3.8, 3.6, 4.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Multiple Line Styles")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -150,7 +150,7 @@ fn test_line_width_with_styles() {
     let y2_data = vec![5.0, 4.0, 3.0, 2.0, 1.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Line Styles with Different Widths")
         .xlabel("X Values")
         .ylabel("Y Values")
