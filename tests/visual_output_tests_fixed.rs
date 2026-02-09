@@ -1,7 +1,7 @@
 //! Visual output tests that save PNG images for manual inspection
 //!
 //! Run with: cargo test --test visual_output_tests_fixed
-//! Images will be saved to test_output/ directory
+//! Images will be saved to tests/output/ directory
 
 mod common;
 

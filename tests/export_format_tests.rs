@@ -44,14 +44,16 @@ fn test_png_export() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .scatter(&x_data, &y_data);
 
     let image = plot2.render()?;
+    let (image_width, image_height) = (image.width, image.height);
 
-    // Create renderer and save PNG directly
-    let renderer = SkiaRenderer::new(image.width, image.height, Theme::default())?;
+    // Draw rendered plot image into a renderer and save PNG
+    let mut renderer = SkiaRenderer::new(image_width, image_height, Theme::default())?;
+    renderer.draw_subplot(image, 0, 0)?;
     renderer.save_png("export_test_output/png/02_renderer_direct.png")?;
-    assert_file_non_empty("export_test_output/png/02_renderer_direct.png");
-    let direct_png = image::open("export_test_output/png/02_renderer_direct.png")?.to_rgba8();
-    assert_eq!(direct_png.width(), image.width);
-    assert_eq!(direct_png.height(), image.height);
+    assert_png_rendered(
+        "export_test_output/png/02_renderer_direct.png",
+        Some((image_width, image_height)),
+    );
 
     println!("✅ PNG Export Tests Complete");
     Ok(())
