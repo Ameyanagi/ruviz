@@ -3,6 +3,9 @@
 //! Run with: cargo test --test visual_output_tests_fixed
 //! Images will be saved to test_output/ directory
 
+mod common;
+
+use common::{assert_png_dimensions_with_tolerance, assert_png_rendered};
 use ruviz::prelude::*;
 use std::fs;
 
@@ -10,6 +13,10 @@ use std::fs;
 fn setup_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("tests/output")?;
     Ok(())
+}
+
+fn assert_default_output(path: &str) {
+    assert_png_rendered(path, Some((640, 480)));
 }
 
 #[cfg(feature = "typst-math")]
@@ -84,8 +91,8 @@ fn test_basic_line_plot() -> std::result::Result<(), Box<dyn std::error::Error>>
         .xlabel("X Values".to_string())
         .ylabel("Y Values".to_string())
         .line(&x_data, &y_data)
-        .end_series()
         .save("tests/output/01_basic_line_plot.png")?;
+    assert_default_output("tests/output/01_basic_line_plot.png");
 
     println!("✓ Saved: test_output/01_basic_line_plot.png");
     Ok(())
@@ -103,8 +110,8 @@ fn test_scatter_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X Coordinates".to_string())
         .ylabel("Y Coordinates".to_string())
         .scatter(&x_data, &y_data)
-        .end_series()
         .save("tests/output/02_scatter_plot.png")?;
+    assert_default_output("tests/output/02_scatter_plot.png");
 
     println!("✓ Saved: test_output/02_scatter_plot.png");
     Ok(())
@@ -122,8 +129,8 @@ fn test_bar_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Fruits".to_string())
         .ylabel("Sales Count".to_string())
         .bar(&categories, &values)
-        .end_series()
         .save("tests/output/03_bar_plot.png")?;
+    assert_default_output("tests/output/03_bar_plot.png");
 
     println!("✓ Saved: test_output/03_bar_plot.png");
     Ok(())
@@ -145,8 +152,8 @@ fn test_multiple_series() -> std::result::Result<(), Box<dyn std::error::Error>>
         .label("Series 1".to_string())
         .line(&x_data, &y2_data)
         .label("Series 2".to_string())
-        .end_series()
         .save("tests/output/04_multiple_series.png")?;
+    assert_default_output("tests/output/04_multiple_series.png");
 
     println!("✓ Saved: test_output/04_multiple_series.png");
     Ok(())
@@ -165,8 +172,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y = X²".to_string())
         .line(&x_data, &y_data)
-        .end_series()
         .save("tests/output/05_dark_theme.png")?;
+    assert_default_output("tests/output/05_dark_theme.png");
 
     // Light theme
     Plot::with_theme(Theme::light())
@@ -174,8 +181,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y = X²".to_string())
         .line(&x_data, &y_data)
-        .end_series()
         .save("tests/output/06_light_theme.png")?;
+    assert_default_output("tests/output/06_light_theme.png");
 
     // Publication theme
     Plot::with_theme(Theme::publication())
@@ -183,8 +190,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Time (seconds)".to_string())
         .ylabel("Response (units)".to_string())
         .line(&x_data, &y_data)
-        .end_series()
         .save("tests/output/07_publication_theme.png")?;
+    assert_default_output("tests/output/07_publication_theme.png");
 
     // Minimal theme
     Plot::with_theme(Theme::minimal())
@@ -192,8 +199,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Input".to_string())
         .ylabel("Output".to_string())
         .scatter(&x_data, &y_data)
-        .end_series()
         .save("tests/output/08_minimal_theme.png")?;
+    assert_default_output("tests/output/08_minimal_theme.png");
 
     println!("✓ Saved: All theme tests");
     Ok(())
@@ -212,8 +219,8 @@ fn test_large_dataset() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Time".to_string())
         .ylabel("Amplitude".to_string())
         .line(&x_data, &y_data)
-        .end_series()
         .save("tests/output/09_large_dataset.png")?;
+    assert_default_output("tests/output/09_large_dataset.png");
 
     println!("✓ Saved: test_output/09_large_dataset.png");
     Ok(())
@@ -235,8 +242,8 @@ fn test_mathematical_functions() -> std::result::Result<(), Box<dyn std::error::
         .label("sin(x)".to_string())
         .line(&x_data, &cos_data)
         .label("cos(x)".to_string())
-        .end_series()
         .save("tests/output/10_mathematical_functions.png")?;
+    assert_default_output("tests/output/10_mathematical_functions.png");
 
     println!("✓ Saved: test_output/10_mathematical_functions.png");
     Ok(())
@@ -255,8 +262,8 @@ fn test_grid_options() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X Axis".to_string())
         .ylabel("Y Axis".to_string())
         .line(&x_data, &y_data)
-        .end_series()
         .save("tests/output/11_grid_enabled.png")?;
+    assert_default_output("tests/output/11_grid_enabled.png");
 
     println!("✓ Saved: Grid tests");
     Ok(())
@@ -270,13 +277,13 @@ fn test_custom_dimensions() -> std::result::Result<(), Box<dyn std::error::Error
     let values = vec![100.0, 150.0, 120.0, 180.0];
 
     Plot::new()
-        .dimensions(1200, 800) // Custom size
+        .size_px(1200, 800) // Custom size
         .title("Custom Dimensions Test (1200x800)".to_string())
         .xlabel("Quarters".to_string())
         .ylabel("Revenue".to_string())
         .bar(&categories, &values)
-        .end_series()
         .save("tests/output/12_custom_dimensions.png")?;
+    assert_png_dimensions_with_tolerance("tests/output/12_custom_dimensions.png", (1200, 800), 1);
 
     println!("✓ Saved: test_output/12_custom_dimensions.png");
     Ok(())
@@ -748,8 +755,8 @@ fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y".to_string())
         .scatter(&single_x, &single_y)
-        .end_series()
         .save("tests/output/13_single_point.png")?;
+    assert_default_output("tests/output/13_single_point.png");
 
     // Two points line
     let two_x = vec![1.0, 10.0];
@@ -760,8 +767,8 @@ fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y".to_string())
         .line(&two_x, &two_y)
-        .end_series()
         .save("tests/output/14_two_points_line.png")?;
+    assert_default_output("tests/output/14_two_points_line.png");
 
     println!("✓ Saved: Edge case tests");
     Ok(())

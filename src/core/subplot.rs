@@ -424,15 +424,15 @@ impl SubplotFigure {
 /// ```rust,no_run
 /// use ruviz::prelude::*;
 ///
-/// let x = vec![1.0, 2.0, 3.0];
-/// let sin_plot = Plot::new()
-///     .line(&x, &x.iter().map(|v| v.sin()).collect::<Vec<_>>())
-///     .end_series()
-///     .title("Sin");
-/// let cos_plot = Plot::new()
-///     .line(&x, &x.iter().map(|v| v.cos()).collect::<Vec<_>>())
-///     .end_series()
-///     .title("Cos");
+/// let x: Vec<f64> = vec![1.0, 2.0, 3.0];
+/// let sin_plot: Plot = Plot::new()
+///     .line(&x, &x.iter().map(|&v| v.sin()).collect::<Vec<_>>())
+///     .title("Sin")
+///     .into();
+/// let cos_plot: Plot = Plot::new()
+///     .line(&x, &x.iter().map(|&v| v.cos()).collect::<Vec<_>>())
+///     .title("Cos")
+///     .into();
 ///
 /// subplots(1, 2, 800, 400)?
 ///     .subplot_at(0, sin_plot)?
@@ -457,7 +457,7 @@ pub fn subplots(rows: usize, cols: usize, width: u32, height: u32) -> Result<Sub
 /// use ruviz::prelude::*;
 ///
 /// // Creates an 800x600 figure (400*2 x 300*2)
-/// let plot = Plot::new().line(&[1.0, 2.0], &[1.0, 4.0]).end_series();
+/// let plot: Plot = Plot::new().line(&[1.0, 2.0], &[1.0, 4.0]).into();
 ///
 /// subplots_default(2, 2)?
 ///     .subplot_at(0, plot)?

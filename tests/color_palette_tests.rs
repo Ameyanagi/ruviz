@@ -7,7 +7,7 @@ fn test_default_color_palette() {
 
     // Test multiple series with automatic color cycling
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Default Color Palette Test")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -32,7 +32,7 @@ fn test_custom_color_sequence() {
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Custom Color Sequence")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -60,7 +60,7 @@ fn test_scatter_with_different_colors() {
     let y_data2 = vec![2.0, 3.0, 4.0, 3.0];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Scatter Plot with Different Colors")
         .xlabel("X Position")
         .ylabel("Y Position")
@@ -86,7 +86,7 @@ fn test_transparency_effects() {
     let y3_data = vec![1.5, 2.5, 3.5, 4.5, 5.5, 6.5];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Transparency Effects")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -115,7 +115,7 @@ fn test_colormap_visualization() {
     let colormap = ColorMap::viridis();
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Viridis Colormap Demonstration")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -173,7 +173,7 @@ fn test_different_colormaps() {
 
     for (name, colormap) in colormaps {
         let result = Plot::new()
-            .dimensions(800, 600)
+            .size_px(800, 600)
             .title(&format!("{} Colormap", name.to_uppercase()))
             .xlabel("X Values")
             .ylabel("Y Values")
@@ -235,7 +235,7 @@ fn test_hex_color_parsing() {
     ];
 
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Hex Color Parsing Test")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -286,7 +286,7 @@ fn test_color_palette_cycling() {
 
     // Test that colors cycle correctly when we have more series than palette colors
     let result = Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .title("Color Palette Cycling Test (12 series)")
         .xlabel("X Values")
         .ylabel("Y Values")
@@ -395,7 +395,7 @@ fn test_scientific_colormaps() {
 
     for (name, colormap) in scientific_maps {
         let result = Plot::new()
-            .dimensions(800, 600)
+            .size_px(800, 600)
             .title(&format!("Scientific Colormap: {}", name.to_uppercase()))
             .xlabel("Data Points")
             .ylabel("Value")

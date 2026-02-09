@@ -89,7 +89,7 @@ fn test_visual_regression_basic_line() -> std::result::Result<(), Box<dyn std::e
     println!("Testing: Basic Line Plot");
     test_against_golden(
         || {
-            let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+            let x: Vec<f64> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
             let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
             Plot::new()
                 .line(&x, &y)
@@ -115,7 +115,7 @@ fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std:
     println!("Testing: Multi-Series Plot");
     test_against_golden(
         || {
-            let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+            let x: Vec<f64> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
             Plot::new()
                 .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
                 .label("Linear")
@@ -315,7 +315,7 @@ fn test_visual_regression_dimensions() -> std::result::Result<(), Box<dyn std::e
             let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
             let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
             Plot::new()
-                .dimensions(1200, 900)
+                .size_px(1200, 900)
                 .line(&x, &y)
                 .title("Custom Dimensions")
                 .save("tests/output/vr_custom_dimensions.png")?;

@@ -60,7 +60,11 @@ fn test_auto_optimize_is_fluent() {
         .title("Test")
         .save("tests/output/auto_optimize_fluent.png");
 
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
 }
 
 #[test]

@@ -21,7 +21,7 @@ jobs:
         id: wait-for-ci
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: 'Test Suite'
+          checkName: 'Test Fast Lane'
           ref: ${{ github.sha }}
           timeoutSeconds: 600
           intervalSeconds: 15

@@ -80,7 +80,11 @@ fn test_scatter_plot_pipeline() {
         .save("tests/output/integration_scatter.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/integration_scatter.png").exists());
 }
 
@@ -98,7 +102,11 @@ fn test_bar_chart_pipeline() {
         .save("tests/output/integration_bar.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/integration_bar.png").exists());
 }
 
@@ -118,7 +126,11 @@ fn test_histogram_pipeline() {
         .save("tests/output/integration_histogram.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/integration_histogram.png").exists());
 }
 
@@ -135,7 +147,11 @@ fn test_boxplot_pipeline() {
         .save("tests/output/integration_boxplot.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
     assert!(Path::new("tests/output/integration_boxplot.png").exists());
 }
 
@@ -150,22 +166,16 @@ fn test_subplot_composition() {
     let hist_data = vec![1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0];
 
     // WHEN: Creating individual plots
-    let plot1 = Plot::new().line(&x, &y_linear).title("Linear").end_series();
+    let plot1: Plot = Plot::new().line(&x, &y_linear).title("Linear").into();
 
-    let plot2 = Plot::new()
-        .scatter(&x, &y_scatter)
-        .title("Scatter")
-        .end_series();
+    let plot2: Plot = Plot::new().scatter(&x, &y_scatter).title("Scatter").into();
 
-    let plot3 = Plot::new()
-        .bar(&categories, &values)
-        .title("Bar")
-        .end_series();
+    let plot3: Plot = Plot::new().bar(&categories, &values).title("Bar").into();
 
-    let plot4 = Plot::new()
+    let plot4: Plot = Plot::new()
         .histogram(&hist_data, None)
         .title("Histogram")
-        .end_series();
+        .into();
 
     // WHEN: Creating subplots
     let result = subplots(2, 2, 1200, 900);
@@ -255,13 +265,17 @@ fn test_custom_dimensions() {
 
     // WHEN: Using custom dimensions
     let result = Plot::new()
-        .dimensions(1200, 900)
+        .size_px(1200, 900)
         .line(&x, &y)
         .title("Custom Dimensions Test")
         .save("tests/output/integration_custom_dimensions.png");
 
     // THEN: Should succeed
-    assert!(result.is_ok());
+    assert!(
+        result.is_ok(),
+        "expected operation to succeed: {:?}",
+        result
+    );
 
     // AND: Image should have correct dimensions
     // Allow ±1 pixel tolerance due to DPI auto-scaling rounding

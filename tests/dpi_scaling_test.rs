@@ -100,7 +100,7 @@ fn test_dpi_canvas_size_scaling() -> std::result::Result<(), Box<dyn std::error:
 
     // Test with known base dimensions
     let plot = Plot::new()
-        .dimensions(400, 300) // Base size
+        .size_px(400, 300) // Base size
         .title("Canvas Size Test")
         .line(&x_data, &y_data);
 

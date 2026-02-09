@@ -39,7 +39,7 @@ mod publication_integration_tests {
             .title("Experimental Results")
             .xlabel("Time (s)")
             .ylabel("Response (V)")
-            .dimensions(600, 400) // Publication standard size
+            .size_px(600, 400) // Publication standard size
             .dpi(300) // High resolution for print
             .save("test_publication_integration.png");
         
@@ -362,7 +362,7 @@ mod publication_integration_tests {
         let result1 = Plot::new()
             .line(&x, &y)
             .title("A4 Print Optimized")
-            .dimensions(2480, 1754) // Half A4 landscape
+            .size_px(2480, 1754) // Half A4 landscape
             .dpi(300)
             .margin(0.1) // 10% margin
             .save("test_a4_print.png");
@@ -374,7 +374,7 @@ mod publication_integration_tests {
         let result2 = Plot::new()
             .line(&x, &y)
             .title("Letter Print Optimized")
-            .dimensions(2550, 1912) // Half Letter landscape at 300 DPI
+            .size_px(2550, 1912) // Half Letter landscape at 300 DPI
             .dpi(300)
             .save("test_letter_print.png");
         

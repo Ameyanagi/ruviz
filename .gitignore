@@ -37,6 +37,8 @@ examples/output/**/*.svg
 # Temporary files
 *.tmp
 *.temp
+*.rej
+*.orig
 
 # AI/Assistant artifacts
 .serena/

@@ -227,7 +227,11 @@ mod memory_pool_tests {
             .ylabel("Y Values")
             .save("tests/output/pool_integration_test.png");
 
-        assert!(result.is_ok());
+        assert!(
+            result.is_ok(),
+            "expected operation to succeed: {:?}",
+            result
+        );
     }
 
     #[test]
