@@ -275,7 +275,7 @@ impl SvgRenderer {
 
         writeln!(
             self.content,
-            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.2}"{}  stroke-linecap="round"/>"#,
+            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.2}"{} stroke-linecap="round"/>"#,
             x1, y1, x2, y2, color_str, width, dash_attr
         )
         .unwrap();
