@@ -32,6 +32,18 @@ pub struct SvgRenderer {
 }
 
 impl SvgRenderer {
+    fn sanitize_dpi_scale(dpi_scale: f32) -> f32 {
+        if dpi_scale.is_finite() && dpi_scale > 0.0 {
+            dpi_scale
+        } else {
+            log::warn!(
+                "Invalid dpi_scale ({:?}) for SvgRenderer; falling back to 1.0",
+                dpi_scale
+            );
+            1.0
+        }
+    }
+
     /// Create a new SVG renderer with specified dimensions
     pub fn new(width: f32, height: f32) -> Self {
         Self {
@@ -48,7 +60,7 @@ impl SvgRenderer {
 
     /// Set the DPI scale factor (dpi / 100.0)
     pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
-        self.dpi_scale = dpi_scale;
+        self.dpi_scale = Self::sanitize_dpi_scale(dpi_scale);
     }
 
     /// Get the DPI scale factor
@@ -111,12 +123,10 @@ impl SvgRenderer {
     /// Dash values are sourced from `LineStyle::to_dash_array()` (100-DPI
     /// baseline), then scaled so SVG spacing matches raster output.
     fn scaled_dash_pattern(&self, style: &LineStyle) -> Option<Vec<f32>> {
-        let scale = self.dpi_scale.max(0.1);
-        style.to_dash_array().map(|base| {
-            base.into_iter()
-                .map(|segment| (segment * scale).max(0.1))
-                .collect()
-        })
+        let scale = self.dpi_scale;
+        style
+            .to_dash_array()
+            .map(|base| base.into_iter().map(|segment| segment * scale).collect())
     }
 
     fn format_dash_value(&self, value: f32) -> String {
@@ -1284,6 +1294,30 @@ mod tests {
             renderer.line_style_to_dasharray(&LineStyle::Custom(vec![1.5, 2.0])),
             Some("3,4".to_string())
         );
+    }
+
+    #[test]
+    fn test_set_dpi_scale_sanitizes_invalid_values() {
+        let mut renderer = SvgRenderer::new(100.0, 100.0);
+
+        renderer.set_dpi_scale(2.5);
+        assert!((renderer.dpi_scale() - 2.5).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(0.0);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+        assert_eq!(
+            renderer.line_style_to_dasharray(&LineStyle::Dashed),
+            Some("5,5".to_string())
+        );
+
+        renderer.set_dpi_scale(-3.0);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(f32::NAN);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(f32::INFINITY);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

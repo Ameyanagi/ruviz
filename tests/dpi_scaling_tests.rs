@@ -54,6 +54,11 @@ fn resize_image(img: &image::RgbaImage, new_width: u32, new_height: u32) -> imag
     result
 }
 
+/// Crop a fixed region from an image.
+fn crop_image(img: &image::RgbaImage, x: u32, y: u32, width: u32, height: u32) -> image::RgbaImage {
+    image::imageops::crop_imm(img, x, y, width, height).to_image()
+}
+
 /// Render plot at specified DPI and return the image
 fn render_at_dpi(x: &[f64], y: &[f64], dpi: u32) -> image::RgbaImage {
     let x_vec: Vec<f64> = x.to_vec();
@@ -118,10 +123,7 @@ fn test_dpi_scaling_dashed_line_spacing() {
             .size(6.4, 4.8)
             .dpi(100)
             .line(&x, &y)
-            .style(ruviz::render::LineStyle::Dashed)
-            .title("Dashed DPI Test")
-            .xlabel("X")
-            .ylabel("Y");
+            .style(ruviz::render::LineStyle::Dashed);
 
         let image = plot.render().expect("Render should succeed");
         image::RgbaImage::from_raw(image.width, image.height, image.pixels)
@@ -135,10 +137,7 @@ fn test_dpi_scaling_dashed_line_spacing() {
             .size(6.4, 4.8)
             .dpi(200)
             .line(&x, &y)
-            .style(ruviz::render::LineStyle::Dashed)
-            .title("Dashed DPI Test")
-            .xlabel("X")
-            .ylabel("Y");
+            .style(ruviz::render::LineStyle::Dashed);
 
         let image = plot.render().expect("Render should succeed");
         image::RgbaImage::from_raw(image.width, image.height, image.pixels)
@@ -146,11 +145,19 @@ fn test_dpi_scaling_dashed_line_spacing() {
     };
 
     let img_200dpi_downscaled = resize_image(&img_200dpi, w100, h100);
-    let similarity = compare_images_simple(&img_100dpi, &img_200dpi_downscaled);
+    // Compare the central plot region to reduce unrelated text/axis rendering differences.
+    let roi_x = w100 / 6;
+    let roi_y = h100 / 6;
+    let roi_w = w100 - 2 * roi_x;
+    let roi_h = h100 - 2 * roi_y;
+
+    let img_100dpi_cropped = crop_image(&img_100dpi, roi_x, roi_y, roi_w, roi_h);
+    let img_200dpi_cropped = crop_image(&img_200dpi_downscaled, roi_x, roi_y, roi_w, roi_h);
+    let similarity = compare_images_simple(&img_100dpi_cropped, &img_200dpi_cropped);
 
     println!("Dashed line similarity score: {:.4}", similarity);
     assert!(
-        similarity > 0.88,
+        similarity > 0.90,
         "DPI scaling should preserve dashed spacing: similarity = {:.4}",
         similarity
     );
