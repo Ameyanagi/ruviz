@@ -108,24 +108,15 @@ impl SvgRenderer {
 
     /// Convert style to a DPI-scaled dash pattern.
     ///
-    /// SVG dash values are authored at a 100-DPI baseline and scaled so dash
-    /// spacing matches PNG output at different DPIs.
+    /// Dash values are sourced from `LineStyle::to_dash_array()` (100-DPI
+    /// baseline), then scaled so SVG spacing matches raster output.
     fn scaled_dash_pattern(&self, style: &LineStyle) -> Option<Vec<f32>> {
-        let base = match style {
-            LineStyle::Solid => return None,
-            LineStyle::Dashed => vec![6.0, 3.0],
-            LineStyle::Dotted => vec![2.0, 2.0],
-            LineStyle::DashDot => vec![6.0, 2.0, 2.0, 2.0],
-            LineStyle::DashDotDot => vec![6.0, 2.0, 2.0, 2.0, 2.0, 2.0],
-            LineStyle::Custom(pattern) => pattern.clone(),
-        };
-
         let scale = self.dpi_scale.max(0.1);
-        Some(
+        style.to_dash_array().map(|base| {
             base.into_iter()
                 .map(|segment| (segment * scale).max(0.1))
-                .collect(),
-        )
+                .collect()
+        })
     }
 
     fn format_dash_value(&self, value: f32) -> String {
@@ -1272,7 +1263,7 @@ mod tests {
         assert_eq!(renderer.line_style_to_dasharray(&LineStyle::Solid), None);
         assert_eq!(
             renderer.line_style_to_dasharray(&LineStyle::Dashed),
-            Some("6,3".to_string())
+            Some("5,5".to_string())
         );
     }
 
@@ -1283,7 +1274,11 @@ mod tests {
 
         assert_eq!(
             renderer.line_style_to_dasharray(&LineStyle::Dashed),
-            Some("12,6".to_string())
+            Some("10,10".to_string())
+        );
+        assert_eq!(
+            renderer.line_style_to_dasharray(&LineStyle::Dotted),
+            Some("2,4".to_string())
         );
         assert_eq!(
             renderer.line_style_to_dasharray(&LineStyle::Custom(vec![1.5, 2.0])),
