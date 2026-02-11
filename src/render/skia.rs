@@ -31,6 +31,18 @@ pub struct SkiaRenderer {
 }
 
 impl SkiaRenderer {
+    fn sanitize_dpi_scale(dpi_scale: f32) -> f32 {
+        if dpi_scale.is_finite() && dpi_scale > 0.0 {
+            dpi_scale
+        } else {
+            log::warn!(
+                "Invalid dpi_scale ({:?}) for SkiaRenderer; falling back to 1.0",
+                dpi_scale
+            );
+            1.0
+        }
+    }
+
     /// Create a new renderer with the given dimensions
     pub fn new(width: u32, height: u32, theme: Theme) -> Result<Self> {
         Self::with_font_family(width, height, theme, FontFamily::SansSerif)
@@ -70,12 +82,23 @@ impl SkiaRenderer {
 
     /// Set the DPI scale factor (dpi / 100.0)
     pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
-        self.dpi_scale = dpi_scale;
+        self.dpi_scale = Self::sanitize_dpi_scale(dpi_scale);
     }
 
     /// Get the DPI scale factor
     pub fn dpi_scale(&self) -> f32 {
         self.dpi_scale
+    }
+
+    /// Convert line style to a DPI-scaled dash pattern.
+    ///
+    /// Dash definitions are authored at a 100-DPI baseline and scaled so
+    /// physical dash spacing remains consistent across output resolutions.
+    fn scaled_dash_pattern(&self, style: &LineStyle) -> Option<Vec<f32>> {
+        let scale = self.dpi_scale;
+        style
+            .to_dash_array()
+            .map(|pattern| pattern.into_iter().map(|segment| segment * scale).collect())
     }
 
     /// Set text rendering backend mode.
@@ -151,8 +174,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        // Apply line style
-        if let Some(dash_pattern) = style.to_dash_array() {
+        // Apply line style (dash lengths scale with DPI for physical consistency)
+        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -192,8 +215,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        // Apply line style
-        if let Some(dash_pattern) = style.to_dash_array() {
+        // Apply line style (dash lengths scale with DPI for physical consistency)
+        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -260,8 +283,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        // Apply line style
-        if let Some(dash_pattern) = style.to_dash_array() {
+        // Apply line style (dash lengths scale with DPI for physical consistency)
+        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -3092,7 +3115,7 @@ impl SkiaRenderer {
                     ..Stroke::default()
                 };
 
-                if let Some(dash_pattern) = style.edge_style.to_dash_array() {
+                if let Some(dash_pattern) = self.scaled_dash_pattern(&style.edge_style) {
                     stroke.dash = StrokeDash::new(dash_pattern, 0.0);
                 }
 
@@ -3698,6 +3721,27 @@ mod tests {
         let renderer = renderer.unwrap();
         assert_eq!(renderer.width, 800);
         assert_eq!(renderer.height, 600);
+    }
+
+    #[test]
+    fn test_set_dpi_scale_sanitizes_invalid_values() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(100, 100, theme).unwrap();
+
+        renderer.set_dpi_scale(2.5);
+        assert!((renderer.dpi_scale() - 2.5).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(0.0);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(-3.0);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(f32::NAN);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(f32::INFINITY);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

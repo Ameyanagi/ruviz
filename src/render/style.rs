@@ -37,8 +37,12 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
-    /// Convert to dash array for tiny-skia stroke
-    /// Returns None for solid lines, Some(dash_array) for patterned lines
+    /// Convert to a baseline dash array.
+    ///
+    /// Values are defined at a 100-DPI baseline. Renderers should apply their
+    /// own DPI scale so physical dash spacing remains consistent.
+    ///
+    /// Returns None for solid lines, Some(dash_array) for patterned lines.
     pub fn to_dash_array(&self) -> Option<Vec<f32>> {
         match self {
             LineStyle::Solid => None,

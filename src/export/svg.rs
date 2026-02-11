@@ -32,6 +32,18 @@ pub struct SvgRenderer {
 }
 
 impl SvgRenderer {
+    fn sanitize_dpi_scale(dpi_scale: f32) -> f32 {
+        if dpi_scale.is_finite() && dpi_scale > 0.0 {
+            dpi_scale
+        } else {
+            log::warn!(
+                "Invalid dpi_scale ({:?}) for SvgRenderer; falling back to 1.0",
+                dpi_scale
+            );
+            1.0
+        }
+    }
+
     /// Create a new SVG renderer with specified dimensions
     pub fn new(width: f32, height: f32) -> Self {
         Self {
@@ -48,7 +60,7 @@ impl SvgRenderer {
 
     /// Set the DPI scale factor (dpi / 100.0)
     pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
-        self.dpi_scale = dpi_scale;
+        self.dpi_scale = Self::sanitize_dpi_scale(dpi_scale);
     }
 
     /// Get the DPI scale factor
@@ -97,20 +109,39 @@ impl SvgRenderer {
 
     /// Convert LineStyle to SVG stroke-dasharray
     fn line_style_to_dasharray(&self, style: &LineStyle) -> Option<String> {
-        match style {
-            LineStyle::Solid => None,
-            LineStyle::Dashed => Some("6,3".to_string()),
-            LineStyle::Dotted => Some("2,2".to_string()),
-            LineStyle::DashDot => Some("6,2,2,2".to_string()),
-            LineStyle::DashDotDot => Some("6,2,2,2,2,2".to_string()),
-            LineStyle::Custom(pattern) => Some(
-                pattern
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ),
+        self.scaled_dash_pattern(style).map(|pattern| {
+            pattern
+                .iter()
+                .map(|v| self.format_dash_value(*v))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+    }
+
+    /// Convert style to a DPI-scaled dash pattern.
+    ///
+    /// Dash values are sourced from `LineStyle::to_dash_array()` (100-DPI
+    /// baseline), then scaled so SVG spacing matches raster output.
+    fn scaled_dash_pattern(&self, style: &LineStyle) -> Option<Vec<f32>> {
+        let scale = self.dpi_scale;
+        style
+            .to_dash_array()
+            .map(|base| base.into_iter().map(|segment| segment * scale).collect())
+    }
+
+    fn format_dash_value(&self, value: f32) -> String {
+        if (value - value.round()).abs() < 1e-6 {
+            return (value.round() as i32).to_string();
         }
+
+        let mut s = format!("{:.3}", value);
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+        s
     }
 
     /// Escape XML special characters
@@ -244,7 +275,7 @@ impl SvgRenderer {
 
         writeln!(
             self.content,
-            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.2}"{}  stroke-linecap="round"/>"#,
+            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.2}"{} stroke-linecap="round"/>"#,
             x1, y1, x2, y2, color_str, width, dash_attr
         )
         .unwrap();
@@ -687,27 +718,16 @@ impl SvgRenderer {
         style: &LineStyle,
         width: f32,
     ) {
-        let dash_array = match style {
-            LineStyle::Solid => String::new(),
-            LineStyle::Dashed => "stroke-dasharray=\"6,4\"".to_string(),
-            LineStyle::Dotted => "stroke-dasharray=\"2,2\"".to_string(),
-            LineStyle::DashDot => "stroke-dasharray=\"6,2,2,2\"".to_string(),
-            LineStyle::DashDotDot => "stroke-dasharray=\"6,2,2,2,2,2\"".to_string(),
-            LineStyle::Custom(pattern) => {
-                let pattern_str = pattern
-                    .iter()
-                    .map(|v| format!("{:.1}", v))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                format!("stroke-dasharray=\"{}\"", pattern_str)
-            }
-        };
+        let dash_attr = self
+            .line_style_to_dasharray(style)
+            .map(|pattern| format!(r#" stroke-dasharray="{}""#, pattern))
+            .unwrap_or_default();
 
         let color_str = self.color_to_svg(color);
         writeln!(
             self.content,
-            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.1}" {}/>"#,
-            x, y, x + length, y, color_str, width, dash_array
+            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.1}"{}/>"#,
+            x, y, x + length, y, color_str, width, dash_attr
         )
         .unwrap();
     }
@@ -1253,8 +1273,51 @@ mod tests {
         assert_eq!(renderer.line_style_to_dasharray(&LineStyle::Solid), None);
         assert_eq!(
             renderer.line_style_to_dasharray(&LineStyle::Dashed),
-            Some("6,3".to_string())
+            Some("5,5".to_string())
         );
+    }
+
+    #[test]
+    fn test_line_style_conversion_scales_with_dpi() {
+        let mut renderer = SvgRenderer::new(100.0, 100.0);
+        renderer.set_dpi_scale(2.0);
+
+        assert_eq!(
+            renderer.line_style_to_dasharray(&LineStyle::Dashed),
+            Some("10,10".to_string())
+        );
+        assert_eq!(
+            renderer.line_style_to_dasharray(&LineStyle::Dotted),
+            Some("2,4".to_string())
+        );
+        assert_eq!(
+            renderer.line_style_to_dasharray(&LineStyle::Custom(vec![1.5, 2.0])),
+            Some("3,4".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_dpi_scale_sanitizes_invalid_values() {
+        let mut renderer = SvgRenderer::new(100.0, 100.0);
+
+        renderer.set_dpi_scale(2.5);
+        assert!((renderer.dpi_scale() - 2.5).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(0.0);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+        assert_eq!(
+            renderer.line_style_to_dasharray(&LineStyle::Dashed),
+            Some("5,5".to_string())
+        );
+
+        renderer.set_dpi_scale(-3.0);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(f32::NAN);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
+
+        renderer.set_dpi_scale(f32::INFINITY);
+        assert!((renderer.dpi_scale() - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1284,6 +1347,36 @@ mod tests {
         assert!(svg.contains("svg"));
         assert!(svg.contains("rect"));
         assert!(svg.contains("line"));
+    }
+
+    #[test]
+    fn test_legend_line_handle_attribute_spacing() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+
+        renderer.draw_legend_line_handle(10.0, 20.0, 30.0, Color::BLACK, &LineStyle::Solid, 1.5);
+        renderer.draw_legend_line_handle(10.0, 30.0, 30.0, Color::BLACK, &LineStyle::Dashed, 1.5);
+
+        let svg = renderer.to_svg_string();
+        let line_nodes: Vec<&str> = svg.lines().filter(|line| line.contains("<line")).collect();
+
+        assert!(
+            line_nodes
+                .iter()
+                .any(|line| line.contains(r#"stroke-width="1.5"/>"#)),
+            "solid legend handle should not include dangling whitespace before '/>'"
+        );
+        assert!(
+            line_nodes
+                .iter()
+                .any(|line| { line.contains(r#"stroke-width="1.5" stroke-dasharray="5,5""#) }),
+            "dashed legend handle should include dash attribute with one leading space"
+        );
+        assert!(
+            !line_nodes
+                .iter()
+                .any(|line| line.contains(r#"stroke-width="1.5" />"#)),
+            "legend handle should not emit dangling whitespace before '/>'"
+        );
     }
 
     #[test]
