@@ -7,7 +7,6 @@
 mod common;
 
 use ruviz::prelude::*;
-use std::path::PathBuf;
 
 /// Simple image comparison using mean squared error per channel
 /// Returns similarity score from 0.0 to 1.0
@@ -105,6 +104,54 @@ fn test_dpi_scaling_line_plot() {
     assert!(
         similarity > 0.90,
         "DPI scaling should preserve appearance: similarity = {:.4}",
+        similarity
+    );
+}
+
+#[test]
+fn test_dpi_scaling_dashed_line_spacing() {
+    let x: Vec<f64> = (0..30).map(|i| i as f64 * 0.3).collect();
+    let y: Vec<f64> = x.iter().map(|&v| (v * 0.8).sin()).collect();
+
+    let img_100dpi = {
+        let plot = Plot::new()
+            .size(6.4, 4.8)
+            .dpi(100)
+            .line(&x, &y)
+            .style(ruviz::render::LineStyle::Dashed)
+            .title("Dashed DPI Test")
+            .xlabel("X")
+            .ylabel("Y");
+
+        let image = plot.render().expect("Render should succeed");
+        image::RgbaImage::from_raw(image.width, image.height, image.pixels)
+            .expect("Image conversion should succeed")
+    };
+
+    let (w100, h100) = img_100dpi.dimensions();
+
+    let img_200dpi = {
+        let plot = Plot::new()
+            .size(6.4, 4.8)
+            .dpi(200)
+            .line(&x, &y)
+            .style(ruviz::render::LineStyle::Dashed)
+            .title("Dashed DPI Test")
+            .xlabel("X")
+            .ylabel("Y");
+
+        let image = plot.render().expect("Render should succeed");
+        image::RgbaImage::from_raw(image.width, image.height, image.pixels)
+            .expect("Image conversion should succeed")
+    };
+
+    let img_200dpi_downscaled = resize_image(&img_200dpi, w100, h100);
+    let similarity = compare_images_simple(&img_100dpi, &img_200dpi_downscaled);
+
+    println!("Dashed line similarity score: {:.4}", similarity);
+    assert!(
+        similarity > 0.88,
+        "DPI scaling should preserve dashed spacing: similarity = {:.4}",
         similarity
     );
 }

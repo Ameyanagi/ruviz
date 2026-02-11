@@ -78,6 +78,20 @@ impl SkiaRenderer {
         self.dpi_scale
     }
 
+    /// Convert line style to a DPI-scaled dash pattern.
+    ///
+    /// Dash definitions are authored at a 100-DPI baseline and scaled so
+    /// physical dash spacing remains consistent across output resolutions.
+    fn scaled_dash_pattern(&self, style: &LineStyle) -> Option<Vec<f32>> {
+        let scale = self.dpi_scale.max(0.1);
+        style.to_dash_array().map(|pattern| {
+            pattern
+                .into_iter()
+                .map(|segment| (segment * scale).max(0.1))
+                .collect()
+        })
+    }
+
     /// Set text rendering backend mode.
     pub fn set_text_engine_mode(&mut self, mode: TextEngineMode) {
         self.text_engine_mode = mode;
@@ -151,8 +165,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        // Apply line style
-        if let Some(dash_pattern) = style.to_dash_array() {
+        // Apply line style (dash lengths scale with DPI for physical consistency)
+        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -192,8 +206,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        // Apply line style
-        if let Some(dash_pattern) = style.to_dash_array() {
+        // Apply line style (dash lengths scale with DPI for physical consistency)
+        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -260,8 +274,8 @@ impl SkiaRenderer {
             ..Stroke::default()
         };
 
-        // Apply line style
-        if let Some(dash_pattern) = style.to_dash_array() {
+        // Apply line style (dash lengths scale with DPI for physical consistency)
+        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -3092,7 +3106,7 @@ impl SkiaRenderer {
                     ..Stroke::default()
                 };
 
-                if let Some(dash_pattern) = style.edge_style.to_dash_array() {
+                if let Some(dash_pattern) = self.scaled_dash_pattern(&style.edge_style) {
                     stroke.dash = StrokeDash::new(dash_pattern, 0.0);
                 }
 
