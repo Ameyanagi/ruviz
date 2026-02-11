@@ -28,9 +28,11 @@ Complete guide to using ruviz for data visualization in Rust.
 ## Quick Links
 
 - **[Quickstart Tutorial](../QUICKSTART.md)** - 5-minute introduction
+- **[Release Notes](../releases/README.md)** - Version-by-version release summaries
+- **[Changelog](../../CHANGELOG.md)** - Complete project change history
 - **[API Documentation](https://docs.rs/ruviz)** - Complete API reference
 - **[Examples Gallery](../gallery/README.md)** - Visual showcase
-- **[GitHub Repository](https://github.com/ruviz/ruviz)** - Source code and issues
+- **[GitHub Repository](https://github.com/Ameyanagi/ruviz)** - Source code and issues
 
 ## Learning Path
 
@@ -51,8 +53,8 @@ Complete guide to using ruviz for data visualization in Rust.
 
 ## Getting Help
 
-- **Issues**: Report bugs at [GitHub Issues](https://github.com/ruviz/ruviz/issues)
-- **Discussions**: Ask questions at [GitHub Discussions](https://github.com/ruviz/ruviz/discussions)
+- **Issues**: Report bugs at [GitHub Issues](https://github.com/Ameyanagi/ruviz/issues)
+- **Discussions**: Ask questions at [GitHub Discussions](https://github.com/Ameyanagi/ruviz/discussions)
 - **Examples**: Browse [examples/](../../examples/) directory
 
 ## Contributing

@@ -6,7 +6,7 @@ Complete guide to setting up ruviz in your Rust project.
 
 ### Rust Installation
 
-ruviz requires **Rust 1.75 or later**. Check your version:
+ruviz requires **Rust 1.87 or later**. Check your version:
 
 ```bash
 rustc --version
@@ -62,14 +62,14 @@ Add ruviz to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruviz = "0.1"
+ruviz = "0.1.4"
 ```
 
 Or with specific features:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["ndarray", "parallel"] }
+ruviz = { version = "0.1.4", features = ["ndarray", "parallel"] }
 ```
 
 ## Feature Flags
@@ -79,7 +79,7 @@ ruviz uses feature flags to enable optional functionality. Choose based on your 
 ### Default Features
 
 ```toml
-ruviz = "0.1"  # Includes: ndarray, parallel
+ruviz = "0.1.4"  # Includes: ndarray, parallel
 ```
 
 **Enabled by default**:
@@ -105,40 +105,40 @@ ruviz = "0.1"  # Includes: ndarray, parallel
 
 ```toml
 # High performance (parallel + SIMD)
-ruviz = { version = "0.1", features = ["performance"] }
+ruviz = { version = "0.1.4", features = ["performance"] }
 
 # Maximum capability (all features)
-ruviz = { version = "0.1", features = ["full"] }
+ruviz = { version = "0.1.4", features = ["full"] }
 
 # Minimal (no default features)
-ruviz = { version = "0.1", default-features = false }
+ruviz = { version = "0.1.4", default-features = false }
 ```
 
 ### Feature Combinations
 
 **Scientific Computing**:
 ```toml
-ruviz = { version = "0.1", features = ["ndarray_support", "parallel"] }
+ruviz = { version = "0.1.4", features = ["ndarray_support", "parallel"] }
 ```
 
 **Data Analysis**:
 ```toml
-ruviz = { version = "0.1", features = ["polars_support", "performance"] }
+ruviz = { version = "0.1.4", features = ["polars_support", "performance"] }
 ```
 
 **Publication Quality**:
 ```toml
-ruviz = { version = "0.1", features = ["svg", "serde"] }
+ruviz = { version = "0.1.4", features = ["svg", "serde"] }
 ```
 
 **Real-time Visualization**:
 ```toml
-ruviz = { version = "0.1", features = ["gpu", "interactive", "window"] }
+ruviz = { version = "0.1.4", features = ["gpu", "interactive", "window"] }
 ```
 
 **Large Datasets**:
 ```toml
-ruviz = { version = "0.1", features = ["parallel", "simd", "gpu"] }
+ruviz = { version = "0.1.4", features = ["parallel", "simd", "gpu"] }
 ```
 
 ## Verification
@@ -271,12 +271,12 @@ rustup update
 
 ### Feature Conflicts
 
-**Problem**: `error: package ruviz v0.1.0 cannot be built because it requires rustc 1.75 or newer`
+**Problem**: `error: package ruviz v0.1.4 cannot be built because it requires rustc 1.87 or newer`
 
 **Solution**: Update Rust:
 ```bash
 rustup update stable
-rustc --version  # Verify ≥ 1.75
+rustc --version  # Verify ≥ 1.87
 ```
 
 ### GPU Feature Issues
@@ -295,7 +295,7 @@ vulkaninfo
 
 Or disable GPU features:
 ```toml
-ruviz = { version = "0.1", default-features = false, features = ["parallel"] }
+ruviz = { version = "0.1.4", default-features = false, features = ["parallel"] }
 ```
 
 ### Memory Issues (Large Datasets)
@@ -378,7 +378,7 @@ rustup default stable-gnu
 **Basic support** (experimental):
 ```toml
 [dependencies]
-ruviz = { version = "0.1", default-features = false }
+ruviz = { version = "0.1.4", default-features = false }
 ```
 
 **Limitations**:

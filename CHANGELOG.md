@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- _None yet._
+
+### Changed
+
+- _None yet._
+
+### Fixed
+
+- _None yet._
+
+## [0.1.4] - 2026-02-11
+
+### Added
+
+- Added grouped series API via `Plot::group(|g| ...)` for shared styling across line/scatter/bar series.
+- Added grouped legend collapse with `group_label(...)` so grouped series render as a single legend entry.
+
+### Changed
+
+- Group auto-color behavior now reuses one palette-generated color for all group members when no fixed group color is set.
+- Updated release documentation workflow to support versioned release notes under `docs/releases/`.
+
+### Fixed
+
+- Made dashed line spacing DPI-independent for consistent appearance across output resolutions.
+
+## [0.1.3] - 2026-02-10
+
 ### Breaking Changes
 
 - Removed `Plot::latex(...)` API. Use `Plot::typst(true)` for Typst text rendering.
@@ -35,3 +65,8 @@ All notable changes to this project will be documented in this file.
 
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
+
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Ameyanagi/ruviz/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/Ameyanagi/ruviz/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/Ameyanagi/ruviz/compare/v0.1.1...v0.1.2

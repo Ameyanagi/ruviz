@@ -2,6 +2,16 @@
 
 Get started with ruviz in less than 5 minutes!
 
+## What's New in v0.1.4
+
+- Grouped series API for shared styling and single legend entries: `Plot::group(|g| ...)`
+- Improved grouped auto-palette behavior (consistent color within each group)
+- DPI-independent dashed line spacing for more consistent visual output
+
+See full details:
+- [Release notes for v0.1.4](releases/v0.1.4.md)
+- [Project changelog](../CHANGELOG.md)
+
 ## Installation
 
 1. **Create a new Rust project**:
@@ -13,7 +23,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.1"
+ruviz = "0.1.4"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -51,7 +61,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["typst-math"] }
+ruviz = { version = "0.1.4", features = ["typst-math"] }
 ```
 
 ```rust
@@ -273,7 +283,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["polars_support"] }
+ruviz = { version = "0.1.4", features = ["polars_support"] }
 polars = "0.35"
 ```
 
@@ -300,14 +310,14 @@ Plot::new()
 Enable parallel rendering:
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["parallel"] }
+ruviz = { version = "0.1.4", features = ["parallel"] }
 ```
 
 ### For Very Large Datasets (>100K points)
 Enable SIMD optimization:
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["parallel", "simd"] }
+ruviz = { version = "0.1.4", features = ["parallel", "simd"] }
 ```
 
 ### Automatic Optimization (Coming in v0.2)

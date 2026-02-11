@@ -61,15 +61,26 @@ jobs:
       - name: Build documentation
         run: cargo doc --no-deps --all-features
 
-      - name: Create release notes
+      - name: Prepare release notes body
         run: |
-          echo "## Release ${{ github.ref_name }}" > RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "### Changes" >> RELEASE_NOTES.md
-          echo "See [CHANGELOG.md](CHANGELOG.md) for details." >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "### Documentation" >> RELEASE_NOTES.md
-          echo "- View the [API Documentation](https://docs.rs/ruviz)" >> RELEASE_NOTES.md
+          TAG="${{ github.ref_name }}"
+          VERSIONED_NOTES_PATH="docs/releases/${TAG}.md"
+
+          if [ -f "${VERSIONED_NOTES_PATH}" ]; then
+            echo "Using versioned release notes: ${VERSIONED_NOTES_PATH}"
+            cp "${VERSIONED_NOTES_PATH}" RELEASE_NOTES.md
+          else
+            echo "Versioned release notes not found at ${VERSIONED_NOTES_PATH}; generating fallback body."
+            {
+              echo "## Release ${TAG}"
+              echo ""
+              echo "### Changes"
+              echo "See [CHANGELOG.md](CHANGELOG.md) for details."
+              echo ""
+              echo "### Documentation"
+              echo "- View the [API Documentation](https://docs.rs/ruviz)"
+            } > RELEASE_NOTES.md
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
