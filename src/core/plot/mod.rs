@@ -308,7 +308,7 @@ impl PlotSeries {
             return None;
         }
 
-        Some(self.build_legend_item(label, default_color, theme)?)
+        self.build_legend_item(label, default_color, theme)
     }
 
     /// Create a LegendItem from this series
