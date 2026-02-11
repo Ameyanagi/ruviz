@@ -84,7 +84,7 @@ use crate::{
     },
     render::{Color, LineStyle, MarkerStyle, Theme},
 };
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 #[cfg(feature = "parallel")]
 use crate::render::{ParallelRenderer, SeriesRenderData};
@@ -141,6 +141,16 @@ pub struct Plot {
     null_policy: NullPolicy,
     /// Deferred ingestion error captured during builder-style API calls.
     pending_ingestion_error: Option<PendingIngestionError>,
+    /// Group metadata used for grouped-series legend behavior.
+    series_groups: Vec<SeriesGroupMeta>,
+    /// Monotonic group ID allocator for grouped-series builder scopes.
+    next_group_id: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SeriesGroupMeta {
+    id: usize,
+    label: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -283,14 +293,38 @@ pub(crate) struct PlotSeries {
     x_errors: Option<ErrorValues>,
     /// Error bar configuration (cap size, line width, etc.)
     error_config: Option<ErrorBarConfig>,
+    /// Optional group ID if this series was created inside `Plot::group(...)`.
+    group_id: Option<usize>,
 }
 
 impl PlotSeries {
+    fn to_legend_item_with_label(
+        &self,
+        label: String,
+        default_color: Color,
+        theme: &Theme,
+    ) -> Option<LegendItem> {
+        if label.is_empty() {
+            return None;
+        }
+
+        Some(self.build_legend_item(label, default_color, theme)?)
+    }
+
     /// Create a LegendItem from this series
     ///
     /// Returns None if the series has no label
     fn to_legend_item(&self, default_color: Color, theme: &Theme) -> Option<LegendItem> {
         let label = self.label.as_ref()?;
+        self.build_legend_item(label.clone(), default_color, theme)
+    }
+
+    fn build_legend_item(
+        &self,
+        label: String,
+        default_color: Color,
+        theme: &Theme,
+    ) -> Option<LegendItem> {
         let color = self.color.unwrap_or(default_color);
         let line_width = self.line_width.unwrap_or(theme.line_width);
         let line_style = self.line_style.clone().unwrap_or(LineStyle::Solid);
@@ -299,7 +333,6 @@ impl PlotSeries {
 
         let item_type = match &self.series_type {
             SeriesType::Line { .. } => {
-                // Check if markers are also enabled
                 if self.marker_style.is_some() {
                     LegendItemType::LineMarker {
                         line_style,
@@ -323,61 +356,27 @@ impl PlotSeries {
                 LegendItemType::ErrorBar
             }
             SeriesType::Histogram { .. } => LegendItemType::Histogram,
-            SeriesType::BoxPlot { .. } => LegendItemType::Bar, // BoxPlot uses bar-style legend
-            SeriesType::Heatmap { .. } => {
-                // Heatmaps don't typically have legend items
-                return None;
-            }
-            SeriesType::Kde { .. } => {
-                // KDE plots use line legend (similar to line plots)
+            SeriesType::BoxPlot { .. } => LegendItemType::Bar,
+            SeriesType::Heatmap { .. } => return None,
+            SeriesType::Kde { .. } | SeriesType::Ecdf { .. } | SeriesType::Polar { .. } => {
                 LegendItemType::Line {
                     style: line_style,
                     width: line_width,
                 }
             }
-            SeriesType::Ecdf { .. } => {
-                // ECDF plots use line legend (step function)
-                LegendItemType::Line {
-                    style: line_style,
-                    width: line_width,
-                }
-            }
-            SeriesType::Violin { .. } => {
-                // Violin plots use bar-style legend
+            SeriesType::Violin { .. } | SeriesType::Boxen { .. } | SeriesType::Pie { .. } => {
                 LegendItemType::Bar
             }
-            SeriesType::Boxen { .. } => {
-                // Boxen plots use bar-style legend
-                LegendItemType::Bar
-            }
-            SeriesType::Contour { .. } => {
-                // Contour plots don't typically have legend items (use colorbar instead)
-                return None;
-            }
-            SeriesType::Pie { .. } => {
-                // Pie slices get individual legend items (handled separately)
-                LegendItemType::Bar
-            }
-            SeriesType::Radar { data } => {
-                // Radar series use filled polygon legend with Area type
-                LegendItemType::Area {
-                    edge_color: Some(color),
-                }
-            }
-            SeriesType::Polar { .. } => {
-                // Polar plots use line legend
-                LegendItemType::Line {
-                    style: line_style,
-                    width: line_width,
-                }
-            }
+            SeriesType::Contour { .. } => return None,
+            SeriesType::Radar { .. } => LegendItemType::Area {
+                edge_color: Some(color),
+            },
         };
 
-        // Check if this series has attached error bars
         let has_error_bars = self.y_errors.is_some() || self.x_errors.is_some();
 
         Some(LegendItem {
-            label: label.clone(),
+            label,
             color,
             item_type,
             has_error_bars,
@@ -745,6 +744,8 @@ impl Plot {
             annotations: Vec::new(),
             null_policy: NullPolicy::Error,
             pending_ingestion_error: None,
+            series_groups: Vec::new(),
+            next_group_id: 0,
         }
     }
 
@@ -824,6 +825,64 @@ impl Plot {
         self.pending_ingestion_error
             .as_ref()
             .map(PendingIngestionError::to_plotting_error)
+    }
+
+    fn register_series_group(&mut self) -> usize {
+        let group_id = self.next_group_id;
+        self.next_group_id = self.next_group_id.saturating_add(1);
+        self.series_groups.push(SeriesGroupMeta {
+            id: group_id,
+            label: None,
+        });
+        group_id
+    }
+
+    fn set_series_group_label(&mut self, group_id: usize, label: String) {
+        if let Some(group) = self
+            .series_groups
+            .iter_mut()
+            .find(|group| group.id == group_id)
+        {
+            group.label = Some(label);
+        }
+    }
+
+    fn group_label(&self, group_id: usize) -> Option<&str> {
+        self.series_groups
+            .iter()
+            .find(|group| group.id == group_id)
+            .and_then(|group| group.label.as_deref())
+    }
+
+    fn collect_legend_items(&self) -> Vec<LegendItem> {
+        let mut legend_items = Vec::new();
+        let mut seen_group_ids = HashSet::new();
+
+        for (idx, series) in self.series_mgr.series.iter().enumerate() {
+            if let Some(group_id) = series.group_id {
+                if !seen_group_ids.insert(group_id) {
+                    continue;
+                }
+
+                let Some(label) = self.group_label(group_id) else {
+                    continue;
+                };
+
+                let default_color = self.display.theme.get_color(idx);
+                if let Some(item) = series.to_legend_item_with_label(
+                    label.to_string(),
+                    default_color,
+                    &self.display.theme,
+                ) {
+                    legend_items.push(item);
+                }
+                continue;
+            }
+
+            legend_items.extend(series.to_legend_items(idx, &self.display.theme));
+        }
+
+        legend_items
     }
 
     /// Set the theme for the plot (fluent API)
@@ -1522,6 +1581,39 @@ impl Plot {
         self
     }
 
+    /// Add a scoped group of series that share style defaults.
+    ///
+    /// Styles configured on the group builder apply to every member series
+    /// added inside the closure and do not leak outside the group.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![0.0, 1.0, 2.0, 3.0];
+    /// let y1 = vec![0.0, 1.0, 2.0, 3.0];
+    /// let y2 = vec![0.0, 1.5, 3.0, 4.5];
+    ///
+    /// Plot::new()
+    ///     .group(|g| {
+    ///         g.group_label("Sensors")
+    ///             .line_width(2.0)
+    ///             .line_style(LineStyle::Dashed)
+    ///             .line(&x, &y1)
+    ///             .line(&x, &y2)
+    ///     })
+    ///     .legend_best()
+    ///     .save("grouped.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn group<F>(self, f: F) -> Self
+    where
+        F: FnOnce(SeriesGroupBuilder) -> SeriesGroupBuilder,
+    {
+        f(SeriesGroupBuilder::new(self)).finalize()
+    }
+
     /// Add a line plot series
     ///
     /// Creates a line chart connecting data points in order.
@@ -1631,6 +1723,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         // Mark as rendered so partial updates can be tracked
@@ -1736,6 +1829,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         stream.mark_rendered();
@@ -1852,6 +1946,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -1909,6 +2004,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -1970,6 +2066,7 @@ impl Plot {
                     y_errors: None,
                     x_errors: None,
                     error_config: None,
+                    group_id: None,
                 };
                 PlotSeriesBuilder::new(self, series)
             }
@@ -2003,6 +2100,7 @@ impl Plot {
                     y_errors: None,
                     x_errors: None,
                     error_config: None,
+                    group_id: None,
                 };
                 PlotSeriesBuilder::new(self, series)
             }
@@ -2055,6 +2153,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -2121,6 +2220,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -3083,6 +3183,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3117,6 +3218,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3148,6 +3250,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3179,6 +3282,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3210,6 +3314,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3241,6 +3346,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3272,6 +3378,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3303,6 +3410,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            group_id: None,
         };
 
         self.series_mgr.series.push(series);
@@ -3314,11 +3422,24 @@ impl Plot {
     ///
     /// This method is called by the PlotBuilder when finalizing a line series.
     pub(crate) fn add_line_series(
+        self,
+        x_data: PlotData,
+        y_data: PlotData,
+        config: &crate::plots::basic::LineConfig,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        self.add_line_series_grouped(x_data, y_data, config, style, None, true)
+    }
+
+    /// Internal method to add a Line series with optional grouped-series metadata.
+    pub(crate) fn add_line_series_grouped(
         mut self,
         x_data: PlotData,
         y_data: PlotData,
         config: &crate::plots::basic::LineConfig,
         style: crate::core::plot::builder::SeriesStyle,
+        group_id: Option<usize>,
+        consume_palette_index: bool,
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
@@ -3342,10 +3463,13 @@ impl Plot {
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
+            group_id,
         };
 
         self.series_mgr.series.push(series);
-        self.series_mgr.auto_color_index += 1;
+        if consume_palette_index {
+            self.series_mgr.auto_color_index += 1;
+        }
         self
     }
 
@@ -3353,11 +3477,24 @@ impl Plot {
     ///
     /// This method is called by the PlotBuilder when finalizing a scatter series.
     pub(crate) fn add_scatter_series(
+        self,
+        x_data: PlotData,
+        y_data: PlotData,
+        config: &crate::plots::basic::ScatterConfig,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        self.add_scatter_series_grouped(x_data, y_data, config, style, None, true)
+    }
+
+    /// Internal method to add a Scatter series with optional grouped-series metadata.
+    pub(crate) fn add_scatter_series_grouped(
         mut self,
         x_data: PlotData,
         y_data: PlotData,
         config: &crate::plots::basic::ScatterConfig,
         style: crate::core::plot::builder::SeriesStyle,
+        group_id: Option<usize>,
+        consume_palette_index: bool,
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
@@ -3377,10 +3514,13 @@ impl Plot {
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
+            group_id,
         };
 
         self.series_mgr.series.push(series);
-        self.series_mgr.auto_color_index += 1;
+        if consume_palette_index {
+            self.series_mgr.auto_color_index += 1;
+        }
         self
     }
 
@@ -3388,11 +3528,24 @@ impl Plot {
     ///
     /// This method is called by the PlotBuilder when finalizing a bar series.
     pub(crate) fn add_bar_series(
+        self,
+        categories: Vec<String>,
+        values: PlotData,
+        config: &crate::plots::basic::BarConfig,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        self.add_bar_series_grouped(categories, values, config, style, None, true)
+    }
+
+    /// Internal method to add a Bar series with optional grouped-series metadata.
+    pub(crate) fn add_bar_series_grouped(
         mut self,
         categories: Vec<String>,
         values: PlotData,
         config: &crate::plots::basic::BarConfig,
         style: crate::core::plot::builder::SeriesStyle,
+        group_id: Option<usize>,
+        consume_palette_index: bool,
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Bar { categories, values },
@@ -3412,10 +3565,13 @@ impl Plot {
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
+            group_id,
         };
 
         self.series_mgr.series.push(series);
-        self.series_mgr.auto_color_index += 1;
+        if consume_palette_index {
+            self.series_mgr.auto_color_index += 1;
+        }
         self
     }
 
@@ -5358,15 +5514,8 @@ impl Plot {
             )?;
         }
 
-        // Collect legend items from series with labels
-        // Use flat_map to expand Radar series into multiple legend entries
-        let legend_items: Vec<LegendItem> = self
-            .series_mgr
-            .series
-            .iter()
-            .enumerate()
-            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.display.theme))
-            .collect();
+        // Collect legend items, including grouped-series collapse behavior.
+        let legend_items = self.collect_legend_items();
 
         // Draw legend if there are labeled series and legend is enabled
         if !legend_items.is_empty() && self.layout.legend.enabled {
@@ -8065,15 +8214,8 @@ impl Plot {
             )?;
         }
 
-        // Collect legend items from series with labels
-        // Use flat_map to expand Radar series into multiple legend entries
-        let legend_items: Vec<LegendItem> = self
-            .series_mgr
-            .series
-            .iter()
-            .enumerate()
-            .flat_map(|(idx, series)| series.to_legend_items(idx, &self.display.theme))
-            .collect();
+        // Collect legend items, including grouped-series collapse behavior.
+        let legend_items = self.collect_legend_items();
 
         // Draw legend if there are labeled series and legend is enabled
         if !legend_items.is_empty() && self.layout.legend.enabled {
@@ -8394,8 +8536,8 @@ impl Plot {
         let clip_id = svg.add_clip_rect(plot_left, plot_top, plot_width, plot_height);
         svg.start_clip_group(&clip_id);
 
-        // Collect legend items (using new LegendItem type)
-        let mut legend_items: Vec<LegendItem> = Vec::new();
+        // Collect legend items, including grouped-series collapse behavior.
+        let legend_items = self.collect_legend_items();
 
         // Render each series
         for (idx, series) in self.series_mgr.series.iter().enumerate() {
@@ -8403,9 +8545,6 @@ impl Plot {
             let color = series.color.unwrap_or(default_color);
             let line_width = series.line_width.unwrap_or(self.display.theme.line_width);
             let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
-
-            // Collect legend items (expands Radar series into multiple entries)
-            legend_items.extend(series.to_legend_items(idx, &self.display.theme));
 
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } => {
@@ -8612,6 +8751,194 @@ impl Plot {
 impl Default for Plot {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Builder for scoped grouped-series construction.
+///
+/// Created via [`Plot::group`], this builder applies shared style defaults
+/// to all series added within the group.
+#[derive(Clone, Debug)]
+pub struct SeriesGroupBuilder {
+    plot: Plot,
+    style: builder::SeriesStyle,
+    group_id: usize,
+    resolved_auto_color: Option<Color>,
+}
+
+impl SeriesGroupBuilder {
+    fn new(mut plot: Plot) -> Self {
+        let group_id = plot.register_series_group();
+        Self {
+            plot,
+            style: builder::SeriesStyle::default(),
+            group_id,
+            resolved_auto_color: None,
+        }
+    }
+
+    fn finalize(self) -> Plot {
+        self.plot
+    }
+
+    /// Set the label used for the single legend entry of this group.
+    pub fn group_label<S: Into<String>>(mut self, label: S) -> Self {
+        self.plot
+            .set_series_group_label(self.group_id, label.into());
+        self
+    }
+
+    /// Set shared color applied to all group member series.
+    pub fn color(mut self, color: Color) -> Self {
+        self.style.color = Some(color);
+        self
+    }
+
+    /// Set shared line width applied to all group member series.
+    pub fn line_width(mut self, width: f32) -> Self {
+        self.style.line_width = Some(width.max(0.1));
+        self
+    }
+
+    /// Set shared line style applied to all group member series.
+    pub fn line_style(mut self, style: LineStyle) -> Self {
+        self.style.line_style = Some(style);
+        self
+    }
+
+    /// Set shared alpha/transparency applied to all group member series.
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.style.alpha = Some(alpha.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Add a line series to the current group.
+    pub fn line<X, Y>(mut self, x_data: &X, y_data: &Y) -> Self
+    where
+        X: NumericData1D,
+        Y: NumericData1D,
+    {
+        let x_vec = match collect_numeric_data_1d(x_data, self.plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let y_vec = match collect_numeric_data_1d(y_data, self.plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_line_series_grouped(
+            PlotData::Static(x_vec),
+            PlotData::Static(y_vec),
+            &crate::plots::basic::LineConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
+    /// Add a scatter series to the current group.
+    pub fn scatter<X, Y>(mut self, x_data: &X, y_data: &Y) -> Self
+    where
+        X: NumericData1D,
+        Y: NumericData1D,
+    {
+        let x_vec = match collect_numeric_data_1d(x_data, self.plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+        let y_vec = match collect_numeric_data_1d(y_data, self.plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_scatter_series_grouped(
+            PlotData::Static(x_vec),
+            PlotData::Static(y_vec),
+            &crate::plots::basic::ScatterConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
+    /// Add a bar series to the current group.
+    pub fn bar<S, V>(mut self, categories: &[S], values: &V) -> Self
+    where
+        S: ToString,
+        V: NumericData1D,
+    {
+        let cat_vec: Vec<String> = categories.iter().map(ToString::to_string).collect();
+        let val_vec = match collect_numeric_data_1d(values, self.plot.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.plot.set_pending_ingestion_error(err);
+                vec![]
+            }
+        };
+
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_bar_series_grouped(
+            cat_vec,
+            PlotData::Static(val_vec),
+            &crate::plots::basic::BarConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
     }
 }
 
@@ -9078,6 +9405,14 @@ impl PlotSeriesBuilder {
         V: NumericData1D,
     {
         self.end_series().bar(categories, values)
+    }
+
+    /// Continue with a grouped-series scope after finalizing the current series.
+    pub fn group<F>(self, f: F) -> Plot
+    where
+        F: FnOnce(SeriesGroupBuilder) -> SeriesGroupBuilder,
+    {
+        self.end_series().group(f)
     }
 
     /// Continue with a new streaming line series
@@ -9643,6 +9978,136 @@ mod tests {
             }
             other => panic!("expected DataExtractionFailed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_group_scopes_shared_style_and_does_not_leak() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y1 = vec![0.0, 1.0, 2.0];
+        let y2 = vec![0.0, 2.0, 4.0];
+        let y3 = vec![0.0, 3.0, 6.0];
+
+        let plot = Plot::new()
+            .group(|g| {
+                g.color(Color::RED)
+                    .line_width(3.0)
+                    .line_style(LineStyle::Dashed)
+                    .alpha(0.35)
+                    .line(&x, &y1)
+                    .line(&x, &y2)
+            })
+            .line(&x, &y3)
+            .end_series();
+
+        assert_eq!(plot.series_mgr.series.len(), 3);
+        assert_eq!(plot.series_mgr.series[0].color, Some(Color::RED));
+        assert_eq!(plot.series_mgr.series[1].color, Some(Color::RED));
+        assert_eq!(plot.series_mgr.series[0].line_width, Some(3.0));
+        assert_eq!(plot.series_mgr.series[1].line_width, Some(3.0));
+        assert!(matches!(
+            plot.series_mgr.series[0].line_style,
+            Some(LineStyle::Dashed)
+        ));
+        assert!(matches!(
+            plot.series_mgr.series[1].line_style,
+            Some(LineStyle::Dashed)
+        ));
+        assert_eq!(plot.series_mgr.series[0].alpha, Some(0.35));
+        assert_eq!(plot.series_mgr.series[1].alpha, Some(0.35));
+
+        // Outside the group, styles should fall back to normal per-series defaults.
+        assert_ne!(plot.series_mgr.series[2].color, Some(Color::RED));
+        assert_ne!(plot.series_mgr.series[2].line_width, Some(3.0));
+        assert!(matches!(
+            plot.series_mgr.series[2].line_style,
+            Some(LineStyle::Solid)
+        ));
+        assert_eq!(plot.series_mgr.series[2].alpha, Some(1.0));
+    }
+
+    #[test]
+    fn test_group_label_collapses_legend_to_single_item() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y1 = vec![0.0, 1.0, 2.0];
+        let y2 = vec![0.0, 2.0, 4.0];
+        let y3 = vec![0.0, 3.0, 6.0];
+
+        let plot = Plot::new()
+            .group(|g| {
+                g.group_label("Grouped")
+                    .line_style(LineStyle::Dashed)
+                    .line(&x, &y1)
+                    .line(&x, &y2)
+            })
+            .line(&x, &y3)
+            .label("Solo")
+            .end_series();
+
+        let legend_items = plot.collect_legend_items();
+        assert_eq!(legend_items.len(), 2);
+        assert!(legend_items.iter().any(|item| item.label == "Grouped"));
+        assert!(legend_items.iter().any(|item| item.label == "Solo"));
+
+        let grouped = legend_items
+            .iter()
+            .find(|item| item.label == "Grouped")
+            .expect("group legend item should exist");
+        assert!(matches!(grouped.item_type, LegendItemType::Line { .. }));
+    }
+
+    #[test]
+    fn test_group_without_label_is_omitted_from_legend() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y1 = vec![0.0, 1.0, 2.0];
+        let y2 = vec![0.0, 2.0, 4.0];
+
+        let plot = Plot::new().group(|g| g.line(&x, &y1).line(&x, &y2));
+        let legend_items = plot.collect_legend_items();
+        assert!(legend_items.is_empty());
+    }
+
+    #[test]
+    fn test_group_without_color_uses_single_palette_color() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y1 = vec![0.0, 1.0, 2.0];
+        let y2 = vec![0.0, 2.0, 4.0];
+        let y3 = vec![0.0, 3.0, 6.0];
+
+        let plot = Plot::new()
+            .group(|g| g.line(&x, &y1).line(&x, &y2))
+            .line(&x, &y3)
+            .end_series();
+        assert_eq!(plot.series_mgr.series.len(), 3);
+        assert_eq!(
+            plot.series_mgr.series[0].color,
+            plot.series_mgr.series[1].color
+        );
+        assert_ne!(
+            plot.series_mgr.series[0].color,
+            plot.series_mgr.series[2].color
+        );
+    }
+
+    #[test]
+    fn test_group_mixed_series_uses_first_member_legend_glyph() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y1 = vec![0.0, 1.0, 2.0];
+        let y2 = vec![0.0, 2.0, 4.0];
+
+        let plot = Plot::new().group(|g| {
+            g.group_label("Mixed")
+                .scatter(&x, &y1)
+                .line(&x, &y2)
+                .line_style(LineStyle::Dashed)
+        });
+
+        let legend_items = plot.collect_legend_items();
+        assert_eq!(legend_items.len(), 1);
+        assert_eq!(legend_items[0].label, "Mixed");
+        assert!(matches!(
+            legend_items[0].item_type,
+            LegendItemType::Scatter { .. }
+        ));
     }
 
     #[test]

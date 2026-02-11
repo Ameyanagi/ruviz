@@ -114,7 +114,7 @@ Plot::new()
 sns.boxplot(data=df, x='category', y='value')
 ```
 
-**ruviz** (manual grouping):
+**ruviz** (manual grouping for boxplot):
 ```rust
 // Group data by category first
 let group_a: Vec<f64> = /* filter for category A */;
@@ -128,6 +128,28 @@ subplots(1, 2, 1200, 600)?
     .subplot(0, 0, plot_a)?
     .subplot(0, 1, plot_b)?
     .save("grouped_boxplot.png")?;
+```
+
+For grouped styling with a single legend entry on line/scatter/bar series, use `group(...)`:
+
+```rust
+Plot::new()
+    .group(|g| {
+        g.group_label("Category A")
+            .line_style(LineStyle::Dashed)
+            .line_width(2.0)
+            .line(&x_a, &y_a1)
+            .line(&x_a, &y_a2)
+    })
+    .group(|g| {
+        g.group_label("Category B")
+            .line_style(LineStyle::Solid)
+            .line_width(2.0)
+            .line(&x_b, &y_b1)
+            .line(&x_b, &y_b2)
+    })
+    .legend(Position::TopRight)
+    .save("grouped_series.png")?;
 ```
 
 ### Scatter with Regression

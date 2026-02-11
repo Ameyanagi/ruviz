@@ -476,3 +476,52 @@ fn test_scientific_colormaps() {
         assert!(result.is_ok(), "Scientific colormap {} should work", name);
     }
 }
+
+#[test]
+fn test_grouped_fixed_color_behavior() {
+    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let y1 = vec![1.0, 1.8, 2.6, 3.4, 4.2];
+    let y2 = vec![0.8, 1.7, 2.5, 3.2, 3.9];
+
+    let result = Plot::new()
+        .size_px(800, 600)
+        .title("Grouped Fixed Color")
+        .xlabel("X Values")
+        .ylabel("Y Values")
+        .group(|g| {
+            g.group_label("Grouped")
+                .color(Color::from_hex("#0D47A1").unwrap())
+                .line_width(2.5)
+                .line(&x_data, &y1)
+                .line(&x_data, &y2)
+        })
+        .legend(ruviz::core::position::Position::TopRight)
+        .save("tests/output/grouped_fixed_color.png");
+
+    assert!(result.is_ok(), "Grouped fixed color should work");
+}
+
+#[test]
+fn test_grouped_auto_palette_color_behavior() {
+    let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let y1 = vec![1.0, 1.6, 2.1, 2.7, 3.2];
+    let y2 = vec![1.2, 1.9, 2.4, 3.1, 3.6];
+    let y3 = vec![1.4, 2.1, 2.9, 3.5, 4.1];
+
+    let result = Plot::new()
+        .size_px(800, 600)
+        .title("Grouped Auto Palette Color")
+        .xlabel("X Values")
+        .ylabel("Y Values")
+        .group(|g| {
+            g.group_label("Auto Colors")
+                .line(&x_data, &y1)
+                .line(&x_data, &y2)
+        })
+        .line(&x_data, &y3)
+        .label("Outside Group")
+        .legend(ruviz::core::position::Position::TopRight)
+        .save("tests/output/grouped_auto_palette_color.png");
+
+    assert!(result.is_ok(), "Grouped auto palette color should work");
+}

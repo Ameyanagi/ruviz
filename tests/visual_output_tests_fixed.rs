@@ -742,6 +742,63 @@ fn test_typst_layout_parity_no_clipping() -> std::result::Result<(), Box<dyn std
 }
 
 #[test]
+fn test_grouped_series_fixed_color_visual() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    setup_output_dir()?;
+
+    let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let y1 = vec![0.8, 1.7, 2.5, 3.2, 3.9];
+    let y2 = vec![1.0, 1.8, 2.6, 3.4, 4.2];
+
+    Plot::new()
+        .title("Grouped Fixed Color (Visual)".to_string())
+        .xlabel("X Values".to_string())
+        .ylabel("Y Values".to_string())
+        .group(|g| {
+            g.group_label("Grouped")
+                .line_style(LineStyle::Dashed)
+                .line_width(2.5)
+                .color(Color::from_hex("#0D47A1").unwrap())
+                .line(&x, &y1)
+                .line(&x, &y2)
+        })
+        .legend(Position::TopRight)
+        .save("tests/output/22_grouped_fixed_color_visual.png")?;
+    assert_default_output("tests/output/22_grouped_fixed_color_visual.png");
+
+    println!("✓ Saved: tests/output/22_grouped_fixed_color_visual.png");
+    Ok(())
+}
+
+#[test]
+fn test_grouped_series_auto_palette_color_visual()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    setup_output_dir()?;
+
+    let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let grouped_1 = vec![1.0, 1.6, 2.1, 2.7, 3.2];
+    let grouped_2 = vec![1.2, 1.9, 2.4, 3.1, 3.6];
+    let outside = vec![1.4, 2.1, 2.9, 3.5, 4.1];
+
+    Plot::new()
+        .title("Grouped Auto Palette Color (Visual)".to_string())
+        .xlabel("X Values".to_string())
+        .ylabel("Y Values".to_string())
+        .group(|g| {
+            g.group_label("Auto Colors")
+                .line(&x, &grouped_1)
+                .line(&x, &grouped_2)
+        })
+        .line(&x, &outside)
+        .label("Outside Group")
+        .legend(Position::TopRight)
+        .save("tests/output/23_grouped_auto_palette_color_visual.png")?;
+    assert_default_output("tests/output/23_grouped_auto_palette_color_visual.png");
+
+    println!("✓ Saved: tests/output/23_grouped_auto_palette_color_visual.png");
+    Ok(())
+}
+
+#[test]
 #[ignore] // Edge case with single point may produce NaN coordinates
 fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
     setup_output_dir()?;
