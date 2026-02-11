@@ -718,16 +718,16 @@ impl SvgRenderer {
         style: &LineStyle,
         width: f32,
     ) {
-        let dash_array = self
+        let dash_attr = self
             .line_style_to_dasharray(style)
-            .map(|pattern| format!("stroke-dasharray=\"{}\"", pattern))
+            .map(|pattern| format!(r#" stroke-dasharray="{}""#, pattern))
             .unwrap_or_default();
 
         let color_str = self.color_to_svg(color);
         writeln!(
             self.content,
-            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.1}" {}/>"#,
-            x, y, x + length, y, color_str, width, dash_array
+            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.1}"{}/>"#,
+            x, y, x + length, y, color_str, width, dash_attr
         )
         .unwrap();
     }
@@ -1347,6 +1347,36 @@ mod tests {
         assert!(svg.contains("svg"));
         assert!(svg.contains("rect"));
         assert!(svg.contains("line"));
+    }
+
+    #[test]
+    fn test_legend_line_handle_attribute_spacing() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+
+        renderer.draw_legend_line_handle(10.0, 20.0, 30.0, Color::BLACK, &LineStyle::Solid, 1.5);
+        renderer.draw_legend_line_handle(10.0, 30.0, 30.0, Color::BLACK, &LineStyle::Dashed, 1.5);
+
+        let svg = renderer.to_svg_string();
+        let line_nodes: Vec<&str> = svg.lines().filter(|line| line.contains("<line")).collect();
+
+        assert!(
+            line_nodes
+                .iter()
+                .any(|line| line.contains(r#"stroke-width="1.5"/>"#)),
+            "solid legend handle should not include dangling whitespace before '/>'"
+        );
+        assert!(
+            line_nodes
+                .iter()
+                .any(|line| { line.contains(r#"stroke-width="1.5" stroke-dasharray="5,5""#) }),
+            "dashed legend handle should include dash attribute with one leading space"
+        );
+        assert!(
+            !line_nodes
+                .iter()
+                .any(|line| line.contains(r#"stroke-width="1.5" />"#)),
+            "legend handle should not emit dangling whitespace before '/>'"
+        );
     }
 
     #[test]
