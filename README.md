@@ -164,6 +164,31 @@ Plot::new()
     .save("polynomials.png")?;
 ```
 
+### Grouped Series with Shared Styling
+
+```rust
+use ruviz::prelude::*;
+
+let x = vec![0.0, 1.0, 2.0, 3.0];
+let a = vec![0.0, 1.0, 2.0, 3.0];
+let b = vec![0.0, 1.5, 3.0, 4.5];
+let baseline = vec![0.2, 1.2, 2.2, 3.2];
+
+Plot::new()
+    .group(|g| {
+        g.group_label("Sensors")
+            .line_style(LineStyle::Dashed)
+            .line_width(2.0)
+            .color(Color::from_hex("#1E88E5").unwrap())
+            .line(&x, &a)
+            .line(&x, &b)
+    })
+    .line(&x, &baseline)
+    .label("Baseline")
+    .legend(Position::TopRight)
+    .save("grouped_series.png")?;
+```
+
 ### Subplots
 
 ```rust

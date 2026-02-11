@@ -257,4 +257,62 @@ mod multi_series_integration_tests {
         
         std::fs::remove_file("test_complex_scenario.png").ok();
     }
+
+    /// Integration Test: grouped-series scope with shared style and single group legend item
+    #[test]
+    fn test_grouped_series_scope_integration() {
+        let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+        let y1 = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+        let y2 = vec![0.0, 1.5, 3.0, 4.5, 6.0];
+        let y3 = vec![0.5, 2.0, 2.5, 4.0, 4.5];
+
+        let result = Plot::new()
+            .group(|g| {
+                g.group_label("Sensor Group")
+                    .color(Color::from_hex("#1E88E5").unwrap())
+                    .line_style(LineStyle::Dashed)
+                    .line_width(2.5)
+                    .line(&x, &y1)
+                    .line(&x, &y2)
+            })
+            .line(&x, &y3)
+            .label("Baseline")
+            .color(Color::from_hex("#D81B60").unwrap())
+            .legend(Position::TopRight)
+            .title("Grouped Series Scope")
+            .save("test_grouped_series_scope.png");
+
+        assert!(result.is_ok(), "Grouped series scope failed: {:?}", result.err());
+        assert!(
+            Path::new("test_grouped_series_scope.png").exists(),
+            "Grouped series output file was not created"
+        );
+        std::fs::remove_file("test_grouped_series_scope.png").ok();
+    }
+
+    /// Integration Test: mixed-type grouped series should render successfully
+    #[test]
+    fn test_grouped_mixed_types_integration() {
+        let x = vec![0.0, 1.0, 2.0, 3.0];
+        let y_line = vec![0.5, 1.0, 1.8, 2.5];
+        let y_scatter = vec![0.7, 1.3, 1.9, 2.2];
+
+        let result = Plot::new()
+            .group(|g| {
+                g.group_label("Mixed Group")
+                    .alpha(0.8)
+                    .scatter(&x, &y_scatter)
+                    .line(&x, &y_line)
+            })
+            .legend(Position::TopLeft)
+            .title("Grouped Mixed Types")
+            .save("test_grouped_mixed_types.png");
+
+        assert!(result.is_ok(), "Grouped mixed types failed: {:?}", result.err());
+        assert!(
+            Path::new("test_grouped_mixed_types.png").exists(),
+            "Grouped mixed-types output file was not created"
+        );
+        std::fs::remove_file("test_grouped_mixed_types.png").ok();
+    }
 }

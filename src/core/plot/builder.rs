@@ -205,6 +205,14 @@ macro_rules! impl_terminal_methods {
                 self.finalize().bar(categories, values)
             }
 
+            /// Add a grouped-series scope after finalizing the current series.
+            pub fn group<F>(self, f: F) -> super::Plot
+            where
+                F: FnOnce(super::SeriesGroupBuilder) -> super::SeriesGroupBuilder,
+            {
+                self.finalize().group(f)
+            }
+
             /// Add an error bars series after finalizing the current series
             ///
             /// Enables chaining multiple series: `.line(...).error_bars(...).save()`
