@@ -84,7 +84,10 @@ use crate::{
     },
     render::{Color, LineStyle, MarkerStyle, Theme},
 };
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 #[cfg(feature = "parallel")]
 use crate::render::{ParallelRenderer, SeriesRenderData};
@@ -829,7 +832,10 @@ impl Plot {
 
     fn register_series_group(&mut self) -> usize {
         let group_id = self.next_group_id;
-        self.next_group_id = self.next_group_id.saturating_add(1);
+        self.next_group_id = self
+            .next_group_id
+            .checked_add(1)
+            .expect("series group id overflow");
         self.series_groups.push(SeriesGroupMeta {
             id: group_id,
             label: None,
@@ -838,25 +844,30 @@ impl Plot {
     }
 
     fn set_series_group_label(&mut self, group_id: usize, label: String) {
+        let mut found = false;
         if let Some(group) = self
             .series_groups
             .iter_mut()
             .find(|group| group.id == group_id)
         {
             group.label = Some(label);
+            found = true;
         }
-    }
-
-    fn group_label(&self, group_id: usize) -> Option<&str> {
-        self.series_groups
-            .iter()
-            .find(|group| group.id == group_id)
-            .and_then(|group| group.label.as_deref())
+        debug_assert!(
+            found,
+            "set_series_group_label called with unknown group_id: {}",
+            group_id
+        );
     }
 
     fn collect_legend_items(&self) -> Vec<LegendItem> {
         let mut legend_items = Vec::new();
         let mut seen_group_ids = HashSet::new();
+        let group_labels: HashMap<usize, &str> = self
+            .series_groups
+            .iter()
+            .filter_map(|group| group.label.as_deref().map(|label| (group.id, label)))
+            .collect();
 
         for (idx, series) in self.series_mgr.series.iter().enumerate() {
             if let Some(group_id) = series.group_id {
@@ -864,7 +875,7 @@ impl Plot {
                     continue;
                 }
 
-                let Some(label) = self.group_label(group_id) else {
+                let Some(label) = group_labels.get(&group_id).copied() else {
                     continue;
                 };
 
