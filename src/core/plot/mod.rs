@@ -4597,13 +4597,16 @@ impl Plot {
     fn validate_output_config(&self) -> Result<()> {
         let figure = &self.display.config.figure;
         if !figure.width.is_finite() || !figure.height.is_finite() {
-            return Err(PlottingError::InvalidDimensions {
-                width: 0,
-                height: 0,
-            });
+            return Err(PlottingError::InvalidInput(format!(
+                "Figure width/height must be finite values (width={}, height={})",
+                figure.width, figure.height
+            )));
         }
         if !figure.dpi.is_finite() {
-            return Err(PlottingError::InvalidDPI(0));
+            return Err(PlottingError::InvalidInput(format!(
+                "Figure DPI must be a finite value (dpi={})",
+                figure.dpi
+            )));
         }
 
         PlottingError::validate_dpi(figure.dpi.round() as u32)?;

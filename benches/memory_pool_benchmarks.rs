@@ -13,7 +13,6 @@ fn generate_test_data(size: usize) -> Vec<f64> {
 }
 
 #[allow(dead_code)]
-#[allow(dead_code)]
 fn generate_position_data(size: usize) -> Vec<(f32, f32)> {
     (0..size)
         .map(|i| (i as f32 * 0.5, (i as f32 * 0.1).sin() * 10.0))

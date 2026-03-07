@@ -1,4 +1,4 @@
-use ruviz::core::PlottingError;
+use ruviz::core::{FigureConfig, PlotConfig, PlottingError};
 use ruviz::prelude::*;
 
 #[test]
@@ -56,4 +56,17 @@ fn render_rejects_nan_data_before_bounds_calculation() {
         .expect_err("NaN data should fail validation");
 
     assert!(matches!(err, PlottingError::InvalidData { .. }));
+}
+
+#[test]
+fn render_rejects_non_finite_output_configuration_with_context() {
+    let mut config = PlotConfig::default();
+    config.figure = FigureConfig::new(f32::NAN, 4.8, 100.0);
+
+    let err = Plot::with_config(config)
+        .line(&[0.0, 1.0], &[1.0, 2.0])
+        .render()
+        .expect_err("non-finite figure dimensions should fail validation");
+
+    assert!(matches!(err, PlottingError::InvalidInput(message) if message.contains("width")));
 }

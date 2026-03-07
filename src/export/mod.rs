@@ -90,18 +90,14 @@ where
         .map_err(PlottingError::IoError)?;
     let mut writer_handle = BufWriter::new(file);
 
-    let write_result = writer(&mut writer_handle).and_then(|_| {
-        writer_handle.flush().map_err(PlottingError::IoError)?;
-        writer_handle
-            .get_ref()
-            .sync_all()
-            .map_err(PlottingError::IoError)?;
-        Ok(())
-    });
-
-    match write_result {
+    match writer(&mut writer_handle) {
         Ok(()) => {
-            drop(writer_handle);
+            writer_handle.flush().map_err(PlottingError::IoError)?;
+            let file = writer_handle
+                .into_inner()
+                .map_err(|err| PlottingError::IoError(err.into_error()))?;
+            file.sync_all().map_err(PlottingError::IoError)?;
+            drop(file);
             fs::rename(&temp_path, path).map_err(|err| {
                 cleanup_temp_file(&temp_path);
                 PlottingError::IoError(err)

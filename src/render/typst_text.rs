@@ -309,11 +309,14 @@ mod imp {
     }
 
     fn maybe_evict(cache: &mut HashMap<CacheKey, CachedValue>, incoming_bytes: usize) {
+        let mut current_bytes = cache_bytes(cache);
         while cache.len() >= MAX_CACHE_ENTRIES
-            || cache_bytes(cache).saturating_add(incoming_bytes) > MAX_CACHE_BYTES
+            || (!cache.is_empty() && current_bytes.saturating_add(incoming_bytes) > MAX_CACHE_BYTES)
         {
             if let Some(first_key) = cache.keys().next().cloned() {
-                cache.remove(&first_key);
+                if let Some(removed) = cache.remove(&first_key) {
+                    current_bytes = current_bytes.saturating_sub(cached_value_bytes(&removed));
+                }
             } else {
                 break;
             }
@@ -498,18 +501,20 @@ mod imp {
         validate_raster_size(pixel_width, pixel_height, operation)?;
         let pixels = pixmap.data().to_vec();
 
-        let mut cache = lock_cache();
-        maybe_evict(&mut cache, pixels.len());
-        cache.insert(
-            key,
-            CachedValue::Raster {
-                pixels,
-                pixel_width,
-                pixel_height,
-                logical_width,
-                logical_height,
-            },
-        );
+        if pixels.len() <= MAX_CACHE_BYTES {
+            let mut cache = lock_cache();
+            maybe_evict(&mut cache, pixels.len());
+            cache.insert(
+                key,
+                CachedValue::Raster {
+                    pixels: pixels.clone(),
+                    pixel_width,
+                    pixel_height,
+                    logical_width,
+                    logical_height,
+                },
+            );
+        }
 
         Ok(TypstRasterOutput {
             pixmap,
@@ -551,16 +556,18 @@ mod imp {
         let width = size.x.to_pt() as f32;
         let height = size.y.to_pt() as f32;
 
-        let mut cache = lock_cache();
-        maybe_evict(&mut cache, raw_svg.len());
-        cache.insert(
-            key,
-            CachedValue::Svg {
-                svg: raw_svg.clone(),
-                width,
-                height,
-            },
-        );
+        if raw_svg.len() <= MAX_CACHE_BYTES {
+            let mut cache = lock_cache();
+            maybe_evict(&mut cache, raw_svg.len());
+            cache.insert(
+                key,
+                CachedValue::Svg {
+                    svg: raw_svg.clone(),
+                    width,
+                    height,
+                },
+            );
+        }
 
         Ok(TypstSvgOutput {
             svg: raw_svg,
