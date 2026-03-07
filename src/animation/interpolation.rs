@@ -392,7 +392,8 @@ mod tests {
     #[test]
     fn test_easing_boundary_values() {
         // All easing functions should return 0 at t=0 and 1 at t=1
-        let easings: Vec<(&str, fn(f64) -> f64)> = vec![
+        type EasingEntry = (&'static str, fn(f64) -> f64);
+        let easings: Vec<EasingEntry> = vec![
             ("linear", easing::linear),
             ("ease_in_quad", easing::ease_in_quad),
             ("ease_out_quad", easing::ease_out_quad),

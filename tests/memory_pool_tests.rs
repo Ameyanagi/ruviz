@@ -1,4 +1,6 @@
-use ruviz::data::{Data1D, DataView, MemoryPool, PooledBuffer, PooledVec, SharedMemoryPool};
+#![allow(dead_code)]
+
+use ruviz::data::{Data1D, DataView, MemoryPool, PooledVec, SharedMemoryPool};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -336,8 +338,8 @@ mod performance_tests {
         for i in 0..NUM_PLOTS {
             let _result = Plot::new()
                 .line(&x_data, &y_data)
-                .title(&format!("Plot {}", i))
-                .save(&format!("tests/output/steady_state_{}.png", i));
+                .title(format!("Plot {}", i))
+                .save(format!("tests/output/steady_state_{}.png", i));
         }
 
         let end_memory = get_memory_usage();
@@ -371,6 +373,7 @@ mod performance_tests {
 
 // Mock implementations for testing (these will be replaced by real implementations)
 #[cfg(test)]
+#[allow(dead_code)]
 mod mocks {
     use super::*;
 

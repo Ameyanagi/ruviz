@@ -23,13 +23,13 @@ async fn main() -> Result<()> {
     let dataset = generate_large_dataset(initial_size);
 
     println!(
-        "Generated {} points in {:.2}ms",
-        initial_size, dataset.generation_time_ms
+        "Generated {} points in {:.2}ms ({:.2}MB)",
+        dataset.size, dataset.generation_time_ms, dataset.memory_usage_mb
     );
 
     // Create performance demonstration plot
     let plot: Plot = Plot::new()
-        .title(&format!(
+        .title(format!(
             "Real-time Performance Demo - {} points",
             initial_size
         ))
@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 struct PerformanceDataset {
     x_data: Vec<f64>,
     y_data: Vec<f64>,
@@ -97,11 +98,12 @@ fn generate_large_dataset(n_points: usize) -> PerformanceDataset {
     }
 }
 
+#[allow(dead_code)]
 fn run_static_performance_benchmark(dataset: &PerformanceDataset) -> Result<()> {
     println!("\nRunning static rendering benchmark...");
 
     let plot: Plot = Plot::new()
-        .title(&format!("Performance Benchmark - {} points", dataset.size))
+        .title(format!("Performance Benchmark - {} points", dataset.size))
         .line(&dataset.x_data, &dataset.y_data)
         .into();
 

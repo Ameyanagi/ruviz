@@ -2690,9 +2690,11 @@ impl SkiaRenderer {
 
     /// Save the current pixmap as PNG
     pub fn save_png<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        self.pixmap
-            .save_png(path)
-            .map_err(|_| PlottingError::IoError(std::io::Error::other("Failed to save PNG")))
+        let png_bytes = self
+            .pixmap
+            .encode_png()
+            .map_err(|_| PlottingError::IoError(std::io::Error::other("Failed to encode PNG")))?;
+        crate::export::write_bytes_atomic(path, &png_bytes)
     }
 
     /// Export as SVG (simplified - tiny-skia doesn't directly support SVG export)
@@ -2710,9 +2712,7 @@ impl SkiaRenderer {
             width, height, self.theme.background, width, height
         );
 
-        std::fs::write(path, svg_content).map_err(PlottingError::IoError)?;
-
-        Ok(())
+        crate::export::write_bytes_atomic(path, svg_content.as_bytes())
     }
 
     /// Get the width of the renderer

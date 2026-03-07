@@ -410,10 +410,9 @@ fn run_all_export_tests() {
     println!("\n📤 RUNNING COMPREHENSIVE EXPORT FORMAT TESTS");
     println!("===============================================");
 
-    let tests: Vec<(
-        &str,
-        fn() -> std::result::Result<(), Box<dyn std::error::Error>>,
-    )> = vec![
+    type ExportTestFn = fn() -> std::result::Result<(), Box<dyn std::error::Error>>;
+
+    let tests: Vec<(&str, ExportTestFn)> = vec![
         (
             "PNG Export",
             test_png_export as fn() -> std::result::Result<(), Box<dyn std::error::Error>>,

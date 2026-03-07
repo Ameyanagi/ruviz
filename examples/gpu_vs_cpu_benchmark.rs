@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
         // CPU Benchmark
         print!("   CPU: ");
         let start = Instant::now();
-        let cpu_result = cpu_renderer.transform_coordinates_pooled(
+        let _cpu_result = cpu_renderer.transform_coordinates_pooled(
             &x_data, &y_data, x_range.0, x_range.1, y_range.0, y_range.1, viewport.0, viewport.1,
             viewport.2, viewport.3,
         )?;
@@ -310,7 +310,7 @@ fn format_number(n: u64) -> String {
     let mut result = String::new();
 
     for (i, &ch) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(ch);

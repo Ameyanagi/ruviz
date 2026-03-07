@@ -1,7 +1,5 @@
 //! Test actual wgpu 22.1 API compatibility
 
-use pollster;
-
 #[tokio::main]
 async fn main() {
     println!("🧪 Testing wgpu 22.1 API...");
@@ -37,7 +35,7 @@ async fn main() {
             )
             .await
         {
-            Ok((device, queue)) => {
+            Ok((device, _queue)) => {
                 println!("✅ Device and queue created successfully");
 
                 // Test basic buffer creation

@@ -3,7 +3,6 @@ use ruviz::prelude::*;
 use std::time::Instant;
 
 /// Memory optimization demonstration showing buffer pooling and efficient rendering
-
 fn main() -> Result<()> {
     println!("Memory Optimization Demo");
     println!("========================");

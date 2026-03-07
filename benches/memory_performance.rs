@@ -60,7 +60,7 @@ fn bench_plot_rendering(c: &mut Criterion) {
                     let _result = Plot::new()
                         .line(x, y)
                         .title("Performance Test")
-                        .save(&format!("test_output/bench_{}.png", points));
+                        .save(format!("test_output/bench_{}.png", points));
                 });
             },
         );
@@ -81,8 +81,8 @@ fn bench_steady_state_rendering(c: &mut Criterion) {
             for i in 0..100 {
                 let _result = Plot::new()
                     .line(&x_data, &y_data)
-                    .title(&format!("Plot {}", i))
-                    .save(&format!("test_output/steady_state_{}.png", i));
+                    .title(format!("Plot {}", i))
+                    .save(format!("test_output/steady_state_{}.png", i));
             }
         });
     });
@@ -110,8 +110,8 @@ fn bench_concurrent_rendering(c: &mut Criterion) {
                                 for i in 0..10 {
                                     let _result = Plot::new()
                                         .line(&x, &y)
-                                        .title(&format!("Thread {} Plot {}", thread_id, i))
-                                        .save(&format!(
+                                        .title(format!("Thread {} Plot {}", thread_id, i))
+                                        .save(format!(
                                             "test_output/concurrent_{}_{}.png",
                                             thread_id, i
                                         ));

@@ -96,7 +96,7 @@ fn test_plot_datashader_activation() {
     // Basic validation that we got an image
     assert!(image.width > 0);
     assert!(image.height > 0);
-    assert!(image.pixels.len() > 0);
+    assert!(!image.pixels.is_empty());
 
     println!("✅ Plot DataShader activation test passed");
     println!("   - Rendered {} points successfully", n);

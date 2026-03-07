@@ -27,11 +27,11 @@ fn main() -> Result<()> {
         .xlabel("X")
         .ylabel("Y")
         .legend(Position::TopLeft)
-        .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
+        .line(&x, &x.iter().copied().collect::<Vec<_>>())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
         .label("Quadratic")
-        .line(&x, &x.iter().map(|&v| v.powi(3)).collect::<Vec<_>>())
+        .line(&x, &x.iter().map(|&v: &f64| v.powi(3)).collect::<Vec<_>>())
         .label("Cubic")
         .save("tests/golden_images/02_multi_series.png")?;
     count += 1;
@@ -93,12 +93,12 @@ fn main() -> Result<()> {
     ] {
         println!("[{}/25] {} theme...", count + 1, name);
         Plot::new()
-            .title(&format!("{} Theme", name.to_uppercase()))
+            .title(format!("{} Theme", name.to_uppercase()))
             .xlabel("X")
             .ylabel("Y")
             .theme(theme)
             .line(&x, &y)
-            .save(&format!(
+            .save(format!(
                 "tests/golden_images/0{}_theme_{}.png",
                 count + 1,
                 name
@@ -110,10 +110,10 @@ fn main() -> Result<()> {
     for dpi in [72, 150, 300] {
         println!("[{}/25] {} DPI...", count + 1, dpi);
         Plot::new()
-            .title(&format!("{} DPI", dpi))
+            .title(format!("{} DPI", dpi))
             .dpi(dpi)
             .line(&x, &y)
-            .save(&format!(
+            .save(format!(
                 "tests/golden_images/{}_dpi_{}.png",
                 count + 1,
                 dpi

@@ -123,7 +123,7 @@ mod imp {
     use std::{
         collections::HashMap,
         path::PathBuf,
-        sync::{Mutex, OnceLock},
+        sync::{Mutex, MutexGuard, OnceLock},
     };
     use tiny_skia::{IntSize, Pixmap};
     use typst::{
@@ -138,6 +138,9 @@ mod imp {
     use typst_kit::fonts::{FontSearcher, FontSlot};
 
     const MAX_CACHE_ENTRIES: usize = 256;
+    const MAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
+    const MAX_RASTER_DIMENSION: u32 = 8_192;
+    const MAX_RASTER_BYTES: usize = 128 * 1024 * 1024;
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     struct CacheKey {
@@ -272,6 +275,10 @@ mod imp {
         CACHE.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
+    fn lock_cache() -> MutexGuard<'static, HashMap<CacheKey, CachedValue>> {
+        cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn make_key(
         snippet: &str,
         size_pt: f32,
@@ -288,13 +295,56 @@ mod imp {
         }
     }
 
-    fn maybe_evict(cache: &mut HashMap<CacheKey, CachedValue>) {
-        if cache.len() < MAX_CACHE_ENTRIES {
-            return;
+    fn cached_value_bytes(value: &CachedValue) -> usize {
+        match value {
+            CachedValue::Raster { pixels, .. } => pixels.len(),
+            CachedValue::Svg { svg, .. } => svg.len(),
         }
-        if let Some(first_key) = cache.keys().next().cloned() {
-            cache.remove(&first_key);
+    }
+
+    fn cache_bytes(cache: &HashMap<CacheKey, CachedValue>) -> usize {
+        cache.values().map(cached_value_bytes).sum()
+    }
+
+    fn maybe_evict(cache: &mut HashMap<CacheKey, CachedValue>, incoming_bytes: usize) {
+        while cache.len() >= MAX_CACHE_ENTRIES
+            || cache_bytes(cache).saturating_add(incoming_bytes) > MAX_CACHE_BYTES
+        {
+            if let Some(first_key) = cache.keys().next().cloned() {
+                cache.remove(&first_key);
+            } else {
+                break;
+            }
         }
+    }
+
+    fn validate_raster_size(width: u32, height: u32, operation: &str) -> Result<()> {
+        if width > MAX_RASTER_DIMENSION || height > MAX_RASTER_DIMENSION {
+            return Err(PlottingError::PerformanceLimit {
+                limit_type: format!("{operation} raster dimension"),
+                actual: width.max(height) as usize,
+                maximum: MAX_RASTER_DIMENSION as usize,
+            });
+        }
+
+        let bytes = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| PlottingError::PerformanceLimit {
+                limit_type: format!("{operation} raster bytes"),
+                actual: usize::MAX,
+                maximum: MAX_RASTER_BYTES,
+            })?;
+
+        if bytes > MAX_RASTER_BYTES {
+            return Err(PlottingError::PerformanceLimit {
+                limit_type: format!("{operation} raster bytes"),
+                actual: bytes,
+                maximum: MAX_RASTER_BYTES,
+            });
+        }
+
+        Ok(())
     }
 
     fn snippet_excerpt(snippet: &str) -> String {
@@ -406,14 +456,15 @@ mod imp {
             TypstBackendKind::Raster,
         );
 
-        if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
-            if let CachedValue::Raster {
+        {
+            let cache = lock_cache();
+            if let Some(CachedValue::Raster {
                 pixels,
                 pixel_width,
                 pixel_height,
                 logical_width,
                 logical_height,
-            } = cached
+            }) = cache.get(&key)
             {
                 let size = IntSize::from_wh(*pixel_width, *pixel_height).ok_or_else(|| {
                     PlottingError::RenderError("Invalid cached typst raster size".to_string())
@@ -435,14 +486,18 @@ mod imp {
         let size = page.frame.size();
         let logical_width = size.x.to_pt() as f32;
         let logical_height = size.y.to_pt() as f32;
+        let expected_width = logical_width.ceil().max(1.0) as u32;
+        let expected_height = logical_height.ceil().max(1.0) as u32;
+        validate_raster_size(expected_width, expected_height, operation)?;
 
         let pixmap = typst_render::render(&page, 1.0);
         let pixel_width = pixmap.width();
         let pixel_height = pixmap.height();
+        validate_raster_size(pixel_width, pixel_height, operation)?;
         let pixels = pixmap.data().to_vec();
 
-        let mut cache = cache().lock().expect("cache lock poisoned");
-        maybe_evict(&mut cache);
+        let mut cache = lock_cache();
+        maybe_evict(&mut cache, pixels.len());
         cache.insert(
             key,
             CachedValue::Raster {
@@ -477,8 +532,9 @@ mod imp {
         }
 
         let key = make_key(snippet, size_pt, color, rotation_deg, TypstBackendKind::Svg);
-        if let Some(cached) = cache().lock().expect("cache lock poisoned").get(&key) {
-            if let CachedValue::Svg { svg, width, height } = cached {
+        {
+            let cache = lock_cache();
+            if let Some(CachedValue::Svg { svg, width, height }) = cache.get(&key) {
                 return Ok(TypstSvgOutput {
                     svg: svg.clone(),
                     width: *width,
@@ -493,8 +549,8 @@ mod imp {
         let width = size.x.to_pt() as f32;
         let height = size.y.to_pt() as f32;
 
-        let mut cache = cache().lock().expect("cache lock poisoned");
-        maybe_evict(&mut cache);
+        let mut cache = lock_cache();
+        maybe_evict(&mut cache, raw_svg.len());
         cache.insert(
             key,
             CachedValue::Svg {

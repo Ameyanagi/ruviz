@@ -154,10 +154,21 @@ impl SvgRenderer {
     }
 
     fn strip_xml_declaration<'a>(&self, svg: &'a str) -> &'a str {
-        if let Some(start) = svg.find("<svg") {
-            &svg[start..]
+        let trimmed = svg.trim_start();
+        let without_decl = if trimmed.starts_with("<?xml") {
+            if let Some(end) = trimmed.find("?>") {
+                trimmed[end + 2..].trim_start()
+            } else {
+                trimmed
+            }
         } else {
-            svg
+            trimmed
+        };
+
+        if let Some(start) = without_decl.find("<svg") {
+            &without_decl[start..]
+        } else {
+            without_decl
         }
     }
 
@@ -1178,8 +1189,7 @@ impl SvgRenderer {
     /// Save to SVG file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let svg_string = self.to_svg_string();
-        std::fs::write(path, svg_string).map_err(PlottingError::IoError)?;
-        Ok(())
+        crate::export::write_bytes_atomic(path, svg_string.as_bytes())
     }
 
     /// Get width

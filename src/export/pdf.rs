@@ -282,14 +282,11 @@ impl PdfRenderer {
 
     /// Save the PDF to a file
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
-        let file = std::fs::File::create(path).map_err(PlottingError::IoError)?;
-
-        let mut writer = std::io::BufWriter::new(file);
-        self.doc
-            .save(&mut writer)
-            .map_err(|e| PlottingError::RenderError(format!("Failed to save PDF: {}", e)))?;
-
-        Ok(())
+        crate::export::write_with_atomic_writer(path, |writer| {
+            self.doc
+                .save(writer)
+                .map_err(|e| PlottingError::RenderError(format!("Failed to save PDF: {}", e)))
+        })
     }
 
     /// Get width in pixels (at 96 DPI)

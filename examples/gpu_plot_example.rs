@@ -82,7 +82,7 @@ fn main() -> Result<()> {
     println!("Generated {} points", large_count);
 
     let large_plot: Plot = Plot::new()
-        .title(&format!("Large Dataset ({} points)", large_count))
+        .title(format!("Large Dataset ({} points)", large_count))
         .line(&large_x, &large_y)
         .color(Color::new(44, 160, 44))
         .into();

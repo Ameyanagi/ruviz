@@ -118,8 +118,9 @@ mod tests {
 
     #[test]
     fn test_defaults_reexport() {
-        // Check that defaults module is accessible
-        assert!(defaults::VIOLIN_FILL_ALPHA > 0.0);
-        assert!(defaults::BOXPLOT_FILL_ALPHA > 0.0);
+        let violin_alpha = std::hint::black_box(defaults::VIOLIN_FILL_ALPHA);
+        let boxplot_alpha = std::hint::black_box(defaults::BOXPLOT_FILL_ALPHA);
+        assert!(violin_alpha > 0.0);
+        assert!(boxplot_alpha > 0.0);
     }
 }

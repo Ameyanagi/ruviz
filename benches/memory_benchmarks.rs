@@ -7,6 +7,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Simple allocator wrapper to track allocations
+#[allow(dead_code)]
 struct TrackingAllocator;
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
@@ -14,7 +15,7 @@ static PEAK_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let ret = System.alloc(layout);
+        let ret = unsafe { System.alloc(layout) };
         if !ret.is_null() {
             let size = layout.size();
             let current = ALLOCATED.fetch_add(size, Ordering::SeqCst) + size;
@@ -37,7 +38,7 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout);
+        unsafe { System.dealloc(ptr, layout) };
         ALLOCATED.fetch_sub(layout.size(), Ordering::SeqCst);
     }
 }
@@ -137,11 +138,7 @@ fn bench_memory_no_leaks(c: &mut Criterion) {
 
             // Allow for some variance but should be close to baseline
             let final_allocated = ALLOCATED.load(Ordering::SeqCst);
-            let growth = if final_allocated > baseline {
-                final_allocated - baseline
-            } else {
-                0
-            };
+            let growth = final_allocated.saturating_sub(baseline);
 
             // Growth should be minimal (< 1MB indicates no significant leaks)
             assert!(

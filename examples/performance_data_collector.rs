@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     println!("==============================\n");
 
     // Initialize CPU renderer
-    let mut cpu_renderer = PooledRenderer::new();
+    let cpu_renderer = PooledRenderer::new();
     println!("✅ CPU Renderer initialized");
 
     // Initialize GPU renderer
@@ -161,7 +161,7 @@ fn format_number(n: u64) -> String {
     let mut result = String::new();
 
     for (i, &ch) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(ch);

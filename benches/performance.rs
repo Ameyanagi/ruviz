@@ -21,7 +21,7 @@ fn bench_scatter_plots(c: &mut Criterion) {
             b.iter(|| {
                 let plot = Plot::new()
                     .scatter(black_box(&x_data), black_box(&y_data))
-                    .title(&format!("Scatter Plot - {} points", size));
+                    .title(format!("Scatter Plot - {} points", size));
 
                 black_box(plot.render()).expect("Render should succeed")
             })
@@ -52,7 +52,7 @@ fn bench_line_plots(c: &mut Criterion) {
             b.iter(|| {
                 let plot = Plot::new()
                     .line(black_box(&x_data), black_box(&y_data))
-                    .title(&format!("Line Plot - {} points", size))
+                    .title(format!("Line Plot - {} points", size))
                     .xlabel("Time")
                     .ylabel("Signal");
 
@@ -90,14 +90,13 @@ fn bench_multi_series(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     let mut plot =
-                        Plot::new().title(&format!("Multi-Series Plot - {} series", series_count));
+                        Plot::new().title(format!("Multi-Series Plot - {} series", series_count));
 
                     // Add all series to the plot
                     for (i, (x, y)) in all_series_data.iter().enumerate() {
                         plot = plot
                             .line(black_box(x), black_box(y))
-                            .label(&format!("Series {}", i + 1))
-                            .end_series();
+                            .label(format!("Series {}", i + 1));
                     }
 
                     plot = plot.legend(Position::TopRight);
@@ -183,9 +182,8 @@ fn bench_resolutions(c: &mut Criterion) {
                 b.iter(|| {
                     let plot = Plot::new()
                         .scatter(black_box(&x_data), black_box(&y_data))
-                        .end_series()
-                        .dimensions(w, h)
-                        .title(&format!("Resolution Test {}x{}", w, h));
+                        .size_px(w, h)
+                        .title(format!("Resolution Test {}x{}", w, h));
 
                     black_box(plot.render()).expect("Render should succeed")
                 })
@@ -215,7 +213,7 @@ fn bench_memory_patterns(c: &mut Criterion) {
 
                     let plot = Plot::new()
                         .line(black_box(&x_data), black_box(&y_data))
-                        .title(&format!("Memory Test - {} points", s));
+                        .title(format!("Memory Test - {} points", s));
 
                     black_box(plot.render()).expect("Render should succeed");
 
@@ -256,7 +254,6 @@ fn bench_styling(c: &mut Criterion) {
                 .title("Complex Styled Plot")
                 .xlabel("X Axis Label")
                 .ylabel("Y Axis Label")
-                .end_series()
                 .grid(true)
                 .legend(Position::TopRight);
             black_box(plot.render()).expect("Render should succeed")

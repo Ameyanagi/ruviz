@@ -6,7 +6,7 @@ use ruviz::prelude::*;
 
 fn main() -> Result<()> {
     // Create exponential data suitable for log scale
-    let x_log: Vec<f64> = (1..=5).map(|i| 10.0_f64.powi(i as i32)).collect();
+    let x_log: Vec<f64> = (1..=5).map(|i| 10.0_f64.powi(i)).collect();
     let y_log: Vec<f64> = x_log.iter().map(|&x| x * 2.0).collect();
 
     // Linear scale (default)

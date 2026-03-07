@@ -762,11 +762,13 @@ mod tests {
     #[test]
     fn test_radar_per_series_config() {
         // Test that RadarConfig can store per-series styling
-        let mut config = RadarConfig::default();
-        config.series_labels = vec!["Series A".to_string(), "Series B".to_string()];
-        config.colors = Some(vec![Color::RED, Color::BLUE]);
-        config.per_series_fill_alphas = vec![Some(0.3), Some(0.5)];
-        config.per_series_line_widths = vec![Some(2.0), None];
+        let config = RadarConfig {
+            series_labels: vec!["Series A".to_string(), "Series B".to_string()],
+            colors: Some(vec![Color::RED, Color::BLUE]),
+            per_series_fill_alphas: vec![Some(0.3), Some(0.5)],
+            per_series_line_widths: vec![Some(2.0), None],
+            ..Default::default()
+        };
 
         assert_eq!(config.series_labels.len(), 2);
         assert_eq!(config.series_labels[0], "Series A");

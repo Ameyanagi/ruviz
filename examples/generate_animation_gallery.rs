@@ -26,10 +26,9 @@ fn main() -> Result<()> {
     let total = 7;
 
     // Define all generators
-    let generators: Vec<(
-        &str,
-        Box<dyn Fn(&str, RecordConfig) -> Result<()> + Send + Sync>,
-    )> = vec![
+    type AnimationGenerator = Box<dyn Fn(&str, RecordConfig) -> Result<()> + Send + Sync>;
+
+    let generators: Vec<(&str, AnimationGenerator)> = vec![
         ("sine wave", Box::new(generate_sine_wave)),
         ("growing scatter", Box::new(generate_growing_scatter)),
         ("animated bars", Box::new(generate_animated_bars)),

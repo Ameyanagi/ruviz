@@ -477,8 +477,7 @@ mod tests {
     fn test_buffer_alignment() {
         // Mock test for alignment calculation
         let alignment = 256u64; // Typical uniform buffer alignment
-        let pool_alignment =
-            |size: u64| -> u64 { ((size + alignment - 1) / alignment) * alignment };
+        let pool_alignment = |size: u64| -> u64 { size.div_ceil(alignment) * alignment };
 
         assert_eq!(pool_alignment(100), 256);
         assert_eq!(pool_alignment(256), 256);
@@ -487,10 +486,12 @@ mod tests {
 
     #[test]
     fn test_memory_stats() {
-        let mut stats = GpuMemoryStats::default();
-        stats.total_allocated = 1024;
-        stats.buffers_created = 5;
-        stats.cache_hits = 3;
+        let stats = GpuMemoryStats {
+            total_allocated: 1024,
+            buffers_created: 5,
+            cache_hits: 3,
+            ..Default::default()
+        };
 
         assert_eq!(stats.total_allocated, 1024);
         assert_eq!(stats.buffers_created, 5);

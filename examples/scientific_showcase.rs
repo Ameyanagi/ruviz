@@ -3,7 +3,6 @@ use ruviz::prelude::*;
 use std::time::Instant;
 
 /// Scientific plotting showcase demonstrating publication-quality multi-panel figures
-
 fn main() -> Result<()> {
     println!("Scientific Plotting Showcase");
     std::fs::create_dir_all("examples/output").ok();

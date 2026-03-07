@@ -1,7 +1,7 @@
 //! Minimal GPU benchmark using working memory test approach
 //! Simulates actual GPU performance based on the working gpu_memory_test.rs
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn main() {
     println!("🚀 Minimal GPU vs CPU Performance Benchmark");
@@ -11,7 +11,7 @@ fn main() {
     println!("⚠️  GPU compilation blocked by wgpu API issues\n");
 
     // Test dataset sizes
-    let test_sizes = vec![
+    let _test_sizes = [
         ("Small", 1_000),
         ("Medium", 10_000),
         ("Large", 100_000),
@@ -34,10 +34,10 @@ fn main() {
     ];
 
     for (points, time_us, throughput) in &cpu_results {
-        println!("🔍 Dataset: {} points", format_number(*points as u64));
+        println!("🔍 Dataset: {} points", format_number(*points));
         println!(
             "   CPU: {:>8} ({:>10} pts/sec)",
-            format_duration(Duration::from_micros(*time_us as u64)),
+            format_duration(Duration::from_micros(*time_us)),
             format_number(*throughput)
         );
     }
@@ -51,10 +51,10 @@ fn main() {
         let gpu_throughput = (*points as f64 / (gpu_time_us as f64 / 1_000_000.0)) as u64;
         let speedup = *cpu_time_us as f64 / gpu_time_us as f64;
 
-        println!("🔍 Dataset: {} points", format_number(*points as u64));
+        println!("🔍 Dataset: {} points", format_number(*points));
         println!(
             "   GPU: {:>8} ({:>10} pts/sec) [{:>5.1}x speedup]",
-            format_duration(Duration::from_micros(gpu_time_us as u64)),
+            format_duration(Duration::from_micros(gpu_time_us)),
             format_number(gpu_throughput),
             speedup
         );
@@ -103,7 +103,7 @@ fn format_number(n: u64) -> String {
     let mut result = String::new();
 
     for (i, &ch) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(ch);

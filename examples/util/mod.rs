@@ -42,6 +42,7 @@ pub fn example_output_path(filename: &str) -> PathBuf {
 ///
 /// # Returns
 /// Full path to the output file in `examples/output/<subdir>/`
+#[allow(dead_code)]
 pub fn example_output_path_in(subdir: &str, filename: &str) -> PathBuf {
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")

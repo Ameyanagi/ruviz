@@ -28,7 +28,7 @@ fn main() -> Result<()> {
 
         Plot::new()
             .line(&x, &y)
-            .title(&format!("Small Dataset Test {}", i))
+            .title(format!("Small Dataset Test {}", i))
             .xlabel("X Axis")
             .ylabel("Y Axis")
             .save("examples/output/profile_small.png")?;

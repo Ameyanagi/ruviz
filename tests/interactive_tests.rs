@@ -68,7 +68,7 @@ fn test_zoom_pan_combination() {
 /// Test data brushing selection
 #[test]
 fn test_data_brushing_selection() {
-    let plot = TestPlotBuilder::clustered_scatter();
+    let _plot = TestPlotBuilder::clustered_scatter();
     let mut handler = MockEventHandler::new();
 
     // Simulate selection of first cluster (around 2, 2)
@@ -87,7 +87,7 @@ fn test_data_brushing_selection() {
 #[test]
 #[ignore = "Memory-intensive: creates 50K point dataset with continuous rendering loop"]
 fn test_large_dataset_performance() {
-    let plot = TestPlotBuilder::large_dataset(50_000);
+    let _plot = TestPlotBuilder::large_dataset(50_000);
     let mut handler = MockEventHandler::new();
     let mut monitor = PerformanceMonitor::new();
 
@@ -144,7 +144,7 @@ fn test_coordinate_accuracy_multi_zoom() {
         (4.0, (12.5, 12.5)),   // 4x zoom
     ];
 
-    for (zoom_factor, expected_center) in test_cases {
+    for (zoom_factor, _expected_center) in test_cases {
         let data_bounds = if zoom_factor == 1.0 {
             (0.0, 0.0, 100.0, 100.0)
         } else {
@@ -193,8 +193,8 @@ fn test_memory_stability() {
 fn test_visual_consistency() {
     // This test would require actual rendering, but we can test the logic
 
-    let plot1 = TestPlotBuilder::simple_line();
-    let plot2 = TestPlotBuilder::simple_line();
+    let _plot1 = TestPlotBuilder::simple_line();
+    let _plot2 = TestPlotBuilder::simple_line();
 
     let mut handler1 = MockEventHandler::new();
     let mut handler2 = MockEventHandler::new();
@@ -219,7 +219,7 @@ fn test_visual_consistency() {
 #[test]
 #[ignore] // Use --ignored to run performance tests
 fn benchmark_interaction_performance() {
-    let plot = TestPlotBuilder::large_dataset(100_000);
+    let _plot = TestPlotBuilder::large_dataset(100_000);
     let mut handler = MockEventHandler::new();
     let mut monitor = PerformanceMonitor::new();
 

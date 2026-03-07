@@ -1,8 +1,6 @@
 // Gallery generator tests - TDD approach
 // Tests define expected gallery generation behavior before implementation
 
-use std::path::Path;
-
 #[test]
 fn test_example_categorization() {
     // GIVEN: Example files should be categorized correctly

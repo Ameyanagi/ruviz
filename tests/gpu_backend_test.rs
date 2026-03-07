@@ -3,7 +3,6 @@
 #[cfg(feature = "gpu")]
 mod gpu_tests {
     use ruviz::render::gpu::*;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_gpu_backend_initialization() {

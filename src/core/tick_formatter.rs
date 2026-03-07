@@ -405,7 +405,7 @@ mod tests {
         let formatter = TickFormatter::default();
 
         // Should use minimal precision
-        assert_eq!(formatter.format_tick(3.14), "3.14");
+        assert_eq!(formatter.format_tick(157.0 / 50.0), "3.14");
         assert_eq!(formatter.format_tick(2.5), "2.5");
 
         // Should trim trailing zeros
