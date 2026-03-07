@@ -232,10 +232,7 @@ fn test_backend_consistency_dimensions() {
             .size_px(width, height)
             .title(format!("{}x{}", width, height))
             .line(&x, &y)
-            .save(format!(
-                "tests/output/backend_dim_{}x{}.png",
-                width, height
-            ));
+            .save(format!("tests/output/backend_dim_{}x{}.png", width, height));
 
         // THEN: Should produce correct dimensions
         assert!(result.is_ok(), "{}x{} failed", width, height);

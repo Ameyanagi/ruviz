@@ -7193,7 +7193,6 @@ impl Plot {
                     let x_data = x_data.resolve_cow(0.0);
                     let y_data = y_data.resolve_cow(0.0);
                     for (&x_val, &y_val) in x_data.iter().zip(y_data.iter()) {
-
                         if x_val.is_finite() {
                             x_min = x_min.min(x_val);
                             x_max = x_max.max(x_val);
@@ -7229,7 +7228,6 @@ impl Plot {
                     for ((&x_val, &y_val), &y_err) in
                         x_data.iter().zip(y_data.iter()).zip(y_errors.iter())
                     {
-
                         if x_val.is_finite() {
                             x_min = x_min.min(x_val);
                             x_max = x_max.max(x_val);
@@ -7256,7 +7254,6 @@ impl Plot {
                         .zip(x_errors.iter())
                         .zip(y_errors.iter())
                     {
-
                         if x_val.is_finite() && x_err.is_finite() {
                             x_min = x_min.min(x_val - x_err);
                             x_max = x_max.max(x_val + x_err);
@@ -8675,11 +8672,8 @@ impl Plot {
 
         // Use the same content-driven layout path as PNG rendering.
         let content = self.create_plot_content(y_min, y_max);
-        let mut measurement_renderer = SkiaRenderer::new(
-            width_px,
-            height_px,
-            self.display.theme.clone(),
-        )?;
+        let mut measurement_renderer =
+            SkiaRenderer::new(width_px, height_px, self.display.theme.clone())?;
         measurement_renderer.set_text_engine_mode(self.display.text_engine);
         measurement_renderer.set_dpi_scale(dpi_scale);
         let measured_dimensions = self.measure_layout_text(

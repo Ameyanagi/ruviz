@@ -276,7 +276,9 @@ mod imp {
     }
 
     fn lock_cache() -> MutexGuard<'static, HashMap<CacheKey, CachedValue>> {
-        cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        cache()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn make_key(

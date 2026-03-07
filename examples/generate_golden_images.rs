@@ -113,11 +113,7 @@ fn main() -> Result<()> {
             .title(format!("{} DPI", dpi))
             .dpi(dpi)
             .line(&x, &y)
-            .save(format!(
-                "tests/golden_images/{}_dpi_{}.png",
-                count + 1,
-                dpi
-            ))?;
+            .save(format!("tests/golden_images/{}_dpi_{}.png", count + 1, dpi))?;
         count += 1;
     }
 
