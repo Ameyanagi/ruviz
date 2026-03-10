@@ -38,6 +38,43 @@ fn render_rejects_excessive_dpi_before_rendering() {
 }
 
 #[test]
+fn render_rejects_negative_dpi_with_context() {
+    let mut config = PlotConfig::default();
+    config.figure = FigureConfig::new(6.4, 4.8, -100.0);
+
+    let err = Plot::with_config(config)
+        .line(&[0.0, 1.0], &[1.0, 2.0])
+        .render()
+        .expect_err("negative DPI should fail validation");
+
+    assert!(matches!(
+        err,
+        PlottingError::InvalidInput(message)
+            if message.contains("Figure DPI must be positive") && message.contains("-100")
+    ));
+}
+
+#[test]
+fn render_rejects_fractional_dpi_above_max_before_rounding() {
+    let mut config = PlotConfig::default();
+    config.figure = FigureConfig::new(6.4, 4.8, 2400.4);
+
+    let err = Plot::with_config(config)
+        .line(&[0.0, 1.0], &[1.0, 2.0])
+        .render()
+        .expect_err("fractional DPI above the max should fail validation");
+
+    assert!(matches!(
+        err,
+        PlottingError::PerformanceLimit {
+            ref limit_type,
+            actual: 2401,
+            maximum: 2400,
+        } if limit_type == "DPI"
+    ));
+}
+
+#[test]
 fn render_rejects_fill_between_length_mismatch() {
     let err = Plot::new()
         .line(&[0.0, 1.0, 2.0], &[1.0, 2.0, 3.0])

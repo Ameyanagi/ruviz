@@ -13,6 +13,8 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const TEMP_FILE_CREATE_RETRIES: usize = 8;
+
 pub mod svg;
 
 #[cfg(feature = "pdf")]
@@ -49,6 +51,33 @@ fn cleanup_temp_file(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
+fn create_atomic_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
+    let mut last_err = None;
+
+    for _ in 0..TEMP_FILE_CREATE_RETRIES {
+        let temp_path = atomic_temp_path(path);
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                cleanup_temp_file(&temp_path);
+                last_err = Some(err);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "failed to allocate a unique temporary export file",
+        )
+    }))
+}
+
 fn rename_temp_into_place(temp_path: &Path, path: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
@@ -76,13 +105,9 @@ fn rename_temp_into_place(temp_path: &Path, path: &Path) -> std::io::Result<()> 
 
 pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Result<()> {
     let path = path.as_ref();
-    let temp_path = atomic_temp_path(path);
+    let (temp_path, mut file) = create_atomic_temp_file(path).map_err(PlottingError::IoError)?;
 
     let write_result = (|| -> std::io::Result<()> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp_path)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
@@ -104,14 +129,9 @@ where
     F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     let path = path.as_ref();
-    let temp_path = atomic_temp_path(path);
+    let (temp_path, file) = create_atomic_temp_file(path).map_err(PlottingError::IoError)?;
 
     let write_result = (|| -> Result<()> {
-        let file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp_path)
-            .map_err(PlottingError::IoError)?;
         let mut writer_handle = BufWriter::new(file);
 
         writer(&mut writer_handle)?;

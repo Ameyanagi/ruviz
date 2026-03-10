@@ -320,6 +320,9 @@ mod imp {
     }
 
     fn maybe_evict(cache: &mut CacheState, incoming_bytes: usize) {
+        // Evict in arbitrary HashMap iteration order; for this small local render
+        // cache that trade-off is acceptable. A single near-limit item can drain
+        // the cache to make room for itself.
         while cache.entries.len() >= MAX_CACHE_ENTRIES
             || (!cache.entries.is_empty()
                 && cache.total_bytes.saturating_add(incoming_bytes) > MAX_CACHE_BYTES)

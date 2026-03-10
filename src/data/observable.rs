@@ -740,6 +740,7 @@ where
                     return;
                 };
                 let Some(source2) = weak_s2.upgrade() else {
+                    source1.unsubscribe(id);
                     return;
                 };
                 let Some(derived) = weak_derived.upgrade() else {
@@ -774,6 +775,9 @@ where
             id,
             Arc::new(move || {
                 let Some(source1) = weak_s1.upgrade() else {
+                    if let Some(source2) = weak_s2.upgrade() {
+                        source2.unsubscribe(id);
+                    }
                     return;
                 };
                 let Some(source2) = weak_s2.upgrade() else {
@@ -1742,6 +1746,21 @@ mod tests {
         drop(derived);
 
         assert_eq!(source.subscriber_count(), 0);
+    }
+
+    #[test]
+    fn test_lift2_releases_remaining_source_subscription_when_other_source_drops() {
+        let source2 = Observable::new(5.0);
+        let derived = {
+            let source1 = Observable::new(10.0);
+            let derived = lift2(&source1, &source2, |x, y| x + y);
+            assert_eq!(source2.subscriber_count(), 1);
+            derived
+        };
+
+        source2.set(6.0);
+        assert_eq!(source2.subscriber_count(), 0);
+        assert_eq!(*derived.read(), 15.0);
     }
 
     #[test]

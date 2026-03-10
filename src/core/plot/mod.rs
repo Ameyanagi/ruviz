@@ -4628,8 +4628,26 @@ impl Plot {
                 figure.dpi
             )));
         }
-
-        PlottingError::validate_dpi(figure.dpi.round() as u32)?;
+        if figure.dpi <= 0.0 {
+            return Err(PlottingError::InvalidInput(format!(
+                "Figure DPI must be positive (dpi={})",
+                figure.dpi
+            )));
+        }
+        if figure.dpi < crate::core::constants::dpi::MIN as f32 {
+            return Err(PlottingError::InvalidInput(format!(
+                "Figure DPI must be at least {} (dpi={})",
+                crate::core::constants::dpi::MIN,
+                figure.dpi
+            )));
+        }
+        if figure.dpi > crate::core::constants::dpi::MAX as f32 {
+            return Err(PlottingError::PerformanceLimit {
+                limit_type: "DPI".to_string(),
+                actual: figure.dpi.ceil() as usize,
+                maximum: crate::core::constants::dpi::MAX as usize,
+            });
+        }
         let (width, height) = self.config_canvas_size();
         PlottingError::validate_dimensions(width, height)?;
         Ok(())
