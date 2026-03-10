@@ -1374,9 +1374,11 @@ impl Plot {
     }
 
     fn set_output_pixels(mut self, width: u32, height: u32) -> Self {
-        let dpi = self.display.config.figure.dpi.max(f32::MIN_POSITIVE);
-        self.display.config.figure.width = width as f32 / dpi;
-        self.display.config.figure.height = height as f32 / dpi;
+        let dpi = self.display.config.figure.dpi;
+        if dpi.is_finite() && dpi != 0.0 {
+            self.display.config.figure.width = width as f32 / dpi;
+            self.display.config.figure.height = height as f32 / dpi;
+        }
         self.display.dimensions = (width, height);
         self
     }
@@ -4633,12 +4635,6 @@ impl Plot {
 
     fn validate_output_config(&self) -> Result<()> {
         let figure = &self.display.config.figure;
-        if !figure.width.is_finite() || !figure.height.is_finite() {
-            return Err(PlottingError::InvalidInput(format!(
-                "Figure width/height must be finite values (width={}, height={})",
-                figure.width, figure.height
-            )));
-        }
         if !figure.dpi.is_finite() {
             return Err(PlottingError::InvalidInput(format!(
                 "Figure DPI must be a finite value (dpi={})",
@@ -4664,6 +4660,12 @@ impl Plot {
                 actual: figure.dpi.ceil() as usize,
                 maximum: crate::core::constants::dpi::MAX as usize,
             });
+        }
+        if !figure.width.is_finite() || !figure.height.is_finite() {
+            return Err(PlottingError::InvalidInput(format!(
+                "Figure width/height must be finite values (width={}, height={})",
+                figure.width, figure.height
+            )));
         }
         let (width, height) = self.config_canvas_size();
         PlottingError::validate_dimensions(width, height)?;
@@ -4696,7 +4698,7 @@ impl Plot {
 
         if use_datashader {
             // Use DataShader for large datasets
-            return self.render_with_datashader();
+            return self.render_with_datashader(&snapshot_series);
         }
 
         // Check if parallel processing should be used
@@ -6022,12 +6024,12 @@ impl Plot {
     }
 
     /// Render plot using DataShader optimization for large datasets
-    fn render_with_datashader(&self) -> Result<Image> {
+    fn render_with_datashader(&self, series_list: &[PlotSeries]) -> Result<Image> {
         let mut x_values = Vec::new();
         let mut y_values = Vec::new();
 
         // Collect all points from all series
-        for series in &self.series_mgr.series {
+        for series in series_list {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     let x_data = x_data.resolve_cow(0.0);
@@ -10263,6 +10265,30 @@ mod tests {
         assert!(matches!(err, PlottingError::DataLengthMismatch { .. }));
     }
 
+    #[test]
+    fn test_render_with_datashader_uses_captured_snapshot_for_reactive_series() {
+        let x = crate::data::Observable::new((0..100_001).map(|i| i as f64).collect::<Vec<_>>());
+        let y = crate::data::Observable::new((0..100_001).map(|i| i as f64).collect::<Vec<_>>());
+        let plot = Plot::new().add_line_series(
+            PlotData::Reactive(x.clone()),
+            PlotData::Reactive(y.clone()),
+            &crate::plots::basic::LineConfig::default(),
+            crate::core::plot::builder::SeriesStyle::default(),
+        );
+
+        let snapshot_series = plot.snapshot_series(0.0);
+        x.set(vec![0.0, f64::NAN]);
+        y.set(vec![1.0]);
+
+        assert!(plot.validate_runtime_inputs().is_err());
+
+        let image = plot
+            .render_with_datashader(&snapshot_series)
+            .expect("datashader helper should render the captured snapshot");
+        assert!(image.width > 0);
+        assert!(image.height > 0);
+    }
+
     #[cfg(feature = "parallel")]
     #[test]
     fn test_render_parallel_path_still_validates_empty_series() {
@@ -11427,6 +11453,24 @@ mod tests {
         assert!((plot.display.config.figure.width - 1600.0).abs() < f32::EPSILON);
         assert!((plot.display.config.figure.height - 1200.0).abs() < f32::EPSILON);
         assert_eq!(plot.display.dimensions, (800, 600));
+    }
+
+    #[test]
+    fn test_set_output_pixels_with_zero_dpi_keeps_direct_dpi_error() {
+        let err = Plot::with_config(PlotConfig {
+            figure: FigureConfig::new(6.4, 4.8, 0.0),
+            ..PlotConfig::default()
+        })
+        .set_output_pixels(800, 600)
+        .line(&[0.0, 1.0], &[1.0, 2.0])
+        .render()
+        .expect_err("zero DPI should still fail with the direct DPI validation error");
+
+        assert!(matches!(
+            err,
+            PlottingError::InvalidInput(message)
+                if message.contains("Figure DPI must be positive") && message.contains("0")
+        ));
     }
 
     // ========== IntoPlot Trait Tests ==========
