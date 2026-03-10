@@ -63,6 +63,8 @@ fn create_atomic_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
         {
             Ok(file) => return Ok((temp_path, file)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Stale temp file from a previous crash with the same PID.
+                // No live process can share our PID, so removing it is safe.
                 cleanup_temp_file(&temp_path);
                 last_err = Some(err);
             }

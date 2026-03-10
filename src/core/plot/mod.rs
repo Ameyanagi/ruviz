@@ -1374,7 +1374,7 @@ impl Plot {
     }
 
     fn set_output_pixels(mut self, width: u32, height: u32) -> Self {
-        let dpi = self.display.config.figure.dpi.max(1.0);
+        let dpi = self.display.config.figure.dpi.max(f32::MIN_POSITIVE);
         self.display.config.figure.width = width as f32 / dpi;
         self.display.config.figure.height = height as f32 / dpi;
         self.display.dimensions = (width, height);
@@ -10161,6 +10161,7 @@ impl PlotSeriesBuilder {
 #[allow(deprecated)]
 mod tests {
     use super::*;
+    use crate::core::FigureConfig;
 
     #[derive(Debug)]
     struct FailingIngestionData;
@@ -11450,6 +11451,19 @@ mod tests {
             (plot_max_res.display.config.figure.dpi - plot_dpi.display.config.figure.dpi).abs()
                 < 1.0
         );
+    }
+
+    #[test]
+    fn test_set_output_pixels_uses_actual_dpi_for_geometry() {
+        let plot = Plot::with_config(PlotConfig {
+            figure: FigureConfig::new(6.4, 4.8, 0.5),
+            ..PlotConfig::default()
+        })
+        .set_output_pixels(800, 600);
+
+        assert!((plot.display.config.figure.width - 1600.0).abs() < f32::EPSILON);
+        assert!((plot.display.config.figure.height - 1200.0).abs() < f32::EPSILON);
+        assert_eq!(plot.display.dimensions, (800, 600));
     }
 
     // ========== IntoPlot Trait Tests ==========

@@ -36,7 +36,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, Weak};
 
 /// Type alias for subscriber callback functions
-pub type SubscriberCallback = Arc<dyn Fn() + Send + Sync>;
+pub type SubscriberCallback = Box<dyn Fn() + Send + Sync>;
+
+type SharedSubscriberCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// Unique identifier for a subscriber
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -45,7 +47,7 @@ pub struct SubscriberId(u64);
 /// Internal subscriber entry
 struct Subscriber {
     id: SubscriberId,
-    callback: SubscriberCallback,
+    callback: SharedSubscriberCallback,
 }
 
 struct ObservableLifecycle {
@@ -87,7 +89,7 @@ impl Drop for ObservableLifecycle {
 fn collect_subscriber_callbacks(
     subscribers: &RwLock<Vec<Subscriber>>,
     lock_error: &str,
-) -> Vec<SubscriberCallback> {
+) -> Vec<SharedSubscriberCallback> {
     subscribers
         .read()
         .expect(lock_error)
@@ -144,7 +146,7 @@ impl<T> Observable<T> {
         SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed))
     }
 
-    fn add_subscriber_with_id(&self, id: SubscriberId, callback: SubscriberCallback) {
+    fn add_subscriber_with_id(&self, id: SubscriberId, callback: SharedSubscriberCallback) {
         let subscriber = Subscriber { id, callback };
         self.subscribers
             .write()
@@ -725,6 +727,8 @@ where
     let weak_derived = derived.downgrade();
     let weak_s1 = source1.downgrade();
     let weak_s2 = source2.downgrade();
+    let source1_id = source1.reserve_subscriber_id();
+    let source2_id = source2.reserve_subscriber_id();
 
     // Subscribe to source1
     {
@@ -732,19 +736,18 @@ where
         let weak_derived = weak_derived.clone();
         let weak_s1 = weak_s1.clone();
         let weak_s2 = weak_s2.clone();
-        let id = source1.reserve_subscriber_id();
         source1.add_subscriber_with_id(
-            id,
+            source1_id,
             Arc::new(move || {
                 let Some(source1) = weak_s1.upgrade() else {
                     return;
                 };
                 let Some(source2) = weak_s2.upgrade() else {
-                    source1.unsubscribe(id);
+                    source1.unsubscribe(source1_id);
                     return;
                 };
                 let Some(derived) = weak_derived.upgrade() else {
-                    source1.unsubscribe(id);
+                    source1.unsubscribe(source1_id);
                     return;
                 };
 
@@ -759,7 +762,7 @@ where
         let weak_source1_for_drop = source1.downgrade();
         derived.on_last_drop(move || {
             if let Some(source1) = weak_source1_for_drop.upgrade() {
-                source1.unsubscribe(id);
+                source1.unsubscribe(source1_id);
             }
         });
     }
@@ -770,13 +773,12 @@ where
         let weak_derived = weak_derived.clone();
         let weak_s1 = weak_s1.clone();
         let weak_s2 = weak_s2.clone();
-        let id = source2.reserve_subscriber_id();
         source2.add_subscriber_with_id(
-            id,
+            source2_id,
             Arc::new(move || {
                 let Some(source1) = weak_s1.upgrade() else {
                     if let Some(source2) = weak_s2.upgrade() {
-                        source2.unsubscribe(id);
+                        source2.unsubscribe(source2_id);
                     }
                     return;
                 };
@@ -784,7 +786,7 @@ where
                     return;
                 };
                 let Some(derived) = weak_derived.upgrade() else {
-                    source2.unsubscribe(id);
+                    source2.unsubscribe(source2_id);
                     return;
                 };
 
@@ -799,10 +801,24 @@ where
         let weak_source2_for_drop = source2.downgrade();
         derived.on_last_drop(move || {
             if let Some(source2) = weak_source2_for_drop.upgrade() {
-                source2.unsubscribe(id);
+                source2.unsubscribe(source2_id);
             }
         });
     }
+
+    let weak_source1_for_source2_drop = source1.downgrade();
+    source2.on_last_drop(move || {
+        if let Some(source1) = weak_source1_for_source2_drop.upgrade() {
+            source1.unsubscribe(source1_id);
+        }
+    });
+
+    let weak_source2_for_source1_drop = source2.downgrade();
+    source1.on_last_drop(move || {
+        if let Some(source2) = weak_source2_for_source1_drop.upgrade() {
+            source2.unsubscribe(source2_id);
+        }
+    });
 
     derived
 }
@@ -1760,6 +1776,20 @@ mod tests {
 
         source2.set(6.0);
         assert_eq!(source2.subscriber_count(), 0);
+        assert_eq!(*derived.read(), 15.0);
+    }
+
+    #[test]
+    fn test_lift2_releases_source1_subscription_when_source2_drops_first() {
+        let source1 = Observable::new(10.0);
+        let derived = {
+            let source2 = Observable::new(5.0);
+            let derived = lift2(&source1, &source2, |x, y| x + y);
+            assert_eq!(source1.subscriber_count(), 1);
+            derived
+        };
+
+        assert_eq!(source1.subscriber_count(), 0);
         assert_eq!(*derived.read(), 15.0);
     }
 

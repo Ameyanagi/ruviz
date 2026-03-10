@@ -10,11 +10,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- _None yet._
+- Preserved the public `SubscriberCallback` API while moving runtime subscription dispatch to internal shared callbacks.
 
 ### Fixed
 
-- _None yet._
+- Eagerly release `lift2` cross-source subscriptions when either source is dropped.
+- Validate floating-point DPI values directly before rendering, including negative and fractional out-of-range inputs.
+- Keep `set_output_pixels` geometry consistent with the actual configured DPI, even on invalid pre-validation states.
+- Retry atomic temp-file creation on stale collisions and document why stale-temp cleanup is safe.
 
 ## [0.1.4] - 2026-02-11
 
