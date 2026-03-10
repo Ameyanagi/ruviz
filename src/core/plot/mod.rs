@@ -7605,7 +7605,108 @@ impl Plot {
                         }
                     }
                 }
-                _ => {}
+                SeriesType::Heatmap { data } => {
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(data.n_cols as f64);
+                    y_min = y_min.min(0.0);
+                    y_max = y_max.max(data.n_rows as f64);
+                }
+                SeriesType::Kde { data } => {
+                    for (&x_val, &y_val) in data.x.iter().zip(data.y.iter()) {
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                    y_min = y_min.min(0.0);
+                }
+                SeriesType::Ecdf { data } => {
+                    for (&x_val, &y_val) in data.x.iter().zip(data.y.iter()) {
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                    y_min = y_min.min(0.0);
+                }
+                SeriesType::Violin { data } => {
+                    let (kde_min, kde_max) = if !data.kde.x.is_empty() {
+                        (
+                            data.kde.x.first().copied().unwrap_or(data.range.0),
+                            data.kde.x.last().copied().unwrap_or(data.range.1),
+                        )
+                    } else {
+                        data.range
+                    };
+                    if kde_min.is_finite() {
+                        y_min = y_min.min(kde_min);
+                    }
+                    if kde_max.is_finite() {
+                        y_max = y_max.max(kde_max);
+                    }
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                }
+                SeriesType::Boxen { data } => {
+                    let (data_min, data_max) = data.data_range;
+                    if data_min.is_finite() {
+                        y_min = y_min.min(data_min);
+                    }
+                    if data_max.is_finite() {
+                        y_max = y_max.max(data_max);
+                    }
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                }
+                SeriesType::Contour { data } => {
+                    for &x_val in &data.x {
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                    }
+                    for &y_val in &data.y {
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                }
+                SeriesType::Pie { .. } => {
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                    y_min = y_min.min(0.0);
+                    y_max = y_max.max(1.0);
+                }
+                SeriesType::Radar { data } => {
+                    for series_data in &data.series {
+                        for &(x_val, y_val) in &series_data.polygon {
+                            if x_val.is_finite() {
+                                x_min = x_min.min(x_val);
+                                x_max = x_max.max(x_val);
+                            }
+                            if y_val.is_finite() {
+                                y_min = y_min.min(y_val);
+                                y_max = y_max.max(y_val);
+                            }
+                        }
+                    }
+                }
+                SeriesType::Polar { data } => {
+                    let label_margin = data.r_max * 1.5;
+                    x_min = -label_margin;
+                    x_max = label_margin;
+                    y_min = -label_margin;
+                    y_max = label_margin;
+                }
             }
         }
 
@@ -10125,6 +10226,26 @@ mod tests {
         ));
         plot.validate_runtime_inputs_for_series(&snapshot_series)
             .expect("snapshot validation should ignore later live mutations");
+    }
+
+    #[test]
+    fn test_snapshot_bounds_cover_heatmap_and_pie_series() {
+        let heatmap = Plot::new()
+            .heatmap(&vec![vec![1.0, 2.0], vec![3.0, 4.0]], None)
+            .end_series();
+        let heatmap_bounds = heatmap
+            .calculate_data_bounds_for_series(&heatmap.snapshot_series(0.0))
+            .expect("heatmap bounds should resolve");
+        assert!(heatmap_bounds.0.is_finite());
+        assert!(heatmap_bounds.1.is_finite());
+        assert!(heatmap_bounds.2.is_finite());
+        assert!(heatmap_bounds.3.is_finite());
+
+        let pie = Plot::new().pie(&[2.0, 3.0, 5.0]).end_series();
+        let pie_bounds = pie
+            .calculate_data_bounds_for_series(&pie.snapshot_series(0.0))
+            .expect("pie bounds should resolve");
+        assert_eq!(pie_bounds, (0.0, 1.0, 0.0, 1.0));
     }
 
     #[test]

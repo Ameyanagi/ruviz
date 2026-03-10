@@ -21,8 +21,9 @@ All notable changes to this project will be documented in this file.
 - Retry atomic temp-file creation on stale collisions and document why stale-temp cleanup is safe.
 - Reuse the same per-series validation for saved snapshots so reactive saves keep NaN and error-bar checks aligned with render validation.
 - Validate rendered reactive snapshots after capture so render, SVG export, and external renderer paths stop re-reading live series for validation.
-- Preserve the temporary output file on Windows if replace-after-delete fails, so recovery is still possible.
+- Preserve existing Windows export targets on overwrite failures by using native replace semantics and keeping the temporary file for recovery.
 - Evict stale Typst cache entries when a replacement grows beyond the cache byte limit, including oversized render results that skip recaching.
+- Restore snapshot-based bounds calculation for heatmap, density, polar, radar, contour, and other non-Cartesian series.
 
 ## [0.1.4] - 2026-02-11
 

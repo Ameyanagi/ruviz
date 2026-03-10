@@ -13,6 +13,12 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(windows)]
+use std::{iter::once, os::windows::ffi::OsStrExt};
+
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW};
+
 const TEMP_FILE_CREATE_RETRIES: usize = 8;
 
 pub mod svg;
@@ -107,31 +113,33 @@ fn rename_temp_into_place(
 ) -> std::result::Result<(), AtomicWriteFailure> {
     #[cfg(windows)]
     {
-        match fs::rename(temp_path, path) {
-            Ok(()) => Ok(()),
-            Err(err)
-                if path.exists()
-                    && matches!(
-                        err.kind(),
-                        std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
-                    ) =>
-            {
-                fs::remove_file(path)
-                    .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
-                // If this rename fails after remove_file succeeded, `path` is already gone.
-                // Preserve the temp file so callers can recover the new data manually.
-                fs::rename(temp_path, path).map_err(|err| {
-                    AtomicWriteFailure::preserve_temp(PlottingError::IoError(std::io::Error::new(
-                        err.kind(),
-                        format!(
-                            "failed to replace {} with {}; the temporary file has been preserved for recovery",
-                            path.display(),
-                            temp_path.display()
-                        ),
-                    )))
-                })
-            }
-            Err(err) => Err(AtomicWriteFailure::cleanup(PlottingError::IoError(err))),
+        let temp_wide: Vec<u16> = temp_path.as_os_str().encode_wide().chain(once(0)).collect();
+        let path_wide: Vec<u16> = path.as_os_str().encode_wide().chain(once(0)).collect();
+
+        // MOVEFILE_REPLACE_EXISTING preserves the destination if the replacement fails,
+        // avoiding the delete-then-rename data-loss window from the previous fallback.
+        let replace_result = unsafe {
+            MoveFileExW(
+                temp_wide.as_ptr(),
+                path_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING,
+            )
+        };
+
+        if replace_result != 0 {
+            Ok(())
+        } else {
+            let err = std::io::Error::last_os_error();
+            Err(AtomicWriteFailure::preserve_temp(PlottingError::IoError(
+                std::io::Error::new(
+                    err.kind(),
+                    format!(
+                        "failed to replace {} with {}; the temporary file has been preserved for recovery",
+                        path.display(),
+                        temp_path.display()
+                    ),
+                ),
+            )))
         }
     }
 
