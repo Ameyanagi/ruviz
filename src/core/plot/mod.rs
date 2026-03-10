@@ -4597,6 +4597,21 @@ impl Plot {
         Self::validate_series_list(&self.series_mgr.series)
     }
 
+    fn validate_runtime_environment(&self) -> Result<()> {
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
+        self.validate_output_config()?;
+        self.validate_annotations()?;
+        Ok(())
+    }
+
+    fn validate_runtime_inputs_for_series(&self, series_list: &[PlotSeries]) -> Result<()> {
+        self.validate_runtime_environment()?;
+        Self::validate_series_list(series_list)
+    }
+
     fn validate_annotations(&self) -> Result<()> {
         for annotation in &self.annotations {
             if let Annotation::FillBetween { x, y1, y2, .. } = annotation {
@@ -4656,15 +4671,12 @@ impl Plot {
     }
 
     fn validate_runtime_inputs(&self) -> Result<()> {
-        self.validate_output_config()?;
-        self.validate_series()?;
-        self.validate_annotations()?;
-        Ok(())
+        self.validate_runtime_inputs_for_series(&self.series_mgr.series)
     }
 
     /// Render the plot to an in-memory image
     pub fn render(&self) -> Result<Image> {
-        self.validate_runtime_inputs()?;
+        self.validate_runtime_environment()?;
 
         // Check if DataShader optimization should be used
         let total_points = self.calculate_total_points();
@@ -4701,6 +4713,7 @@ impl Plot {
         }
 
         let snapshot_series = self.snapshot_series(0.0);
+        Self::validate_series_list(&snapshot_series)?;
 
         // Create renderer for standard rendering with DPI scaling
         let (scaled_width, scaled_height) = self.config_canvas_size();
@@ -5250,15 +5263,18 @@ impl Plot {
         }
         renderer.set_text_engine_mode(self.display.text_engine);
 
+        let snapshot_series = self.snapshot_series(0.0);
+
         // Validate we have at least one series
-        if self.series_mgr.series.is_empty() {
+        if snapshot_series.is_empty() {
             return Err(PlottingError::NoDataSeries);
         }
 
-        Self::validate_series_list(&self.series_mgr.series)?;
+        Self::validate_series_list(&snapshot_series)?;
 
         // Calculate data bounds across all series
-        let (x_min, x_max, y_min, y_max) = self.calculate_data_bounds()?;
+        let (x_min, x_max, y_min, y_max) =
+            self.calculate_data_bounds_for_series(&snapshot_series)?;
 
         // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
@@ -5449,7 +5465,7 @@ impl Plot {
         }
 
         // Render each data series
-        for (color_index, series) in self.series_mgr.series.iter().enumerate() {
+        for (color_index, series) in snapshot_series.iter().enumerate() {
             // Get series styling with defaults
             let color = series.color.unwrap_or_else(|| {
                 let palette = Color::default_palette();
@@ -7748,7 +7764,7 @@ impl Plot {
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         use crate::render::skia::SkiaRenderer;
 
-        self.validate_runtime_inputs()?;
+        self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
 
         Self::validate_series_list(&snapshot_series)?;
@@ -8445,8 +8461,9 @@ impl Plot {
         use crate::export::SvgRenderer;
         use crate::render::skia::map_data_to_pixels;
 
-        self.validate_runtime_inputs()?;
+        self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
+        Self::validate_series_list(&snapshot_series)?;
 
         let (width_px, height_px) = self.config_canvas_size();
         let width = width_px as f32;
@@ -10087,6 +10104,27 @@ mod tests {
             }
             other => panic!("expected DataExtractionFailed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_snapshot_validation_isolated_from_later_reactive_mutation() {
+        let x = crate::data::Observable::new(vec![0.0, 1.0]);
+        let plot = Plot::new().add_line_series(
+            PlotData::Reactive(x.clone()),
+            PlotData::Static(vec![1.0, 2.0]),
+            &crate::plots::basic::LineConfig::default(),
+            crate::core::plot::builder::SeriesStyle::default(),
+        );
+
+        let snapshot_series = plot.snapshot_series(0.0);
+        x.set(vec![0.0, f64::NAN]);
+
+        assert!(matches!(
+            plot.validate_runtime_inputs(),
+            Err(PlottingError::InvalidData { .. })
+        ));
+        plot.validate_runtime_inputs_for_series(&snapshot_series)
+            .expect("snapshot validation should ignore later live mutations");
     }
 
     #[test]

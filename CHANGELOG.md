@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - Keep `set_output_pixels` geometry consistent with the actual configured DPI, even on invalid pre-validation states.
 - Retry atomic temp-file creation on stale collisions and document why stale-temp cleanup is safe.
 - Reuse the same per-series validation for saved snapshots so reactive saves keep NaN and error-bar checks aligned with render validation.
+- Validate rendered reactive snapshots after capture so render, SVG export, and external renderer paths stop re-reading live series for validation.
 - Preserve the temporary output file on Windows if replace-after-delete fails, so recovery is still possible.
 - Evict stale Typst cache entries when a replacement grows beyond the cache byte limit, including oversized render results that skip recaching.
 
