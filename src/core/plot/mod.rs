@@ -1373,6 +1373,14 @@ impl Plot {
         self
     }
 
+    fn set_output_pixels(mut self, width: u32, height: u32) -> Self {
+        let dpi = self.display.config.figure.dpi.max(1.0);
+        self.display.config.figure.width = width as f32 / dpi;
+        self.display.config.figure.height = height as f32 / dpi;
+        self.display.dimensions = (width, height);
+        self
+    }
+
     /// Set DPI for export quality
     ///
     /// DPI only affects output resolution, not layout proportions.
@@ -1621,6 +1629,18 @@ impl Plot {
             .series
             .iter()
             .map(|series| series.series_type.resolve_for_render(time))
+            .collect()
+    }
+
+    fn snapshot_series(&self, time: f64) -> Vec<PlotSeries> {
+        self.series_mgr
+            .series
+            .iter()
+            .cloned()
+            .map(|mut series| {
+                series.series_type = series.series_type.resolve(time);
+                series
+            })
             .collect()
     }
 
@@ -4660,6 +4680,8 @@ impl Plot {
             }
         }
 
+        let snapshot_series = self.snapshot_series(0.0);
+
         // Create renderer for standard rendering with DPI scaling
         let (scaled_width, scaled_height) = self.config_canvas_size();
         let mut renderer =
@@ -4678,14 +4700,16 @@ impl Plot {
                 (x_min_manual, x_max_manual, y_min_manual, y_max_manual)
             } else if let Some((x_min_manual, x_max_manual)) = self.layout.x_limits {
                 // Use manual X limits, calculate Y bounds from data
-                let (_, _, y_min_calc, y_max_calc) = self.calculate_data_bounds()?;
+                let (_, _, y_min_calc, y_max_calc) =
+                    self.calculate_data_bounds_for_series(&snapshot_series)?;
                 (x_min_manual, x_max_manual, y_min_calc, y_max_calc)
             } else if let Some((y_min_manual, y_max_manual)) = self.layout.y_limits {
                 // Use manual Y limits, calculate X bounds from data
-                let (x_min_calc, x_max_calc, _, _) = self.calculate_data_bounds()?;
+                let (x_min_calc, x_max_calc, _, _) =
+                    self.calculate_data_bounds_for_series(&snapshot_series)?;
                 (x_min_calc, x_max_calc, y_min_manual, y_max_manual)
             } else {
-                self.calculate_data_bounds()?
+                self.calculate_data_bounds_for_series(&snapshot_series)?
             };
 
         // Handle edge case where all data is the same
@@ -4913,7 +4937,7 @@ impl Plot {
         }
 
         // Render each data series
-        for series in &self.series_mgr.series {
+        for series in &snapshot_series {
             // Get series styling with defaults
             let color = series.color.unwrap_or_else(|| {
                 let palette = Color::default_palette();
@@ -7564,6 +7588,140 @@ impl Plot {
         Ok((x_min, x_max, y_min, y_max))
     }
 
+    fn calculate_data_bounds_for_series(
+        &self,
+        series_list: &[PlotSeries],
+    ) -> Result<(f64, f64, f64, f64)> {
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
+        let mut x_min = f64::INFINITY;
+        let mut x_max = f64::NEG_INFINITY;
+        let mut y_min = f64::INFINITY;
+        let mut y_max = f64::NEG_INFINITY;
+
+        for series in series_list {
+            match &series.series_type {
+                SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                    let x_data = x_data.resolve_cow(0.0);
+                    let y_data = y_data.resolve_cow(0.0);
+                    for (&x_val, &y_val) in x_data.iter().zip(y_data.iter()) {
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() {
+                            y_min = y_min.min(y_val);
+                            y_max = y_max.max(y_val);
+                        }
+                    }
+                }
+                SeriesType::Bar { categories, values } => {
+                    let values = values.resolve_cow(0.0);
+                    x_min = x_min.min(-0.5);
+                    x_max = x_max.max(categories.len() as f64 - 0.5);
+                    for &value in values.iter() {
+                        if value.is_finite() {
+                            y_min = y_min.min(value.min(0.0));
+                            y_max = y_max.max(value.max(0.0));
+                        }
+                    }
+                }
+                SeriesType::ErrorBars {
+                    x_data,
+                    y_data,
+                    y_errors,
+                } => {
+                    let x_data = x_data.resolve_cow(0.0);
+                    let y_data = y_data.resolve_cow(0.0);
+                    let y_errors = y_errors.resolve_cow(0.0);
+                    for ((&x_val, &y_val), &y_err) in
+                        x_data.iter().zip(y_data.iter()).zip(y_errors.iter())
+                    {
+                        if x_val.is_finite() {
+                            x_min = x_min.min(x_val);
+                            x_max = x_max.max(x_val);
+                        }
+                        if y_val.is_finite() && y_err.is_finite() {
+                            y_min = y_min.min(y_val - y_err);
+                            y_max = y_max.max(y_val + y_err);
+                        }
+                    }
+                }
+                SeriesType::ErrorBarsXY {
+                    x_data,
+                    y_data,
+                    x_errors,
+                    y_errors,
+                } => {
+                    let x_data = x_data.resolve_cow(0.0);
+                    let y_data = y_data.resolve_cow(0.0);
+                    let x_errors = x_errors.resolve_cow(0.0);
+                    let y_errors = y_errors.resolve_cow(0.0);
+                    for (((&x_val, &y_val), &x_err), &y_err) in x_data
+                        .iter()
+                        .zip(y_data.iter())
+                        .zip(x_errors.iter())
+                        .zip(y_errors.iter())
+                    {
+                        if x_val.is_finite() && x_err.is_finite() {
+                            x_min = x_min.min(x_val - x_err);
+                            x_max = x_max.max(x_val + x_err);
+                        }
+                        if y_val.is_finite() && y_err.is_finite() {
+                            y_min = y_min.min(y_val - y_err);
+                            y_max = y_max.max(y_val + y_err);
+                        }
+                    }
+                }
+                SeriesType::Histogram { data, config } => {
+                    let data = data.resolve(0.0);
+                    if let Ok(hist_data) =
+                        crate::plots::histogram::calculate_histogram(&data, config)
+                    {
+                        if !hist_data.bin_edges.is_empty() {
+                            x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
+                            x_max = x_max.max(*hist_data.bin_edges.last().unwrap());
+                        }
+                        y_min = y_min.min(0.0);
+                        for &count in &hist_data.counts {
+                            if count.is_finite() && count > 0.0 {
+                                y_max = y_max.max(count);
+                            }
+                        }
+                    }
+                }
+                SeriesType::BoxPlot { data, .. } => {
+                    let data = data.resolve_cow(0.0);
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    x_min = x_min.min(0.0);
+                    x_max = x_max.max(1.0);
+                    for &value in data.iter() {
+                        if value.is_finite() {
+                            y_min = y_min.min(value);
+                            y_max = y_max.max(value);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if (x_max - x_min).abs() < f64::EPSILON {
+            x_min -= 1.0;
+            x_max += 1.0;
+        }
+        if (y_max - y_min).abs() < f64::EPSILON {
+            y_min -= 1.0;
+            y_max += 1.0;
+        }
+
+        Ok((x_min, x_max, y_min, y_max))
+    }
+
     /// Automatically optimize backend selection based on data size
     ///
     /// Selects the most appropriate rendering backend based on dataset characteristics:
@@ -7708,9 +7866,10 @@ impl Plot {
         use crate::render::skia::SkiaRenderer;
 
         self.validate_runtime_inputs()?;
+        let snapshot_series = self.snapshot_series(0.0);
 
         // Validate data before rendering
-        for series in &self.series_mgr.series {
+        for series in &snapshot_series {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data }
                 | SeriesType::Scatter { x_data, y_data }
@@ -7812,172 +7971,8 @@ impl Plot {
         renderer.clear();
 
         // Calculate data bounds first (needed for layout calculation)
-        let mut x_min = f64::INFINITY;
-        let mut x_max = f64::NEG_INFINITY;
-        let mut y_min = f64::INFINITY;
-        let mut y_max = f64::NEG_INFINITY;
-
-        for series in &self.series_mgr.series {
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data }
-                | SeriesType::Scatter { x_data, y_data }
-                | SeriesType::ErrorBars { x_data, y_data, .. }
-                | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
-                    for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                        x_min = x_min.min(x);
-                        x_max = x_max.max(x);
-                        y_min = y_min.min(y);
-                        y_max = y_max.max(y);
-                    }
-                }
-                SeriesType::Bar { values, .. } => {
-                    let values = values.resolve(0.0);
-                    // Add 0.5-unit padding on each side for bar charts (matplotlib-compatible)
-                    let n_categories = values.len();
-                    x_min = x_min.min(-0.5);
-                    x_max = x_max.max(n_categories as f64 - 0.5);
-                    for &value in values.iter() {
-                        y_min = y_min.min(0.0).min(value);
-                        y_max = y_max.max(value);
-                    }
-                }
-                SeriesType::Histogram { data, config } => {
-                    let data = data.resolve(0.0);
-                    if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(&data, config)
-                    {
-                        if let (Some(&first), Some(&last)) =
-                            (hist_data.bin_edges.first(), hist_data.bin_edges.last())
-                        {
-                            x_min = x_min.min(first);
-                            x_max = x_max.max(last);
-                        }
-                        y_min = y_min.min(0.0);
-                        if let Some(&max_count) = hist_data
-                            .counts
-                            .iter()
-                            .max_by(|a, b| a.partial_cmp(b).unwrap())
-                        {
-                            y_max = y_max.max(max_count);
-                        }
-                    }
-                }
-                SeriesType::BoxPlot { data, .. } => {
-                    let data = data.resolve(0.0);
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                    for &value in &data {
-                        if value.is_finite() {
-                            y_min = y_min.min(value);
-                            y_max = y_max.max(value);
-                        }
-                    }
-                }
-                SeriesType::Heatmap { data } => {
-                    // Heatmap bounds: x from 0 to n_cols, y from 0 to n_rows
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(data.n_cols as f64);
-                    y_min = y_min.min(0.0);
-                    y_max = y_max.max(data.n_rows as f64);
-                }
-                SeriesType::Kde { data } => {
-                    // KDE bounds from x/y data
-                    for (&x, &y) in data.x.iter().zip(data.y.iter()) {
-                        x_min = x_min.min(x);
-                        x_max = x_max.max(x);
-                        y_min = y_min.min(y);
-                        y_max = y_max.max(y);
-                    }
-                    // Include zero baseline for density plots
-                    y_min = y_min.min(0.0);
-                }
-                SeriesType::Ecdf { data } => {
-                    // ECDF bounds from x/y data
-                    for (&x, &y) in data.x.iter().zip(data.y.iter()) {
-                        x_min = x_min.min(x);
-                        x_max = x_max.max(x);
-                        y_min = y_min.min(y);
-                        y_max = y_max.max(y);
-                    }
-                    // Include zero baseline for ECDF
-                    y_min = y_min.min(0.0);
-                }
-                SeriesType::Violin { data } => {
-                    // Violin bounds from data range
-                    let (data_min, data_max) = data.range;
-                    if data_min.is_finite() {
-                        y_min = y_min.min(data_min);
-                    }
-                    if data_max.is_finite() {
-                        y_max = y_max.max(data_max);
-                    }
-                    // X bounds for centered violin
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                }
-                SeriesType::Boxen { data } => {
-                    // Boxen bounds from data range
-                    let (data_min, data_max) = data.data_range;
-                    if data_min.is_finite() {
-                        y_min = y_min.min(data_min);
-                    }
-                    if data_max.is_finite() {
-                        y_max = y_max.max(data_max);
-                    }
-                    // X bounds for centered boxen
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                }
-                SeriesType::Contour { data } => {
-                    // Contour bounds from grid coordinates
-                    for &x_val in &data.x {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                    }
-                    for &y_val in &data.y {
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                }
-                SeriesType::Pie { .. } => {
-                    // Pie charts use normalized 0-1 coordinate space
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                    y_min = y_min.min(0.0);
-                    y_max = y_max.max(1.0);
-                }
-                SeriesType::Radar { data } => {
-                    // Radar charts use polygon coordinates
-                    for series_data in &data.series {
-                        for &(x_val, y_val) in &series_data.polygon {
-                            if x_val.is_finite() {
-                                x_min = x_min.min(x_val);
-                                x_max = x_max.max(x_val);
-                            }
-                            if y_val.is_finite() {
-                                y_min = y_min.min(y_val);
-                                y_max = y_max.max(y_val);
-                            }
-                        }
-                    }
-                }
-                SeriesType::Polar { data } => {
-                    // Polar plots need symmetric space centered at origin
-                    // Use label margin bounds to ensure all angle labels are visible
-                    let label_margin = data.r_max * 1.5;
-                    x_min = -label_margin;
-                    x_max = label_margin;
-                    y_min = -label_margin;
-                    y_max = label_margin;
-                }
-            }
-        }
+        let (mut x_min, mut x_max, mut y_min, mut y_max) =
+            self.calculate_data_bounds_for_series(&snapshot_series)?;
 
         // Add padding to data bounds (skip for polar which has its own margins)
         let x_range = x_max - x_min;
@@ -8409,7 +8404,7 @@ impl Plot {
             // Use DataShader for massive datasets - simplified version
             use crate::data::DataShader;
 
-            for series in &self.series_mgr.series {
+            for series in &snapshot_series {
                 match &series.series_type {
                     SeriesType::Scatter { x_data, y_data }
                     | SeriesType::Line { x_data, y_data } => {
@@ -8485,7 +8480,7 @@ impl Plot {
                             total_points,
                             GPU_THRESHOLD
                         );
-                        for series in &self.series_mgr.series {
+                        for series in &snapshot_series {
                             self.render_series_gpu(
                                 series,
                                 &mut renderer,
@@ -8501,7 +8496,7 @@ impl Plot {
                     Err(e) => {
                         log::warn!("GPU initialization failed, falling back to CPU: {}", e);
                         // Fall back to normal rendering
-                        for series in &self.series_mgr.series {
+                        for series in &snapshot_series {
                             self.render_series_normal(
                                 series,
                                 &mut renderer,
@@ -8516,7 +8511,7 @@ impl Plot {
                 }
             } else {
                 // Use normal rendering for smaller datasets
-                for series in &self.series_mgr.series {
+                for series in &snapshot_series {
                     self.render_series_normal(
                         series,
                         &mut renderer,
@@ -8532,7 +8527,7 @@ impl Plot {
             #[cfg(not(feature = "gpu"))]
             {
                 // Use normal rendering for smaller datasets (no GPU feature)
-                for series in &self.series_mgr.series {
+                for series in &snapshot_series {
                     self.render_series_normal(
                         series,
                         &mut renderer,
@@ -8573,8 +8568,7 @@ impl Plot {
             let data_bboxes: Vec<(f32, f32, f32, f32)> =
                 if matches!(legend.position, LegendPosition::Best) {
                     let marker_radius = 4.0_f32; // Approximate marker radius in pixels
-                    self.series_mgr
-                        .series
+                    snapshot_series
                         .iter()
                         .flat_map(|series| {
                             match &series.series_type {
@@ -8637,7 +8631,7 @@ impl Plot {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        self = self.size_px(width, height);
+        self = self.set_output_pixels(width, height);
         self.save(path)
     }
 
@@ -8660,6 +8654,7 @@ impl Plot {
         use crate::render::skia::map_data_to_pixels;
 
         self.validate_runtime_inputs()?;
+        let snapshot_series = self.snapshot_series(0.0);
 
         let (width_px, height_px) = self.config_canvas_size();
         let width = width_px as f32;
@@ -8671,7 +8666,8 @@ impl Plot {
         svg.set_text_engine_mode(self.display.text_engine);
 
         // Calculate data bounds
-        let (x_min, x_max, y_min, y_max) = self.calculate_data_bounds()?;
+        let (x_min, x_max, y_min, y_max) =
+            self.calculate_data_bounds_for_series(&snapshot_series)?;
 
         // Use the same content-driven layout path as PNG rendering.
         let content = self.create_plot_content(y_min, y_max);
@@ -8879,7 +8875,7 @@ impl Plot {
         let legend_items = self.collect_legend_items();
 
         // Render each series
-        for (idx, series) in self.series_mgr.series.iter().enumerate() {
+        for (idx, series) in snapshot_series.iter().enumerate() {
             let default_color = self.display.theme.get_color(idx);
             let color = series.color.unwrap_or(default_color);
             let line_width = series.line_width.unwrap_or(self.display.theme.line_width);
@@ -9032,7 +9028,7 @@ impl Plot {
         let width_px = page_sizes::mm_to_px(width_mm) as u32;
         let height_px = page_sizes::mm_to_px(height_mm) as u32;
 
-        self = self.size_px(width_px, height_px);
+        self = self.set_output_pixels(width_px, height_px);
 
         // Render to SVG
         let svg_content = self.render_to_svg()?;
@@ -9944,7 +9940,7 @@ impl PlotSeriesBuilder {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        self.plot.display.dimensions = (width, height);
+        self.plot = self.plot.set_output_pixels(width, height);
         self.end_series().save(path)
     }
 

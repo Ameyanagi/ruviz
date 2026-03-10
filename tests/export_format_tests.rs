@@ -4,7 +4,10 @@
 
 mod common;
 
-use common::{assert_file_non_empty, assert_png_dimensions_with_tolerance, assert_png_rendered};
+use common::{
+    assert_file_non_empty, assert_png_dimensions_with_tolerance, assert_png_rendered,
+    test_output_path,
+};
 use ruviz::prelude::*;
 use ruviz::render::skia::{SkiaRenderer, calculate_plot_area};
 use std::fs;
@@ -218,6 +221,51 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
 
     println!("✅ Direct Renderer Export Tests Complete");
     Ok(())
+}
+
+#[test]
+fn test_save_with_size_honors_requested_pixels_after_dpi_change() {
+    let output = test_output_path("save_with_size_exact_pixels.png");
+
+    Plot::new()
+        .dpi(300)
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .save_with_size(&output, 800, 600)
+        .expect("save_with_size should succeed");
+
+    assert_png_rendered(&output, Some((800, 600)));
+}
+
+#[test]
+fn test_builder_save_with_size_honors_requested_pixels_after_dpi_change() {
+    let output = test_output_path("builder_save_with_size_exact_pixels.png");
+
+    Plot::new()
+        .dpi(300)
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .title("Builder sized export")
+        .save_with_size(&output, 640, 360)
+        .expect("builder save_with_size should succeed");
+
+    assert_png_rendered(&output, Some((640, 360)));
+}
+
+#[test]
+fn test_export_overwrites_existing_png() {
+    let output = test_output_path("png_overwrite_test.png");
+
+    Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .save(&output)
+        .expect("first save should succeed");
+
+    Plot::new()
+        .dpi(200)
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .save(&output)
+        .expect("second save should overwrite the same file");
+
+    assert_png_dimensions_with_tolerance(&output, (1280, 960), 0);
 }
 
 #[test]

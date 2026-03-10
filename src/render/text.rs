@@ -97,16 +97,23 @@ pub fn get_swash_cache() -> &'static Mutex<SwashCache> {
     })
 }
 
-fn lock_font_system() -> MutexGuard<'static, FontSystem> {
-    get_font_system()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_text_resource<'a, T>(
+    mutex: &'a Mutex<T>,
+    resource_name: &str,
+) -> Result<MutexGuard<'a, T>> {
+    mutex.lock().map_err(|_| {
+        PlottingError::RenderError(format!(
+            "Text rendering aborted because {resource_name} lock is poisoned"
+        ))
+    })
 }
 
-fn lock_swash_cache() -> MutexGuard<'static, SwashCache> {
-    get_swash_cache()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_font_system() -> Result<MutexGuard<'static, FontSystem>> {
+    lock_text_resource(get_font_system(), "FontSystem")
+}
+
+fn lock_swash_cache() -> Result<MutexGuard<'static, SwashCache>> {
+    lock_text_resource(get_swash_cache(), "SwashCache")
 }
 
 /// Initialize the text rendering system
@@ -390,8 +397,8 @@ impl TextRenderer {
             return Ok(());
         }
 
-        let mut font_system = lock_font_system();
-        let mut swash_cache = lock_swash_cache();
+        let mut font_system = lock_font_system()?;
+        let mut swash_cache = lock_swash_cache()?;
 
         // Create metrics for the buffer
         let metrics = Metrics::new(config.size, config.size * 1.2);
@@ -518,8 +525,8 @@ impl TextRenderer {
             return Ok(());
         }
 
-        let mut font_system = lock_font_system();
-        let mut swash_cache = lock_swash_cache();
+        let mut font_system = lock_font_system()?;
+        let mut swash_cache = lock_swash_cache()?;
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
@@ -707,7 +714,7 @@ impl TextRenderer {
             return Ok(TextPlacementMetrics::new(0.0, config.size, config.size));
         }
 
-        let mut font_system = lock_font_system();
+        let mut font_system = lock_font_system()?;
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
@@ -859,6 +866,19 @@ mod tests {
 
         assert!(std::ptr::eq(fs1, fs2));
         assert!(std::ptr::eq(sc1, sc2));
+    }
+
+    #[test]
+    fn poisoned_text_lock_returns_error() {
+        let mutex = Mutex::new(0_u8);
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = mutex.lock().unwrap();
+            panic!("poison text lock");
+        });
+
+        let err = lock_text_resource(&mutex, "test resource").unwrap_err();
+        assert!(matches!(err, PlottingError::RenderError(_)));
+        assert!(err.to_string().contains("test resource lock is poisoned"));
     }
 
     #[test]

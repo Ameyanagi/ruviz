@@ -154,7 +154,7 @@ macro_rules! impl_terminal_methods {
                 width: u32,
                 height: u32,
             ) -> crate::core::Result<()> {
-                self.finalize().size_px(width, height).save(path)
+                self.finalize().save_with_size(path, width, height)
             }
 
             /// Add a line series after finalizing the current series

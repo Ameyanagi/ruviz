@@ -167,6 +167,12 @@ mod imp {
         },
     }
 
+    #[derive(Debug, Default)]
+    struct CacheState {
+        entries: HashMap<CacheKey, CachedValue>,
+        total_bytes: usize,
+    }
+
     #[derive(Debug)]
     struct FontContext {
         book: LazyHash<FontBook>,
@@ -270,15 +276,24 @@ mod imp {
         value.replace('\\', "\\\\").replace('"', "\\\"")
     }
 
-    fn cache() -> &'static Mutex<HashMap<CacheKey, CachedValue>> {
-        static CACHE: OnceLock<Mutex<HashMap<CacheKey, CachedValue>>> = OnceLock::new();
-        CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    fn cache() -> &'static Mutex<CacheState> {
+        static CACHE: OnceLock<Mutex<CacheState>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(CacheState::default()))
     }
 
-    fn lock_cache() -> MutexGuard<'static, HashMap<CacheKey, CachedValue>> {
-        cache()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn lock_cache_resource<'a, T>(
+        mutex: &'a Mutex<T>,
+        resource_name: &str,
+    ) -> Result<MutexGuard<'a, T>> {
+        mutex.lock().map_err(|_| {
+            PlottingError::TypstError(format!(
+                "Typst rendering aborted because {resource_name} lock is poisoned"
+            ))
+        })
+    }
+
+    fn lock_cache() -> Result<MutexGuard<'static, CacheState>> {
+        lock_cache_resource(cache(), "Typst cache")
     }
 
     fn make_key(
@@ -304,23 +319,38 @@ mod imp {
         }
     }
 
-    fn cache_bytes(cache: &HashMap<CacheKey, CachedValue>) -> usize {
-        cache.values().map(cached_value_bytes).sum()
-    }
-
-    fn maybe_evict(cache: &mut HashMap<CacheKey, CachedValue>, incoming_bytes: usize) {
-        let mut current_bytes = cache_bytes(cache);
-        while cache.len() >= MAX_CACHE_ENTRIES
-            || (!cache.is_empty() && current_bytes.saturating_add(incoming_bytes) > MAX_CACHE_BYTES)
+    fn maybe_evict(cache: &mut CacheState, incoming_bytes: usize) {
+        while cache.entries.len() >= MAX_CACHE_ENTRIES
+            || (!cache.entries.is_empty()
+                && cache.total_bytes.saturating_add(incoming_bytes) > MAX_CACHE_BYTES)
         {
-            if let Some(first_key) = cache.keys().next().cloned() {
-                if let Some(removed) = cache.remove(&first_key) {
-                    current_bytes = current_bytes.saturating_sub(cached_value_bytes(&removed));
+            if let Some(first_key) = cache.entries.keys().next().cloned() {
+                if let Some(removed) = cache.entries.remove(&first_key) {
+                    cache.total_bytes = cache
+                        .total_bytes
+                        .saturating_sub(cached_value_bytes(&removed));
                 }
             } else {
                 break;
             }
         }
+    }
+
+    fn insert_cached_value(cache: &mut CacheState, key: CacheKey, value: CachedValue) {
+        let incoming_bytes = cached_value_bytes(&value);
+        if incoming_bytes > MAX_CACHE_BYTES {
+            return;
+        }
+
+        if let Some(previous) = cache.entries.remove(&key) {
+            cache.total_bytes = cache
+                .total_bytes
+                .saturating_sub(cached_value_bytes(&previous));
+        }
+
+        maybe_evict(cache, incoming_bytes);
+        cache.total_bytes = cache.total_bytes.saturating_add(incoming_bytes);
+        cache.entries.insert(key, value);
     }
 
     fn validate_raster_size(width: u32, height: u32, operation: &str) -> Result<()> {
@@ -462,14 +492,14 @@ mod imp {
         );
 
         {
-            let cache = lock_cache();
+            let cache = lock_cache()?;
             if let Some(CachedValue::Raster {
                 pixels,
                 pixel_width,
                 pixel_height,
                 logical_width,
                 logical_height,
-            }) = cache.get(&key)
+            }) = cache.entries.get(&key)
             {
                 let size = IntSize::from_wh(*pixel_width, *pixel_height).ok_or_else(|| {
                     PlottingError::RenderError("Invalid cached typst raster size".to_string())
@@ -502,9 +532,9 @@ mod imp {
         let pixels = pixmap.data().to_vec();
 
         if pixels.len() <= MAX_CACHE_BYTES {
-            let mut cache = lock_cache();
-            maybe_evict(&mut cache, pixels.len());
-            cache.insert(
+            let mut cache = lock_cache()?;
+            insert_cached_value(
+                &mut cache,
                 key,
                 CachedValue::Raster {
                     pixels: pixels.clone(),
@@ -540,8 +570,8 @@ mod imp {
 
         let key = make_key(snippet, size_pt, color, rotation_deg, TypstBackendKind::Svg);
         {
-            let cache = lock_cache();
-            if let Some(CachedValue::Svg { svg, width, height }) = cache.get(&key) {
+            let cache = lock_cache()?;
+            if let Some(CachedValue::Svg { svg, width, height }) = cache.entries.get(&key) {
                 return Ok(TypstSvgOutput {
                     svg: svg.clone(),
                     width: *width,
@@ -557,9 +587,9 @@ mod imp {
         let height = size.y.to_pt() as f32;
 
         if raw_svg.len() <= MAX_CACHE_BYTES {
-            let mut cache = lock_cache();
-            maybe_evict(&mut cache, raw_svg.len());
-            cache.insert(
+            let mut cache = lock_cache()?;
+            insert_cached_value(
+                &mut cache,
                 key,
                 CachedValue::Svg {
                     svg: raw_svg.clone(),
@@ -593,6 +623,51 @@ mod imp {
                 let rendered = render_svg(snippet, size_pt, color, rotation_deg, operation)?;
                 Ok((rendered.width, rendered.height))
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn poisoned_typst_cache_lock_returns_error() {
+            let mutex = Mutex::new(0_u8);
+            let _ = std::panic::catch_unwind(|| {
+                let _guard = mutex.lock().unwrap();
+                panic!("poison typst cache lock");
+            });
+
+            let err = lock_cache_resource(&mutex, "test cache").unwrap_err();
+            assert!(matches!(err, PlottingError::TypstError(_)));
+            assert!(err.to_string().contains("test cache lock is poisoned"));
+        }
+
+        #[test]
+        fn cache_insert_tracks_bytes_without_rescanning() {
+            let mut cache = CacheState::default();
+            let key = make_key(
+                "#text(\"a\")",
+                12.0,
+                Color::BLACK,
+                0.0,
+                TypstBackendKind::Svg,
+            );
+            let svg = "<svg>abc</svg>".to_string();
+            let bytes = svg.len();
+
+            insert_cached_value(
+                &mut cache,
+                key.clone(),
+                CachedValue::Svg {
+                    svg,
+                    width: 12.0,
+                    height: 8.0,
+                },
+            );
+
+            assert_eq!(cache.total_bytes, bytes);
+            assert!(cache.entries.contains_key(&key));
         }
     }
 }

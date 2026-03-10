@@ -140,6 +140,18 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Observable<T> {
 }
 
 impl<T> Observable<T> {
+    fn reserve_subscriber_id(&self) -> SubscriberId {
+        SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn add_subscriber_with_id(&self, id: SubscriberId, callback: SubscriberCallback) {
+        let subscriber = Subscriber { id, callback };
+        self.subscribers
+            .write()
+            .expect("Subscribers lock poisoned")
+            .push(subscriber);
+    }
+
     /// Create a new Observable with the given initial value
     ///
     /// # Example
@@ -324,17 +336,8 @@ impl<T> Observable<T> {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        let id = SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed));
-        let subscriber = Subscriber {
-            id,
-            callback: Arc::new(callback),
-        };
-
-        self.subscribers
-            .write()
-            .expect("Subscribers lock poisoned")
-            .push(subscriber);
-
+        let id = self.reserve_subscriber_id();
+        self.add_subscriber_with_id(id, Arc::new(callback));
         id
     }
 
@@ -658,29 +661,26 @@ where
     let f = Arc::new(f);
     let weak_source = source.downgrade();
     let weak_derived = derived.downgrade();
-    let subscriber_id = Arc::new(Mutex::new(None));
-    let subscriber_id_for_callback = Arc::clone(&subscriber_id);
-
-    let id = source.subscribe(move || {
-        let Some(source) = weak_source.upgrade() else {
-            return;
-        };
-        let Some(derived) = weak_derived.upgrade() else {
-            if let Some(id) = *subscriber_id_for_callback.lock().expect("Lock poisoned") {
+    let id = source.reserve_subscriber_id();
+    source.add_subscriber_with_id(
+        id,
+        Arc::new(move || {
+            let Some(source) = weak_source.upgrade() else {
+                return;
+            };
+            let Some(derived) = weak_derived.upgrade() else {
                 source.unsubscribe(id);
+                return;
+            };
+
+            let new_value = f(source.get());
+            {
+                let mut guard = derived.data.write().expect("Lock poisoned");
+                *guard = new_value;
             }
-            return;
-        };
-
-        let new_value = f(source.get());
-        {
-            let mut guard = derived.data.write().expect("Lock poisoned");
-            *guard = new_value;
-        }
-        derived.bump_version();
-    });
-
-    *subscriber_id.lock().expect("Lock poisoned") = Some(id);
+            derived.bump_version();
+        }),
+    );
     let weak_source_for_drop = source.downgrade();
     derived.on_last_drop(move || {
         if let Some(source) = weak_source_for_drop.upgrade() {
@@ -732,30 +732,29 @@ where
         let weak_derived = weak_derived.clone();
         let weak_s1 = weak_s1.clone();
         let weak_s2 = weak_s2.clone();
-        let subscriber_id = Arc::new(Mutex::new(None));
-        let subscriber_id_for_callback = Arc::clone(&subscriber_id);
-        let id = source1.subscribe(move || {
-            let Some(source1) = weak_s1.upgrade() else {
-                return;
-            };
-            let Some(source2) = weak_s2.upgrade() else {
-                return;
-            };
-            let Some(derived) = weak_derived.upgrade() else {
-                if let Some(id) = *subscriber_id_for_callback.lock().expect("Lock poisoned") {
+        let id = source1.reserve_subscriber_id();
+        source1.add_subscriber_with_id(
+            id,
+            Arc::new(move || {
+                let Some(source1) = weak_s1.upgrade() else {
+                    return;
+                };
+                let Some(source2) = weak_s2.upgrade() else {
+                    return;
+                };
+                let Some(derived) = weak_derived.upgrade() else {
                     source1.unsubscribe(id);
-                }
-                return;
-            };
+                    return;
+                };
 
-            let new_value = f_clone(source1.get(), source2.get());
-            {
-                let mut guard = derived.data.write().expect("Lock poisoned");
-                *guard = new_value;
-            }
-            derived.bump_version();
-        });
-        *subscriber_id.lock().expect("Lock poisoned") = Some(id);
+                let new_value = f_clone(source1.get(), source2.get());
+                {
+                    let mut guard = derived.data.write().expect("Lock poisoned");
+                    *guard = new_value;
+                }
+                derived.bump_version();
+            }),
+        );
         let weak_source1_for_drop = source1.downgrade();
         derived.on_last_drop(move || {
             if let Some(source1) = weak_source1_for_drop.upgrade() {
@@ -770,30 +769,29 @@ where
         let weak_derived = weak_derived.clone();
         let weak_s1 = weak_s1.clone();
         let weak_s2 = weak_s2.clone();
-        let subscriber_id = Arc::new(Mutex::new(None));
-        let subscriber_id_for_callback = Arc::clone(&subscriber_id);
-        let id = source2.subscribe(move || {
-            let Some(source1) = weak_s1.upgrade() else {
-                return;
-            };
-            let Some(source2) = weak_s2.upgrade() else {
-                return;
-            };
-            let Some(derived) = weak_derived.upgrade() else {
-                if let Some(id) = *subscriber_id_for_callback.lock().expect("Lock poisoned") {
+        let id = source2.reserve_subscriber_id();
+        source2.add_subscriber_with_id(
+            id,
+            Arc::new(move || {
+                let Some(source1) = weak_s1.upgrade() else {
+                    return;
+                };
+                let Some(source2) = weak_s2.upgrade() else {
+                    return;
+                };
+                let Some(derived) = weak_derived.upgrade() else {
                     source2.unsubscribe(id);
-                }
-                return;
-            };
+                    return;
+                };
 
-            let new_value = f_clone(source1.get(), source2.get());
-            {
-                let mut guard = derived.data.write().expect("Lock poisoned");
-                *guard = new_value;
-            }
-            derived.bump_version();
-        });
-        *subscriber_id.lock().expect("Lock poisoned") = Some(id);
+                let new_value = f_clone(source1.get(), source2.get());
+                {
+                    let mut guard = derived.data.write().expect("Lock poisoned");
+                    *guard = new_value;
+                }
+                derived.bump_version();
+            }),
+        );
         let weak_source2_for_drop = source2.downgrade();
         derived.on_last_drop(move || {
             if let Some(source2) = weak_source2_for_drop.upgrade() {

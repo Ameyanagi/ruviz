@@ -11,7 +11,7 @@ use crate::core::{PlottingError, Result};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod svg;
 
@@ -30,15 +30,13 @@ pub use pdf::PdfRenderer;
 pub use svg_to_pdf::{page_sizes, svg_to_pdf, svg_to_pdf_file};
 
 fn atomic_temp_path(path: &Path) -> PathBuf {
+    static TEMP_PATH_NONCE: AtomicU64 = AtomicU64::new(0);
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("ruviz-output");
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
+    let nonce = TEMP_PATH_NONCE.fetch_add(1, Ordering::Relaxed);
     parent.join(format!(
         ".{}.{}.{}.tmp",
         file_name,
@@ -49,6 +47,31 @@ fn atomic_temp_path(path: &Path) -> PathBuf {
 
 fn cleanup_temp_file(path: &Path) {
     let _ = fs::remove_file(path);
+}
+
+fn rename_temp_into_place(temp_path: &Path, path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        match fs::rename(temp_path, path) {
+            Ok(()) => Ok(()),
+            Err(err)
+                if path.exists()
+                    && matches!(
+                        err.kind(),
+                        std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
+                    ) =>
+            {
+                fs::remove_file(path)?;
+                fs::rename(temp_path, path)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        fs::rename(temp_path, path)
+    }
 }
 
 pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Result<()> {
@@ -63,7 +86,7 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&temp_path, path)?;
+        rename_temp_into_place(&temp_path, path)?;
         Ok(())
     })();
 
@@ -83,31 +106,29 @@ where
     let path = path.as_ref();
     let temp_path = atomic_temp_path(path);
 
-    let file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temp_path)
-        .map_err(PlottingError::IoError)?;
-    let mut writer_handle = BufWriter::new(file);
+    let write_result = (|| -> Result<()> {
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .map_err(PlottingError::IoError)?;
+        let mut writer_handle = BufWriter::new(file);
 
-    match writer(&mut writer_handle) {
-        Ok(()) => {
-            writer_handle.flush().map_err(PlottingError::IoError)?;
-            let file = writer_handle
-                .into_inner()
-                .map_err(|err| PlottingError::IoError(err.into_error()))?;
-            file.sync_all().map_err(PlottingError::IoError)?;
-            drop(file);
-            fs::rename(&temp_path, path).map_err(|err| {
-                cleanup_temp_file(&temp_path);
-                PlottingError::IoError(err)
-            })?;
-            Ok(())
-        }
-        Err(err) => {
-            drop(writer_handle);
-            cleanup_temp_file(&temp_path);
-            Err(err)
-        }
+        writer(&mut writer_handle)?;
+        writer_handle.flush().map_err(PlottingError::IoError)?;
+        let file = writer_handle
+            .into_inner()
+            .map_err(|err| PlottingError::IoError(err.into_error()))?;
+        file.sync_all().map_err(PlottingError::IoError)?;
+        drop(file);
+        rename_temp_into_place(&temp_path, path).map_err(PlottingError::IoError)?;
+        Ok(())
+    })();
+
+    if let Err(err) = write_result {
+        cleanup_temp_file(&temp_path);
+        return Err(err);
     }
+
+    Ok(())
 }
