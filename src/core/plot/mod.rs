@@ -4677,9 +4677,11 @@ impl Plot {
     /// Render the plot to an in-memory image
     pub fn render(&self) -> Result<Image> {
         self.validate_runtime_environment()?;
+        let snapshot_series = self.snapshot_series(0.0);
+        Self::validate_series_list(&snapshot_series)?;
 
         // Check if DataShader optimization should be used
-        let total_points = self.calculate_total_points();
+        let total_points = Self::calculate_total_points_for_series(&snapshot_series);
 
         // Warn for very large datasets
         const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
@@ -4701,7 +4703,7 @@ impl Plot {
         // Note: Parallel rendering not supported for reactive plots (Signal uses Rc which is !Send)
         #[cfg(feature = "parallel")]
         {
-            let series_count = self.series_mgr.series.len();
+            let series_count = snapshot_series.len();
             if !self.is_reactive()
                 && self
                     .render
@@ -4711,9 +4713,6 @@ impl Plot {
                 return self.render_with_parallel();
             }
         }
-
-        let snapshot_series = self.snapshot_series(0.0);
-        Self::validate_series_list(&snapshot_series)?;
 
         // Create renderer for standard rendering with DPI scaling
         let (scaled_width, scaled_height) = self.config_canvas_size();
@@ -5697,8 +5696,11 @@ impl Plot {
 
     /// Calculate total number of data points across all series
     fn calculate_total_points(&self) -> usize {
-        self.series_mgr
-            .series
+        Self::calculate_total_points_for_series(&self.series_mgr.series)
+    }
+
+    fn calculate_total_points_for_series(series_list: &[PlotSeries]) -> usize {
+        series_list
             .iter()
             .map(|series| match &series.series_type {
                 SeriesType::Line { x_data, .. }
@@ -10246,6 +10248,34 @@ mod tests {
             .calculate_data_bounds_for_series(&pie.snapshot_series(0.0))
             .expect("pie bounds should resolve");
         assert_eq!(pie_bounds, (0.0, 1.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn test_render_datashader_path_still_validates_mismatched_series() {
+        let x: Vec<f64> = (0..100_001).map(|i| i as f64).collect();
+        let y: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+
+        let err = Plot::new()
+            .line(&x, &y)
+            .render()
+            .expect_err("datashader path should reject mismatched inputs");
+
+        assert!(matches!(err, PlottingError::DataLengthMismatch { .. }));
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_render_parallel_path_still_validates_empty_series() {
+        let empty: Vec<f64> = Vec::new();
+
+        let err = Plot::new()
+            .line(&empty, &empty)
+            .end_series()
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .render()
+            .expect_err("parallel path should reject empty inputs");
+
+        assert!(matches!(err, PlottingError::EmptyDataSet));
     }
 
     #[test]

@@ -57,6 +57,45 @@ fn cleanup_temp_file(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
+fn resolve_atomic_destination(path: &Path) -> std::io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        let mut current = path.to_path_buf();
+        let mut hops = 0usize;
+
+        loop {
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    if hops >= 16 {
+                        return Err(std::io::Error::other(
+                            "too many symlink levels while resolving export destination",
+                        ));
+                    }
+
+                    let target = fs::read_link(&current)?;
+                    current = if target.is_absolute() {
+                        target
+                    } else {
+                        current
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join(target)
+                    };
+                    hops += 1;
+                }
+                Ok(_) => return Ok(current),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(current),
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        Ok(path.to_path_buf())
+    }
+}
+
 struct AtomicWriteFailure {
     error: PlottingError,
     cleanup_temp: bool,
@@ -152,7 +191,9 @@ fn rename_temp_into_place(
 
 pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Result<()> {
     let path = path.as_ref();
-    let (temp_path, mut file) = create_atomic_temp_file(path).map_err(PlottingError::IoError)?;
+    let destination_path = resolve_atomic_destination(path).map_err(PlottingError::IoError)?;
+    let (temp_path, mut file) =
+        create_atomic_temp_file(&destination_path).map_err(PlottingError::IoError)?;
 
     let write_result = (|| -> std::result::Result<(), AtomicWriteFailure> {
         file.write_all(bytes)
@@ -160,7 +201,7 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
         file.sync_all()
             .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
         drop(file);
-        rename_temp_into_place(&temp_path, path)?;
+        rename_temp_into_place(&temp_path, &destination_path)?;
         Ok(())
     })();
 
@@ -180,7 +221,9 @@ where
     F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     let path = path.as_ref();
-    let (temp_path, file) = create_atomic_temp_file(path).map_err(PlottingError::IoError)?;
+    let destination_path = resolve_atomic_destination(path).map_err(PlottingError::IoError)?;
+    let (temp_path, file) =
+        create_atomic_temp_file(&destination_path).map_err(PlottingError::IoError)?;
 
     let write_result = (|| -> std::result::Result<(), AtomicWriteFailure> {
         let mut writer_handle = BufWriter::new(file);
@@ -195,7 +238,7 @@ where
         file.sync_all()
             .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
         drop(file);
-        rename_temp_into_place(&temp_path, path)?;
+        rename_temp_into_place(&temp_path, &destination_path)?;
         Ok(())
     })();
 
@@ -207,4 +250,39 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_symlink_and_updates_target() {
+        use std::os::unix::fs::symlink;
+
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let runs_dir = tempdir.path().join("runs");
+        fs::create_dir(&runs_dir).expect("runs dir");
+
+        let target_path = runs_dir.join("42.png");
+        fs::write(&target_path, b"old-bytes").expect("seed target");
+
+        let link_path = tempdir.path().join("latest.png");
+        symlink(Path::new("runs/42.png"), &link_path).expect("create symlink");
+
+        write_bytes_atomic(&link_path, b"new-bytes").expect("atomic write through symlink");
+
+        assert!(
+            fs::symlink_metadata(&link_path)
+                .expect("symlink metadata")
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_link(&link_path).expect("read symlink"),
+            PathBuf::from("runs/42.png")
+        );
+        assert_eq!(fs::read(&target_path).expect("read target"), b"new-bytes");
+    }
 }

@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - Preserve existing Windows export targets on overwrite failures by using native replace semantics and keeping the temporary file for recovery.
 - Evict stale Typst cache entries when a replacement grows beyond the cache byte limit, including oversized render results that skip recaching.
 - Restore snapshot-based bounds calculation for heatmap, density, polar, radar, contour, and other non-Cartesian series.
+- Restore series validation before DataShader and parallel render fast paths, and preserve POSIX symlink destinations during atomic export overwrites.
 
 ## [0.1.4] - 2026-02-11
 
