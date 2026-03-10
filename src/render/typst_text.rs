@@ -342,6 +342,11 @@ mod imp {
     fn insert_cached_value(cache: &mut CacheState, key: CacheKey, value: CachedValue) {
         let incoming_bytes = cached_value_bytes(&value);
         if incoming_bytes > MAX_CACHE_BYTES {
+            if let Some(previous) = cache.entries.remove(&key) {
+                cache.total_bytes = cache
+                    .total_bytes
+                    .saturating_sub(cached_value_bytes(&previous));
+            }
             return;
         }
 
@@ -671,6 +676,46 @@ mod imp {
 
             assert_eq!(cache.total_bytes, bytes);
             assert!(cache.entries.contains_key(&key));
+        }
+
+        #[test]
+        fn cache_insert_evicts_stale_entry_when_replacement_is_too_large() {
+            let mut cache = CacheState::default();
+            let key = make_key(
+                "#text(\"grow\")",
+                12.0,
+                Color::BLACK,
+                0.0,
+                TypstBackendKind::Svg,
+            );
+            let small_svg = "<svg>small</svg>".to_string();
+            let small_bytes = small_svg.len();
+
+            insert_cached_value(
+                &mut cache,
+                key.clone(),
+                CachedValue::Svg {
+                    svg: small_svg,
+                    width: 12.0,
+                    height: 8.0,
+                },
+            );
+
+            assert_eq!(cache.total_bytes, small_bytes);
+            assert!(cache.entries.contains_key(&key));
+
+            insert_cached_value(
+                &mut cache,
+                key.clone(),
+                CachedValue::Svg {
+                    svg: "x".repeat(MAX_CACHE_BYTES + 1),
+                    width: 12.0,
+                    height: 8.0,
+                },
+            );
+
+            assert_eq!(cache.total_bytes, 0);
+            assert!(!cache.entries.contains_key(&key));
         }
     }
 }
