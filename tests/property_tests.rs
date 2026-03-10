@@ -234,7 +234,6 @@ mod tests {
 
     #[test]
     fn proptest_module_compiles() {
-        // Ensure module compiles and proptest is available
-        assert!(true);
+        // Ensure module compiles and proptest is available.
     }
 }

@@ -84,7 +84,6 @@ fn main() {
         .collect();
 
     stream.push_many(bulk_data);
-    time += bulk_size as f64 * 0.01;
 
     println!("After bulk insert: {} points", stream.len());
 

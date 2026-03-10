@@ -11,8 +11,7 @@ fn main() -> Result<()> {
             // Simple pseudo-random values
             let u1 = ((i * 7 + 13) % 1000) as f64 / 1000.0;
             let u2 = ((i * 11 + 17) % 1000) as f64 / 1000.0;
-            let z = (-2.0 * u1.max(0.001).ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
-            z
+            (-2.0 * u1.max(0.001).ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
         })
         .collect();
 

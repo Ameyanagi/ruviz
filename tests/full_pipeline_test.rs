@@ -45,7 +45,7 @@ fn test_multi_series_pipeline() {
 
     // WHEN: Creating plot with multiple series
     let result = Plot::new()
-        .line(&x, &x.iter().copied().collect::<Vec<_>>())
+        .line(&x, &x.to_vec())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
         .label("Quadratic")

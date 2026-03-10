@@ -271,8 +271,8 @@ fn test_theme_performance() {
         let result = Plot::new()
             .theme(theme)
             .line(&x, &y)
-            .title(&format!("{} Theme", name))
-            .save(&format!("tests/output/perf_theme_{}.png", name));
+            .title(format!("{} Theme", name))
+            .save(format!("tests/output/perf_theme_{}.png", name));
         let duration = start.elapsed();
 
         assert!(result.is_ok(), "{} theme failed", name);

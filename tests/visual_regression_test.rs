@@ -24,7 +24,6 @@ fn calculate_image_diff(path1: &Path, path2: &Path) -> Result<f64, Box<dyn std::
 
     let (width, height) = img1.dimensions();
     let total_pixels = (width * height) as f64;
-    let mut diff_pixels = 0u32;
     let mut total_diff = 0.0;
 
     // Compare pixel by pixel
@@ -44,7 +43,6 @@ fn calculate_image_diff(path1: &Path, path2: &Path) -> Result<f64, Box<dyn std::
             }
 
             if pixel_diff > 0.0 {
-                diff_pixels += 1;
                 total_diff += pixel_diff / (channels1.len() as f64 * 255.0);
             }
         }
@@ -117,7 +115,7 @@ fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std:
         || {
             let x: Vec<f64> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
             Plot::new()
-                .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
+                .line(&x, &x.iter().copied().collect::<Vec<_>>())
                 .label("Linear")
                 .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
                 .label("Quadratic")
@@ -263,10 +261,10 @@ fn test_visual_regression_themes() -> std::result::Result<(), Box<dyn std::error
                 Plot::new()
                     .theme(theme)
                     .line(&x, &y)
-                    .title(&format!("{} Theme", name.to_uppercase()))
+                    .title(format!("{} Theme", name.to_uppercase()))
                     .xlabel("X")
                     .ylabel("Y")
-                    .save(&format!("tests/output/vr_theme_{}.png", name))?;
+                    .save(format!("tests/output/vr_theme_{}.png", name))?;
                 Ok(())
             },
             &format!("tests/output/vr_theme_{}.png", name),

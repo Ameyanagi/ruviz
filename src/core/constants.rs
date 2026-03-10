@@ -189,28 +189,28 @@ pub mod margins {
     pub const LARGE_MAX: f32 = 1.5;
 }
 
+const _: () = {
+    assert!(dpi::WEB < dpi::SCREEN);
+    assert!(dpi::SCREEN < dpi::PRINT);
+    assert!(dpi::PRINT < dpi::HIGH_PRINT);
+    assert!(dpi::HIGH_PRINT < dpi::MAX);
+    assert!(font_scales::TICK < font_scales::LABEL);
+    assert!(font_scales::LABEL < font_scales::TITLE);
+    assert!(line_widths::THIN < line_widths::NORMAL);
+    assert!(line_widths::NORMAL < line_widths::MEDIUM);
+    assert!(line_widths::MEDIUM < line_widths::THICK);
+};
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn test_dpi_ordering() {
-        assert!(dpi::WEB < dpi::SCREEN);
-        assert!(dpi::SCREEN < dpi::PRINT);
-        assert!(dpi::PRINT < dpi::HIGH_PRINT);
-        assert!(dpi::HIGH_PRINT < dpi::MAX);
-    }
+    fn constants_compile_with_expected_relationships() {
+        let max_dpi = super::dpi::MAX;
+        let web_dpi = super::dpi::WEB;
+        let thick = super::line_widths::THICK;
+        let thin = super::line_widths::THIN;
 
-    #[test]
-    fn test_font_scales_ordering() {
-        assert!(font_scales::TICK < font_scales::LABEL);
-        assert!(font_scales::LABEL < font_scales::TITLE);
-    }
-
-    #[test]
-    fn test_line_widths_ordering() {
-        assert!(line_widths::THIN < line_widths::NORMAL);
-        assert!(line_widths::NORMAL < line_widths::MEDIUM);
-        assert!(line_widths::MEDIUM < line_widths::THICK);
+        assert!(max_dpi > web_dpi);
+        assert!(thick > thin);
     }
 }

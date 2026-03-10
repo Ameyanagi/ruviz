@@ -62,7 +62,7 @@ async fn test_coordinate_transformation(
     );
 
     match result {
-        Ok((x_transformed, y_transformed)) => {
+        Ok((x_transformed, _y_transformed)) => {
             println!("   ✅ Small dataset transformation successful");
             println!("      Transformed {} points", x_transformed.len());
             println!(

@@ -146,7 +146,7 @@ fn test_backend_consistency_multi_series() {
     let result = Plot::new()
         .title("Backend Consistency - Multi-Series")
         .legend(Position::TopLeft)
-        .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
+        .line(&x, &x.iter().copied().collect::<Vec<_>>())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
         .label("Quadratic")
@@ -178,9 +178,9 @@ fn test_backend_consistency_themes() {
     ] {
         let result = Plot::new()
             .theme(theme)
-            .title(&format!("Backend - {} Theme", name))
+            .title(format!("Backend - {} Theme", name))
             .line(&x, &y)
-            .save(&format!("tests/output/backend_theme_{}.png", name));
+            .save(format!("tests/output/backend_theme_{}.png", name));
 
         // THEN: Should produce consistent output for all themes
         assert!(result.is_ok(), "{} theme failed", name);
@@ -201,9 +201,9 @@ fn test_backend_consistency_dpi() {
     for dpi in [72, 96, 150, 300] {
         let result = Plot::new()
             .dpi(dpi)
-            .title(&format!("Backend - {} DPI", dpi))
+            .title(format!("Backend - {} DPI", dpi))
             .line(&x, &y)
-            .save(&format!("tests/output/backend_dpi_{}.png", dpi));
+            .save(format!("tests/output/backend_dpi_{}.png", dpi));
 
         // THEN: Should succeed for all DPIs
         assert!(result.is_ok(), "{} DPI failed", dpi);
@@ -230,12 +230,9 @@ fn test_backend_consistency_dimensions() {
     for (width, height) in [(400, 300), (800, 600), (1200, 900), (1600, 1200)] {
         let result = Plot::new()
             .size_px(width, height)
-            .title(&format!("{}x{}", width, height))
+            .title(format!("{}x{}", width, height))
             .line(&x, &y)
-            .save(&format!(
-                "tests/output/backend_dim_{}x{}.png",
-                width, height
-            ));
+            .save(format!("tests/output/backend_dim_{}x{}.png", width, height));
 
         // THEN: Should produce correct dimensions
         assert!(result.is_ok(), "{}x{} failed", width, height);

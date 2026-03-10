@@ -30,6 +30,7 @@
 
 use crate::data::Observable;
 use crate::data::signal::Signal;
+use std::borrow::Cow;
 
 // ============================================================================
 // PlotData Enum
@@ -59,6 +60,19 @@ pub enum PlotData {
 }
 
 impl PlotData {
+    /// Resolve the data to a borrowed-or-owned slice at the given time.
+    ///
+    /// Static data is borrowed directly to avoid unnecessary clones in
+    /// render-time hot paths.
+    #[inline]
+    pub fn resolve_cow(&self, time: f64) -> Cow<'_, [f64]> {
+        match self {
+            PlotData::Static(data) => Cow::Borrowed(data.as_slice()),
+            PlotData::Temporal(signal) => Cow::Owned(signal.at(time)),
+            PlotData::Reactive(obs) => Cow::Owned(obs.get()),
+        }
+    }
+
     /// Resolve the data to a concrete `Vec<f64>` at the given time.
     ///
     /// - `Static` - Returns a clone of the stored data
@@ -70,11 +84,7 @@ impl PlotData {
     /// * `time` - The time at which to resolve (in seconds). Only used for `Temporal`.
     #[inline]
     pub fn resolve(&self, time: f64) -> Vec<f64> {
-        match self {
-            PlotData::Static(data) => data.clone(),
-            PlotData::Temporal(signal) => signal.at(time),
-            PlotData::Reactive(obs) => obs.get(),
-        }
+        self.resolve_cow(time).into_owned()
     }
 
     /// Check if this data is static (no resolution needed).

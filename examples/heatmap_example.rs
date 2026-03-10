@@ -77,11 +77,11 @@ fn scientific_heatmap() -> Result<()> {
     let cols = 30;
     let mut data = vec![vec![0.0; cols]; rows];
 
-    for i in 0..rows {
-        for j in 0..cols {
+    for (i, row) in data.iter_mut().enumerate().take(rows) {
+        for (j, value) in row.iter_mut().enumerate().take(cols) {
             let x = j as f64 * 2.0 * PI / cols as f64;
             let y = i as f64 * 2.0 * PI / rows as f64;
-            data[i][j] = (x.sin() * y.cos()).sin();
+            *value = (x.sin() * y.cos()).sin();
         }
     }
 
@@ -108,11 +108,11 @@ fn large_heatmap() -> Result<()> {
     let size = 50;
     let mut data = vec![vec![0.0; size]; size];
 
-    for i in 0..size {
-        for j in 0..size {
+    for (i, row) in data.iter_mut().enumerate().take(size) {
+        for (j, value) in row.iter_mut().enumerate().take(size) {
             let x = (j as f64 - size as f64 / 2.0) / 10.0;
             let y = (i as f64 - size as f64 / 2.0) / 10.0;
-            data[i][j] = (-x * x - y * y).exp();
+            *value = (-x * x - y * y).exp();
         }
     }
 

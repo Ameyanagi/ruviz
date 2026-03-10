@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use ruviz::core::Plot;
 use ruviz::data::Data1D;
@@ -10,6 +12,7 @@ fn generate_test_data(size: usize) -> Vec<f64> {
         .collect()
 }
 
+#[allow(dead_code)]
 fn generate_position_data(size: usize) -> Vec<(f32, f32)> {
     (0..size)
         .map(|i| (i as f32 * 0.5, (i as f32 * 0.1).sin() * 10.0))

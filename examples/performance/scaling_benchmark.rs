@@ -31,7 +31,7 @@ fn main() {
         // Time rendering (don't save to disk to isolate render time)
         let start = Instant::now();
 
-        let image = Plot::new()
+        let _image = Plot::new()
             .size(8.0, 6.0)
             .dpi(100)
             .line(&x, &y)

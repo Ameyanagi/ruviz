@@ -1,5 +1,6 @@
 //! Validation tests for core Plot functionality
 
+use crate::core::PlottingError;
 use crate::prelude::*;
 
 #[cfg(test)]
@@ -9,8 +10,7 @@ mod tests {
     #[test]
     fn test_plot_creation() {
         let plot = Plot::new();
-        // Test that plot can be created without errors
-        assert!(true); // Basic creation test
+        assert!(matches!(plot.render(), Err(PlottingError::NoDataSeries)));
     }
 
     #[test]

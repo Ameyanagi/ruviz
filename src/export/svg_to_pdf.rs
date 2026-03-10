@@ -40,8 +40,7 @@ pub fn svg_to_pdf(svg_data: &str) -> Result<Vec<u8>> {
 #[cfg(feature = "pdf")]
 pub fn svg_to_pdf_file<P: AsRef<Path>>(svg_data: &str, path: P) -> Result<()> {
     let pdf_data = svg_to_pdf(svg_data)?;
-    std::fs::write(path, pdf_data).map_err(PlottingError::IoError)?;
-    Ok(())
+    crate::export::write_bytes_atomic(path, &pdf_data)
 }
 
 /// Page sizes in millimeters

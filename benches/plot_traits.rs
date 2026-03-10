@@ -76,12 +76,10 @@ fn generate_grid_data(nx: usize, ny: usize, seed: u64) -> (Vec<f64>, Vec<f64>, V
         .collect();
 
     let mut z = Vec::with_capacity(ny);
-    for j in 0..ny {
+    for &yj in y.iter().take(ny) {
         let mut row = Vec::with_capacity(nx);
-        for i in 0..nx {
+        for &xi in x.iter().take(nx) {
             // Gaussian-like function with noise
-            let xi = x[i];
-            let yj = y[j];
             let base = (-0.1 * (xi * xi + yj * yj)).exp();
 
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1);

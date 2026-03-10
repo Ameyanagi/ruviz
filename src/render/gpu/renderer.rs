@@ -334,8 +334,7 @@ mod tests {
         // Should gracefully handle GPU not available
         let result = GpuRenderer::new().await;
 
-        if result.is_ok() {
-            let renderer = result.unwrap();
+        if let Ok(renderer) = result {
             assert!(renderer.gpu_threshold() > 0);
             println!(
                 "GPU renderer created successfully with threshold: {}",

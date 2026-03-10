@@ -174,7 +174,7 @@ fn test_different_colormaps() {
     for (name, colormap) in colormaps {
         let result = Plot::new()
             .size_px(800, 600)
-            .title(&format!("{} Colormap", name.to_uppercase()))
+            .title(format!("{} Colormap", name.to_uppercase()))
             .xlabel("X Values")
             .ylabel("Y Values")
             // Plot lines with colors from the colormap
@@ -214,7 +214,7 @@ fn test_different_colormaps() {
             .line_width(2.0)
             .label("t=1.00")
             .legend(ruviz::core::position::Position::TopRight)
-            .save(&format!("tests/output/colormap_{}.png", name));
+            .save(format!("tests/output/colormap_{}.png", name));
 
         assert!(result.is_ok(), "{} colormap should work", name);
     }
@@ -223,16 +223,7 @@ fn test_different_colormaps() {
 #[test]
 fn test_hex_color_parsing() {
     let x_data = vec![0.0, 1.0, 2.0, 3.0];
-    let y_data = vec![1.0, 2.0, 3.0, 4.0];
-
-    // Test various hex formats
-    let hex_colors = vec![
-        "#FF0000", // Red
-        "#00ff00", // Green (lowercase)
-        "#0080FF", // Blue
-        "#ff8040", // Orange
-        "#8040ff", // Purple
-    ];
+    let y_data = [1.0, 2.0, 3.0, 4.0];
 
     let result = Plot::new()
         .size_px(800, 600)
@@ -396,7 +387,7 @@ fn test_scientific_colormaps() {
     for (name, colormap) in scientific_maps {
         let result = Plot::new()
             .size_px(800, 600)
-            .title(&format!("Scientific Colormap: {}", name.to_uppercase()))
+            .title(format!("Scientific Colormap: {}", name.to_uppercase()))
             .xlabel("Data Points")
             .ylabel("Value")
             // Create a gradient effect
@@ -471,7 +462,7 @@ fn test_scientific_colormaps() {
             .line_width(3.0)
             .label("1.0")
             .legend(ruviz::core::position::Position::TopRight)
-            .save(&format!("tests/output/scientific_{}.png", name));
+            .save(format!("tests/output/scientific_{}.png", name));
 
         assert!(result.is_ok(), "Scientific colormap {} should work", name);
     }

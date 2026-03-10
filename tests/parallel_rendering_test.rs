@@ -29,7 +29,7 @@ fn test_parallel_rendering_basic() {
     let image = result.unwrap();
     assert!(image.width > 0);
     assert!(image.height > 0);
-    assert!(image.pixels.len() > 0);
+    assert!(!image.pixels.is_empty());
 
     println!("✅ Parallel rendering test passed");
     println!(
@@ -46,7 +46,10 @@ fn test_parallel_vs_sequential_performance() {
     // Test that demonstrates parallel processing capability
     let n = 25_000;
     let x_data: Vec<f64> = (0..n).map(|i| (i as f64) * 0.001).collect();
-    let y_data: Vec<f64> = x_data.iter().map(|&x| (x * 3.14159).sin()).collect();
+    let y_data: Vec<f64> = x_data
+        .iter()
+        .map(|&x| (x * std::f64::consts::PI).sin())
+        .collect();
 
     // Test with parallel enabled (default)
     let start_parallel = Instant::now();

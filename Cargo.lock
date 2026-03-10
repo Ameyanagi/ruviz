@@ -4604,6 +4604,7 @@ dependencies = [
  "wgpu",
  "wgsl_bindgen",
  "wide",
+ "windows-sys 0.59.0",
  "winit",
 ]
 

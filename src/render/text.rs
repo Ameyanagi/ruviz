@@ -20,7 +20,7 @@
 //! renderer.render_text(&mut pixmap, "Hello 日本語", 10.0, 50.0, &config, Color::BLACK)?;
 //! ```
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping,
@@ -31,6 +31,38 @@ use tiny_skia::{Pixmap, PremultipliedColorU8};
 use crate::core::error::{PlottingError, Result};
 use crate::render::Color;
 use crate::render::text_anchor::TextPlacementMetrics;
+
+const MAX_TEXT_RASTER_DIMENSION: u32 = 8_192;
+const MAX_TEXT_RASTER_BYTES: usize = 128 * 1024 * 1024;
+
+fn validate_text_raster_size(width: u32, height: u32, context: &str) -> Result<()> {
+    if width > MAX_TEXT_RASTER_DIMENSION || height > MAX_TEXT_RASTER_DIMENSION {
+        return Err(PlottingError::PerformanceLimit {
+            limit_type: format!("{context} raster dimension"),
+            actual: width.max(height) as usize,
+            maximum: MAX_TEXT_RASTER_DIMENSION as usize,
+        });
+    }
+
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| PlottingError::PerformanceLimit {
+            limit_type: format!("{context} raster bytes"),
+            actual: usize::MAX,
+            maximum: MAX_TEXT_RASTER_BYTES,
+        })?;
+
+    if bytes > MAX_TEXT_RASTER_BYTES {
+        return Err(PlottingError::PerformanceLimit {
+            limit_type: format!("{context} raster bytes"),
+            actual: bytes,
+            maximum: MAX_TEXT_RASTER_BYTES,
+        });
+    }
+
+    Ok(())
+}
 
 // =============================================================================
 // Global Singletons
@@ -63,6 +95,25 @@ pub fn get_swash_cache() -> &'static Mutex<SwashCache> {
         log::debug!("Initializing global SwashCache for glyph caching");
         Mutex::new(SwashCache::new())
     })
+}
+
+fn lock_text_resource<'a, T>(
+    mutex: &'a Mutex<T>,
+    resource_name: &str,
+) -> Result<MutexGuard<'a, T>> {
+    mutex.lock().map_err(|_| {
+        PlottingError::RenderError(format!(
+            "Text rendering aborted because {resource_name} lock is poisoned"
+        ))
+    })
+}
+
+fn lock_font_system() -> Result<MutexGuard<'static, FontSystem>> {
+    lock_text_resource(get_font_system(), "FontSystem")
+}
+
+fn lock_swash_cache() -> Result<MutexGuard<'static, SwashCache>> {
+    lock_text_resource(get_swash_cache(), "SwashCache")
 }
 
 /// Initialize the text rendering system
@@ -346,13 +397,8 @@ impl TextRenderer {
             return Ok(());
         }
 
-        let mut font_system = get_font_system()
-            .lock()
-            .map_err(|e| PlottingError::RenderError(format!("Failed to lock FontSystem: {}", e)))?;
-
-        let mut swash_cache = get_swash_cache()
-            .lock()
-            .map_err(|e| PlottingError::RenderError(format!("Failed to lock SwashCache: {}", e)))?;
+        let mut font_system = lock_font_system()?;
+        let mut swash_cache = lock_swash_cache()?;
 
         // Create metrics for the buffer
         let metrics = Metrics::new(config.size, config.size * 1.2);
@@ -479,13 +525,8 @@ impl TextRenderer {
             return Ok(());
         }
 
-        let mut font_system = get_font_system()
-            .lock()
-            .map_err(|e| PlottingError::RenderError(format!("Failed to lock FontSystem: {}", e)))?;
-
-        let mut swash_cache = get_swash_cache()
-            .lock()
-            .map_err(|e| PlottingError::RenderError(format!("Failed to lock SwashCache: {}", e)))?;
+        let mut font_system = lock_font_system()?;
+        let mut swash_cache = lock_swash_cache()?;
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
@@ -537,6 +578,7 @@ impl TextRenderer {
 
         let text_width = (max_x - min_x + 1).max(1) as u32;
         let text_height = (max_y - min_y + 1).max(1) as u32;
+        validate_text_raster_size(text_width, text_height, "Rotated text")?;
 
         // Create temporary pixmap for horizontal text
         let mut temp_pixmap = Pixmap::new(text_width, text_height).ok_or_else(|| {
@@ -583,6 +625,7 @@ impl TextRenderer {
         // Apply 90° counterclockwise rotation (lossless pixel swap)
         let rotated_width = text_height;
         let rotated_height = text_width;
+        validate_text_raster_size(rotated_width, rotated_height, "Rotated text")?;
 
         let mut rotated_pixmap = Pixmap::new(rotated_width, rotated_height).ok_or_else(|| {
             PlottingError::RenderError("Failed to create rotated pixmap".to_string())
@@ -671,9 +714,7 @@ impl TextRenderer {
             return Ok(TextPlacementMetrics::new(0.0, config.size, config.size));
         }
 
-        let mut font_system = get_font_system()
-            .lock()
-            .map_err(|e| PlottingError::RenderError(format!("Failed to lock FontSystem: {}", e)))?;
+        let mut font_system = lock_font_system()?;
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
@@ -825,6 +866,19 @@ mod tests {
 
         assert!(std::ptr::eq(fs1, fs2));
         assert!(std::ptr::eq(sc1, sc2));
+    }
+
+    #[test]
+    fn poisoned_text_lock_returns_error() {
+        let mutex = Mutex::new(0_u8);
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = mutex.lock().unwrap();
+            panic!("poison text lock");
+        });
+
+        let err = lock_text_resource(&mutex, "test resource").unwrap_err();
+        assert!(matches!(err, PlottingError::RenderError(_)));
+        assert!(err.to_string().contains("test resource lock is poisoned"));
     }
 
     #[test]

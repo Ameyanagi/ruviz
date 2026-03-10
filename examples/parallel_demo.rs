@@ -4,7 +4,6 @@ use std::thread;
 use std::time::Instant;
 
 /// Parallel rendering demonstration showing multi-threaded performance
-
 fn main() -> Result<()> {
     println!("Parallel Rendering Demo");
     println!("=======================");

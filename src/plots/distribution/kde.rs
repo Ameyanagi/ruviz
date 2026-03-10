@@ -585,7 +585,7 @@ mod tests {
         let kde_data = compute_kde(&data, &config);
 
         for &xi in &kde_data.x {
-            assert!(xi >= 1.0 && xi <= 4.0);
+            assert!((1.0..=4.0).contains(&xi));
         }
     }
 

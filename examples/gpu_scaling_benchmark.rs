@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     println!("GPU vs CPU Scaling Analysis");
     println!("===========================\n");
 
-    let mut cpu_renderer = PooledRenderer::new();
+    let cpu_renderer = PooledRenderer::new();
     println!("CPU Renderer initialized");
 
     let mut gpu_renderer = match initialize_gpu_backend().await {
@@ -254,7 +254,7 @@ fn format_number(n: u64) -> String {
     let mut result = String::new();
 
     for (i, &ch) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(ch);

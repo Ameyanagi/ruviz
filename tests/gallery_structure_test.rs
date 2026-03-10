@@ -92,10 +92,10 @@ fn test_gallery_category_indexes_exist() {
         );
 
         let content = std::fs::read_to_string(&category_index)
-            .expect(&format!("Should read {} index", category));
+            .unwrap_or_else(|_| panic!("Should read {} index", category));
 
         assert!(
-            content.len() > 0,
+            !content.is_empty(),
             "Category '{}' index should not be empty",
             category
         );
@@ -120,12 +120,10 @@ fn test_gallery_has_images() {
         let category_path = Path::new("docs/gallery").join(category);
 
         if let Ok(entries) = std::fs::read_dir(&category_path) {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.extension().and_then(|s| s.to_str()) == Some("png") {
-                        total_images += 1;
-                    }
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("png") {
+                    total_images += 1;
                 }
             }
         }
@@ -160,11 +158,7 @@ fn test_thumbnails_directory_structure() {
                 .any(|e| e.path().extension().and_then(|s| s.to_str()) == Some("png"));
 
             if has_images {
-                assert!(
-                    thumbnails_path.exists() || true, // Allow missing thumbnails for now
-                    "Category '{}' with images should have thumbnails directory (optional)",
-                    category
-                );
+                let _ = thumbnails_path.exists();
             }
         }
     }
@@ -191,11 +185,7 @@ fn test_gallery_index_links_are_valid() {
                     let exists = full_path.exists();
                     let is_readme_link = image_path.as_str().contains("README");
 
-                    assert!(
-                        exists || is_readme_link || true, // Lenient for now
-                        "Image link {} should exist or be a valid reference",
-                        image_path.as_str()
-                    );
+                    let _ = exists || is_readme_link;
                 }
             }
         }

@@ -10,11 +10,22 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- _None yet._
+- Preserved the public `SubscriberCallback` API while moving runtime subscription dispatch to internal shared callbacks.
 
 ### Fixed
 
-- _None yet._
+- Eagerly release `lift2` cross-source subscriptions when either source is dropped.
+- Prevent `lift2` source-drop cleanup hooks from accumulating on long-lived source observables.
+- Validate floating-point DPI values directly before rendering, including negative and fractional out-of-range inputs.
+- Keep `set_output_pixels` geometry consistent with the actual configured DPI, even on invalid pre-validation states.
+- Retry atomic temp-file creation on stale collisions and document why stale-temp cleanup is safe.
+- Reuse the same per-series validation for saved snapshots so reactive saves keep NaN and error-bar checks aligned with render validation.
+- Validate rendered reactive snapshots after capture so render, SVG export, and external renderer paths stop re-reading live series for validation.
+- Preserve existing Windows export targets on overwrite failures by using native replace semantics and keeping the temporary file for recovery.
+- Evict stale Typst cache entries when a replacement grows beyond the cache byte limit, including oversized render results that skip recaching.
+- Restore snapshot-based bounds calculation for heatmap, density, polar, radar, contour, and other non-Cartesian series.
+- Restore series validation before DataShader and parallel render fast paths, and preserve POSIX symlink destinations during atomic export overwrites.
+- Make DataShader renders consume the same validated snapshot as the main render path, and keep invalid zero-DPI pixel sizing from surfacing misleading dimension errors.
 
 ## [0.1.4] - 2026-02-11
 

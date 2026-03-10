@@ -1,4 +1,3 @@
-use ruviz::data::Data1D;
 use ruviz::render::pooled::PooledRenderer;
 use std::time::Instant;
 

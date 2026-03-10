@@ -56,7 +56,7 @@ fn main() {
         .size(10.0, 8.0) // 10x8 inches
         .dpi(150) // Higher DPI for detail
         .scatter(&x, &y)
-        .title(&format!(
+        .title(format!(
             "1 Million Points ({:.2}s generation)",
             gen_time.as_secs_f64()
         ))

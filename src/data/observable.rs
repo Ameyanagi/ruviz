@@ -30,21 +30,108 @@
 //! }
 //! ```
 
+use crate::core::{PlottingError, Result};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock, RwLockReadGuard, Weak};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, Weak};
 
 /// Type alias for subscriber callback functions
 pub type SubscriberCallback = Box<dyn Fn() + Send + Sync>;
+
+type SharedSubscriberCallback = Arc<dyn Fn() + Send + Sync>;
 
 /// Unique identifier for a subscriber
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubscriberId(u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct DropHookId(u64);
+
 /// Internal subscriber entry
 struct Subscriber {
     id: SubscriberId,
-    callback: SubscriberCallback,
+    callback: SharedSubscriberCallback,
+}
+
+struct DropHookEntry {
+    id: DropHookId,
+    hook: Box<dyn FnOnce() + Send + 'static>,
+}
+
+struct ObservableLifecycle {
+    drop_hooks: Mutex<Vec<DropHookEntry>>,
+    next_drop_hook_id: AtomicU64,
+}
+
+impl ObservableLifecycle {
+    fn new() -> Self {
+        Self {
+            drop_hooks: Mutex::new(Vec::new()),
+            next_drop_hook_id: AtomicU64::new(0),
+        }
+    }
+
+    fn add_drop_hook<F>(&self, hook: F) -> DropHookId
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let id = DropHookId(self.next_drop_hook_id.fetch_add(1, Ordering::Relaxed));
+        self.drop_hooks
+            .lock()
+            .expect("Observable lifecycle lock poisoned")
+            .push(DropHookEntry {
+                id,
+                hook: Box::new(hook),
+            });
+        id
+    }
+
+    fn remove_drop_hook(&self, id: DropHookId) -> bool {
+        let mut hooks = self
+            .drop_hooks
+            .lock()
+            .expect("Observable lifecycle lock poisoned");
+        if let Some(pos) = hooks.iter().position(|entry| entry.id == id) {
+            hooks.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(test)]
+    fn hook_count(&self) -> usize {
+        self.drop_hooks
+            .lock()
+            .expect("Observable lifecycle lock poisoned")
+            .len()
+    }
+}
+
+impl Drop for ObservableLifecycle {
+    fn drop(&mut self) {
+        let hooks = std::mem::take(
+            &mut *self
+                .drop_hooks
+                .lock()
+                .expect("Observable lifecycle lock poisoned"),
+        );
+        for entry in hooks {
+            (entry.hook)();
+        }
+    }
+}
+
+fn collect_subscriber_callbacks(
+    subscribers: &RwLock<Vec<Subscriber>>,
+    lock_error: &str,
+) -> Vec<SharedSubscriberCallback> {
+    subscribers
+        .read()
+        .expect(lock_error)
+        .iter()
+        .map(|subscriber| Arc::clone(&subscriber.callback))
+        .collect()
 }
 
 /// Thread-safe observable data container with change detection
@@ -61,6 +148,8 @@ pub struct Observable<T> {
     subscribers: Arc<RwLock<Vec<Subscriber>>>,
     /// Counter for generating unique subscriber IDs
     next_subscriber_id: Arc<AtomicU64>,
+    /// Internal lifecycle hooks for derived subscriptions and cleanup.
+    lifecycle: Arc<ObservableLifecycle>,
 }
 
 impl<T> Clone for Observable<T> {
@@ -70,6 +159,7 @@ impl<T> Clone for Observable<T> {
             version: Arc::clone(&self.version),
             subscribers: Arc::clone(&self.subscribers),
             next_subscriber_id: Arc::clone(&self.next_subscriber_id),
+            lifecycle: Arc::clone(&self.lifecycle),
         }
     }
 }
@@ -88,6 +178,18 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Observable<T> {
 }
 
 impl<T> Observable<T> {
+    fn reserve_subscriber_id(&self) -> SubscriberId {
+        SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn add_subscriber_with_id(&self, id: SubscriberId, callback: SharedSubscriberCallback) {
+        let subscriber = Subscriber { id, callback };
+        self.subscribers
+            .write()
+            .expect("Subscribers lock poisoned")
+            .push(subscriber);
+    }
+
     /// Create a new Observable with the given initial value
     ///
     /// # Example
@@ -104,6 +206,7 @@ impl<T> Observable<T> {
             version: Arc::new(AtomicU64::new(0)),
             subscribers: Arc::new(RwLock::new(Vec::new())),
             next_subscriber_id: Arc::new(AtomicU64::new(0)),
+            lifecycle: Arc::new(ObservableLifecycle::new()),
         }
     }
 
@@ -271,17 +374,8 @@ impl<T> Observable<T> {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        let id = SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed));
-        let subscriber = Subscriber {
-            id,
-            callback: Box::new(callback),
-        };
-
-        self.subscribers
-            .write()
-            .expect("Subscribers lock poisoned")
-            .push(subscriber);
-
+        let id = self.reserve_subscriber_id();
+        self.add_subscriber_with_id(id, Arc::new(callback));
         id
     }
 
@@ -308,10 +402,27 @@ impl<T> Observable<T> {
 
     /// Notify all subscribers of a change
     fn notify_subscribers(&self) {
-        let subscribers = self.subscribers.read().expect("Subscribers lock poisoned");
-        for subscriber in subscribers.iter() {
-            (subscriber.callback)();
+        let callbacks =
+            collect_subscriber_callbacks(&self.subscribers, "Subscribers lock poisoned");
+        for callback in callbacks {
+            callback();
         }
+    }
+
+    fn on_last_drop<F>(&self, hook: F) -> DropHookId
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.lifecycle.add_drop_hook(hook)
+    }
+
+    fn remove_drop_hook(&self, id: DropHookId) -> bool {
+        self.lifecycle.remove_drop_hook(id)
+    }
+
+    #[cfg(test)]
+    fn lifecycle_hook_count(&self) -> usize {
+        self.lifecycle.hook_count()
     }
 
     /// Create a weak reference to this observable
@@ -322,6 +433,9 @@ impl<T> Observable<T> {
         WeakObservable {
             data: Arc::downgrade(&self.data),
             version: Arc::downgrade(&self.version),
+            subscribers: Arc::downgrade(&self.subscribers),
+            next_subscriber_id: Arc::downgrade(&self.next_subscriber_id),
+            lifecycle: Arc::downgrade(&self.lifecycle),
         }
     }
 }
@@ -348,6 +462,9 @@ impl<T: Default> Default for Observable<T> {
 pub struct WeakObservable<T> {
     data: Weak<RwLock<T>>,
     version: Weak<AtomicU64>,
+    subscribers: Weak<RwLock<Vec<Subscriber>>>,
+    next_subscriber_id: Weak<AtomicU64>,
+    lifecycle: Weak<ObservableLifecycle>,
 }
 
 impl<T> Clone for WeakObservable<T> {
@@ -355,6 +472,9 @@ impl<T> Clone for WeakObservable<T> {
         Self {
             data: Weak::clone(&self.data),
             version: Weak::clone(&self.version),
+            subscribers: Weak::clone(&self.subscribers),
+            next_subscriber_id: Weak::clone(&self.next_subscriber_id),
+            lifecycle: Weak::clone(&self.lifecycle),
         }
     }
 }
@@ -366,12 +486,16 @@ impl<T> WeakObservable<T> {
     pub fn upgrade(&self) -> Option<Observable<T>> {
         let data = self.data.upgrade()?;
         let version = self.version.upgrade()?;
+        let subscribers = self.subscribers.upgrade()?;
+        let next_subscriber_id = self.next_subscriber_id.upgrade()?;
+        let lifecycle = self.lifecycle.upgrade()?;
 
         Some(Observable {
             data,
             version,
-            subscribers: Arc::new(RwLock::new(Vec::new())),
-            next_subscriber_id: Arc::new(AtomicU64::new(0)),
+            subscribers,
+            next_subscriber_id,
+            lifecycle,
         })
     }
 
@@ -581,18 +705,34 @@ where
 {
     let initial = f(source.get());
     let derived = Observable::new(initial);
-    let derived_clone = derived.clone();
     let f = Arc::new(f);
-    let source_clone = source.clone();
+    let weak_source = source.downgrade();
+    let weak_derived = derived.downgrade();
+    let id = source.reserve_subscriber_id();
+    source.add_subscriber_with_id(
+        id,
+        Arc::new(move || {
+            let Some(source) = weak_source.upgrade() else {
+                return;
+            };
+            let Some(derived) = weak_derived.upgrade() else {
+                source.unsubscribe(id);
+                return;
+            };
 
-    source.subscribe(move || {
-        let new_value = f(source_clone.get());
-        // Update and notify subscribers for proper chaining
-        {
-            let mut guard = derived_clone.data.write().expect("Lock poisoned");
-            *guard = new_value;
+            let new_value = f(source.get());
+            {
+                let mut guard = derived.data.write().expect("Lock poisoned");
+                *guard = new_value;
+            }
+            derived.bump_version();
+        }),
+    );
+    let weak_source_for_drop = source.downgrade();
+    derived.on_last_drop(move || {
+        if let Some(source) = weak_source_for_drop.upgrade() {
+            source.unsubscribe(id);
         }
-        derived_clone.bump_version();
     });
 
     derived
@@ -629,38 +769,102 @@ where
     let derived = Observable::new(initial);
 
     let f = Arc::new(f);
+    let weak_derived = derived.downgrade();
+    let weak_s1 = source1.downgrade();
+    let weak_s2 = source2.downgrade();
+    let source1_id = source1.reserve_subscriber_id();
+    let source2_id = source2.reserve_subscriber_id();
 
     // Subscribe to source1
     {
-        let derived_clone = derived.clone();
         let f_clone = Arc::clone(&f);
-        let s1 = source1.clone();
-        let s2 = source2.clone();
-        source1.subscribe(move || {
-            let new_value = f_clone(s1.get(), s2.get());
-            {
-                let mut guard = derived_clone.data.write().expect("Lock poisoned");
-                *guard = new_value;
-            }
-            derived_clone.bump_version();
-        });
+        let weak_derived = weak_derived.clone();
+        let weak_s1 = weak_s1.clone();
+        let weak_s2 = weak_s2.clone();
+        source1.add_subscriber_with_id(
+            source1_id,
+            Arc::new(move || {
+                let Some(source1) = weak_s1.upgrade() else {
+                    return;
+                };
+                let Some(source2) = weak_s2.upgrade() else {
+                    source1.unsubscribe(source1_id);
+                    return;
+                };
+                let Some(derived) = weak_derived.upgrade() else {
+                    source1.unsubscribe(source1_id);
+                    return;
+                };
+
+                let new_value = f_clone(source1.get(), source2.get());
+                {
+                    let mut guard = derived.data.write().expect("Lock poisoned");
+                    *guard = new_value;
+                }
+                derived.bump_version();
+            }),
+        );
     }
 
     // Subscribe to source2
     {
-        let derived_clone = derived.clone();
         let f_clone = Arc::clone(&f);
-        let s1 = source1.clone();
-        let s2 = source2.clone();
-        source2.subscribe(move || {
-            let new_value = f_clone(s1.get(), s2.get());
-            {
-                let mut guard = derived_clone.data.write().expect("Lock poisoned");
-                *guard = new_value;
-            }
-            derived_clone.bump_version();
-        });
+        let weak_derived = weak_derived.clone();
+        let weak_s1 = weak_s1.clone();
+        let weak_s2 = weak_s2.clone();
+        source2.add_subscriber_with_id(
+            source2_id,
+            Arc::new(move || {
+                let Some(source1) = weak_s1.upgrade() else {
+                    if let Some(source2) = weak_s2.upgrade() {
+                        source2.unsubscribe(source2_id);
+                    }
+                    return;
+                };
+                let Some(source2) = weak_s2.upgrade() else {
+                    return;
+                };
+                let Some(derived) = weak_derived.upgrade() else {
+                    source2.unsubscribe(source2_id);
+                    return;
+                };
+
+                let new_value = f_clone(source1.get(), source2.get());
+                {
+                    let mut guard = derived.data.write().expect("Lock poisoned");
+                    *guard = new_value;
+                }
+                derived.bump_version();
+            }),
+        );
     }
+
+    let weak_source1_for_source2_drop = source1.downgrade();
+    let source2_drop_hook_id = source2.on_last_drop(move || {
+        if let Some(source1) = weak_source1_for_source2_drop.upgrade() {
+            source1.unsubscribe(source1_id);
+        }
+    });
+
+    let weak_source2_for_source1_drop = source2.downgrade();
+    let source1_drop_hook_id = source1.on_last_drop(move || {
+        if let Some(source2) = weak_source2_for_source1_drop.upgrade() {
+            source2.unsubscribe(source2_id);
+        }
+    });
+
+    let weak_source1_for_derived_drop = source1.downgrade();
+    let weak_source2_for_derived_drop = source2.downgrade();
+    derived.on_last_drop(move || {
+        if let Some(source1) = weak_source1_for_derived_drop.upgrade() {
+            source1.unsubscribe(source1_id);
+            source1.remove_drop_hook(source1_drop_hook_id);
+        }
+        if let Some(source2) = weak_source2_for_derived_drop.upgrade() {
+            source2.unsubscribe(source2_id);
+            source2.remove_drop_hook(source2_drop_hook_id);
+        }
+    });
 
     derived
 }
@@ -864,6 +1068,21 @@ pub struct StreamingBuffer<T> {
 impl<T: Clone> StreamingBuffer<T> {
     /// Create a new streaming buffer with the given capacity
     pub fn new(capacity: usize) -> Self {
+        Self::try_new(capacity).unwrap_or_else(|_| Self::with_capacity(1))
+    }
+
+    /// Try to create a new streaming buffer with validated capacity.
+    pub fn try_new(capacity: usize) -> Result<Self> {
+        if capacity == 0 {
+            return Err(PlottingError::InvalidInput(
+                "StreamingBuffer capacity must be at least 1".to_string(),
+            ));
+        }
+
+        Ok(Self::with_capacity(capacity))
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
         let mut data = Vec::with_capacity(capacity);
         data.resize_with(capacity, || None);
 
@@ -881,15 +1100,20 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Push a single value (O(1) operation)
     pub fn push(&self, value: T) {
-        let pos = self.write_pos.fetch_add(1, Ordering::Relaxed) % self.capacity;
-
         {
             let mut data = self.data.write().expect("Lock poisoned");
+            let write_pos = self.write_pos.load(Ordering::Relaxed);
+            let pos = write_pos % self.capacity;
             data[pos] = Some(value);
+            self.write_pos
+                .store(write_pos.wrapping_add(1), Ordering::Release);
+            let total = self.total_written.load(Ordering::Relaxed);
+            self.total_written
+                .store(total.saturating_add(1), Ordering::Release);
+            let appended = self.appended_since_render.load(Ordering::Relaxed);
+            self.appended_since_render
+                .store(appended.saturating_add(1), Ordering::Release);
         }
-
-        self.total_written.fetch_add(1, Ordering::Relaxed);
-        self.appended_since_render.fetch_add(1, Ordering::Relaxed);
         self.bump_version();
     }
 
@@ -904,24 +1128,28 @@ impl<T: Clone> StreamingBuffer<T> {
 
         {
             let mut data = self.data.write().expect("Lock poisoned");
+            let mut write_pos = self.write_pos.load(Ordering::Relaxed);
             for value in values {
-                let pos = self.write_pos.fetch_add(1, Ordering::Relaxed) % self.capacity;
+                let pos = write_pos % self.capacity;
                 data[pos] = Some(value);
+                write_pos = write_pos.wrapping_add(1);
             }
+            self.write_pos.store(write_pos, Ordering::Release);
+            let total = self.total_written.load(Ordering::Relaxed);
+            self.total_written
+                .store(total.saturating_add(count as u64), Ordering::Release);
+            let appended = self.appended_since_render.load(Ordering::Relaxed);
+            self.appended_since_render
+                .store(appended.saturating_add(count), Ordering::Release);
         }
-
-        self.total_written
-            .fetch_add(count as u64, Ordering::Relaxed);
-        self.appended_since_render
-            .fetch_add(count, Ordering::Relaxed);
         self.bump_version();
     }
 
     /// Get all valid data in order (oldest to newest)
     pub fn read(&self) -> Vec<T> {
         let data = self.data.read().expect("Lock poisoned");
-        let total = self.total_written.load(Ordering::Relaxed);
-        let write_pos = self.write_pos.load(Ordering::Relaxed);
+        let total = self.total_written.load(Ordering::Acquire);
+        let write_pos = self.write_pos.load(Ordering::Acquire);
 
         if total == 0 {
             return Vec::new();
@@ -987,8 +1215,8 @@ impl<T: Clone> StreamingBuffer<T> {
     /// This enables partial re-rendering for streaming data
     pub fn read_appended(&self) -> Vec<T> {
         let data = self.data.read().expect("Lock poisoned");
-        let appended = self.appended_since_render.load(Ordering::Relaxed);
-        let write_pos = self.write_pos.load(Ordering::Relaxed);
+        let appended = self.appended_since_render.load(Ordering::Acquire);
+        let write_pos = self.write_pos.load(Ordering::Acquire);
 
         if appended == 0 {
             return Vec::new();
@@ -1010,7 +1238,7 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Get the number of elements appended since last mark_rendered()
     pub fn appended_since_mark(&self) -> usize {
-        self.appended_since_render.load(Ordering::Relaxed)
+        self.appended_since_render.load(Ordering::Acquire)
     }
 
     /// Mark the buffer as rendered (resets appended count)
@@ -1022,7 +1250,7 @@ impl<T: Clone> StreamingBuffer<T> {
     ///
     /// Returns true if only new data needs rendering (no wrapping occurred)
     pub fn can_partial_render(&self) -> bool {
-        let appended = self.appended_since_render.load(Ordering::Relaxed);
+        let appended = self.appended_since_render.load(Ordering::Acquire);
         appended < self.capacity
     }
 
@@ -1038,34 +1266,36 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Get the current number of valid elements
     pub fn len(&self) -> usize {
-        let total = self.total_written.load(Ordering::Relaxed);
+        let total = self.total_written.load(Ordering::Acquire);
         std::cmp::min(total as usize, self.capacity)
     }
 
     /// Check if the buffer is empty
     pub fn is_empty(&self) -> bool {
-        self.total_written.load(Ordering::Relaxed) == 0
+        self.total_written.load(Ordering::Acquire) == 0
     }
 
     /// Check if the buffer is full (has wrapped at least once)
     pub fn is_full(&self) -> bool {
-        self.total_written.load(Ordering::Relaxed) >= self.capacity as u64
+        self.total_written.load(Ordering::Acquire) >= self.capacity as u64
     }
 
     /// Total number of elements ever written
     pub fn total_written(&self) -> u64 {
-        self.total_written.load(Ordering::Relaxed)
+        self.total_written.load(Ordering::Acquire)
     }
 
     /// Clear all data
     pub fn clear(&self) {
-        let mut data = self.data.write().expect("Lock poisoned");
-        for slot in data.iter_mut() {
-            *slot = None;
+        {
+            let mut data = self.data.write().expect("Lock poisoned");
+            for slot in data.iter_mut() {
+                *slot = None;
+            }
+            self.write_pos.store(0, Ordering::Release);
+            self.total_written.store(0, Ordering::Release);
+            self.appended_since_render.store(0, Ordering::Release);
         }
-        self.write_pos.store(0, Ordering::Release);
-        self.total_written.store(0, Ordering::Release);
-        self.appended_since_render.store(0, Ordering::Release);
         self.bump_version();
     }
 
@@ -1077,7 +1307,7 @@ impl<T: Clone> StreamingBuffer<T> {
         let id = SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed));
         let subscriber = Subscriber {
             id,
-            callback: Box::new(callback),
+            callback: Arc::new(callback),
         };
         self.subscribers
             .write()
@@ -1100,9 +1330,9 @@ impl<T: Clone> StreamingBuffer<T> {
     /// Bump version and notify subscribers
     fn bump_version(&self) {
         self.version.fetch_add(1, Ordering::Release);
-        let subscribers = self.subscribers.read().expect("Lock poisoned");
-        for subscriber in subscribers.iter() {
-            (subscriber.callback)();
+        let callbacks = collect_subscriber_callbacks(&self.subscribers, "Lock poisoned");
+        for callback in callbacks {
+            callback();
         }
     }
 }
@@ -1374,6 +1604,50 @@ mod tests {
     }
 
     #[test]
+    fn test_weak_observable_upgrade_preserves_subscribers() {
+        let obs = Observable::new(1);
+        let notifications = Arc::new(AtomicUsize::new(0));
+        let notifications_clone = Arc::clone(&notifications);
+
+        let first_id = obs.subscribe(move || {
+            notifications_clone.fetch_add(1, AtomicOrdering::Relaxed);
+        });
+
+        let weak = obs.downgrade();
+        let upgraded = weak.upgrade().expect("upgrade should preserve state");
+        assert_eq!(upgraded.subscriber_count(), 1);
+
+        let second_id = upgraded.subscribe(|| {});
+        assert_ne!(first_id, second_id);
+
+        upgraded.set(2);
+        assert_eq!(notifications.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_observable_unsubscribe_within_callback_does_not_deadlock() {
+        let obs = Observable::new(0);
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let callback_count_clone = Arc::clone(&callback_count);
+        let callback_id = Arc::new(Mutex::new(None));
+        let callback_id_clone = Arc::clone(&callback_id);
+        let obs_clone = obs.clone();
+
+        let id = obs.subscribe(move || {
+            callback_count_clone.fetch_add(1, AtomicOrdering::Relaxed);
+            if let Some(id) = *callback_id_clone.lock().expect("Lock poisoned") {
+                obs_clone.unsubscribe(id);
+            }
+        });
+        *callback_id.lock().expect("Lock poisoned") = Some(id);
+
+        obs.set(1);
+        obs.set(2);
+
+        assert_eq!(callback_count.load(AtomicOrdering::Relaxed), 1);
+    }
+
+    #[test]
     fn test_sliding_window() {
         let window = SlidingWindowObservable::new(3);
 
@@ -1523,6 +1797,61 @@ mod tests {
         x.set(3.0);
         assert_eq!(*doubled.read(), 6.0);
         assert_eq!(*quadrupled.read(), 12.0);
+    }
+
+    #[test]
+    fn test_lift_releases_source_subscription_on_drop() {
+        let source = Observable::new(2.0);
+        let derived = lift(&source, |v| v * 2.0);
+
+        assert_eq!(source.subscriber_count(), 1);
+        drop(derived);
+
+        assert_eq!(source.subscriber_count(), 0);
+    }
+
+    #[test]
+    fn test_lift2_releases_remaining_source_subscription_when_other_source_drops() {
+        let source2 = Observable::new(5.0);
+        let derived = {
+            let source1 = Observable::new(10.0);
+            let derived = lift2(&source1, &source2, |x, y| x + y);
+            assert_eq!(source2.subscriber_count(), 1);
+            derived
+        };
+
+        source2.set(6.0);
+        assert_eq!(source2.subscriber_count(), 0);
+        assert_eq!(*derived.read(), 15.0);
+    }
+
+    #[test]
+    fn test_lift2_releases_source1_subscription_when_source2_drops_first() {
+        let source1 = Observable::new(10.0);
+        let derived = {
+            let source2 = Observable::new(5.0);
+            let derived = lift2(&source1, &source2, |x, y| x + y);
+            assert_eq!(source1.subscriber_count(), 1);
+            derived
+        };
+
+        assert_eq!(source1.subscriber_count(), 0);
+        assert_eq!(*derived.read(), 15.0);
+    }
+
+    #[test]
+    fn test_lift2_does_not_accumulate_source_drop_hooks_after_drop() {
+        let source1 = Observable::new(1.0);
+        let source2 = Observable::new(2.0);
+
+        for _ in 0..8 {
+            let derived = lift2(&source1, &source2, |x, y| x + y);
+            assert!(source1.lifecycle_hook_count() >= 1);
+            assert!(source2.lifecycle_hook_count() >= 1);
+            drop(derived);
+            assert_eq!(source1.lifecycle_hook_count(), 0);
+            assert_eq!(source2.lifecycle_hook_count(), 0);
+        }
     }
 
     #[test]
@@ -1793,6 +2122,21 @@ mod tests {
     }
 
     #[test]
+    fn test_streaming_buffer_try_new_rejects_zero_capacity() {
+        assert!(StreamingBuffer::<i32>::try_new(0).is_err());
+    }
+
+    #[test]
+    fn test_streaming_buffer_new_zero_capacity_is_normalized() {
+        let buffer = StreamingBuffer::<i32>::new(0);
+
+        assert_eq!(buffer.capacity(), 1);
+        buffer.push(7);
+        buffer.push(8);
+        assert_eq!(buffer.read(), vec![8]);
+    }
+
+    #[test]
     fn test_streaming_buffer_appended_exceeds_capacity() {
         let buffer = StreamingBuffer::<f64>::new(3);
 
@@ -1974,5 +2318,28 @@ mod tests {
         // clear() notifies
         buffer.clear();
         assert_eq!(notify_count.load(AtomicOrdering::Relaxed), 3);
+    }
+
+    #[test]
+    fn test_streaming_buffer_unsubscribe_within_callback_does_not_deadlock() {
+        let buffer = StreamingBuffer::<i32>::new(4);
+        let notify_count = Arc::new(AtomicUsize::new(0));
+        let notify_count_clone = Arc::clone(&notify_count);
+        let callback_id = Arc::new(Mutex::new(None));
+        let callback_id_clone = Arc::clone(&callback_id);
+        let buffer_clone = buffer.clone();
+
+        let id = buffer.subscribe(move || {
+            notify_count_clone.fetch_add(1, AtomicOrdering::Relaxed);
+            if let Some(id) = *callback_id_clone.lock().expect("Lock poisoned") {
+                buffer_clone.unsubscribe(id);
+            }
+        });
+        *callback_id.lock().expect("Lock poisoned") = Some(id);
+
+        buffer.push(1);
+        buffer.push(2);
+
+        assert_eq!(notify_count.load(AtomicOrdering::Relaxed), 1);
     }
 }
