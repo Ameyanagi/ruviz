@@ -51,6 +51,27 @@ fn cleanup_temp_file(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
+struct AtomicWriteFailure {
+    error: PlottingError,
+    cleanup_temp: bool,
+}
+
+impl AtomicWriteFailure {
+    fn cleanup(error: PlottingError) -> Self {
+        Self {
+            error,
+            cleanup_temp: true,
+        }
+    }
+
+    fn preserve_temp(error: PlottingError) -> Self {
+        Self {
+            error,
+            cleanup_temp: false,
+        }
+    }
+}
+
 fn create_atomic_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
     let mut last_err = None;
 
@@ -80,7 +101,10 @@ fn create_atomic_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
     }))
 }
 
-fn rename_temp_into_place(temp_path: &Path, path: &Path) -> std::io::Result<()> {
+fn rename_temp_into_place(
+    temp_path: &Path,
+    path: &Path,
+) -> std::result::Result<(), AtomicWriteFailure> {
     #[cfg(windows)]
     {
         match fs::rename(temp_path, path) {
@@ -92,16 +116,29 @@ fn rename_temp_into_place(temp_path: &Path, path: &Path) -> std::io::Result<()> 
                         std::io::ErrorKind::AlreadyExists | std::io::ErrorKind::PermissionDenied
                     ) =>
             {
-                fs::remove_file(path)?;
-                fs::rename(temp_path, path)
+                fs::remove_file(path)
+                    .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+                // If this rename fails after remove_file succeeded, `path` is already gone.
+                // Preserve the temp file so callers can recover the new data manually.
+                fs::rename(temp_path, path).map_err(|err| {
+                    AtomicWriteFailure::preserve_temp(PlottingError::IoError(std::io::Error::new(
+                        err.kind(),
+                        format!(
+                            "failed to replace {} with {}; the temporary file has been preserved for recovery",
+                            path.display(),
+                            temp_path.display()
+                        ),
+                    )))
+                })
             }
-            Err(err) => Err(err),
+            Err(err) => Err(AtomicWriteFailure::cleanup(PlottingError::IoError(err))),
         }
     }
 
     #[cfg(not(windows))]
     {
         fs::rename(temp_path, path)
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))
     }
 }
 
@@ -109,17 +146,21 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
     let path = path.as_ref();
     let (temp_path, mut file) = create_atomic_temp_file(path).map_err(PlottingError::IoError)?;
 
-    let write_result = (|| -> std::io::Result<()> {
-        file.write_all(bytes)?;
-        file.sync_all()?;
+    let write_result = (|| -> std::result::Result<(), AtomicWriteFailure> {
+        file.write_all(bytes)
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+        file.sync_all()
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
         drop(file);
         rename_temp_into_place(&temp_path, path)?;
         Ok(())
     })();
 
-    if let Err(err) = write_result {
-        cleanup_temp_file(&temp_path);
-        return Err(PlottingError::IoError(err));
+    if let Err(failure) = write_result {
+        if failure.cleanup_temp {
+            cleanup_temp_file(&temp_path);
+        }
+        return Err(failure.error);
     }
 
     Ok(())
@@ -133,23 +174,28 @@ where
     let path = path.as_ref();
     let (temp_path, file) = create_atomic_temp_file(path).map_err(PlottingError::IoError)?;
 
-    let write_result = (|| -> Result<()> {
+    let write_result = (|| -> std::result::Result<(), AtomicWriteFailure> {
         let mut writer_handle = BufWriter::new(file);
 
-        writer(&mut writer_handle)?;
-        writer_handle.flush().map_err(PlottingError::IoError)?;
+        writer(&mut writer_handle).map_err(AtomicWriteFailure::cleanup)?;
+        writer_handle
+            .flush()
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
         let file = writer_handle
             .into_inner()
-            .map_err(|err| PlottingError::IoError(err.into_error()))?;
-        file.sync_all().map_err(PlottingError::IoError)?;
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err.into_error())))?;
+        file.sync_all()
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
         drop(file);
-        rename_temp_into_place(&temp_path, path).map_err(PlottingError::IoError)?;
+        rename_temp_into_place(&temp_path, path)?;
         Ok(())
     })();
 
-    if let Err(err) = write_result {
-        cleanup_temp_file(&temp_path);
-        return Err(err);
+    if let Err(failure) = write_result {
+        if failure.cleanup_temp {
+            cleanup_temp_file(&temp_path);
+        }
+        return Err(failure.error);
     }
 
     Ok(())

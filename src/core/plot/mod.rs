@@ -4442,19 +4442,12 @@ impl Plot {
         Ok(())
     }
 
-    /// Internal validation logic for series data
-    fn validate_series(&self) -> Result<()> {
-        if let Some(err) = self.pending_ingestion_error() {
-            return Err(err);
-        }
-
-        // Validate we have at least one series
-        if self.series_mgr.series.is_empty() {
+    fn validate_series_list(series_list: &[PlotSeries]) -> Result<()> {
+        if series_list.is_empty() {
             return Err(PlottingError::NoDataSeries);
         }
 
-        // Validate all series data
-        for (idx, series) in self.series_mgr.series.iter().enumerate() {
+        for (idx, series) in series_list.iter().enumerate() {
             match &series.series_type {
                 SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
                     let x_data = x_data.resolve_cow(0.0);
@@ -4593,6 +4586,15 @@ impl Plot {
         }
 
         Ok(())
+    }
+
+    /// Internal validation logic for series data
+    fn validate_series(&self) -> Result<()> {
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
+        Self::validate_series_list(&self.series_mgr.series)
     }
 
     fn validate_annotations(&self) -> Result<()> {
@@ -5253,144 +5255,7 @@ impl Plot {
             return Err(PlottingError::NoDataSeries);
         }
 
-        // Validate all series data (same validation as render method)
-        for (idx, series) in self.series_mgr.series.iter().enumerate() {
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
-                    if x_data.len() != y_data.len() {
-                        return Err(PlottingError::DataLengthMismatch {
-                            x_len: x_data.len(),
-                            y_len: y_data.len(),
-                            series_index: Some(idx),
-                        });
-                    }
-                    if x_data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                    let x_resolved = x_data.resolve_cow(0.0);
-                    let y_resolved = y_data.resolve_cow(0.0);
-                    PlottingError::validate_data(x_resolved.as_ref())?;
-                    PlottingError::validate_data(y_resolved.as_ref())?;
-                }
-                SeriesType::Bar { categories, values } => {
-                    if categories.len() != values.len() {
-                        return Err(PlottingError::DataLengthMismatch {
-                            x_len: categories.len(),
-                            y_len: values.len(),
-                            series_index: Some(idx),
-                        });
-                    }
-                    if categories.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                    let values = values.resolve_cow(0.0);
-                    PlottingError::validate_data(values.as_ref())?;
-                }
-                SeriesType::ErrorBars {
-                    x_data,
-                    y_data,
-                    y_errors,
-                } => {
-                    if x_data.len() != y_data.len() || y_data.len() != y_errors.len() {
-                        return Err(PlottingError::DataLengthMismatch {
-                            x_len: x_data.len(),
-                            y_len: y_data.len(),
-                            series_index: Some(idx),
-                        });
-                    }
-                    let x_resolved = x_data.resolve_cow(0.0);
-                    let y_resolved = y_data.resolve_cow(0.0);
-                    let y_errors = y_errors.resolve_cow(0.0);
-                    PlottingError::validate_data(x_resolved.as_ref())?;
-                    PlottingError::validate_data(y_resolved.as_ref())?;
-                    PlottingError::validate_data(y_errors.as_ref())?;
-                }
-                SeriesType::ErrorBarsXY {
-                    x_data,
-                    y_data,
-                    x_errors,
-                    y_errors,
-                } => {
-                    if x_data.len() != y_data.len()
-                        || x_data.len() != x_errors.len()
-                        || x_data.len() != y_errors.len()
-                    {
-                        return Err(PlottingError::DataLengthMismatch {
-                            x_len: x_data.len(),
-                            y_len: y_data.len(),
-                            series_index: Some(idx),
-                        });
-                    }
-                    let x_resolved = x_data.resolve_cow(0.0);
-                    let y_resolved = y_data.resolve_cow(0.0);
-                    let x_errors = x_errors.resolve_cow(0.0);
-                    let y_errors = y_errors.resolve_cow(0.0);
-                    PlottingError::validate_data(x_resolved.as_ref())?;
-                    PlottingError::validate_data(y_resolved.as_ref())?;
-                    PlottingError::validate_data(x_errors.as_ref())?;
-                    PlottingError::validate_data(y_errors.as_ref())?;
-                }
-                SeriesType::Histogram { data, .. } => {
-                    if data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                    let data = data.resolve_cow(0.0);
-                    PlottingError::validate_data(data.as_ref())?;
-                }
-                SeriesType::BoxPlot { data, .. } => {
-                    if data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                    let data = data.resolve_cow(0.0);
-                    PlottingError::validate_data(data.as_ref())?;
-                }
-                SeriesType::Heatmap { data } => {
-                    if data.values.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Kde { data } => {
-                    if data.x.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Ecdf { data } => {
-                    if data.x.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Violin { data } => {
-                    if data.data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Boxen { data } => {
-                    if data.boxes.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Contour { data } => {
-                    if data.levels.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Pie { data } => {
-                    if data.values.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Radar { data } => {
-                    if data.series.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Polar { data } => {
-                    if data.points.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-            }
-        }
+        Self::validate_series_list(&self.series_mgr.series)?;
 
         // Calculate data bounds across all series
         let (x_min, x_max, y_min, y_max) = self.calculate_data_bounds()?;
@@ -7886,98 +7751,7 @@ impl Plot {
         self.validate_runtime_inputs()?;
         let snapshot_series = self.snapshot_series(0.0);
 
-        // Validate data before rendering
-        for series in &snapshot_series {
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data }
-                | SeriesType::Scatter { x_data, y_data }
-                | SeriesType::ErrorBars { x_data, y_data, .. }
-                | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                    // Check for empty data
-                    if x_data.is_empty() || y_data.is_empty() {
-                        return Err(crate::core::PlottingError::EmptyDataSet);
-                    }
-                    // Check for mismatched data lengths
-                    if x_data.len() != y_data.len() {
-                        return Err(crate::core::PlottingError::DataLengthMismatch {
-                            x_len: x_data.len(),
-                            y_len: y_data.len(),
-                            series_index: None,
-                        });
-                    }
-                }
-                SeriesType::Bar { categories, values } => {
-                    // Check for empty data
-                    if categories.is_empty() || values.is_empty() {
-                        return Err(crate::core::PlottingError::EmptyDataSet);
-                    }
-                    // Check for mismatched data lengths
-                    if categories.len() != values.len() {
-                        return Err(crate::core::PlottingError::DataLengthMismatch {
-                            x_len: categories.len(),
-                            y_len: values.len(),
-                            series_index: None,
-                        });
-                    }
-                }
-                SeriesType::Histogram { data, .. } => {
-                    // Check for empty data
-                    if data.is_empty() {
-                        return Err(crate::core::PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::BoxPlot { data, .. } => {
-                    if data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Heatmap { data } => {
-                    if data.values.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Kde { data } => {
-                    if data.x.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Ecdf { data } => {
-                    if data.x.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Violin { data } => {
-                    if data.data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Boxen { data } => {
-                    if data.boxes.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Contour { data } => {
-                    if data.levels.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Pie { data } => {
-                    if data.values.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Radar { data } => {
-                    if data.series.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-                SeriesType::Polar { data } => {
-                    if data.points.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                }
-            }
-        }
+        Self::validate_series_list(&snapshot_series)?;
 
         // Create renderer and render the plot with DPI scaling
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();

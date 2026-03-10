@@ -15,9 +15,12 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Eagerly release `lift2` cross-source subscriptions when either source is dropped.
+- Prevent `lift2` source-drop cleanup hooks from accumulating on long-lived source observables.
 - Validate floating-point DPI values directly before rendering, including negative and fractional out-of-range inputs.
 - Keep `set_output_pixels` geometry consistent with the actual configured DPI, even on invalid pre-validation states.
 - Retry atomic temp-file creation on stale collisions and document why stale-temp cleanup is safe.
+- Reuse the same per-series validation for saved snapshots so reactive saves keep NaN and error-bar checks aligned with render validation.
+- Preserve the temporary output file on Windows if replace-after-delete fails, so recovery is still possible.
 
 ## [0.1.4] - 2026-02-11
 

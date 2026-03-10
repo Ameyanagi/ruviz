@@ -44,31 +44,67 @@ type SharedSubscriberCallback = Arc<dyn Fn() + Send + Sync>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubscriberId(u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct DropHookId(u64);
+
 /// Internal subscriber entry
 struct Subscriber {
     id: SubscriberId,
     callback: SharedSubscriberCallback,
 }
 
+struct DropHookEntry {
+    id: DropHookId,
+    hook: Box<dyn FnOnce() + Send + 'static>,
+}
+
 struct ObservableLifecycle {
-    drop_hooks: Mutex<Vec<Box<dyn FnOnce() + Send + 'static>>>,
+    drop_hooks: Mutex<Vec<DropHookEntry>>,
+    next_drop_hook_id: AtomicU64,
 }
 
 impl ObservableLifecycle {
     fn new() -> Self {
         Self {
             drop_hooks: Mutex::new(Vec::new()),
+            next_drop_hook_id: AtomicU64::new(0),
         }
     }
 
-    fn add_drop_hook<F>(&self, hook: F)
+    fn add_drop_hook<F>(&self, hook: F) -> DropHookId
     where
         F: FnOnce() + Send + 'static,
     {
+        let id = DropHookId(self.next_drop_hook_id.fetch_add(1, Ordering::Relaxed));
         self.drop_hooks
             .lock()
             .expect("Observable lifecycle lock poisoned")
-            .push(Box::new(hook));
+            .push(DropHookEntry {
+                id,
+                hook: Box::new(hook),
+            });
+        id
+    }
+
+    fn remove_drop_hook(&self, id: DropHookId) -> bool {
+        let mut hooks = self
+            .drop_hooks
+            .lock()
+            .expect("Observable lifecycle lock poisoned");
+        if let Some(pos) = hooks.iter().position(|entry| entry.id == id) {
+            hooks.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(test)]
+    fn hook_count(&self) -> usize {
+        self.drop_hooks
+            .lock()
+            .expect("Observable lifecycle lock poisoned")
+            .len()
     }
 }
 
@@ -80,8 +116,8 @@ impl Drop for ObservableLifecycle {
                 .lock()
                 .expect("Observable lifecycle lock poisoned"),
         );
-        for hook in hooks {
-            hook();
+        for entry in hooks {
+            (entry.hook)();
         }
     }
 }
@@ -373,11 +409,20 @@ impl<T> Observable<T> {
         }
     }
 
-    fn on_last_drop<F>(&self, hook: F)
+    fn on_last_drop<F>(&self, hook: F) -> DropHookId
     where
         F: FnOnce() + Send + 'static,
     {
-        self.lifecycle.add_drop_hook(hook);
+        self.lifecycle.add_drop_hook(hook)
+    }
+
+    fn remove_drop_hook(&self, id: DropHookId) -> bool {
+        self.lifecycle.remove_drop_hook(id)
+    }
+
+    #[cfg(test)]
+    fn lifecycle_hook_count(&self) -> usize {
+        self.lifecycle.hook_count()
     }
 
     /// Create a weak reference to this observable
@@ -759,12 +804,6 @@ where
                 derived.bump_version();
             }),
         );
-        let weak_source1_for_drop = source1.downgrade();
-        derived.on_last_drop(move || {
-            if let Some(source1) = weak_source1_for_drop.upgrade() {
-                source1.unsubscribe(source1_id);
-            }
-        });
     }
 
     // Subscribe to source2
@@ -798,25 +837,32 @@ where
                 derived.bump_version();
             }),
         );
-        let weak_source2_for_drop = source2.downgrade();
-        derived.on_last_drop(move || {
-            if let Some(source2) = weak_source2_for_drop.upgrade() {
-                source2.unsubscribe(source2_id);
-            }
-        });
     }
 
     let weak_source1_for_source2_drop = source1.downgrade();
-    source2.on_last_drop(move || {
+    let source2_drop_hook_id = source2.on_last_drop(move || {
         if let Some(source1) = weak_source1_for_source2_drop.upgrade() {
             source1.unsubscribe(source1_id);
         }
     });
 
     let weak_source2_for_source1_drop = source2.downgrade();
-    source1.on_last_drop(move || {
+    let source1_drop_hook_id = source1.on_last_drop(move || {
         if let Some(source2) = weak_source2_for_source1_drop.upgrade() {
             source2.unsubscribe(source2_id);
+        }
+    });
+
+    let weak_source1_for_derived_drop = source1.downgrade();
+    let weak_source2_for_derived_drop = source2.downgrade();
+    derived.on_last_drop(move || {
+        if let Some(source1) = weak_source1_for_derived_drop.upgrade() {
+            source1.unsubscribe(source1_id);
+            source1.remove_drop_hook(source1_drop_hook_id);
+        }
+        if let Some(source2) = weak_source2_for_derived_drop.upgrade() {
+            source2.unsubscribe(source2_id);
+            source2.remove_drop_hook(source2_drop_hook_id);
         }
     });
 
@@ -1791,6 +1837,21 @@ mod tests {
 
         assert_eq!(source1.subscriber_count(), 0);
         assert_eq!(*derived.read(), 15.0);
+    }
+
+    #[test]
+    fn test_lift2_does_not_accumulate_source_drop_hooks_after_drop() {
+        let source1 = Observable::new(1.0);
+        let source2 = Observable::new(2.0);
+
+        for _ in 0..8 {
+            let derived = lift2(&source1, &source2, |x, y| x + y);
+            assert!(source1.lifecycle_hook_count() >= 1);
+            assert!(source2.lifecycle_hook_count() >= 1);
+            drop(derived);
+            assert_eq!(source1.lifecycle_hook_count(), 0);
+            assert_eq!(source2.lifecycle_hook_count(), 0);
+        }
     }
 
     #[test]
