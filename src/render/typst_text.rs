@@ -339,22 +339,22 @@ mod imp {
         }
     }
 
-    fn insert_cached_value(cache: &mut CacheState, key: CacheKey, value: CachedValue) {
-        let incoming_bytes = cached_value_bytes(&value);
-        if incoming_bytes > MAX_CACHE_BYTES {
-            if let Some(previous) = cache.entries.remove(&key) {
-                cache.total_bytes = cache
-                    .total_bytes
-                    .saturating_sub(cached_value_bytes(&previous));
-            }
-            return;
-        }
-
-        if let Some(previous) = cache.entries.remove(&key) {
+    fn remove_cached_value(cache: &mut CacheState, key: &CacheKey) {
+        if let Some(previous) = cache.entries.remove(key) {
             cache.total_bytes = cache
                 .total_bytes
                 .saturating_sub(cached_value_bytes(&previous));
         }
+    }
+
+    fn insert_cached_value(cache: &mut CacheState, key: CacheKey, value: CachedValue) {
+        let incoming_bytes = cached_value_bytes(&value);
+        if incoming_bytes > MAX_CACHE_BYTES {
+            remove_cached_value(cache, &key);
+            return;
+        }
+
+        remove_cached_value(cache, &key);
 
         maybe_evict(cache, incoming_bytes);
         cache.total_bytes = cache.total_bytes.saturating_add(incoming_bytes);
@@ -537,15 +537,16 @@ mod imp {
         let pixel_width = pixmap.width();
         let pixel_height = pixmap.height();
         validate_raster_size(pixel_width, pixel_height, operation)?;
-        let pixels = pixmap.data().to_vec();
-
-        if pixels.len() <= MAX_CACHE_BYTES {
-            let mut cache = lock_cache()?;
+        let pixel_bytes = pixmap.data().len();
+        let mut cache = lock_cache()?;
+        if pixel_bytes > MAX_CACHE_BYTES {
+            remove_cached_value(&mut cache, &key);
+        } else {
             insert_cached_value(
                 &mut cache,
                 key,
                 CachedValue::Raster {
-                    pixels: pixels.clone(),
+                    pixels: pixmap.data().to_vec(),
                     pixel_width,
                     pixel_height,
                     logical_width,
@@ -594,8 +595,10 @@ mod imp {
         let width = size.x.to_pt() as f32;
         let height = size.y.to_pt() as f32;
 
-        if raw_svg.len() <= MAX_CACHE_BYTES {
-            let mut cache = lock_cache()?;
+        let mut cache = lock_cache()?;
+        if raw_svg.len() > MAX_CACHE_BYTES {
+            remove_cached_value(&mut cache, &key);
+        } else {
             insert_cached_value(
                 &mut cache,
                 key,
@@ -713,6 +716,46 @@ mod imp {
                     height: 8.0,
                 },
             );
+
+            assert_eq!(cache.total_bytes, 0);
+            assert!(!cache.entries.contains_key(&key));
+        }
+
+        #[test]
+        fn oversized_render_path_evicts_stale_entry_even_without_recaching() {
+            let mut cache = CacheState::default();
+            let key = make_key(
+                "#text(\"grow\")",
+                12.0,
+                Color::BLACK,
+                0.0,
+                TypstBackendKind::Svg,
+            );
+
+            insert_cached_value(
+                &mut cache,
+                key.clone(),
+                CachedValue::Svg {
+                    svg: "<svg>small</svg>".to_string(),
+                    width: 12.0,
+                    height: 8.0,
+                },
+            );
+
+            let oversized_svg = "x".repeat(MAX_CACHE_BYTES + 1);
+            if oversized_svg.len() > MAX_CACHE_BYTES {
+                remove_cached_value(&mut cache, &key);
+            } else {
+                insert_cached_value(
+                    &mut cache,
+                    key.clone(),
+                    CachedValue::Svg {
+                        svg: oversized_svg,
+                        width: 12.0,
+                        height: 8.0,
+                    },
+                );
+            }
 
             assert_eq!(cache.total_bytes, 0);
             assert!(!cache.entries.contains_key(&key));
