@@ -82,13 +82,15 @@
 //! })?;
 //! ```
 //!
-//! ### Signal-Based Reactive Plots
+//! ### Signals Inside Animation Closures
 //!
-//! Use `Signal<T>` for pull-based values stored on the plot:
+//! Use `Signal<T>` to build time-varying values, then sample them inside
+//! `record!` closures for animated series data today:
 //!
 //! ```rust,ignore
 //! use ruviz::prelude::*;
 //! use ruviz::animation::signal;
+//! use ruviz::record;
 //!
 //! // Create signals that vary over time
 //! let amplitude = signal::lerp(0.0, 2.0, 3.0);  // 0 to 2 over 3 seconds
@@ -105,13 +107,15 @@
 //!     }).collect::<Vec<f64>>()
 //! });
 //!
-//! // Attach signal-backed title and data to the plot
+//! // Use a signal-backed title alongside the sampled series data
 //! let title = signal::of(|t| format!("Wave Animation - t={:.2}s", t));
 //!
-//! // `render_at()` is still evolving; today this stores the signals on the plot
-//! let plot = Plot::new()
-//!     .title_signal(title)
-//!     .line(&x, &y_signal);
+//! record!("wave.gif", 3 secs, |t| {
+//!     let y = y_signal.at(t);
+//!     Plot::new()
+//!         .title(title.at(t))
+//!         .line(&x, &y)
+//! })?;
 //! ```
 //!
 //! ### Reactive Labels

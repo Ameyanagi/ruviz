@@ -3270,6 +3270,10 @@ impl Plot {
     /// This method is currently a no-op on [`Plot`]. To set transparency on a
     /// series, call `.alpha(...)` on the returned series builder after adding a
     /// plot series.
+    #[deprecated(
+        since = "0.1.4",
+        note = "Plot::alpha() is a no-op compatibility shim; call .alpha(...) on the returned series builder instead"
+    )]
     pub fn alpha(self, _alpha: f32) -> Self {
         // This would be handled by the series builder
         // Keeping for API compatibility
@@ -5258,8 +5262,8 @@ impl Plot {
     /// let static_plot = Plot::new().line(&x, &y);
     /// assert!(!static_plot.is_reactive());
     ///
-    /// let y_signal = signal::of(|t| vec![0.0, t]);
-    /// let reactive_plot = Plot::new().line(&x, &y_signal);
+    /// let title = signal::of(|t| format!("t = {:.1}", t));
+    /// let reactive_plot = Plot::new().title_signal(title).line(&x, &y);
     /// assert!(reactive_plot.is_reactive());
     /// ```
     pub fn is_reactive(&self) -> bool {

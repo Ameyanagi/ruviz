@@ -234,10 +234,9 @@ If performance is slower than expected:
 
 ```rust
 // In-memory rendering path
-let image = Plot::new()
+let _image = Plot::new()
     .line(&x, &y)
     .render()?;
-# let _ = image;
 ```
 
 ### Step 2: Measure with Warmup

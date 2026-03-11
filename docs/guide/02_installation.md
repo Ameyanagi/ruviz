@@ -210,10 +210,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
     let start = std::time::Instant::now();
-    Plot::new()
-        .backend(BackendType::Parallel)
+    let _image = Plot::new()
         .line(&x, &y)
-        .save("parallel_test.png")?;
+        .render()?;
 
     println!("✅ Rendered 100K points in {:?}", start.elapsed());
     Ok(())
@@ -336,11 +335,13 @@ codegen-units = 1    # Single codegen unit for max optimization
 
 **CPU cores** (automatic detection):
 ```rust
-// rayon uses the available cores when the parallel backend is selected
-Plot::new()
-    .backend(BackendType::Parallel)
+// rayon uses the available cores when the parallel render path is selected
+let x = vec![0.0, 1.0, 2.0];
+let y = vec![0.0, 1.0, 4.0];
+
+let _image = Plot::new()
     .line(&x, &y)
-    .save("parallel.png")?;
+    .render()?;
 ```
 
 **Memory pooling** (opt-in):

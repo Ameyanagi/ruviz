@@ -26,13 +26,12 @@ A: **Yes!** This is "cold start" performance. The time breakdown:
 
 A: Measure the path you actually use. `render()` is the path that can use the parallel renderer:
 ```rust
-let image = Plot::new()
+let _image = Plot::new()
     .line(&x, &y)
     .render()?;
-# let _ = image;
 ```
 
-Expected performance with auto-optimize:
+Expected performance on large datasets:
 - 100K points: ~35ms (2.9x faster than target) ✅
 - 1M points: ~87ms (5.7x faster than target) ✅
 
