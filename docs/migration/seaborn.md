@@ -14,6 +14,7 @@ Guide for users familiar with seaborn's statistical visualization capabilities.
 ```python
 import seaborn as sns
 import numpy as np
+import matplotlib.pyplot as plt
 
 data = np.random.normal(100, 20, 1000)
 sns.histplot(data, bins=30, kde=False)
@@ -24,11 +25,13 @@ plt.savefig('distribution.png')
 **Rust/ruviz**:
 ```rust
 use ruviz::prelude::*;
-use rand::distributions::{Distribution, Normal};
 
-let normal = Normal::new(100.0, 20.0).unwrap();
-let mut rng = rand::thread_rng();
-let data: Vec<f64> = (0..1000).map(|_| normal.sample(&mut rng)).collect();
+let data: Vec<f64> = (0..1000)
+    .map(|i| {
+        let x = i as f64 / 40.0;
+        100.0 + 20.0 * x.sin()
+    })
+    .collect();
 
 Plot::new()
     .theme(Theme::seaborn())
@@ -65,10 +68,10 @@ Plot::new()
 | `lineplot()` | `.line()` | ✅ Supported |
 | `barplot()` | `.bar()` | ✅ Supported |
 | `countplot()` | Manual aggregation + `.bar()` | ⚠️ Workaround |
-| `violinplot()` | Not yet | ❌ Planned v0.3 |
-| `heatmap()` | Not yet | ❌ Planned v0.2 |
-| `pairplot()` | Not yet | ❌ Planned v0.3 |
-| `jointplot()` | Not yet | ❌ Planned v0.3 |
+| `violinplot()` | `.violin()` | ✅ Supported |
+| `heatmap()` | `.heatmap()` | ✅ Supported |
+| `pairplot()` | Manual subplot composition or `ruviz::plots::composite` helpers | ⚠️ No top-level `Plot` builder |
+| `jointplot()` | Manual composition or `ruviz::plots::composite` helpers | ⚠️ No top-level `Plot` builder |
 | `catplot()` | Use `.bar()` | ⚠️ Workaround |
 
 ## Statistical Plots
@@ -80,16 +83,17 @@ Plot::new()
 sns.histplot(data, bins=20, kde=True)
 ```
 
-**ruviz** (KDE not yet supported):
+**ruviz** (histogram and KDE are separate plot types):
 ```rust
+use ruviz::{plots::HistogramConfig, prelude::*};
+
 Plot::new()
-    .histogram(&data, Some(HistogramConfig {
-        bins: 20,
-        ..Default::default()
-    }))
+    .histogram(&data, Some(HistogramConfig::new().bins(20)))
     .save("histogram.png")?;
 
-// KDE planned for v0.3
+Plot::new()
+    .kde(&data)
+    .save("kde.png")?;
 ```
 
 ### Box Plot
@@ -192,21 +196,22 @@ sns.color_palette("deep")
 sns.color_palette("pastel")
 ```
 
-**ruviz** (v0.1 - manual colors):
+**ruviz**:
 ```rust
 // Seaborn "muted" palette (approximate)
 let muted_blue = Color::from_rgb(76, 114, 176);
 let muted_orange = Color::from_rgb(221, 132, 82);
 let muted_green = Color::from_rgb(85, 168, 104);
+let muted_theme = Theme::builder()
+    .palette([muted_blue, muted_orange, muted_green])
+    .build();
 
 Plot::new()
+    .theme(muted_theme)
     .line(&x, &y1).color(muted_blue)
     .line(&x, &y2).color(muted_orange)
     .line(&x, &y3).color(muted_green)
     .save("muted_palette.png")?;
-
-// Planned v0.2: Palette API
-// .color_palette(Palette::seaborn_muted())
 ```
 
 ### seaborn Color Reference
@@ -295,27 +300,23 @@ Plot::new()
 sns.barplot(data=df, x='category', y='value', errorbar='sd')
 ```
 
-**ruviz** (manual calculation):
+**ruviz** (manual calculation; error bars are available on numeric series):
 ```rust
-// Calculate means and std devs per category
-fn calculate_stats(data: &[f64]) -> (f64, f64) {
-    let mean = data.iter().sum::<f64>() / data.len() as f64;
-    let variance = data.iter()
-        .map(|&x| (x - mean).powi(2))
-        .sum::<f64>() / data.len() as f64;
-    (mean, variance.sqrt())
-}
+use ruviz::{plots::error::ErrorBarConfig, prelude::*};
 
-let categories = vec!["A", "B", "C"];
+let x = vec![0.0, 1.0, 2.0];
 let means = vec![/* calculated means */];
 let stds = vec![/* calculated std devs */];
 
 Plot::new()
-    .bar(&categories, &means)
-    // Error bars planned v0.3
+    .scatter(&x, &means)
+    .with_yerr(&stds)
+    .error_config(ErrorBarConfig::default().cap_size(0.15).line_width(1.5))
     .ylabel("Mean Value")
     .save("mean_with_error.png")?;
 ```
+
+For categorical bar summaries, compute the summary first and either plot the values numerically with `.with_yerr(...)` or render bars without attached error bars.
 
 ## Complete Example: Statistical Analysis
 
@@ -422,65 +423,18 @@ subplots(2, 2, 1200, 1000)?
     .save("analysis.png")?;
 ```
 
-## Feature Roadmap
+## Support Snapshot
 
-### v0.2 (Planned)
-- Color palettes (seaborn muted, deep, pastel, etc.)
-- Heatmaps
-- Error bars
-- Violin plots
+### Available Today
+- `Theme::seaborn()` plus custom palettes via `Theme::builder().palette(...)`
+- Histogram, KDE, violin, box plot, and heatmap support
+- Numeric error bars via `.with_yerr(...)`, `.with_xerr(...)`, and `.error_config(...)`
+- Manual multi-panel composition with `subplots(...)`
 
-### v0.3 (Planned)
-- KDE (kernel density estimation)
-- Pair plots
-- Joint plots
-- Regression plots with confidence intervals
-- Categorical plots enhancements
-
-### v1.0+ (Future)
-- FacetGrid equivalent
-- Statistical annotations
-- Advanced multi-panel layouts
-
-## Workarounds for Missing Features
-
-### 1. KDE (Kernel Density Estimation)
-
-Use external crate for KDE calculation, then plot as line:
-
-```rust
-// Use kde crate or implement manually
-fn calculate_kde(data: &[f64], points: usize) -> (Vec<f64>, Vec<f64>) {
-    // KDE implementation
-    // Returns (x_values, density_values)
-}
-
-let (x_kde, y_kde) = calculate_kde(&data, 100);
-
-Plot::new()
-    .histogram(&data, None)  // Histogram bars
-    .line(&x_kde, &y_kde)     // KDE overlay
-    .save("hist_kde.png")?;
-```
-
-### 2. Violin Plot
-
-Combine histogram and mirrored density:
-
-```rust
-// Calculate density for both sides
-// Create custom visual representation
-// Or wait for v0.2 native support
-```
-
-### 3. Heatmap
-
-Use 2D iteration to create colored grid (complex workaround):
-
-```rust
-// Planned for v0.2
-// Current workaround: export data to external tool
-```
+### Still Manual or Lower-Level
+- `FacetGrid`-style automatic faceting still requires manual subplot composition
+- `pairplot()` and `jointplot()` do not have top-level `Plot` builders yet; use `subplots(...)` or the lower-level helpers in `ruviz::plots::composite`
+- Statistical annotations remain manual
 
 ## Performance Benefits
 
@@ -494,15 +448,14 @@ Use 2D iteration to create colored grid (complex workaround):
 ## Migration Checklist
 
 - [ ] Identify statistical plots used (hist, box, violin, etc.)
-- [ ] Check feature support in ruviz (see roadmap)
-- [ ] Plan workarounds for unsupported features
+- [ ] Check which plots map directly to `Plot` methods and which still need manual composition
 - [ ] Convert data loading (pandas → polars)
 - [ ] Rewrite plots with ruviz API
 - [ ] Apply `Theme::seaborn()` for familiar aesthetics
 - [ ] Implement manual aggregations where needed
 - [ ] Test with sample data
 - [ ] Benchmark performance improvements
-- [ ] Plan for future feature adoption (v0.2+)
+- [ ] Reserve custom subplot/layout work for pairplot, jointplot, or FacetGrid-style figures
 
 ## Resources
 
@@ -514,13 +467,13 @@ Use 2D iteration to create colored grid (complex workaround):
 ## FAQ
 
 **Q: When will seaborn-style pair plots be available?**
-A: Planned for v0.3 (Q2 2026)
+A: There is no top-level `pairplot()` builder yet. Today you can assemble equivalent layouts manually with `subplots(...)` or use the lower-level helpers in `ruviz::plots::composite`.
 
 **Q: How do I create a correlation heatmap?**
-A: Planned for v0.2 (Q4 2025). Current workaround: use external visualization tool.
+A: Compute a correlation matrix first, then pass it to `.heatmap()`.
 
 **Q: Can I use seaborn color palettes?**
-A: Manual RGB translation for v0.1, native palette support in v0.2.
+A: Yes. Use `Theme::seaborn()` for seaborn-style defaults or `Theme::builder().palette(...)` for a custom palette.
 
 **Q: What about statistical annotations?**
 A: Planned for v1.0+. Current focus is core plot types and performance.

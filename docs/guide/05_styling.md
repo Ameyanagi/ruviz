@@ -35,7 +35,7 @@ use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
-    .color(Color::from_hex("#FF5733"))  // Coral
+    .color(Color::from_hex("#FF5733")?)  // Coral
     .save("hex_color.png")?;
 ```
 
@@ -339,31 +339,39 @@ Plot::new()
 
 ## Typography
 
-### Title Font
+### Global Font Family
 
 ```rust
 use ruviz::prelude::*;
 
+let custom_theme = Theme::builder()
+    .font("Arial")
+    .font_size(14.0)
+    .title_font_size(18.0)
+    .build();
+
 Plot::new()
+    .theme(custom_theme)
     .line(&x, &y)
-    .title("Custom Title Font")
-    .title_font("Arial", 18.0)  // Font name, size
+    .title("Custom Typography")
     .save("custom_title.png")?;
 ```
 
-### Axis Label Fonts
+### Typography Sizing
 
 ```rust
 use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
+    .font_size(14.0)   // Base size for labels and ticks
+    .title_size(18.0)  // Title size
     .xlabel("X Axis")
-    .xlabel_font("Times New Roman", 14.0)
     .ylabel("Y Axis")
-    .ylabel_font("Times New Roman", 14.0)
-    .save("custom_axis_fonts.png")?;
+    .save("custom_typography_sizes.png")?;
 ```
+
+Axis labels and tick labels scale from the base `font_size()`. Title size is controlled independently with `title_size()` or `Theme::builder().title_font_size(...)`.
 
 ### System Fonts
 
@@ -374,16 +382,25 @@ Plot::new()
 - **Liberation Sans** (Linux)
 - **DejaVu Sans** (Linux)
 
-### Open Fonts (Auto-Download)
+### Installed Open Fonts
 
-**Google Fonts support**:
 ```rust
+use ruviz::prelude::*;
+
+let open_font_theme = Theme::builder()
+    .font("Open Sans")
+    .font_size(14.0)
+    .title_font_size(16.0)
+    .build();
+
 Plot::new()
+    .theme(open_font_theme)
     .line(&x, &y)
     .title("Open Sans Title")
-    .title_font("Open Sans", 16.0)  // Auto-downloads from Google Fonts
     .save("open_font.png")?;
 ```
+
+ruviz resolves fonts through the system font stack. Install the font on the target machine before selecting it by family name.
 
 **Popular open fonts**:
 - **Open Sans** - Clean, professional
@@ -397,12 +414,20 @@ Plot::new()
 ```rust
 use ruviz::prelude::*;
 
+let custom_theme = Theme::builder()
+    .font("My Installed Font")
+    .font_size(14.0)
+    .title_font_size(16.0)
+    .build();
+
 Plot::new()
+    .theme(custom_theme)
     .line(&x, &y)
     .title("Custom Font Title")
-    .title_font_file("path/to/custom_font.ttf", 16.0)
-    .save("custom_ttf_font.png")?;
+    .save("custom_font.png")?;
 ```
+
+Custom font files are not loaded through a dedicated `Plot` API today. Install the font on the system, then select it by family name in the theme.
 
 ## Grid
 
@@ -617,13 +642,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y_exp: Vec<f64> = x.iter().map(|v| (-v).exp()).collect();
     let y_sin: Vec<f64> = x.iter().map(|v| v.sin() * (-v/5.0).exp()).collect();
+    let publication_theme = Theme::builder()
+        .font("Arial")
+        .font_size(14.0)
+        .title_font_size(16.0)
+        .build();
 
     // Create publication-quality plot
     Plot::new()
         // Figure setup
         .dimensions(1000, 700)
         .dpi(300)
-        .theme(Theme::publication())
+        .theme(publication_theme)
 
         // Data series
         .line(&x, &y_exp)
@@ -640,11 +670,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Labels and formatting
         .title("Exponential Functions")
-        .title_font("Arial", 16.0)
         .xlabel("Time (s)")
-        .xlabel_font("Arial", 14.0)
         .ylabel("Amplitude")
-        .ylabel_font("Arial", 14.0)
 
         // Layout
         .xlim(0.0, 10.0)
@@ -664,21 +691,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use ruviz::prelude::*;
 
+let presentation_theme = Theme::builder()
+    .font("Arial")
+    .font_size(20.0)
+    .title_font_size(24.0)
+    .build();
+
 Plot::new()
     .dimensions(1920, 1080)  // Full HD
     .dpi(150)
-    .theme(Theme::dark())     // Dark for projector
+    .theme(presentation_theme)
 
     .line(&x, &y)
     .color(Color::from_rgb(100, 200, 255))  // Bright cyan
     .line_width(4.0)  // Thick for visibility
 
     .title("Presentation Plot")
-    .title_font("Arial", 24.0)  // Large font
     .xlabel("X Axis")
-    .xlabel_font("Arial", 20.0)
     .ylabel("Y Axis")
-    .ylabel_font("Arial", 20.0)
 
     .grid(true)
     .save("presentation.png")?;

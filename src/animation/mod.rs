@@ -6,25 +6,26 @@
 //! # Features
 //!
 //! - **Tick-based timing**: Deterministic frame timing with `Tick` struct
-//! - **Iterator-based recording**: `record()` function for frame generation
+//! - **Macro-based recording**: `record!` for frame count, duration, and config-driven capture
 //! - **Multiple formats**: GIF (default), MP4/WebM via AV1 (optional)
 //! - **Observable integration**: Reactive animations with `AnimatedObservable`
 //! - **Smooth transitions**: Easing functions and plot morphing
-//! - **Simplified API**: `record_simple()` with built-in interpolation helpers
+//! - **Compatibility wrappers**: Deprecated `record_*` helpers remain available for older code
 //!
-//! # Simplified API (Recommended)
+//! # Recommended API
 //!
 //! ```rust,ignore
-//! use ruviz::animation::{record_simple, DurationExt, easing};
+//! use ruviz::prelude::*;
+//! use ruviz::record;
 //!
 //! // Record with frame count and tick interpolation helpers
-//! record_simple("bounce.gif", 60, |t| {
+//! record!("bounce.gif", 60, |t| {
 //!     let y = t.ease_over(easing::ease_out_bounce, 100.0, 0.0, 2.0);
 //!     Plot::new().scatter(&[0.0], &[y])
 //! })?;
 //!
 //! // Or use duration syntax
-//! record_simple("wave.gif", 2.0.secs(), |t| {
+//! record!("wave.gif", 2 secs, |t| {
 //!     let x = t.lerp_over(0.0, 10.0, 2.0);
 //!     Plot::new().line(&[0.0, x], &[0.0, x])
 //! })?;
@@ -45,7 +46,7 @@
 //!     })?;
 //! ```
 //!
-//! # Original API
+//! # Deprecated Compatibility API
 //!
 //! ```rust,ignore
 //! use ruviz::prelude::*;
@@ -63,6 +64,9 @@
 //!         .title(format!("t = {:.2}s", tick.time))
 //! }).unwrap();
 //! ```
+//!
+//! The `record()` and `record_simple()` helpers are deprecated in favor of `record!`
+//! but remain available for older callers.
 //!
 //! # Feature Flags
 //!

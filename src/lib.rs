@@ -21,11 +21,11 @@
 //!
 //! - **High Performance**: <100ms for 100K points, <1s for 1M points
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
-//! - **30+ Plot Types**: Distribution, categorical, polar, regression, composite plots
+//! - **30+ Plotting Primitives and Layouts**: Distribution, categorical, polar, regression, and layout helpers
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: DataShader-style aggregation for 100M+ points
-//! - **Cross Platform**: Linux, macOS, Windows, WASM support
-//! - **Reactive Animation**: Signal-based animation with time-varying data
+//! - **Cross Platform**: Linux, macOS, Windows
+//! - **Animation Tooling**: Frame-based recording plus signal-aware plot data APIs
 //!
 //! ## Quick Start
 //!
@@ -49,10 +49,11 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! ## Reactive Animation (New!)
+//! ## Animation APIs
 //!
-//! Create smooth animations with Signal-based reactive data. Define your animation
-//! once and render at any time point.
+//! Create smooth animations with `record!` closures today. Signal-backed plot data
+//! and labels can also be attached to a plot, but `render_at()` currently behaves
+//! the same as `render()`.
 //!
 //! ### Basic Animation with record! Macro
 //!
@@ -83,7 +84,7 @@
 //!
 //! ### Signal-Based Reactive Plots
 //!
-//! Use `Signal<T>` for pull-based animation values that are evaluated at render time:
+//! Use `Signal<T>` for pull-based values stored on the plot:
 //!
 //! ```rust,ignore
 //! use ruviz::prelude::*;
@@ -94,7 +95,8 @@
 //! let frequency = signal::ease(easing::ease_in_out_quad, 1.0, 5.0, 3.0);
 //!
 //! // Compose signals
-//! let y_data = signal::of(move |t| {
+//! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+//! let y_signal = signal::of(move |t| {
 //!     let amp = amplitude.at(t);
 //!     let freq = frequency.at(t);
 //!     (0..100).map(|i| {
@@ -103,21 +105,18 @@
 //!     }).collect::<Vec<f64>>()
 //! });
 //!
-//! // Use with reactive title
+//! // Attach signal-backed title and data to the plot
 //! let title = signal::of(|t| format!("Wave Animation - t={:.2}s", t));
 //!
-//! // Create plot with reactive data (evaluated at render time)
+//! // `render_at()` is still evolving; today this stores the signals on the plot
 //! let plot = Plot::new()
 //!     .title_signal(title)
-//!     .line_signal(&x_data, y_data);
-//!
-//! // Record using reactive plot
-//! record!("reactive.gif", &plot, 3 secs)?;
+//!     .line(&x, &y_signal);
 //! ```
 //!
 //! ### Reactive Labels
 //!
-//! Make titles and axis labels change during animation:
+//! Attach signal-backed titles and axis labels:
 //!
 //! ```rust,ignore
 //! use ruviz::prelude::*;
@@ -133,12 +132,14 @@
 //!     else { "Decelerating".to_string() }
 //! });
 //!
-//! Plot::new()
+//! let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+//! let y: Vec<f64> = x.iter().map(|&xi| xi.sin()).collect();
+//!
+//! let plot = Plot::new()
 //!     .title_signal(title)
 //!     .xlabel("Time")
 //!     .ylabel_signal(ylabel)
-//!     .line(&x, &y)
-//!     .save("dynamic_labels.png")?;
+//!     .line(&x, &y);
 //! ```
 //!
 //! ### Signal Composition
@@ -191,25 +192,22 @@
 //! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/polar_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/polar_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/radar_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/radar_chart.png" width="250"></a> | |
 //! | Polar Plot | Radar Chart | |
 //!
-//! ### Advanced Plot Types (30+ Total)
+//! ### Additional Plot Types
 //!
-//! ruviz provides comprehensive plot type coverage for scientific visualization:
+//! The top-level [`Plot`] builder covers the most common scientific chart types:
 //!
 //! | Category | Plot Types |
 //! |----------|------------|
-//! | **Distribution** | Violin, KDE (1D/2D), Boxen, ECDF, Strip, Swarm |
-//! | **Categorical** | Grouped Bar, Stacked Bar, Horizontal Bar |
-//! | **Composition** | Pie, Donut, Area, Stacked Area |
-//! | **Continuous** | Contour, Hexbin, Fill Between |
-//! | **Error** | Error Bars (symmetric/asymmetric) |
-//! | **Discrete** | Step, Stem |
-//! | **Regression** | Regression Plot, Residual Plot |
+//! | **Basic** | Line, Scatter, Bar |
+//! | **Distribution** | Histogram, Box Plot, Violin, KDE, ECDF |
+//! | **Continuous** | Heatmap, Contour, Fill Between |
+//! | **Error** | Error Bars |
+//! | **Composition** | Pie |
 //! | **Polar** | Polar Plot, Radar/Spider Chart |
-//! | **Composite** | Joint Plot, Pair Plot |
-//! | **Vector** | Quiver Plot |
-//! | **Hierarchical** | Dendrogram |
 //!
-//! See [`plots`] module and [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md) for details.
+//! Lower-level utilities in [`plots`] expose additional configs and computation
+//! helpers for specialized workflows. See the [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md)
+//! for current coverage details.
 //!
 //! <details>
 //! <summary>Plot Types Code Examples</summary>

@@ -4,13 +4,13 @@ Complete guide to exporting high-quality plots with DPI settings, custom dimensi
 
 ## Overview
 
-ruviz currently supports PNG export with comprehensive control over quality and resolution. SVG support is planned for v0.2.
+ruviz supports PNG and SVG export today. PDF export is available when the `pdf` feature is enabled.
 
 | Format | Status | Use Case |
 |--------|--------|----------|
 | **PNG** | ✅ Supported | Screen, web, print, universal compatibility |
-| **SVG** | ⏳ Planned v0.2 | Vector graphics, scalable, web embedding |
-| **PDF** | ⏳ Planned v0.3 | Publications, archival |
+| **SVG** | ✅ Supported | Vector graphics, scalable, web embedding |
+| **PDF** | ✅ Supported with `pdf` feature | Publications, archival |
 | **JPEG** | ⏳ Planned v0.4 | Photos, web (lossy compression) |
 
 ## PNG Export
@@ -308,12 +308,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y_decay: Vec<f64> = x.iter()
         .map(|v| (-v * 0.5).exp() * (v * 2.0).sin())
         .collect();
+    let publication_theme = Theme::builder()
+        .font("Arial")
+        .font_size(14.0)
+        .title_font_size(16.0)
+        .build();
 
     // IEEE double-column figure @ 300 DPI
     Plot::new()
         .dimensions(2175, 1500)
         .dpi(300)
-        .theme(Theme::publication())
+        .theme(publication_theme)
 
         .line(&x, &y_exp)
             .label("Exponential Decay")
@@ -327,11 +332,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .line_style(LineStyle::Dashed)
 
         .title("Figure 1: Temporal Decay Patterns")
-        .title_font("Arial", 16.0)
         .xlabel("Time (s)")
-        .xlabel_font("Arial", 14.0)
         .ylabel("Amplitude (normalized)")
-        .ylabel_font("Arial", 14.0)
 
         .xlim(0.0, 10.0)
         .ylim(-0.2, 1.0)
@@ -490,17 +492,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Future Export Formats
+## Vector Export Formats
 
-### SVG Export (Planned v0.2)
+### SVG Export
 
 ```rust
-// Planned API for v0.2
 use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
-    .save_svg("vector_plot.svg")?;  // Scalable vector graphics
+    .export_svg("vector_plot.svg")?;  // Scalable vector graphics
 ```
 
 **Benefits**:
@@ -509,15 +510,15 @@ Plot::new()
 - Editable in vector graphics software
 - Perfect for web embedding
 
-### PDF Export (Planned v0.3)
+### PDF Export
 
 ```rust
-// Planned API for v0.3
+// Requires: ruviz = { version = "0.1.4", features = ["pdf"] }
 use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
-    .save_pdf("publication.pdf")?;  // Direct PDF output
+    .save_pdf("publication.pdf")?;
 ```
 
 **Benefits**:

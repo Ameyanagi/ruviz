@@ -139,7 +139,7 @@ let y = vec![2.3, 3.1, 2.8, 4.2, 3.9];
 
 Plot::new()
     .scatter(&x, &y)
-    .marker_style(MarkerStyle::Circle)
+    .marker(MarkerStyle::Circle)
     .marker_size(10.0)
     .title("Scatter Plot")
     .save("scatter.png")?;
@@ -171,7 +171,7 @@ let data: Vec<f64> = (0..1000)
     .collect();
 
 Plot::new()
-    .histogram(&data)
+    .histogram(&data, None)
     .title("Data Distribution")
     .xlabel("Value")
     .ylabel("Frequency")
@@ -241,7 +241,7 @@ use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
-    .color(Color::from_hex("#FF5733"))  // Hex color
+    .color(Color::from_hex("#FF5733")?)  // Hex color
     .line_width(2.5)
     .line_style(LineStyle::Dashed)
     .save("custom.png")?;
@@ -320,10 +320,9 @@ Enable SIMD optimization:
 ruviz = { version = "0.1.4", features = ["parallel", "simd"] }
 ```
 
-### Automatic Optimization (Coming in v0.2)
+### Large Dataset Export
 ```rust
 Plot::new()
-    .auto_optimize()  // Automatically selects best backend
     .line(&huge_x, &huge_y)
     .save("optimized.png")?;
 ```
@@ -361,7 +360,7 @@ Now that you've created your first plots, explore:
 1. **[User Guide](guide/README.md)** - Comprehensive tutorials
 2. **[API Documentation](https://docs.rs/ruviz)** - Complete reference
 3. **[Gallery](gallery/README.md)** - Visual examples
-4. **[Performance Guide](performance/PERFORMANCE.md)** - Optimization techniques
+4. **[Performance Guide](PERFORMANCE_GUIDE.md)** - Optimization techniques
 
 ## Common Issues
 
@@ -379,8 +378,8 @@ ruviz automatically falls back to system fonts. If issues persist, check that yo
 
 ## Getting Help
 
-- **Issues**: [GitHub Issues](https://github.com/ruviz/ruviz/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ruviz/ruviz/discussions)
+- **Issues**: [GitHub Issues](https://github.com/Ameyanagi/ruviz/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Ameyanagi/ruviz/discussions)
 - **Documentation**: [docs.rs/ruviz](https://docs.rs/ruviz)
 
 Happy plotting! 📊

@@ -1,13 +1,14 @@
 # Animation API Migration Guide
 
-This guide helps you migrate from the verbose animation API to the simplified API introduced in v0.9.
+This guide helps you migrate from the legacy function-based animation APIs to the
+current `record!` macro-based API.
 
 ## Quick Reference
 
-| Task | Original API | Simplified API |
+| Task | Legacy API | Recommended API |
 |------|-------------|----------------|
-| Basic recording | `record(path, 0..60, \|frame, tick\| ...)` | `record_simple(path, 60, \|tick\| ...)` |
-| Duration-based | `record_duration(path, 2.0, 30, \|tick\| ...)` | `record_simple(path, 2.0.secs(), \|tick\| ...)` |
+| Basic recording | `record(path, 0..60, \|frame, tick\| ...)` | `record!(path, 60, \|tick\| ...)` |
+| Duration-based | `record_duration(path, 2.0, 30, \|tick\| ...)` | `record!(path, 2 secs @ 30 fps, \|tick\| ...)` |
 | Multi-value | `AnimatedObservable` + `AnimationGroup` | `Animation::build().value(...)` |
 | Time interpolation | Manual: `from + (to - from) * (tick.time / duration)` | `tick.lerp_over(from, to, duration)` |
 | Eased values | Manual calculation | `tick.ease_over(easing::ease_out_bounce, from, to, duration)` |
@@ -31,9 +32,10 @@ record("out.gif", 0..60, |_frame, tick| {
 
 **After:**
 ```rust
-use ruviz::animation::record_simple;
+use ruviz::record;
+use ruviz::prelude::*;
 
-record_simple("out.gif", 60, |tick| {
+record!("out.gif", 60, |tick| {
     let x = tick.time;
     Plot::new()
         .line(&[0.0, x], &[0.0, x])
@@ -41,7 +43,7 @@ record_simple("out.gif", 60, |tick| {
 ```
 
 **Changes:**
-- `record` → `record_simple`
+- `record` → `record!`
 - `0..60` (range) → `60` (count)
 - `|_frame, tick|` → `|tick|` (no frame index needed)
 - No more `#[allow(deprecated)]` or `.end_series()`
@@ -59,16 +61,17 @@ record_duration("out.gif", 2.0, 30, |tick| {
 
 **After:**
 ```rust
-use ruviz::animation::{record_simple, DurationExt};
+use ruviz::record;
+use ruviz::prelude::*;
 
-record_simple("out.gif", 2.0.secs(), |tick| {
+record!("out.gif", 2 secs @ 30 fps, |tick| {
     // ...
 })?;
 ```
 
 **Changes:**
-- Use `DurationExt` trait for `.secs()` syntax
-- Single function handles both frame counts and durations
+- Replace `record_duration` with `record!`
+- Encode duration and framerate directly in the macro invocation
 
 ### 3. Value Interpolation
 
@@ -166,32 +169,33 @@ New methods on `Tick` for easier time-based calculations:
 
 ## When to Use Each API
 
-### Use Simplified API (`record_simple`, `Animation::build`) when:
+### Use the recommended API (`record!`, `Animation::build`) when:
 - Creating standard animations with known durations
 - Animating multiple values with different easings
 - Wanting minimal boilerplate
 
-### Use Original API (`record`, `AnimatedObservable`) when:
-- Need frame-by-frame control
-- Animations change dynamically during recording
-- Complex conditional animation logic
-- Need to query animation state externally
+### Use legacy APIs only when maintaining older code:
+- `record`, `record_duration`, and `record_simple` still work but are deprecated
+- `AnimatedObservable`-based flows remain useful for compatibility with existing code
+- New examples and new code should prefer `record!`
 
 ## Backward Compatibility
 
-The original API remains fully functional. All existing code will continue to work. The simplified API is additive - use whichever fits your needs.
+The legacy function APIs remain available for existing code, but they are deprecated.
+New code should prefer `record!`.
 
 ## PlotBuilder Auto-Conversion
 
-All recording functions now accept `impl Into<Plot>`, so you can return `PlotBuilder` directly without calling `.end_series()`:
+The macro-based recording API accepts `impl Into<Plot>`, so you can return
+`PlotBuilder` directly without calling `.end_series()`:
 
 ```rust
 // Both work now:
-record_simple("out.gif", 60, |tick| {
+record!("out.gif", 60, |tick| {
     Plot::new().line(&x, &y)  // Returns PlotBuilder, auto-converts
 })?;
 
-record_simple("out.gif", 60, |tick| {
+record!("out.gif", 60, |tick| {
     Plot::new().line(&x, &y).into()  // Explicit conversion also works
 })?;
 ```

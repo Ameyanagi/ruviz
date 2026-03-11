@@ -48,29 +48,28 @@ Backend selection decision time: **< 142µs** (worst case)
 
 ## Performance Best Practices
 
-### 1. Use Auto-Optimization
+### 1. Choose the Right Output Path
 
-**Always enable auto-optimization** for datasets larger than 1K points:
+For large datasets, start with the output path you actually need:
 
 ```rust
 use ruviz::prelude::*;
 
-// Good - automatic backend selection
+// PNG export: save() already applies its own large-dataset thresholds
 Plot::new()
     .line(&x, &y)
-    .auto_optimize()
     .save("plot.png")?;
 ```
 
 **Why?**
 - Decision time: < 142µs (negligible)
-- Selects optimal backend automatically
-- 2.9-5.7x performance improvement for large datasets
+- `save()` already switches to its large-dataset export paths internally
+- `render()` is the in-memory path that can use the parallel renderer
 
-**Backend Selection Algorithm**:
-- < 1K points → Skia (simple, fast)
-- 1K-100K points → Parallel (multi-threaded)
-- > 100K points → GPU/DataShader (hardware accelerated)
+**Stored backend metadata (`auto_optimize()`)**:
+- < 1K points → Skia
+- 1,000 to 99,999 points → Parallel when built with the `parallel` feature, otherwise Skia
+- 100,000+ points → GPU when built with the `gpu` feature, otherwise DataShader
 
 ### 2. Choose the Right Plot Type
 
@@ -112,16 +111,15 @@ Plot::new()
 
 ### 4. Large Dataset Optimization
 
-For datasets > 100K points:
+For datasets with 100,000 points or more:
 
 ```rust
-// Always use auto_optimize() for large data
+// Large PNG export
 let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
 let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
 Plot::new()
     .line(&x, &y)
-    .auto_optimize()  // Enables parallel/GPU rendering
     .save("large_plot.png")?;
 ```
 
@@ -132,7 +130,7 @@ Plot::new()
 **Tips**:
 - Consider DataShader for > 1M points
 - Use histogram for distributions (faster than scatter)
-- Enable parallel rendering with `.auto_optimize()`
+- Use `render()` for in-memory images and `save()` for PNG export
 
 ### 5. Memory Efficiency
 
@@ -166,7 +164,7 @@ let plot = Plot::new()
     .line(&x, &y4)  // Series 4
     .line(&x, &y5); // Series 5
 
-plot.auto_optimize().save("multi_series.png")?;
+plot.save("multi_series.png")?;
 ```
 
 **Performance**: 5 series × 10K points = 28.7ms total
@@ -212,7 +210,6 @@ fn main() -> Result<()> {
     let start = Instant::now();
     Plot::new()
         .line(&x, &y)
-        .auto_optimize()
         .save("benchmark_plot.png")?;
     let duration = start.elapsed();
 
@@ -233,14 +230,14 @@ fn main() -> Result<()> {
 
 If performance is slower than expected:
 
-### Step 1: Verify Auto-Optimization
+### Step 1: Verify the Path You Are Measuring
 
 ```rust
-// Check if auto_optimize() is enabled
-Plot::new()
+// In-memory rendering path
+let image = Plot::new()
     .line(&x, &y)
-    .auto_optimize()  // CRITICAL for large datasets
-    .save("plot.png")?;
+    .render()?;
+# let _ = image;
 ```
 
 ### Step 2: Measure with Warmup
@@ -251,7 +248,7 @@ Plot::new().line(&x_small, &y_small).save("warmup.png")?;
 
 // Actual measurement
 let start = Instant::now();
-Plot::new().line(&x, &y).auto_optimize().save("actual.png")?;
+Plot::new().line(&x, &y).save("actual.png")?;
 let duration = start.elapsed();
 
 println!("Warm performance: {:?}", duration);
@@ -287,7 +284,7 @@ If performance is still unexpected, report with:
 - System specifications (CPU cores, RAM)
 - Dataset size and characteristics
 - Timing measurements
-- Whether `.auto_optimize()` was used
+- Whether you used `render()` or `save()`, and whether `.gpu(true)` was enabled
 - Operating system
 
 ## Performance Expectations by Use Case
@@ -307,7 +304,6 @@ loop {
     let start = Instant::now();
     Plot::new()
         .line(&x, &current_data)
-        .auto_optimize()
         .save("realtime_plot.png")?;
 
     if start.elapsed().as_millis() > 50 {
@@ -332,7 +328,6 @@ Plot::new().line(&[1.0], &[1.0]).save("warmup.png")?;
 for (i, dataset) in datasets.iter().enumerate() {
     Plot::new()
         .line(&dataset.x, &dataset.y)
-        .auto_optimize()
         .save(&format!("plot_{:04}.png", i))?;
 }
 ```
@@ -362,22 +357,19 @@ Plot::new()
 
 **Strategy**:
 ```rust
+use ruviz::{core::plot::Image, prelude::*};
+
 // Async endpoint example
-async fn generate_plot(data: Vec<(f64, f64)>) -> Result<Vec<u8>> {
+async fn generate_plot(data: Vec<(f64, f64)>) -> Result<Image> {
     let (x, y): (Vec<_>, Vec<_>) = data.into_iter().unzip();
 
-    // Render plot
-    let image = Plot::new()
+    Plot::new()
         .line(&x, &y)
-        .auto_optimize()
-        .render()?;
-
-    // Return PNG bytes
-    Ok(image.to_png())
+        .render()
 }
 ```
 
-**Expected**: 30-50ms response time for 10K points
+**Expected**: 30-50ms response time for 10K points, plus any external PNG encoding you add on top of `Image { width, height, pixels }`
 
 ## Future Performance Work
 
@@ -410,12 +402,17 @@ Faster scatter plots:
 - 2-3x improvement for scatter plots
 - Platform-optimized (SSE, AVX, NEON)
 
-### GPU Acceleration (v1.0)
+### GPU Acceleration (experimental today)
 
-Real-time updates:
-- GPU-accelerated rendering pipeline
-- Sub-millisecond updates for large datasets
-- WebGPU support for browser deployment
+Available today behind the `gpu` feature and explicit `.gpu(true)`:
+- GPU-assisted PNG export in `save()` for sufficiently large datasets
+- Automatic CPU fallback if GPU initialization fails
+- `render()` continues to use the in-memory CPU/DataShader/parallel paths today
+
+Future GPU work:
+- Broader plot-type coverage
+- Lower-latency interactive workflows
+- Browser/WebGPU deployment
 
 ## Comparison with Other Libraries
 
@@ -423,11 +420,11 @@ Real-time updates:
 
 ### 100K Point Line Plot
 
-| Library | Performance | Language | Backend |
-|---------|-------------|----------|---------|
-| **ruviz** | **34.6ms** | Rust | Native (Skia) |
+| Library | Performance | Language | Backend/Mode |
+|---------|-------------|----------|--------------|
+| **ruviz** | **34.6ms** | Rust | Auto-optimized |
 | matplotlib | ~500ms | Python | Multiple |
-| plotters | ~100ms | Rust | Native |
+| plotters | ~100ms | Rust | Native CPU |
 | plotly | ~200ms | Python | Browser (D3.js) |
 | Chart.js | ~150ms | JavaScript | Browser (Canvas) |
 
@@ -463,7 +460,7 @@ Real-time updates:
 
 ### Optimization Guidelines
 
-1. **Always use `.auto_optimize()` for > 1K points**
+1. **Use `render()` for in-memory images and `save()` for PNG export**
 2. **Accept 250ms cold start as normal** (amortizes for multiple plots)
 3. **Choose appropriate plot types** (histogram > scatter for distributions)
 4. **Use 300 DPI for publications** (minimal performance impact)
@@ -479,7 +476,7 @@ Real-time updates:
 - Performance-critical applications
 
 **Consider alternatives if**:
-- Need interactive plots (ruviz focuses on static output)
+- Need production-grade interactive plots
 - Require extensive plot customization (ruviz prioritizes performance)
 - Working with web-only applications (WASM support planned)
 
@@ -488,7 +485,7 @@ Real-time updates:
 - **Benchmark Results**: See `docs/BENCHMARK_RESULTS.md` for detailed metrics
 - **Troubleshooting**: See `docs/TROUBLESHOOTING.md` for common issues
 - **Optimization Findings**: See `docs/OPTIMIZATION_FINDINGS.md` for architectural analysis
-- **GitHub Issues**: https://github.com/ruviz/ruviz/issues for performance questions
+- **GitHub Issues**: https://github.com/Ameyanagi/ruviz/issues for performance questions
 
 ---
 
