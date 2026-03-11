@@ -177,17 +177,17 @@ Plot::new()
 | Figure size | `figsize=` | `.dimensions()` |
 | PNG export | `savefig()` | `.save()` |
 
-### Not Yet Supported ⚠️
+### Support Snapshot ⚠️
 
 | Feature | matplotlib | ruviz Status |
 |---------|------------|--------------|
-| SVG export | `savefig('file.svg')` | Planned v0.2 |
-| Heatmaps | `imshow()`, `pcolormesh()` | Planned v0.2 |
-| Contour plots | `contour()` | Planned v0.2 |
+| SVG export | `savefig('file.svg')` | Supported via `.export_svg("file.svg")?` |
+| Heatmaps | `imshow()`, `pcolormesh()` | Supported via `.heatmap(...)` |
+| Contour plots | `contour()` | Supported via `.contour(...)` |
 | 3D plots | `mpl_toolkits.mplot3d` | Planned v1.0+ |
-| Interactive plots | `%matplotlib notebook` | Experimental GPU backend |
-| Polar plots | `projection='polar'` | Planned v0.3 |
-| Animations | `FuncAnimation` | Planned v0.4 |
+| Interactive plots | `%matplotlib notebook` | Experimental via `show_interactive(plot).await` |
+| Polar plots | `projection='polar'` | Supported via `.polar_line(...)` |
+| Animations | `FuncAnimation` | Supported with the `record!` macro |
 
 ### Different Approach 🔄
 
@@ -383,24 +383,28 @@ Plot::new()
 
 ### Q: How do I display plots interactively?
 **A**: Current focus is file output. For interactive:
-1. Use the experimental GPU backend (`features = ["gpu", "interactive"]`)
-2. Or save to file and open with image viewer
-3. Interactive mode planned for v0.3
+1. Enable `interactive` or `interactive-gpu`
+2. Build a `Plot`
+3. Call `show_interactive(plot).await`
 
 ### Q: What about animations?
-**A**: Not yet supported. Planned for v0.4. Current workaround:
-- Generate frame-by-frame PNGs
-- Combine with ffmpeg or similar tool
+**A**: Animations are available behind the `animation` feature via the `record!` macro.
 
 ### Q: Can I customize colors like matplotlib's colormap?
 **A**: Yes, but differently:
 ```rust
 // Custom colors
 .color(Color::from_rgb(255, 128, 0))
-.color(Color::from_hex("#FF8000"))
+.color(Color::from_hex("#FF8000")?)
 
-// Planned v0.2: color palettes
-.color_palette(Palette::viridis())
+let viridis_like = Theme::builder()
+    .palette([
+        Color::from_hex("#440154").unwrap(),
+        Color::from_hex("#31688e").unwrap(),
+        Color::from_hex("#35b779").unwrap(),
+        Color::from_hex("#fde725").unwrap(),
+    ])
+    .build();
 ```
 
 ### Q: Performance tips for large datasets?

@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/ruviz)](https://crates.io/crates/ruviz)
 [![Documentation](https://docs.rs/ruviz/badge.svg)](https://docs.rs/ruviz)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 [![CI](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml/badge.svg)](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml)
 
 ## Release Notes
@@ -51,7 +51,7 @@ Need typeset math labels? See [Typst Text Mode](#typst-text-mode) below.
 
 ### 🎨 Publication Quality
 - **High-DPI export**: 72, 96, 300, 600 DPI for print
-- **Multiple formats**: PNG, SVG *(SVG in development)*
+- **Multiple formats**: PNG, SVG, and PDF (with the `pdf` feature)
 - **Professional themes**: Light, Dark, Publication, Seaborn-style
 - **Custom styling**: Colors, fonts, markers, line styles
 - **International text**: Full UTF-8 support (Japanese, Chinese, Korean, etc.) with cosmic-text
@@ -88,14 +88,14 @@ ruviz = { version = "0.1.4", features = ["parallel", "simd"] }
 | `parallel` | Multi-threaded rendering | Large datasets |
 | `simd` | Vectorized transforms | Performance-critical |
 | `animation` | GIF animation export | Animated plots |
-| `gpu` | GPU acceleration (experimental) | Real-time rendering |
+| `gpu` | GPU acceleration backend (experimental) | Opt-in GPU rendering |
 | `interactive` | winit window support | Interactive plots |
 | `ndarray_support` | ndarray types | Scientific computing |
 | `nalgebra_support` | nalgebra vectors/matrices | Linear algebra workloads |
 | `polars_support` | DataFrame support | Data analysis |
 | `pdf` | PDF export | Publication output |
 | `typst-math` | Typst text engine for all plot text | Math-heavy publication plots |
-| `full` | All features | Power users |
+| `full` | Most bundled features (excludes HQ GIF/video extras) | Power users |
 
 For minimal builds: `default-features = false`
 
@@ -203,7 +203,11 @@ use ruviz::prelude::*;
 let plot1 = Plot::new().line(&x, &y).title("Line").end_series();
 let plot2 = Plot::new().scatter(&x, &y).title("Scatter").end_series();
 let plot3 = Plot::new().bar(&["A", "B", "C"], &[1.0, 2.0, 3.0]).title("Bar").end_series();
-let plot4 = Plot::new().histogram(&data).title("Histogram").end_series();
+let data = vec![0.5, 1.0, 1.5, 2.0, 2.5];
+let plot4 = Plot::new()
+    .histogram(&data, None)
+    .title("Histogram")
+    .end_series();
 
 subplots(2, 2, 800, 600)?
     .suptitle("Scientific Analysis")
@@ -219,7 +223,7 @@ subplots(2, 2, 800, 600)?
 ```rust
 use ruviz::prelude::*;
 
-// 100K points with parallel rendering (enable "parallel" feature)
+// 100,000-point PNG export
 let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
 let y: Vec<f64> = x.iter().map(|&x| x.sin()).collect();
 
@@ -230,6 +234,13 @@ Plot::new()
 ```
 
 ### Animation
+
+Enable the `animation` feature for this example:
+
+```toml
+[dependencies]
+ruviz = { version = "0.1.4", features = ["animation"] }
+```
 
 ```rust
 use ruviz::prelude::*;
@@ -272,7 +283,7 @@ cargo run --example doc_typst_text --features typst-math
 - **[Gallery](docs/gallery/README.md)** - Visual examples showcase
 - **[Migration from matplotlib](docs/migration/matplotlib.md)** - For Python users
 - **[Migration from seaborn](docs/migration/seaborn.md)** - Statistical plots
-- **[Performance Guide](docs/performance/PERFORMANCE.md)** - Optimization techniques
+- **[Performance Guide](docs/PERFORMANCE_GUIDE.md)** - Optimization techniques
 
 ## Why ruviz?
 
@@ -301,7 +312,7 @@ Plot::new()
 
 ## Contributing
 
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and pull request guidelines.
 
 ### Development
 
@@ -341,19 +352,19 @@ The pre-commit hooks will automatically run `cargo fmt --check` and `cargo clipp
 - [x] Continuous plots: Contour
 - [x] Polar plots: Polar, Radar
 - [x] Error bars
-- [ ] More plot types: Area, Hexbin, Step, Stem (v0.2)
-- [ ] Regression plots: Regplot, Residplot (v0.2)
-- [ ] Composite plots: Joint, Pair (v0.2)
-- [ ] SVG export (v0.2)
-- [ ] Interactive plots with zoom/pan (v0.3)
+- [x] SVG export
+- [x] Experimental interactive window support
+- [ ] High-level APIs for area, hexbin, step, and stem plots
+- [ ] High-level APIs for regression and composite plots
+- [ ] Stabilize the interactive zoom/pan workflow
 - [ ] 3D plotting (v1.0+)
 
 ## License
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE](LICENSE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE](LICENSE) or http://opensource.org/licenses/MIT)
 
 at your option.
 

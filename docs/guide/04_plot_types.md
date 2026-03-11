@@ -6,6 +6,10 @@ Comprehensive guide to all plot types available in ruviz.
 
 ruviz provides **30+ plot types** across multiple categories, achieving parity with matplotlib, seaborn, and Makie.jl for scientific and data visualization.
 
+The examples below mix the high-level `Plot` builder with lower-level helpers from
+`ruviz::plots::*`. For the low-level examples, the symbol names and signatures
+match the current exported APIs.
+
 ### Quick Reference by Category
 
 | Category | Plot Types |
@@ -98,7 +102,7 @@ use ruviz::plots::histogram::HistogramConfig;
 let data: Vec<f64> = (0..1000).map(|i| /* sample data */).collect();
 
 Plot::new()
-    .histogram(&data, Some(HistogramConfig { bins: 30, ..Default::default() }))
+    .histogram(&data, Some(HistogramConfig { bins: Some(30), ..Default::default() }))
     .title("Distribution")
     .save("histogram.png")?;
 ```
@@ -128,15 +132,18 @@ Plot::new()
 **Use for**: Distribution comparison across categories, combining KDE with box plot statistics
 
 ```rust
-use ruviz::plots::distribution::{ViolinConfig, ViolinData, violin_polygon};
+use ruviz::plots::distribution::{
+    BandwidthMethod, ViolinConfig, ViolinData, close_violin_polygon, violin_polygon,
+};
 
 let config = ViolinConfig::new()
-    .bandwidth_method(BandwidthMethod::Scott)
-    .show_box(true)
-    .show_median(true);
+    .bandwidth(BandwidthMethod::Scott)
+    .box_plot(true)
+    .median(true);
 
-let violin = ViolinData::from_data(&data, &config);
-let polygon = violin_polygon(&violin, x_center, width, Orientation::Vertical);
+let violin = ViolinData::from_values(&data, &config).unwrap();
+let (left, right) = violin_polygon(&violin, 0.5, 0.4, &config);
+let polygon = close_violin_polygon(&left, &right);
 ```
 
 **Features**:
@@ -150,20 +157,18 @@ let polygon = violin_polygon(&violin, x_center, width, Orientation::Vertical);
 **Use for**: Smooth distribution curves, density estimation
 
 ```rust
-use ruviz::plots::distribution::{KdePlotConfig, compute_kde_plot};
+use ruviz::plots::distribution::{Kde2dPlotConfig, KdeConfig, compute_kde, compute_kde_2d_plot};
 
 // 1D KDE
-let config = KdePlotConfig::new()
+let config = KdeConfig::new()
     .bandwidth(0.5)
     .n_points(200)
     .cumulative(false);
 
-let kde_data = compute_kde_plot(&data, &config);
+let kde_data = compute_kde(&data, &config);
 // kde_data.x and kde_data.y contain the smooth density curve
 
 // 2D KDE for bivariate density
-use ruviz::plots::distribution::{Kde2dPlotConfig, compute_kde_2d_plot};
-
 let config_2d = Kde2dPlotConfig::new().grid_size(50);
 let kde_2d = compute_kde_2d_plot(&x, &y, &config_2d);
 // kde_2d.density contains the 2D density grid
@@ -205,14 +210,14 @@ let ecdf = compute_ecdf(&data, &config);
 **Use for**: Jittered categorical scatter plots
 
 ```rust
-use ruviz::plots::categorical::{StripConfig, compute_strip};
+use ruviz::plots::categorical::{StripConfig, compute_strip_points};
 
+let categories = vec![0, 0, 0, 1, 1, 1];
 let config = StripConfig::new()
-    .jitter(0.1)
-    .orientation(StripOrientation::Vertical);
+    .jitter(0.1);
 
-let strip = compute_strip(&values, &config);
-// strip.points contains jittered positions
+let strip_points = compute_strip_points(&categories, &values, None, &config);
+// strip_points contains jittered positions
 ```
 
 ### Swarm Plots (Beeswarm)
@@ -220,14 +225,14 @@ let strip = compute_strip(&values, &config);
 **Use for**: Non-overlapping categorical scatter
 
 ```rust
-use ruviz::plots::categorical::{SwarmConfig, compute_swarm};
+use ruviz::plots::categorical::{SwarmConfig, compute_swarm_points};
 
+let categories = vec![0, 0, 0, 1, 1, 1];
 let config = SwarmConfig::new()
-    .point_size(5.0)
-    .orientation(SwarmOrientation::Vertical);
+    .size(5.0);
 
-let swarm = compute_swarm(&values, &config);
-// swarm.points positioned to avoid overlap
+let swarm_points = compute_swarm_points(&categories, &values, None, &config);
+// swarm_points are positioned to avoid overlap
 ```
 
 ---
@@ -239,15 +244,15 @@ let swarm = compute_swarm(&values, &config);
 **Use for**: Side-by-side comparison of multiple series
 
 ```rust
-use ruviz::plots::categorical::{BarConfig, BarMode, compute_grouped_bars};
+use ruviz::plots::categorical::{GroupedBarConfig, compute_grouped_bars};
 
-let config = BarConfig::new().mode(BarMode::Grouped);
 let groups = vec![
     vec![10.0, 20.0, 30.0],  // Series 1
     vec![15.0, 25.0, 35.0],  // Series 2
 ];
 
-let bars = compute_grouped_bars(&groups, &config);
+let config = GroupedBarConfig::new().group_width(0.8).bar_gap(0.05);
+let bars = compute_grouped_bars(&groups, 3, &config);
 ```
 
 ### Stacked Bar Charts
@@ -255,10 +260,10 @@ let bars = compute_grouped_bars(&groups, &config);
 **Use for**: Part-to-whole relationships across categories
 
 ```rust
-use ruviz::plots::categorical::{BarConfig, BarMode, compute_stacked_bars};
+use ruviz::plots::categorical::{StackedBarConfig, compute_stacked_bars};
 
-let config = BarConfig::new().mode(BarMode::Stacked);
-let bars = compute_stacked_bars(&groups, &config);
+let config = StackedBarConfig::new().width(0.8);
+let bars = compute_stacked_bars(&groups, 3, &config);
 ```
 
 ### Horizontal Bar Charts
@@ -266,9 +271,10 @@ let bars = compute_stacked_bars(&groups, &config);
 **Use for**: Long category labels, ranked data
 
 ```rust
-use ruviz::plots::categorical::{BarConfig, BarOrientation};
+use ruviz::plots::categorical::{GroupedBarConfig, compute_grouped_bars};
 
-let config = BarConfig::new().orientation(BarOrientation::Horizontal);
+let config = GroupedBarConfig::new().horizontal();
+let bars = compute_grouped_bars(&groups, 3, &config);
 ```
 
 ---
@@ -280,18 +286,20 @@ let config = BarConfig::new().orientation(BarOrientation::Horizontal);
 **Use for**: Part-to-whole proportions
 
 ```rust
-use ruviz::plots::composition::{PieConfig, compute_pie};
+use ruviz::plots::composition::{PieConfig, PieData};
 
 let values = vec![30.0, 25.0, 20.0, 15.0, 10.0];
-let labels = vec!["A", "B", "C", "D", "E"];
+let labels = vec!["A", "B", "C", "D", "E"]
+    .into_iter()
+    .map(String::from)
+    .collect();
 
-let config = PieConfig::new()
+let config = PieConfig::new(labels)
     .start_angle(90.0)
-    .labels(labels)
-    .show_percent(true)
-    .explode(vec![0.0, 0.1, 0.0, 0.0, 0.0]);  // Explode slice B
+    .percentages(true)
+    .explode(vec![0.0, 0.1, 0.0, 0.0, 0.0]);
 
-let pie = compute_pie(&values, &config);
+let pie = PieData::compute(&values, &config);
 // pie.wedges contains arc coordinates for each slice
 ```
 
@@ -300,9 +308,8 @@ let pie = compute_pie(&values, &config);
 **Use for**: Pie chart with center hole (modern aesthetic)
 
 ```rust
-let config = PieConfig::new()
-    .inner_radius(0.5)  // Creates donut hole
-    .outer_radius(1.0);
+let labels = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+let config = PieConfig::new(labels).donut(0.5);
 ```
 
 ### Area Charts
@@ -310,13 +317,13 @@ let config = PieConfig::new()
 **Use for**: Cumulative quantities over time, filled line plots
 
 ```rust
-use ruviz::plots::continuous::{AreaConfig, compute_area};
+use ruviz::plots::continuous::{AreaConfig, area_polygon};
 
 let config = AreaConfig::new()
-    .fill_alpha(0.5)
-    .stacked(false);
+    .alpha(0.5)
+    .baseline(0.0);
 
-let area = compute_area(&x, &y, &config);
+let area = area_polygon(&x, &y, config.baseline);
 ```
 
 ### Stacked Area Charts
@@ -324,8 +331,10 @@ let area = compute_area(&x, &y, &config);
 **Use for**: Part-to-whole over continuous axis
 
 ```rust
-let config = AreaConfig::new().stacked(true);
-let areas = compute_stacked_area(&x, &series, &config);
+use ruviz::plots::continuous::{StackBaseline, StackPlotConfig, compute_stack};
+
+let config = StackPlotConfig::new().baseline(StackBaseline::Zero);
+let areas = compute_stack(&x, &series, config.baseline);
 ```
 
 ---
@@ -337,14 +346,14 @@ let areas = compute_stacked_area(&x, &series, &config);
 **Use for**: 2D density visualization, level curves
 
 ```rust
-use ruviz::plots::continuous::{ContourConfig, compute_contour};
+use ruviz::plots::continuous::{ContourConfig, compute_contour_plot};
 
 let config = ContourConfig::new()
-    .levels(10)
+    .n_levels(10)
     .filled(true);
 
-let contour = compute_contour(&z_data, x_range, y_range, &config);
-// contour.level_paths contains paths for each contour level
+let contour = compute_contour_plot(&x, &y, &z_data, &config);
+// contour.lines contains contour segments for each level
 ```
 
 ### Hexbin Plots
@@ -352,14 +361,14 @@ let contour = compute_contour(&z_data, x_range, y_range, &config);
 **Use for**: Large scatter datasets, 2D histogram with hexagonal bins
 
 ```rust
-use ruviz::plots::continuous::{HexbinConfig, HexbinReduce, compute_hexbin};
+use ruviz::plots::continuous::{HexbinConfig, ReduceFunction, compute_hexbin};
 
 let config = HexbinConfig::new()
     .gridsize(20)
-    .reduce(HexbinReduce::Count);  // or Mean, Sum, Max, Min
+    .reduce_fn(ReduceFunction::Count);  // or Mean, Sum, Max, Min, Std
 
-let hexbin = compute_hexbin(&x, &y, &config);
-// hexbin.hexagons contains bin positions and values
+let hexbin = compute_hexbin(&x, &y, None, &config);
+// hexbin.bins contains bin positions and aggregated values
 ```
 
 ---
@@ -373,19 +382,20 @@ let hexbin = compute_hexbin(&x, &y, &config);
 ```rust
 use ruviz::plots::error::{ErrorBarConfig, ErrorValues, compute_error_bars};
 
-// Symmetric errors
 let config = ErrorBarConfig::new()
     .cap_size(5.0)
     .line_width(1.5);
 
-let errors = ErrorValues::Symmetric(vec![0.5, 0.3, 0.4, 0.6]);
-let bars = compute_error_bars(&x, &y, &errors, &config);
+// Geometry helpers take optional x/y error values directly.
+let y_errors = ErrorValues::symmetric(vec![0.5, 0.3, 0.4, 0.6]);
+let bars = compute_error_bars(&x, &y, Some(&y_errors), None);
 
 // Asymmetric errors
-let errors = ErrorValues::Asymmetric {
-    lower: vec![0.3, 0.2, 0.3, 0.4],
-    upper: vec![0.5, 0.4, 0.5, 0.6],
-};
+let x_errors = ErrorValues::asymmetric(
+    vec![0.3, 0.2, 0.3, 0.4],
+    vec![0.5, 0.4, 0.5, 0.6],
+);
+let bars_with_xy = compute_error_bars(&x, &y, Some(&y_errors), Some(&x_errors));
 ```
 
 ---
@@ -397,14 +407,14 @@ let errors = ErrorValues::Asymmetric {
 **Use for**: Discrete data, histogram outlines, signal processing
 
 ```rust
-use ruviz::plots::discrete::{StepConfig, StepMode, compute_step};
+use ruviz::plots::discrete::{StepConfig, StepWhere, step_line};
 
 let config = StepConfig::new()
-    .mode(StepMode::Pre)  // or Post, Mid
+    .where_step(StepWhere::Pre)  // or Post, Mid
     .fill(false);
 
-let step = compute_step(&x, &y, &config);
-// step.vertices contains step function coordinates
+let step = step_line(&x, &y, config.where_step);
+// step contains the rendered step vertices
 ```
 
 ### Stem Plots (Lollipop Charts)
@@ -412,14 +422,14 @@ let step = compute_step(&x, &y, &config);
 **Use for**: Discrete sequences, emphasizing individual values
 
 ```rust
-use ruviz::plots::discrete::{StemConfig, compute_stem};
+use ruviz::plots::discrete::{StemConfig, compute_stems};
 
 let config = StemConfig::new()
     .marker_size(6.0)
     .baseline(0.0);
 
-let stem = compute_stem(&x, &y, &config);
-// stem.lines and stem.markers for rendering
+let stem = compute_stems(&x, &y, &config);
+// stem contains one StemElement per sample
 ```
 
 ---
@@ -431,15 +441,15 @@ let stem = compute_stem(&x, &y, &config);
 **Use for**: Scatter with fitted regression line and confidence interval
 
 ```rust
-use ruviz::plots::regression::{RegressionConfig, compute_regression};
+use ruviz::plots::regression::{RegPlotConfig, compute_regplot};
 
-let config = RegressionConfig::new()
-    .order(1)  // Linear (1) or polynomial (2, 3, ...)
-    .ci(0.95)  // 95% confidence interval
-    .scatter(true);
+let config = RegPlotConfig::new()
+    .order(1)             // Linear (1) or polynomial (2, 3, ...)
+    .ci(Some(95.0))       // 95% confidence interval
+    .scatter_size(5.0);
 
-let reg = compute_regression(&x, &y, &config);
-// reg.fit_line, reg.ci_lower, reg.ci_upper, reg.scatter_points
+let reg = compute_regplot(&x, &y, &config);
+// reg.line_x / reg.line_y and optional reg.ci_lower / reg.ci_upper
 ```
 
 ### Residual Plot
@@ -447,13 +457,13 @@ let reg = compute_regression(&x, &y, &config);
 **Use for**: Regression diagnostics, checking model fit
 
 ```rust
-use ruviz::plots::regression::{ResidualConfig, compute_residuals};
+use ruviz::plots::regression::{ResidPlotConfig, compute_residplot};
 
-let config = ResidualConfig::new()
+let config = ResidPlotConfig::new()
     .lowess(true);  // Add LOWESS smoothing line
 
-let resid = compute_residuals(&x, &y, &config);
-// resid.residuals contains (x, residual) points
+let resid = compute_residplot(&x, &y, &config);
+// resid.x contains fitted values and resid.residuals contains the residuals
 ```
 
 ---
@@ -465,17 +475,18 @@ let resid = compute_residuals(&x, &y, &config);
 **Use for**: Circular data, angular measurements, wind roses
 
 ```rust
-use ruviz::plots::polar::{PolarConfig, compute_polar};
+use ruviz::plots::polar::{PolarPlotConfig, compute_polar_plot};
 
 let theta = vec![0.0, PI/4.0, PI/2.0, PI, 3.0*PI/2.0];  // Angles in radians
 let r = vec![1.0, 2.0, 1.5, 2.5, 1.0];  // Radii
 
-let config = PolarConfig::new()
-    .direction(PolarDirection::CounterClockwise)
-    .zero_location(ZeroLocation::East);
+let config = PolarPlotConfig::new()
+    .theta_offset(std::f64::consts::FRAC_PI_2)
+    .show_theta_labels(true)
+    .show_r_labels(true);
 
-let polar = compute_polar(&theta, &r, &config);
-// polar.cartesian_points for rendering
+let polar = compute_polar_plot(&r, &theta, &config);
+// polar.points contains the resolved cartesian/polar coordinates
 ```
 
 ### Radar/Spider Charts
@@ -483,44 +494,52 @@ let polar = compute_polar(&theta, &r, &config);
 **Use for**: Multi-variable comparison, performance profiles
 
 ```rust
-use ruviz::plots::polar::{RadarConfig, compute_radar};
+use ruviz::plots::polar::{RadarConfig, compute_radar_chart};
 
 let categories = vec!["Speed", "Power", "Range", "Defense", "Magic"];
-let values = vec![0.8, 0.6, 0.9, 0.7, 0.5];  // Normalized 0-1
+let values = vec![vec![0.8, 0.6, 0.9, 0.7, 0.5]];  // One radar series
 
 let config = RadarConfig::new()
+    .labels(categories.into_iter().map(String::from).collect())
     .fill(true)
     .fill_alpha(0.3);
 
-let radar = compute_radar(&values, &categories, &config);
-// radar.polygon_points for the filled area
+let radar = compute_radar_chart(&values, &config);
+// radar.series contains one polygon/marker set per input series
 ```
 
 ---
 
 ## Composite Plots
 
-### Joint Plots
+### Joint Plot Helpers
 
-**Use for**: Bivariate distribution with marginal distributions
+**Use for**: Joint-plot style layout and marginal histogram helpers
 
 ```rust
-use ruviz::plots::composite::{JointConfig, JointKind, compute_joint};
+use ruviz::plots::composite::{
+    JointKind, JointPlotConfig, compute_marginal_histogram, joint_plot_layout,
+};
 
-let config = JointConfig::new()
-    .kind(JointKind::Scatter)  // or Hex, KDE
-    .marginal(MarginalKind::Histogram);  // or KDE, Box
+let config = JointPlotConfig::new()
+    .kind(JointKind::Hex)
+    .marginal_hist(true)
+    .marginal_kde(false);
 
-let joint = compute_joint(&x, &y, &config);
-// joint.center, joint.marginal_x, joint.marginal_y
+let layout = joint_plot_layout(config.marginal_ratio);
+let x_hist = compute_marginal_histogram(&x, config.bins);
+let y_hist = compute_marginal_histogram(&y, config.bins);
+// layout plus x_hist / y_hist can be used to assemble a joint-plot style figure
 ```
 
-### Pair Plots
+### Pair Plot Helpers
 
-**Use for**: Multi-variable exploration, scatterplot matrix
+**Use for**: Scatterplot-matrix layout and labeling helpers
 
 ```rust
-use ruviz::plots::composite::{PairConfig, compute_pairplot};
+use ruviz::plots::composite::{
+    DiagKind, OffDiagKind, PairPlotConfig, cell_variable_names, compute_pairplot_layout,
+};
 
 let data = vec![
     vec![1.0, 2.0, 3.0],  // Variable 1
@@ -528,12 +547,15 @@ let data = vec![
     vec![7.0, 8.0, 9.0],  // Variable 3
 ];
 
-let config = PairConfig::new()
-    .diag(DiagKind::Histogram)  // or KDE
-    .corner(false);  // Show full matrix or just lower triangle
+let config = PairPlotConfig::new()
+    .diag_kind(DiagKind::Hist)
+    .off_diag_kind(OffDiagKind::Scatter)
+    .lower_only()
+    .vars(vec!["x".into(), "y".into(), "z".into()]);
 
-let pair = compute_pairplot(&data, &config);
-// pair.panels[i][j] for each subplot
+let pair = compute_pairplot_layout(data.len(), &config);
+let first_cell = &pair.cells[0];
+let (x_name, y_name) = cell_variable_names(first_cell, &config.vars);
 ```
 
 ---
@@ -547,11 +569,14 @@ let pair = compute_pairplot(&data, &config);
 ```rust
 use ruviz::plots::vector::{QuiverConfig, QuiverPivot, compute_quiver};
 
-let config = QuiverConfig::new()
+let mut config = QuiverConfig::new()
     .scale(1.0)
-    .pivot(QuiverPivot::Tail)  // or Middle, Tip
-    .headwidth(3.0)
-    .headlength(5.0);
+    .width(1.5)
+    .pivot(QuiverPivot::Tail)
+    .color_by_magnitude(true);
+
+config.headwidth = 0.25;
+config.headlength = 0.35;
 
 let quiver = compute_quiver(&x, &y, &u, &v, &config);
 // quiver.arrows contains arrow geometries
@@ -575,7 +600,7 @@ let linkage_result = linkage(&distances, LinkageMethod::Single);
 
 let config = DendrogramConfig::new()
     .orientation(DendrogramOrientation::Top)
-    .color_threshold(Some(5.0))
+    .color_threshold(5.0)
     .labels(sample_labels);
 
 let dendro = compute_dendrogram(&linkage_result, &config);
@@ -590,23 +615,26 @@ let dendro = compute_dendrogram(&linkage_result, &config);
 Default rendering is optimal. No special configuration needed.
 
 ### Medium Datasets (1K - 100K points)
-Parallel features automatically optimize rendering.
+For non-reactive plots, the `parallel` feature can speed up the in-memory
+`render()` path.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["parallel"] }
+ruviz = { version = "0.1.4", features = ["parallel"] }
 ```
 
-### Large Datasets (100K - 1M points)
-Use SIMD optimization and consider downsampling.
+### Large Datasets (20K - 100K points)
+Use `parallel` and `simd` for heavier in-memory rendering workloads, and
+consider downsampling where visual density is already saturated.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["parallel", "simd"] }
+ruviz = { version = "0.1.4", features = ["parallel", "simd"] }
 ```
 
-### Very Large Datasets (> 1M points)
-DataShader-style aggregation automatically activates for density-based plots.
+### Very Large Datasets (> 100K points)
+DataShader-style aggregation activates above `100_000` total points. The exact
+`render()` vs `save()` behavior is documented in [Performance](08_performance.md).
 
 ---
 
@@ -636,8 +664,8 @@ DataShader-style aggregation automatically activates for density-based plots.
 | Regression | Regplot | Fitted line + CI |
 | Polar | Polar | Circular coordinates |
 | Polar | Radar | Multi-axis radial |
-| Composite | Joint | Bivariate + marginals |
-| Composite | Pair | Scatterplot matrix |
+| Composite | Joint helpers | Bivariate layout + marginals |
+| Composite | Pair helpers | Scatterplot-matrix layout |
 | Vector | Quiver | Vector fields |
 | Hierarchical | Dendrogram | Clustering trees |
 

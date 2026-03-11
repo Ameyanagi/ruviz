@@ -1,30 +1,35 @@
-//! Animation recording API
+//! Animation recording API.
 //!
-//! Provides the main `record()` function and related utilities for
-//! creating animated plots.
+//! Prefer the `record!` macro for new code. This module still contains the
+//! deprecated `record_*` compatibility wrappers and the shared implementation
+//! behind the macro.
 //!
 // Allow deprecated usage within this module - it contains backward-compatible
 // wrapper functions that internally use deprecated APIs
 #![allow(deprecated)]
 //!
-//! # Simplified API
+//! # Recommended API
 //!
-//! The simplified API reduces boilerplate for common animation tasks:
+//! Use the `record!` macro for common animation tasks:
 //!
 //! ```rust,ignore
-//! use ruviz::animation::{record_simple, DurationExt};
+//! use ruviz::prelude::*;
+//! use ruviz::record;
 //!
 //! // Record 60 frames with just time
-//! record_simple("out.gif", 60, |t| {
+//! record!("out.gif", 60, |t| {
 //!     let x = t.lerp_over(0.0, 10.0, 2.0);
 //!     Plot::new().scatter(&[x], &[0.0])
 //! })?;
 //!
 //! // Or use duration syntax
-//! record_simple("out.gif", 2.0.secs(), |t| {
+//! record!("out.gif", 2 secs, |t| {
 //!     Plot::new().line(&[0.0, t.time], &[0.0, t.time])
 //! })?;
 //! ```
+//!
+//! The deprecated `record()`, `record_duration()`, and `record_simple()` helpers
+//! remain available for older callers.
 
 use std::ops::Range;
 use std::path::Path;
@@ -753,16 +758,17 @@ where
 // Reactive Plot Recording
 // ============================================================================
 
-/// Record a reactive plot to an animation file.
+/// Record a pre-built plot to an animation file.
 ///
 /// Unlike `record_simple` which creates a new Plot per frame via closure,
-/// this function takes a pre-built Plot and renders it at each frame time.
-/// Reactive data (Signal/Observable) in the plot is resolved at each frame.
+/// this function reuses the same Plot for every frame. At the moment,
+/// `Plot::render_at()` behaves the same as `render()`, so time-varying
+/// signal resolution is not wired through this path yet.
 ///
 /// # Arguments
 ///
 /// * `path` - Output file path (format detected from extension)
-/// * `plot` - The plot to record (can contain reactive data)
+/// * `plot` - The plot to record
 /// * `duration` - Total animation duration in seconds
 /// * `fps` - Frames per second
 ///
@@ -770,17 +776,16 @@ where
 ///
 /// ```rust,ignore
 /// use ruviz::prelude::*;
-/// use ruviz::animation::{record_plot, signal};
+/// use ruviz::animation::record_plot;
 ///
-/// // Create reactive plot ONCE
-/// let y_signal = signal::of(|t| (0..100).map(|i| (i as f64 * 0.1 + t).sin()).collect());
 /// let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
+/// let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 ///
 /// let plot = Plot::new()
-///     .line(&x, y_signal)
-///     .title("Reactive Wave");
+///     .line(&x, &y)
+///     .title("Reusable Plot");
 ///
-/// // Record - plot structure unchanged, only data resolved each frame
+/// // Record without rebuilding the plot each frame
 /// record_plot("wave.gif", &plot, 2.0, 30)?;
 /// ```
 pub fn record_plot<P: AsRef<Path>>(path: P, plot: &Plot, duration: f64, fps: u32) -> Result<()> {

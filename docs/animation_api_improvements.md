@@ -1,5 +1,10 @@
 # Animation API Improvement Suggestions
 
+This document is historical design context from before the current `record!`
+macro-based animation API landed. Several suggestions below have since been
+implemented. For current usage, prefer `record!` and see
+`docs/animation_migration_guide.md`.
+
 ## Comparison: Makie.jl vs ruviz
 
 ### Makie.jl Approach (Reference)
@@ -31,9 +36,11 @@ end
 
 ---
 
-## Current ruviz API Pain Points
+## Historical ruviz API Pain Points
 
 ### Problem 1: Too Many `record*()` Variants
+
+This section describes the pre-`record!` API surface.
 
 We have **6 functions** for recording:
 ```rust

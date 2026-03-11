@@ -1,464 +1,237 @@
 # Backend Selection Guide
 
-ruviz provides multiple rendering backends optimized for different use cases. This guide helps you choose the right backend for your needs.
+This guide describes the backend-related APIs exactly as they work in the
+current codebase.
 
-## TL;DR - Quick Decision
+## TL;DR
 
-| Your Situation | Use This |
-|----------------|----------|
-| Learning ruviz, small datasets | **Default** - just use ruviz, nothing extra |
-| 10K-100K points | **Parallel** - add `features = ["parallel"]` |
-| 100K-1M points | **Parallel + SIMD** - add `features = ["parallel", "simd"]` |
-| >1M points | **DataShader** - automatically enabled for large data |
-| Real-time/interactive | **GPU** - add `features = ["gpu", "interactive"]` |
-| Memory constrained | **Pooled** - optimizes memory usage |
+| Goal | What to use today |
+|------|-------------------|
+| Small or medium PNG export | `Plot::save()` with default settings |
+| In-memory render with CPU parallelism | `Plot::render()` plus `features = ["parallel"]` |
+| SIMD acceleration | `features = ["parallel", "simd"]` and use `render()` |
+| Very large datasets | Let DataShader activate automatically above `100_000` points |
+| GPU-accelerated PNG export | Enable `gpu` and call `.gpu(true)` |
+| Interactive window | Enable `interactive` or `interactive-gpu` and use `show_interactive()` |
+| Lower allocation pressure | `.with_memory_pooling(true)` |
 
-## Available Backends
+## Important Distinction
 
-### 1. Default (Skia) Backend
+There are two separate concepts in the current implementation:
 
-**What it is**: CPU-based rendering using tiny-skia
+1. **Stored backend selection**
+   - `.backend(...)`
+   - `.auto_optimize()`
+   - `.get_backend_name()`
 
-**When to use**:
-- Getting started with ruviz
-- Small to medium datasets (<10K points)
-- Simple plots without performance requirements
-- When compile time matters
+2. **Actual execution path**
+   - `render()`
+   - `save()`
 
-**Pros**:
-- ✅ Fast compilation
-- ✅ No extra dependencies
-- ✅ Always available
-- ✅ Predictable behavior
+The stored backend selection is metadata today. It is visible through
+`get_backend_name()`, but the current `render()` and `save()` implementations do
+not directly dispatch on `self.render.backend`.
 
-**Cons**:
-- ❌ Slower for large datasets
-- ❌ Single-threaded
+### What `.auto_optimize()` does today
 
-**How to use**:
+`.auto_optimize()` stores a backend choice based on total point count:
+
+- `< 1_000` points: `Skia`
+- `1_000..100_000`: `Parallel` if the `parallel` feature is enabled, otherwise `Skia`
+- `>= 100_000`: `GPU` if the `gpu` feature is enabled, otherwise `DataShader`
+
+If you set `.backend(...)` first, `.auto_optimize()` keeps that explicit choice.
+
 ```rust
-// Nothing special needed - this is the default!
-Plot::new()
+use ruviz::core::plot::BackendType;
+use ruviz::prelude::*;
+
+let x = vec![0.0, 1.0, 2.0];
+let y = vec![0.0, 1.0, 4.0];
+
+let plot = Plot::new()
+    .backend(BackendType::DataShader)
     .line(&x, &y)
-    .save("plot.png")?;
+    .end_series();
+
+assert_eq!(plot.get_backend_name(), "datashader");
 ```
 
-**Performance**: ~5ms for 1K points, ~18ms for 10K points
+## What `render()` actually does
 
----
+`render()` returns an in-memory `Image` and currently chooses its path like this:
 
-### 2. Parallel Backend
+- Above `100_000` points: DataShader
+- Otherwise, if the `parallel` feature is enabled and the plot is not reactive:
+  - parallel rendering is used when `ParallelRenderer::should_use_parallel(...)` returns `true`
+- Otherwise: CPU/tiny-skia rendering
 
-**What it is**: Multi-threaded rendering using rayon
+The default parallel renderer activates when either:
 
-**When to use**:
-- 10K-100K data points
-- Multiple data series
-- Multi-core system available
-- Performance matters more than compile time
+- the series count is at least `2`, or
+- total points exceed `20_000` (default chunk size `10_000 * 2`)
 
-**Pros**:
-- ✅ 2-4x faster for suitable workloads
-- ✅ Scales with CPU cores
-- ✅ No visual difference from default
-- ✅ Automatic work distribution
+`parallel_threshold(...)` only adjusts the **series-count** threshold. It does
+not change the chunk-size path.
 
-**Cons**:
-- ❌ +3s compile time
-- ❌ Slight overhead for small datasets
-- ❌ Requires rayon dependency
+### Parallel render example
 
-**How to use**:
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["parallel"] }
-```
-
-```rust
-// Automatically uses parallel backend when beneficial
-Plot::new()
-    .line(&x, &y)  // Parallel processing for large data
-    .save("plot.png")?;
-```
-
-**Performance**: ~85ms for 100K points (vs ~300ms single-threaded)
-
-**Configuration**:
-```rust
-// Control parallelism (advanced)
-Plot::new()
-    .parallel_threads(8)  // Limit to 8 threads
-    .line(&x, &y)
-    .save("plot.png")?;
-```
-
----
-
-### 3. SIMD Backend
-
-**What it is**: Vectorized coordinate transformations
-
-**When to use**:
-- >100K data points
-- Modern CPU with SIMD support
-- Maximum performance needed
-- Scientific computing workloads
-
-**Pros**:
-- ✅ 2-4x faster coordinate transforms
-- ✅ Low memory overhead
-- ✅ Works with parallel backend
-- ✅ Minimal compile time impact
-
-**Cons**:
-- ❌ Requires CPU SIMD support
-- ❌ Complex to debug if issues arise
-- ❌ Benefit only for large datasets
-
-**How to use**:
-```toml
-[dependencies]
-ruviz = { version = "0.1", features = ["parallel", "simd"] }
-```
-
-```rust
-// SIMD used automatically for coordinate transforms
-Plot::new()
-    .line(&huge_x, &huge_y)  // 100K+ points
-    .save("plot.png")?;
-```
-
-**Performance**: ~720ms for 1M points (vs ~1.5s without SIMD)
-
-**Requirements**:
-- x86_64 CPU with SSE2/AVX (most modern CPUs)
-- ARM CPU with NEON (most modern ARM CPUs)
-
----
-
-### 4. GPU Backend (Experimental)
-
-**What it is**: GPU-accelerated rendering using wgpu
-
-**When to use**:
-- Real-time plotting (animations, live data)
-- Interactive plots with zoom/pan
-- Very large datasets with high frame rates
-- When you have a discrete GPU
-
-**Pros**:
-- ✅ Extremely fast for real-time rendering
-- ✅ Enables smooth interactions
-- ✅ Can handle millions of points at 60 FPS
-- ✅ Offloads work from CPU
-
-**Cons**:
-- ❌ +30s compile time
-- ❌ Requires GPU and drivers
-- ❌ Larger binary size (+10MB)
-- ❌ Initialization overhead (~100ms)
-- ❌ Experimental - API may change
-
-**How to use**:
-```toml
-[dependencies]
-ruviz = { version = "0.1", features = ["gpu", "interactive"] }
+ruviz = { version = "0.1.4", features = ["parallel"] }
 ```
 
 ```rust
 use ruviz::prelude::*;
 
-// Static plot with GPU acceleration
-Plot::new()
-    .gpu_accelerated(true)
+let x: Vec<f64> = (0..50_000).map(|i| i as f64 * 0.001).collect();
+let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
+
+let image = Plot::new()
+    .parallel_threshold(4)
     .line(&x, &y)
-    .save("plot.png")?;
+    .render()?;
 
-// Interactive plot (requires winit)
-let window = InteractiveWindow::new()
-    .title("Interactive Plot")
-    .build()?;
-
-window.plot()
-    .line(&x, &y)
-    .show()?;  // Opens window with zoom/pan
+println!("Rendered {}x{}", image.width(), image.height());
 ```
 
-**Performance**: 60 FPS for 1M+ points with interactions
+### SIMD note
 
-**Requirements**:
-- GPU with Vulkan/Metal/DirectX support
-- GPU drivers installed
-- For interactive: Display server running
+The `simd` feature is used inside the parallel renderer. In practice that means
+it helps the `render()` path when parallel rendering is active.
 
----
-
-### 5. DataShader Backend
-
-**What it is**: Canvas-based aggregation for extreme datasets
-
-**When to use**:
-- >1M data points
-- 10M-100M+ point datasets
-- When individual points aren't visible
-- Heatmap-style visualizations
-
-**Pros**:
-- ✅ Handles 100M+ points efficiently
-- ✅ Constant memory usage
-- ✅ Fast rendering (<2s for 100M points)
-- ✅ Automatically enabled when needed
-
-**Cons**:
-- ❌ Loses individual point detail
-- ❌ Aggregation introduces artifacts
-- ❌ Not suitable for sparse data
-
-**How to use**:
-```rust
-// Automatically uses DataShader for very large data
-let huge_x: Vec<f64> = (0..10_000_000).map(|i| i as f64).collect();
-let huge_y: Vec<f64> = huge_x.iter().map(|&x| x.sin()).collect();
-
-Plot::new()
-    .line(&huge_x, &huge_y)  // Auto DataShader for 10M points
-    .save("huge_plot.png")?;
-
-// Or explicitly enable
-Plot::new()
-    .datashader(true)
-    .line(&x, &y)
-    .save("plot.png")?;
-```
-
-**Performance**: ~1.8s for 100M points
-
-**Configuration**:
-```rust
-// Control aggregation resolution
-Plot::new()
-    .datashader_resolution(2048, 1536)  // Canvas size
-    .line(&huge_x, &huge_y)
-    .save("plot.png")?;
-```
-
----
-
-### 6. Pooled Backend
-
-**What it is**: Memory-pooled rendering for constrained environments
-
-**When to use**:
-- Memory-limited systems (<2GB RAM)
-- Embedded systems
-- When creating many plots
-- Memory profiling shows high allocation
-
-**Pros**:
-- ✅ Minimal memory overhead
-- ✅ Reduces allocations
-- ✅ Good for batch processing
-- ✅ Predictable memory usage
-
-**Cons**:
-- ❌ Slightly slower than default
-- ❌ Requires manual enablement
-- ❌ Complexity for small benefit
-
-**How to use**:
-```rust
-// Enable pooled rendering
-Plot::new()
-    .enable_pooled_rendering(true)
-    .line(&x, &y)
-    .save("plot.png")?;
-```
-
-**Performance**: Similar to default, lower memory usage
-
----
-
-## Decision Flowchart
-
-```
-┌─────────────────────────────────────────────────────┐
-│ Start: What are you trying to do?                  │
-└─────────────────────────────────────────────────────┘
-                        │
-                        ▼
-         ┌──────────────────────────────┐
-         │ How many data points?        │
-         └──────────────────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
-    < 10K          10K-100K         100K-1M         >1M
-      │               │               │              │
-      ▼               ▼               ▼              ▼
-  Default         Parallel      Parallel+SIMD   DataShader
-
-                        │
-                        ▼
-         ┌──────────────────────────────┐
-         │ Need interactivity?          │
-         └──────────────────────────────┘
-                        │
-                ┌───────┴───────┐
-                ▼               ▼
-              Yes              No
-                │               │
-                ▼               ▼
-         GPU+Interactive    Continue above
-
-                        │
-                        ▼
-         ┌──────────────────────────────┐
-         │ Memory constrained?          │
-         └──────────────────────────────┘
-                        │
-                ┌───────┴───────┐
-                ▼               ▼
-              Yes              No
-                │               │
-                ▼               ▼
-            Pooled       Use performance choice
-```
-
-## Combining Backends
-
-Some backends work together:
-
-### Parallel + SIMD (Recommended for large data)
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["parallel", "simd"] }
+ruviz = { version = "0.1.4", features = ["parallel", "simd"] }
 ```
-Best for: 100K-1M points, multi-core CPU with SIMD
 
-### Parallel + Pooled (Memory-efficient performance)
+## What `save()` actually does
+
+`save()` renders and writes a PNG file. Its current path is different from
+`render()`:
+
+- Above `100_000` points: DataShader branch
+- Otherwise, if `gpu(true)` is enabled and the plot has at least `5_000` points:
+  - GPU rendering path
+- Otherwise: CPU/tiny-skia rendering
+
+Two important details:
+
+- `save()` does **not** currently call the dedicated `render_with_parallel()` path
+- The DataShader branch in `save()` has explicit fast paths for line, scatter,
+  and histogram series; unsupported series fall back to normal rendering inside
+  that branch
+
+## DataShader
+
+DataShader activates automatically above `100_000` total points.
+
 ```rust
-Plot::new()
-    .enable_pooled_rendering(true)
-    // Parallel automatically used when beneficial
-    .line(&x, &y)
-    .save("plot.png")?;
-```
-Best for: Large datasets on memory-limited systems
+use ruviz::prelude::*;
 
-### GPU + Interactive (Real-time visualization)
+let points = 250_000;
+let x: Vec<f64> = (0..points).map(|i| i as f64 * 0.001).collect();
+let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
+
+// Both render() and save() will switch to DataShader above 100_000 points.
+Plot::new()
+    .line(&x, &y)
+    .save("datashader_plot.png")?;
+```
+
+## GPU
+
+GPU support is opt-in and requires the `gpu` feature (or `interactive-gpu`,
+which includes it).
+
+Calling `.gpu(true)` does two things:
+
+- it stores `BackendType::GPU` on the plot
+- it enables the GPU path in `save()` for plots with at least `5_000` points
+
+If GPU initialization fails during `save()`, the code logs a warning and falls
+back to CPU rendering.
+
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["gpu", "interactive"] }
+ruviz = { version = "0.1.4", features = ["gpu"] }
 ```
-Best for: Interactive dashboards, live data visualization
-
-## Backend Comparison Table
-
-| Backend | Compile Time | Memory | Speed (100K) | Best For |
-|---------|--------------|--------|--------------|----------|
-| Default | Fast (~5s) | Low | 300ms | Learning, small data |
-| Parallel | Medium (~8s) | Medium | 85ms | Medium data, multi-core |
-| SIMD | Medium (~9s) | Low | 60ms | Large data, modern CPU |
-| Parallel+SIMD | Medium (~12s) | Medium | 40ms | Large data, performance |
-| GPU | Slow (~35s) | GPU mem | <16ms | Real-time, interactive |
-| DataShader | Fast (~5s) | Low | 200ms* | Extreme data (>1M) |
-| Pooled | Fast (~5s) | Very Low | 320ms | Memory constrained |
-
-*For 100K points. DataShader excels at 10M+ points.
-
-## Auto-Selection (Coming in v0.2)
-
-Future versions will automatically select the best backend:
 
 ```rust
-// v0.2 feature
-Plot::new()
-    .auto_optimize()  // Chooses based on data size and system
-    .line(&x, &y)
-    .save("plot.png")?;
+use ruviz::prelude::*;
 
-// With logging
-Plot::new()
-    .auto_optimize_verbose(true)
-    .line(&x, &y)
-    .save("plot.png")?;
+let x: Vec<f64> = (0..20_000).map(|i| i as f64 * 0.001).collect();
+let y: Vec<f64> = x.iter().map(|v| v.cos()).collect();
 
-// Output: [INFO] Selected: Parallel (reason: 85K points benefits from parallelism)
+Plot::new()
+    .gpu(true)
+    .line(&x, &y)
+    .save("gpu_plot.png")?;
 ```
 
-## Performance Testing
+`render()` does not currently use this GPU path.
 
-Test which backend works best for your data:
+## Interactive windows
+
+Interactive support is behind `interactive` or `interactive-gpu`.
+
+The key APIs are:
+
+- `show_interactive(plot)` - convenience async function
+- `InteractiveWindowBuilder::build(plot)` - async builder
+- `InteractiveWindow::run(plot)` - blocking event loop after the window is built
+
+Because the builder and convenience function are async, your application must
+provide an async runtime. `ruviz` does **not** add `tokio` as a normal
+dependency for you.
+
+### Self-contained interactive example
+
+```toml
+[dependencies]
+ruviz = { version = "0.1.4", features = ["interactive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+```
 
 ```rust
-use std::time::Instant;
+use ruviz::prelude::*;
 
-let start = Instant::now();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
+    let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
+
+    let plot = Plot::new()
+        .line(&x, &y)
+        .title("Interactive Plot")
+        .end_series();
+
+    show_interactive(plot).await?;
+    Ok(())
+}
+```
+
+For GPU-backed interactive work, switch the feature flag to `interactive-gpu`
+and enable `.gpu(true)` on the plot before `end_series()`.
+
+## Memory pooling
+
+Memory pooling is separate from backend selection and is always opt-in:
+
+```rust
+use ruviz::prelude::*;
+
 Plot::new()
+    .with_memory_pooling(true)
     .line(&x, &y)
-    .save("plot.png")?;
-println!("Rendered in {:?}", start.elapsed());
+    .save("pooled_plot.png")?;
 ```
 
-Run with different features enabled and compare times.
+## Recommendations
 
-## Troubleshooting
-
-### "Parallel rendering is slower"
-- You have <10K points (overhead exceeds benefit)
-- Single-core CPU
-- Try default backend instead
-
-### "GPU initialization failed"
-- No GPU or drivers not installed
-- Falls back to parallel backend automatically
-- Check GPU with: `cargo run --example gpu_debug_test`
-
-### "Out of memory"
-- Use DataShader for very large data
-- Enable pooled rendering
-- Reduce data resolution
-
-### "Compilation takes forever"
-- Disable GPU feature if not needed
-- Use `default-features = false` for minimal build
-- Consider using default backend only
-
-## Recommendations by Use Case
-
-### Scientific Computing
-```toml
-ruviz = { version = "0.1", features = ["parallel", "simd", "ndarray_support"] }
-```
-
-### Data Analysis
-```toml
-ruviz = { version = "0.1", features = ["parallel", "polars_support"] }
-```
-
-### Web Server (Static Plots)
-```toml
-ruviz = { version = "0.1", default-features = false }
-```
-
-### Interactive Dashboard
-```toml
-ruviz = { version = "0.1", features = ["gpu", "interactive"] }
-```
-
-### Embedded Systems
-```toml
-ruviz = { version = "0.1", default-features = false }
-```
-
-## Further Reading
-
-- [Performance Guide](../performance/PERFORMANCE.md) - Detailed benchmarks
-- [API Documentation](https://docs.rs/ruviz) - Complete reference
-- [Examples](../../examples/) - Working code samples
-
-## Questions?
-
-If you're unsure which backend to use, start with **default** (no features) and only add features if you measure a performance problem.
-
-> **Remember**: Premature optimization is the root of all evil. Start simple, measure, then optimize if needed.
+- Start with plain `save()` or `render()` before setting backend metadata.
+- If you need faster in-memory rendering, add `parallel` and use `render()`.
+- Add `simd` only alongside `parallel`.
+- Use `.gpu(true)` when you want GPU-assisted PNG export or `interactive-gpu`.
+- Treat `.backend(...)` and `.auto_optimize()` as stored selection helpers, not
+  hard execution guarantees.

@@ -147,11 +147,13 @@ Plot::new()
 
 ```rust
 use ruviz::prelude::*;
-use rand::distributions::{Distribution, Normal};
 
-let normal = Normal::new(100.0, 15.0).unwrap();
-let mut rng = rand::thread_rng();
-let data: Vec<f64> = (0..1000).map(|_| normal.sample(&mut rng)).collect();
+let data: Vec<f64> = (0..1000)
+    .map(|i| {
+        let x = i as f64 * 0.05;
+        100.0 + 15.0 * x.sin() + 5.0 * (x * 0.5).cos()
+    })
+    .collect();
 
 Plot::new()
     .histogram(&data, None)  // Auto bin count
@@ -164,8 +166,7 @@ Plot::new()
 Add to `Cargo.toml`:
 ```toml
 [dependencies]
-ruviz = "0.1"
-rand = "0.8"
+ruviz = "0.1.4"
 ```
 
 ## Customization Basics
@@ -303,7 +304,7 @@ Plot::new()
 Add to `Cargo.toml`:
 ```toml
 [dependencies]
-ruviz = { version = "0.1", features = ["ndarray_support"] }
+ruviz = { version = "0.1.4", features = ["ndarray_support"] }
 ndarray = "0.15"
 ```
 

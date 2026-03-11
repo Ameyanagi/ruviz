@@ -69,7 +69,7 @@ Or with specific features:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.4", features = ["ndarray", "parallel"] }
+ruviz = { version = "0.1.4", features = ["ndarray_support", "parallel"] }
 ```
 
 ## Feature Flags
@@ -99,7 +99,9 @@ ruviz = "0.1.4"  # Includes: ndarray, parallel
 | `interactive` | Interactive plots | Real-time exploration, data brushing |
 | `window` | Window support | Desktop applications |
 | `serde` | Serialization | Save/load plot configurations |
-| `svg` | SVG export | Vector graphics, web publishing |
+| `pdf` | PDF export | Publication-ready vector output |
+
+SVG export is available without an extra feature flag. The legacy `svg` feature remains a no-op compatibility alias.
 
 ### Performance Bundles
 
@@ -128,12 +130,12 @@ ruviz = { version = "0.1.4", features = ["polars_support", "performance"] }
 
 **Publication Quality**:
 ```toml
-ruviz = { version = "0.1.4", features = ["svg", "serde"] }
+ruviz = { version = "0.1.4", features = ["serde", "pdf"] }
 ```
 
 **Real-time Visualization**:
 ```toml
-ruviz = { version = "0.1.4", features = ["gpu", "interactive", "window"] }
+ruviz = { version = "0.1.4", features = ["interactive-gpu"] }
 ```
 
 **Large Datasets**:
@@ -208,9 +210,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
     let start = std::time::Instant::now();
-    Plot::new()
-        .line(&x, &y)  // Automatically uses parallel backend
-        .save("parallel_test.png")?;
+    let _image = Plot::new()
+        .line(&x, &y)
+        .render()?;
 
     println!("✅ Rendered 100K points in {:?}", start.elapsed());
     Ok(())
@@ -302,11 +304,14 @@ ruviz = { version = "0.1.4", default-features = false, features = ["parallel"] }
 
 **Problem**: Out of memory with large datasets
 
-**Solution**: Enable streaming or DataShader backend:
+**Solution**: Save directly; the PNG export path already switches to large-dataset rendering internally:
 ```rust
-// Automatically handled for >1M points
 let x: Vec<f64> = (0..10_000_000).map(|i| i as f64).collect();
-// ruviz auto-selects DataShader backend
+let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
+
+Plot::new()
+    .line(&x, &y)
+    .save("large_dataset.png")?;
 ```
 
 ## Performance Tuning
@@ -330,14 +335,21 @@ codegen-units = 1    # Single codegen unit for max optimization
 
 **CPU cores** (automatic detection):
 ```rust
-// ruviz automatically uses all CPU cores with parallel feature
-// No configuration needed
+// rayon uses the available cores when the parallel render path is selected
+let x = vec![0.0, 1.0, 2.0];
+let y = vec![0.0, 1.0, 4.0];
+
+let _image = Plot::new()
+    .line(&x, &y)
+    .render()?;
 ```
 
-**Memory pooling** (automatic):
+**Memory pooling** (opt-in):
 ```rust
-// ruviz automatically pools memory for repeated operations
-// No configuration needed
+Plot::new()
+    .with_memory_pooling(true)
+    .line(&x, &y)
+    .save("pooled.png")?;
 ```
 
 ## Platform-Specific Notes
@@ -375,16 +387,7 @@ rustup default stable-gnu
 
 ### WebAssembly (WASM)
 
-**Basic support** (experimental):
-```toml
-[dependencies]
-ruviz = { version = "0.1.4", default-features = false }
-```
-
-**Limitations**:
-- No file I/O (use in-memory buffers)
-- No GPU acceleration (CPU rendering only)
-- Limited to basic features
+WASM is not currently supported in the published crate. If web support is a requirement today, use a native build target or track future work in the repository issues.
 
 ## Next Steps
 
@@ -396,8 +399,8 @@ ruviz = { version = "0.1.4", default-features = false }
 
 ## Getting Help
 
-- **Build Issues**: [GitHub Issues](https://github.com/ruviz/ruviz/issues)
-- **Questions**: [GitHub Discussions](https://github.com/ruviz/ruviz/discussions)
+- **Build Issues**: [GitHub Issues](https://github.com/Ameyanagi/ruviz/issues)
+- **Questions**: [GitHub Discussions](https://github.com/Ameyanagi/ruviz/discussions)
 - **Documentation**: [docs.rs/ruviz](https://docs.rs/ruviz)
 
 ---

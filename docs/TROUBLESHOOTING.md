@@ -24,33 +24,34 @@ A: **Yes!** This is "cold start" performance. The time breakdown:
 
 **Q: My 100K point plot is slow**
 
-A: Use `.auto_optimize()` to enable parallel rendering:
+A: Measure the path you actually use. `render()` is the path that can use the parallel renderer:
 ```rust
-Plot::new()
+let _image = Plot::new()
     .line(&x, &y)
-    .auto_optimize()  // Selects best backend automatically
-    .save("plot.png")?;
+    .render()?;
 ```
 
-Expected performance with auto-optimize:
+Expected performance on large datasets:
 - 100K points: ~35ms (2.9x faster than target) ✅
 - 1M points: ~87ms (5.7x faster than target) ✅
 
 **Q: How do I know which backend is being used?**
 
-A: Backend selection is automatic with `.auto_optimize()`:
-- < 1K points → Skia (simple, fast)
-- 1K-100K points → Parallel (multi-threaded)
-- > 100K points → GPU/DataShader (hardware accelerated)
+A: `.auto_optimize()` stores an inferred backend name based on data size:
+- < 1K points → Skia
+- 1,000 to 99,999 points → Parallel when built with the `parallel` feature, otherwise Skia
+- 100,000+ points → GPU when built with the `gpu` feature, otherwise DataShader
 
-You can also manually select:
+The `render()` and `save()` paths still use their own internal heuristics.
+You can also inspect or override the stored backend label:
 ```rust
 use ruviz::core::BackendType;
 
-Plot::new()
+let plot = Plot::new()
     .line(&x, &y)
-    .backend(BackendType::Parallel)
-    .save("plot.png")?;
+    .backend(BackendType::Parallel);
+
+assert_eq!(plot.get_backend_name(), "parallel");
 ```
 
 ### Rendering Issues
@@ -61,25 +62,39 @@ A: ruviz uses system fonts by default. To ensure consistency:
 
 **Option 1: Specify explicit fonts**
 ```rust
+let theme = Theme::builder()
+    .font("Arial")
+    .font_size(14.0)
+    .title_font_size(16.0)
+    .build();
+
 Plot::new()
+    .theme(theme)
     .title("My Plot")
-    .title_font("Arial", 16.0)  // System font
     .save("plot.png")?;
 ```
 
-**Option 2: Use open fonts (auto-downloaded)**
+**Option 2: Use installed open fonts**
 ```rust
+let theme = Theme::builder()
+    .font("Open Sans")
+    .font_size(14.0)
+    .title_font_size(16.0)
+    .build();
+
 Plot::new()
+    .theme(theme)
     .title("My Plot")
-    .title_font("Open Sans", 16.0)  // Downloaded from Google Fonts
     .save("plot.png")?;
 ```
 
-**Option 3: Provide custom TTF**
+**Option 3: Prefer generic families for portability**
 ```rust
+let theme = Theme::builder().font("sans-serif").build();
+
 Plot::new()
+    .theme(theme)
     .title("My Plot")
-    .title_font_file(&Path::new("fonts/MyFont.ttf"), 16.0)
     .save("plot.png")?;
 ```
 
@@ -114,17 +129,16 @@ For Typst text specifically:
 
 **Q: Which backend should I use?**
 
-A: **Always use `.auto_optimize()` unless you have specific requirements.** It automatically selects the optimal backend based on data size:
+A: Start with plain `save()` or `render()`. Use `.auto_optimize()` only when you want the stored backend label for diagnostics:
 
 ```rust
-// Recommended - automatic backend selection
 Plot::new()
     .line(&x, &y)
-    .auto_optimize()
     .save("plot.png")?;
 ```
 
 Backend decision overhead is negligible (< 142µs worst case).
+For guaranteed GPU rendering, enable the `gpu` feature and call `.gpu(true)`.
 
 **Q: Can I reuse a plot object?**
 
@@ -239,25 +253,23 @@ assert_eq!(x.len(), y.len(), "Data vectors must have equal length");
 Plot::new().line(&x, &y).save("plot.png")?;
 ```
 
-### `FontLoadingError`
+### `FontError`
 
 **Cause**: Cannot find or load specified font
 
 **Solution**:
 1. Check font name spelling (case-sensitive)
 2. Ensure font is installed on system
-3. Try open fonts (auto-downloaded from Google Fonts)
-4. Provide custom TTF file path
+3. Try generic families like `sans-serif` or `serif`
+4. Keep font choices consistent across build machines
 
 ```rust
-// If system font fails, try open font
-Plot::new()
-    .title("My Plot")
-    .title_font("Open Sans", 16.0)  // Auto-downloads if not cached
-    .save("plot.png")?;
+let theme = Theme::builder().font("sans-serif").build();
+
+Plot::new().theme(theme).title("My Plot").save("plot.png")?;
 ```
 
-### `RenderingError`
+### `RenderError`
 
 **Cause**: Internal rendering failure (canvas allocation, drawing operations)
 
@@ -287,13 +299,13 @@ Plot::new()
 
 ### Verified Benchmark Results (Week 6)
 
-| Dataset Size | Expected Time | Backend | vs Target |
-|--------------|---------------|---------|-----------|
+| Dataset Size | Expected Time | Backend/Mode | vs Target |
+|--------------|---------------|--------------|-----------|
 | 100 points | 250ms (cold) | Skia | N/A (cold start) |
 | 1K points | 250ms (cold) | Skia | N/A (cold start) |
-| 10K points | 50ms | Skia | Excellent |
-| 100K points | **34.6ms** | Parallel | **2.9x faster** ✅ |
-| 1M points | **87ms** | Parallel/DataShader | **5.7x faster** ✅ |
+| 10K points | 50ms | Auto-optimized | Excellent |
+| 100K points | **34.6ms** | Auto-optimized | **2.9x faster** ✅ |
+| 1M points | **87ms** | Auto-optimized | **5.7x faster** ✅ |
 
 **Cold start**: First plot in application (font init overhead)
 **Warm**: Subsequent plots (fonts cached)
@@ -313,7 +325,7 @@ Backend selection decision time: **< 142µs** (worst case)
 
 ### Performance Best Practices
 
-1. **Always use `.auto_optimize()` for datasets > 1K points**
+1. **Use `render()` for in-memory images and `save()` for PNG export**
 2. **Batch multiple plots in single application** to amortize cold start
 3. **Use appropriate plot types** (histogram faster than scatter for distributions)
 4. **Profile before optimizing** - measure actual performance first
@@ -366,14 +378,14 @@ When reporting performance or rendering issues, please include:
 ### GitHub Issues
 
 Report bugs and request features at:
-https://github.com/ruviz/ruviz/issues
+https://github.com/Ameyanagi/ruviz/issues
 
 ### Performance Issues
 
 For performance problems, also include:
 - Timing measurements (use `std::time::Instant`)
 - System specifications (CPU cores, RAM)
-- Whether `.auto_optimize()` was used
+- Whether you used `render()` or `save()`, and whether `.gpu(true)` was enabled
 
 ## Architecture Notes (for Advanced Users)
 
@@ -388,12 +400,12 @@ ruviz uses a **one-shot rendering API** where every `.save()` call initializes e
 
 **Future work**: Batch rendering API will enable < 10ms per plot after initial warmup.
 
-### Backend Selection Algorithm
+### Stored Backend Metadata
 
-Auto-optimize uses these heuristics:
+`auto_optimize()` stores these inferred backend labels:
 - < 1,000 points → Skia (simple rendering pipeline)
-- 1,000-100,000 points → Parallel (multi-threaded)
-- > 100,000 points → GPU/DataShader (hardware accelerated)
+- 1,000-100,000 points → Parallel when available, otherwise Skia
+- ≥ 100,000 points → GPU when the `gpu` feature is enabled, otherwise DataShader
 
 Thresholds are based on empirical benchmarking across diverse hardware.
 
@@ -416,7 +428,7 @@ A: WASM support is planned but not yet implemented. Follow GitHub issues for upd
 
 **Q: Does ruviz support interactive plots?**
 
-A: Not currently. ruviz focuses on static, publication-quality output. Interactive features are on the roadmap.
+A: Yes, experimentally. Enable the `interactive` feature and start from `examples/basic_interaction.rs` or `show_interactive(plot).await`.
 
 **Q: How does ruviz compare to matplotlib/plotly?**
 
@@ -424,4 +436,4 @@ A: ruviz is **pure Rust**, with 2.9-5.7x faster rendering for large datasets. It
 
 **Q: Can I contribute to ruviz?**
 
-A: Yes! See CONTRIBUTING.md for guidelines. We welcome bug reports, feature requests, and code contributions.
+A: Yes. See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines. We welcome bug reports, feature requests, and code contributions.

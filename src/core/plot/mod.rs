@@ -1117,7 +1117,8 @@ impl Plot {
 
     /// Set the plot title as a reactive signal.
     ///
-    /// Use this for animations where the title changes over time.
+    /// This stores signal-backed text on the plot. Time-aware rendering via
+    /// `render_at()` is still evolving, so this is primarily a data-model API today.
     ///
     /// # Example
     ///
@@ -1126,6 +1127,8 @@ impl Plot {
     /// use ruviz::animation::signal;
     ///
     /// let title_signal = signal::of(|t| format!("Time: {:.2}s", t));
+    /// let x = vec![0.0, 1.0, 2.0];
+    /// let y = vec![0.0, 0.5, 1.0];
     /// let plot = Plot::new()
     ///     .title_signal(title_signal)
     ///     .line(&x, &y);
@@ -3262,7 +3265,15 @@ impl Plot {
         self
     }
 
-    /// Set transparency for the next series
+    /// Compatibility shim for older code paths.
+    ///
+    /// This method is currently a no-op on [`Plot`]. To set transparency on a
+    /// series, call `.alpha(...)` on the returned series builder after adding a
+    /// plot series.
+    #[deprecated(
+        since = "0.1.4",
+        note = "Plot::alpha() is a no-op compatibility shim; call .alpha(...) on the returned series builder instead"
+    )]
     pub fn alpha(self, _alpha: f32) -> Self {
         // This would be handled by the series builder
         // Keeping for API compatibility
@@ -5201,29 +5212,28 @@ impl Plot {
         Ok(renderer.into_image())
     }
 
-    /// Render the plot at a specific animation time.
+    /// Render the plot using the current resolved state.
     ///
-    /// This method resolves all reactive data (Signal/Observable) at the given time
-    /// before rendering. For static plots, this is equivalent to `render()`.
+    /// The `time` argument is currently reserved for future reactive rendering
+    /// support. At the moment this method behaves the same as [`render`](Self::render).
     ///
     /// # Arguments
     ///
-    /// * `time` - The animation time in seconds at which to render
+    /// * `time` - Reserved for future reactive rendering support
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use ruviz::prelude::*;
-    /// use ruviz::animation::signal;
-    ///
-    /// let y_signal = signal::of(|t| (0..10).map(|i| (i as f64 * 0.1 + t).sin()).collect());
     /// let plot = Plot::new()
-    ///     .line(&x, y_signal)
-    ///     .title_signal(signal::of(|t| format!("t={:.2}s", t)));
+    ///     .title("Example")
+    ///     .line(&[0.0, 1.0], &[0.0, 1.0])
+    ///     .end_series();
     ///
-    /// // Render at different times
-    /// let frame_0 = plot.render_at(0.0)?;
-    /// let frame_1 = plot.render_at(1.0)?;
+    /// // Currently equivalent to plot.render()
+    /// let image = plot.render_at(0.0)?;
+    /// # let _ = image;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn render_at(&self, _time: f64) -> Result<Image> {
         // For now, delegate to render() for backward compatibility.
@@ -5244,10 +5254,16 @@ impl Plot {
     /// # Example
     ///
     /// ```rust,ignore
+    /// use ruviz::prelude::*;
+    /// use ruviz::animation::signal;
+    ///
+    /// let x = vec![0.0, 1.0];
+    /// let y = vec![0.0, 1.0];
     /// let static_plot = Plot::new().line(&x, &y);
     /// assert!(!static_plot.is_reactive());
     ///
-    /// let reactive_plot = Plot::new().line(&x, y_signal);
+    /// let title = signal::of(|t| format!("t = {:.1}", t));
+    /// let reactive_plot = Plot::new().title_signal(title).line(&x, &y);
     /// assert!(reactive_plot.is_reactive());
     /// ```
     pub fn is_reactive(&self) -> bool {
@@ -7726,15 +7742,18 @@ impl Plot {
         Ok((x_min, x_max, y_min, y_max))
     }
 
-    /// Automatically optimize backend selection based on data size
+    /// Infer and store a backend label based on data size
     ///
-    /// Selects the most appropriate rendering backend based on dataset characteristics:
+    /// Updates [`get_backend_name`](Self::get_backend_name) metadata based on
+    /// dataset characteristics:
     /// - < 1K points: Skia (simple, fast)
-    /// - 1K-10K points: Parallel (multi-threaded)
-    /// - 10K-100K points: Parallel (optimized)
-    /// - > 100K points: GPU/DataShader (hardware acceleration)
+    /// - 1,000 to 99,999 points: Parallel when available, otherwise Skia
+    /// - 100,000+ points: GPU when available, otherwise DataShader
     ///
     /// If a backend was explicitly set with `.backend()`, that choice is respected.
+    /// The current [`render`](Self::render) and [`save`](Self::save)
+    /// implementations still use their own internal heuristics; calling
+    /// `.auto_optimize()` does not directly switch those execution paths today.
     pub fn auto_optimize(self) -> Self {
         self.auto_optimize_with_extra_points(0)
     }
@@ -7812,18 +7831,25 @@ impl Plot {
         self
     }
 
-    /// Enable GPU acceleration for coordinate transformations
+    /// Enable GPU acceleration for the PNG export path used by [`save`](Self::save).
     ///
-    /// When enabled, large datasets (>5K points) will use GPU compute shaders
-    /// for coordinate transformation, providing significant speedups.
+    /// When enabled, [`save`](Self::save) may use GPU-assisted rendering for
+    /// sufficiently large datasets. [`render`](Self::render) continues to use
+    /// the in-memory CPU/DataShader/parallel paths today.
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let large_x: Vec<f64> = (0..10_000).map(|i| i as f64).collect();
+    /// let large_y: Vec<f64> = large_x.iter().map(|x| x * x).collect();
+    ///
     /// Plot::new()
     ///     .gpu(true)
     ///     .line(&large_x, &large_y)
-    ///     .save("plot.png")?;
+    ///     .save("gpu_plot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Requirements
@@ -9884,7 +9910,7 @@ impl PlotSeriesBuilder {
         self.end_series().save_pdf_with_size(path, size)
     }
 
-    /// Automatically optimize backend selection (fluent API)
+    /// Infer and store a backend label (fluent API)
     /// Note: This ends the current series before optimizing
     pub fn auto_optimize(self) -> Plot {
         self.end_series().auto_optimize()

@@ -599,8 +599,8 @@ For more advanced examples, see:
 
 ## Getting Help
 
-- **Issues**: [GitHub Issues](https://github.com/ruviz/ruviz/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ruviz/ruviz/discussions)
+- **Issues**: [GitHub Issues](https://github.com/Ameyanagi/ruviz/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Ameyanagi/ruviz/discussions)
 - **Examples**: [examples/](../../examples/) directory
 
 ---
