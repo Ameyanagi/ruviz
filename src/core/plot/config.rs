@@ -40,6 +40,16 @@ pub struct TickSides {
 }
 
 impl TickSides {
+    /// Show ticks on no sides.
+    pub const fn none() -> Self {
+        Self {
+            top: false,
+            bottom: false,
+            left: false,
+            right: false,
+        }
+    }
+
     /// Show ticks on all four sides.
     pub const fn all() -> Self {
         Self {

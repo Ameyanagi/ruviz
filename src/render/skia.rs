@@ -910,6 +910,24 @@ impl SkiaRenderer {
         }
     }
 
+    fn x_label_center(plot_area: &LayoutRect, x_value: f64, x_min: f64, x_max: f64) -> f32 {
+        let x_range = x_max - x_min;
+        if x_range.abs() < f64::EPSILON {
+            plot_area.center_x()
+        } else {
+            plot_area.left + ((x_value - x_min) as f32 / x_range as f32) * plot_area.width()
+        }
+    }
+
+    fn y_label_center(plot_area: &LayoutRect, y_value: f64, y_min: f64, y_max: f64) -> f32 {
+        let y_range = y_max - y_min;
+        if y_range.abs() < f64::EPSILON {
+            plot_area.center_y()
+        } else {
+            plot_area.bottom - ((y_value - y_min) as f32 / y_range as f32) * plot_area.height()
+        }
+    }
+
     /// Draw axis lines and ticks
     pub fn draw_axes(
         &mut self,
@@ -1803,6 +1821,7 @@ impl SkiaRenderer {
         color: Color,
         dpi_scale: f32,
     ) -> Result<()> {
+        // Matches the full-frame axis width used by draw_axes/draw_axes_with_config.
         let border_width =
             RenderScale::from_reference_scale(dpi_scale).logical_pixels_to_pixels(1.5);
 
@@ -1915,8 +1934,7 @@ impl SkiaRenderer {
         if show_tick_labels {
             // Draw X-axis tick labels using provided ticks
             for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-                let x_pixel = plot_area.left
-                    + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
+                let x_pixel = Self::x_label_center(plot_area, *tick_value, x_min, x_max);
 
                 let label_snippet = self.generated_label(label_text);
                 let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
@@ -1928,8 +1946,7 @@ impl SkiaRenderer {
 
             // Draw Y-axis tick labels using provided ticks
             for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = plot_area.bottom
-                    - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
 
                 let label_snippet = self.generated_label(label_text);
                 let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
@@ -1989,15 +2006,8 @@ impl SkiaRenderer {
         if show_tick_labels {
             let n_categories = categories.len();
             if n_categories > 0 {
-                let x_range = x_max - x_min;
-
                 for (i, category) in categories.iter().enumerate() {
-                    let x_data = i as f64;
-                    let x_center = if x_range.abs() < f64::EPSILON {
-                        plot_area.left + plot_area.width() * 0.5
-                    } else {
-                        plot_area.left + ((x_data - x_min) / x_range) as f32 * plot_area.width()
-                    };
+                    let x_center = Self::x_label_center(plot_area, i as f64, x_min, x_max);
 
                     let label_snippet = self.generated_label(category);
                     let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
@@ -2011,8 +2021,7 @@ impl SkiaRenderer {
 
             let y_labels = format_tick_labels(y_ticks);
             for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = plot_area.bottom
-                    - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
 
                 let label_snippet = self.generated_label(label_text);
                 let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
@@ -2080,26 +2089,21 @@ impl SkiaRenderer {
         })?;
 
         if show_tick_labels {
-            let x_range = x_max - x_min;
-            if x_range > 0.0 {
-                for (category, &x_pos) in categories.iter().zip(x_positions.iter()) {
-                    let x_center =
-                        plot_area.left + ((x_pos - x_min) / x_range) as f32 * plot_area.width();
+            for (category, &x_pos) in categories.iter().zip(x_positions.iter()) {
+                let x_center = Self::x_label_center(plot_area, x_pos, x_min, x_max);
 
-                    let label_snippet = self.generated_label(category);
-                    let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                    let label_x = (x_center - text_width / 2.0)
-                        .max(0.0)
-                        .min(self.width() as f32 - text_width);
+                let label_snippet = self.generated_label(category);
+                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+                let label_x = (x_center - text_width / 2.0)
+                    .max(0.0)
+                    .min(self.width() as f32 - text_width);
 
-                    self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
-                }
+                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
             }
 
             let y_labels = format_tick_labels(y_ticks);
             for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = plot_area.bottom
-                    - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
+                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
 
                 let label_snippet = self.generated_label(label_text);
                 let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
@@ -4073,6 +4077,37 @@ mod tests {
         assert!(!pixel_is_dark(&image, 96, 50));
         assert!(pixel_is_dark(&image, 60, 76));
         assert!(pixel_is_dark(&image, 24, 50));
+    }
+
+    #[test]
+    fn test_draw_axis_labels_at_handles_collapsed_ranges() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(120, 100, theme).unwrap();
+        let plot_area = LayoutRect {
+            left: 20.0,
+            top: 20.0,
+            right: 100.0,
+            bottom: 80.0,
+        };
+
+        renderer
+            .draw_axis_labels_at(
+                &plot_area,
+                1.0,
+                1.0,
+                2.0,
+                2.0,
+                &[1.0],
+                &[2.0],
+                88.0,
+                18.0,
+                10.0,
+                Color::BLACK,
+                100.0,
+                true,
+                false,
+            )
+            .expect("collapsed ranges should use centered label placement");
     }
 
     #[cfg(feature = "typst-math")]

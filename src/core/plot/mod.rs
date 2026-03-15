@@ -8955,12 +8955,7 @@ impl Plot {
                 &[],
                 &[],
                 &self.layout.tick_config.direction,
-                &TickSides {
-                    top: false,
-                    bottom: false,
-                    left: false,
-                    right: false,
-                },
+                &TickSides::none(),
                 self.display.theme.foreground,
             );
         }

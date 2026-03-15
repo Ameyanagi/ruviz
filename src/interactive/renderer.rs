@@ -340,7 +340,12 @@ impl RealTimeRenderer {
         // Keep logical styling stable across HiDPI displays:
         // - window/device scale controls framebuffer density
         // - plot sizing stays anchored to the reference logical DPI
-        let device_scale = device_scale.max(1.0);
+        let min_device_scale = crate::core::constants::dpi::MIN as f32 / crate::core::REFERENCE_DPI;
+        let device_scale = if !device_scale.is_finite() || device_scale <= 0.0 {
+            1.0
+        } else {
+            device_scale.max(min_device_scale)
+        };
         let interactive_dpi = (crate::core::REFERENCE_DPI * device_scale).round() as u32;
 
         plot.clone()
@@ -829,5 +834,24 @@ mod tests {
         assert!((configured.get_config().figure.width - (1001.0 / 150.0)).abs() < 1e-6);
         assert!((configured.get_config().figure.height - (751.0 / 150.0)).abs() < 1e-6);
         assert!((configured.get_config().figure.dpi - 150.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_configure_plot_for_surface_preserves_sub_1x_device_scale() {
+        #[allow(deprecated)]
+        let plot = Plot::new()
+            .size_px(800, 600)
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .end_series();
+
+        let configured = RealTimeRenderer::configure_plot_for_surface(&plot, 800, 600, 0.75);
+        let image = configured
+            .render()
+            .expect("configured sub-1x plot should render");
+
+        assert_eq!((image.width, image.height), (800, 600));
+        assert!((configured.get_config().figure.width - (800.0 / 75.0)).abs() < 1e-6);
+        assert!((configured.get_config().figure.height - (600.0 / 75.0)).abs() < 1e-6);
+        assert!((configured.get_config().figure.dpi - 75.0).abs() < f32::EPSILON);
     }
 }
