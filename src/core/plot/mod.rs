@@ -5055,40 +5055,42 @@ impl Plot {
                 self.layout.tick_config.enabled,
                 !draw_ticks,
             )?;
-        } else if draw_axes && let Some(ref categories) = bar_categories {
-            renderer.draw_axis_labels_at_categorical(
-                &layout.plot_area,
-                categories,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                &y_ticks,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.display.theme.foreground,
-                dpi,
-                self.layout.tick_config.enabled,
-                !draw_ticks,
-            )?;
         } else if draw_axes {
-            renderer.draw_axis_labels_at(
-                &layout.plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                &x_ticks,
-                &y_ticks,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.display.theme.foreground,
-                dpi,
-                self.layout.tick_config.enabled,
-                !draw_ticks,
-            )?;
+            if let Some(ref categories) = bar_categories {
+                renderer.draw_axis_labels_at_categorical(
+                    &layout.plot_area,
+                    categories,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &y_ticks,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.display.theme.foreground,
+                    dpi,
+                    self.layout.tick_config.enabled,
+                    !draw_ticks,
+                )?;
+            } else {
+                renderer.draw_axis_labels_at(
+                    &layout.plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &x_ticks,
+                    &y_ticks,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.display.theme.foreground,
+                    dpi,
+                    self.layout.tick_config.enabled,
+                    !draw_ticks,
+                )?;
+            }
         }
 
         // Draw title if present (resolve at t=0 for static render)
@@ -5608,40 +5610,42 @@ impl Plot {
                 self.layout.tick_config.enabled,
                 !draw_ticks,
             )?;
-        } else if draw_axes && let Some(ref categories) = bar_categories {
-            renderer.draw_axis_labels_at_categorical(
-                &layout.plot_area,
-                categories,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                &y_ticks,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.display.theme.foreground,
-                dpi,
-                self.layout.tick_config.enabled,
-                !draw_ticks,
-            )?;
         } else if draw_axes {
-            renderer.draw_axis_labels_at(
-                &layout.plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                &x_ticks,
-                &y_ticks,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.display.theme.foreground,
-                dpi,
-                self.layout.tick_config.enabled,
-                !draw_ticks,
-            )?;
+            if let Some(ref categories) = bar_categories {
+                renderer.draw_axis_labels_at_categorical(
+                    &layout.plot_area,
+                    categories,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &y_ticks,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.display.theme.foreground,
+                    dpi,
+                    self.layout.tick_config.enabled,
+                    !draw_ticks,
+                )?;
+            } else {
+                renderer.draw_axis_labels_at(
+                    &layout.plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    &x_ticks,
+                    &y_ticks,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.display.theme.foreground,
+                    dpi,
+                    self.layout.tick_config.enabled,
+                    !draw_ticks,
+                )?;
+            }
         }
 
         // Draw title if present (resolve at t=0 for static render)
