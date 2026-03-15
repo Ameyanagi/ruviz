@@ -547,6 +547,9 @@ Plot::new()
 Ticks are enabled by default. The default style draws inward tick marks on all four sides while
 keeping tick labels on the bottom and left axes.
 
+Migration note: older releases only drew default tick marks on the bottom and left sides. Use
+`.ticks_bottom_left()` if you want to preserve that appearance.
+
 ```rust
 use ruviz::prelude::*;
 

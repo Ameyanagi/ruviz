@@ -135,6 +135,8 @@ Notes:
 - DPI changes output density, not the intended physical size of fonts, strokes, markers, or layout spacing.
 - Prefer `.size(width_in, height_in)` when you care about physical figure size. `.size_px(width, height)` is a convenience that maps pixels through the 100-DPI reference size before final output DPI is applied.
 - Ticks are enabled by default and render inward on all four sides. Use `.ticks(false)` to hide tick marks and tick labels while keeping the frame and axis titles.
+- Migration: if you want the older bottom/left-only tick appearance, call `.ticks_bottom_left()`.
+- Migration: if you previously relied on high-DPI exports making lines, markers, or text look larger, set those sizes explicitly instead of relying on DPI.
 
 Tick customization:
 

@@ -99,6 +99,9 @@ Plot::new()
 
 Use `.size(width_in, height_in)` to define the physical figure and `.dpi(...)` to control raster density. If you use `.size_px(width, height)`, the pixel size is first interpreted against the 100-DPI reference figure and then re-rendered at the chosen output DPI, so changing DPI increases detail without intentionally thickening lines or enlarging text.
 
+Migration note: if you previously used higher DPI to make strokes, markers, or text look larger,
+set those sizes explicitly instead of relying on DPI side effects.
+
 ### DPI vs File Size
 
 ```rust

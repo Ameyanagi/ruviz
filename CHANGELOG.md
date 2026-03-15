@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Default tick marks now render on all four sides of the plot frame instead of only the bottom and left axes. To preserve the previous look, call `.ticks_bottom_left()`.
+
 ### Added
 
 - _None yet._
@@ -11,7 +15,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Preserved the public `SubscriberCallback` API while moving runtime subscription dispatch to internal shared callbacks.
-- Ticks now default to four-sided inward marks, with a simple `.ticks(bool)` toggle and per-side/direction controls for customization.
+- Raster DPI now changes output density without intentionally enlarging fonts, line widths, marker sizes, or layout spacing. If you tuned visuals around the old DPI-coupled output, re-check explicit `.line_width(...)`, `.marker_size(...)`, and font-size settings.
 
 ### Fixed
 
