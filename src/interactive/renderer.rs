@@ -96,6 +96,7 @@ impl RealTimeRenderer {
         state: &InteractionState,
         width: u32,
         height: u32,
+        device_scale: f32,
     ) -> Result<Vec<u8>> {
         let frame_start = Instant::now();
 
@@ -108,7 +109,7 @@ impl RealTimeRenderer {
         }
 
         // Render base plot (cached when possible)
-        let mut pixel_data = self.render_base_plot(state, width, height)?;
+        let mut pixel_data = self.render_base_plot(state, width, height, device_scale)?;
 
         // Render interactive elements on top
         self.render_hover_highlight(state, &mut pixel_data)?;
@@ -139,12 +140,10 @@ impl RealTimeRenderer {
         self.cpu_renderer = SkiaRenderer::new(width, height, crate::render::Theme::default())?;
 
         // Render the plot at high quality
-        let mut plot_clone = plot.clone();
-
-        // Set size in inches based on requested pixels and DPI
-        let width_inches = width as f32 / dpi;
-        let height_inches = height as f32 / dpi;
-        plot_clone = plot_clone.size(width_inches, height_inches).dpi(dpi as u32);
+        let plot_clone = plot
+            .clone()
+            .dpi(dpi as u32)
+            .set_output_pixels(width, height);
 
         let result = match plot_clone.render() {
             Ok(image) => image.pixels,
@@ -246,6 +245,7 @@ impl RealTimeRenderer {
         state: &InteractionState,
         width: u32,
         height: u32,
+        device_scale: f32,
     ) -> Result<Vec<u8>> {
         // Check if we can use cached render
         if !state.needs_redraw && !state.viewport_dirty {
@@ -263,15 +263,15 @@ impl RealTimeRenderer {
             match self.quality_mode {
                 RenderQuality::Interactive => {
                     // Fast rendering for interaction
-                    self.render_interactive_quality(state, width, height)?
+                    self.render_interactive_quality(state, width, height, device_scale)?
                 }
                 RenderQuality::Balanced => {
                     // Balanced quality and performance
-                    self.render_balanced_quality(state, width, height)?
+                    self.render_balanced_quality(state, width, height, device_scale)?
                 }
                 RenderQuality::Publication => {
                     // High quality rendering
-                    self.render_plot_to_pixels(width, height)?
+                    self.render_plot_to_pixels(width, height, device_scale)?
                 }
             }
         } else {
@@ -292,8 +292,9 @@ impl RealTimeRenderer {
         _state: &InteractionState,
         width: u32,
         height: u32,
+        device_scale: f32,
     ) -> Result<Vec<u8>> {
-        self.render_plot_to_pixels(width, height)
+        self.render_plot_to_pixels(width, height, device_scale)
     }
 
     /// Render with balanced quality
@@ -302,23 +303,15 @@ impl RealTimeRenderer {
         _state: &InteractionState,
         width: u32,
         height: u32,
+        device_scale: f32,
     ) -> Result<Vec<u8>> {
-        self.render_plot_to_pixels(width, height)
+        self.render_plot_to_pixels(width, height, device_scale)
     }
 
     /// Render the current plot to RGBA pixel data
-    fn render_plot_to_pixels(&self, width: u32, height: u32) -> Result<Vec<u8>> {
+    fn render_plot_to_pixels(&self, width: u32, height: u32, device_scale: f32) -> Result<Vec<u8>> {
         if let Some(ref plot) = self.current_plot {
-            // Clone and resize the plot to match requested dimensions
-            let mut plot_clone = plot.clone();
-
-            // Convert pixels to inches (assuming 100 DPI for interactive mode)
-            let dpi = 100.0;
-            let width_inches = width as f32 / dpi;
-            let height_inches = height as f32 / dpi;
-
-            // Update plot size
-            plot_clone = plot_clone.size(width_inches, height_inches);
+            let plot_clone = Self::configure_plot_for_surface(plot, width, height, device_scale);
 
             // Render the plot
             match plot_clone.render() {
@@ -341,6 +334,18 @@ impl RealTimeRenderer {
             // No plot set, return white background
             Ok(vec![255u8; (width * height * 4) as usize])
         }
+    }
+
+    fn configure_plot_for_surface(plot: &Plot, width: u32, height: u32, device_scale: f32) -> Plot {
+        // Keep logical styling stable across HiDPI displays:
+        // - window/device scale controls framebuffer density
+        // - plot sizing stays anchored to the reference logical DPI
+        let device_scale = device_scale.max(1.0);
+        let interactive_dpi = (crate::core::REFERENCE_DPI * device_scale).round() as u32;
+
+        plot.clone()
+            .dpi(interactive_dpi)
+            .set_output_pixels(width, height)
     }
 
     /// Render hover highlight
@@ -715,6 +720,7 @@ impl AnnotationRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::REFERENCE_DPI;
 
     #[tokio::test]
     async fn test_renderer_creation() {
@@ -766,5 +772,62 @@ mod tests {
         let expected = (100.0 * 0.5 + 200.0 * 0.5) as u8;
 
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_configure_plot_for_surface_keeps_logical_size_on_hidpi() {
+        #[allow(deprecated)]
+        let plot = Plot::new()
+            .size_px(800, 600)
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .end_series();
+
+        let configured = RealTimeRenderer::configure_plot_for_surface(&plot, 1600, 1200, 2.0);
+        let image = configured
+            .render()
+            .expect("configured HiDPI plot should render");
+
+        assert_eq!((image.width, image.height), (1600, 1200));
+        assert!((configured.get_config().figure.width - 8.0).abs() < f32::EPSILON);
+        assert!((configured.get_config().figure.height - 6.0).abs() < f32::EPSILON);
+        assert!((configured.get_config().figure.dpi - (REFERENCE_DPI * 2.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_configure_plot_for_surface_defaults_device_scale_to_one() {
+        #[allow(deprecated)]
+        let plot = Plot::new()
+            .size_px(800, 600)
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .end_series();
+
+        let configured = RealTimeRenderer::configure_plot_for_surface(&plot, 800, 600, 0.0);
+        let image = configured
+            .render()
+            .expect("configured 1x plot should render");
+
+        assert_eq!((image.width, image.height), (800, 600));
+        assert!((configured.get_config().figure.width - 8.0).abs() < f32::EPSILON);
+        assert!((configured.get_config().figure.height - 6.0).abs() < f32::EPSILON);
+        assert!((configured.get_config().figure.dpi - REFERENCE_DPI).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_configure_plot_for_surface_preserves_fractional_hidpi_framebuffer_size() {
+        #[allow(deprecated)]
+        let plot = Plot::new()
+            .size_px(800, 600)
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .end_series();
+
+        let configured = RealTimeRenderer::configure_plot_for_surface(&plot, 1001, 751, 1.5);
+        let image = configured
+            .render()
+            .expect("configured fractional HiDPI plot should render");
+
+        assert_eq!((image.width, image.height), (1001, 751));
+        assert!((configured.get_config().figure.width - (1001.0 / 150.0)).abs() < 1e-6);
+        assert!((configured.get_config().figure.height - (751.0 / 150.0)).abs() < 1e-6);
+        assert!((configured.get_config().figure.dpi - 150.0).abs() < f32::EPSILON);
     }
 }

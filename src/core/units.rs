@@ -28,6 +28,192 @@ pub const POINTS_PER_INCH: f32 = 72.0;
 /// Reference DPI used for pixel-to-inch conversions in `size_px()` method
 pub const REFERENCE_DPI: f32 = 100.0;
 
+/// Shared render-scale context for converting logical units to output pixels.
+///
+/// `dpi` controls output pixel density. `device_scale` is reserved for host or
+/// framebuffer scaling in interactive environments and is intentionally kept
+/// separate from style semantics.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RenderScale {
+    figure_width_in: f32,
+    figure_height_in: f32,
+    dpi: f32,
+    device_scale: f32,
+}
+
+impl RenderScale {
+    fn sanitize_positive(value: f32, fallback: f32) -> f32 {
+        if value.is_finite() && value > 0.0 {
+            value
+        } else {
+            fallback
+        }
+    }
+
+    /// Create a scale context with an explicit output DPI.
+    pub fn new(dpi: f32) -> Self {
+        Self {
+            figure_width_in: 6.4,
+            figure_height_in: 4.8,
+            dpi: Self::sanitize_positive(dpi, REFERENCE_DPI),
+            device_scale: 1.0,
+        }
+    }
+
+    /// Return a copy with explicit figure dimensions in inches.
+    pub fn with_figure(mut self, figure_width_in: f32, figure_height_in: f32) -> Self {
+        self.figure_width_in = Self::sanitize_positive(figure_width_in, 6.4);
+        self.figure_height_in = Self::sanitize_positive(figure_height_in, 4.8);
+        self
+    }
+
+    /// Create a scale context with explicit output DPI and device scale.
+    pub fn with_device_scale(dpi: f32, device_scale: f32) -> Self {
+        Self::new(dpi).with_host_scale(device_scale)
+    }
+
+    /// Create a scale context from an existing pixel canvas and output DPI.
+    pub fn from_canvas_size(width_px: u32, height_px: u32, dpi: f32) -> Self {
+        let dpi = Self::sanitize_positive(dpi, REFERENCE_DPI);
+        Self::new(dpi).with_figure(
+            px_to_in(width_px as f32, dpi),
+            px_to_in(height_px as f32, dpi),
+        )
+    }
+
+    /// Return a copy with a separate host/device scale applied.
+    pub fn with_host_scale(mut self, device_scale: f32) -> Self {
+        self.device_scale = Self::sanitize_positive(device_scale, 1.0);
+        self
+    }
+
+    /// Create a scale context from a legacy `dpi / REFERENCE_DPI` ratio.
+    pub fn from_reference_scale(scale: f32) -> Self {
+        Self::new(Self::sanitize_positive(scale, 1.0) * REFERENCE_DPI)
+    }
+
+    /// Figure width in inches.
+    pub fn figure_width_in(self) -> f32 {
+        self.figure_width_in
+    }
+
+    /// Figure height in inches.
+    pub fn figure_height_in(self) -> f32 {
+        self.figure_height_in
+    }
+
+    /// Output DPI used for physical-unit conversion.
+    pub fn dpi(self) -> f32 {
+        self.dpi
+    }
+
+    /// Host or framebuffer scale for interactive rendering.
+    pub fn device_scale(self) -> f32 {
+        self.device_scale
+    }
+
+    /// Effective device DPI after host/device scaling is applied.
+    pub fn device_dpi(self) -> f32 {
+        self.dpi * self.device_scale
+    }
+
+    /// Legacy `dpi / REFERENCE_DPI` ratio, retained only for compatibility.
+    pub fn reference_scale(self) -> f32 {
+        self.dpi / REFERENCE_DPI
+    }
+
+    /// Convert typographic points to output pixels.
+    pub fn points_to_pixels(self, points: f32) -> f32 {
+        pt_to_px(points, self.dpi)
+    }
+
+    /// Convert inches to output pixels.
+    pub fn inches_to_pixels(self, inches: f32) -> f32 {
+        in_to_px(inches, self.dpi)
+    }
+
+    /// Convert output pixels to inches.
+    pub fn pixels_to_inches(self, pixels: f32) -> f32 {
+        px_to_in(pixels, self.dpi)
+    }
+
+    /// Convert output pixels to points.
+    pub fn pixels_to_points(self, pixels: f32) -> f32 {
+        px_to_pt(pixels, self.dpi)
+    }
+
+    /// Convert logical pixels authored at `REFERENCE_DPI` to output pixels.
+    pub fn logical_pixels_to_pixels(self, logical_pixels: f32) -> f32 {
+        logical_pixels * self.reference_scale()
+    }
+
+    /// Convert output pixels back to logical pixels at `REFERENCE_DPI`.
+    pub fn pixels_to_logical_pixels(self, pixels: f32) -> f32 {
+        pixels / self.reference_scale()
+    }
+
+    /// Convert output pixels to device pixels using only the host/device scale.
+    pub fn pixels_to_device_pixels(self, pixels: f32) -> f32 {
+        pixels * self.device_scale
+    }
+
+    /// Convert logical/output pixels to device pixels using the host/device scale.
+    pub fn logical_pixels_to_device_pixels(self, logical_pixels: f32) -> f32 {
+        logical_pixels * self.device_scale
+    }
+
+    /// Convert device pixels back to logical/output pixels.
+    pub fn device_pixels_to_logical_pixels(self, pixels: f32) -> f32 {
+        pixels / self.device_scale
+    }
+
+    /// Convert reference pixels (100-DPI baseline) to output pixels.
+    pub fn reference_pixels_to_pixels(self, pixels: f32) -> f32 {
+        pixels * self.reference_scale()
+    }
+
+    /// Convert reference pixels (100-DPI baseline) directly to device pixels.
+    pub fn reference_pixels_to_device_pixels(self, pixels: f32) -> f32 {
+        self.pixels_to_device_pixels(self.reference_pixels_to_pixels(pixels))
+    }
+
+    /// Convert the configured figure size to output canvas pixels.
+    pub fn canvas_size(self) -> (u32, u32) {
+        (
+            self.inches_to_pixels(self.figure_width_in) as u32,
+            self.inches_to_pixels(self.figure_height_in) as u32,
+        )
+    }
+
+    /// Convert the configured figure size to device canvas pixels.
+    pub fn device_canvas_size(self) -> (u32, u32) {
+        (
+            self.pixels_to_device_pixels(self.inches_to_pixels(self.figure_width_in))
+                .round() as u32,
+            self.pixels_to_device_pixels(self.inches_to_pixels(self.figure_height_in))
+                .round() as u32,
+        )
+    }
+
+    /// Convert arbitrary figure dimensions in inches to output canvas pixels.
+    pub fn canvas_size_pixels(self, width_in: f32, height_in: f32) -> (u32, u32) {
+        (
+            self.inches_to_pixels(width_in) as u32,
+            self.inches_to_pixels(height_in) as u32,
+        )
+    }
+
+    /// Convert arbitrary figure dimensions in inches to device canvas pixels.
+    pub fn canvas_size_device_pixels(self, width_in: f32, height_in: f32) -> (u32, u32) {
+        (
+            self.pixels_to_device_pixels(self.inches_to_pixels(width_in))
+                .round() as u32,
+            self.pixels_to_device_pixels(self.inches_to_pixels(height_in))
+                .round() as u32,
+        )
+    }
+}
+
 /// Convert points to pixels at the given DPI
 ///
 /// Points are a typographic unit where 1 point = 1/72 inch.
@@ -177,6 +363,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_render_scale_logical_and_device_conversion() {
+        let scale = RenderScale::with_device_scale(150.0, 2.0);
+
+        assert!((scale.points_to_pixels(12.0) - 25.0).abs() < 0.001);
+        assert!((scale.pixels_to_device_pixels(25.0) - 50.0).abs() < 0.001);
+        assert_eq!(scale.canvas_size_pixels(6.4, 4.8), (960, 720));
+        assert_eq!(scale.canvas_size_device_pixels(6.4, 4.8), (1920, 1440));
+    }
+
+    #[test]
+    fn test_render_scale_reference_baseline_conversion() {
+        let scale = RenderScale::new(300.0);
+
+        assert!((scale.logical_pixels_to_pixels(5.0) - 15.0).abs() < 0.001);
+        assert!((scale.reference_scale() - 3.0).abs() < 0.001);
+    }
+
+    #[test]
     fn test_pt_to_px() {
         // At 72 DPI, 1 point = 1 pixel
         assert!((pt_to_px(10.0, 72.0) - 10.0).abs() < 0.001);
@@ -241,5 +445,40 @@ mod tests {
 
         // Ratios should be equal (DPI-independent)
         assert!((ratio_100 - ratio_300).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_render_scale_points_and_inches() {
+        let scale = RenderScale::new(144.0);
+
+        assert!((scale.points_to_pixels(10.0) - 20.0).abs() < 0.001);
+        assert!((scale.inches_to_pixels(2.0) - 288.0).abs() < 0.001);
+        assert!((scale.pixels_to_points(20.0) - 10.0).abs() < 0.001);
+        assert!((scale.pixels_to_inches(288.0) - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_render_scale_logical_pixels() {
+        let scale = RenderScale::new(200.0);
+
+        assert!((scale.logical_pixels_to_pixels(10.0) - 20.0).abs() < 0.001);
+        assert!((scale.pixels_to_logical_pixels(20.0) - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_render_scale_device_scale_is_separate() {
+        let scale = RenderScale::with_device_scale(150.0, 2.0);
+
+        assert!((scale.points_to_pixels(12.0) - 25.0).abs() < 0.001);
+        assert!((scale.logical_pixels_to_device_pixels(10.0) - 20.0).abs() < 0.001);
+        assert!((scale.pixels_to_device_pixels(15.0) - 30.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_render_scale_sanitizes_invalid_inputs() {
+        let scale = RenderScale::with_device_scale(f32::NAN, 0.0);
+
+        assert!((scale.dpi() - REFERENCE_DPI).abs() < 0.001);
+        assert!((scale.device_scale() - 1.0).abs() < 0.001);
     }
 }

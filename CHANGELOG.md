@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Preserved the public `SubscriberCallback` API while moving runtime subscription dispatch to internal shared callbacks.
+- Ticks now default to four-sided inward marks, with a simple `.ticks(bool)` toggle and per-side/direction controls for customization.
 
 ### Fixed
 
@@ -26,6 +27,7 @@ All notable changes to this project will be documented in this file.
 - Restore snapshot-based bounds calculation for heatmap, density, polar, radar, contour, and other non-Cartesian series.
 - Restore series validation before DataShader and parallel render fast paths, and preserve POSIX symlink destinations during atomic export overwrites.
 - Make DataShader renders consume the same validated snapshot as the main render path, and keep invalid zero-DPI pixel sizing from surfacing misleading dimension errors.
+- Apply tick-side and tick-direction settings consistently in `render()`-based outputs, keep SVG frame strokes DPI-aware when ticks are disabled, and preserve exact framebuffer sizes on fractional HiDPI interactive surfaces.
 
 ## [0.1.4] - 2026-02-11
 

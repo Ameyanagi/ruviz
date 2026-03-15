@@ -38,7 +38,10 @@ pub use legend::{
     Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, LegendSpacing,
     LegendSpacingPixels, LegendStyle, find_best_position,
 };
-pub use plot::{BackendType, IntoPlot, Plot, PlotBuilder, PlotInput, SeriesStyle, TextEngineMode};
+pub use plot::{
+    BackendType, IntoPlot, Plot, PlotBuilder, PlotInput, SeriesStyle, TextEngineMode,
+    TickDirection, TickSides,
+};
 pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;
@@ -47,7 +50,8 @@ pub use tick_formatter::TickFormatter;
 pub use transform::CoordinateTransform;
 pub use types::{BoundingBox, Orientation, Point2f};
 pub use units::{
-    POINTS_PER_INCH, REFERENCE_DPI, in_to_pt, in_to_px, pt_to_in, pt_to_px, px_to_in, px_to_pt,
+    POINTS_PER_INCH, REFERENCE_DPI, RenderScale, in_to_pt, in_to_px, pt_to_in, pt_to_px, px_to_in,
+    px_to_pt,
 };
 
 #[cfg(test)]

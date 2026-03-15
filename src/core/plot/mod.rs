@@ -54,7 +54,7 @@ mod render_pipeline;
 mod series_manager;
 
 pub use builder::{IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
-pub use config::{BackendType, GridMode, TickDirection};
+pub use config::{BackendType, GridMode, TickDirection, TickSides};
 pub use configuration::{PlotConfiguration, TextEngineMode};
 pub use data::{IntoPlotData, PlotData, PlotText};
 pub use image::Image;
@@ -67,8 +67,8 @@ use crate::{
     core::{
         Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig, Legend,
         LegendItem, LegendItemType, LegendPosition, MarginConfig, MeasuredDimensions, PlotConfig,
-        PlotContent, PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, Result,
-        ShapeStyle, TextStyle, pt_to_px,
+        PlotContent, PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, RenderScale,
+        Result, ShapeStyle, TextStyle, pt_to_px,
     },
     data::{
         Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,
@@ -761,8 +761,12 @@ impl LegendConfig {
 /// Tick configuration for axes
 #[derive(Clone, Debug)]
 pub(crate) struct TickConfig {
+    /// Whether tick marks and tick labels are rendered
+    enabled: bool,
     /// Direction ticks point (inside or outside)
     direction: TickDirection,
+    /// Which plot borders render tick marks
+    sides: TickSides,
     /// Number of major ticks on X axis
     major_ticks_x: usize,
     /// Number of minor ticks between major ticks on X axis
@@ -778,7 +782,9 @@ pub(crate) struct TickConfig {
 impl Default for TickConfig {
     fn default() -> Self {
         TickConfig {
+            enabled: true,
             direction: TickDirection::Inside,
+            sides: TickSides::all(),
             major_ticks_x: 10,
             minor_ticks_x: 0,
             major_ticks_y: 8,
@@ -1376,7 +1382,7 @@ impl Plot {
         self
     }
 
-    fn set_output_pixels(mut self, width: u32, height: u32) -> Self {
+    pub(crate) fn set_output_pixels(mut self, width: u32, height: u32) -> Self {
         let dpi = self.display.config.figure.dpi;
         if dpi.is_finite() && dpi != 0.0 {
             self.display.config.figure.width = width as f32 / dpi;
@@ -1565,14 +1571,13 @@ impl Plot {
         let height = self.display.config.figure.height;
 
         // Estimate text sizes in inches
-        let pt_to_in = |pt: f32| pt / 72.0;
-        let pad_in = pt_to_in(pad);
+        let pad_in = crate::core::pt_to_in(pad);
 
         // Calculate required top margin (title)
         let top_margin = if self.display.title.is_some() {
             let title_size = self.display.config.typography.title_size();
             let title_pad = self.display.config.spacing.title_pad;
-            pt_to_in(title_size) + pt_to_in(title_pad) + pad_in
+            crate::core::pt_to_in(title_size) + crate::core::pt_to_in(title_pad) + pad_in
         } else {
             pad_in.max(0.1) // Minimal margin
         };
@@ -1584,27 +1589,27 @@ impl Plot {
         let label_pad = self.display.config.spacing.label_pad;
 
         let bottom_margin = if self.display.xlabel.is_some() {
-            pt_to_in(tick_size)
-                + pt_to_in(tick_pad)
-                + pt_to_in(label_size)
-                + pt_to_in(label_pad)
+            crate::core::pt_to_in(tick_size)
+                + crate::core::pt_to_in(tick_pad)
+                + crate::core::pt_to_in(label_size)
+                + crate::core::pt_to_in(label_pad)
                 + pad_in
         } else {
-            pt_to_in(tick_size) + pt_to_in(tick_pad) + pad_in
+            crate::core::pt_to_in(tick_size) + crate::core::pt_to_in(tick_pad) + pad_in
         };
 
         // Calculate required left margin (ylabel + tick labels)
         // Y-axis tick labels are typically 4-5 characters wide
-        let estimated_tick_width = pt_to_in(tick_size) * 4.0;
+        let estimated_tick_width = crate::core::pt_to_in(tick_size) * 4.0;
 
         let left_margin = if self.display.ylabel.is_some() {
             estimated_tick_width
-                + pt_to_in(tick_pad)
-                + pt_to_in(label_size)
-                + pt_to_in(label_pad)
+                + crate::core::pt_to_in(tick_pad)
+                + crate::core::pt_to_in(label_size)
+                + crate::core::pt_to_in(label_pad)
                 + pad_in
         } else {
-            estimated_tick_width + pt_to_in(tick_pad) + pad_in
+            estimated_tick_width + crate::core::pt_to_in(tick_pad) + pad_in
         };
 
         // Right margin is minimal (just padding)
@@ -1626,7 +1631,47 @@ impl Plot {
 
     /// Calculate canvas dimensions from config
     fn config_canvas_size(&self) -> (u32, u32) {
-        self.display.config.canvas_size()
+        self.display.config.figure.canvas_size()
+    }
+
+    fn render_scale(&self) -> RenderScale {
+        self.display.config.figure.render_scale()
+    }
+
+    fn render_scale_with_device(&self, device_scale: f32) -> RenderScale {
+        self.render_scale().with_host_scale(device_scale)
+    }
+
+    fn x_data_to_pixel(plot_area: tiny_skia::Rect, x_data: f64, x_min: f64, x_max: f64) -> f32 {
+        let x_range = x_max - x_min;
+        if x_range.abs() < f64::EPSILON {
+            plot_area.left() + plot_area.width() * 0.5
+        } else {
+            plot_area.left() + ((x_data - x_min) / x_range) as f32 * plot_area.width()
+        }
+    }
+
+    fn categorical_x_tick_pixels(
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        category_count: Option<usize>,
+        violin_positions: &[f64],
+    ) -> Option<Vec<f32>> {
+        if !violin_positions.is_empty() {
+            Some(
+                violin_positions
+                    .iter()
+                    .map(|&x_pos| Self::x_data_to_pixel(plot_area, x_pos, x_min, x_max))
+                    .collect(),
+            )
+        } else {
+            category_count.map(|count| {
+                (0..count)
+                    .map(|index| Self::x_data_to_pixel(plot_area, index as f64, x_min, x_max))
+                    .collect()
+            })
+        }
     }
 
     fn resolved_series(&self, time: f64) -> Vec<ResolvedSeries<'_>> {
@@ -1651,12 +1696,17 @@ impl Plot {
 
     /// Get font size in pixels for rendering
     fn font_size_px(&self, points: f32) -> f32 {
-        pt_to_px(points, self.display.config.figure.dpi)
+        self.render_scale().points_to_pixels(points)
     }
 
     /// Get line width in pixels for rendering
     fn line_width_px(&self, points: f32) -> f32 {
-        pt_to_px(points, self.display.config.figure.dpi)
+        self.render_scale().points_to_pixels(points)
+    }
+
+    /// Convert legacy logical pixels (authored at REFERENCE_DPI) to output pixels.
+    fn logical_px(&self, logical_pixels: f32) -> f32 {
+        self.render_scale().logical_pixels_to_pixels(logical_pixels)
     }
 
     /// Calculate DPI-scaled canvas dimensions
@@ -1668,7 +1718,7 @@ impl Plot {
     /// Calculate DPI scaling factor
     /// **Deprecated**: Use config.figure.dpi with pt_to_px/in_to_px instead
     fn dpi_scale(&self) -> f32 {
-        self.display.config.figure.dpi / 72.0 // Scale relative to 72 DPI (1pt = 1px)
+        self.render_scale().reference_scale()
     }
 
     /// Calculate DPI-scaled font size
@@ -2824,9 +2874,65 @@ impl Plot {
         self
     }
 
+    /// Enable or disable tick marks and tick labels.
+    ///
+    /// Ticks are enabled by default and render on all four sides inward.
+    pub fn ticks(mut self, enabled: bool) -> Self {
+        self.layout.tick_config.enabled = enabled;
+        self
+    }
+
     /// Set tick direction to outside
     pub fn tick_direction_outside(mut self) -> Self {
         self.layout.tick_config.direction = TickDirection::Outside;
+        self
+    }
+
+    /// Set tick direction to straddle the plot border.
+    pub fn tick_direction_inout(mut self) -> Self {
+        self.layout.tick_config.direction = TickDirection::InOut;
+        self
+    }
+
+    /// Set which plot borders render tick marks.
+    pub fn tick_sides(mut self, sides: TickSides) -> Self {
+        self.layout.tick_config.sides = sides;
+        self
+    }
+
+    /// Show ticks on all four sides of the plot area.
+    pub fn ticks_all_sides(mut self) -> Self {
+        self.layout.tick_config.sides = TickSides::all();
+        self
+    }
+
+    /// Show ticks only on the bottom and left sides.
+    pub fn ticks_bottom_left(mut self) -> Self {
+        self.layout.tick_config.sides = TickSides::bottom_left();
+        self
+    }
+
+    /// Enable or disable top ticks.
+    pub fn show_top_ticks(mut self, enabled: bool) -> Self {
+        self.layout.tick_config.sides.top = enabled;
+        self
+    }
+
+    /// Enable or disable bottom ticks.
+    pub fn show_bottom_ticks(mut self, enabled: bool) -> Self {
+        self.layout.tick_config.sides.bottom = enabled;
+        self
+    }
+
+    /// Enable or disable left ticks.
+    pub fn show_left_ticks(mut self, enabled: bool) -> Self {
+        self.layout.tick_config.sides.left = enabled;
+        self
+    }
+
+    /// Enable or disable right ticks.
+    pub fn show_right_ticks(mut self, enabled: bool) -> Self {
+        self.layout.tick_config.sides.right = enabled;
         self
     }
 
@@ -3745,7 +3851,6 @@ impl Plot {
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
-                    let dpi_scale = self.dpi_scale();
                     Self::render_attached_error_bars(
                         renderer,
                         &x_data,
@@ -3760,7 +3865,7 @@ impl Plot {
                         y_max,
                         plot_area,
                         line_width,
-                        dpi_scale,
+                        self.render_scale(),
                     )?;
                 }
             }
@@ -3779,7 +3884,6 @@ impl Plot {
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
-                    let dpi_scale = self.dpi_scale();
                     Self::render_attached_error_bars(
                         renderer,
                         &x_data,
@@ -3794,7 +3898,7 @@ impl Plot {
                         y_max,
                         plot_area,
                         line_width,
-                        dpi_scale,
+                        self.render_scale(),
                     )?;
                 }
             }
@@ -4125,7 +4229,6 @@ impl Plot {
 
                 // Draw Y error bars
                 let y_err_values = ErrorValues::symmetric(y_errors);
-                let dpi_scale = self.dpi_scale();
                 Self::render_attached_error_bars(
                     renderer,
                     &x_data,
@@ -4140,7 +4243,7 @@ impl Plot {
                     y_max,
                     plot_area,
                     line_width,
-                    dpi_scale,
+                    self.render_scale(),
                 )?;
             }
             SeriesType::ErrorBarsXY {
@@ -4169,7 +4272,6 @@ impl Plot {
                 // Draw X and Y error bars
                 let x_err_values = ErrorValues::symmetric(x_errors);
                 let y_err_values = ErrorValues::symmetric(y_errors);
-                let dpi_scale = self.dpi_scale();
                 Self::render_attached_error_bars(
                     renderer,
                     &x_data,
@@ -4184,7 +4286,7 @@ impl Plot {
                     y_max,
                     plot_area,
                     line_width,
-                    dpi_scale,
+                    self.render_scale(),
                 )?;
             }
             SeriesType::Kde { data } => {
@@ -4732,9 +4834,9 @@ impl Plot {
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         renderer.set_text_engine_mode(self.display.text_engine);
-        let dpi = self.display.config.figure.dpi;
-        let dpi_scale = dpi / 100.0;
-        renderer.set_dpi_scale(dpi_scale);
+        let render_scale = self.render_scale();
+        let dpi = render_scale.dpi();
+        renderer.set_render_scale(render_scale);
 
         // Calculate or use manual data bounds
         let (mut x_min, mut x_max, mut y_min, mut y_max) =
@@ -4903,6 +5005,30 @@ impl Plot {
             )?;
         }
 
+        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
+            plot_area,
+            x_min,
+            x_max,
+            bar_categories.as_ref().map(Vec::len),
+            &violin_positions,
+        );
+
+        let draw_axes = self.needs_cartesian_axes();
+        let draw_ticks = draw_axes && self.layout.tick_config.enabled;
+        if draw_ticks {
+            let x_axis_ticks = categorical_x_tick_pixels
+                .as_deref()
+                .unwrap_or(x_tick_pixels.as_slice());
+            renderer.draw_axes(
+                plot_area,
+                x_axis_ticks,
+                &y_tick_pixels,
+                &self.layout.tick_config.direction,
+                &self.layout.tick_config.sides,
+                self.display.theme.foreground,
+            )?;
+        }
+
         // Draw axes and labels using computed layout positions
         // Note: layout_opt is always Some since all render paths now compute layout
         let layout = layout_opt.expect("layout should always be computed");
@@ -4910,7 +5036,7 @@ impl Plot {
 
         // Draw tick labels using layout positions
         // Use categorical labels for bar/violin charts, numeric for others
-        if is_violin_categorical {
+        if draw_axes && is_violin_categorical {
             // Violin plots use their own x-positions for category labels
             renderer.draw_axis_labels_at_categorical_violin(
                 &layout.plot_area,
@@ -4926,11 +5052,15 @@ impl Plot {
                 tick_size_px,
                 self.display.theme.foreground,
                 dpi,
+                self.layout.tick_config.enabled,
+                !draw_ticks,
             )?;
-        } else if let Some(ref categories) = bar_categories {
+        } else if draw_axes && let Some(ref categories) = bar_categories {
             renderer.draw_axis_labels_at_categorical(
                 &layout.plot_area,
                 categories,
+                x_min,
+                x_max,
                 y_min,
                 y_max,
                 &y_ticks,
@@ -4939,8 +5069,10 @@ impl Plot {
                 tick_size_px,
                 self.display.theme.foreground,
                 dpi,
+                self.layout.tick_config.enabled,
+                !draw_ticks,
             )?;
-        } else {
+        } else if draw_axes {
             renderer.draw_axis_labels_at(
                 &layout.plot_area,
                 x_min,
@@ -4954,6 +5086,8 @@ impl Plot {
                 tick_size_px,
                 self.display.theme.foreground,
                 dpi,
+                self.layout.tick_config.enabled,
+                !draw_ticks,
             )?;
         }
 
@@ -5019,7 +5153,6 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
-                        let dpi_scale = self.dpi_scale();
                         Self::render_attached_error_bars(
                             &mut renderer,
                             &x_data,
@@ -5034,7 +5167,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
-                            dpi_scale,
+                            self.render_scale(),
                         )?;
                     }
                 }
@@ -5056,7 +5189,6 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
-                        let dpi_scale = self.dpi_scale();
                         Self::render_attached_error_bars(
                             &mut renderer,
                             &x_data,
@@ -5071,7 +5203,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
-                            dpi_scale,
+                            self.render_scale(),
                         )?;
                     }
                 }
@@ -5302,24 +5434,31 @@ impl Plot {
             }
         });
 
-        // Extract violin categories if present (for categorical x-axis labels)
-        let violin_categories: Vec<String> = self
+        // Extract violin categories and positions if present (for categorical x-axis labels)
+        let violin_data: Vec<(String, f64)> = self
             .series_mgr
             .series
             .iter()
             .filter_map(|s| {
                 if let SeriesType::Violin { data } = &s.series_type {
-                    data.config.category.clone()
+                    data.config
+                        .category
+                        .clone()
+                        .map(|cat| (cat, data.config.x_position))
                 } else {
                     None
                 }
             })
             .collect();
 
+        let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
+            violin_data.into_iter().unzip();
+
         // Use violin categories if bar_categories is not present and violin categories exist
-        let bar_categories = bar_categories.or({
-            if !violin_categories.is_empty() {
-                Some(violin_categories)
+        let is_violin_categorical = !violin_categories.is_empty();
+        let bar_categories = bar_categories.or_else(|| {
+            if is_violin_categorical {
+                Some(violin_categories.clone())
             } else {
                 None
             }
@@ -5420,17 +5559,44 @@ impl Plot {
             )?;
         }
 
+        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
+            plot_area,
+            x_min,
+            x_max,
+            bar_categories.as_ref().map(Vec::len),
+            &violin_positions,
+        );
+
+        let draw_axes = self.needs_cartesian_axes();
+        let draw_ticks = draw_axes && self.layout.tick_config.enabled;
+        if draw_ticks {
+            let x_axis_ticks = categorical_x_tick_pixels
+                .as_deref()
+                .unwrap_or(x_tick_pixels.as_slice());
+            renderer.draw_axes(
+                plot_area,
+                x_axis_ticks,
+                &y_tick_pixels,
+                &self.layout.tick_config.direction,
+                &self.layout.tick_config.sides,
+                self.display.theme.foreground,
+            )?;
+        }
+
         // Draw axes and labels using computed layout positions
         // Note: layout_opt is always Some since all render paths now compute layout
         let layout = layout_opt.expect("layout should always be computed");
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
         // Draw tick labels using layout positions
-        // Use categorical labels for bar charts, numeric for others
-        if let Some(ref categories) = bar_categories {
-            renderer.draw_axis_labels_at_categorical(
+        // Use categorical labels for bar/violin charts, numeric for others
+        if draw_axes && is_violin_categorical {
+            renderer.draw_axis_labels_at_categorical_violin(
                 &layout.plot_area,
-                categories,
+                &violin_categories,
+                &violin_positions,
+                x_min,
+                x_max,
                 y_min,
                 y_max,
                 &y_ticks,
@@ -5439,8 +5605,27 @@ impl Plot {
                 tick_size_px,
                 self.display.theme.foreground,
                 dpi,
+                self.layout.tick_config.enabled,
+                !draw_ticks,
             )?;
-        } else {
+        } else if draw_axes && let Some(ref categories) = bar_categories {
+            renderer.draw_axis_labels_at_categorical(
+                &layout.plot_area,
+                categories,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &y_ticks,
+                layout.xtick_baseline_y,
+                layout.ytick_right_x,
+                tick_size_px,
+                self.display.theme.foreground,
+                dpi,
+                self.layout.tick_config.enabled,
+                !draw_ticks,
+            )?;
+        } else if draw_axes {
             renderer.draw_axis_labels_at(
                 &layout.plot_area,
                 x_min,
@@ -5454,6 +5639,8 @@ impl Plot {
                 tick_size_px,
                 self.display.theme.foreground,
                 dpi,
+                self.layout.tick_config.enabled,
+                !draw_ticks,
             )?;
         }
 
@@ -5519,7 +5706,6 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
-                        let dpi_scale = self.dpi_scale();
                         Self::render_attached_error_bars(
                             renderer,
                             &x_data,
@@ -5534,7 +5720,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
-                            dpi_scale,
+                            self.render_scale(),
                         )?;
                     }
                 }
@@ -5556,7 +5742,6 @@ impl Plot {
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
-                        let dpi_scale = dpi / 100.0;
                         Self::render_attached_error_bars(
                             renderer,
                             &x_data,
@@ -5571,7 +5756,7 @@ impl Plot {
                             y_max,
                             plot_area,
                             line_width,
-                            dpi_scale,
+                            self.render_scale(),
                         )?;
                     }
                 }
@@ -5774,19 +5959,18 @@ impl Plot {
         y_max: f64,
         plot_area: tiny_skia::Rect,
         default_line_width: f32,
-        dpi_scale: f32,
+        render_scale: RenderScale,
     ) -> Result<()> {
         let config = error_config.cloned().unwrap_or_default();
         let bar_color = config
             .color
             .unwrap_or(series_color)
             .with_alpha(config.alpha);
-        // Scale error bar line width by DPI (config.line_width is in pt at 100 DPI base)
-        let scaled_config_width = config.line_width * dpi_scale;
+        // Error-bar configuration is still authored in legacy logical pixels.
+        let scaled_config_width = render_scale.logical_pixels_to_pixels(config.line_width);
         let line_width = scaled_config_width.max(default_line_width * 0.75); // Slightly thinner than data line
 
-        // Scale cap size by DPI (config.cap_size is in pt at 100 DPI base)
-        let cap_size_px = config.cap_size * dpi_scale;
+        let cap_size_px = render_scale.logical_pixels_to_pixels(config.cap_size);
         let half_cap = cap_size_px / 2.0;
 
         let n = x_data.len().min(y_data.len());
@@ -6009,6 +6193,7 @@ impl Plot {
             title: self.display.title.as_ref().map(|t| t.resolve(0.0)),
             xlabel: self.display.xlabel.as_ref().map(|t| t.resolve(0.0)),
             ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(0.0)),
+            show_tick_labels: self.layout.tick_config.enabled && self.needs_cartesian_axes(),
             max_ytick_chars,
             max_xtick_chars: 5, // Reasonable default
         }
@@ -6021,8 +6206,11 @@ impl Plot {
         content: &PlotContent,
         dpi: f32,
     ) -> Result<Option<MeasuredDimensions>> {
-        let title_size_px = pt_to_px(self.display.config.typography.title_size(), dpi);
-        let label_size_px = pt_to_px(self.display.config.typography.label_size(), dpi);
+        let render_scale = RenderScale::new(dpi);
+        let title_size_px =
+            render_scale.points_to_pixels(self.display.config.typography.title_size());
+        let label_size_px =
+            render_scale.points_to_pixels(self.display.config.typography.label_size());
 
         let mut measurements = MeasuredDimensions::default();
 
@@ -6229,8 +6417,8 @@ impl Plot {
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         renderer.set_text_engine_mode(self.display.text_engine);
         let dpi = self.display.dpi as f32;
-        let dpi_scale = dpi / 100.0;
-        renderer.set_dpi_scale(dpi_scale);
+        let render_scale = self.render_scale();
+        renderer.set_render_scale(render_scale);
 
         let resolved_series = self.resolved_series(0.0);
         let bounds = if resolved_series
@@ -6269,7 +6457,11 @@ impl Plot {
         )
         .unwrap_or_else(|| {
             // Fallback to simple calculation if layout rect is invalid
-            calculate_plot_area_dpi(scaled_width, scaled_height, self.dpi_scale())
+            calculate_plot_area_dpi(
+                scaled_width,
+                scaled_height,
+                self.render_scale().reference_scale(),
+            )
         });
 
         // Convert to parallel renderer format
@@ -6322,11 +6514,13 @@ impl Plot {
         }
 
         // Draw axes (sequential - UI elements) - only for Cartesian plots
-        if self.needs_cartesian_axes() {
+        if self.needs_cartesian_axes() && self.layout.tick_config.enabled {
             renderer.draw_axes(
                 plot_area,
                 &x_tick_pixels,
                 &y_tick_pixels,
+                &self.layout.tick_config.direction,
+                &self.layout.tick_config.sides,
                 self.display.theme.foreground,
             )?;
         }
@@ -7077,6 +7271,8 @@ impl Plot {
                 tick_size_px,
                 self.display.theme.foreground,
                 dpi,
+                self.layout.tick_config.enabled,
+                !self.layout.tick_config.enabled,
             )?;
         }
 
@@ -7963,8 +8159,8 @@ impl Plot {
         });
 
         let dpi = self.display.dpi as f32;
-        let dpi_scale = dpi / 100.0;
-        renderer.set_dpi_scale(dpi_scale);
+        let render_scale = self.render_scale();
+        renderer.set_render_scale(render_scale);
         let content = self.create_plot_content(y_min, y_max);
         let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
         let measurements = measured_dimensions.as_ref();
@@ -8209,22 +8405,39 @@ impl Plot {
             })
             .collect();
 
+        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
+            plot_area,
+            x_min,
+            x_max,
+            bar_categories.as_ref().map(Vec::len),
+            &violin_positions,
+        );
+        let x_major_axis_ticks = categorical_x_tick_pixels
+            .as_deref()
+            .unwrap_or(x_major_tick_pixels.as_slice());
+        let x_minor_axis_ticks = if categorical_x_tick_pixels.is_some() {
+            &[][..]
+        } else {
+            x_minor_tick_pixels.as_slice()
+        };
+
         // Only draw axes for Cartesian plots (skip for Pie, Radar, etc.)
         let draw_axes = self.needs_cartesian_axes();
+        let draw_ticks = draw_axes && self.layout.tick_config.enabled;
 
-        if draw_axes {
-            // Calculate DPI scale for tick rendering (base 100 DPI)
-            let dpi_scale = dpi / 100.0;
+        if draw_ticks {
+            let render_scale = self.render_scale();
             // Always draw axes with enhanced tick system
             renderer.draw_axes_with_config(
                 plot_area,
-                &x_major_tick_pixels,
+                x_major_axis_ticks,
                 &y_major_tick_pixels,
-                &x_minor_tick_pixels,
+                x_minor_axis_ticks,
                 &y_minor_tick_pixels,
                 &self.layout.tick_config.direction,
+                &self.layout.tick_config.sides,
                 self.display.theme.foreground,
-                dpi_scale,
+                render_scale.reference_scale(),
             )?;
         }
 
@@ -8252,11 +8465,15 @@ impl Plot {
                     tick_size_px,
                     self.display.theme.foreground,
                     dpi,
+                    self.layout.tick_config.enabled,
+                    !draw_ticks,
                 )?;
             } else if let Some(ref categories) = bar_categories {
                 renderer.draw_axis_labels_at_categorical(
                     &layout.plot_area,
                     categories,
+                    x_min,
+                    x_max,
                     y_min,
                     y_max,
                     &y_major_ticks,
@@ -8265,6 +8482,8 @@ impl Plot {
                     tick_size_px,
                     self.display.theme.foreground,
                     dpi,
+                    self.layout.tick_config.enabled,
+                    !draw_ticks,
                 )?;
             } else {
                 renderer.draw_axis_labels_at(
@@ -8280,6 +8499,8 @@ impl Plot {
                     tick_size_px,
                     self.display.theme.foreground,
                     dpi,
+                    self.layout.tick_config.enabled,
+                    !draw_ticks,
                 )?;
             }
         }
@@ -8601,8 +8822,8 @@ impl Plot {
         let height = height_px as f32;
 
         let mut svg = SvgRenderer::new(width, height);
-        let dpi_scale = self.display.config.figure.dpi / 100.0;
-        svg.set_dpi_scale(dpi_scale);
+        let render_scale = self.render_scale();
+        svg.set_render_scale(render_scale);
         svg.set_text_engine_mode(self.display.text_engine);
 
         // Calculate data bounds
@@ -8614,7 +8835,7 @@ impl Plot {
         let mut measurement_renderer =
             SkiaRenderer::new(width_px, height_px, self.display.theme.clone())?;
         measurement_renderer.set_text_engine_mode(self.display.text_engine);
-        measurement_renderer.set_dpi_scale(dpi_scale);
+        measurement_renderer.set_render_scale(render_scale);
         let measured_dimensions = self.measure_layout_text(
             &measurement_renderer,
             &content,
@@ -8720,15 +8941,25 @@ impl Plot {
             }
         }
 
-        // Draw plot area border
-        svg.draw_rectangle(
-            plot_left,
-            plot_top,
-            plot_width,
-            plot_height,
-            self.display.theme.foreground,
-            false,
-        );
+        if !self.layout.tick_config.enabled {
+            // Keep frame stroke width consistent with the tick-enabled path.
+            svg.draw_axes(
+                plot_left,
+                plot_right,
+                plot_top,
+                plot_bottom,
+                &[],
+                &[],
+                &self.layout.tick_config.direction,
+                &TickSides {
+                    top: false,
+                    bottom: false,
+                    left: false,
+                    right: false,
+                },
+                self.display.theme.foreground,
+            );
+        }
 
         let tick_size_px = pt_to_px(
             self.display.config.typography.tick_size(),
@@ -8737,74 +8968,89 @@ impl Plot {
 
         // Draw axes and tick labels
         if let Some(categories) = bar_categories {
+            let x_range = x_max - x_min;
+            let category_x_tick_positions: Vec<f32> = (0..categories.len())
+                .map(|index| {
+                    if x_range.abs() < f64::EPSILON {
+                        plot_left + plot_width * 0.5
+                    } else {
+                        plot_left + (((index as f64) - x_min) / x_range) as f32 * plot_width
+                    }
+                })
+                .collect();
+
             // Bar chart: draw axes with category labels
-            svg.draw_axes(
-                plot_left,
-                plot_right,
-                plot_top,
-                plot_bottom,
-                &[], // no X ticks for bar chart
-                &y_tick_layout.pixel_positions,
-                self.display.theme.foreground,
-                true,
-            );
-
-            // Draw Y-axis tick labels
-            svg.draw_tick_labels(
-                &[],
-                &[],
-                &y_tick_layout.pixel_positions,
-                &y_tick_layout.labels,
-                plot_left,
-                plot_right,
-                plot_top,
-                plot_bottom,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                self.display.theme.foreground,
-                tick_size_px,
-            )?;
-
-            // Draw category labels on X-axis
-            let num_categories = categories.len();
-            for (i, category) in categories.iter().enumerate() {
-                let x = plot_left + (i as f32 + 0.5) * (plot_width / num_categories as f32);
-                svg.draw_text_centered(
-                    category,
-                    x,
-                    layout.xtick_baseline_y,
-                    tick_size_px,
+            if self.layout.tick_config.enabled {
+                svg.draw_axes(
+                    plot_left,
+                    plot_right,
+                    plot_top,
+                    plot_bottom,
+                    &category_x_tick_positions,
+                    &y_tick_layout.pixel_positions,
+                    &self.layout.tick_config.direction,
+                    &self.layout.tick_config.sides,
                     self.display.theme.foreground,
+                );
+
+                // Draw Y-axis tick labels
+                svg.draw_tick_labels(
+                    &[],
+                    &[],
+                    &y_tick_layout.pixel_positions,
+                    &y_tick_layout.labels,
+                    plot_left,
+                    plot_right,
+                    plot_top,
+                    plot_bottom,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    self.display.theme.foreground,
+                    tick_size_px,
                 )?;
+
+                // Draw category labels on X-axis
+                for (category, &x) in categories.iter().zip(category_x_tick_positions.iter()) {
+                    svg.draw_text_centered(
+                        category,
+                        x,
+                        layout.xtick_baseline_y,
+                        tick_size_px,
+                        self.display.theme.foreground,
+                    )?;
+                }
             }
         } else {
             // Normal chart: draw axes with numeric labels
             let x_tick_layout =
                 TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.layout.x_scale, 7);
-            svg.draw_axes(
-                plot_left,
-                plot_right,
-                plot_top,
-                plot_bottom,
-                &x_tick_layout.pixel_positions,
-                &y_tick_layout.pixel_positions,
-                self.display.theme.foreground,
-                true,
-            );
-            svg.draw_tick_labels(
-                &x_tick_layout.pixel_positions,
-                &x_tick_layout.labels,
-                &y_tick_layout.pixel_positions,
-                &y_tick_layout.labels,
-                plot_left,
-                plot_right,
-                plot_top,
-                plot_bottom,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                self.display.theme.foreground,
-                tick_size_px,
-            )?;
+            if self.layout.tick_config.enabled {
+                svg.draw_axes(
+                    plot_left,
+                    plot_right,
+                    plot_top,
+                    plot_bottom,
+                    &x_tick_layout.pixel_positions,
+                    &y_tick_layout.pixel_positions,
+                    &self.layout.tick_config.direction,
+                    &self.layout.tick_config.sides,
+                    self.display.theme.foreground,
+                );
+                svg.draw_tick_labels(
+                    &x_tick_layout.pixel_positions,
+                    &x_tick_layout.labels,
+                    &y_tick_layout.pixel_positions,
+                    &y_tick_layout.labels,
+                    plot_left,
+                    plot_right,
+                    plot_top,
+                    plot_bottom,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    self.display.theme.foreground,
+                    tick_size_px,
+                )?;
+            }
         }
 
         // Create clip path for data
@@ -8813,12 +9059,14 @@ impl Plot {
 
         // Collect legend items, including grouped-series collapse behavior.
         let legend_items = self.collect_legend_items();
+        let render_scale = self.render_scale();
 
         // Render each series
         for (idx, series) in snapshot_series.iter().enumerate() {
             let default_color = self.display.theme.get_color(idx);
             let color = series.color.unwrap_or(default_color);
-            let line_width = series.line_width.unwrap_or(self.display.theme.line_width);
+            let line_width = render_scale
+                .points_to_pixels(series.line_width.unwrap_or(self.display.theme.line_width));
             let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
 
             match &series.series_type {
@@ -8838,7 +9086,8 @@ impl Plot {
                 SeriesType::Scatter { x_data, y_data } => {
                     let x_data = x_data.resolve(0.0);
                     let y_data = y_data.resolve(0.0);
-                    let marker_size = series.marker_size.unwrap_or(6.0);
+                    let marker_size =
+                        render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
                     for (&x, &y) in x_data.iter().zip(y_data.iter()) {
                         let (px, py) =
                             map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
@@ -8999,7 +9248,7 @@ impl Plot {
     #[cfg(feature = "animation")]
     pub fn render_frame(&self, width: u32, height: u32) -> Result<Vec<u8>> {
         // Create a sized version of the plot
-        let sized_plot = self.clone().size_px(width, height);
+        let sized_plot = self.clone().set_output_pixels(width, height);
 
         // Render to RGBA image
         let image = sized_plot.render()?;
@@ -10158,6 +10407,132 @@ mod tests {
         (x, y)
     }
 
+    fn extract_svg_root_attr(svg: &str, attr: &str) -> f32 {
+        let line = svg
+            .lines()
+            .find(|line| line.contains("<svg"))
+            .unwrap_or_else(|| panic!("missing svg root"));
+        parse_svg_attr(line, attr)
+    }
+
+    fn extract_first_svg_polyline_stroke_width(svg: &str) -> f32 {
+        let line = svg
+            .lines()
+            .find(|line| line.contains("<polyline"))
+            .unwrap_or_else(|| panic!("missing polyline element"));
+        parse_svg_attr(line, "stroke-width")
+    }
+
+    fn extract_first_svg_line_stroke_width(svg: &str) -> f32 {
+        let line = svg
+            .lines()
+            .find(|line| line.contains("<line"))
+            .unwrap_or_else(|| panic!("missing line element"));
+        parse_svg_attr(line, "stroke-width")
+    }
+
+    fn image_pixel_is_dark(image: &Image, x: u32, y: u32) -> bool {
+        let idx = ((y * image.width + x) * 4) as usize;
+        image.pixels[idx..idx + 3]
+            .iter()
+            .all(|channel| *channel < 220)
+    }
+
+    fn image_has_dark_pixel_near(image: &Image, x: u32, y: u32, radius: u32) -> bool {
+        let x_start = x.saturating_sub(radius);
+        let x_end = (x + radius).min(image.width.saturating_sub(1));
+        let y_start = y.saturating_sub(radius);
+        let y_end = (y + radius).min(image.height.saturating_sub(1));
+
+        for sample_y in y_start..=y_end {
+            for sample_x in x_start..=x_end {
+                if image_pixel_is_dark(image, sample_x, sample_y) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
+        let (x_min, x_max, y_min, y_max) = plot
+            .calculate_data_bounds()
+            .expect("data bounds should be available");
+        let content = plot.create_plot_content(y_min, y_max);
+        let layout_config = match &plot.display.config.margins {
+            MarginConfig::ContentDriven {
+                edge_buffer,
+                center_plot,
+            } => LayoutConfig {
+                edge_buffer_pt: *edge_buffer,
+                center_plot: *center_plot,
+                ..Default::default()
+            },
+            _ => LayoutConfig::default(),
+        };
+        let calculator = LayoutCalculator::new(layout_config);
+        let mut measurement_renderer = crate::render::SkiaRenderer::new(
+            plot.display.dimensions.0,
+            plot.display.dimensions.1,
+            plot.display.theme.clone(),
+        )
+        .expect("measurement renderer");
+        measurement_renderer.set_render_scale(plot.render_scale());
+        measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+        let measured_dimensions = plot
+            .measure_layout_text(
+                &measurement_renderer,
+                &content,
+                plot.display.config.figure.dpi,
+            )
+            .expect("layout text measurements");
+        let layout = calculator.compute(
+            plot.display.dimensions,
+            &content,
+            &plot.display.config.typography,
+            &plot.display.config.spacing,
+            plot.display.config.figure.dpi,
+            measured_dimensions.as_ref(),
+        );
+        let plot_area = tiny_skia::Rect::from_ltrb(
+            layout.plot_area.left,
+            layout.plot_area.top,
+            layout.plot_area.right,
+            layout.plot_area.bottom,
+        )
+        .expect("valid plot area");
+
+        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
+        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
+        let x_ticks = generate_ticks(x_min, x_max, x_tick_count);
+        let y_ticks = generate_ticks(y_min, y_max, y_tick_count);
+        let x_tick_pixels: Vec<f32> = x_ticks
+            .iter()
+            .map(|&tick| {
+                crate::render::skia::map_data_to_pixels(
+                    tick, 0.0, x_min, x_max, y_min, y_max, plot_area,
+                )
+                .0
+            })
+            .collect();
+        let y_tick_pixels: Vec<f32> = y_ticks
+            .iter()
+            .map(|&tick| {
+                crate::render::skia::map_data_to_pixels(
+                    0.0, tick, x_min, x_max, y_min, y_max, plot_area,
+                )
+                .1
+            })
+            .collect();
+
+        let x_probe = x_tick_pixels[x_tick_pixels.len() / 2].round() as u32;
+        let y_probe = y_tick_pixels[y_tick_pixels.len() / 2].round() as u32;
+        let top_probe = (x_probe, (plot_area.top() + 2.0).round() as u32);
+        let right_probe = ((plot_area.right() - 2.0).round() as u32, y_probe);
+        (top_probe, right_probe)
+    }
+
     fn parse_svg_attr_pt(line: &str, attr: &str) -> f32 {
         let marker = format!(r#"{}=""#, attr);
         let start = line
@@ -10558,6 +10933,182 @@ mod tests {
     }
 
     #[test]
+    fn test_render_honors_top_and_right_tick_sides() {
+        let base_plot = Plot::new()
+            .size_px(400, 300)
+            .line(&[0.0, 10.0, 20.0], &[0.0, 50.0, 100.0])
+            .end_series();
+        let all_sides = base_plot.clone().ticks_all_sides();
+        let bottom_left = base_plot.ticks_bottom_left();
+
+        let (top_probe, right_probe) = compute_render_tick_probe_points(&all_sides);
+        let image_all_sides = all_sides.render().expect("all-sides render should succeed");
+        let image_bottom_left = bottom_left
+            .render()
+            .expect("bottom-left render should succeed");
+
+        assert!(image_pixel_is_dark(
+            &image_all_sides,
+            top_probe.0,
+            top_probe.1
+        ));
+        assert!(!image_pixel_is_dark(
+            &image_bottom_left,
+            top_probe.0,
+            top_probe.1
+        ));
+        assert!(image_pixel_is_dark(
+            &image_all_sides,
+            right_probe.0,
+            right_probe.1
+        ));
+        assert!(!image_pixel_is_dark(
+            &image_bottom_left,
+            right_probe.0,
+            right_probe.1
+        ));
+    }
+
+    fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
+        let (x_min, x_max, y_min, y_max) = plot
+            .calculate_data_bounds()
+            .expect("data bounds should be available");
+        let content = plot.create_plot_content(y_min, y_max);
+        let layout_config = match &plot.display.config.margins {
+            MarginConfig::ContentDriven {
+                edge_buffer,
+                center_plot,
+            } => LayoutConfig {
+                edge_buffer_pt: *edge_buffer,
+                center_plot: *center_plot,
+                ..Default::default()
+            },
+            _ => LayoutConfig::default(),
+        };
+        let calculator = LayoutCalculator::new(layout_config);
+        let mut measurement_renderer = crate::render::SkiaRenderer::new(
+            plot.display.dimensions.0,
+            plot.display.dimensions.1,
+            plot.display.theme.clone(),
+        )
+        .expect("measurement renderer");
+        measurement_renderer.set_render_scale(plot.render_scale());
+        measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+        let measured_dimensions = plot
+            .measure_layout_text(
+                &measurement_renderer,
+                &content,
+                plot.display.config.figure.dpi,
+            )
+            .expect("layout text measurements");
+        let layout = calculator.compute(
+            plot.display.dimensions,
+            &content,
+            &plot.display.config.typography,
+            &plot.display.config.spacing,
+            plot.display.config.figure.dpi,
+            measured_dimensions.as_ref(),
+        );
+        let plot_area = tiny_skia::Rect::from_ltrb(
+            layout.plot_area.left,
+            layout.plot_area.top,
+            layout.plot_area.right,
+            layout.plot_area.bottom,
+        )
+        .expect("valid plot area");
+        let categories = plot
+            .series_mgr
+            .series
+            .iter()
+            .find_map(|series| {
+                if let SeriesType::Bar { categories, .. } = &series.series_type {
+                    Some(categories.len())
+                } else {
+                    None
+                }
+            })
+            .expect("categorical plot should contain bar categories");
+        let x_tick_pixels =
+            Plot::categorical_x_tick_pixels(plot_area, x_min, x_max, Some(categories), &[])
+                .expect("categorical ticks should be available");
+        let x_probe = x_tick_pixels[0].round() as u32;
+        (x_probe, (plot_area.top() + 3.0).round() as u32)
+    }
+
+    #[test]
+    fn test_render_honors_top_ticks_for_categorical_bar() {
+        let categories = ["A", "B", "C"];
+        let values = [2.0, 4.0, 3.0];
+        let base_plot = Plot::new()
+            .size_px(400, 300)
+            .bar(&categories, &values)
+            .end_series();
+        let all_sides = base_plot.clone().ticks_all_sides();
+        let bottom_left = base_plot.ticks_bottom_left();
+
+        let top_probe = compute_categorical_render_top_tick_probe(&all_sides);
+        let image_all_sides = all_sides.render().expect("all-sides render should succeed");
+        let image_bottom_left = bottom_left
+            .render()
+            .expect("bottom-left render should succeed");
+
+        assert!(image_has_dark_pixel_near(
+            &image_all_sides,
+            top_probe.0,
+            top_probe.1,
+            1
+        ));
+        assert!(!image_has_dark_pixel_near(
+            &image_bottom_left,
+            top_probe.0,
+            top_probe.1,
+            1
+        ));
+    }
+
+    #[test]
+    fn test_render_to_renderer_honors_top_ticks_for_categorical_bar() {
+        let categories = ["A", "B", "C"];
+        let values = [2.0, 4.0, 3.0];
+        let base_plot = Plot::new()
+            .size_px(400, 300)
+            .bar(&categories, &values)
+            .end_series();
+        let all_sides = base_plot.clone().ticks_all_sides();
+        let bottom_left = base_plot.ticks_bottom_left();
+        let top_probe = compute_categorical_render_top_tick_probe(&all_sides);
+
+        let mut renderer_all =
+            crate::render::SkiaRenderer::new(400, 300, all_sides.display.theme.clone())
+                .expect("renderer");
+        all_sides
+            .render_to_renderer(&mut renderer_all, 100.0)
+            .expect("all-sides render_to_renderer should succeed");
+        let image_all_sides = renderer_all.into_image();
+
+        let mut renderer_bottom_left =
+            crate::render::SkiaRenderer::new(400, 300, bottom_left.display.theme.clone())
+                .expect("renderer");
+        bottom_left
+            .render_to_renderer(&mut renderer_bottom_left, 100.0)
+            .expect("bottom-left render_to_renderer should succeed");
+        let image_bottom_left = renderer_bottom_left.into_image();
+
+        assert!(image_has_dark_pixel_near(
+            &image_all_sides,
+            top_probe.0,
+            top_probe.1,
+            1
+        ));
+        assert!(!image_has_dark_pixel_near(
+            &image_bottom_left,
+            top_probe.0,
+            top_probe.1,
+            1
+        ));
+    }
+
+    #[test]
     fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
         use crate::render::{FontConfig, FontFamily, TextRenderer};
 
@@ -10594,8 +11145,8 @@ mod tests {
             plot.display.theme.clone(),
         )
         .expect("measurement renderer");
-        let dpi_scale = plot.display.config.figure.dpi / 100.0;
-        measurement_renderer.set_dpi_scale(dpi_scale);
+        let render_scale = plot.render_scale();
+        measurement_renderer.set_render_scale(render_scale);
         measurement_renderer.set_text_engine_mode(plot.display.text_engine);
         let measured_dimensions = plot
             .measure_layout_text(
@@ -10662,6 +11213,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_render_to_svg_ticks_false_omits_tick_artifacts_but_keeps_axis_labels() {
+        let x_data = vec![0.0, 1.0, 2.0, 3.0];
+        let y_data = vec![1.0, 3.0, 2.0, 4.0];
+
+        let svg_with_ticks = Plot::new()
+            .line(&x_data, &y_data)
+            .title("NO_TICK_TITLE")
+            .xlabel("NO_TICK_X")
+            .ylabel("NO_TICK_Y")
+            .render_to_svg()
+            .expect("SVG render should succeed");
+
+        let svg_without_ticks = Plot::new()
+            .line(&x_data, &y_data)
+            .ticks(false)
+            .title("NO_TICK_TITLE")
+            .xlabel("NO_TICK_X")
+            .ylabel("NO_TICK_Y")
+            .render_to_svg()
+            .expect("SVG render should succeed");
+
+        assert!(
+            svg_without_ticks.matches("<line ").count() < svg_with_ticks.matches("<line ").count(),
+            "ticks(false) should reduce axis/tick line segments in SVG output"
+        );
+        assert_eq!(
+            svg_without_ticks.matches("</text>").count(),
+            3,
+            "ticks(false) should keep only title/xlabel/ylabel text nodes"
+        );
+        assert!(svg_without_ticks.contains(">NO_TICK_TITLE</text>"));
+        assert!(svg_without_ticks.contains(">NO_TICK_X</text>"));
+        assert!(svg_without_ticks.contains(">NO_TICK_Y</text>"));
+    }
+
+    #[test]
+    fn test_render_to_svg_ticks_false_keeps_dpi_scaled_frame_stroke() {
+        let svg = Plot::new()
+            .dpi(200)
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .ticks(false)
+            .render_to_svg()
+            .expect("SVG render should succeed");
+
+        assert!(
+            svg.contains(r#"stroke-width="3.00""#),
+            "ticks(false) should keep the DPI-scaled 1.5 logical px frame width"
+        );
+    }
+
     #[cfg(feature = "typst-math")]
     #[test]
     fn test_render_to_svg_typst_uses_layout_anchor_contract() {
@@ -10699,8 +11301,8 @@ mod tests {
             plot.display.theme.clone(),
         )
         .expect("measurement renderer");
-        let dpi_scale = plot.display.config.figure.dpi / 100.0;
-        measurement_renderer.set_dpi_scale(dpi_scale);
+        let render_scale = plot.render_scale();
+        measurement_renderer.set_render_scale(render_scale);
         measurement_renderer.set_text_engine_mode(plot.display.text_engine);
         let measured_dimensions = plot
             .measure_layout_text(
@@ -10768,6 +11370,43 @@ mod tests {
             ylabel.3,
             ylabel_pos.x,
             ylabel_pos.y
+        );
+    }
+
+    #[test]
+    fn test_render_to_svg_preserves_line_width_ratio_across_dpi() {
+        let x_data = vec![0.0, 1.0, 2.0, 3.0];
+        let y_data = vec![1.0, 3.0, 2.0, 4.0];
+
+        let plot_100 = Plot::new()
+            .size(6.4, 4.8)
+            .dpi(100)
+            .line(&x_data, &y_data)
+            .line_width(2.0)
+            .end_series();
+        let plot_200 = Plot::new()
+            .size(6.4, 4.8)
+            .dpi(200)
+            .line(&x_data, &y_data)
+            .line_width(2.0)
+            .end_series();
+
+        let svg_100 = plot_100.render_to_svg().expect("100 DPI SVG render");
+        let svg_200 = plot_200.render_to_svg().expect("200 DPI SVG render");
+
+        let width_100 = extract_svg_root_attr(&svg_100, "width");
+        let width_200 = extract_svg_root_attr(&svg_200, "width");
+        let stroke_100 = extract_first_svg_polyline_stroke_width(&svg_100);
+        let stroke_200 = extract_first_svg_polyline_stroke_width(&svg_200);
+
+        let ratio_100 = stroke_100 / width_100;
+        let ratio_200 = stroke_200 / width_200;
+
+        assert!(
+            (ratio_100 - ratio_200).abs() < 0.0005,
+            "stroke-to-canvas ratio should remain stable across DPI: {} vs {}",
+            ratio_100,
+            ratio_200
         );
     }
 
@@ -11496,6 +12135,24 @@ mod tests {
             err,
             PlottingError::InvalidInput(message)
                 if message.contains("Figure DPI must be positive") && message.contains("0")
+        ));
+    }
+
+    #[test]
+    fn test_render_rejects_non_positive_figure_width_before_sanitizing() {
+        let mut plot = Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]).end_series();
+        plot.display.config.figure = FigureConfig::new(0.0, 4.8, 100.0);
+
+        let err = plot
+            .render()
+            .expect_err("non-positive figure width should fail validation");
+
+        assert!(matches!(
+            err,
+            PlottingError::InvalidDimensions {
+                width: 0,
+                height: 480
+            }
         ));
     }
 

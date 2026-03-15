@@ -542,6 +542,48 @@ Plot::new()
     .save("axis_labels.png")?;
 ```
 
+### Tick Marks
+
+Ticks are enabled by default. The default style draws inward tick marks on all four sides while
+keeping tick labels on the bottom and left axes.
+
+```rust
+use ruviz::prelude::*;
+
+// Default: four-sided inward ticks
+Plot::new()
+    .line(&x, &y)
+    .save("default_ticks.png")?;
+
+// Hide tick marks and tick labels, but keep the frame and axis labels
+Plot::new()
+    .line(&x, &y)
+    .ticks(false)
+    .xlabel("Time")
+    .ylabel("Value")
+    .save("ticks_disabled.png")?;
+```
+
+```rust
+use ruviz::prelude::*;
+
+// Customize direction and visible sides
+Plot::new()
+    .line(&x, &y)
+    .tick_direction_inout()
+    .ticks_bottom_left()
+    .show_top_ticks(true)
+    .show_right_ticks(true)
+    .save("ticks_custom.png")?;
+```
+
+Available tick controls:
+- `.ticks(bool)` to enable or disable tick marks and tick labels together
+- `.tick_direction_inside()`, `.tick_direction_outside()`, `.tick_direction_inout()`
+- `.ticks_all_sides()` and `.ticks_bottom_left()`
+- `.show_top_ticks(bool)`, `.show_bottom_ticks(bool)`, `.show_left_ticks(bool)`, `.show_right_ticks(bool)`
+- `.tick_sides(TickSides { .. })` for explicit per-side control
+
 ## Figure Dimensions
 
 ### Custom Size

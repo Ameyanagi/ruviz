@@ -20,9 +20,9 @@ use crate::render::{Color, LineStyle, Theme};
 pub struct ErrorBarConfig {
     /// Color for error bars
     pub color: Option<Color>,
-    /// Line width for error bar lines (in pixels)
+    /// Line width for error bar lines in logical pixels at the reference DPI.
     pub line_width: f32,
-    /// Cap width in pixels (matplotlib default: 0, typical: 4-6)
+    /// Cap width in logical pixels at the reference DPI.
     pub cap_size: f32,
     /// Line style for error bars
     pub line_style: ErrorLineStyle,
@@ -73,7 +73,7 @@ impl ErrorBarConfig {
         self
     }
 
-    /// Set cap size in pixels (matplotlib typical: 4-6)
+    /// Set cap size in logical pixels (matplotlib typical: 4-6 at the reference DPI)
     pub fn cap_size(mut self, size: f32) -> Self {
         self.cap_size = size.max(0.0);
         self

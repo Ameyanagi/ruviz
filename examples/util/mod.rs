@@ -19,6 +19,7 @@ use std::path::PathBuf;
 /// let path = example_output_path("my_example_plot.png");
 /// plot.save(&path)?;
 /// ```
+#[allow(dead_code)]
 pub fn example_output_path(filename: &str) -> PathBuf {
     let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")

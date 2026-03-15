@@ -762,7 +762,7 @@ pub mod prelude {
         Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern,
         IntoPlot, Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot,
         PlotBuilder, PlotInput, Position, Result, SeriesStyle, ShapeStyle, SubplotFigure,
-        TextAlign, TextStyle, TextVAlign, subplots, subplots_default,
+        TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, subplots, subplots_default,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,
