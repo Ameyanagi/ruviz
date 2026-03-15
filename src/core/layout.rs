@@ -14,7 +14,7 @@
 //! 3. **Position elements** - Each element adjacent to its neighbor
 //! 4. **Center the plot** - Distribute extra space symmetrically
 
-use crate::core::{SpacingConfig, TypographyConfig};
+use crate::core::{RenderScale, SpacingConfig, TypographyConfig};
 
 // =============================================================================
 // Data Structures
@@ -93,15 +93,30 @@ pub struct PlotLayout {
 }
 
 /// Content information needed for layout calculation
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PlotContent {
     pub title: Option<String>,
     pub xlabel: Option<String>,
     pub ylabel: Option<String>,
+    /// Whether layout should reserve space for tick labels.
+    pub show_tick_labels: bool,
     /// Maximum number of characters in y-tick labels (for width estimation)
     pub max_ytick_chars: usize,
     /// Maximum number of characters in x-tick labels (for height is same)
     pub max_xtick_chars: usize,
+}
+
+impl Default for PlotContent {
+    fn default() -> Self {
+        Self {
+            title: None,
+            xlabel: None,
+            ylabel: None,
+            show_tick_labels: true,
+            max_ytick_chars: 0,
+            max_xtick_chars: 0,
+        }
+    }
 }
 
 impl PlotContent {
@@ -127,6 +142,11 @@ impl PlotContent {
     pub fn with_tick_chars(mut self, max_ytick: usize, max_xtick: usize) -> Self {
         self.max_ytick_chars = max_ytick;
         self.max_xtick_chars = max_xtick;
+        self
+    }
+
+    pub fn with_tick_labels(mut self, show_tick_labels: bool) -> Self {
+        self.show_tick_labels = show_tick_labels;
         self
     }
 }
@@ -226,19 +246,17 @@ impl LayoutCalculator {
         measurements: Option<&MeasuredDimensions>,
     ) -> PlotLayout {
         let (canvas_width, canvas_height) = (canvas_size.0 as f32, canvas_size.1 as f32);
+        let render_scale = RenderScale::from_canvas_size(canvas_size.0, canvas_size.1, dpi);
 
-        // Convert points to pixels
-        let pt_to_px = |pt: f32| pt * dpi / 72.0;
-
-        let edge_buffer = pt_to_px(self.config.edge_buffer_pt);
-        let title_pad = pt_to_px(spacing.title_pad);
-        let label_pad = pt_to_px(spacing.label_pad);
-        let tick_pad = pt_to_px(spacing.tick_pad);
+        let edge_buffer = render_scale.points_to_pixels(self.config.edge_buffer_pt);
+        let title_pad = render_scale.points_to_pixels(spacing.title_pad);
+        let label_pad = render_scale.points_to_pixels(spacing.label_pad);
+        let tick_pad = render_scale.points_to_pixels(spacing.tick_pad);
 
         // Get font sizes in pixels
-        let title_size_px = pt_to_px(typography.title_size());
-        let label_size_px = pt_to_px(typography.label_size());
-        let tick_size_px = pt_to_px(typography.tick_size());
+        let title_size_px = render_scale.points_to_pixels(typography.title_size());
+        let label_size_px = render_scale.points_to_pixels(typography.label_size());
+        let tick_size_px = render_scale.points_to_pixels(typography.tick_size());
 
         // Step 1: Measure/estimate content sizes
         let measured_title = measurements.and_then(|m| m.title);
@@ -270,11 +288,18 @@ impl LayoutCalculator {
             0.0
         };
 
-        let xtick_height = estimate_text_height(tick_size_px);
-        let ytick_width = estimate_tick_label_width(
-            content.max_ytick_chars.max(5), // Default to 5 chars if not specified
-            tick_size_px,
-        );
+        let (xtick_height, ytick_width, tick_pad) = if content.show_tick_labels {
+            (
+                estimate_text_height(tick_size_px),
+                estimate_tick_label_width(
+                    content.max_ytick_chars.max(5), // Default to 5 chars if not specified
+                    tick_size_px,
+                ),
+                tick_pad,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
 
         // Step 2: Calculate minimum required margins
         let mut min_top = edge_buffer;
@@ -555,6 +580,38 @@ mod tests {
         // Plot area should be maximized
         assert!(layout.plot_area.width() > 500.0);
         assert!(layout.plot_area.height() > 400.0);
+    }
+
+    #[test]
+    fn test_layout_without_tick_labels_reclaims_tick_margins() {
+        let calculator = LayoutCalculator::default();
+        let with_ticks = PlotContent::new()
+            .with_xlabel("X Axis")
+            .with_ylabel("Y Axis")
+            .with_tick_chars(6, 4);
+        let without_ticks = with_ticks.clone().with_tick_labels(false);
+
+        let layout_with_ticks = calculator.compute(
+            (640, 480),
+            &with_ticks,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+        let layout_without_ticks = calculator.compute(
+            (640, 480),
+            &without_ticks,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        assert!(layout_without_ticks.margins.bottom < layout_with_ticks.margins.bottom);
+        assert!(layout_without_ticks.margins.left < layout_with_ticks.margins.left);
+        assert!(layout_without_ticks.plot_area.width() > layout_with_ticks.plot_area.width());
+        assert!(layout_without_ticks.plot_area.height() > layout_with_ticks.plot_area.height());
     }
 
     #[test]

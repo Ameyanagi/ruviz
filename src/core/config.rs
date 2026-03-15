@@ -26,7 +26,7 @@
 //!     .build();
 //! ```
 
-use crate::core::units::{REFERENCE_DPI, in_to_px, pt_to_px, px_to_in};
+use crate::core::units::{REFERENCE_DPI, RenderScale, in_to_px, pt_to_px, px_to_in};
 use crate::render::{FontFamily, FontWeight};
 
 // =============================================================================
@@ -68,6 +68,11 @@ impl FigureConfig {
     /// Get aspect ratio (width / height)
     pub fn aspect_ratio(&self) -> f32 {
         self.width / self.height
+    }
+
+    /// Build the shared render scale for this figure configuration.
+    pub fn render_scale(&self) -> RenderScale {
+        RenderScale::new(self.dpi).with_figure(self.width, self.height)
     }
 }
 
@@ -790,12 +795,10 @@ impl PlotConfig {
                 }
             }
             MarginConfig::Auto { min, max } => {
-                let pt_to_in = |pt: f32| pt / 72.0;
-
                 // Estimate top margin based on title
                 let top = if has_title {
-                    (pt_to_in(self.typography.title_size())
-                        + pt_to_in(self.spacing.title_pad)
+                    (crate::core::pt_to_in(self.typography.title_size())
+                        + crate::core::pt_to_in(self.spacing.title_pad)
                         + 0.15)
                         .clamp(*min, *max)
                 } else {
@@ -804,27 +807,30 @@ impl PlotConfig {
 
                 // Estimate bottom margin based on xlabel and tick labels
                 let bottom = if has_xlabel {
-                    (pt_to_in(self.typography.label_size())
-                        + pt_to_in(self.typography.tick_size())
-                        + pt_to_in(self.spacing.label_pad)
-                        + pt_to_in(self.spacing.tick_pad)
+                    (crate::core::pt_to_in(self.typography.label_size())
+                        + crate::core::pt_to_in(self.typography.tick_size())
+                        + crate::core::pt_to_in(self.spacing.label_pad)
+                        + crate::core::pt_to_in(self.spacing.tick_pad)
                         + 0.1)
                         .clamp(*min, *max)
                 } else {
-                    (pt_to_in(self.typography.tick_size()) + pt_to_in(self.spacing.tick_pad) + 0.1)
+                    (crate::core::pt_to_in(self.typography.tick_size())
+                        + crate::core::pt_to_in(self.spacing.tick_pad)
+                        + 0.1)
                         .clamp(*min, *max)
                 };
 
                 // Estimate left margin based on ylabel and y-tick labels
                 let left = if has_ylabel {
                     // Rotated ylabel takes more horizontal space
-                    (pt_to_in(self.typography.label_size())
-                        + pt_to_in(self.typography.tick_size()) * 4.0 // Estimate tick label width
-                        + pt_to_in(self.spacing.label_pad)
+                    (crate::core::pt_to_in(self.typography.label_size())
+                        + crate::core::pt_to_in(self.typography.tick_size()) * 4.0
+                        + crate::core::pt_to_in(self.spacing.label_pad)
                         + 0.2)
                         .clamp(*min, *max)
                 } else {
-                    (pt_to_in(self.typography.tick_size()) * 4.0 + 0.15).clamp(*min, *max)
+                    (crate::core::pt_to_in(self.typography.tick_size()) * 4.0 + 0.15)
+                        .clamp(*min, *max)
                 };
 
                 // Right margin is typically smaller

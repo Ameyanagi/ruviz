@@ -10,7 +10,8 @@ use polars::prelude::*;
 mod util;
 
 fn main() -> Result<()> {
-    let mut outputs = Vec::new();
+    #[allow(unused_mut)]
+    let mut outputs: Vec<std::path::PathBuf> = Vec::new();
 
     #[cfg(feature = "ndarray_support")]
     {

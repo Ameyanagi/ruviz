@@ -305,6 +305,7 @@ impl InteractiveWindow {
                 &self.interaction_state,
                 self.window_size.width,
                 self.window_size.height,
+                self.scale_factor as f32,
             )?;
 
             // In real implementation, would present pixel_data to window surface

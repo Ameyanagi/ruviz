@@ -694,6 +694,94 @@ where
         self
     }
 
+    /// Enable or disable tick marks and tick labels.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn ticks(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.ticks(enabled);
+        self
+    }
+
+    /// Set tick direction to inside.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn tick_direction_inside(mut self) -> Self {
+        self.plot = self.plot.tick_direction_inside();
+        self
+    }
+
+    /// Set tick direction to outside.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn tick_direction_outside(mut self) -> Self {
+        self.plot = self.plot.tick_direction_outside();
+        self
+    }
+
+    /// Set tick direction to straddle the plot border.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn tick_direction_inout(mut self) -> Self {
+        self.plot = self.plot.tick_direction_inout();
+        self
+    }
+
+    /// Set which plot borders render tick marks.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn tick_sides(mut self, sides: crate::core::TickSides) -> Self {
+        self.plot = self.plot.tick_sides(sides);
+        self
+    }
+
+    /// Show ticks on all four sides.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn ticks_all_sides(mut self) -> Self {
+        self.plot = self.plot.ticks_all_sides();
+        self
+    }
+
+    /// Show ticks only on the bottom and left sides.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn ticks_bottom_left(mut self) -> Self {
+        self.plot = self.plot.ticks_bottom_left();
+        self
+    }
+
+    /// Enable or disable top ticks.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn show_top_ticks(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.show_top_ticks(enabled);
+        self
+    }
+
+    /// Enable or disable bottom ticks.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn show_bottom_ticks(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.show_bottom_ticks(enabled);
+        self
+    }
+
+    /// Enable or disable left ticks.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn show_left_ticks(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.show_left_ticks(enabled);
+        self
+    }
+
+    /// Enable or disable right ticks.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn show_right_ticks(mut self, enabled: bool) -> Self {
+        self.plot = self.plot.show_right_ticks(enabled);
+        self
+    }
+
     /// Enable or disable Typst text rendering mode.
     ///
     /// This method forwards to the inner Plot.

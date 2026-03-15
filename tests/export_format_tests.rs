@@ -8,6 +8,7 @@ use common::{
     assert_file_non_empty, assert_png_dimensions_with_tolerance, assert_png_rendered,
     test_output_path,
 };
+use ruviz::core::plot::{TickDirection, TickSides};
 use ruviz::prelude::*;
 use ruviz::render::skia::{SkiaRenderer, calculate_plot_area};
 use std::fs;
@@ -212,7 +213,14 @@ fn test_direct_renderer_exports() -> std::result::Result<(), Box<dyn std::error:
         LineStyle::Dotted,
         1.0,
     )?;
-    grid_renderer.draw_axes(plot_area, &x_ticks, &y_ticks, Color::new(0, 0, 0))?;
+    grid_renderer.draw_axes(
+        plot_area,
+        &x_ticks,
+        &y_ticks,
+        &TickDirection::Inside,
+        &TickSides::all(),
+        Color::new(0, 0, 0),
+    )?;
     grid_renderer.save_png("export_test_output/direct/03_grid_and_axes.png")?;
     assert_png_rendered(
         "export_test_output/direct/03_grid_and_axes.png",

@@ -1,9 +1,9 @@
 use crate::{
     core::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
-        LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, Result, SpacingConfig,
-        TextPosition, TickFormatter, find_best_position,
-        plot::{Image, TextEngineMode},
+        LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
+        SpacingConfig, TextPosition, TickFormatter, find_best_position,
+        plot::{Image, TextEngineMode, TickDirection, TickSides},
         pt_to_px,
     },
     render::{
@@ -24,25 +24,13 @@ pub struct SkiaRenderer {
     theme: Theme,
     text_renderer: TextRenderer,
     font_config: FontConfig,
-    /// DPI scale factor (1.0 = 100 DPI base)
-    dpi_scale: f32,
+    /// Shared render scale for unit conversion.
+    render_scale: RenderScale,
     /// Active text rendering engine.
     text_engine_mode: TextEngineMode,
 }
 
 impl SkiaRenderer {
-    fn sanitize_dpi_scale(dpi_scale: f32) -> f32 {
-        if dpi_scale.is_finite() && dpi_scale > 0.0 {
-            dpi_scale
-        } else {
-            log::warn!(
-                "Invalid dpi_scale ({:?}) for SkiaRenderer; falling back to 1.0",
-                dpi_scale
-            );
-            1.0
-        }
-    }
-
     /// Create a new renderer with the given dimensions
     pub fn new(width: u32, height: u32, theme: Theme) -> Result<Self> {
         Self::with_font_family(width, height, theme, FontFamily::SansSerif)
@@ -75,30 +63,51 @@ impl SkiaRenderer {
             theme,
             text_renderer,
             font_config,
-            dpi_scale: 1.0, // Default to 100 DPI base
+            render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
         })
     }
 
-    /// Set the DPI scale factor (dpi / 100.0)
-    pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
-        self.dpi_scale = Self::sanitize_dpi_scale(dpi_scale);
+    /// Set the render scale context used for unit conversion.
+    pub fn set_render_scale(&mut self, render_scale: RenderScale) {
+        self.render_scale = render_scale;
     }
 
-    /// Get the DPI scale factor
+    /// Get the render scale context used for unit conversion.
+    pub fn render_scale(&self) -> RenderScale {
+        self.render_scale
+    }
+
+    /// Legacy compatibility shim for callers that still pass `dpi / 100.0`.
+    pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
+        self.set_render_scale(RenderScale::from_reference_scale(dpi_scale));
+    }
+
+    /// Legacy compatibility shim for callers that still expect `dpi / 100.0`.
     pub fn dpi_scale(&self) -> f32 {
-        self.dpi_scale
+        self.render_scale.reference_scale()
+    }
+
+    fn points_to_pixels(&self, points: f32) -> f32 {
+        self.render_scale.points_to_pixels(points)
+    }
+
+    fn logical_pixels_to_pixels(&self, logical_pixels: f32) -> f32 {
+        self.render_scale.logical_pixels_to_pixels(logical_pixels)
     }
 
     /// Convert line style to a DPI-scaled dash pattern.
     ///
-    /// Dash definitions are authored at a 100-DPI baseline and scaled so
-    /// physical dash spacing remains consistent across output resolutions.
+    /// Dash definitions are authored in logical pixels at the reference DPI and
+    /// converted through the shared render scale so physical dash spacing
+    /// remains consistent across output resolutions.
     fn scaled_dash_pattern(&self, style: &LineStyle) -> Option<Vec<f32>> {
-        let scale = self.dpi_scale;
-        style
-            .to_dash_array()
-            .map(|pattern| pattern.into_iter().map(|segment| segment * scale).collect())
+        style.to_dash_array().map(|pattern| {
+            pattern
+                .into_iter()
+                .map(|segment| self.logical_pixels_to_pixels(segment))
+                .collect()
+        })
     }
 
     /// Set text rendering backend mode.
@@ -851,22 +860,90 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    fn vertical_tick_span(
+        spine_y: f32,
+        tick_size: f32,
+        tick_direction: &TickDirection,
+        top: bool,
+    ) -> (f32, f32) {
+        match tick_direction {
+            TickDirection::Inside => {
+                if top {
+                    (spine_y, spine_y + tick_size)
+                } else {
+                    (spine_y, spine_y - tick_size)
+                }
+            }
+            TickDirection::Outside => {
+                if top {
+                    (spine_y, spine_y - tick_size)
+                } else {
+                    (spine_y, spine_y + tick_size)
+                }
+            }
+            TickDirection::InOut => (spine_y - tick_size / 2.0, spine_y + tick_size / 2.0),
+        }
+    }
+
+    fn horizontal_tick_span(
+        spine_x: f32,
+        tick_size: f32,
+        tick_direction: &TickDirection,
+        right: bool,
+    ) -> (f32, f32) {
+        match tick_direction {
+            TickDirection::Inside => {
+                if right {
+                    (spine_x, spine_x - tick_size)
+                } else {
+                    (spine_x, spine_x + tick_size)
+                }
+            }
+            TickDirection::Outside => {
+                if right {
+                    (spine_x, spine_x + tick_size)
+                } else {
+                    (spine_x, spine_x - tick_size)
+                }
+            }
+            TickDirection::InOut => (spine_x - tick_size / 2.0, spine_x + tick_size / 2.0),
+        }
+    }
+
+    fn x_label_center(plot_area: &LayoutRect, x_value: f64, x_min: f64, x_max: f64) -> f32 {
+        let x_range = x_max - x_min;
+        if x_range.abs() < f64::EPSILON {
+            plot_area.center_x()
+        } else {
+            plot_area.left + ((x_value - x_min) as f32 / x_range as f32) * plot_area.width()
+        }
+    }
+
+    fn y_label_center(plot_area: &LayoutRect, y_value: f64, y_min: f64, y_max: f64) -> f32 {
+        let y_range = y_max - y_min;
+        if y_range.abs() < f64::EPSILON {
+            plot_area.center_y()
+        } else {
+            plot_area.bottom - ((y_value - y_min) as f32 / y_range as f32) * plot_area.height()
+        }
+    }
+
     /// Draw axis lines and ticks
     pub fn draw_axes(
         &mut self,
         plot_area: Rect,
         x_ticks: &[f32],
         y_ticks: &[f32],
+        tick_direction: &TickDirection,
+        tick_sides: &TickSides,
         color: Color,
     ) -> Result<()> {
-        // Scale widths and sizes by DPI (base values at 100 DPI)
-        let dpi_scale = self.dpi_scale;
-        let axis_width = 1.5 * dpi_scale;
-        let tick_size = 5.0 * dpi_scale;
-        let tick_width = 1.0 * dpi_scale;
+        // Axis metrics are authored in logical pixels and resolved via RenderScale.
+        let axis_width = self.logical_pixels_to_pixels(1.5);
+        let tick_size = self.logical_pixels_to_pixels(5.0);
+        let tick_width = self.logical_pixels_to_pixels(1.0);
 
-        // Draw main axis lines
-        // X-axis (bottom)
+        // Draw the full plot frame. Tick side selection only controls tick marks.
         self.draw_line(
             plot_area.left(),
             plot_area.bottom(),
@@ -877,7 +954,6 @@ impl SkiaRenderer {
             LineStyle::Solid,
         )?;
 
-        // Y-axis (left)
         self.draw_line(
             plot_area.left(),
             plot_area.top(),
@@ -888,34 +964,98 @@ impl SkiaRenderer {
             LineStyle::Solid,
         )?;
 
+        self.draw_line(
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.top(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
+
+        self.draw_line(
+            plot_area.right(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.bottom(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
+
         // Draw tick marks
-        // X-axis ticks
         for &x in x_ticks {
             if x >= plot_area.left() && x <= plot_area.right() {
-                self.draw_line(
-                    x,
-                    plot_area.bottom(),
-                    x,
-                    plot_area.bottom() + tick_size,
-                    color,
-                    tick_width,
-                    LineStyle::Solid,
-                )?;
+                if tick_sides.bottom {
+                    let (tick_start, tick_end) = Self::vertical_tick_span(
+                        plot_area.bottom(),
+                        tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+                if tick_sides.top {
+                    let (tick_start, tick_end) =
+                        Self::vertical_tick_span(plot_area.top(), tick_size, tick_direction, true);
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
             }
         }
 
-        // Y-axis ticks
         for &y in y_ticks {
             if y >= plot_area.top() && y <= plot_area.bottom() {
-                self.draw_line(
-                    plot_area.left() - tick_size,
-                    y,
-                    plot_area.left(),
-                    y,
-                    color,
-                    tick_width,
-                    LineStyle::Solid,
-                )?;
+                if tick_sides.left {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_area.left(),
+                        tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+                if tick_sides.right {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_area.right(),
+                        tick_size,
+                        tick_direction,
+                        true,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
             }
         }
 
@@ -930,19 +1070,19 @@ impl SkiaRenderer {
         y_major_ticks: &[f32],
         x_minor_ticks: &[f32],
         y_minor_ticks: &[f32],
-        tick_direction: &crate::core::plot::TickDirection,
+        tick_direction: &TickDirection,
+        tick_sides: &TickSides,
         color: Color,
         dpi_scale: f32,
     ) -> Result<()> {
-        // Scale tick widths and sizes based on DPI (base values at 100 DPI)
-        let axis_width = 1.5 * dpi_scale;
-        let major_tick_size = 8.0 * dpi_scale;
-        let minor_tick_size = 4.0 * dpi_scale;
-        let major_tick_width = 1.5 * dpi_scale;
-        let minor_tick_width = 1.0 * dpi_scale;
+        let render_scale = RenderScale::from_reference_scale(dpi_scale);
+        let axis_width = render_scale.logical_pixels_to_pixels(1.5);
+        let major_tick_size = render_scale.logical_pixels_to_pixels(8.0);
+        let minor_tick_size = render_scale.logical_pixels_to_pixels(4.0);
+        let major_tick_width = render_scale.logical_pixels_to_pixels(1.5);
+        let minor_tick_width = render_scale.logical_pixels_to_pixels(1.0);
 
-        // Draw main axis lines
-        // X-axis (bottom)
+        // Draw the full plot frame. Tick side selection only controls tick marks.
         self.draw_line(
             plot_area.left(),
             plot_area.bottom(),
@@ -953,7 +1093,6 @@ impl SkiaRenderer {
             LineStyle::Solid,
         )?;
 
-        // Y-axis (left)
         self.draw_line(
             plot_area.left(),
             plot_area.top(),
@@ -964,77 +1103,179 @@ impl SkiaRenderer {
             LineStyle::Solid,
         )?;
 
-        // Determine tick direction multiplier
-        let tick_dir_multiplier = match tick_direction {
-            crate::core::plot::TickDirection::Inside => -1.0,
-            crate::core::plot::TickDirection::Outside => 1.0,
-        };
+        self.draw_line(
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.top(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
 
-        // Draw major tick marks on X-axis
+        self.draw_line(
+            plot_area.right(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.bottom(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
+
         for &x in x_major_ticks {
             if x >= plot_area.left() && x <= plot_area.right() {
-                let tick_start = plot_area.bottom();
-                let tick_end = plot_area.bottom() + major_tick_size * tick_dir_multiplier;
-                self.draw_line(
-                    x,
-                    tick_start,
-                    x,
-                    tick_end,
-                    color,
-                    major_tick_width,
-                    LineStyle::Solid,
-                )?;
+                if tick_sides.bottom {
+                    let (tick_start, tick_end) = Self::vertical_tick_span(
+                        plot_area.bottom(),
+                        major_tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        major_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+                if tick_sides.top {
+                    let (tick_start, tick_end) = Self::vertical_tick_span(
+                        plot_area.top(),
+                        major_tick_size,
+                        tick_direction,
+                        true,
+                    );
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        major_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
             }
         }
 
-        // Draw minor tick marks on X-axis
         for &x in x_minor_ticks {
             if x >= plot_area.left() && x <= plot_area.right() {
-                let tick_start = plot_area.bottom();
-                let tick_end = plot_area.bottom() + minor_tick_size * tick_dir_multiplier;
-                self.draw_line(
-                    x,
-                    tick_start,
-                    x,
-                    tick_end,
-                    color,
-                    minor_tick_width,
-                    LineStyle::Solid,
-                )?;
+                if tick_sides.bottom {
+                    let (tick_start, tick_end) = Self::vertical_tick_span(
+                        plot_area.bottom(),
+                        minor_tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        minor_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+                if tick_sides.top {
+                    let (tick_start, tick_end) = Self::vertical_tick_span(
+                        plot_area.top(),
+                        minor_tick_size,
+                        tick_direction,
+                        true,
+                    );
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        minor_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
             }
         }
 
-        // Draw major tick marks on Y-axis
         for &y in y_major_ticks {
             if y >= plot_area.top() && y <= plot_area.bottom() {
-                let tick_start = plot_area.left();
-                let tick_end = plot_area.left() + major_tick_size * -tick_dir_multiplier; // Opposite direction for Y-axis
-                self.draw_line(
-                    tick_start,
-                    y,
-                    tick_end,
-                    y,
-                    color,
-                    major_tick_width,
-                    LineStyle::Solid,
-                )?;
+                if tick_sides.left {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_area.left(),
+                        major_tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        major_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+                if tick_sides.right {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_area.right(),
+                        major_tick_size,
+                        tick_direction,
+                        true,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        major_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
             }
         }
 
-        // Draw minor tick marks on Y-axis
         for &y in y_minor_ticks {
             if y >= plot_area.top() && y <= plot_area.bottom() {
-                let tick_start = plot_area.left();
-                let tick_end = plot_area.left() + minor_tick_size * -tick_dir_multiplier; // Opposite direction for Y-axis
-                self.draw_line(
-                    tick_start,
-                    y,
-                    tick_end,
-                    y,
-                    color,
-                    minor_tick_width,
-                    LineStyle::Solid,
-                )?;
+                if tick_sides.left {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_area.left(),
+                        minor_tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        minor_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
+                if tick_sides.right {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_area.right(),
+                        minor_tick_size,
+                        tick_direction,
+                        true,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        minor_tick_width,
+                        LineStyle::Solid,
+                    )?;
+                }
             }
         }
 
@@ -1257,12 +1498,12 @@ impl SkiaRenderer {
         spacing: &SpacingConfig,
     ) -> Result<()> {
         let tick_size = label_size * 0.7; // Tick labels slightly smaller than axis labels
-        let dpi_scale = dpi / 100.0;
+        let render_scale = RenderScale::new(dpi);
 
         // Convert spacing config values from points to pixels
         let tick_pad_px = pt_to_px(spacing.tick_pad, dpi);
         let label_pad_px = pt_to_px(spacing.label_pad, dpi);
-        let char_width_estimate = 4.0 * dpi_scale;
+        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
 
         // Generate ticks and format all labels with consistent precision
         let x_ticks = generate_ticks(x_min, x_max, 5);
@@ -1320,7 +1561,7 @@ impl SkiaRenderer {
         self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
 
         // Draw border around plot area
-        self.draw_plot_border(plot_area, color, dpi_scale)?;
+        self.draw_plot_border(plot_area, color, render_scale.reference_scale())?;
 
         Ok(())
     }
@@ -1340,10 +1581,11 @@ impl SkiaRenderer {
         dpi_scale: f32,
     ) -> Result<()> {
         let tick_size = label_size * 0.7;
-        let tick_offset_y = 20.0 * dpi_scale;
-        let x_label_offset = 50.0 * dpi_scale;
-        let y_label_offset = 25.0 * dpi_scale;
-        let char_width_estimate = 4.0 * dpi_scale;
+        let render_scale = RenderScale::from_reference_scale(dpi_scale);
+        let tick_offset_y = render_scale.logical_pixels_to_pixels(20.0);
+        let x_label_offset = render_scale.logical_pixels_to_pixels(50.0);
+        let y_label_offset = render_scale.logical_pixels_to_pixels(25.0);
+        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
 
         // Generate ticks and format all labels with consistent precision
         let x_ticks = generate_ticks(x_min, x_max, 5);
@@ -1368,7 +1610,10 @@ impl SkiaRenderer {
             let y_pixel = plot_area.bottom()
                 - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
             let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            let label_x = (plot_area.left() - text_width_estimate - 15.0 * dpi_scale).max(5.0);
+            let label_x = (plot_area.left()
+                - text_width_estimate
+                - render_scale.logical_pixels_to_pixels(15.0))
+            .max(5.0);
             let label_snippet = self.generated_label(label_text);
             self.draw_text(
                 &label_snippet,
@@ -1410,13 +1655,14 @@ impl SkiaRenderer {
         dpi_scale: f32,
     ) -> Result<()> {
         let tick_size = label_size * 0.7; // Tick labels slightly smaller than axis labels
+        let render_scale = RenderScale::from_reference_scale(dpi_scale);
 
-        // Scale all positioning offsets with DPI - increased spacing
-        let tick_offset_y = 25.0 * dpi_scale; // Increased from 20.0
-        let x_label_offset = 55.0 * dpi_scale; // Increased from 50.0
-        let y_label_offset = 50.0 * dpi_scale; // Increased from 25.0 to give more space
-        let y_tick_offset = 15.0 * dpi_scale; // Additional offset for Y-axis tick labels
-        let char_width_estimate = 4.0 * dpi_scale; // Rough character width for centering
+        // Spacing constants are authored in logical pixels and resolved via RenderScale.
+        let tick_offset_y = render_scale.logical_pixels_to_pixels(25.0);
+        let x_label_offset = render_scale.logical_pixels_to_pixels(55.0);
+        let y_label_offset = render_scale.logical_pixels_to_pixels(50.0);
+        let y_tick_offset = render_scale.logical_pixels_to_pixels(15.0);
+        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
 
         // Format all tick labels with consistent precision
         let x_labels = format_tick_labels(x_major_ticks);
@@ -1498,11 +1744,12 @@ impl SkiaRenderer {
         dpi_scale: f32,
     ) -> Result<()> {
         let tick_size = label_size * 0.7;
-        let tick_offset_y = 25.0 * dpi_scale;
-        let x_label_offset = 55.0 * dpi_scale;
-        let y_label_offset = 50.0 * dpi_scale;
-        let y_tick_offset = 15.0 * dpi_scale;
-        let char_width_estimate = 4.0 * dpi_scale;
+        let render_scale = RenderScale::from_reference_scale(dpi_scale);
+        let tick_offset_y = render_scale.logical_pixels_to_pixels(25.0);
+        let x_label_offset = render_scale.logical_pixels_to_pixels(55.0);
+        let y_label_offset = render_scale.logical_pixels_to_pixels(50.0);
+        let y_tick_offset = render_scale.logical_pixels_to_pixels(15.0);
+        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
 
         // Draw X-axis category labels using same data-to-pixel mapping as bars
         let n_categories = categories.len();
@@ -1574,7 +1821,9 @@ impl SkiaRenderer {
         color: Color,
         dpi_scale: f32,
     ) -> Result<()> {
-        let border_width = 1.0 * dpi_scale;
+        // Matches the full-frame axis width used by draw_axes/draw_axes_with_config.
+        let border_width =
+            RenderScale::from_reference_scale(dpi_scale).logical_pixels_to_pixels(1.5);
 
         // Create border paint
         let mut paint = tiny_skia::Paint::default();
@@ -1617,7 +1866,7 @@ impl SkiaRenderer {
 
         // Position title near top of canvas with small top padding
         // Text baseline is at title_y, so top of text is roughly at title_y - title_size * 0.8
-        let top_padding = 8.0 * (dpi / 100.0); // 8px at 100 DPI
+        let top_padding = RenderScale::new(dpi).logical_pixels_to_pixels(8.0);
         let title_y = top_padding + title_size;
 
         self.draw_text_centered(title, canvas_center_x, title_y, title_size, color)
@@ -1661,8 +1910,10 @@ impl SkiaRenderer {
         tick_size: f32,
         color: Color,
         dpi: f32,
+        show_tick_labels: bool,
+        draw_border: bool,
     ) -> Result<()> {
-        let dpi_scale = dpi / 100.0;
+        let render_scale = RenderScale::new(dpi);
 
         // Convert LayoutRect to tiny_skia Rect for border drawing
         let skia_plot_area = Rect::from_ltrb(
@@ -1680,37 +1931,36 @@ impl SkiaRenderer {
         let x_labels = format_tick_labels(x_ticks);
         let y_labels = format_tick_labels(y_ticks);
 
-        // Draw X-axis tick labels using provided ticks
-        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-            let x_pixel = plot_area.left
-                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
+        if show_tick_labels {
+            // Draw X-axis tick labels using provided ticks
+            for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
+                let x_pixel = Self::x_label_center(plot_area, *tick_value, x_min, x_max);
 
-            let label_snippet = self.generated_label(label_text);
-            let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-            let label_x = (x_pixel - text_width / 2.0)
-                .max(0.0)
-                .min(self.width() as f32 - text_width);
-            self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
+                let label_snippet = self.generated_label(label_text);
+                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+                let label_x = (x_pixel - text_width / 2.0)
+                    .max(0.0)
+                    .min(self.width() as f32 - text_width);
+                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
+            }
+
+            // Draw Y-axis tick labels using provided ticks
+            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
+                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
+
+                let label_snippet = self.generated_label(label_text);
+                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
+                let gap = tick_size * 0.5;
+                let min_x = tick_size * 0.5;
+                let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                let centered_y = y_pixel - text_height / 2.0;
+                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
+            }
         }
 
-        // Draw Y-axis tick labels using provided ticks
-        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            let label_snippet = self.generated_label(label_text);
-            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-            // Position so the right edge of the text is at ytick_right_x with a gap
-            let gap = tick_size * 0.5; // Gap between labels and axis
-            let min_x = tick_size * 0.5; // Minimum distance from left edge
-            let label_x = (ytick_right_x - text_width - gap).max(min_x);
-            // Center text vertically on tick using measured text height.
-            let centered_y = y_pixel - text_height / 2.0;
-            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
+        if draw_border {
+            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
         }
-
-        // Draw border around plot area
-        self.draw_plot_border(skia_plot_area, color, dpi_scale)?;
 
         Ok(())
     }
@@ -1726,6 +1976,8 @@ impl SkiaRenderer {
         &mut self,
         plot_area: &LayoutRect,
         categories: &[String],
+        x_min: f64,
+        x_max: f64,
         y_min: f64,
         y_max: f64,
         y_ticks: &[f64],
@@ -1734,8 +1986,10 @@ impl SkiaRenderer {
         tick_size: f32,
         color: Color,
         dpi: f32,
+        show_tick_labels: bool,
+        draw_border: bool,
     ) -> Result<()> {
-        let dpi_scale = dpi / 100.0;
+        let render_scale = RenderScale::new(dpi);
 
         // Convert LayoutRect to tiny_skia Rect for border drawing
         let skia_plot_area = Rect::from_ltrb(
@@ -1749,50 +2003,39 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        // Draw X-axis category labels using same data-to-pixel mapping as bars
-        let n_categories = categories.len();
-        if n_categories > 0 {
-            // X-axis range with matplotlib-compatible padding: [-0.5, n-0.5]
-            let x_min = -0.5_f64;
-            let x_max = n_categories as f64 - 0.5;
-            let x_range = x_max - x_min;
+        if show_tick_labels {
+            let n_categories = categories.len();
+            if n_categories > 0 {
+                for (i, category) in categories.iter().enumerate() {
+                    let x_center = Self::x_label_center(plot_area, i as f64, x_min, x_max);
 
-            for (i, category) in categories.iter().enumerate() {
-                // Position label at category index (same as bar center in data space)
-                let x_data = i as f64;
-                let x_center =
-                    plot_area.left + ((x_data - x_min) / x_range) as f32 * plot_area.width();
+                    let label_snippet = self.generated_label(category);
+                    let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+                    let label_x = (x_center - text_width / 2.0)
+                        .max(0.0)
+                        .min(self.width() as f32 - text_width);
 
-                let label_snippet = self.generated_label(category);
-                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (x_center - text_width / 2.0)
-                    .max(0.0)
-                    .min(self.width() as f32 - text_width);
+                    self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
+                }
+            }
 
-                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
+            let y_labels = format_tick_labels(y_ticks);
+            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
+                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
+
+                let label_snippet = self.generated_label(label_text);
+                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
+                let gap = tick_size * 0.5;
+                let min_x = tick_size * 0.5;
+                let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                let centered_y = y_pixel - text_height / 2.0;
+                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
             }
         }
 
-        // Format Y-axis tick labels with consistent precision
-        let y_labels = format_tick_labels(y_ticks);
-
-        // Draw Y-axis tick labels using provided ticks
-        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            let label_snippet = self.generated_label(label_text);
-            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-            let gap = tick_size * 0.5;
-            let min_x = tick_size * 0.5;
-            let label_x = (ytick_right_x - text_width - gap).max(min_x);
-            // Center text vertically on tick using measured text height.
-            let centered_y = y_pixel - text_height / 2.0;
-            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
+        if draw_border {
+            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
         }
-
-        // Draw border around plot area
-        self.draw_plot_border(skia_plot_area, color, dpi_scale)?;
 
         Ok(())
     }
@@ -1828,8 +2071,10 @@ impl SkiaRenderer {
         tick_size: f32,
         color: Color,
         dpi: f32,
+        show_tick_labels: bool,
+        draw_border: bool,
     ) -> Result<()> {
-        let dpi_scale = dpi / 100.0;
+        let render_scale = RenderScale::new(dpi);
 
         // Convert LayoutRect to tiny_skia Rect for border drawing
         let skia_plot_area = Rect::from_ltrb(
@@ -1843,13 +2088,9 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        // Draw X-axis category labels at specified positions
-        let x_range = x_max - x_min;
-        if x_range > 0.0 {
+        if show_tick_labels {
             for (category, &x_pos) in categories.iter().zip(x_positions.iter()) {
-                // Map data position to pixel position
-                let x_center =
-                    plot_area.left + ((x_pos - x_min) / x_range) as f32 * plot_area.width();
+                let x_center = Self::x_label_center(plot_area, x_pos, x_min, x_max);
 
                 let label_snippet = self.generated_label(category);
                 let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
@@ -1859,28 +2100,24 @@ impl SkiaRenderer {
 
                 self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
             }
+
+            let y_labels = format_tick_labels(y_ticks);
+            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
+                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
+
+                let label_snippet = self.generated_label(label_text);
+                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
+                let gap = tick_size * 0.5;
+                let min_x = tick_size * 0.5;
+                let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                let centered_y = y_pixel - text_height / 2.0;
+                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
+            }
         }
 
-        // Format Y-axis tick labels with consistent precision
-        let y_labels = format_tick_labels(y_ticks);
-
-        // Draw Y-axis tick labels using provided ticks
-        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            let label_snippet = self.generated_label(label_text);
-            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-            let gap = tick_size * 0.5;
-            let min_x = tick_size * 0.5;
-            let label_x = (ytick_right_x - text_width - gap).max(min_x);
-            // Center text vertically on tick using measured text height.
-            let centered_y = y_pixel - text_height / 2.0;
-            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
+        if draw_border {
+            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
         }
-
-        // Draw border around plot area
-        self.draw_plot_border(skia_plot_area, color, dpi_scale)?;
 
         Ok(())
     }
@@ -1897,7 +2134,8 @@ impl SkiaRenderer {
         title_size: f32,
         dpi_scale: f32,
     ) -> Result<()> {
-        let title_offset = 30.0 * dpi_scale;
+        let title_offset =
+            RenderScale::from_reference_scale(dpi_scale).logical_pixels_to_pixels(30.0);
         let canvas_center_x = self.width() as f32 / 2.0;
         let title_y = (plot_area.top() - title_offset).max(title_size + 5.0);
         self.draw_text_centered(title, canvas_center_x, title_y, title_size, color)
@@ -2159,16 +2397,14 @@ impl SkiaRenderer {
     ) -> Result<()> {
         let handle_length = spacing.handle_length;
         let handle_height = spacing.handle_height;
-        let dpi_scale = self.dpi_scale;
-
         // First draw the base type
         match &item.item_type {
             LegendItemType::Line { style, width } => {
-                let scaled_width = *width * dpi_scale;
+                let scaled_width = self.points_to_pixels(*width);
                 self.draw_legend_line_handle(x, y, handle_length, item.color, style, scaled_width)?;
             }
             LegendItemType::Scatter { marker, size } => {
-                let scaled_size = *size * dpi_scale;
+                let scaled_size = self.points_to_pixels(*size);
                 self.draw_legend_scatter_handle(
                     x,
                     y,
@@ -2184,8 +2420,8 @@ impl SkiaRenderer {
                 marker,
                 marker_size,
             } => {
-                let scaled_line_width = *line_width * dpi_scale;
-                let scaled_marker_size = *marker_size * dpi_scale;
+                let scaled_line_width = self.points_to_pixels(*line_width);
+                let scaled_marker_size = self.points_to_pixels(*marker_size);
                 self.draw_legend_line_marker_handle(
                     x,
                     y,
@@ -2206,7 +2442,7 @@ impl SkiaRenderer {
                 if let Some(edge) = edge_color {
                     // Draw edge around the rectangle
                     let rect_y = y - handle_height / 2.0;
-                    let scaled_edge_width = 1.0 * dpi_scale;
+                    let scaled_edge_width = self.logical_pixels_to_pixels(1.0);
                     self.draw_rectangle_outline(
                         x,
                         rect_y,
@@ -2224,7 +2460,7 @@ impl SkiaRenderer {
                 let half_error = error_height / 2.0;
                 let cap_width = handle_height * 0.5;
                 let half_cap = cap_width / 2.0;
-                let error_line_width = 1.5 * dpi_scale;
+                let error_line_width = self.logical_pixels_to_pixels(1.5);
 
                 // Vertical error bar line
                 self.draw_line(
@@ -2269,7 +2505,7 @@ impl SkiaRenderer {
             let half_error = error_height / 2.0;
             let cap_width = handle_height * 0.4;
             let half_cap = cap_width / 2.0;
-            let overlay_line_width = 1.0 * dpi_scale;
+            let overlay_line_width = self.logical_pixels_to_pixels(1.0);
 
             // Vertical error bar line
             self.draw_line(
@@ -3317,6 +3553,7 @@ pub fn calculate_plot_area(canvas_width: u32, canvas_height: u32, margin_fractio
 
 /// Calculate plot area with DPI-aware margins for text space
 pub fn calculate_plot_area_dpi(canvas_width: u32, canvas_height: u32, dpi_scale: f32) -> Rect {
+    let render_scale = RenderScale::from_reference_scale(dpi_scale);
     // Base margins in pixels (at 96 DPI) - asymmetric to account for labels
     let base_margin_left = 100.0; // Space for Y-axis label and tick labels (more space needed)
     let base_margin_right = 40.0; // Less space needed on right side
@@ -3324,10 +3561,10 @@ pub fn calculate_plot_area_dpi(canvas_width: u32, canvas_height: u32, dpi_scale:
     let base_margin_bottom = 60.0; // Space for X-axis label
 
     // Scale margins with DPI
-    let margin_left = base_margin_left * dpi_scale;
-    let margin_right = base_margin_right * dpi_scale;
-    let margin_top = base_margin_top * dpi_scale;
-    let margin_bottom = base_margin_bottom * dpi_scale;
+    let margin_left = render_scale.logical_pixels_to_pixels(base_margin_left);
+    let margin_right = render_scale.logical_pixels_to_pixels(base_margin_right);
+    let margin_top = render_scale.logical_pixels_to_pixels(base_margin_top);
+    let margin_bottom = render_scale.logical_pixels_to_pixels(base_margin_bottom);
 
     let plot_width = (canvas_width as f32) - margin_left - margin_right;
     let plot_height = (canvas_height as f32) - margin_top - margin_bottom;
@@ -3712,6 +3949,13 @@ fn test_to_image_conversion() {
 mod tests {
     use super::*;
 
+    fn pixel_is_dark(image: &Image, x: u32, y: u32) -> bool {
+        let idx = ((y * image.width + x) * 4) as usize;
+        image.pixels[idx..idx + 3]
+            .iter()
+            .all(|channel| *channel < 220)
+    }
+
     #[test]
     fn test_renderer_creation() {
         let theme = Theme::default();
@@ -3777,6 +4021,93 @@ mod tests {
         // Test edge case
         let ticks = generate_ticks(5.0, 5.0, 3);
         assert_eq!(ticks, vec![5.0, 5.0]);
+    }
+
+    #[test]
+    fn test_draw_axes_with_config_draws_top_and_right_ticks() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(120, 100, theme).unwrap();
+        let plot_area = Rect::from_xywh(20.0, 20.0, 80.0, 60.0).unwrap();
+
+        renderer
+            .draw_axes_with_config(
+                plot_area,
+                &[60.0],
+                &[50.0],
+                &[],
+                &[],
+                &TickDirection::Inside,
+                &TickSides::all(),
+                Color::BLACK,
+                1.0,
+            )
+            .unwrap();
+
+        let image = renderer.into_image();
+        assert!(pixel_is_dark(&image, 60, 20));
+        assert!(pixel_is_dark(&image, 100, 50));
+        assert!(pixel_is_dark(&image, 60, 24));
+        assert!(pixel_is_dark(&image, 96, 50));
+    }
+
+    #[test]
+    fn test_draw_axes_with_config_respects_bottom_left_ticks() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(120, 100, theme).unwrap();
+        let plot_area = Rect::from_xywh(20.0, 20.0, 80.0, 60.0).unwrap();
+
+        renderer
+            .draw_axes_with_config(
+                plot_area,
+                &[60.0],
+                &[50.0],
+                &[],
+                &[],
+                &TickDirection::Inside,
+                &TickSides::bottom_left(),
+                Color::BLACK,
+                1.0,
+            )
+            .unwrap();
+
+        let image = renderer.into_image();
+        assert!(pixel_is_dark(&image, 60, 20));
+        assert!(pixel_is_dark(&image, 100, 50));
+        assert!(!pixel_is_dark(&image, 60, 24));
+        assert!(!pixel_is_dark(&image, 96, 50));
+        assert!(pixel_is_dark(&image, 60, 76));
+        assert!(pixel_is_dark(&image, 24, 50));
+    }
+
+    #[test]
+    fn test_draw_axis_labels_at_handles_collapsed_ranges() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(120, 100, theme).unwrap();
+        let plot_area = LayoutRect {
+            left: 20.0,
+            top: 20.0,
+            right: 100.0,
+            bottom: 80.0,
+        };
+
+        renderer
+            .draw_axis_labels_at(
+                &plot_area,
+                1.0,
+                1.0,
+                2.0,
+                2.0,
+                &[1.0],
+                &[2.0],
+                88.0,
+                18.0,
+                10.0,
+                Color::BLACK,
+                100.0,
+                true,
+                false,
+            )
+            .expect("collapsed ranges should use centered label placement");
     }
 
     #[cfg(feature = "typst-math")]

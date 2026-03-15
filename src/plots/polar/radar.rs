@@ -409,8 +409,8 @@ impl PlotRender for RadarPlotData {
         // Draw grid rings
         if config.show_grid {
             let grid_color = theme.grid_color;
-            // Scale grid line width by DPI (base 0.5pt at 100 DPI)
-            let grid_line_width = 0.5 * renderer.dpi_scale();
+            let render_scale = renderer.render_scale();
+            let grid_line_width = render_scale.logical_pixels_to_pixels(0.5);
             for ring in &self.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -459,9 +459,9 @@ impl PlotRender for RadarPlotData {
         }
 
         // Scale line width and marker size by DPI
-        let dpi_scale = renderer.dpi_scale();
-        let scaled_line_width = config.line_width * dpi_scale;
-        let scaled_marker_size = config.marker_size * dpi_scale;
+        let render_scale = renderer.render_scale();
+        let scaled_line_width = render_scale.points_to_pixels(config.line_width);
+        let scaled_marker_size = render_scale.points_to_pixels(config.marker_size);
 
         // Draw each series
         for (series_idx, series) in self.series.iter().enumerate() {
@@ -537,17 +537,16 @@ impl PlotRender for RadarPlotData {
         let config = &self.config;
         let resolver = StyleResolver::new(theme);
 
-        // Use StyleResolver for line width and scale by DPI
-        let dpi_scale = renderer.dpi_scale();
-        let effective_line_width =
-            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))) * dpi_scale;
-        let scaled_marker_size = config.marker_size * dpi_scale;
+        let render_scale = renderer.render_scale();
+        let effective_line_width = render_scale.points_to_pixels(
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
+        );
+        let scaled_marker_size = render_scale.points_to_pixels(config.marker_size);
 
         // Draw grid rings
         if config.show_grid {
             let grid_color = theme.grid_color;
-            // Scale grid line width by DPI (base 0.5pt at 100 DPI)
-            let grid_line_width = 0.5 * renderer.dpi_scale();
+            let grid_line_width = render_scale.logical_pixels_to_pixels(0.5);
             for ring in &self.grid_rings {
                 if ring.len() < 2 {
                     continue;

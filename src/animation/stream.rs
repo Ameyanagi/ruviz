@@ -150,7 +150,7 @@ impl FrameCapture {
     /// to the RGB pixel data.
     pub fn capture(&mut self, plot: &Plot) -> Result<&[u8]> {
         // Create a temporary plot with the desired size
-        let sized_plot = plot.clone().size_px(self.width, self.height);
+        let sized_plot = plot.clone().set_output_pixels(self.width, self.height);
 
         // Render plot to RGBA buffer
         let image = sized_plot.render()?;
@@ -198,7 +198,7 @@ impl FrameCapture {
             plot.clone().size(fig_width, fig_height).dpi(dpi)
         } else {
             // Standard behavior: just set pixel dimensions
-            plot.clone().size_px(self.width, self.height)
+            plot.clone().set_output_pixels(self.width, self.height)
         };
 
         // Render plot to RGBA buffer

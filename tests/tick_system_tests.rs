@@ -52,6 +52,62 @@ fn test_ticks_outside_direction() {
 }
 
 #[test]
+fn test_ticks_inout_direction() {
+    let x_data = vec![0.0, 5.0, 10.0, 15.0, 20.0];
+    let y_data = vec![0.0, 25.0, 50.0, 75.0, 100.0];
+
+    let result = Plot::new()
+        .size_px(800, 600)
+        .title("Ticks InOut")
+        .xlabel("Time (seconds)")
+        .ylabel("Value")
+        .tick_direction_inout()
+        .line(&x_data, &y_data)
+        .save("tests/output/ticks_inout.png");
+
+    assert!(result.is_ok(), "InOut tick direction should work");
+}
+
+#[test]
+fn test_tick_side_convenience_api() {
+    let x_data = vec![0.0, 5.0, 10.0, 15.0, 20.0];
+    let y_data = vec![0.0, 25.0, 50.0, 75.0, 100.0];
+
+    let result = Plot::new()
+        .size_px(800, 600)
+        .title("Tick Side Convenience API")
+        .xlabel("Time (seconds)")
+        .ylabel("Value")
+        .ticks_bottom_left()
+        .show_top_ticks(true)
+        .show_right_ticks(true)
+        .line(&x_data, &y_data)
+        .save("tests/output/ticks_all_sides.png");
+
+    assert!(result.is_ok(), "Tick side convenience API should work");
+}
+
+#[test]
+fn test_ticks_can_be_disabled_from_builder_chain() {
+    let x_data = vec![0.0, 5.0, 10.0, 15.0, 20.0];
+    let y_data = vec![0.0, 25.0, 50.0, 75.0, 100.0];
+
+    let result = Plot::new()
+        .size_px(800, 600)
+        .line(&x_data, &y_data)
+        .ticks(false)
+        .title("Ticks Disabled")
+        .xlabel("Time (seconds)")
+        .ylabel("Value")
+        .save("tests/output/ticks_disabled.png");
+
+    assert!(
+        result.is_ok(),
+        "Ticks should be disable-able from builder chains"
+    );
+}
+
+#[test]
 fn test_major_minor_ticks() {
     let x_data = vec![0.0, 2.5, 5.0, 7.5, 10.0];
     let y_data = vec![0.0, 12.5, 25.0, 37.5, 50.0];

@@ -5,7 +5,8 @@
 
 use crate::core::{
     Legend, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels, LegendStyle,
-    PlottingError, Result, find_best_position, plot::TextEngineMode,
+    PlottingError, RenderScale, Result, find_best_position,
+    plot::{TextEngineMode, TickDirection, TickSides},
 };
 use crate::render::{
     Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer,
@@ -23,8 +24,8 @@ pub struct SvgRenderer {
     content: String,
     defs: String,
     clip_id_counter: u32,
-    /// DPI scale factor (1.0 = 100 DPI base)
-    dpi_scale: f32,
+    /// Shared render scale for unit conversion.
+    render_scale: RenderScale,
     /// Active text rendering engine.
     text_engine_mode: TextEngineMode,
     /// Plain text metrics for anchor conversion.
@@ -32,18 +33,6 @@ pub struct SvgRenderer {
 }
 
 impl SvgRenderer {
-    fn sanitize_dpi_scale(dpi_scale: f32) -> f32 {
-        if dpi_scale.is_finite() && dpi_scale > 0.0 {
-            dpi_scale
-        } else {
-            log::warn!(
-                "Invalid dpi_scale ({:?}) for SvgRenderer; falling back to 1.0",
-                dpi_scale
-            );
-            1.0
-        }
-    }
-
     /// Create a new SVG renderer with specified dimensions
     pub fn new(width: f32, height: f32) -> Self {
         Self {
@@ -52,20 +41,38 @@ impl SvgRenderer {
             content: String::new(),
             defs: String::new(),
             clip_id_counter: 0,
-            dpi_scale: 1.0, // Default to 100 DPI base
+            render_scale: RenderScale::from_canvas_size(
+                width.max(1.0).round() as u32,
+                height.max(1.0).round() as u32,
+                crate::core::REFERENCE_DPI,
+            ),
             text_engine_mode: TextEngineMode::Plain,
             text_renderer: TextRenderer::new(),
         }
     }
 
-    /// Set the DPI scale factor (dpi / 100.0)
-    pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
-        self.dpi_scale = Self::sanitize_dpi_scale(dpi_scale);
+    /// Set the render scale context used for unit conversion.
+    pub fn set_render_scale(&mut self, render_scale: RenderScale) {
+        self.render_scale = render_scale;
     }
 
-    /// Get the DPI scale factor
+    /// Get the render scale context used for unit conversion.
+    pub fn render_scale(&self) -> RenderScale {
+        self.render_scale
+    }
+
+    /// Legacy compatibility shim for callers that still pass `dpi / 100.0`.
+    pub fn set_dpi_scale(&mut self, dpi_scale: f32) {
+        self.set_render_scale(RenderScale::from_reference_scale(dpi_scale));
+    }
+
+    /// Legacy compatibility shim for callers that still expect `dpi / 100.0`.
     pub fn dpi_scale(&self) -> f32 {
-        self.dpi_scale
+        self.render_scale.reference_scale()
+    }
+
+    fn logical_pixels_to_pixels(&self, logical_pixels: f32) -> f32 {
+        self.render_scale.logical_pixels_to_pixels(logical_pixels)
     }
 
     /// Set text rendering backend mode.
@@ -118,15 +125,13 @@ impl SvgRenderer {
         })
     }
 
-    /// Convert style to a DPI-scaled dash pattern.
-    ///
-    /// Dash values are sourced from `LineStyle::to_dash_array()` (100-DPI
-    /// baseline), then scaled so SVG spacing matches raster output.
+    /// Convert style to a scaled dash pattern using the shared render scale.
     fn scaled_dash_pattern(&self, style: &LineStyle) -> Option<Vec<f32>> {
-        let scale = self.dpi_scale;
-        style
-            .to_dash_array()
-            .map(|base| base.into_iter().map(|segment| segment * scale).collect())
+        style.to_dash_array().map(|base| {
+            base.into_iter()
+                .map(|segment| self.logical_pixels_to_pixels(segment))
+                .collect()
+        })
     }
 
     fn format_dash_value(&self, value: f32) -> String {
@@ -538,6 +543,56 @@ impl SvgRenderer {
         }
     }
 
+    fn vertical_tick_span(
+        spine_y: f32,
+        tick_size: f32,
+        tick_direction: &TickDirection,
+        top: bool,
+    ) -> (f32, f32) {
+        match tick_direction {
+            TickDirection::Inside => {
+                if top {
+                    (spine_y, spine_y + tick_size)
+                } else {
+                    (spine_y, spine_y - tick_size)
+                }
+            }
+            TickDirection::Outside => {
+                if top {
+                    (spine_y, spine_y - tick_size)
+                } else {
+                    (spine_y, spine_y + tick_size)
+                }
+            }
+            TickDirection::InOut => (spine_y - tick_size / 2.0, spine_y + tick_size / 2.0),
+        }
+    }
+
+    fn horizontal_tick_span(
+        spine_x: f32,
+        tick_size: f32,
+        tick_direction: &TickDirection,
+        right: bool,
+    ) -> (f32, f32) {
+        match tick_direction {
+            TickDirection::Inside => {
+                if right {
+                    (spine_x, spine_x - tick_size)
+                } else {
+                    (spine_x, spine_x + tick_size)
+                }
+            }
+            TickDirection::Outside => {
+                if right {
+                    (spine_x, spine_x + tick_size)
+                } else {
+                    (spine_x, spine_x - tick_size)
+                }
+            }
+            TickDirection::InOut => (spine_x - tick_size / 2.0, spine_x + tick_size / 2.0),
+        }
+    }
+
     /// Draw axis lines and tick marks
     pub fn draw_axes(
         &mut self,
@@ -547,16 +602,16 @@ impl SvgRenderer {
         plot_bottom: f32,
         x_ticks: &[f32],
         y_ticks: &[f32],
+        tick_direction: &TickDirection,
+        tick_sides: &TickSides,
         color: Color,
-        tick_outside: bool,
     ) {
-        // Scale widths and sizes by DPI (base values at 100 DPI)
-        let axis_width = 1.5 * self.dpi_scale;
-        let major_tick_size = 6.0 * self.dpi_scale;
-        let tick_width = 1.0 * self.dpi_scale;
-        let tick_dir = if tick_outside { 1.0 } else { -1.0 };
+        // Axis metrics are authored in logical pixels and resolved via RenderScale.
+        let axis_width = self.logical_pixels_to_pixels(1.5);
+        let major_tick_size = self.logical_pixels_to_pixels(6.0);
+        let tick_width = self.logical_pixels_to_pixels(1.0);
 
-        // Draw X-axis (bottom)
+        // Draw the full plot frame. Tick side selection only controls tick marks.
         self.draw_line(
             plot_left,
             plot_bottom,
@@ -567,7 +622,6 @@ impl SvgRenderer {
             LineStyle::Solid,
         );
 
-        // Draw Y-axis (left)
         self.draw_line(
             plot_left,
             plot_top,
@@ -578,35 +632,97 @@ impl SvgRenderer {
             LineStyle::Solid,
         );
 
-        // Draw X-axis tick marks
+        self.draw_line(
+            plot_left,
+            plot_top,
+            plot_right,
+            plot_top,
+            color,
+            axis_width,
+            LineStyle::Solid,
+        );
+
+        self.draw_line(
+            plot_right,
+            plot_top,
+            plot_right,
+            plot_bottom,
+            color,
+            axis_width,
+            LineStyle::Solid,
+        );
+
         for &x in x_ticks {
             if x >= plot_left && x <= plot_right {
-                let tick_end = plot_bottom + major_tick_size * tick_dir;
-                self.draw_line(
-                    x,
-                    plot_bottom,
-                    x,
-                    tick_end,
-                    color,
-                    tick_width,
-                    LineStyle::Solid,
-                );
+                if tick_sides.bottom {
+                    let (tick_start, tick_end) = Self::vertical_tick_span(
+                        plot_bottom,
+                        major_tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    );
+                }
+                if tick_sides.top {
+                    let (tick_start, tick_end) =
+                        Self::vertical_tick_span(plot_top, major_tick_size, tick_direction, true);
+                    self.draw_line(
+                        x,
+                        tick_start,
+                        x,
+                        tick_end,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    );
+                }
             }
         }
 
-        // Draw Y-axis tick marks
         for &y in y_ticks {
             if y >= plot_top && y <= plot_bottom {
-                let tick_end = plot_left - major_tick_size * tick_dir;
-                self.draw_line(
-                    plot_left,
-                    y,
-                    tick_end,
-                    y,
-                    color,
-                    tick_width,
-                    LineStyle::Solid,
-                );
+                if tick_sides.left {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_left,
+                        major_tick_size,
+                        tick_direction,
+                        false,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    );
+                }
+                if tick_sides.right {
+                    let (tick_start, tick_end) = Self::horizontal_tick_span(
+                        plot_right,
+                        major_tick_size,
+                        tick_direction,
+                        true,
+                    );
+                    self.draw_line(
+                        tick_start,
+                        y,
+                        tick_end,
+                        y,
+                        color,
+                        tick_width,
+                        LineStyle::Solid,
+                    );
+                }
             }
         }
     }
@@ -1231,6 +1347,17 @@ mod tests {
         (parse_svg_attr(line, "x"), parse_svg_attr(line, "y"))
     }
 
+    fn has_svg_line(svg: &str, x1: f32, y1: f32, x2: f32, y2: f32) -> bool {
+        svg.lines()
+            .filter(|line| line.contains("<line"))
+            .any(|line| {
+                (parse_svg_attr(line, "x1") - x1).abs() <= 0.01
+                    && (parse_svg_attr(line, "y1") - y1).abs() <= 0.01
+                    && (parse_svg_attr(line, "x2") - x2).abs() <= 0.01
+                    && (parse_svg_attr(line, "y2") - y2).abs() <= 0.01
+            })
+    }
+
     fn extract_typst_group_translates(svg: &str) -> Vec<(f32, f32)> {
         svg.lines()
             .filter(|line| line.contains(r#"data-ruviz-text-engine="typst""#))
@@ -1464,6 +1591,54 @@ mod tests {
                 && (y_tick_y - expected_y_tick_y).abs() <= 0.6,
             "y-axis tick label should use layout ytick anchor and centered y"
         );
+    }
+
+    #[test]
+    fn test_draw_axes_renders_ticks_on_all_sides() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.draw_axes(
+            40.0,
+            160.0,
+            20.0,
+            120.0,
+            &[100.0],
+            &[75.0],
+            &TickDirection::Inside,
+            &TickSides::all(),
+            Color::BLACK,
+        );
+
+        let svg = renderer.to_svg_string();
+        assert!(has_svg_line(&svg, 40.0, 20.0, 160.0, 20.0));
+        assert!(has_svg_line(&svg, 160.0, 20.0, 160.0, 120.0));
+        assert!(has_svg_line(&svg, 100.0, 120.0, 100.0, 114.0));
+        assert!(has_svg_line(&svg, 100.0, 20.0, 100.0, 26.0));
+        assert!(has_svg_line(&svg, 40.0, 75.0, 46.0, 75.0));
+        assert!(has_svg_line(&svg, 160.0, 75.0, 154.0, 75.0));
+    }
+
+    #[test]
+    fn test_draw_axes_respects_bottom_left_tick_selection() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.draw_axes(
+            40.0,
+            160.0,
+            20.0,
+            120.0,
+            &[100.0],
+            &[75.0],
+            &TickDirection::Inside,
+            &TickSides::bottom_left(),
+            Color::BLACK,
+        );
+
+        let svg = renderer.to_svg_string();
+        assert!(has_svg_line(&svg, 40.0, 20.0, 160.0, 20.0));
+        assert!(has_svg_line(&svg, 160.0, 20.0, 160.0, 120.0));
+        assert!(has_svg_line(&svg, 100.0, 120.0, 100.0, 114.0));
+        assert!(has_svg_line(&svg, 40.0, 75.0, 46.0, 75.0));
+        assert!(!has_svg_line(&svg, 100.0, 20.0, 100.0, 26.0));
+        assert!(!has_svg_line(&svg, 160.0, 75.0, 154.0, 75.0));
     }
 
     #[cfg(feature = "typst-math")]

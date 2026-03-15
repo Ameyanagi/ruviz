@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Default tick marks now render on all four sides of the plot frame instead of only the bottom and left axes. To preserve the previous look, call `.ticks_bottom_left()`.
+
 ### Added
 
 - _None yet._
@@ -11,6 +15,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Preserved the public `SubscriberCallback` API while moving runtime subscription dispatch to internal shared callbacks.
+- Raster DPI now changes output density without intentionally enlarging fonts, line widths, marker sizes, or layout spacing. If you tuned visuals around the old DPI-coupled output, re-check explicit `.line_width(...)`, `.marker_size(...)`, and font-size settings.
 
 ### Fixed
 
@@ -26,6 +31,7 @@ All notable changes to this project will be documented in this file.
 - Restore snapshot-based bounds calculation for heatmap, density, polar, radar, contour, and other non-Cartesian series.
 - Restore series validation before DataShader and parallel render fast paths, and preserve POSIX symlink destinations during atomic export overwrites.
 - Make DataShader renders consume the same validated snapshot as the main render path, and keep invalid zero-DPI pixel sizing from surfacing misleading dimension errors.
+- Apply tick-side and tick-direction settings consistently in `render()`-based outputs, keep SVG frame strokes DPI-aware when ticks are disabled, and preserve exact framebuffer sizes on fractional HiDPI interactive surfaces.
 
 ## [0.1.4] - 2026-02-11
 

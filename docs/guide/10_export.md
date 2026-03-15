@@ -97,6 +97,11 @@ Plot::new()
 | **300** | Publication print | Large | Excellent |
 | **600** | Premium print | Very large | Outstanding |
 
+Use `.size(width_in, height_in)` to define the physical figure and `.dpi(...)` to control raster density. If you use `.size_px(width, height)`, the pixel size is first interpreted against the 100-DPI reference figure and then re-rendered at the chosen output DPI, so changing DPI increases detail without intentionally thickening lines or enlarging text.
+
+Migration note: if you previously used higher DPI to make strokes, markers, or text look larger,
+set those sizes explicitly instead of relying on DPI side effects.
+
 ### DPI vs File Size
 
 ```rust
@@ -105,19 +110,19 @@ use ruviz::prelude::*;
 // DPI affects both resolution and file size
 Plot::new()
     .line(&x, &y)
-    .dimensions(800, 600)
+    .size_px(800, 600)
     .dpi(96)   // ~50KB
     .save("dpi_96.png")?;
 
 Plot::new()
     .line(&x, &y)
-    .dimensions(800, 600)
+    .size_px(800, 600)
     .dpi(300)  // ~250KB (5x larger)
     .save("dpi_300.png")?;
 
 Plot::new()
     .line(&x, &y)
-    .dimensions(800, 600)
+    .size_px(800, 600)
     .dpi(600)  // ~900KB (18x larger)
     .save("dpi_600.png")?;
 ```

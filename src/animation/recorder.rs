@@ -822,16 +822,7 @@ pub fn record_plot_with_config<P: AsRef<Path>>(
         let tick = ticker.tick_immediate();
 
         // Render plot at this time (resolves reactive data)
-        let sized_plot = if config.preserve_figure {
-            // Calculate DPI to achieve target dimensions with figure size
-            let dpi =
-                (width as f32 / config.figure_width).max(height as f32 / config.figure_height);
-            plot.clone()
-                .size(config.figure_width, config.figure_height)
-                .dpi(dpi as u32)
-        } else {
-            plot.clone().size_px(width, height)
-        };
+        let sized_plot = frame_plot_for_config(plot, &config);
         let image = sized_plot.render_at(time)?;
 
         // Convert to frame data and record
@@ -839,6 +830,19 @@ pub fn record_plot_with_config<P: AsRef<Path>>(
     }
 
     stream.save()
+}
+
+fn frame_plot_for_config(plot: &Plot, config: &RecordConfig) -> Plot {
+    let (width, height) = (config.width, config.height);
+
+    if config.preserve_figure {
+        let dpi = (width as f32 / config.figure_width).max(height as f32 / config.figure_height);
+        plot.clone()
+            .size(config.figure_width, config.figure_height)
+            .dpi(dpi as u32)
+    } else {
+        plot.clone().set_output_pixels(width, height)
+    }
 }
 
 // ============================================================================
@@ -991,6 +995,20 @@ mod tests {
     }
 
     #[test]
+    fn test_frame_plot_for_config_uses_plot_dpi_when_not_preserving_figure() {
+        let plot = crate::core::Plot::new().dpi(300);
+        let config = RecordConfig::new().dimensions(800, 600);
+
+        let sized_plot = frame_plot_for_config(&plot, &config);
+        let sized_config = sized_plot.get_config();
+
+        assert_eq!(sized_config.canvas_size(), (800, 600));
+        assert!((sized_config.figure.width - (800.0 / 300.0)).abs() < 0.001);
+        assert!((sized_config.figure.height - (600.0 / 300.0)).abs() < 0.001);
+        assert!((sized_config.figure.dpi - 300.0).abs() < 0.001);
+    }
+
+    #[test]
     fn test_record_config_preserve_figure_size() {
         let config = RecordConfig::new()
             .dimensions(1920, 1080)
@@ -1009,6 +1027,36 @@ mod tests {
 
         assert!((config.figure_width - 16.0).abs() < 0.001);
         assert!((config.figure_height - 9.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_frame_plot_for_config_preserve_figure_uses_derived_dpi() {
+        let plot = Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]).into();
+        let config = RecordConfig::new()
+            .dimensions(1920, 1080)
+            .preserve_figure_size();
+
+        let sized_plot = frame_plot_for_config(&plot, &config);
+
+        assert!((sized_plot.get_config().figure.width - config.figure_width).abs() < 0.001);
+        assert!((sized_plot.get_config().figure.height - config.figure_height).abs() < 0.001);
+        assert!((sized_plot.get_config().figure.dpi - 300.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_frame_plot_for_config_non_preserve_reuses_plot_dpi() {
+        let plot = Plot::new()
+            .size(6.4, 4.8)
+            .dpi(200)
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .into();
+        let config = RecordConfig::new().dimensions(800, 600);
+
+        let sized_plot = frame_plot_for_config(&plot, &config);
+
+        assert!((sized_plot.get_config().figure.dpi - 200.0).abs() < f32::EPSILON);
+        assert!((sized_plot.get_config().figure.width - 4.0).abs() < f32::EPSILON);
+        assert!((sized_plot.get_config().figure.height - 3.0).abs() < f32::EPSILON);
     }
 
     #[test]

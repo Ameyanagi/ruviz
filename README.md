@@ -132,6 +132,25 @@ Notes:
 - Migration: `.latex(true)` has been removed; use `.typst(true)` instead.
 - Typst text in PNG output is rasterized at native output scale (1x).
 - For maximum text sharpness, prefer higher DPI (for example `.dpi(300)`) or vector export (`.export_svg(...)` / `.save_pdf(...)`).
+- DPI changes output density, not the intended physical size of fonts, strokes, markers, or layout spacing.
+- Prefer `.size(width_in, height_in)` when you care about physical figure size. `.size_px(width, height)` is a convenience that maps pixels through the 100-DPI reference size before final output DPI is applied.
+- Ticks are enabled by default and render inward on all four sides. Use `.ticks(false)` to hide tick marks and tick labels while keeping the frame and axis titles.
+- Migration: if you want the older bottom/left-only tick appearance, call `.ticks_bottom_left()`.
+- Migration: if you previously relied on high-DPI exports making lines, markers, or text look larger, set those sizes explicitly instead of relying on DPI.
+
+Tick customization:
+
+```rust
+use ruviz::prelude::*;
+
+Plot::new()
+    .line(&x, &y)
+    .tick_direction_inout()
+    .ticks_bottom_left()
+    .show_top_ticks(true)
+    .show_right_ticks(true)
+    .save("custom_ticks.png")?;
+```
 
 ## Examples
 
