@@ -17,7 +17,7 @@ examples: static-examples interactive-examples performance-examples
 static-examples: setup-dirs
 	@echo "📊 Generating static plotting examples..."
 	@echo "  - GPU performance comparison..."
-	cargo run --release --example gpu_performance_plot
+	cargo run --release --features gpu --example gpu_performance_plot
 	
 	@echo "  - Scientific showcase..."
 	cargo run --release --example scientific_showcase 2>/dev/null || echo "  (Scientific showcase example not found - skipping)"
@@ -59,18 +59,18 @@ performance-examples: setup-dirs
 	echo "Interactive performance test failed or not available" > examples/output/performance/interactive_perf_report.txt
 	
 	@echo "  - GPU vs CPU comparison..."
-	cargo run --release --example gpu_vs_cpu_benchmark > examples/output/performance/gpu_cpu_benchmark.txt 2>&1 || \
+	cargo run --release --features gpu --example gpu_vs_cpu_benchmark > examples/output/performance/gpu_cpu_benchmark.txt 2>&1 || \
 	echo "GPU benchmark failed or not available" > examples/output/performance/gpu_cpu_benchmark.txt
 	
 	@echo "  - Memory usage analysis..."
-	cargo run --release --example performance_data_collector > examples/output/performance/memory_analysis.txt 2>&1 || \
+	cargo run --release --features gpu --example performance_data_collector > examples/output/performance/memory_analysis.txt 2>&1 || \
 	echo "Memory analysis failed or not available" > examples/output/performance/memory_analysis.txt
 	
 	@echo "  - Scaling performance test..."
 	@echo "Testing performance with different dataset sizes..." > examples/output/performance/scaling_analysis.txt
 	@for size in 1000 10000 50000 100000; do \
 		echo "Testing $$size points..." >> examples/output/performance/scaling_analysis.txt; \
-		timeout 30s cargo run --release --example minimal_gpu_benchmark -- --points $$size >> examples/output/performance/scaling_analysis.txt 2>&1 || \
+		timeout 30s cargo run --release --features gpu --example minimal_gpu_benchmark -- --points $$size >> examples/output/performance/scaling_analysis.txt 2>&1 || \
 		echo "  Test with $$size points failed or timed out" >> examples/output/performance/scaling_analysis.txt; \
 	done
 	@echo "✅ Performance analysis completed"
@@ -127,9 +127,8 @@ test-compile:
 
 # Clean all generated files
 clean:
-	@echo "🧹 Cleaning generated examples..."
-	rm -rf examples/output/
-	rm -f *.png *.txt *.html
+	@echo "🧹 Cleaning generated outputs..."
+	./scripts/clean-outputs.sh
 	cargo clean
 	@echo "✅ Cleanup completed"
 
