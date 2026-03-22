@@ -2,7 +2,7 @@
 # Clean generated output artifacts from ruviz.
 #
 # This preserves checked-in `.gitkeep` placeholders while removing generated
-# files from the output roots used by tests, examples, docs, and export demos.
+# files from the output roots used by tests, examples, and export demos.
 
 set -e
 
@@ -25,7 +25,7 @@ echo "Cleaning ruviz output files..."
 
 clean_output_root "$PROJECT_ROOT/tests/output" "tests/output"
 clean_output_root "$PROJECT_ROOT/examples/output" "examples/output"
-clean_output_root "$PROJECT_ROOT/docs/images" "docs/images"
+# Keep committed documentation images intact; refresh them with `make doc-images`.
 clean_output_root "$PROJECT_ROOT/test_output" "test_output"
 clean_output_root "$PROJECT_ROOT/export_test_output" "export_test_output"
 clean_output_root "$PROJECT_ROOT/export_output" "export_output"

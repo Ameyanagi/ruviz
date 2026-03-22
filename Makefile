@@ -112,7 +112,7 @@ docs: setup-dirs
 # Quick demo - generate a small subset for quick testing
 demo: setup-dirs
 	@echo "🚀 Generating quick demo (subset of examples)..."
-	cargo run --release --example gpu_performance_plot
+	cargo run --release --features gpu --example gpu_performance_plot
 	cargo run --release --example basic_interaction 2>/dev/null || true
 	@echo "✅ Quick demo completed"
 
@@ -122,7 +122,7 @@ test-compile:
 	cargo check --example basic_interaction --features interactive
 	cargo check --example data_brushing --features interactive  
 	cargo check --example real_time_performance --features interactive
-	cargo check --example gpu_performance_plot
+	cargo check --example gpu_performance_plot --features gpu
 	@echo "✅ All examples compile successfully"
 
 # Clean all generated files
