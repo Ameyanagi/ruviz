@@ -1,6 +1,6 @@
 //! Documentation example: Violin Plot
 //!
-//! Generates docs/images/violin_plot.png for rustdoc
+//! Generates docs/images/violin_plot.png and docs/images/violin_quartiles.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating violin plots.
 

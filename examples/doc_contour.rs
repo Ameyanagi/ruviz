@@ -1,6 +1,7 @@
 //! Documentation example: Contour Plot
 //!
-//! Generates docs/images/contour_plot.png for rustdoc
+//! Generates docs/images/contour_plot.png and
+//! docs/images/contour_custom_levels.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating contour plots,
 //! including smoothing via interpolation.

@@ -177,7 +177,7 @@ async fn test_cpu_fallback() -> std::result::Result<(), Box<dyn std::error::Erro
     match plot_result {
         Ok(_) => {
             println!("✅ CPU fallback rendering successful");
-            println!("   Generated: test_output/gpu_integration_cpu_fallback.png");
+            println!("   Generated: examples/output/gpu_integration_cpu_fallback.png");
         }
         Err(e) => {
             println!("❌ CPU fallback rendering failed: {}", e);

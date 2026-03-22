@@ -27,7 +27,7 @@ fn test_dpi_fluent_api_basic() -> std::result::Result<(), Box<dyn std::error::Er
         .dpi(300) // This should fail initially - method doesn't exist yet
         .save("tests/output/dpi_300_test.png")?;
 
-    println!("✓ Saved: test_output/dpi_300_test.png at 300 DPI");
+    println!("✓ Saved: tests/output/dpi_300_test.png at 300 DPI");
     Ok(())
 }
 
@@ -47,7 +47,7 @@ fn test_ieee_publication_dpi() -> std::result::Result<(), Box<dyn std::error::Er
         .dpi(600) // IEEE requirement
         .save("tests/output/ieee_600_dpi_test.png")?;
 
-    println!("✓ Saved: test_output/ieee_600_dpi_test.png at 600 DPI (IEEE standard)");
+    println!("✓ Saved: tests/output/ieee_600_dpi_test.png at 600 DPI (IEEE standard)");
     Ok(())
 }
 
@@ -99,7 +99,7 @@ fn test_dpi_with_theme() -> std::result::Result<(), Box<dyn std::error::Error>> 
         .dpi(300)
         .save("tests/output/theme_with_dpi_test.png")?;
 
-    println!("✓ Saved: test_output/theme_with_dpi_test.png with publication theme at 300 DPI");
+    println!("✓ Saved: tests/output/theme_with_dpi_test.png with publication theme at 300 DPI");
     Ok(())
 }
 
@@ -117,7 +117,7 @@ fn test_dpi_validation() -> std::result::Result<(), Box<dyn std::error::Error>> 
         .dpi(50) // Too low, should be clamped to 72
         .save("tests/output/dpi_validation_test.png")?;
 
-    println!("✓ Saved: test_output/dpi_validation_test.png with validated DPI");
+    println!("✓ Saved: tests/output/dpi_validation_test.png with validated DPI");
     Ok(())
 }
 

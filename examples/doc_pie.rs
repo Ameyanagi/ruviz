@@ -1,6 +1,6 @@
 //! Documentation example: Pie Chart
 //!
-//! Generates docs/images/pie_chart.png for rustdoc
+//! Generates docs/images/pie_chart.png and docs/images/pie_donut.png for rustdoc.
 //!
 //! This example demonstrates both the high-level API and the low-level API
 //! for creating pie charts.

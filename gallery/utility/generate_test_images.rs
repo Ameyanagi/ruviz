@@ -94,7 +94,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n✅ All test images generated successfully!");
     println!("📁 Check these directories:");
     println!("  - test_output/           (4 PNG files)");
-    println!("  - export_output/png/     (4 theme PNG files)");
+    println!("  - export_output/png/     (2 theme PNG files)");
     println!("  - export_output/svg/     (1 SVG file)");
     println!("  - export_output/raw/     (1 binary file)");
     

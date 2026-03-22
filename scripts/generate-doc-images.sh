@@ -1,12 +1,13 @@
 #!/bin/bash
-# Generate documentation images from gallery examples
+# Generate documentation media from example programs.
 #
 # Usage: ./scripts/generate-doc-images.sh
 #
-# This script runs all gallery examples prefixed with 'doc_' and generates
-# PNG images in docs/images/ for use in rustdoc documentation.
+# This script runs all `doc_*.rs` examples plus the animation gallery generator
+# so the static images and GIFs cited by rustdoc/README stay in sync with
+# `docs/images/`.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -24,6 +25,28 @@ total=0
 success=0
 failed=0
 
+run_example() {
+    local name="$1"
+    local features="${2:-}"
+
+    total=$((total + 1))
+    echo "[$total] Generating: $name"
+
+    local cmd=(cargo run --example "$name" --release)
+    if [ -n "$features" ]; then
+        cmd+=(--features "$features")
+    fi
+
+    if "${cmd[@]}" 2>&1; then
+        success=$((success + 1))
+        echo "    ✓ Success"
+    else
+        failed=$((failed + 1))
+        echo "    ✗ Failed"
+    fi
+    echo ""
+}
+
 # Find all doc_*.rs examples in the examples directory
 for example in "$PROJECT_ROOT"/examples/doc_*.rs; do
     if [ ! -f "$example" ]; then
@@ -32,18 +55,18 @@ for example in "$PROJECT_ROOT"/examples/doc_*.rs; do
     fi
 
     name=$(basename "$example" .rs)
-    total=$((total + 1))
 
-    echo "[$total] Generating: $name"
-    if cargo run --example "$name" --release 2>&1; then
-        success=$((success + 1))
-        echo "    ✓ Success"
-    else
-        failed=$((failed + 1))
-        echo "    ✗ Failed"
-    fi
-    echo ""
+    case "$name" in
+        doc_typst_text)
+            run_example "$name" "typst-math"
+            ;;
+        *)
+            run_example "$name"
+            ;;
+    esac
 done
+
+run_example "generate_animation_gallery" "animation"
 
 echo "================================"
 echo "Summary: $success/$total succeeded"

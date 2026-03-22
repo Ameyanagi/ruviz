@@ -124,6 +124,12 @@ impl Encoder for GifEncoder {
         self.width = width as u16;
         self.height = height as u16;
 
+        if let Some(parent) = self.path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
         let file = File::create(&self.path)?;
         let writer = BufWriter::new(file);
 

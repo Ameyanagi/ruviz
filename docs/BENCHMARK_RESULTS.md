@@ -145,13 +145,10 @@ Based on benchmark results, optimization priorities:
 To reproduce these benchmarks:
 
 ```bash
-# Create output directory
-mkdir -p test_output
-
 # Run baseline benchmarks
 cargo bench --bench baseline_benchmarks
 
-# View HTML report
+# View the generated Criterion HTML report
 open target/criterion/report/index.html
 ```
 

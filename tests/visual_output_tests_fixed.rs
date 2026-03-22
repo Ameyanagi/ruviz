@@ -94,7 +94,7 @@ fn test_basic_line_plot() -> std::result::Result<(), Box<dyn std::error::Error>>
         .save("tests/output/01_basic_line_plot.png")?;
     assert_default_output("tests/output/01_basic_line_plot.png");
 
-    println!("✓ Saved: test_output/01_basic_line_plot.png");
+    println!("✓ Saved: tests/output/01_basic_line_plot.png");
     Ok(())
 }
 
@@ -113,7 +113,7 @@ fn test_scatter_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .save("tests/output/02_scatter_plot.png")?;
     assert_default_output("tests/output/02_scatter_plot.png");
 
-    println!("✓ Saved: test_output/02_scatter_plot.png");
+    println!("✓ Saved: tests/output/02_scatter_plot.png");
     Ok(())
 }
 
@@ -132,7 +132,7 @@ fn test_bar_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .save("tests/output/03_bar_plot.png")?;
     assert_default_output("tests/output/03_bar_plot.png");
 
-    println!("✓ Saved: test_output/03_bar_plot.png");
+    println!("✓ Saved: tests/output/03_bar_plot.png");
     Ok(())
 }
 
@@ -155,7 +155,7 @@ fn test_multiple_series() -> std::result::Result<(), Box<dyn std::error::Error>>
         .save("tests/output/04_multiple_series.png")?;
     assert_default_output("tests/output/04_multiple_series.png");
 
-    println!("✓ Saved: test_output/04_multiple_series.png");
+    println!("✓ Saved: tests/output/04_multiple_series.png");
     Ok(())
 }
 
@@ -222,7 +222,7 @@ fn test_large_dataset() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .save("tests/output/09_large_dataset.png")?;
     assert_default_output("tests/output/09_large_dataset.png");
 
-    println!("✓ Saved: test_output/09_large_dataset.png");
+    println!("✓ Saved: tests/output/09_large_dataset.png");
     Ok(())
 }
 
@@ -245,7 +245,7 @@ fn test_mathematical_functions() -> std::result::Result<(), Box<dyn std::error::
         .save("tests/output/10_mathematical_functions.png")?;
     assert_default_output("tests/output/10_mathematical_functions.png");
 
-    println!("✓ Saved: test_output/10_mathematical_functions.png");
+    println!("✓ Saved: tests/output/10_mathematical_functions.png");
     Ok(())
 }
 
@@ -285,7 +285,7 @@ fn test_custom_dimensions() -> std::result::Result<(), Box<dyn std::error::Error
         .save("tests/output/12_custom_dimensions.png")?;
     assert_png_dimensions_with_tolerance("tests/output/12_custom_dimensions.png", (1200, 800), 1);
 
-    println!("✓ Saved: test_output/12_custom_dimensions.png");
+    println!("✓ Saved: tests/output/12_custom_dimensions.png");
     Ok(())
 }
 
