@@ -52,8 +52,8 @@
 //! ## Animation APIs
 //!
 //! Create smooth animations with `record!` closures today. Signal-backed plot data
-//! and labels can also be attached to a plot, but `render_at()` currently behaves
-//! the same as `render()`.
+//! and labels can also be attached to a plot, and `render_at()` resolves those
+//! temporal sources before using the normal backend-selection path.
 //!
 //! ### Basic Animation with record! Macro
 //!
@@ -760,9 +760,13 @@ pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
         Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern,
-        IntoPlot, Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot,
-        PlotBuilder, PlotInput, Position, Result, SeriesStyle, ShapeStyle, SubplotFigure,
-        TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, subplots, subplots_default,
+        FramePacing, FrameStats, HitResult, ImageTarget, InteractiveFrame,
+        InteractivePlotSession, IntoPlot, Legend, LegendAnchor, LegendItem, LegendItemType,
+        LegendPosition, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource, Position,
+        PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind,
+        Result, SeriesStyle, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget,
+        TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect,
+        subplots, subplots_default,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,

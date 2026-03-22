@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/ruviz-gpui"]
+resolver = "2"
+
 [package]
 name = "ruviz"
 version = "0.1.4"

@@ -49,16 +49,24 @@ mod config;
 mod configuration;
 pub mod data;
 mod image;
+mod interactive_session;
 mod layout_manager;
+mod prepared;
 mod render_pipeline;
 mod series_manager;
 
 pub use builder::{IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{BackendType, GridMode, TickDirection, TickSides};
 pub use configuration::{PlotConfiguration, TextEngineMode};
-pub use data::{IntoPlotData, PlotData, PlotText};
+pub use data::{IntoPlotData, PlotData, PlotSource, PlotText, ReactiveValue};
 pub use image::Image;
+pub use interactive_session::{
+    DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget,
+    InteractiveFrame, InteractivePlotSession, PlotInputEvent, QualityPolicy, RenderTargetKind,
+    SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
+};
 pub use layout_manager::LayoutManager;
+pub use prepared::{PreparedPlot, ReactiveSubscription};
 pub use render_pipeline::RenderPipeline;
 pub use series_manager::SeriesManager;
 
@@ -88,7 +96,10 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     path::Path,
+    sync::Arc,
 };
+
+use self::data::{ReactiveTeardown, SharedReactiveCallback};
 
 #[cfg(feature = "parallel")]
 use crate::render::{ParallelRenderer, SeriesRenderData};
@@ -431,6 +442,26 @@ impl PlotSeries {
             }
         }
     }
+
+    fn collect_source_versions(&self, versions: &mut Vec<u64>) {
+        self.series_type.collect_source_versions(versions);
+    }
+
+    fn has_temporal_sources(&self) -> bool {
+        self.series_type.has_temporal_sources()
+    }
+
+    fn mark_rendered_sources(&self) {
+        self.series_type.mark_rendered_sources();
+    }
+
+    fn subscribe_push_updates(
+        &self,
+        callback: &SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) {
+        self.series_type.subscribe_push_updates(callback, teardowns);
+    }
 }
 
 /// Types of plot series
@@ -531,6 +562,153 @@ impl SeriesType {
             SeriesType::BoxPlot { data, .. } => data.is_reactive(),
             // Other types use their own data structures, not PlotData
             _ => false,
+        }
+    }
+
+    fn has_temporal_sources(&self) -> bool {
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                x_data.is_temporal() || y_data.is_temporal()
+            }
+            SeriesType::Bar { values, .. } => values.is_temporal(),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => x_data.is_temporal() || y_data.is_temporal() || y_errors.is_temporal(),
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                x_data.is_temporal()
+                    || y_data.is_temporal()
+                    || x_errors.is_temporal()
+                    || y_errors.is_temporal()
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                data.is_temporal()
+            }
+            _ => false,
+        }
+    }
+
+    fn collect_source_versions(&self, versions: &mut Vec<u64>) {
+        let push = |data: &PlotData, versions: &mut Vec<u64>| {
+            if let Some(version) = data.current_version() {
+                versions.push(version);
+            }
+        };
+
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                push(x_data, versions);
+                push(y_data, versions);
+            }
+            SeriesType::Bar { values, .. } => push(values, versions),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                push(x_data, versions);
+                push(y_data, versions);
+                push(y_errors, versions);
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                push(x_data, versions);
+                push(y_data, versions);
+                push(x_errors, versions);
+                push(y_errors, versions);
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                push(data, versions);
+            }
+            _ => {}
+        }
+    }
+
+    fn mark_rendered_sources(&self) {
+        let mark = |data: &PlotData| data.mark_rendered();
+
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                mark(x_data);
+                mark(y_data);
+            }
+            SeriesType::Bar { values, .. } => mark(values),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                mark(x_data);
+                mark(y_data);
+                mark(y_errors);
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                mark(x_data);
+                mark(y_data);
+                mark(x_errors);
+                mark(y_errors);
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                mark(data);
+            }
+            _ => {}
+        }
+    }
+
+    fn subscribe_push_updates(
+        &self,
+        callback: &SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) {
+        let subscribe = |data: &PlotData, teardowns: &mut Vec<ReactiveTeardown>| {
+            data.subscribe_push_updates(Arc::clone(callback), teardowns);
+        };
+
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                subscribe(x_data, teardowns);
+                subscribe(y_data, teardowns);
+            }
+            SeriesType::Bar { values, .. } => subscribe(values, teardowns),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                subscribe(x_data, teardowns);
+                subscribe(y_data, teardowns);
+                subscribe(y_errors, teardowns);
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                subscribe(x_data, teardowns);
+                subscribe(y_data, teardowns);
+                subscribe(x_errors, teardowns);
+                subscribe(y_errors, teardowns);
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                subscribe(data, teardowns);
+            }
+            _ => {}
         }
     }
 
@@ -863,6 +1041,16 @@ impl Plot {
         plot
     }
 
+    /// Create a reusable prepared runtime for repeated frame rendering.
+    pub fn prepare(&self) -> PreparedPlot {
+        PreparedPlot::new(self.clone())
+    }
+
+    /// Prepare a shared interactive rendering session for repeated viewport-aware frames.
+    pub fn prepare_interactive(&self) -> InteractivePlotSession {
+        InteractivePlotSession::new(self.prepare())
+    }
+
     /// Create a new Plot with a preset style
     ///
     /// # Example
@@ -1116,8 +1304,8 @@ impl Plot {
     ///     .save("titled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn title<S: Into<String>>(mut self, title: S) -> Self {
-        self.display.title = Some(data::PlotText::Static(title.into()));
+    pub fn title(mut self, title: impl Into<data::PlotText>) -> Self {
+        self.display.title = Some(title.into());
         self
     }
 
@@ -1159,8 +1347,8 @@ impl Plot {
     ///     .save("labeled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.display.xlabel = Some(data::PlotText::Static(label.into()));
+    pub fn xlabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.display.xlabel = Some(label.into());
         self
     }
 
@@ -1184,8 +1372,8 @@ impl Plot {
     ///     .save("ylabel.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.display.ylabel = Some(data::PlotText::Static(label.into()));
+    pub fn ylabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.display.ylabel = Some(label.into());
         self
     }
 
@@ -1694,6 +1882,117 @@ impl Plot {
             .collect()
     }
 
+    fn resolved_plot(&self, time: f64) -> Plot {
+        let mut resolved = self.clone();
+        resolved.series_mgr.series = self.snapshot_series(time);
+        resolved.display.title = self
+            .display
+            .title
+            .as_ref()
+            .map(|title| data::PlotText::Static(title.resolve(time)));
+        resolved.display.xlabel = self
+            .display
+            .xlabel
+            .as_ref()
+            .map(|label| data::PlotText::Static(label.resolve(time)));
+        resolved.display.ylabel = self
+            .display
+            .ylabel
+            .as_ref()
+            .map(|label| data::PlotText::Static(label.resolve(time)));
+        resolved
+    }
+
+    pub(crate) fn prepared_frame_plot(
+        &self,
+        size_px: (u32, u32),
+        scale_factor: f32,
+        time: f64,
+    ) -> Plot {
+        let min_device_scale = crate::core::constants::dpi::MIN as f32 / crate::core::REFERENCE_DPI;
+        let device_scale = if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            1.0
+        } else {
+            scale_factor.max(min_device_scale)
+        };
+        let dpi = (crate::core::REFERENCE_DPI * device_scale).round() as u32;
+
+        self.resolved_plot(time)
+            .dpi(dpi)
+            .set_output_pixels(size_px.0, size_px.1)
+    }
+
+    fn has_temporal_sources(&self) -> bool {
+        self.display
+            .title
+            .as_ref()
+            .is_some_and(|title| title.is_temporal())
+            || self
+                .display
+                .xlabel
+                .as_ref()
+                .is_some_and(|label| label.is_temporal())
+            || self
+                .display
+                .ylabel
+                .as_ref()
+                .is_some_and(|label| label.is_temporal())
+            || self
+                .series_mgr
+                .series
+                .iter()
+                .any(PlotSeries::has_temporal_sources)
+    }
+
+    pub(crate) fn collect_reactive_versions(&self) -> Vec<u64> {
+        let mut versions = Vec::new();
+        for text in [
+            self.display.title.as_ref(),
+            self.display.xlabel.as_ref(),
+            self.display.ylabel.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(version) = text.current_version() {
+                versions.push(version);
+            }
+        }
+
+        for series in &self.series_mgr.series {
+            series.collect_source_versions(&mut versions);
+        }
+
+        versions
+    }
+
+    pub(crate) fn subscribe_push_updates(
+        &self,
+        callback: SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) {
+        for text in [
+            self.display.title.as_ref(),
+            self.display.xlabel.as_ref(),
+            self.display.ylabel.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            text.subscribe_push_updates(Arc::clone(&callback), teardowns);
+        }
+
+        for series in &self.series_mgr.series {
+            series.subscribe_push_updates(&callback, teardowns);
+        }
+    }
+
+    fn mark_reactive_sources_rendered(&self) {
+        for series in &self.series_mgr.series {
+            series.mark_rendered_sources();
+        }
+    }
+
     /// Get font size in pixels for rendering
     fn font_size_px(&self, points: f32) -> f32 {
         self.render_scale().points_to_pixels(points)
@@ -1851,6 +2150,23 @@ impl Plot {
         )
     }
 
+    /// Add a line series from source-backed data.
+    pub fn line_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::LineConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        PlotBuilder::new(
+            self,
+            PlotInput::XYSource(x_data.into_plot_data(), y_data.into_plot_data()),
+            crate::plots::basic::LineConfig::default(),
+        )
+    }
+
     /// Add a line plot series from streaming data
     ///
     /// This method reads the current data from the StreamingXY buffer at render time.
@@ -1886,9 +2202,8 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        // Read current data from the streaming buffer
-        let x_data = PlotData::Static(stream.read_x());
-        let y_data = PlotData::Static(stream.read_y());
+        let x_data = PlotData::Streaming(stream.x().clone());
+        let y_data = PlotData::Streaming(stream.y().clone());
 
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
@@ -1904,9 +2219,6 @@ impl Plot {
             error_config: None,
             group_id: None,
         };
-
-        // Mark as rendered so partial updates can be tracked
-        stream.mark_rendered();
 
         PlotSeriesBuilder::new(self, series)
     }
@@ -1973,6 +2285,23 @@ impl Plot {
         )
     }
 
+    /// Add a scatter series from source-backed data.
+    pub fn scatter_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        PlotBuilder::new(
+            self,
+            PlotInput::XYSource(x_data.into_plot_data(), y_data.into_plot_data()),
+            crate::plots::basic::ScatterConfig::default(),
+        )
+    }
+
     /// Add a scatter plot series from streaming data
     ///
     /// Similar to `line_streaming`, reads current data from the buffer at render time.
@@ -1993,8 +2322,8 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        let x_data = PlotData::Static(stream.read_x());
-        let y_data = PlotData::Static(stream.read_y());
+        let x_data = PlotData::Streaming(stream.x().clone());
+        let y_data = PlotData::Streaming(stream.y().clone());
 
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
@@ -2010,8 +2339,6 @@ impl Plot {
             error_config: None,
             group_id: None,
         };
-
-        stream.mark_rendered();
 
         PlotSeriesBuilder::new(self, series)
     }
@@ -2076,6 +2403,26 @@ impl Plot {
         )
     }
 
+    /// Add a bar series from source-backed values.
+    pub fn bar_source<S, V>(
+        self,
+        categories: &[S],
+        values: V,
+    ) -> PlotBuilder<crate::plots::basic::BarConfig>
+    where
+        S: ToString,
+        V: IntoPlotData,
+    {
+        PlotBuilder::new(
+            self,
+            PlotInput::CategoricalSource {
+                categories: categories.iter().map(ToString::to_string).collect(),
+                values: values.into_plot_data(),
+            },
+            crate::plots::basic::BarConfig::default(),
+        )
+    }
+
     /// Add a histogram plot series
     ///
     /// Creates a histogram showing the distribution of data values.
@@ -2129,6 +2476,33 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(plot, series)
+    }
+
+    /// Add a histogram series from source-backed values.
+    pub fn histogram_source<D: IntoPlotData>(
+        self,
+        data: D,
+        config: Option<HistogramConfig>,
+    ) -> PlotSeriesBuilder {
+        let series = PlotSeries {
+            series_type: SeriesType::Histogram {
+                data: data.into_plot_data(),
+                config: config.unwrap_or_default(),
+            },
+            label: None,
+            color: None,
+            line_width: None,
+            line_style: None,
+            marker_style: None,
+            marker_size: None,
+            alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
     }
 
     /// Add a box plot series
@@ -2187,6 +2561,33 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(plot, series)
+    }
+
+    /// Add a box plot series from source-backed values.
+    pub fn boxplot_source<D: IntoPlotData>(
+        self,
+        data: D,
+        config: Option<BoxPlotConfig>,
+    ) -> PlotSeriesBuilder {
+        let series = PlotSeries {
+            series_type: SeriesType::BoxPlot {
+                data: data.into_plot_data(),
+                config: config.unwrap_or_default(),
+            },
+            label: None,
+            color: None,
+            line_width: None,
+            line_style: None,
+            marker_style: None,
+            marker_size: None,
+            alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
     }
 
     /// Add a heatmap visualization for 2D array data
@@ -2338,6 +2739,35 @@ impl Plot {
         PlotSeriesBuilder::new(plot, series)
     }
 
+    /// Add error bars from source-backed X, Y, and Y-error data.
+    pub fn error_bars_source<X, Y, E>(self, x_data: X, y_data: Y, y_errors: E) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        E: IntoPlotData,
+    {
+        let series = PlotSeries {
+            series_type: SeriesType::ErrorBars {
+                x_data: x_data.into_plot_data(),
+                y_data: y_data.into_plot_data(),
+                y_errors: y_errors.into_plot_data(),
+            },
+            label: None,
+            color: None,
+            line_width: None,
+            line_style: None,
+            marker_style: None,
+            marker_size: None,
+            alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
+    }
+
     /// Add error bars in both X and Y directions
     pub fn error_bars_xy<X, Y, EX, EY>(
         self,
@@ -2403,6 +2833,43 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(plot, series)
+    }
+
+    /// Add X/Y error bars from source-backed data.
+    pub fn error_bars_xy_source<X, Y, EX, EY>(
+        self,
+        x_data: X,
+        y_data: Y,
+        x_errors: EX,
+        y_errors: EY,
+    ) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        EX: IntoPlotData,
+        EY: IntoPlotData,
+    {
+        let series = PlotSeries {
+            series_type: SeriesType::ErrorBarsXY {
+                x_data: x_data.into_plot_data(),
+                y_data: y_data.into_plot_data(),
+                x_errors: x_errors.into_plot_data(),
+                y_errors: y_errors.into_plot_data(),
+            },
+            label: None,
+            color: None,
+            line_width: None,
+            line_style: None,
+            marker_style: None,
+            marker_size: None,
+            alpha: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
     }
 
     /// Add a KDE (Kernel Density Estimation) plot
@@ -4791,6 +5258,13 @@ impl Plot {
 
     /// Render the plot to an in-memory image
     pub fn render(&self) -> Result<Image> {
+        if self.is_reactive() {
+            let resolved = self.resolved_plot(0.0);
+            let image = resolved.render()?;
+            self.mark_reactive_sources_rendered();
+            return Ok(image);
+        }
+
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
         Self::validate_series_list(&snapshot_series)?;
@@ -4814,16 +5288,16 @@ impl Plot {
             return self.render_with_datashader(&snapshot_series);
         }
 
-        // Check if parallel processing should be used
-        // Note: Parallel rendering not supported for reactive plots (Signal uses Rc which is !Send)
+        // Check if parallel processing should be used.
+        // Reactive plots are resolved into a static snapshot above, so they can
+        // reuse the normal backend-selection path here.
         #[cfg(feature = "parallel")]
         {
             let series_count = snapshot_series.len();
-            if !self.is_reactive()
-                && self
-                    .render
-                    .parallel_renderer
-                    .should_use_parallel(series_count, total_points)
+            if self
+                .render
+                .parallel_renderer
+                .should_use_parallel(series_count, total_points)
             {
                 return self.render_with_parallel();
             }
@@ -5369,15 +5843,15 @@ impl Plot {
     /// # let _ = image;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn render_at(&self, _time: f64) -> Result<Image> {
-        // For now, delegate to render() for backward compatibility.
-        // Future: resolve reactive PlotData and PlotText at the given time.
-        //
-        // TODO: When series modification is complete:
-        // 1. Resolve all PlotData in series at `time`
-        // 2. Resolve PlotText (title, xlabel, ylabel) at `time`
-        // 3. Build resolved data and call render pipeline
-        self.render()
+    pub fn render_at(&self, time: f64) -> Result<Image> {
+        if !self.is_reactive() {
+            return self.render();
+        }
+
+        let resolved = self.resolved_plot(time);
+        let image = resolved.render()?;
+        self.mark_reactive_sources_rendered();
+        Ok(image)
     }
 
     /// Check if this plot contains any reactive data (Signal or Observable).
@@ -5401,14 +5875,32 @@ impl Plot {
     /// assert!(reactive_plot.is_reactive());
     /// ```
     pub fn is_reactive(&self) -> bool {
-        self.series_mgr
-            .series
-            .iter()
-            .any(|s| s.series_type.is_reactive())
+        self.display
+            .title
+            .as_ref()
+            .is_some_and(|title| title.is_reactive())
+            || self
+                .display
+                .xlabel
+                .as_ref()
+                .is_some_and(|label| label.is_reactive())
+            || self
+                .display
+                .ylabel
+                .as_ref()
+                .is_some_and(|label| label.is_reactive())
+            || self
+                .series_mgr
+                .series
+                .iter()
+                .any(|series| series.series_type.is_reactive())
     }
 
     /// Render the plot to an external renderer (used for subplots)
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
+        if self.is_reactive() {
+            return self.resolved_plot(0.0).render_to_renderer(renderer, dpi);
+        }
         if let Some(err) = self.pending_ingestion_error() {
             return Err(err);
         }
@@ -8093,6 +8585,14 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
+        if self.is_reactive() {
+            let result = self.resolved_plot(0.0).save(path);
+            if result.is_ok() {
+                self.mark_reactive_sources_rendered();
+            }
+            return result;
+        }
+
         use crate::render::skia::SkiaRenderer;
 
         self.validate_runtime_environment()?;
@@ -8813,6 +9313,12 @@ impl Plot {
     /// Returns the complete SVG content as a string. This can be saved to a file
     /// or converted to other formats like PDF.
     pub fn render_to_svg(&self) -> Result<String> {
+        if self.is_reactive() {
+            let svg = self.resolved_plot(0.0).render_to_svg()?;
+            self.mark_reactive_sources_rendered();
+            return Ok(svg);
+        }
+
         use crate::axes::TickLayout;
         use crate::export::SvgRenderer;
         use crate::render::skia::map_data_to_pixels;
@@ -9376,6 +9882,36 @@ impl SeriesGroupBuilder {
         self
     }
 
+    /// Add a line series from source-backed data to the current group.
+    pub fn line_source<X, Y>(mut self, x_data: X, y_data: Y) -> Self
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_line_series_grouped(
+            x_data.into_plot_data(),
+            y_data.into_plot_data(),
+            &crate::plots::basic::LineConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
     /// Add a scatter series to the current group.
     pub fn scatter<X, Y>(mut self, x_data: &X, y_data: &Y) -> Self
     where
@@ -9421,6 +9957,36 @@ impl SeriesGroupBuilder {
         self
     }
 
+    /// Add a scatter series from source-backed data to the current group.
+    pub fn scatter_source<X, Y>(mut self, x_data: X, y_data: Y) -> Self
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_scatter_series_grouped(
+            x_data.into_plot_data(),
+            y_data.into_plot_data(),
+            &crate::plots::basic::ScatterConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
     /// Add a bar series to the current group.
     pub fn bar<S, V>(mut self, categories: &[S], values: &V) -> Self
     where
@@ -9448,6 +10014,36 @@ impl SeriesGroupBuilder {
         self.plot = self.plot.add_bar_series_grouped(
             cat_vec,
             PlotData::Static(val_vec),
+            &crate::plots::basic::BarConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
+    /// Add a bar series from source-backed values to the current group.
+    pub fn bar_source<S, V>(mut self, categories: &[S], values: V) -> Self
+    where
+        S: ToString,
+        V: IntoPlotData,
+    {
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_bar_series_grouped(
+            categories.iter().map(ToString::to_string).collect(),
+            values.into_plot_data(),
             &crate::plots::basic::BarConfig::default(),
             style,
             Some(self.group_id),
@@ -9900,6 +10496,19 @@ impl PlotSeriesBuilder {
         self.end_series().line(x_data, y_data)
     }
 
+    /// Continue with a new line series from source-backed data.
+    pub fn line_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::LineConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        self.end_series().line_source(x_data, y_data)
+    }
+
     /// Continue with a new scatter series
     pub fn scatter<X, Y>(
         self,
@@ -9913,6 +10522,19 @@ impl PlotSeriesBuilder {
         self.end_series().scatter(x_data, y_data)
     }
 
+    /// Continue with a new scatter series from source-backed data.
+    pub fn scatter_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        self.end_series().scatter_source(x_data, y_data)
+    }
+
     /// Continue with a new bar series
     pub fn bar<S, V>(
         self,
@@ -9924,6 +10546,19 @@ impl PlotSeriesBuilder {
         V: NumericData1D,
     {
         self.end_series().bar(categories, values)
+    }
+
+    /// Continue with a new bar series from source-backed values.
+    pub fn bar_source<S, V>(
+        self,
+        categories: &[S],
+        values: V,
+    ) -> PlotBuilder<crate::plots::basic::BarConfig>
+    where
+        S: ToString,
+        V: IntoPlotData,
+    {
+        self.end_series().bar_source(categories, values)
     }
 
     /// Continue with a grouped-series scope after finalizing the current series.
@@ -9978,6 +10613,17 @@ impl PlotSeriesBuilder {
         self.end_series().error_bars(x_data, y_data, y_errors)
     }
 
+    /// Continue with a new Y-error-bar series from source-backed data.
+    pub fn error_bars_source<X, Y, E>(self, x_data: X, y_data: Y, y_errors: E) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        E: IntoPlotData,
+    {
+        self.end_series()
+            .error_bars_source(x_data, y_data, y_errors)
+    }
+
     /// Continue with a new error bar series (both X and Y errors)
     ///
     /// # Example
@@ -10014,9 +10660,27 @@ impl PlotSeriesBuilder {
             .error_bars_xy(x_data, y_data, x_errors, y_errors)
     }
 
+    /// Continue with a new X/Y error-bar series from source-backed data.
+    pub fn error_bars_xy_source<X, Y, EX, EY>(
+        self,
+        x_data: X,
+        y_data: Y,
+        x_errors: EX,
+        y_errors: EY,
+    ) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        EX: IntoPlotData,
+        EY: IntoPlotData,
+    {
+        self.end_series()
+            .error_bars_xy_source(x_data, y_data, x_errors, y_errors)
+    }
+
     /// Set plot title
-    pub fn title<S: Into<String>>(mut self, title: S) -> Self {
-        self.plot.display.title = Some(data::PlotText::Static(title.into()));
+    pub fn title(mut self, title: impl Into<data::PlotText>) -> Self {
+        self.plot.display.title = Some(title.into());
         self
     }
 
@@ -10027,8 +10691,8 @@ impl PlotSeriesBuilder {
     }
 
     /// Set X-axis label
-    pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.plot.display.xlabel = Some(data::PlotText::Static(label.into()));
+    pub fn xlabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.plot.display.xlabel = Some(label.into());
         self
     }
 
@@ -10039,8 +10703,8 @@ impl PlotSeriesBuilder {
     }
 
     /// Set Y-axis label
-    pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.plot.display.ylabel = Some(data::PlotText::Static(label.into()));
+    pub fn ylabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.plot.display.ylabel = Some(label.into());
         self
     }
 
@@ -11611,10 +12275,30 @@ mod tests {
 
         assert_eq!(stream.appended_count(), 2);
 
-        let _plot = Plot::new().line_streaming(&stream).end_series();
+        let plot = Plot::new().line_streaming(&stream).end_series();
 
-        // After line_streaming, buffer should be marked as rendered
+        // Construction keeps the stream live. Rendering advances the append mark.
+        assert_eq!(stream.appended_count(), 2);
+        plot.render().expect("streaming plot should render");
         assert_eq!(stream.appended_count(), 0);
+    }
+
+    #[test]
+    fn test_line_streaming_reads_updates_after_build() {
+        use crate::data::StreamingXY;
+
+        let stream = StreamingXY::new(100);
+        stream.push_many(vec![(0.0, 0.0), (1.0, 1.0)]);
+
+        let plot = Plot::new().line_streaming(&stream).end_series();
+        stream.push(2.0, 4.0);
+
+        if let SeriesType::Line { x_data, y_data } = &plot.series_mgr.series[0].series_type {
+            assert_eq!(x_data.resolve(0.0), vec![0.0, 1.0, 2.0]);
+            assert_eq!(y_data.resolve(0.0), vec![0.0, 1.0, 4.0]);
+        } else {
+            panic!("Expected Line series type");
+        }
     }
 
     #[test]
@@ -11803,7 +12487,7 @@ mod tests {
 
         assert!(v1 > v0, "Version should increase after push");
 
-        // Create plot (marks as rendered)
+        // Create plot while keeping the stream live.
         let _plot = Plot::new().line_streaming(&stream).end_series();
 
         // Push more data
@@ -11811,6 +12495,19 @@ mod tests {
         let v2 = stream.version();
 
         assert!(v2 > v1, "Version should increase after second push");
+    }
+
+    #[test]
+    fn test_plot_is_reactive_for_reactive_title() {
+        use crate::data::Observable;
+
+        let title = Observable::new("Reactive Title".to_string());
+        let plot = Plot::new()
+            .title(title)
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .end_series();
+
+        assert!(plot.is_reactive());
     }
 
     // ========== Error Bar Modifier API Tests ==========

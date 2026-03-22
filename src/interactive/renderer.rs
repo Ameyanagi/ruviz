@@ -6,7 +6,10 @@
 #[cfg(feature = "gpu")]
 use crate::render::gpu::GpuRenderer;
 use crate::{
-    core::{Plot, Result},
+    core::{
+        FramePacing, HitResult, ImageTarget, InteractivePlotSession, Plot, QualityPolicy, Result,
+        ViewportPoint,
+    },
     interactive::{
         event::{Annotation, Point2D, Rectangle},
         state::{DataPoint, DataPointId, InteractionState},
@@ -27,8 +30,10 @@ pub struct RealTimeRenderer {
 
     // Rendering state
     current_plot: Option<Plot>,
+    interactive_session: Option<InteractivePlotSession>,
     render_cache: RenderCache,
     performance_monitor: PerformanceMonitor,
+    last_device_scale: f32,
 
     // Interactive elements
     hover_highlight_color: Color,
@@ -70,8 +75,10 @@ impl RealTimeRenderer {
             gpu_renderer,
             cpu_renderer,
             current_plot: None,
+            interactive_session: None,
             render_cache: RenderCache::new(),
             performance_monitor: PerformanceMonitor::new(),
+            last_device_scale: 1.0,
 
             hover_highlight_color: Color::new_rgba(255, 165, 0, 180), // Orange with transparency
             selection_highlight_color: Color::new_rgba(255, 0, 0, 120), // Red with transparency
@@ -86,6 +93,7 @@ impl RealTimeRenderer {
 
     /// Set the current plot for rendering
     pub fn set_plot(&mut self, plot: Plot) {
+        self.interactive_session = Some(plot.prepare_interactive());
         self.current_plot = Some(plot);
         self.render_cache.invalidate_all();
     }
@@ -102,6 +110,7 @@ impl RealTimeRenderer {
 
         // Update renderer dimensions if needed
         self.update_dimensions(width, height)?;
+        self.last_device_scale = device_scale;
 
         // Adaptive quality based on performance
         if self.adaptive_quality {
@@ -169,20 +178,36 @@ impl RealTimeRenderer {
 
         // In real implementation, this would spatial search through plot data
         // For now, simulate finding a nearby point
-        if let Some(ref plot) = self.current_plot {
-            // Simulate hit testing - in reality would use spatial indexing
-            let tolerance = 10.0 / state.zoom_level; // Zoom-adjusted tolerance
-
-            // Mock implementation - would actually search plot data
-            if data_pos.x > 10.0 && data_pos.x < 90.0 && data_pos.y > 10.0 && data_pos.y < 90.0 {
-                return Some(
-                    DataPoint::new(
-                        42, // Mock ID
-                        data_pos.x, data_pos.y, data_pos.y, // Mock value
-                        0,          // Series index
-                    )
-                    .with_metadata("type".to_string(), "simulated".to_string()),
-                );
+        if let Some(session) = &self.interactive_session {
+            self.sync_session_viewport(session, state);
+            match session.hit_test(ViewportPoint::new(screen_pos.x, screen_pos.y)) {
+                HitResult::SeriesPoint {
+                    series_index,
+                    point_index,
+                    data_position,
+                    ..
+                } => {
+                    return Some(DataPoint::new(
+                        point_index,
+                        data_position.x,
+                        data_position.y,
+                        data_position.y,
+                        series_index,
+                    ));
+                }
+                HitResult::HeatmapCell {
+                    series_index,
+                    row,
+                    col,
+                    value,
+                    ..
+                } => {
+                    return Some(
+                        DataPoint::new(row.saturating_mul(10_000) + col, col as f64, row as f64, value, series_index)
+                            .with_metadata("kind".to_string(), "heatmap".to_string()),
+                    );
+                }
+                HitResult::None => {}
             }
         }
 
@@ -271,7 +296,7 @@ impl RealTimeRenderer {
                 }
                 RenderQuality::Publication => {
                     // High quality rendering
-                    self.render_plot_to_pixels(width, height, device_scale)?
+                    self.render_plot_to_pixels(state, width, height, device_scale)?
                 }
             }
         } else {
@@ -289,49 +314,65 @@ impl RealTimeRenderer {
     /// Render with interactive quality (optimized for speed)
     fn render_interactive_quality(
         &mut self,
-        _state: &InteractionState,
+        state: &InteractionState,
         width: u32,
         height: u32,
         device_scale: f32,
     ) -> Result<Vec<u8>> {
-        self.render_plot_to_pixels(width, height, device_scale)
+        self.render_plot_to_pixels(state, width, height, device_scale)
     }
 
     /// Render with balanced quality
     fn render_balanced_quality(
         &mut self,
-        _state: &InteractionState,
+        state: &InteractionState,
         width: u32,
         height: u32,
         device_scale: f32,
     ) -> Result<Vec<u8>> {
-        self.render_plot_to_pixels(width, height, device_scale)
+        self.render_plot_to_pixels(state, width, height, device_scale)
     }
 
     /// Render the current plot to RGBA pixel data
-    fn render_plot_to_pixels(&self, width: u32, height: u32, device_scale: f32) -> Result<Vec<u8>> {
-        if let Some(ref plot) = self.current_plot {
-            let plot_clone = Self::configure_plot_for_surface(plot, width, height, device_scale);
+    fn render_plot_to_pixels(
+        &self,
+        state: &InteractionState,
+        width: u32,
+        height: u32,
+        device_scale: f32,
+    ) -> Result<Vec<u8>> {
+        if let Some(session) = &self.interactive_session {
+            self.sync_session_viewport(session, state);
+            session.set_frame_pacing(FramePacing::Display);
+            session.set_quality_policy(match self.quality_mode {
+                RenderQuality::Interactive => QualityPolicy::Interactive,
+                RenderQuality::Balanced => QualityPolicy::Balanced,
+                RenderQuality::Publication => QualityPolicy::Publication,
+            });
+            #[cfg(feature = "gpu")]
+            session.set_prefer_gpu(self.gpu_renderer.is_some());
 
-            // Render the plot
-            match plot_clone.render() {
-                Ok(image) => {
-                    // If dimensions match, return directly
-                    if image.width == width && image.height == height {
-                        Ok(image.pixels)
-                    } else {
-                        // Dimensions might differ slightly, return as-is
-                        // The caller should handle any size mismatch
-                        Ok(image.pixels)
-                    }
+            match session.render_to_image(ImageTarget {
+                size_px: (width, height),
+                scale_factor: device_scale,
+                time_seconds: 0.0,
+            }) {
+                Ok(frame) => Ok(frame.image.pixels),
+                Err(e) => {
+                    log::warn!("Interactive session rendering failed: {}, returning white pixels", e);
+                    Ok(vec![255u8; (width * height * 4) as usize])
                 }
+            }
+        } else if let Some(ref plot) = self.current_plot {
+            let plot_clone = Self::configure_plot_for_surface(plot, width, height, device_scale);
+            match plot_clone.render() {
+                Ok(image) => Ok(image.pixels),
                 Err(e) => {
                     log::warn!("Plot rendering failed: {}, returning white pixels", e);
                     Ok(vec![255u8; (width * height * 4) as usize])
                 }
             }
         } else {
-            // No plot set, return white background
             Ok(vec![255u8; (width * height * 4) as usize])
         }
     }
@@ -351,6 +392,13 @@ impl RealTimeRenderer {
         plot.clone()
             .dpi(interactive_dpi)
             .set_output_pixels(width, height)
+    }
+
+    fn sync_session_viewport(&self, session: &InteractivePlotSession, state: &InteractionState) {
+        let width = state.screen_bounds.width().max(1.0).round() as u32;
+        let height = state.screen_bounds.height().max(1.0).round() as u32;
+        session.resize((width, height), self.last_device_scale);
+        session.sync_legacy_viewport(state.zoom_level, state.pan_offset.x, state.pan_offset.y);
     }
 
     /// Render hover highlight

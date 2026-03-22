@@ -284,6 +284,8 @@ pub enum PlotInput {
     Single(Vec<f64>),
     /// Paired X-Y data (for line, scatter, etc.)
     XY(Vec<f64>, Vec<f64>),
+    /// Paired X-Y data from source-backed plot values.
+    XYSource(super::PlotData, super::PlotData),
     /// 2D grid data (for heatmap, contour)
     Grid2D {
         x: Vec<f64>,
@@ -295,6 +297,11 @@ pub enum PlotInput {
         categories: Vec<String>,
         values: Vec<f64>,
     },
+    /// Categorical data with source-backed values.
+    CategoricalSource {
+        categories: Vec<String>,
+        values: super::PlotData,
+    },
 }
 
 impl PlotInput {
@@ -303,8 +310,10 @@ impl PlotInput {
         match self {
             PlotInput::Single(data) => data.len(),
             PlotInput::XY(x, _) => x.len(),
+            PlotInput::XYSource(x, _) => x.len(),
             PlotInput::Grid2D { x, y, .. } => x.len() * y.len(),
             PlotInput::Categorical { values, .. } => values.len(),
+            PlotInput::CategoricalSource { values, .. } => values.len(),
         }
     }
 }
@@ -571,7 +580,7 @@ where
     /// Set plot title
     ///
     /// This method forwards to the inner Plot.
-    pub fn title<S: Into<String>>(mut self, title: S) -> Self {
+    pub fn title(mut self, title: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.title(title);
         self
     }
@@ -579,7 +588,7 @@ where
     /// Set X-axis label
     ///
     /// This method forwards to the inner Plot.
-    pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
+    pub fn xlabel(mut self, label: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.xlabel(label);
         self
     }
@@ -587,7 +596,7 @@ where
     /// Set Y-axis label
     ///
     /// This method forwards to the inner Plot.
-    pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
+    pub fn ylabel(mut self, label: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.ylabel(label);
         self
     }
@@ -1897,6 +1906,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     fn finalize(self) -> super::Plot {
         let (x_data, y_data) = match &self.input {
             PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
+            PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
             PlotInput::Single(y) => {
                 // Generate x values as indices
                 let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
@@ -1961,6 +1971,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     fn finalize(self) -> super::Plot {
         let (x_data, y_data) = match &self.input {
             PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
+            PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
             PlotInput::Single(y) => {
                 let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
                 (PlotData::Static(x), PlotData::Static(y.clone()))
@@ -2034,6 +2045,9 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
         let (categories, values) = match &self.input {
             PlotInput::Categorical { categories, values } => {
                 (categories.clone(), PlotData::Static(values.clone()))
+            }
+            PlotInput::CategoricalSource { categories, values } => {
+                (categories.clone(), values.clone())
             }
             PlotInput::Single(y) => {
                 // Generate category labels as indices
@@ -2156,6 +2170,18 @@ mod tests {
             _ => panic!("Expected XY variant"),
         }
 
+        let xy_source = PlotInput::XYSource(
+            PlotData::Static(vec![1.0, 2.0]),
+            PlotData::Static(vec![3.0, 4.0]),
+        );
+        match xy_source {
+            PlotInput::XYSource(x, y) => {
+                assert_eq!(x.len(), 2);
+                assert_eq!(y.len(), 2);
+            }
+            _ => panic!("Expected XYSource variant"),
+        }
+
         // Test Categorical variant
         let cat = PlotInput::Categorical {
             categories: vec!["A".to_string(), "B".to_string()],
@@ -2167,6 +2193,18 @@ mod tests {
                 assert_eq!(values.len(), 2);
             }
             _ => panic!("Expected Categorical variant"),
+        }
+
+        let cat_source = PlotInput::CategoricalSource {
+            categories: vec!["A".to_string(), "B".to_string()],
+            values: PlotData::Static(vec![10.0, 20.0]),
+        };
+        match cat_source {
+            PlotInput::CategoricalSource { categories, values } => {
+                assert_eq!(categories.len(), 2);
+                assert_eq!(values.len(), 2);
+            }
+            _ => panic!("Expected CategoricalSource variant"),
         }
     }
 }

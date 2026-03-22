@@ -62,9 +62,14 @@ assert_eq!(plot.get_backend_name(), "datashader");
 `render()` returns an in-memory `Image` and currently chooses its path like this:
 
 - Above `100_000` points: DataShader
-- Otherwise, if the `parallel` feature is enabled and the plot is not reactive:
+- Otherwise, if the `parallel` feature is enabled:
   - parallel rendering is used when `ParallelRenderer::should_use_parallel(...)` returns `true`
 - Otherwise: CPU/tiny-skia rendering
+
+Reactive plots first resolve their current values into a static snapshot, then
+run through the same backend-selection logic. That means observable-backed and
+streaming-backed line/scatter/bar/error/histogram/box plots can still reach the
+parallel and DataShader paths after resolution.
 
 The default parallel renderer activates when either:
 
