@@ -1,6 +1,7 @@
 //! Documentation example: Themes comparison
 //!
-//! Generates docs/images/theme_*.png for rustdoc
+//! Generates docs/images/theme_default.png, docs/images/theme_dark.png,
+//! docs/images/theme_seaborn.png, and docs/images/theme_publication.png for rustdoc.
 
 use ruviz::prelude::*;
 

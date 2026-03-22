@@ -539,21 +539,21 @@ fn test_plot_output_consistency() {
     // Generate reference plot
     Plot::new()
         .line(&x, &y)
-        .save("test_output/reference.png")
+        .save("tests/output/reference.png")
         .expect("Failed to save reference");
 
     // Generate test plot
     Plot::new()
         .line(&x, &y)
-        .save("test_output/test.png")
+        .save("tests/output/test.png")
         .expect("Failed to save test");
 
     // Compare file sizes (basic check)
-    let ref_size = std::fs::metadata("test_output/reference.png")
+    let ref_size = std::fs::metadata("tests/output/reference.png")
         .unwrap()
         .len();
 
-    let test_size = std::fs::metadata("test_output/test.png")
+    let test_size = std::fs::metadata("tests/output/test.png")
         .unwrap()
         .len();
 

@@ -182,7 +182,7 @@ fn test_font_system_singleton() {
 #[test]
 fn test_international_plot_generation() {
     // Create output directory
-    let output_dir = Path::new("test_output");
+    let output_dir = Path::new("tests/output");
     std::fs::create_dir_all(output_dir).ok();
 
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];

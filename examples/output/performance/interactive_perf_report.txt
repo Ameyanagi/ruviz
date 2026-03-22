@@ -1,0 +1,25 @@
+   Compiling objc-sys v0.3.5
+   Compiling objc2-encode v4.1.0
+   Compiling core-foundation v0.9.4
+   Compiling foreign-types-macros v0.2.3
+   Compiling dispatch v0.2.0
+   Compiling winit v0.30.12
+   Compiling smol_str v0.2.2
+   Compiling tracing-core v0.1.34
+   Compiling dpi v0.1.2
+   Compiling cursor-icon v1.2.0
+   Compiling cosmic-text v0.13.2
+   Compiling core-graphics-types v0.1.3
+   Compiling tracing v0.1.41
+   Compiling foreign-types v0.5.0
+   Compiling objc2 v0.5.2
+   Compiling block2 v0.5.1
+   Compiling objc2-foundation v0.2.2
+   Compiling core-graphics v0.23.2
+   Compiling objc2-app-kit v0.2.2
+   Compiling ruviz v0.1.4 (/Users/ryuichi/dev/ruviz)
+    Finished `release` profile [optimized] target(s) in 24.49s
+     Running `target/release/examples/real_time_performance`
+Starting real-time performance demo...
+Generated 100000 points in 4.80ms (1.53MB)
+Opening performance demo window...

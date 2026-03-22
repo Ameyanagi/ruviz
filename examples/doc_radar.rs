@@ -1,6 +1,6 @@
 //! Documentation example: Radar Chart
 //!
-//! Generates docs/images/radar_chart.png for rustdoc
+//! Generates docs/images/radar_chart.png and docs/images/radar_skills.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating radar charts,
 //! including the new `add_series()` API for explicit named series.

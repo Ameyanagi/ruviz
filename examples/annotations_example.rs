@@ -40,7 +40,7 @@ fn main() -> Result<()> {
         .axhspan(6.0, 8.0)
         .save("examples/output/annotations_demo.png")?;
 
-    println!("Annotations demo saved to test_output/annotations_demo.png");
+    println!("Annotations demo saved to examples/output/annotations_demo.png");
 
     // Also create a simpler example with just text and arrow
     Plot::new()
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
         .vline(7.0)
         .save("examples/output/simple_annotations.png")?;
 
-    println!("Simple annotations saved to test_output/simple_annotations.png");
+    println!("Simple annotations saved to examples/output/simple_annotations.png");
 
     Ok(())
 }

@@ -1,6 +1,8 @@
 //! Documentation example: Error Bars
 //!
-//! Generates docs/images/errorbar_plot.png for rustdoc
+//! Generates docs/images/errorbar_plot.png, docs/images/errorbar_standalone.png,
+//! docs/images/errorbar_asymmetric.png, and
+//! docs/images/errorbar_continuation.png for rustdoc.
 //!
 //! This example demonstrates both error bar API patterns:
 //! 1. **Modifier Pattern**: Attach error bars to existing Line/Scatter series

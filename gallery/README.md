@@ -80,38 +80,34 @@ Development utilities and testing tools.
 
 ## Running the Examples
 
-Each example is a standalone Rust program. To run any example:
+Each registered gallery example is a standalone Rust program. Run them with `cargo run --example <name>`:
 
 ```bash
 # Basic examples
-cargo run --example basic_line
-cargo run --example basic_scatter
+cargo run --example basic_example
+cargo run --example simple_visual_test
+cargo run --example axis_legend_test
 
 # Advanced examples  
-cargo run --example transparency_demo
-cargo run --example line_styles
+cargo run --example font_demo
 
 # Publication examples
-cargo run --example publication_line
-cargo run --example high_dpi
+cargo run --example simple_publication_test
+cargo run --example legend_features_example
 
 # Scientific examples
-cargo run --example colormap_demo
-cargo run --example large_dataset
-
-# Interactive examples
-cargo run --example animation
-cargo run --example realtime_data
+cargo run --example scientific_plotting
 ```
 
 ## Output Location
 
-All example outputs are saved to the `test_output/` directory with descriptive names:
+Gallery examples in `gallery/` save their rendered PNGs to `test_output/`.
+Utility scripts may also write export artifacts under `export_output/`.
 
-- `test_output/basic_line_demo.png`
-- `test_output/transparency_effects.png`
-- `test_output/publication_quality.png`
-- `test_output/scientific_colormap.png`
+- `test_output/test_axis_labels.png`
+- `test_output/scientific_error_bars.png`
+- `test_output/scientific_multi_series_errors.png`
+- `export_output/png/light_theme.png`
 
 ## Features Demonstrated
 
@@ -190,7 +186,7 @@ To add a new example:
 1. Create the example file in the appropriate category directory
 2. Add the example to the `Cargo.toml` examples section
 3. Update this README with a description
-4. Include sample output in `test_output/`
+4. Document which output directory it uses (`test_output/` or `export_output/`)
 
 ## Performance Benchmarks
 

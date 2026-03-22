@@ -57,6 +57,16 @@ fn cleanup_temp_file(path: &Path) {
     let _ = fs::remove_file(path);
 }
 
+fn ensure_parent_dir(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn resolve_atomic_destination(path: &Path) -> std::io::Result<PathBuf> {
     #[cfg(unix)]
     {
@@ -192,6 +202,7 @@ fn rename_temp_into_place(
 pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Result<()> {
     let path = path.as_ref();
     let destination_path = resolve_atomic_destination(path).map_err(PlottingError::IoError)?;
+    ensure_parent_dir(&destination_path).map_err(PlottingError::IoError)?;
     let (temp_path, mut file) =
         create_atomic_temp_file(&destination_path).map_err(PlottingError::IoError)?;
 
@@ -222,6 +233,7 @@ where
 {
     let path = path.as_ref();
     let destination_path = resolve_atomic_destination(path).map_err(PlottingError::IoError)?;
+    ensure_parent_dir(&destination_path).map_err(PlottingError::IoError)?;
     let (temp_path, file) =
         create_atomic_temp_file(&destination_path).map_err(PlottingError::IoError)?;
 
@@ -284,5 +296,18 @@ mod tests {
             PathBuf::from("runs/42.png")
         );
         assert_eq!(fs::read(&target_path).expect("read target"), b"new-bytes");
+    }
+
+    #[test]
+    fn atomic_write_creates_missing_parent_directories() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let nested_path = tempdir.path().join("nested/output/example.bin");
+
+        write_bytes_atomic(&nested_path, b"new-bytes").expect("atomic write to nested path");
+
+        assert_eq!(
+            fs::read(&nested_path).expect("read nested output"),
+            b"new-bytes"
+        );
     }
 }

@@ -1,6 +1,6 @@
 //! Documentation example: Polar Plot
 //!
-//! Generates docs/images/polar_plot.png for rustdoc
+//! Generates docs/images/polar_plot.png and docs/images/polar_cardioid.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating polar plots.
 

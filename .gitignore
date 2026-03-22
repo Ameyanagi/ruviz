@@ -43,6 +43,7 @@ examples/output/**/*.svg
 # AI/Assistant artifacts
 .serena/
 .claude/
+.codex/
 openspec/
 memory/
 plans/

@@ -1,6 +1,8 @@
 //! Documentation example: International text support
 //!
-//! Generates docs/images/international_*.png for gallery
+//! Generates docs/images/international_japanese.png,
+//! docs/images/international_chinese.png, docs/images/international_korean.png,
+//! and docs/images/international_comparison.png for rustdoc and gallery docs.
 //! Demonstrates support for Japanese, Chinese, Korean, and mixed scripts.
 
 use ruviz::prelude::*;
