@@ -58,6 +58,7 @@ cargo test --test visual_traits_test test_kde_visual -- --ignored
 - Generated images: `tests/output/visual/`
 - Diff images (failures): `tests/output/visual_diff/`
 - Compare visually against references
+- These output directories are local debug artifacts and are gitignored; only `tests/visual/reference/` is versioned
 
 ## Adding New Visual Tests
 

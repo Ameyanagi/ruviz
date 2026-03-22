@@ -121,9 +121,13 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Save CSV data for plotting
-    std::fs::write("performance_data.csv", csv_data)?;
-    println!("\n📁 Performance data saved to 'performance_data.csv'");
+    // Save CSV data alongside the other generated performance artifacts.
+    let csv_path = std::path::Path::new("examples/output/performance/performance_data.csv");
+    if let Some(parent) = csv_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(csv_path, csv_data)?;
+    println!("\n📁 Performance data saved to '{}'", csv_path.display());
 
     // Show GPU statistics if available
     if let Some(gpu) = &gpu_renderer {

@@ -18,6 +18,9 @@ export_test_output/*
 tests/output/*.png
 tests/output/*.pdf
 tests/output/*.svg
+tests/output/**/*.png
+tests/output/**/*.pdf
+tests/output/**/*.svg
 !tests/output/.gitkeep
 
 # Example outputs
@@ -27,12 +30,15 @@ examples/output/*.svg
 examples/output/**/*.png
 examples/output/**/*.pdf
 examples/output/**/*.svg
+examples/output/performance/*.txt
+examples/output/performance/*.csv
 !examples/output/.gitkeep
 
 # Scattered outputs in root (legacy - to be removed)
 /*.png
 /*.pdf
 /*.svg
+/performance_data.csv
 
 # Temporary files
 *.tmp
