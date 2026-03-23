@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - Added `ruviz-gpui`, a GPUI component adapter crate for interactive and reactive plotting integrations.
+- Added GPUI interactive session support and reactive plotting hooks for embedded and streaming use cases.
 
 ### Changed
 
@@ -23,6 +24,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Fixed GPUI reactive rendering issues around interactive invalidation, streaming redraws, overlay refresh, and source setter updates.
+- Fixed manual axis-limit handling in the GPUI/reactive plotting path.
 - Eagerly release `lift2` cross-source subscriptions when either source is dropped.
 - Prevent `lift2` source-drop cleanup hooks from accumulating on long-lived source observables.
 - Validate floating-point DPI values directly before rendering, including negative and fractional out-of-range inputs.
@@ -35,6 +38,7 @@ All notable changes to this project will be documented in this file.
 - Restore snapshot-based bounds calculation for heatmap, density, polar, radar, contour, and other non-Cartesian series.
 - Restore series validation before DataShader and parallel render fast paths, and preserve POSIX symlink destinations during atomic export overwrites.
 - Make DataShader renders consume the same validated snapshot as the main render path, and keep invalid zero-DPI pixel sizing from surfacing misleading dimension errors.
+- Tighten DataShader bounds handling for the reactive/interactive rendering path.
 - Apply tick-side and tick-direction settings consistently in `render()`-based outputs, keep SVG frame strokes DPI-aware when ticks are disabled, and preserve exact framebuffer sizes on fractional HiDPI interactive surfaces.
 
 ## [0.1.4] - 2026-02-11
