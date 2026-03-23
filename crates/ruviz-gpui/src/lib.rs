@@ -237,6 +237,7 @@ mod supported {
     struct PresentationClock {
         stats: PresentationStats,
         last_presented_at: Option<Instant>,
+        average_present_interval_secs: f64,
     }
 
     impl PresentationClock {
@@ -257,20 +258,22 @@ mod supported {
 
             if let Some(previous) = self.last_presented_at {
                 let interval = now.saturating_duration_since(previous);
+                let interval_secs = interval.as_secs_f64();
                 self.stats.last_present_interval = interval;
-                self.stats.average_present_interval = if self.stats.frame_count <= 2 {
-                    interval
+                self.average_present_interval_secs = if self.stats.frame_count <= 2 {
+                    interval_secs
                 } else {
                     let sample_count = self.stats.frame_count - 1;
-                    let previous_total =
-                        self.stats.average_present_interval.as_nanos() * (sample_count - 1) as u128;
-                    let total = previous_total + interval.as_nanos();
-                    Duration::from_nanos((total / sample_count as u128) as u64)
+                    let previous_sample_count = (sample_count - 1) as f64;
+                    (self.average_present_interval_secs * previous_sample_count + interval_secs)
+                        / sample_count as f64
                 };
+                self.stats.average_present_interval =
+                    Duration::from_secs_f64(self.average_present_interval_secs);
                 self.stats.current_fps = if interval.is_zero() {
                     0.0
                 } else {
-                    1.0 / interval.as_secs_f64()
+                    1.0 / interval_secs
                 };
             }
 
@@ -1879,6 +1882,21 @@ mod supported {
             assert!(stats.last_present_interval >= Duration::from_millis(16));
             assert!(stats.average_present_interval >= Duration::from_millis(16));
             assert!(stats.current_fps > 50.0 && stats.current_fps < 70.0);
+        }
+
+        #[test]
+        fn test_presentation_clock_preserves_average_precision() {
+            let start = Instant::now();
+            let mut clock = PresentationClock::default();
+
+            clock.record_at(start);
+            clock.record_at(start + Duration::from_nanos(1));
+            clock.record_at(start + Duration::from_nanos(3));
+            clock.record_at(start + Duration::from_nanos(6));
+
+            let stats = clock.stats();
+            assert_eq!(stats.average_present_interval, Duration::from_nanos(2));
+            assert!((clock.average_present_interval_secs - 2e-9).abs() < 1e-18);
         }
 
         #[test]

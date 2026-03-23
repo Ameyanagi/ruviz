@@ -7468,9 +7468,9 @@ impl Plot {
         let (canvas_width, canvas_height) = self.config_canvas_size();
         let mut datashader =
             DataShader::with_canvas_size(canvas_width as usize, canvas_height as usize);
-        let bounds = self.effective_data_bounds_for_series(series_list)?;
+        let (x_min, x_max, y_min, y_max) = self.effective_data_bounds_for_series(series_list)?;
 
-        datashader.aggregate_with_bounds(&x_values, &y_values, bounds)?;
+        datashader.aggregate_with_bounds(&x_values, &y_values, x_min, x_max, y_min, y_max)?;
         let ds_image = datashader.render();
 
         // Convert to Image format
@@ -9659,11 +9659,8 @@ impl Plot {
                             plot_area.height() as usize,
                         );
 
-                        datashader.aggregate_with_bounds(
-                            &x_data,
-                            &y_data,
-                            (x_min, x_max, y_min, y_max),
-                        )?;
+                        datashader
+                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
                         let image = datashader.render();
 
                         // Draw the DataShader result
@@ -9693,11 +9690,8 @@ impl Plot {
                             plot_area.height() as usize,
                         );
 
-                        datashader.aggregate_with_bounds(
-                            &x_data,
-                            &y_data,
-                            (x_min, x_max, y_min, y_max),
-                        )?;
+                        datashader
+                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
                         let image = datashader.render();
 
                         // Draw the DataShader result
