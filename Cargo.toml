@@ -6,7 +6,7 @@ resolver = "2"
 
 [package]
 name = "ruviz"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.87"
 authors = ["Ruviz Contributors"]

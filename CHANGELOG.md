@@ -4,13 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- _None yet._
+
+## [0.1.5] - 2026-03-23
+
 ### Breaking Changes
 
 - Default tick marks now render on all four sides of the plot frame instead of only the bottom and left axes. To preserve the previous look, call `.ticks_bottom_left()`.
 
 ### Added
 
-- _None yet._
+- Added `ruviz-gpui`, a GPUI component adapter crate for interactive and reactive plotting integrations.
 
 ### Changed
 
@@ -83,7 +87,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/Ameyanagi/ruviz/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Ameyanagi/ruviz/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Ameyanagi/ruviz/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Ameyanagi/ruviz/compare/v0.1.1...v0.1.2
