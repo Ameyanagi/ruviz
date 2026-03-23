@@ -88,6 +88,24 @@ impl<T> ReactiveValue<T> {
     }
 }
 
+impl<T> From<T> for ReactiveValue<T> {
+    fn from(value: T) -> Self {
+        ReactiveValue::Static(value)
+    }
+}
+
+impl<T> From<Signal<T>> for ReactiveValue<T> {
+    fn from(signal: Signal<T>) -> Self {
+        ReactiveValue::Temporal(signal)
+    }
+}
+
+impl<T> From<Observable<T>> for ReactiveValue<T> {
+    fn from(obs: Observable<T>) -> Self {
+        ReactiveValue::Reactive(obs)
+    }
+}
+
 impl<T: Clone> ReactiveValue<T> {
     /// Resolve the value at the given time.
     #[inline]
@@ -371,27 +389,9 @@ impl ReactiveValue<String> {
     }
 }
 
-impl From<String> for ReactiveValue<String> {
-    fn from(s: String) -> Self {
-        ReactiveValue::Static(s)
-    }
-}
-
 impl From<&str> for ReactiveValue<String> {
     fn from(s: &str) -> Self {
         ReactiveValue::Static(s.to_string())
-    }
-}
-
-impl From<Signal<String>> for ReactiveValue<String> {
-    fn from(signal: Signal<String>) -> Self {
-        ReactiveValue::Temporal(signal)
-    }
-}
-
-impl From<Observable<String>> for ReactiveValue<String> {
-    fn from(obs: Observable<String>) -> Self {
-        ReactiveValue::Reactive(obs)
     }
 }
 

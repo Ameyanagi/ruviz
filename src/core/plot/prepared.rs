@@ -173,6 +173,7 @@ impl From<Plot> for PreparedPlot {
 mod tests {
     use super::*;
     use crate::data::{Observable, StreamingXY};
+    use crate::render::Color;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -212,6 +213,45 @@ mod tests {
         });
 
         y.set(vec![0.0, 1.0, 9.0]);
+
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_prepared_plot_is_dirty_after_reactive_color_change() {
+        let color = Observable::new(Color::RED);
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
+            .color_source(color.clone())
+            .into();
+        let prepared = plot.prepare();
+
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("prepared plot should render");
+
+        assert!(!prepared.is_dirty((320, 240), 1.0, 0.0));
+
+        color.set(Color::BLUE);
+
+        assert!(prepared.is_dirty((320, 240), 1.0, 0.0));
+    }
+
+    #[test]
+    fn test_prepared_plot_subscribe_reactive_color_observable() {
+        let color = Observable::new(Color::RED);
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
+            .color_source(color.clone())
+            .into();
+        let prepared = plot.prepare();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_callback = Arc::clone(&hits);
+        let _subscription = prepared.subscribe_reactive(move || {
+            hits_for_callback.fetch_add(1, Ordering::Relaxed);
+        });
+
+        color.set(Color::BLUE);
 
         assert_eq!(hits.load(Ordering::Relaxed), 1);
     }

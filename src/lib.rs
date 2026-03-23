@@ -759,14 +759,14 @@ pub mod animation;
 pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
-        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern,
-        FramePacing, FrameStats, HitResult, ImageTarget, InteractiveFrame,
-        InteractivePlotSession, IntoPlot, Legend, LegendAnchor, LegendItem, LegendItemType,
+        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, FramePacing, FrameStats,
+        GridSpec, HatchPattern, HitResult, ImageTarget, InteractiveFrame, InteractivePlotSession,
+        IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem, LegendItemType,
         LegendPosition, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource, Position,
-        PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind,
-        Result, SeriesStyle, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget,
-        TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect,
-        subplots, subplots_default,
+        PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, Result,
+        SeriesStyle, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget, TextAlign,
+        TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect, subplots,
+        subplots_default,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,

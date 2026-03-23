@@ -3,8 +3,8 @@ use gpui::{
     prelude::*, px, size,
 };
 use ruviz::{data::StreamingXY, prelude::*};
-use ruviz_gpui::RuvizPlot;
-use std::time::Duration;
+use ruviz_gpui::{PerformancePreset, RuvizPlot, plot_builder};
+use std::{env, time::Duration};
 
 struct StreamingEmbedDemo {
     plot: gpui::Entity<RuvizPlot>,
@@ -12,6 +12,10 @@ struct StreamingEmbedDemo {
 
 impl StreamingEmbedDemo {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let producer_interval_ms = env::args()
+            .skip(1)
+            .find_map(parse_interval_arg)
+            .unwrap_or(16);
         let stream = StreamingXY::new(2_048);
         stream.push_many((0..240).map(|i| {
             let x = i as f64 * 0.02;
@@ -24,7 +28,10 @@ impl StreamingEmbedDemo {
             .xlabel("t")
             .ylabel("signal")
             .into();
-        let plot = cx.new(|cx| RuvizPlot::new(plot, cx));
+        let plot = plot_builder(plot)
+            .interactive()
+            .performance_preset(PerformancePreset::Interactive)
+            .build(cx);
 
         window
             .spawn(cx, {
@@ -32,7 +39,7 @@ impl StreamingEmbedDemo {
                 async move |_| {
                     let mut t = 240.0 * 0.02;
                     loop {
-                        Timer::after(Duration::from_millis(16)).await;
+                        Timer::after(Duration::from_millis(producer_interval_ms)).await;
                         stream.push(t, (t * 1.5).sin());
                         t += 0.02;
                     }
@@ -48,14 +55,15 @@ impl StreamingEmbedDemo {
                     let plot = plot.clone();
                     cx.on_next_frame(move |_, cx| {
                         let plot = plot.read(cx);
-                        let render = plot.frame_stats();
-                        let presentation = plot.presentation_stats();
+                        let stats = plot.stats();
                         println!(
-                            "render_fps={:.1} present_fps={:.1} render_avg_ms={:.2} present_avg_ms={:.2}",
-                            render.current_fps,
-                            presentation.current_fps,
-                            render.average_frame_time.as_secs_f64() * 1000.0,
-                            presentation.average_present_interval.as_secs_f64() * 1000.0,
+                            "producer_ms={} backend={:?} render_fps={:.1} display_hz_est={:.1} render_avg_ms={:.2} present_avg_ms={:.2}",
+                            producer_interval_ms,
+                            stats.active_backend,
+                            stats.render.current_fps,
+                            stats.presentation.current_fps,
+                            stats.render.average_frame_time.as_secs_f64() * 1000.0,
+                            stats.presentation.average_present_interval.as_secs_f64() * 1000.0,
                         );
                     });
                 }
@@ -63,6 +71,14 @@ impl StreamingEmbedDemo {
             .detach();
 
         Self { plot }
+    }
+}
+
+fn parse_interval_arg(arg: String) -> Option<u64> {
+    if let Some(value) = arg.strip_prefix("--interval-ms=") {
+        value.parse().ok()
+    } else {
+        arg.parse().ok()
     }
 }
 

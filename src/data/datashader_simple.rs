@@ -308,6 +308,35 @@ impl DataShader {
 
         self.set_bounds(x_min, y_min, x_max, y_max);
 
+        self.aggregate_with_current_bounds(x_data, y_data)
+    }
+
+    /// Aggregate data points using explicit bounds instead of auto-fitting to the data.
+    pub fn aggregate_with_bounds(
+        &mut self,
+        x_data: &[f64],
+        y_data: &[f64],
+        bounds: (f64, f64, f64, f64),
+    ) -> Result<()> {
+        if x_data.len() != y_data.len() {
+            return Err(PlottingError::DataLengthMismatch {
+                x_len: x_data.len(),
+                y_len: y_data.len(),
+                series_index: None,
+            });
+        }
+
+        if x_data.is_empty() {
+            return Err(PlottingError::EmptyDataSet);
+        }
+
+        self.set_bounds(bounds.0, bounds.2, bounds.1, bounds.3);
+        self.aggregate_with_current_bounds(x_data, y_data)
+    }
+
+    fn aggregate_with_current_bounds(&mut self, x_data: &[f64], y_data: &[f64]) -> Result<()> {
+        self.canvas.clear();
+
         // Create point tuples and aggregate
         let points: Vec<(f64, f64)> = x_data
             .iter()

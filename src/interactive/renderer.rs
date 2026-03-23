@@ -14,7 +14,7 @@ use crate::{
         event::{Annotation, Point2D, Rectangle},
         state::{DataPoint, DataPointId, InteractionState},
     },
-    render::{Color, skia::SkiaRenderer},
+    render::{Color, FontConfig, FontFamily, TextRenderer, skia::SkiaRenderer},
 };
 use std::{
     collections::HashMap,
@@ -203,8 +203,14 @@ impl RealTimeRenderer {
                     ..
                 } => {
                     return Some(
-                        DataPoint::new(row.saturating_mul(10_000) + col, col as f64, row as f64, value, series_index)
-                            .with_metadata("kind".to_string(), "heatmap".to_string()),
+                        DataPoint::new(
+                            row.saturating_mul(10_000) + col,
+                            col as f64,
+                            row as f64,
+                            value,
+                            series_index,
+                        )
+                        .with_metadata("kind".to_string(), "heatmap".to_string()),
                     );
                 }
                 HitResult::None => {}
@@ -357,9 +363,12 @@ impl RealTimeRenderer {
                 scale_factor: device_scale,
                 time_seconds: 0.0,
             }) {
-                Ok(frame) => Ok(frame.image.pixels),
+                Ok(frame) => Ok(frame.image.pixels.clone()),
                 Err(e) => {
-                    log::warn!("Interactive session rendering failed: {}, returning white pixels", e);
+                    log::warn!(
+                        "Interactive session rendering failed: {}, returning white pixels",
+                        e
+                    );
                     Ok(vec![255u8; (width * height * 4) as usize])
                 }
             }
@@ -547,20 +556,74 @@ impl RealTimeRenderer {
 
     /// Draw tooltip
     fn draw_tooltip(&self, pixel_data: &mut [u8], content: &str, position: Point2D) -> Result<()> {
-        // Simple tooltip rendering - in production would use proper text rendering
-        // For now, just draw a simple colored rectangle as placeholder
-        let tooltip_width = content.len() as f64 * 8.0 + 20.0;
-        let tooltip_height = 30.0;
+        const TOOLTIP_FONT_SIZE: f32 = 13.0;
+        const TOOLTIP_PADDING_X: f64 = 8.0;
+        const TOOLTIP_PADDING_Y: f64 = 6.0;
+        const TOOLTIP_CURSOR_GAP: f64 = 12.0;
 
-        let tooltip_rect = Rectangle::new(
-            position.x,
-            position.y - tooltip_height,
-            position.x + tooltip_width,
-            position.y,
-        );
+        let text_renderer = TextRenderer::new();
+        let font = FontConfig::new(FontFamily::SansSerif, TOOLTIP_FONT_SIZE);
+        let (text_width, text_height) =
+            text_renderer
+                .measure_text(content, &font)
+                .unwrap_or_else(|_| {
+                    (
+                        content.chars().count() as f32 * TOOLTIP_FONT_SIZE * 0.6,
+                        TOOLTIP_FONT_SIZE * 1.2,
+                    )
+                });
+
+        let tooltip_width = f64::from(text_width) + TOOLTIP_PADDING_X * 2.0;
+        let tooltip_height = f64::from(text_height) + TOOLTIP_PADDING_Y * 2.0;
+        let view_width = self.cpu_renderer.width() as f64;
+        let view_height = self.cpu_renderer.height() as f64;
+        let max_left = (view_width - tooltip_width).max(0.0);
+        let max_top = (view_height - tooltip_height).max(0.0);
+
+        let mut left = position.x + TOOLTIP_CURSOR_GAP;
+        if left + tooltip_width > view_width {
+            left = position.x - tooltip_width - TOOLTIP_CURSOR_GAP;
+        }
+        let mut top = position.y - tooltip_height - TOOLTIP_CURSOR_GAP;
+        if top < 0.0 {
+            top = position.y + TOOLTIP_CURSOR_GAP;
+        }
+
+        left = left.clamp(0.0, max_left);
+        top = top.clamp(0.0, max_top);
+
+        let tooltip_rect = Rectangle::new(left, top, left + tooltip_width, top + tooltip_height);
 
         let tooltip_color = Color::new_rgba(255, 255, 220, 200); // Light yellow
         self.draw_selection_rectangle(pixel_data, tooltip_rect, tooltip_color)?;
+
+        let Some(size) =
+            tiny_skia::IntSize::from_wh(self.cpu_renderer.width(), self.cpu_renderer.height())
+        else {
+            log::debug!("Skipping legacy tooltip text render because frame size is invalid");
+            return Ok(());
+        };
+        let Some(mut pixmap) = tiny_skia::Pixmap::from_vec(pixel_data.to_vec(), size) else {
+            log::debug!("Skipping legacy tooltip text render because pixmap creation failed");
+            return Ok(());
+        };
+
+        if let Err(err) = text_renderer.render_text(
+            &mut pixmap,
+            content,
+            (left + TOOLTIP_PADDING_X) as f32,
+            (top + TOOLTIP_PADDING_Y) as f32,
+            &font,
+            Color::new_rgba(24, 24, 24, 255),
+        ) {
+            log::debug!(
+                "Skipping legacy tooltip text render after text rasterization failed: {err}"
+            );
+            return Ok(());
+        }
+
+        let rendered = pixmap.take();
+        pixel_data.copy_from_slice(&rendered);
 
         Ok(())
     }

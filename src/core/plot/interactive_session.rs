@@ -1,11 +1,14 @@
-use super::{Image, Plot, PreparedPlot, ReactiveSubscription, ResolvedSeries, SeriesType};
+use super::{
+    Image, Plot, PlotData, PlotSeries, PreparedPlot, ReactiveSubscription, ResolvedSeries,
+    SeriesType,
+};
 use crate::{
     core::{
         LayoutCalculator, LayoutConfig, MarginConfig, PlotLayout, PlottingError, REFERENCE_DPI,
         Result,
     },
     render::{
-        Color,
+        Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer,
         skia::{SkiaRenderer, map_data_to_pixels},
     },
 };
@@ -159,17 +162,24 @@ impl Default for FrameStats {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LayerRenderState {
+    pub base_dirty: bool,
+    pub overlay_dirty: bool,
+    pub used_incremental_data: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct LayerImages {
-    pub chrome: Option<Image>,
-    pub data: Option<Image>,
-    pub overlay: Option<Image>,
+    pub base: Arc<Image>,
+    pub overlay: Option<Arc<Image>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct InteractiveFrame {
-    pub image: Image,
+    pub image: Arc<Image>,
     pub layers: LayerImages,
+    pub layer_state: LayerRenderState,
     pub stats: FrameStats,
     pub target: RenderTargetKind,
     pub surface_capability: SurfaceCapability,
@@ -294,7 +304,10 @@ impl DataBounds {
     }
 
     fn center(&self) -> ViewportPoint {
-        ViewportPoint::new((self.x_min + self.x_max) * 0.5, (self.y_min + self.y_max) * 0.5)
+        ViewportPoint::new(
+            (self.x_min + self.x_max) * 0.5,
+            (self.y_min + self.y_max) * 0.5,
+        )
     }
 }
 
@@ -309,6 +322,7 @@ struct SessionState {
     size_px: (u32, u32),
     scale_factor: f32,
     time_seconds: f64,
+    data_bounds: DataBounds,
     base_bounds: DataBounds,
     zoom_level: f64,
     pan_offset: ViewportPoint,
@@ -329,6 +343,7 @@ impl Default for SessionState {
             size_px: (0, 0),
             scale_factor: 1.0,
             time_seconds: 0.0,
+            data_bounds: DataBounds::default(),
             base_bounds: DataBounds::default(),
             zoom_level: 1.0,
             pan_offset: ViewportPoint::default(),
@@ -360,7 +375,7 @@ struct InteractiveFrameKey {
 #[derive(Clone, Debug)]
 struct InteractiveFrameCache {
     key: InteractiveFrameKey,
-    image: Image,
+    image: Arc<Image>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -375,7 +390,7 @@ struct OverlayFrameKey {
 #[derive(Clone, Debug)]
 struct OverlayFrameCache {
     key: OverlayFrameKey,
-    image: Image,
+    image: Arc<Image>,
 }
 
 #[derive(Clone, Debug)]
@@ -386,11 +401,89 @@ struct GeometrySnapshot {
     y_bounds: (f64, f64),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct AxisConstraints {
+    x_limits: Option<(f64, f64)>,
+    y_limits: Option<(f64, f64)>,
+}
+
+impl AxisConstraints {
+    fn from_plot(plot: &Plot) -> Self {
+        Self {
+            x_limits: plot.layout.x_limits,
+            y_limits: plot.layout.y_limits,
+        }
+    }
+
+    fn apply(self, data_bounds: DataBounds) -> DataBounds {
+        let (mut x_min, mut x_max) = self
+            .x_limits
+            .unwrap_or((data_bounds.x_min, data_bounds.x_max));
+        let (mut y_min, mut y_max) = self
+            .y_limits
+            .unwrap_or((data_bounds.y_min, data_bounds.y_max));
+
+        if (x_max - x_min).abs() < f64::EPSILON {
+            x_min -= 1.0;
+            x_max += 1.0;
+        }
+        if (y_max - y_min).abs() < f64::EPSILON {
+            y_min -= 1.0;
+            y_max += 1.0;
+        }
+
+        DataBounds::from_limits(x_min, x_max, y_min, y_max)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BaseLayerResult {
+    image: Arc<Image>,
+    updated: bool,
+    used_incremental_data: bool,
+}
+
+#[derive(Clone, Debug)]
+struct OverlayLayerResult {
+    image: Arc<Image>,
+    updated: bool,
+}
+
+#[derive(Clone, Debug)]
+struct StreamingDrawOp {
+    kind: StreamingDrawKind,
+    points: Vec<(f64, f64)>,
+    previous_point: Option<(f64, f64)>,
+    color: Color,
+    line_width_px: f32,
+    line_style: LineStyle,
+    marker_style: MarkerStyle,
+    marker_size_px: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamingDrawKind {
+    Line,
+    Scatter,
+}
+
+impl InteractiveFrameKey {
+    fn same_viewport(&self, other: &Self) -> bool {
+        self.size_px == other.size_px
+            && self.scale_bits == other.scale_bits
+            && self.time_bits == other.time_bits
+            && self.x_min_bits == other.x_min_bits
+            && self.x_max_bits == other.x_max_bits
+            && self.y_min_bits == other.y_min_bits
+            && self.y_max_bits == other.y_max_bits
+    }
+}
+
 impl InteractivePlotSession {
     pub(crate) fn new(prepared: PreparedPlot) -> Self {
-        let initial_bounds = compute_base_bounds(prepared.plot(), 0.0).unwrap_or_else(|_| {
-            DataBounds::from_limits(0.0, 1.0, 0.0, 1.0)
-        });
+        let initial_data_bounds = compute_data_bounds(prepared.plot(), 0.0)
+            .unwrap_or_else(|_| DataBounds::from_limits(0.0, 1.0, 0.0, 1.0));
+        let initial_bounds = AxisConstraints::from_plot(prepared.plot()).apply(initial_data_bounds);
         let dirty = Arc::new(Mutex::new(DirtyDomains::with_all()));
         let reactive_epoch = Arc::new(AtomicU64::new(0));
         let dirty_for_callback = Arc::clone(&dirty);
@@ -411,6 +504,7 @@ impl InteractivePlotSession {
                 prefer_gpu: Mutex::new(false),
                 reactive_subscription: Mutex::new(reactive_subscription),
                 state: Mutex::new(SessionState {
+                    data_bounds: initial_data_bounds,
                     base_bounds: initial_bounds,
                     ..SessionState::default()
                 }),
@@ -731,7 +825,10 @@ impl InteractivePlotSession {
                             best_hit = HitResult::SeriesPoint {
                                 series_index,
                                 point_index,
-                                screen_position: ViewportPoint::new(screen_x as f64, screen_y as f64),
+                                screen_position: ViewportPoint::new(
+                                    screen_x as f64,
+                                    screen_y as f64,
+                                ),
                                 data_position: ViewportPoint::new(x_val, y_val),
                                 distance_px: distance,
                             };
@@ -784,7 +881,12 @@ impl InteractivePlotSession {
     }
 
     pub fn render_to_image(&self, target: ImageTarget) -> Result<InteractiveFrame> {
-        self.render_to_target(RenderTargetKind::Image, target.size_px, target.scale_factor, target.time_seconds)
+        self.render_to_target(
+            RenderTargetKind::Image,
+            target.size_px,
+            target.scale_factor,
+            target.time_seconds,
+        )
     }
 
     pub fn render_to_surface(&self, target: SurfaceTarget) -> Result<InteractiveFrame> {
@@ -840,14 +942,17 @@ impl InteractivePlotSession {
                 || dirty_before_render.temporal
                 || mark_data_dirty
             {
-                if let Ok(base_bounds) = compute_base_bounds(self.inner.prepared.plot(), time_seconds) {
-                    let mut state = self
-                        .inner
-                        .state
-                        .lock()
-                        .expect("InteractivePlotSession state lock poisoned");
-                    state.base_bounds = base_bounds;
-                }
+                let plot = self.inner.prepared.plot();
+                let constraints = AxisConstraints::from_plot(plot);
+                let mut state = self
+                    .inner
+                    .state
+                    .lock()
+                    .expect("InteractivePlotSession state lock poisoned");
+                let next_data_bounds =
+                    compute_data_bounds(plot, time_seconds).unwrap_or(state.data_bounds);
+                state.data_bounds = next_data_bounds;
+                state.base_bounds = constraints.apply(next_data_bounds);
             }
 
             let state = self
@@ -860,9 +965,13 @@ impl InteractivePlotSession {
         };
 
         let geometry = self.ensure_geometry(&base_key)?;
-        let base_image = self.ensure_base_image(&base_key, &geometry)?;
-        let overlay_image = self.ensure_overlay_image(size_px)?;
-        let composed = compose_images(&base_image, &overlay_image);
+        let base_result = self.ensure_base_image(&base_key, &geometry, dirty_before_render)?;
+        let overlay_result = self.ensure_overlay_image(size_px, dirty_before_render)?;
+        let composed = if target == RenderTargetKind::Image {
+            Arc::new(compose_images(&base_result.image, &overlay_result.image))
+        } else {
+            Arc::clone(&base_result.image)
+        };
 
         let mut dirty = self
             .inner
@@ -874,7 +983,13 @@ impl InteractivePlotSession {
         drop(dirty);
 
         let surface_capability = if target == RenderTargetKind::Surface {
-            SurfaceCapability::FallbackImage
+            if base_result.used_incremental_data
+                || plot_supports_surface_fast_path(self.inner.prepared.plot())
+            {
+                SurfaceCapability::FastPath
+            } else {
+                SurfaceCapability::FallbackImage
+            }
         } else {
             SurfaceCapability::Unsupported
         };
@@ -883,9 +998,13 @@ impl InteractivePlotSession {
         Ok(InteractiveFrame {
             image: composed,
             layers: LayerImages {
-                chrome: Some(base_image),
-                data: None,
-                overlay: Some(overlay_image),
+                base: base_result.image,
+                overlay: Some(overlay_result.image),
+            },
+            layer_state: LayerRenderState {
+                base_dirty: base_result.updated,
+                overlay_dirty: overlay_result.updated,
+                used_incremental_data: base_result.used_incremental_data,
             },
             stats,
             target,
@@ -913,7 +1032,11 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
-        let snapshot = self.inner.prepared.plot().snapshot_series(state.time_seconds);
+        let snapshot = self
+            .inner
+            .prepared
+            .plot()
+            .snapshot_series(state.time_seconds);
         let visible = visible_bounds(&state);
         let layout = compute_plot_layout(
             self.inner.prepared.plot(),
@@ -943,7 +1066,8 @@ impl InteractivePlotSession {
         &self,
         key: &InteractiveFrameKey,
         geometry: &GeometrySnapshot,
-    ) -> Result<Image> {
+        dirty_before_render: DirtyDomains,
+    ) -> Result<BaseLayerResult> {
         {
             let state = self
                 .inner
@@ -958,9 +1082,23 @@ impl InteractivePlotSession {
             if !dirty.needs_base_render() {
                 if let Some(cached) = &state.base_cache {
                     if cached.key == *key {
-                        return Ok(cached.image.clone());
+                        return Ok(BaseLayerResult {
+                            image: Arc::clone(&cached.image),
+                            updated: false,
+                            used_incremental_data: false,
+                        });
                     }
                 }
+            }
+        }
+
+        if dirty_before_render.data
+            && !dirty_before_render.layout
+            && !dirty_before_render.temporal
+            && !dirty_before_render.interaction
+        {
+            if let Some(incremental) = self.try_incremental_stream_render(key, geometry)? {
+                return Ok(incremental);
             }
         }
 
@@ -984,6 +1122,8 @@ impl InteractivePlotSession {
             }
         }
         let image = plot.render_at(state.time_seconds)?;
+        self.inner.prepared.plot().mark_reactive_sources_rendered();
+        let image = Arc::new(image);
 
         let mut state = self
             .inner
@@ -992,12 +1132,20 @@ impl InteractivePlotSession {
             .expect("InteractivePlotSession state lock poisoned");
         state.base_cache = Some(InteractiveFrameCache {
             key: key.clone(),
-            image: image.clone(),
+            image: Arc::clone(&image),
         });
-        Ok(image)
+        Ok(BaseLayerResult {
+            image,
+            updated: true,
+            used_incremental_data: false,
+        })
     }
 
-    fn ensure_overlay_image(&self, size_px: (u32, u32)) -> Result<Image> {
+    fn ensure_overlay_image(
+        &self,
+        size_px: (u32, u32),
+        dirty_before_render: DirtyDomains,
+    ) -> Result<OverlayLayerResult> {
         let state = self
             .inner
             .state
@@ -1026,10 +1174,13 @@ impl InteractivePlotSession {
                 .dirty
                 .lock()
                 .expect("InteractivePlotSession dirty lock poisoned");
-            if !dirty.needs_overlay_render() {
+            if !dirty_before_render.needs_overlay_render() && !dirty.needs_overlay_render() {
                 if let Some(cached) = &state.overlay_cache {
                     if cached.key == overlay_key {
-                        return Ok(cached.image.clone());
+                        return Ok(OverlayLayerResult {
+                            image: Arc::clone(&cached.image),
+                            updated: false,
+                        });
                     }
                 }
             }
@@ -1043,18 +1194,18 @@ impl InteractivePlotSession {
             draw_hit(&mut pixels, size_px, hit, Color::new_rgba(255, 0, 0, 180));
         }
         if let Some(region) = state.brushed_region {
-            draw_rect(&mut pixels, size_px, region, Color::new_rgba(0, 100, 255, 72));
+            draw_rect(
+                &mut pixels,
+                size_px,
+                region,
+                Color::new_rgba(0, 100, 255, 72),
+            );
         }
         if let Some(tooltip) = &state.tooltip {
-            let width = tooltip.content.len() as f64 * 8.0 + 16.0;
-            let rect = ViewportRect {
-                min: ViewportPoint::new(tooltip.position_px.x, tooltip.position_px.y - 28.0),
-                max: ViewportPoint::new(tooltip.position_px.x + width, tooltip.position_px.y),
-            };
-            draw_rect(&mut pixels, size_px, rect, Color::new_rgba(255, 255, 220, 200));
+            draw_tooltip_overlay(&mut pixels, size_px, tooltip);
         }
 
-        let image = Image::new(size_px.0, size_px.1, pixels);
+        let image = Arc::new(Image::new(size_px.0, size_px.1, pixels));
         let mut state = self
             .inner
             .state
@@ -1062,9 +1213,12 @@ impl InteractivePlotSession {
             .expect("InteractivePlotSession state lock poisoned");
         state.overlay_cache = Some(OverlayFrameCache {
             key: overlay_key,
-            image: image.clone(),
+            image: Arc::clone(&image),
         });
-        Ok(image)
+        Ok(OverlayLayerResult {
+            image,
+            updated: true,
+        })
     }
 
     fn geometry_snapshot(&self) -> Result<GeometrySnapshot> {
@@ -1084,6 +1238,64 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession dirty lock poisoned")
             .mark(domain);
+    }
+
+    fn try_incremental_stream_render(
+        &self,
+        key: &InteractiveFrameKey,
+        geometry: &GeometrySnapshot,
+    ) -> Result<Option<BaseLayerResult>> {
+        let (cached, state) = {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .expect("InteractivePlotSession state lock poisoned");
+            let Some(cached) = state.base_cache.clone() else {
+                return Ok(None);
+            };
+            if !cached.key.same_viewport(key) {
+                return Ok(None);
+            }
+            (cached, state.clone())
+        };
+
+        let Some(draw_ops) = collect_streaming_draw_ops(
+            self.inner.prepared.plot(),
+            state.size_px,
+            state.scale_factor,
+            state.time_seconds,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        if draw_ops.is_empty() {
+            return Ok(None);
+        }
+
+        let image = Arc::new(apply_streaming_draw_ops(
+            cached.image.as_ref(),
+            geometry,
+            &draw_ops,
+        )?);
+        self.inner.prepared.plot().mark_reactive_sources_rendered();
+
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        state.base_cache = Some(InteractiveFrameCache {
+            key: key.clone(),
+            image: Arc::clone(&image),
+        });
+
+        Ok(Some(BaseLayerResult {
+            image,
+            updated: true,
+            used_incremental_data: true,
+        }))
     }
 
     fn record_frame_stats(
@@ -1159,23 +1371,10 @@ impl InteractivePlotSession {
     }
 }
 
-fn compute_base_bounds(plot: &Plot, time: f64) -> Result<DataBounds> {
+fn compute_data_bounds(plot: &Plot, time: f64) -> Result<DataBounds> {
     let snapshot = plot.snapshot_series(time);
-    let (mut x_min, mut x_max, mut y_min, mut y_max) = if let (
-        Some((x_min_manual, x_max_manual)),
-        Some((y_min_manual, y_max_manual)),
-    ) = (plot.layout.x_limits, plot.layout.y_limits)
-    {
-        (x_min_manual, x_max_manual, y_min_manual, y_max_manual)
-    } else if let Some((x_min_manual, x_max_manual)) = plot.layout.x_limits {
-        let (_, _, y_min_calc, y_max_calc) = plot.calculate_data_bounds_for_series(&snapshot)?;
-        (x_min_manual, x_max_manual, y_min_calc, y_max_calc)
-    } else if let Some((y_min_manual, y_max_manual)) = plot.layout.y_limits {
-        let (x_min_calc, x_max_calc, _, _) = plot.calculate_data_bounds_for_series(&snapshot)?;
-        (x_min_calc, x_max_calc, y_min_manual, y_max_manual)
-    } else {
-        plot.calculate_data_bounds_for_series(&snapshot)?
-    };
+    let (mut x_min, mut x_max, mut y_min, mut y_max) =
+        plot.calculate_data_bounds_for_series(&snapshot)?;
 
     if (x_max - x_min).abs() < f64::EPSILON {
         x_min -= 1.0;
@@ -1189,12 +1388,24 @@ fn compute_base_bounds(plot: &Plot, time: f64) -> Result<DataBounds> {
     Ok(DataBounds::from_limits(x_min, x_max, y_min, y_max))
 }
 
+fn plot_supports_surface_fast_path(plot: &Plot) -> bool {
+    !plot.series_mgr.series.is_empty()
+        && plot
+            .series_mgr
+            .series
+            .iter()
+            .all(|series| series.series_type.supports_interactive_surface_fast_path())
+}
+
 fn visible_bounds(state: &SessionState) -> DataBounds {
     let base = state.base_bounds;
     let zoom = state.zoom_level.max(0.1);
     let width = base.width() / zoom;
     let height = base.height() / zoom;
-    let center = ViewportPoint::new(base.center().x + state.pan_offset.x, base.center().y + state.pan_offset.y);
+    let center = ViewportPoint::new(
+        base.center().x + state.pan_offset.x,
+        base.center().y + state.pan_offset.y,
+    );
     DataBounds::from_limits(
         center.x - width * 0.5,
         center.x + width * 0.5,
@@ -1223,7 +1434,9 @@ fn build_frame_key(plot: &Plot, state: &SessionState) -> InteractiveFrameKey {
     InteractiveFrameKey {
         size_px: state.size_px,
         scale_bits: sanitize_scale_factor(state.scale_factor).to_bits(),
-        time_bits: plot.has_temporal_sources().then_some(state.time_seconds.to_bits()),
+        time_bits: plot
+            .has_temporal_sources()
+            .then_some(state.time_seconds.to_bits()),
         x_min_bits: visible.x_min.to_bits(),
         x_max_bits: visible.x_max.to_bits(),
         y_min_bits: visible.y_min.to_bits(),
@@ -1312,7 +1525,10 @@ fn compute_plot_layout(
 
 fn compose_images(base: &Image, overlay: &Image) -> Image {
     let mut pixels = base.pixels.clone();
-    for (dst, src) in pixels.chunks_exact_mut(4).zip(overlay.pixels.chunks_exact(4)) {
+    for (dst, src) in pixels
+        .chunks_exact_mut(4)
+        .zip(overlay.pixels.chunks_exact(4))
+    {
         let alpha = src[3] as f32 / 255.0;
         if alpha <= 0.0 {
             continue;
@@ -1325,6 +1541,458 @@ fn compose_images(base: &Image, overlay: &Image) -> Image {
     Image::new(base.width, base.height, pixels)
 }
 
+fn collect_streaming_draw_ops(
+    plot: &Plot,
+    size_px: (u32, u32),
+    scale_factor: f32,
+    time_seconds: f64,
+) -> Result<Option<Vec<StreamingDrawOp>>> {
+    if plot
+        .display
+        .title
+        .as_ref()
+        .is_some_and(|title| title.is_reactive())
+        || plot
+            .display
+            .xlabel
+            .as_ref()
+            .is_some_and(|label| label.is_reactive())
+        || plot
+            .display
+            .ylabel
+            .as_ref()
+            .is_some_and(|label| label.is_reactive())
+        || plot
+            .series_mgr
+            .series
+            .iter()
+            .any(PlotSeries::has_reactive_style_sources)
+    {
+        return Ok(None);
+    }
+
+    let prepared_plot = plot.prepared_frame_plot(size_px, scale_factor, time_seconds);
+    let mut draw_ops = Vec::new();
+    let mut saw_streaming_update = false;
+
+    for (series_index, series) in plot.series_mgr.series.iter().enumerate() {
+        let color = series
+            .color
+            .unwrap_or_else(|| prepared_plot.display.theme.get_color(series_index));
+        let line_width_pt = series
+            .line_width
+            .unwrap_or(prepared_plot.display.config.lines.data_width);
+        let line_width_px = prepared_plot.line_width_px(line_width_pt);
+        let dash_pattern = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+        let marker_size_px = prepared_plot.line_width_px(series.marker_size.unwrap_or(8.0));
+
+        match &series.series_type {
+            SeriesType::Line { x_data, y_data } => {
+                let Some(op) = streaming_draw_op(
+                    series,
+                    x_data,
+                    y_data,
+                    StreamingDrawKind::Line,
+                    color,
+                    line_width_px,
+                    dash_pattern,
+                    marker_style,
+                    marker_size_px,
+                    time_seconds,
+                )?
+                else {
+                    if series.series_type.is_reactive() {
+                        return Ok(None);
+                    }
+                    continue;
+                };
+                saw_streaming_update = true;
+                draw_ops.push(op);
+            }
+            SeriesType::Scatter { x_data, y_data } => {
+                let Some(op) = streaming_draw_op(
+                    series,
+                    x_data,
+                    y_data,
+                    StreamingDrawKind::Scatter,
+                    color,
+                    line_width_px,
+                    dash_pattern,
+                    marker_style,
+                    marker_size_px,
+                    time_seconds,
+                )?
+                else {
+                    if series.series_type.is_reactive() {
+                        return Ok(None);
+                    }
+                    continue;
+                };
+                saw_streaming_update = true;
+                draw_ops.push(op);
+            }
+            _ if series.series_type.is_reactive() => return Ok(None),
+            _ => {}
+        }
+    }
+
+    Ok(saw_streaming_update.then_some(draw_ops))
+}
+
+fn streaming_draw_op(
+    series: &PlotSeries,
+    x_data: &PlotData,
+    y_data: &PlotData,
+    kind: StreamingDrawKind,
+    color: Color,
+    line_width_px: f32,
+    line_style: LineStyle,
+    marker_style: MarkerStyle,
+    marker_size_px: f32,
+    time_seconds: f64,
+) -> Result<Option<StreamingDrawOp>> {
+    if !matches!(x_data, PlotData::Streaming(_)) || !matches!(y_data, PlotData::Streaming(_)) {
+        return Ok(None);
+    }
+    if !x_data.can_partial_render() || !y_data.can_partial_render() {
+        return Ok(None);
+    }
+
+    let appended_count = x_data.appended_count().min(y_data.appended_count());
+    if appended_count == 0 {
+        return Ok(None);
+    }
+
+    let x_values = x_data.resolve(time_seconds);
+    let y_values = y_data.resolve(time_seconds);
+    let len = x_values.len().min(y_values.len());
+    if len == 0 || appended_count > len {
+        return Ok(None);
+    }
+
+    let split_index = len - appended_count;
+    let previous_point = if split_index > 0 {
+        Some((x_values[split_index - 1], y_values[split_index - 1]))
+    } else {
+        None
+    };
+    let mut points = Vec::with_capacity(appended_count);
+    for (&x, &y) in x_values[split_index..len]
+        .iter()
+        .zip(&y_values[split_index..len])
+    {
+        if x.is_finite() && y.is_finite() {
+            points.push((x, y));
+        }
+    }
+
+    if points.is_empty() {
+        return Ok(None);
+    }
+
+    let _ = series;
+    Ok(Some(StreamingDrawOp {
+        kind,
+        points,
+        previous_point,
+        color,
+        line_width_px,
+        line_style,
+        marker_style,
+        marker_size_px,
+    }))
+}
+
+fn apply_streaming_draw_ops(
+    base: &Image,
+    geometry: &GeometrySnapshot,
+    draw_ops: &[StreamingDrawOp],
+) -> Result<Image> {
+    let size =
+        tiny_skia::IntSize::from_wh(base.width, base.height).ok_or(PlottingError::InvalidData {
+            message: "Invalid frame size for incremental streaming render".to_string(),
+            position: None,
+        })?;
+    let mut pixmap = tiny_skia::Pixmap::from_vec(base.pixels.clone(), size).ok_or(
+        PlottingError::RenderError("Failed to create incremental streaming pixmap".to_string()),
+    )?;
+
+    for op in draw_ops {
+        let mut mapped_points: Vec<(f32, f32)> = Vec::with_capacity(op.points.len());
+        for &(x, y) in &op.points {
+            let (px, py) = map_data_to_pixels(
+                x,
+                y,
+                geometry.x_bounds.0,
+                geometry.x_bounds.1,
+                geometry.y_bounds.0,
+                geometry.y_bounds.1,
+                geometry.plot_area,
+            );
+            mapped_points.push((px, py));
+        }
+
+        if op.kind == StreamingDrawKind::Line {
+            draw_incremental_polyline(
+                &mut pixmap,
+                geometry,
+                op.previous_point,
+                &mapped_points,
+                op.color,
+                op.line_width_px,
+                &op.line_style,
+            )?;
+        }
+
+        if op.kind == StreamingDrawKind::Scatter {
+            for &(px, py) in &mapped_points {
+                draw_incremental_marker(
+                    &mut pixmap,
+                    px,
+                    py,
+                    op.marker_size_px,
+                    op.marker_style,
+                    op.color,
+                )?;
+            }
+        }
+    }
+
+    Ok(Image::new(base.width, base.height, pixmap.take()))
+}
+
+fn draw_incremental_polyline(
+    pixmap: &mut tiny_skia::Pixmap,
+    geometry: &GeometrySnapshot,
+    previous_point: Option<(f64, f64)>,
+    points: &[(f32, f32)],
+    color: Color,
+    line_width_px: f32,
+    line_style: &LineStyle,
+) -> Result<()> {
+    let mut path = tiny_skia::PathBuilder::new();
+
+    if let Some((x, y)) = previous_point {
+        let (px, py) = map_data_to_pixels(
+            x,
+            y,
+            geometry.x_bounds.0,
+            geometry.x_bounds.1,
+            geometry.y_bounds.0,
+            geometry.y_bounds.1,
+            geometry.plot_area,
+        );
+        path.move_to(px, py);
+    } else if let Some(&(px, py)) = points.first() {
+        path.move_to(px, py);
+    } else {
+        return Ok(());
+    }
+
+    for &(px, py) in points {
+        path.line_to(px, py);
+    }
+
+    let Some(path) = path.finish() else {
+        return Ok(());
+    };
+
+    let mut paint = tiny_skia::Paint::default();
+    paint.set_color(color.to_tiny_skia_color());
+    paint.anti_alias = true;
+
+    let mut stroke = tiny_skia::Stroke {
+        width: line_width_px.max(1.0),
+        ..tiny_skia::Stroke::default()
+    };
+    if let Some(pattern) = line_style.to_dash_array() {
+        stroke.dash = tiny_skia::StrokeDash::new(pattern, 0.0);
+    }
+
+    pixmap.stroke_path(
+        &path,
+        &paint,
+        &stroke,
+        tiny_skia::Transform::identity(),
+        None,
+    );
+
+    Ok(())
+}
+
+fn draw_incremental_marker(
+    pixmap: &mut tiny_skia::Pixmap,
+    x: f32,
+    y: f32,
+    size: f32,
+    style: MarkerStyle,
+    color: Color,
+) -> Result<()> {
+    let radius = size * 0.5;
+    let mut paint = tiny_skia::Paint::default();
+    paint.set_color(color.to_tiny_skia_color());
+    paint.anti_alias = true;
+
+    match style {
+        MarkerStyle::Circle | MarkerStyle::CircleOpen => {
+            let circle = tiny_skia::PathBuilder::from_circle(x, y, radius).ok_or(
+                PlottingError::RenderError("Failed to create circle marker path".to_string()),
+            )?;
+            if style.is_filled() {
+                pixmap.fill_path(
+                    &circle,
+                    &paint,
+                    tiny_skia::FillRule::Winding,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            } else {
+                let stroke = tiny_skia::Stroke {
+                    width: (size * 0.15).max(1.0),
+                    ..tiny_skia::Stroke::default()
+                };
+                pixmap.stroke_path(
+                    &circle,
+                    &paint,
+                    &stroke,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            }
+        }
+        MarkerStyle::Square | MarkerStyle::SquareOpen => {
+            let rect = tiny_skia::Rect::from_ltrb(x - radius, y - radius, x + radius, y + radius)
+                .ok_or(PlottingError::RenderError(
+                "Failed to create square marker path".to_string(),
+            ))?;
+            let path = tiny_skia::PathBuilder::from_rect(rect);
+            if style.is_filled() {
+                pixmap.fill_path(
+                    &path,
+                    &paint,
+                    tiny_skia::FillRule::Winding,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            } else {
+                let stroke = tiny_skia::Stroke {
+                    width: (size * 0.15).max(1.0),
+                    ..tiny_skia::Stroke::default()
+                };
+                pixmap.stroke_path(
+                    &path,
+                    &paint,
+                    &stroke,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            }
+        }
+        MarkerStyle::Triangle | MarkerStyle::TriangleOpen | MarkerStyle::TriangleDown => {
+            let mut path = tiny_skia::PathBuilder::new();
+            if style == MarkerStyle::TriangleDown {
+                path.move_to(x, y + radius);
+                path.line_to(x - radius * 0.866, y - radius * 0.5);
+                path.line_to(x + radius * 0.866, y - radius * 0.5);
+            } else {
+                path.move_to(x, y - radius);
+                path.line_to(x - radius * 0.866, y + radius * 0.5);
+                path.line_to(x + radius * 0.866, y + radius * 0.5);
+            }
+            path.close();
+            let path = path.finish().ok_or(PlottingError::RenderError(
+                "Failed to create triangle marker path".to_string(),
+            ))?;
+            if style.is_filled() {
+                pixmap.fill_path(
+                    &path,
+                    &paint,
+                    tiny_skia::FillRule::Winding,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            } else {
+                let stroke = tiny_skia::Stroke {
+                    width: (size * 0.15).max(1.0),
+                    ..tiny_skia::Stroke::default()
+                };
+                pixmap.stroke_path(
+                    &path,
+                    &paint,
+                    &stroke,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            }
+        }
+        MarkerStyle::Diamond | MarkerStyle::DiamondOpen => {
+            let mut path = tiny_skia::PathBuilder::new();
+            path.move_to(x, y - radius);
+            path.line_to(x + radius, y);
+            path.line_to(x, y + radius);
+            path.line_to(x - radius, y);
+            path.close();
+            let path = path.finish().ok_or(PlottingError::RenderError(
+                "Failed to create diamond marker path".to_string(),
+            ))?;
+            if style.is_filled() {
+                pixmap.fill_path(
+                    &path,
+                    &paint,
+                    tiny_skia::FillRule::Winding,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            } else {
+                let stroke = tiny_skia::Stroke {
+                    width: (size * 0.15).max(1.0),
+                    ..tiny_skia::Stroke::default()
+                };
+                pixmap.stroke_path(
+                    &path,
+                    &paint,
+                    &stroke,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+            }
+        }
+        MarkerStyle::Plus | MarkerStyle::Cross | MarkerStyle::Star => {
+            let stroke = tiny_skia::Stroke {
+                width: (size * 0.25).max(1.0),
+                ..tiny_skia::Stroke::default()
+            };
+            let mut path = tiny_skia::PathBuilder::new();
+            if matches!(style, MarkerStyle::Plus | MarkerStyle::Star) {
+                path.move_to(x - radius, y);
+                path.line_to(x + radius, y);
+                path.move_to(x, y - radius);
+                path.line_to(x, y + radius);
+            }
+            if matches!(style, MarkerStyle::Cross | MarkerStyle::Star) {
+                let offset = radius * 0.707;
+                path.move_to(x - offset, y - offset);
+                path.line_to(x + offset, y + offset);
+                path.move_to(x - offset, y + offset);
+                path.line_to(x + offset, y - offset);
+            }
+            let path = path.finish().ok_or(PlottingError::RenderError(
+                "Failed to create cross marker path".to_string(),
+            ))?;
+            pixmap.stroke_path(
+                &path,
+                &paint,
+                &stroke,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
     let bg = background as f32 / 255.0;
     let fg = foreground as f32 / 255.0;
@@ -1333,10 +2001,14 @@ fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
 
 fn draw_hit(pixels: &mut [u8], size_px: (u32, u32), hit: &HitResult, color: Color) {
     match hit {
-        HitResult::SeriesPoint { screen_position, .. } => {
+        HitResult::SeriesPoint {
+            screen_position, ..
+        } => {
             draw_circle(pixels, size_px, *screen_position, 6.0, color);
         }
-        HitResult::HeatmapCell { screen_rect, .. } => draw_rect(pixels, size_px, *screen_rect, color),
+        HitResult::HeatmapCell { screen_rect, .. } => {
+            draw_rect(pixels, size_px, *screen_rect, color)
+        }
         HitResult::None => {}
     }
 }
@@ -1374,12 +2046,7 @@ fn draw_circle(
     }
 }
 
-fn draw_rect(
-    pixels: &mut [u8],
-    size_px: (u32, u32),
-    rect: ViewportRect,
-    color: Color,
-) {
+fn draw_rect(pixels: &mut [u8], size_px: (u32, u32), rect: ViewportRect, color: Color) {
     let width = size_px.0 as i32;
     let height = size_px.1 as i32;
     let x1 = rect.min.x.round() as i32;
@@ -1397,6 +2064,73 @@ fn draw_rect(
             pixels[index + 3] = color.a;
         }
     }
+}
+
+fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), tooltip: &TooltipState) {
+    const TOOLTIP_FONT_SIZE: f32 = 13.0;
+    const TOOLTIP_PADDING_X: f64 = 8.0;
+    const TOOLTIP_PADDING_Y: f64 = 6.0;
+    const TOOLTIP_CURSOR_GAP: f64 = 12.0;
+
+    let text_renderer = TextRenderer::new();
+    let font = FontConfig::new(FontFamily::SansSerif, TOOLTIP_FONT_SIZE);
+    let (text_width, text_height) = text_renderer
+        .measure_text(&tooltip.content, &font)
+        .unwrap_or_else(|_| {
+            (
+                tooltip.content.chars().count() as f32 * TOOLTIP_FONT_SIZE * 0.6,
+                TOOLTIP_FONT_SIZE * 1.2,
+            )
+        });
+
+    let tooltip_width = f64::from(text_width) + TOOLTIP_PADDING_X * 2.0;
+    let tooltip_height = f64::from(text_height) + TOOLTIP_PADDING_Y * 2.0;
+    let view_width = size_px.0 as f64;
+    let view_height = size_px.1 as f64;
+    let max_left = (view_width - tooltip_width).max(0.0);
+    let max_top = (view_height - tooltip_height).max(0.0);
+
+    let mut left = tooltip.position_px.x + TOOLTIP_CURSOR_GAP;
+    if left + tooltip_width > view_width {
+        left = tooltip.position_px.x - tooltip_width - TOOLTIP_CURSOR_GAP;
+    }
+    let mut top = tooltip.position_px.y - tooltip_height - TOOLTIP_CURSOR_GAP;
+    if top < 0.0 {
+        top = tooltip.position_px.y + TOOLTIP_CURSOR_GAP;
+    }
+
+    left = left.clamp(0.0, max_left);
+    top = top.clamp(0.0, max_top);
+
+    let rect = ViewportRect {
+        min: ViewportPoint::new(left, top),
+        max: ViewportPoint::new(left + tooltip_width, top + tooltip_height),
+    };
+    draw_rect(pixels, size_px, rect, Color::new_rgba(255, 255, 220, 220));
+
+    let Some(size) = tiny_skia::IntSize::from_wh(size_px.0, size_px.1) else {
+        log::debug!("Skipping tooltip text render because overlay size is invalid");
+        return;
+    };
+    let Some(mut pixmap) = tiny_skia::Pixmap::from_vec(pixels.to_vec(), size) else {
+        log::debug!("Skipping tooltip text render because tooltip pixmap creation failed");
+        return;
+    };
+
+    if let Err(err) = text_renderer.render_text(
+        &mut pixmap,
+        &tooltip.content,
+        (left + TOOLTIP_PADDING_X) as f32,
+        (top + TOOLTIP_PADDING_Y) as f32,
+        &font,
+        Color::new_rgba(24, 24, 24, 255),
+    ) {
+        log::debug!("Skipping tooltip text render after text rasterization failed: {err}");
+        return;
+    }
+
+    let rendered = pixmap.take();
+    pixels.copy_from_slice(&rendered);
 }
 
 fn tooltip_from_hit(hit: &HitResult) -> TooltipState {
@@ -1429,6 +2163,54 @@ fn tooltip_from_hit(hit: &HitResult) -> TooltipState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::{Observable, StreamingXY};
+    use crate::prelude::Plot;
+    use crate::render::{Color, MarkerStyle};
+    use std::sync::Arc;
+
+    fn render_target() -> SurfaceTarget {
+        SurfaceTarget {
+            size_px: (320, 240),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        }
+    }
+
+    fn derived_y_ticks(session: &InteractivePlotSession) -> Vec<f64> {
+        let geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after render");
+        let plot = session.prepared_plot().plot();
+        crate::axes::generate_ticks_for_scale(
+            geometry.y_bounds.0,
+            geometry.y_bounds.1,
+            plot.layout.tick_config.major_ticks_y,
+            &plot.layout.y_scale,
+        )
+    }
+
+    fn color_centroid<F>(image: &Image, predicate: F) -> Option<ViewportPoint>
+    where
+        F: Fn(&[u8]) -> bool,
+    {
+        let mut x_sum = 0.0;
+        let mut y_sum = 0.0;
+        let mut count = 0.0;
+
+        for (index, pixel) in image.pixels.chunks_exact(4).enumerate() {
+            if !predicate(pixel) {
+                continue;
+            }
+
+            let x = (index as u32 % image.width) as f64;
+            let y = (index as u32 / image.width) as f64;
+            x_sum += x;
+            y_sum += y;
+            count += 1.0;
+        }
+
+        (count > 0.0).then(|| ViewportPoint::new(x_sum / count, y_sum / count))
+    }
 
     #[test]
     fn test_dirty_domains_mark_and_clear() {
@@ -1463,5 +2245,386 @@ mod tests {
         assert!(composed.pixels[0] > 0);
         assert!(composed.pixels[2] > 0);
         assert_eq!(composed.pixels[3], 255);
+    }
+
+    #[test]
+    fn test_overlay_only_updates_reuse_cached_base_layer() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .title("Layer Reuse")
+            .into();
+        let session = plot.prepare_interactive();
+
+        let first = session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("surface frame should render");
+        assert!(first.layer_state.base_dirty);
+
+        session.apply_input(PlotInputEvent::Hover {
+            position_px: ViewportPoint::new(160.0, 120.0),
+        });
+        let second = session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("surface frame should render after hover");
+
+        assert!(!second.layer_state.base_dirty);
+        assert!(second.layer_state.overlay_dirty);
+        assert!(Arc::ptr_eq(&first.layers.base, &second.layers.base));
+    }
+
+    #[test]
+    fn test_tooltip_overlay_renders_text_pixels() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .title("Tooltip")
+            .into();
+        let session = plot.prepare_interactive();
+
+        session.apply_input(PlotInputEvent::ShowTooltip {
+            content: "x=1.234, y=5.678".to_string(),
+            position_px: ViewportPoint::new(180.0, 120.0),
+        });
+
+        let frame = session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("surface frame should render with tooltip");
+
+        let overlay = frame
+            .layers
+            .overlay
+            .expect("surface frame should include overlay pixels");
+        let dark_text_pixels = overlay
+            .pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0 && (pixel[0] < 220 || pixel[1] < 220 || pixel[2] < 180))
+            .count();
+
+        assert!(
+            dark_text_pixels > 0,
+            "tooltip overlay should contain dark text pixels in addition to the background box"
+        );
+    }
+
+    #[test]
+    fn test_supported_surface_series_use_fast_path_on_full_rerender() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .title("Fast Path")
+            .into();
+        let session = plot.prepare_interactive();
+
+        let frame = session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("supported surface frame should render");
+
+        assert_eq!(frame.surface_capability, SurfaceCapability::FastPath);
+        assert!(!frame.layer_state.used_incremental_data);
+    }
+
+    #[test]
+    fn test_unsupported_surface_series_fall_back_to_image_capability() {
+        let plot: Plot = Plot::new()
+            .histogram(&[0.0, 1.0, 1.5, 2.0, 2.5], None)
+            .into();
+        let session = plot.prepare_interactive();
+
+        let frame = session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("fallback surface frame should render");
+
+        assert_eq!(frame.surface_capability, SurfaceCapability::FallbackImage);
+    }
+
+    #[test]
+    fn test_streaming_surface_render_uses_incremental_fast_path() {
+        let stream = StreamingXY::new(256);
+        stream.push_many(vec![(0.0, 0.0), (1.0, 0.5), (2.0, 1.0)]);
+
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .xlim(0.0, 10.0)
+            .ylim(-2.0, 2.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("initial surface frame should render");
+
+        stream.push(3.0, 0.75);
+        let incremental = session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("incremental surface frame should render");
+
+        assert!(incremental.layer_state.used_incremental_data);
+        assert_eq!(incremental.surface_capability, SurfaceCapability::FastPath);
+        assert_eq!(stream.appended_count(), 0);
+    }
+
+    #[test]
+    fn test_reactive_manual_ylim_stays_pinned_across_updates() {
+        let y = Observable::new(vec![0.0, 0.5, 1.0, -0.25]);
+        let plot: Plot = Plot::new()
+            .line_source(vec![0.0, 1.0, 2.0, 3.0], y.clone())
+            .ylim(-2.0, 2.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial surface frame should render");
+        let first_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after initial render");
+        let first_ticks = derived_y_ticks(&session);
+
+        y.set(vec![12.0, -15.0, 8.0, -11.0]);
+        session
+            .render_to_surface(render_target())
+            .expect("surface frame after first reactive update should render");
+        let second_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after first reactive update");
+        let second_ticks = derived_y_ticks(&session);
+
+        y.set(vec![30.0, 5.0, -22.0, 18.0]);
+        session
+            .render_to_surface(render_target())
+            .expect("surface frame after second reactive update should render");
+        let third_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after second reactive update");
+        let third_ticks = derived_y_ticks(&session);
+
+        assert_eq!(first_geometry.y_bounds, (-2.0, 2.0));
+        assert_eq!(second_geometry.y_bounds, (-2.0, 2.0));
+        assert_eq!(third_geometry.y_bounds, (-2.0, 2.0));
+        assert_eq!(first_ticks, second_ticks);
+        assert_eq!(second_ticks, third_ticks);
+    }
+
+    #[test]
+    fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
+        let x: Vec<f64> = (0..120).map(|index| index as f64 * 12.0 / 119.0).collect();
+        let primary = Observable::new(
+            x.iter()
+                .map(|value| 0.85 * value.sin() + 0.2 * (value * 3.0).cos())
+                .collect::<Vec<_>>(),
+        );
+        let baseline = Observable::new(
+            x.iter()
+                .map(|value| 0.4 * (value * 0.75).sin())
+                .collect::<Vec<_>>(),
+        );
+        let event_x = Observable::new(vec![2.0, 6.0, 9.5]);
+        let event_y = Observable::new(vec![1.1, -1.3, 1.4]);
+        let accent = Observable::new(Color::new(42, 157, 143));
+
+        let plot: Plot = Plot::new()
+            .line(&x, &vec![1.2; x.len()])
+            .color(Color::LIGHT_GRAY)
+            .into();
+        let plot: Plot = plot
+            .line(&x, &vec![-1.2; x.len()])
+            .color(Color::LIGHT_GRAY)
+            .into();
+        let plot: Plot = plot
+            .line_source(x.clone(), primary.clone())
+            .color_source(accent.clone())
+            .line_width(2.4)
+            .into();
+        let plot: Plot = plot
+            .line_source(x.clone(), baseline.clone())
+            .color(Color::new(38, 70, 83))
+            .line_width(1.6)
+            .into();
+        let plot: Plot = plot
+            .scatter_source(event_x.clone(), event_y.clone())
+            .color(Color::new(231, 111, 81))
+            .marker(MarkerStyle::Diamond)
+            .marker_size(9.0)
+            .xlim(0.0, 12.0)
+            .ylim(-2.0, 2.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial dashboard-like surface frame should render");
+        let first_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after initial dashboard render");
+        let first_ticks = derived_y_ticks(&session);
+
+        primary.set(
+            x.iter()
+                .map(|value| 1.6 * (value * 1.3).sin() + 0.5 * (value * 2.8).cos())
+                .collect::<Vec<_>>(),
+        );
+        baseline.set(
+            x.iter()
+                .map(|value| 0.55 * (value * 0.65).sin() - 0.2 * (value * 2.1).cos())
+                .collect::<Vec<_>>(),
+        );
+        event_x.set(vec![1.0, 4.5, 10.5]);
+        event_y.set(vec![1.5, -1.4, 1.7]);
+        accent.set(Color::new(231, 111, 81));
+
+        session
+            .render_to_surface(render_target())
+            .expect("dashboard-like surface frame after reactive updates should render");
+        let second_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after dashboard reactive updates");
+        let second_ticks = derived_y_ticks(&session);
+
+        assert_eq!(first_geometry.y_bounds, (-2.0, 2.0));
+        assert_eq!(second_geometry.y_bounds, (-2.0, 2.0));
+        assert_eq!(first_ticks, second_ticks);
+    }
+
+    #[test]
+    fn test_surface_frame_pixels_honor_manual_ylim() {
+        let plot: Plot = Plot::new()
+            .scatter(&[0.5], &[1.0])
+            .color(Color::new(220, 20, 20))
+            .marker(MarkerStyle::Square)
+            .marker_size(18.0)
+            .ticks(false)
+            .grid(false)
+            .into();
+        let plot: Plot = plot
+            .scatter(&[0.5], &[-1.0])
+            .color(Color::new(20, 20, 220))
+            .marker(MarkerStyle::Square)
+            .marker_size(18.0)
+            .ticks(false)
+            .grid(false)
+            .xlim(0.0, 1.0)
+            .ylim(-2.0, 2.0)
+            .into();
+        let session = plot.prepare_interactive();
+        let plain_plot = plot.clone().set_output_pixels(320, 240);
+        let render_plot = session
+            .prepared_plot()
+            .plot()
+            .prepared_frame_plot(render_target().size_px, render_target().scale_factor, 0.0)
+            .xlim(0.0, 1.0)
+            .ylim(-2.0, 2.0);
+
+        assert_eq!(plain_plot.layout.y_limits, Some((-2.0, 2.0)));
+        assert_eq!(render_plot.layout.y_limits, Some((-2.0, 2.0)));
+        assert_eq!(render_plot.layout.x_limits, Some((0.0, 1.0)));
+
+        let plain = plain_plot.render().expect("plain plot should render");
+        let plain_red_center = color_centroid(&plain, |pixel| {
+            pixel[3] > 0 && pixel[0] > 160 && pixel[1] < 80 && pixel[2] < 80
+        })
+        .expect("plain red marker pixels should be present");
+        let direct = render_plot.render().expect("direct prepared frame should render");
+        let direct_red_center = color_centroid(&direct, |pixel| {
+            pixel[3] > 0 && pixel[0] > 160 && pixel[1] < 80 && pixel[2] < 80
+        })
+        .expect("direct red marker pixels should be present");
+
+        let visible = DataBounds::from_limits(0.0, 1.0, -2.0, 2.0);
+        let snapshot_series = plain_plot.snapshot_series(0.0);
+        let layout = compute_plot_layout(
+            &plain_plot,
+            &snapshot_series,
+            render_target().size_px,
+            render_target().scale_factor,
+            visible,
+        )
+        .expect("plot layout should compute for manual bounds");
+
+        let frame = session
+            .render_to_surface(render_target())
+            .expect("surface frame should render");
+        let base = frame.layers.base.as_ref();
+
+        let red_center = color_centroid(base, |pixel| {
+            pixel[3] > 0 && pixel[0] > 160 && pixel[1] < 80 && pixel[2] < 80
+        })
+        .expect("red marker pixels should be present");
+        let blue_center = color_centroid(base, |pixel| {
+            pixel[3] > 0 && pixel[0] < 80 && pixel[1] < 80 && pixel[2] > 160
+        })
+        .expect("blue marker pixels should be present");
+
+        let expected_red_y = map_data_to_pixels(
+            0.5,
+            1.0,
+            visible.x_min,
+            visible.x_max,
+            visible.y_min,
+            visible.y_max,
+            layout.plot_area_rect,
+        )
+        .1 as f64;
+
+        assert!(
+            (plain_red_center.y - expected_red_y).abs() <= 12.0,
+            "plain render red marker y={} should be close to expected {}",
+            plain_red_center.y,
+            expected_red_y
+        );
+        assert!(
+            (direct_red_center.y - expected_red_y).abs() <= 12.0,
+            "direct render red marker y={} should be close to expected {}",
+            direct_red_center.y,
+            expected_red_y
+        );
+        let expected_blue_y = map_data_to_pixels(
+            0.5,
+            -1.0,
+            visible.x_min,
+            visible.x_max,
+            visible.y_min,
+            visible.y_max,
+            layout.plot_area_rect,
+        )
+        .1 as f64;
+
+        assert!(
+            (red_center.y - expected_red_y).abs() <= 12.0,
+            "red marker y={} should be close to expected {}",
+            red_center.y,
+            expected_red_y
+        );
+        assert!(
+            (blue_center.y - expected_blue_y).abs() <= 12.0,
+            "blue marker y={} should be close to expected {}",
+            blue_center.y,
+            expected_blue_y
+        );
     }
 }

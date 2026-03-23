@@ -33,7 +33,7 @@
 //! }
 //! ```
 
-use super::data::PlotData;
+use super::data::{PlotData, ReactiveValue};
 use crate::render::{Color, LineStyle, MarkerStyle};
 
 /// Trait for types that can be converted to a finalized [`Plot`](super::Plot)
@@ -327,16 +327,28 @@ pub struct SeriesStyle {
     pub label: Option<String>,
     /// Series color
     pub color: Option<Color>,
+    /// Reactive series color source
+    pub color_source: Option<ReactiveValue<Color>>,
     /// Line width override
     pub line_width: Option<f32>,
+    /// Reactive line width source
+    pub line_width_source: Option<ReactiveValue<f32>>,
     /// Line style override
     pub line_style: Option<LineStyle>,
+    /// Reactive line style source
+    pub line_style_source: Option<ReactiveValue<LineStyle>>,
     /// Marker style (for scatter-like plots)
     pub marker_style: Option<MarkerStyle>,
+    /// Reactive marker style source
+    pub marker_style_source: Option<ReactiveValue<MarkerStyle>>,
     /// Marker size
     pub marker_size: Option<f32>,
+    /// Reactive marker size source
+    pub marker_size_source: Option<ReactiveValue<f32>>,
     /// Alpha/transparency (0.0 = transparent, 1.0 = opaque)
     pub alpha: Option<f32>,
+    /// Reactive alpha/transparency source
+    pub alpha_source: Option<ReactiveValue<f32>>,
     /// Y-axis error bar values
     pub y_errors: Option<crate::plots::error::ErrorValues>,
     /// X-axis error bar values
@@ -434,6 +446,17 @@ where
     /// ```
     pub fn color(mut self, color: Color) -> Self {
         self.style.color = Some(color);
+        self.style.color_source = None;
+        self
+    }
+
+    /// Set a reactive series color source.
+    pub fn color_source<S>(mut self, color: S) -> Self
+    where
+        S: Into<ReactiveValue<Color>>,
+    {
+        self.style.color = None;
+        self.style.color_source = Some(color.into());
         self
     }
 
@@ -449,6 +472,17 @@ where
     /// ```
     pub fn line_width(mut self, width: f32) -> Self {
         self.style.line_width = Some(width.max(0.1));
+        self.style.line_width_source = None;
+        self
+    }
+
+    /// Set a reactive line width source.
+    pub fn line_width_source<S>(mut self, width: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.line_width = None;
+        self.style.line_width_source = Some(width.into());
         self
     }
 
@@ -464,6 +498,17 @@ where
     /// ```
     pub fn line_style(mut self, style: LineStyle) -> Self {
         self.style.line_style = Some(style);
+        self.style.line_style_source = None;
+        self
+    }
+
+    /// Set a reactive line style source.
+    pub fn line_style_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<LineStyle>>,
+    {
+        self.style.line_style = None;
+        self.style.line_style_source = Some(style.into());
         self
     }
 
@@ -481,6 +526,17 @@ where
     /// ```
     pub fn alpha(mut self, alpha: f32) -> Self {
         self.style.alpha = Some(alpha.clamp(0.0, 1.0));
+        self.style.alpha_source = None;
+        self
+    }
+
+    /// Set a reactive alpha/transparency source.
+    pub fn alpha_source<S>(mut self, alpha: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.alpha = None;
+        self.style.alpha_source = Some(alpha.into());
         self
     }
 
@@ -1861,6 +1917,19 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = Some(style);
         self.config.show_markers = true;
+        self.style.marker_style = Some(style);
+        self.style.marker_style_source = None;
+        self
+    }
+
+    /// Set a reactive marker style.
+    pub fn marker_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<crate::render::MarkerStyle>>,
+    {
+        self.config.show_markers = true;
+        self.style.marker_style = None;
+        self.style.marker_style_source = Some(style.into());
         self
     }
 
@@ -1870,6 +1939,18 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.marker_size = size.max(0.1);
+        self.style.marker_size = Some(size.max(0.1));
+        self.style.marker_size_source = None;
+        self
+    }
+
+    /// Set a reactive marker size.
+    pub fn marker_size_source<S>(mut self, size: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.marker_size = None;
+        self.style.marker_size_source = Some(size.into());
         self
     }
 
@@ -1899,6 +1980,17 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// ```
     pub fn style(mut self, line_style: crate::render::LineStyle) -> Self {
         self.style.line_style = Some(line_style);
+        self.style.line_style_source = None;
+        self
+    }
+
+    /// Set a reactive line style.
+    pub fn style_source<S>(mut self, line_style: S) -> Self
+    where
+        S: Into<ReactiveValue<crate::render::LineStyle>>,
+    {
+        self.style.line_style = None;
+        self.style.line_style_source = Some(line_style.into());
         self
     }
 
@@ -1940,6 +2032,18 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// ```
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = style;
+        self.style.marker_style = Some(style);
+        self.style.marker_style_source = None;
+        self
+    }
+
+    /// Set a reactive marker style.
+    pub fn marker_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<crate::render::MarkerStyle>>,
+    {
+        self.style.marker_style = None;
+        self.style.marker_style_source = Some(style.into());
         self
     }
 
@@ -1949,6 +2053,18 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.size = size.max(0.1);
+        self.style.marker_size = Some(size.max(0.1));
+        self.style.marker_size_source = None;
+        self
+    }
+
+    /// Set a reactive marker size.
+    pub fn marker_size_source<S>(mut self, size: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.marker_size = None;
+        self.style.marker_size_source = Some(size.into());
         self
     }
 

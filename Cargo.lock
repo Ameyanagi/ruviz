@@ -7276,6 +7276,8 @@ dependencies = [
 name = "ruviz-gpui"
 version = "0.1.0"
 dependencies = [
+ "core-foundation 0.10.0",
+ "core-video",
  "futures",
  "gpui",
  "image 0.25.9",

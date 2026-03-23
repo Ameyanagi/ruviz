@@ -3,7 +3,7 @@ use gpui::{
     prelude::*, px, size,
 };
 use ruviz::{data::Observable, prelude::*};
-use ruviz_gpui::RuvizPlot;
+use ruviz_gpui::{PerformancePreset, RuvizPlot, plot_builder};
 use std::time::Duration;
 
 struct ObservableEmbedDemo {
@@ -20,7 +20,10 @@ impl ObservableEmbedDemo {
             .xlabel("x")
             .ylabel("value")
             .into();
-        let plot = cx.new(|cx| RuvizPlot::new(plot, cx));
+        let plot = plot_builder(plot)
+            .interactive()
+            .performance_preset(PerformancePreset::Balanced)
+            .build(cx);
 
         window
             .spawn(cx, {

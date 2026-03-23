@@ -20,7 +20,7 @@ impl StaticEmbedDemo {
             .ylabel("sin(x)")
             .into();
 
-        let plot = cx.new(|cx| RuvizPlot::new(plot, cx));
+        let plot = ruviz_gpui::plot(plot, cx);
         Self { plot }
     }
 }
