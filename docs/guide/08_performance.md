@@ -33,7 +33,7 @@ They do **not** currently use identical execution paths.
 
 ```toml
 [dependencies]
-ruviz = "0.1.4"
+ruviz = "0.1.5"
 ```
 
 Useful opt-in features:
@@ -59,7 +59,7 @@ streaming sources can still benefit from the same parallel/DataShader decisions.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.4", features = ["parallel"] }
+ruviz = { version = "0.1.5", features = ["parallel"] }
 ```
 
 ```rust
@@ -83,7 +83,7 @@ override every internal condition used by the parallel renderer.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.4", features = ["parallel", "simd"] }
+ruviz = { version = "0.1.5", features = ["parallel", "simd"] }
 ```
 
 The `simd` feature is used inside the parallel renderer, so it helps when the
@@ -105,7 +105,7 @@ The current `save()` implementation does **not** call the dedicated
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.4", features = ["gpu"] }
+ruviz = { version = "0.1.5", features = ["gpu"] }
 ```
 
 ```rust

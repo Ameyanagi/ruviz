@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CRATES_IO_USER_AGENT: ruviz-release-workflow/1.0 (https://github.com/Ameyanagi/ruviz)
 
 jobs:
   check-ci:
@@ -43,6 +44,16 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Validate release tag matches ruviz version
+        run: |
+          VERSION="$(cargo pkgid -p ruviz | sed 's/.*#.*@//')"
+          TAG="${{ github.ref_name }}"
+
+          if [ "v${VERSION}" != "${TAG}" ]; then
+            echo "Release tag ${TAG} does not match ruviz version v${VERSION}"
+            exit 1
+          fi
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -60,6 +71,109 @@ jobs:
 
       - name: Build documentation
         run: cargo doc --no-deps --all-features
+
+      - name: Verify ruviz-gpui compiles
+        run: cargo check -p ruviz-gpui
+
+  publish-ruviz:
+    name: Publish ruviz to crates.io
+    runs-on: ubuntu-latest
+    needs: build-release
+    # Only publish on non-prerelease tags
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Detect published ruviz version
+        id: ruviz-version
+        run: |
+          VERSION="$(cargo pkgid -p ruviz | sed 's/.*#.*@//')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          if curl --silent --fail \
+              --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
+              "https://crates.io/api/v1/crates/ruviz/${VERSION}" >/dev/null; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish ruviz to crates.io
+        if: steps.ruviz-version.outputs.published != 'true'
+        run: cargo publish --package ruviz --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Skip ruviz publish
+        if: steps.ruviz-version.outputs.published == 'true'
+        run: echo "ruviz v${{ steps.ruviz-version.outputs.version }} is already published on crates.io"
+
+  publish-ruviz-gpui:
+    name: Publish ruviz-gpui to crates.io
+    runs-on: ubuntu-latest
+    needs: publish-ruviz
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Detect published ruviz-gpui version
+        id: gpui-version
+        run: |
+          VERSION="$(cargo pkgid -p ruviz-gpui | sed 's/.*#.*@//')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          if curl --silent --fail \
+              --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
+              "https://crates.io/api/v1/crates/ruviz-gpui/${VERSION}" >/dev/null; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for ruviz-gpui packaging to resolve against crates.io
+        if: steps.gpui-version.outputs.published != 'true'
+        run: |
+          last_output=""
+
+          for attempt in $(seq 1 60); do
+            if output="$(cargo package --package ruviz-gpui --allow-dirty --no-verify 2>&1)"; then
+              exit 0
+            fi
+
+            last_output="${output}"
+            echo "Waiting for crates.io index to serve ruviz-gpui dependencies (attempt ${attempt}/60)..."
+            sleep 20
+          done
+
+          echo "Timed out waiting for ruviz-gpui packaging to resolve against crates.io"
+          if [ -n "${last_output}" ]; then
+            echo "Last cargo package error output:"
+            printf '%s\n' "${last_output}"
+          fi
+          exit 1
+
+      - name: Publish ruviz-gpui to crates.io
+        if: steps.gpui-version.outputs.published != 'true'
+        run: cargo publish --package ruviz-gpui --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Skip ruviz-gpui publish
+        if: steps.gpui-version.outputs.published == 'true'
+        run: echo "ruviz-gpui v${{ steps.gpui-version.outputs.version }} is already published on crates.io"
+
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-release, publish-ruviz, publish-ruviz-gpui]
+    if: ${{ always() && needs.build-release.result == 'success' && (needs.publish-ruviz.result == 'success' || needs.publish-ruviz.result == 'skipped') && (needs.publish-ruviz-gpui.result == 'success' || needs.publish-ruviz-gpui.result == 'skipped') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Prepare release notes body
         run: |
@@ -90,21 +204,3 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish-crates:
-    name: Publish to crates.io
-    runs-on: ubuntu-latest
-    needs: build-release
-    # Only publish on non-prerelease tags
-    if: ${{ !contains(github.ref_name, '-') }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish to crates.io
-        run: cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
