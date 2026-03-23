@@ -273,6 +273,7 @@ struct InteractivePlotSessionInner {
     reactive_subscription: Mutex<ReactiveSubscription>,
     state: Mutex<SessionState>,
     dirty: Arc<Mutex<DirtyDomains>>,
+    dirty_epoch: Arc<AtomicU64>,
     stats: Mutex<FrameStats>,
     reactive_epoch: Arc<AtomicU64>,
 }
@@ -459,6 +460,7 @@ struct StreamingDrawOp {
     line_style: LineStyle,
     marker_style: MarkerStyle,
     marker_size_px: f32,
+    draw_markers: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -485,14 +487,17 @@ impl InteractivePlotSession {
             .unwrap_or_else(|_| DataBounds::from_limits(0.0, 1.0, 0.0, 1.0));
         let initial_bounds = AxisConstraints::from_plot(prepared.plot()).apply(initial_data_bounds);
         let dirty = Arc::new(Mutex::new(DirtyDomains::with_all()));
+        let dirty_epoch = Arc::new(AtomicU64::new(0));
         let reactive_epoch = Arc::new(AtomicU64::new(0));
         let dirty_for_callback = Arc::clone(&dirty);
+        let dirty_epoch_for_callback = Arc::clone(&dirty_epoch);
         let epoch_for_callback = Arc::clone(&reactive_epoch);
         let reactive_subscription = prepared.subscribe_reactive(move || {
             if let Ok(mut domains) = dirty_for_callback.lock() {
                 domains.mark(DirtyDomain::Data);
                 domains.mark(DirtyDomain::Overlay);
             }
+            dirty_epoch_for_callback.fetch_add(1, Ordering::AcqRel);
             epoch_for_callback.fetch_add(1, Ordering::AcqRel);
         });
 
@@ -509,6 +514,7 @@ impl InteractivePlotSession {
                     ..SessionState::default()
                 }),
                 dirty,
+                dirty_epoch,
                 stats: Mutex::new(FrameStats::default()),
                 reactive_epoch,
             }),
@@ -532,6 +538,27 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession stats lock poisoned")
             .clone()
+    }
+
+    /// Drop cached geometry and layer images so the next frame rebuilds them.
+    pub fn invalidate(&self) {
+        self.inner.prepared.invalidate();
+        {
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("InteractivePlotSession state lock poisoned");
+            state.base_cache = None;
+            state.overlay_cache = None;
+            state.geometry = None;
+        }
+        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
+        *self
+            .inner
+            .dirty
+            .lock()
+            .expect("InteractivePlotSession dirty lock poisoned") = DirtyDomains::with_all();
     }
 
     pub fn frame_pacing(&self) -> FramePacing {
@@ -918,43 +945,41 @@ impl InteractivePlotSession {
         self.apply_input(PlotInputEvent::SetTime { time_seconds });
 
         let reactive_epoch = self.inner.reactive_epoch.load(Ordering::Acquire);
+        let mut mark_data_dirty = false;
+        {
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("InteractivePlotSession state lock poisoned");
+            if state.last_reactive_epoch != reactive_epoch {
+                state.last_reactive_epoch = reactive_epoch;
+                mark_data_dirty = true;
+            }
+        }
+        if mark_data_dirty {
+            self.mark_dirty(DirtyDomain::Data);
+            self.mark_dirty(DirtyDomain::Overlay);
+        }
+
         let dirty_before_render = self.dirty_domains();
+        let dirty_epoch_before_render = self.inner.dirty_epoch.load(Ordering::Acquire);
+
+        if dirty_before_render.layout || dirty_before_render.data || dirty_before_render.temporal {
+            let plot = self.inner.prepared.plot();
+            let constraints = AxisConstraints::from_plot(plot);
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("InteractivePlotSession state lock poisoned");
+            let next_data_bounds =
+                compute_data_bounds(plot, time_seconds).unwrap_or(state.data_bounds);
+            state.data_bounds = next_data_bounds;
+            state.base_bounds = constraints.apply(next_data_bounds);
+        }
+
         let base_key = {
-            let mut mark_data_dirty = false;
-            {
-                let mut state = self
-                    .inner
-                    .state
-                    .lock()
-                    .expect("InteractivePlotSession state lock poisoned");
-                if state.last_reactive_epoch != reactive_epoch {
-                    state.last_reactive_epoch = reactive_epoch;
-                    mark_data_dirty = true;
-                }
-            }
-            if mark_data_dirty {
-                self.mark_dirty(DirtyDomain::Data);
-                self.mark_dirty(DirtyDomain::Overlay);
-            }
-
-            if dirty_before_render.layout
-                || dirty_before_render.data
-                || dirty_before_render.temporal
-                || mark_data_dirty
-            {
-                let plot = self.inner.prepared.plot();
-                let constraints = AxisConstraints::from_plot(plot);
-                let mut state = self
-                    .inner
-                    .state
-                    .lock()
-                    .expect("InteractivePlotSession state lock poisoned");
-                let next_data_bounds =
-                    compute_data_bounds(plot, time_seconds).unwrap_or(state.data_bounds);
-                state.data_bounds = next_data_bounds;
-                state.base_bounds = constraints.apply(next_data_bounds);
-            }
-
             let state = self
                 .inner
                 .state
@@ -973,14 +998,7 @@ impl InteractivePlotSession {
             Arc::clone(&base_result.image)
         };
 
-        let mut dirty = self
-            .inner
-            .dirty
-            .lock()
-            .expect("InteractivePlotSession dirty lock poisoned");
-        dirty.clear_base();
-        dirty.clear_overlay();
-        drop(dirty);
+        self.clear_dirty_after_render(dirty_epoch_before_render);
 
         let surface_capability = if target == RenderTargetKind::Surface {
             if base_result.used_incremental_data
@@ -1233,11 +1251,29 @@ impl InteractivePlotSession {
     }
 
     fn mark_dirty(&self, domain: DirtyDomain) {
+        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
         self.inner
             .dirty
             .lock()
             .expect("InteractivePlotSession dirty lock poisoned")
             .mark(domain);
+    }
+
+    fn clear_dirty_after_render(&self, dirty_epoch_before_render: u64) {
+        if self.inner.dirty_epoch.load(Ordering::Acquire) != dirty_epoch_before_render {
+            return;
+        }
+
+        let mut dirty = self
+            .inner
+            .dirty
+            .lock()
+            .expect("InteractivePlotSession dirty lock poisoned");
+        if self.inner.dirty_epoch.load(Ordering::Acquire) != dirty_epoch_before_render {
+            return;
+        }
+        dirty.clear_base();
+        dirty.clear_overlay();
     }
 
     fn try_incremental_stream_render(
@@ -1655,11 +1691,20 @@ fn streaming_draw_op(
     if !matches!(x_data, PlotData::Streaming(_)) || !matches!(y_data, PlotData::Streaming(_)) {
         return Ok(None);
     }
-    if !x_data.can_partial_render() || !y_data.can_partial_render() {
-        return Ok(None);
-    }
-
-    let appended_count = x_data.appended_count().min(y_data.appended_count());
+    let appended_count = match (
+        x_data.streaming_render_state(),
+        y_data.streaming_render_state(),
+    ) {
+        (
+            Some(crate::data::StreamingRenderState::AppendOnly {
+                visible_appended: x_count,
+            }),
+            Some(crate::data::StreamingRenderState::AppendOnly {
+                visible_appended: y_count,
+            }),
+        ) => x_count.min(y_count),
+        _ => return Ok(None),
+    };
     if appended_count == 0 {
         return Ok(None);
     }
@@ -1701,6 +1746,7 @@ fn streaming_draw_op(
         line_style,
         marker_style,
         marker_size_px,
+        draw_markers: kind == StreamingDrawKind::Scatter || series.marker_style.is_some(),
     }))
 }
 
@@ -1745,7 +1791,7 @@ fn apply_streaming_draw_ops(
             )?;
         }
 
-        if op.kind == StreamingDrawKind::Scatter {
+        if op.draw_markers {
             for &(px, py) in &mapped_points {
                 draw_incremental_marker(
                     &mut pixmap,
@@ -2166,7 +2212,7 @@ mod tests {
     use crate::data::{Observable, StreamingXY};
     use crate::prelude::Plot;
     use crate::render::{Color, MarkerStyle};
-    use std::sync::Arc;
+    use std::sync::{Arc, atomic::Ordering};
 
     fn render_target() -> SurfaceTarget {
         SurfaceTarget {
@@ -2212,6 +2258,33 @@ mod tests {
         (count > 0.0).then(|| ViewportPoint::new(x_sum / count, y_sum / count))
     }
 
+    fn count_matching_pixels_near<F>(
+        image: &Image,
+        center: ViewportPoint,
+        radius: u32,
+        predicate: F,
+    ) -> usize
+    where
+        F: Fn(&[u8]) -> bool,
+    {
+        let min_x = center.x.round().max(0.0) as i32 - radius as i32;
+        let max_x = center.x.round().min(image.width as f64) as i32 + radius as i32;
+        let min_y = center.y.round().max(0.0) as i32 - radius as i32;
+        let max_y = center.y.round().min(image.height as f64) as i32 + radius as i32;
+
+        let mut count = 0usize;
+        for y in min_y.max(0)..max_y.min(image.height as i32) {
+            for x in min_x.max(0)..max_x.min(image.width as i32) {
+                let index = ((y as u32 * image.width + x as u32) * 4) as usize;
+                if predicate(&image.pixels[index..index + 4]) {
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+
     #[test]
     fn test_dirty_domains_mark_and_clear() {
         let mut dirty = DirtyDomains::default();
@@ -2234,6 +2307,43 @@ mod tests {
 
         dirty.clear_overlay();
         assert!(!dirty.overlay);
+    }
+
+    #[test]
+    fn test_inflight_dirty_marks_survive_render_clear() {
+        let plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
+        let session = plot.prepare_interactive();
+
+        session.mark_dirty(DirtyDomain::Data);
+        let render_epoch = session.inner.dirty_epoch.load(Ordering::Acquire);
+        session.mark_dirty(DirtyDomain::Overlay);
+        session.clear_dirty_after_render(render_epoch);
+
+        let dirty = session.dirty_domains();
+        assert!(dirty.data);
+        assert!(dirty.overlay);
+    }
+
+    #[test]
+    fn test_session_invalidate_forces_base_rerender() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .title("Invalidate")
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial surface frame should render");
+        assert!(!session.dirty_domains().needs_base_render());
+
+        session.invalidate();
+        assert!(session.dirty_domains().needs_base_render());
+
+        let rerendered = session
+            .render_to_surface(render_target())
+            .expect("invalidated surface frame should rerender");
+        assert!(rerendered.layer_state.base_dirty);
     }
 
     #[test]
@@ -2387,6 +2497,90 @@ mod tests {
         assert!(incremental.layer_state.used_incremental_data);
         assert_eq!(incremental.surface_capability, SurfaceCapability::FastPath);
         assert_eq!(stream.appended_count(), 0);
+    }
+
+    #[test]
+    fn test_streaming_surface_render_falls_back_after_wraparound() {
+        let stream = StreamingXY::new(3);
+        stream.push_many(vec![(0.0, 0.0), (1.0, 0.5), (2.0, 1.0)]);
+
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .xlim(0.0, 3.0)
+            .ylim(-1.0, 2.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial wrapped-stream frame should render");
+
+        stream.push(3.0, 1.25);
+        let rerendered = session
+            .render_to_surface(render_target())
+            .expect("wrapped-stream surface frame should render");
+
+        assert!(!rerendered.layer_state.used_incremental_data);
+        assert_eq!(stream.appended_count(), 0);
+    }
+
+    #[test]
+    fn test_incremental_line_render_preserves_markers() {
+        let stream = StreamingXY::new(32);
+        stream.push_many(vec![(0.5, 0.5), (1.0, 1.2)]);
+
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .color(Color::new(220, 20, 20))
+            .width(1.0)
+            .marker(MarkerStyle::Square)
+            .marker_size(18.0)
+            .into();
+        let plot = plot.ticks(false).grid(false).xlim(0.0, 3.0).ylim(0.0, 3.0);
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial line+marker surface frame should render");
+
+        stream.push(2.0, 2.3);
+        let incremental = session
+            .render_to_surface(render_target())
+            .expect("incremental line+marker surface frame should render");
+        assert!(incremental.layer_state.used_incremental_data);
+
+        let geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after incremental render");
+        let (px, py) = map_data_to_pixels(
+            2.0,
+            2.3,
+            geometry.x_bounds.0,
+            geometry.x_bounds.1,
+            geometry.y_bounds.0,
+            geometry.y_bounds.1,
+            geometry.plot_area,
+        );
+        let point = ViewportPoint::new(px as f64, py as f64);
+        let incremental_pixels =
+            count_matching_pixels_near(incremental.layers.base.as_ref(), point, 12, |pixel| {
+                pixel[3] > 0 && pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100
+            });
+
+        let full = session
+            .prepared_plot()
+            .plot()
+            .prepared_frame_plot(render_target().size_px, render_target().scale_factor, 0.0)
+            .xlim(0.0, 3.0)
+            .ylim(0.0, 3.0)
+            .render()
+            .expect("full line+marker render should succeed");
+        let full_pixels = count_matching_pixels_near(&full, point, 12, |pixel| {
+            pixel[3] > 0 && pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100
+        });
+
+        assert!(incremental_pixels > 0);
+        assert!((incremental_pixels as i32 - full_pixels as i32).abs() <= 12);
     }
 
     #[test]
@@ -2549,7 +2743,9 @@ mod tests {
             pixel[3] > 0 && pixel[0] > 160 && pixel[1] < 80 && pixel[2] < 80
         })
         .expect("plain red marker pixels should be present");
-        let direct = render_plot.render().expect("direct prepared frame should render");
+        let direct = render_plot
+            .render()
+            .expect("direct prepared frame should render");
         let direct_red_center = color_centroid(&direct, |pixel| {
             pixel[3] > 0 && pixel[0] > 160 && pixel[1] < 80 && pixel[2] < 80
         })

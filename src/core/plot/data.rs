@@ -11,7 +11,7 @@
 //! - `IntoPlotData` - Trait for converting common numeric sources into `PlotData`
 
 use crate::data::signal::Signal;
-use crate::data::{Observable, StreamingBuffer};
+use crate::data::{Observable, StreamingBuffer, StreamingRenderState};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -230,9 +230,18 @@ impl PlotData {
         }
     }
 
+    /// Describe the incremental rendering state for streaming sources.
+    pub fn streaming_render_state(&self) -> Option<StreamingRenderState> {
+        match self {
+            Self::Streaming(buffer) => Some(buffer.render_state()),
+            _ => None,
+        }
+    }
+
     /// Check whether a streaming source can use append-only rendering.
     pub fn can_partial_render(&self) -> bool {
-        matches!(self, Self::Streaming(buffer) if buffer.can_partial_render())
+        self.streaming_render_state()
+            .is_some_and(StreamingRenderState::can_incrementally_render)
     }
 
     /// Get the number of values appended since the last rendered mark.

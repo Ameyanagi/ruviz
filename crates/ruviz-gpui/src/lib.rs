@@ -731,6 +731,7 @@ mod supported {
 
         fn invalidate_frame_state(&mut self) {
             self.retire_cached_frame();
+            self.session.invalidate();
             self.scheduler.reset();
             self.in_flight_render = None;
         }
@@ -1763,6 +1764,25 @@ mod supported {
             assert!(!request.is_dirty(&session));
 
             y.set(vec![0.0, 1.0, 9.0]);
+            assert!(request.is_dirty(&session));
+        }
+
+        #[test]
+        fn test_render_request_becomes_dirty_after_session_invalidate() {
+            let plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
+            let session = plot.prepare_interactive();
+            let request = RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid);
+
+            session
+                .render_to_surface(SurfaceTarget {
+                    size_px: request.size_px,
+                    scale_factor: request.scale_factor(),
+                    time_seconds: request.time_seconds(),
+                })
+                .expect("interactive session should render");
+            assert!(!request.is_dirty(&session));
+
+            session.invalidate();
             assert!(request.is_dirty(&session));
         }
 

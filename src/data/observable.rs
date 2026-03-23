@@ -1015,6 +1015,33 @@ impl<T> Deref for StreamingBufferView<'_, T> {
     }
 }
 
+/// Rendering state for the changes accumulated in a [`StreamingBuffer`] since the
+/// last [`StreamingBuffer::mark_rendered`] call.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamingRenderState {
+    /// No new visible samples have arrived since the last render mark.
+    Unchanged,
+    /// Only newly visible tail samples need to be appended to the existing frame.
+    AppendOnly { visible_appended: usize },
+    /// Existing visible samples were displaced, so the next frame must redraw.
+    FullRedrawRequired,
+}
+
+impl StreamingRenderState {
+    /// Returns the number of newly visible samples represented by this state.
+    pub fn visible_appended(self) -> usize {
+        match self {
+            Self::Unchanged | Self::FullRedrawRequired => 0,
+            Self::AppendOnly { visible_appended } => visible_appended,
+        }
+    }
+
+    /// Returns `true` when an append-only incremental render is still correct.
+    pub fn can_incrementally_render(self) -> bool {
+        matches!(self, Self::AppendOnly { .. })
+    }
+}
+
 /// High-performance ring buffer for streaming time-series data
 ///
 /// Unlike `SlidingWindowObservable`, `StreamingBuffer` uses a true circular
@@ -1246,12 +1273,39 @@ impl<T: Clone> StreamingBuffer<T> {
         self.appended_since_render.store(0, Ordering::Release);
     }
 
-    /// Check if partial re-render is possible
-    ///
-    /// Returns true if only new data needs rendering (no wrapping occurred)
-    pub fn can_partial_render(&self) -> bool {
+    /// Describe whether the current buffer changes can be rendered incrementally.
+    pub fn render_state(&self) -> StreamingRenderState {
         let appended = self.appended_since_render.load(Ordering::Acquire);
-        appended < self.capacity
+        if appended == 0 {
+            return StreamingRenderState::Unchanged;
+        }
+
+        let total_written = self.total_written.load(Ordering::Acquire);
+        let visible_after = std::cmp::min(total_written as usize, self.capacity);
+        let total_before = total_written.saturating_sub(appended as u64);
+        let visible_before = std::cmp::min(total_before as usize, self.capacity);
+
+        if visible_before == 0 {
+            return StreamingRenderState::AppendOnly {
+                visible_appended: visible_after,
+            };
+        }
+
+        if visible_before.saturating_add(appended) <= self.capacity {
+            return StreamingRenderState::AppendOnly {
+                visible_appended: appended,
+            };
+        }
+
+        StreamingRenderState::FullRedrawRequired
+    }
+
+    /// Check if partial re-render is possible.
+    ///
+    /// Prefer [`StreamingBuffer::render_state`] when the caller needs to
+    /// distinguish append-only updates from wraparound/full-redraw cases.
+    pub fn can_partial_render(&self) -> bool {
+        self.render_state().can_incrementally_render()
     }
 
     /// Get the current version (for change detection)
@@ -1448,8 +1502,31 @@ impl StreamingXY {
     }
 
     /// Check if partial rendering is possible
+    ///
+    /// Prefer [`StreamingXY::render_state`] when the caller needs to distinguish
+    /// append-only updates from wraparound/full-redraw cases.
     pub fn can_partial_render(&self) -> bool {
-        self.x.can_partial_render() && self.y.can_partial_render()
+        self.render_state().can_incrementally_render()
+    }
+
+    /// Describe whether the paired buffers can be rendered incrementally.
+    pub fn render_state(&self) -> StreamingRenderState {
+        match (self.x.render_state(), self.y.render_state()) {
+            (StreamingRenderState::Unchanged, StreamingRenderState::Unchanged) => {
+                StreamingRenderState::Unchanged
+            }
+            (
+                StreamingRenderState::AppendOnly {
+                    visible_appended: x,
+                },
+                StreamingRenderState::AppendOnly {
+                    visible_appended: y,
+                },
+            ) => StreamingRenderState::AppendOnly {
+                visible_appended: x.min(y),
+            },
+            _ => StreamingRenderState::FullRedrawRequired,
+        }
     }
 
     /// Get the combined version (max of X and Y versions)
@@ -1956,14 +2033,30 @@ mod tests {
 
         buffer.push_many(vec![1.0, 2.0, 3.0]);
         assert!(buffer.can_partial_render());
+        assert_eq!(
+            buffer.render_state(),
+            StreamingRenderState::AppendOnly {
+                visible_appended: 3
+            }
+        );
 
         buffer.mark_rendered();
         buffer.push_many(vec![4.0, 5.0]);
         assert!(buffer.can_partial_render());
+        assert_eq!(
+            buffer.render_state(),
+            StreamingRenderState::AppendOnly {
+                visible_appended: 2
+            }
+        );
 
         // Fill beyond capacity - can't partial render
         buffer.push_many(vec![6.0, 7.0, 8.0, 9.0, 10.0]);
         assert!(!buffer.can_partial_render());
+        assert_eq!(
+            buffer.render_state(),
+            StreamingRenderState::FullRedrawRequired
+        );
     }
 
     #[test]
@@ -2075,6 +2168,12 @@ mod tests {
         assert_eq!(xy.appended_count(), 2);
         assert_eq!(xy.read_appended_x(), vec![3.0, 4.0]);
         assert_eq!(xy.read_appended_y(), vec![30.0, 40.0]);
+        assert_eq!(
+            xy.render_state(),
+            StreamingRenderState::AppendOnly {
+                visible_appended: 2
+            }
+        );
     }
 
     #[test]
@@ -2151,8 +2250,46 @@ mod tests {
         assert_eq!(appended.len(), 3);
         assert_eq!(appended, vec![3.0, 4.0, 5.0]);
 
-        // can_partial_render should be false (appended >= capacity)
+        // With no previously rendered points, the visible tail can still be appended directly.
+        assert!(buffer.can_partial_render());
+        assert_eq!(
+            buffer.render_state(),
+            StreamingRenderState::AppendOnly {
+                visible_appended: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_streaming_buffer_render_state_requires_full_redraw_after_wrap() {
+        let buffer = StreamingBuffer::<f64>::new(5);
+        buffer.push_many(vec![1.0, 2.0, 3.0, 4.0]);
+        buffer.mark_rendered();
+
+        buffer.push_many(vec![5.0, 6.0]);
+
+        assert_eq!(buffer.read(), vec![2.0, 3.0, 4.0, 5.0, 6.0]);
+        assert_eq!(
+            buffer.render_state(),
+            StreamingRenderState::FullRedrawRequired
+        );
         assert!(!buffer.can_partial_render());
+    }
+
+    #[test]
+    fn test_streaming_buffer_render_state_stays_append_only_from_empty_cache() {
+        let buffer = StreamingBuffer::<f64>::new(3);
+        buffer.mark_rendered();
+
+        buffer.push_many(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+
+        assert_eq!(buffer.read(), vec![3.0, 4.0, 5.0]);
+        assert_eq!(
+            buffer.render_state(),
+            StreamingRenderState::AppendOnly {
+                visible_appended: 3
+            }
+        );
     }
 
     #[test]

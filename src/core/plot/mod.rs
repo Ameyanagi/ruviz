@@ -4691,6 +4691,12 @@ impl Plot {
                     .collect();
 
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
+                if let Some(marker_style) = series.marker_style {
+                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                    for &(px, py) in &points {
+                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    }
+                }
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
@@ -5357,6 +5363,12 @@ impl Plot {
                     .collect();
 
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
+                if let Some(marker_style) = series.marker_style {
+                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                    for &(px, py) in &points {
+                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    }
+                }
             }
             SeriesType::Scatter { x_data, y_data } => {
                 // Resolve PlotData to concrete Vec<f64>
@@ -5670,10 +5682,15 @@ impl Plot {
         #[cfg(feature = "parallel")]
         {
             let series_count = snapshot_series.len();
-            if self
-                .render
-                .parallel_renderer
-                .should_use_parallel(series_count, total_points)
+            let parallel_safe_for_markers = snapshot_series.iter().all(|series| {
+                !matches!(series.series_type, SeriesType::Line { .. })
+                    || series.marker_style.is_none()
+            });
+            if parallel_safe_for_markers
+                && self
+                    .render
+                    .parallel_renderer
+                    .should_use_parallel(series_count, total_points)
             {
                 return self.render_with_parallel();
             }
@@ -5973,6 +5990,12 @@ impl Plot {
 
                     if points.len() >= 2 {
                         renderer.draw_polyline(&points, color, line_width, line_style)?;
+                    }
+                    if let Some(marker_style) = series.marker_style {
+                        let marker_size_px = self.line_width_px(series.marker_size.unwrap_or(8.0));
+                        for &(px, py) in &points {
+                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                        }
                     }
 
                     // Draw attached error bars if present
@@ -6542,6 +6565,12 @@ impl Plot {
                     if points.len() >= 2 {
                         renderer.draw_polyline(&points, color, line_width, line_style)?;
                     }
+                    if let Some(marker_style) = series.marker_style {
+                        let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
+                        for &(px, py) in &points {
+                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                        }
+                    }
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
@@ -6782,10 +6811,7 @@ impl Plot {
         true
     }
 
-    fn apply_manual_axis_limits(
-        &self,
-        bounds: (f64, f64, f64, f64),
-    ) -> (f64, f64, f64, f64) {
+    fn apply_manual_axis_limits(&self, bounds: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
         let (mut x_min, mut x_max, mut y_min, mut y_max) = bounds;
 
         if let Some((x_min_manual, x_max_manual)) = self.layout.x_limits {
@@ -10002,6 +10028,13 @@ impl Plot {
                         .collect();
 
                     svg.draw_polyline(&points, color, line_width, line_style);
+                    if series.marker_style.is_some() {
+                        let marker_size =
+                            render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
+                        for &(px, py) in &points {
+                            svg.draw_marker(px, py, marker_size, color);
+                        }
+                    }
                 }
                 SeriesType::Scatter { x_data, y_data } => {
                     let x_data = x_data.resolve(0.0);
