@@ -280,6 +280,22 @@ impl DataShader {
         (width, height)
     }
 
+    fn validate_explicit_bounds(x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> Result<()> {
+        if !x_min.is_finite() || !x_max.is_finite() || !y_min.is_finite() || !y_max.is_finite() {
+            return Err(PlottingError::InvalidInput(format!(
+                "DataShader bounds must be finite, got x=({x_min}, {x_max}), y=({y_min}, {y_max})"
+            )));
+        }
+
+        if x_min >= x_max || y_min >= y_max {
+            return Err(PlottingError::InvalidInput(format!(
+                "DataShader bounds must satisfy x_min < x_max and y_min < y_max, got x=({x_min}, {x_max}), y=({y_min}, {y_max})"
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Set data bounds
     pub fn set_bounds(&mut self, min_x: f64, min_y: f64, max_x: f64, max_y: f64) {
         let bounds = BoundingBox::new(min_x as f32, max_x as f32, min_y as f32, max_y as f32);
@@ -307,6 +323,40 @@ impl DataShader {
         let y_max = y_data.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
 
         self.set_bounds(x_min, y_min, x_max, y_max);
+
+        self.aggregate_with_current_bounds(x_data, y_data)
+    }
+
+    /// Aggregate data points using explicit `x_min/x_max/y_min/y_max` bounds
+    /// instead of auto-fitting to the data.
+    pub fn aggregate_with_bounds(
+        &mut self,
+        x_data: &[f64],
+        y_data: &[f64],
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        if x_data.len() != y_data.len() {
+            return Err(PlottingError::DataLengthMismatch {
+                x_len: x_data.len(),
+                y_len: y_data.len(),
+                series_index: None,
+            });
+        }
+
+        if x_data.is_empty() {
+            return Err(PlottingError::EmptyDataSet);
+        }
+
+        Self::validate_explicit_bounds(x_min, x_max, y_min, y_max)?;
+        self.set_bounds(x_min, y_min, x_max, y_max);
+        self.aggregate_with_current_bounds(x_data, y_data)
+    }
+
+    fn aggregate_with_current_bounds(&mut self, x_data: &[f64], y_data: &[f64]) -> Result<()> {
+        self.canvas.clear();
 
         // Create point tuples and aggregate
         let points: Vec<(f64, f64)> = x_data
@@ -422,5 +472,57 @@ mod tests {
         assert_eq!(image.width, 10);
         assert_eq!(image.height, 10);
         assert_eq!(image.pixels.len(), 10 * 10 * 4); // RGBA
+    }
+
+    #[test]
+    fn test_datashader_aggregate_with_explicit_bounds_uses_named_order() {
+        let mut ds = DataShader::with_canvas_size(16, 16);
+        let x_data = vec![0.25, 0.75];
+        let y_data = vec![10.5, 19.5];
+
+        ds.aggregate_with_bounds(&x_data, &y_data, 0.0, 1.0, 10.0, 20.0)
+            .unwrap();
+
+        let bounds = ds.canvas.bounds();
+        assert_eq!(bounds.min_x, 0.0);
+        assert_eq!(bounds.max_x, 1.0);
+        assert_eq!(bounds.min_y, 10.0);
+        assert_eq!(bounds.max_y, 20.0);
+    }
+
+    #[test]
+    fn test_datashader_aggregate_with_explicit_bounds_rejects_invalid_range() {
+        let mut ds = DataShader::with_canvas_size(16, 16);
+        let x_data = vec![0.25, 0.75];
+        let y_data = vec![10.5, 19.5];
+
+        let err = ds
+            .aggregate_with_bounds(&x_data, &y_data, 1.0, 0.0, 10.0, 20.0)
+            .unwrap_err();
+
+        match err {
+            PlottingError::InvalidInput(message) => {
+                assert!(message.contains("x_min < x_max"));
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_datashader_aggregate_with_explicit_bounds_rejects_non_finite_values() {
+        let mut ds = DataShader::with_canvas_size(16, 16);
+        let x_data = vec![0.25, 0.75];
+        let y_data = vec![10.5, 19.5];
+
+        let err = ds
+            .aggregate_with_bounds(&x_data, &y_data, f64::NAN, 1.0, 10.0, 20.0)
+            .unwrap_err();
+
+        match err {
+            PlottingError::InvalidInput(message) => {
+                assert!(message.contains("must be finite"));
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
     }
 }

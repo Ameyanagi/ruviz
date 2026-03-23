@@ -615,8 +615,9 @@ let dendro = compute_dendrogram(&linkage_result, &config);
 Default rendering is optimal. No special configuration needed.
 
 ### Medium Datasets (1K - 100K points)
-For non-reactive plots, the `parallel` feature can speed up the in-memory
-`render()` path.
+The `parallel` feature can speed up the in-memory `render()` path. Reactive
+plots are resolved to a static snapshot first, so observable-backed series can
+use the same path as static data.
 
 ```toml
 [dependencies]

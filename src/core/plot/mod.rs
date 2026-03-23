@@ -49,16 +49,24 @@ mod config;
 mod configuration;
 pub mod data;
 mod image;
+mod interactive_session;
 mod layout_manager;
+mod prepared;
 mod render_pipeline;
 mod series_manager;
 
 pub use builder::{IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{BackendType, GridMode, TickDirection, TickSides};
 pub use configuration::{PlotConfiguration, TextEngineMode};
-pub use data::{IntoPlotData, PlotData, PlotText};
+pub use data::{IntoPlotData, PlotData, PlotSource, PlotText, ReactiveValue};
 pub use image::Image;
+pub use interactive_session::{
+    DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget, InteractiveFrame,
+    InteractivePlotSession, LayerRenderState, PlotInputEvent, QualityPolicy, RenderTargetKind,
+    SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
+};
 pub use layout_manager::LayoutManager;
+pub use prepared::{PreparedPlot, ReactiveSubscription};
 pub use render_pipeline::RenderPipeline;
 pub use series_manager::SeriesManager;
 
@@ -88,7 +96,10 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     path::Path,
+    sync::Arc,
 };
+
+use self::data::{ReactiveTeardown, SharedReactiveCallback};
 
 #[cfg(feature = "parallel")]
 use crate::render::{ParallelRenderer, SeriesRenderData};
@@ -277,20 +288,34 @@ impl PendingIngestionError {
 pub(crate) struct PlotSeries {
     /// Series type
     series_type: SeriesType,
+    /// Original paired streaming source for line/scatter streaming series.
+    streaming_source: Option<StreamingXY>,
     /// Series label for legend
     label: Option<String>,
     /// Series color (None for auto-color)
     color: Option<Color>,
+    /// Reactive series color sampled at render time.
+    color_source: Option<ReactiveValue<Color>>,
     /// Line width override
     line_width: Option<f32>,
+    /// Reactive line width sampled at render time.
+    line_width_source: Option<ReactiveValue<f32>>,
     /// Line style override
     line_style: Option<LineStyle>,
+    /// Reactive line style sampled at render time.
+    line_style_source: Option<ReactiveValue<LineStyle>>,
     /// Marker style for scatter plots
     marker_style: Option<MarkerStyle>,
+    /// Reactive marker style sampled at render time.
+    marker_style_source: Option<ReactiveValue<MarkerStyle>>,
     /// Marker size for scatter plots
     marker_size: Option<f32>,
+    /// Reactive marker size sampled at render time.
+    marker_size_source: Option<ReactiveValue<f32>>,
     /// Alpha/transparency override
     alpha: Option<f32>,
+    /// Reactive alpha sampled at render time.
+    alpha_source: Option<ReactiveValue<f32>>,
     /// Optional Y error bar data (attached to series)
     y_errors: Option<ErrorValues>,
     /// Optional X error bar data (attached to series)
@@ -302,6 +327,84 @@ pub(crate) struct PlotSeries {
 }
 
 impl PlotSeries {
+    fn set_color_source_value(&mut self, color: ReactiveValue<Color>) {
+        match color {
+            ReactiveValue::Static(color) => {
+                self.color = Some(color);
+                self.color_source = None;
+            }
+            source => {
+                self.color = None;
+                self.color_source = Some(source);
+            }
+        }
+    }
+
+    fn set_line_width_source_value(&mut self, width: ReactiveValue<f32>) {
+        match width {
+            ReactiveValue::Static(width) => {
+                self.line_width = Some(width.max(0.1));
+                self.line_width_source = None;
+            }
+            source => {
+                self.line_width = None;
+                self.line_width_source = Some(source);
+            }
+        }
+    }
+
+    fn set_line_style_source_value(&mut self, style: ReactiveValue<LineStyle>) {
+        match style {
+            ReactiveValue::Static(style) => {
+                self.line_style = Some(style);
+                self.line_style_source = None;
+            }
+            source => {
+                self.line_style = None;
+                self.line_style_source = Some(source);
+            }
+        }
+    }
+
+    fn set_marker_style_source_value(&mut self, marker: ReactiveValue<MarkerStyle>) {
+        match marker {
+            ReactiveValue::Static(marker) => {
+                self.marker_style = Some(marker);
+                self.marker_style_source = None;
+            }
+            source => {
+                self.marker_style = None;
+                self.marker_style_source = Some(source);
+            }
+        }
+    }
+
+    fn set_marker_size_source_value(&mut self, size: ReactiveValue<f32>) {
+        match size {
+            ReactiveValue::Static(size) => {
+                self.marker_size = Some(size.max(0.1));
+                self.marker_size_source = None;
+            }
+            source => {
+                self.marker_size = None;
+                self.marker_size_source = Some(source);
+            }
+        }
+    }
+
+    fn set_alpha_source_value(&mut self, alpha: ReactiveValue<f32>) {
+        match alpha {
+            ReactiveValue::Static(alpha) => {
+                self.alpha = Some(alpha.clamp(0.0, 1.0));
+                self.alpha_source = None;
+            }
+            source => {
+                self.alpha = None;
+                self.alpha_source = Some(source);
+            }
+        }
+    }
+
     fn to_legend_item_with_label(
         &self,
         label: String,
@@ -329,15 +432,15 @@ impl PlotSeries {
         default_color: Color,
         theme: &Theme,
     ) -> Option<LegendItem> {
-        let color = self.color.unwrap_or(default_color);
-        let line_width = self.line_width.unwrap_or(theme.line_width);
-        let line_style = self.line_style.clone().unwrap_or(LineStyle::Solid);
-        let marker_style = self.marker_style.unwrap_or(MarkerStyle::Circle);
-        let marker_size = self.marker_size.unwrap_or(6.0);
+        let color = self.resolved_color(default_color, 0.0);
+        let line_width = self.resolved_line_width(theme.line_width, 0.0);
+        let line_style = self.resolved_line_style(LineStyle::Solid, 0.0);
+        let marker_style = self.resolved_marker_style(MarkerStyle::Circle, 0.0);
+        let marker_size = self.resolved_marker_size(6.0, 0.0);
 
         let item_type = match &self.series_type {
             SeriesType::Line { .. } => {
-                if self.marker_style.is_some() {
+                if self.marker_style.is_some() || self.marker_style_source.is_some() {
                     LegendItemType::LineMarker {
                         line_style,
                         line_width,
@@ -391,8 +494,8 @@ impl PlotSeries {
     ///
     /// Returns a Vec of legend items, expanding radar series into individual entries per data series.
     fn to_legend_items(&self, base_color_idx: usize, theme: &Theme) -> Vec<LegendItem> {
-        let line_width = self.line_width.unwrap_or(theme.line_width);
-        let line_style = self.line_style.clone().unwrap_or(LineStyle::Solid);
+        let line_width = self.resolved_line_width(theme.line_width, 0.0);
+        let line_style = self.resolved_line_style(LineStyle::Solid, 0.0);
 
         match &self.series_type {
             SeriesType::Radar { data } => {
@@ -430,6 +533,251 @@ impl PlotSeries {
                     .collect()
             }
         }
+    }
+
+    fn collect_source_versions(&self, versions: &mut Vec<u64>) {
+        self.series_type.collect_source_versions(versions);
+        if let Some(version) = self
+            .color_source
+            .as_ref()
+            .and_then(ReactiveValue::current_version)
+        {
+            versions.push(version);
+        }
+        if let Some(version) = self
+            .line_width_source
+            .as_ref()
+            .and_then(ReactiveValue::current_version)
+        {
+            versions.push(version);
+        }
+        if let Some(version) = self
+            .line_style_source
+            .as_ref()
+            .and_then(ReactiveValue::current_version)
+        {
+            versions.push(version);
+        }
+        if let Some(version) = self
+            .marker_style_source
+            .as_ref()
+            .and_then(ReactiveValue::current_version)
+        {
+            versions.push(version);
+        }
+        if let Some(version) = self
+            .marker_size_source
+            .as_ref()
+            .and_then(ReactiveValue::current_version)
+        {
+            versions.push(version);
+        }
+        if let Some(version) = self
+            .alpha_source
+            .as_ref()
+            .and_then(ReactiveValue::current_version)
+        {
+            versions.push(version);
+        }
+    }
+
+    fn is_reactive(&self) -> bool {
+        self.series_type.is_reactive()
+            || self
+                .color_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .line_width_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .line_style_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .marker_style_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .marker_size_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .alpha_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+    }
+
+    fn has_temporal_sources(&self) -> bool {
+        self.series_type.has_temporal_sources()
+            || self
+                .color_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_temporal)
+            || self
+                .line_width_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_temporal)
+            || self
+                .line_style_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_temporal)
+            || self
+                .marker_style_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_temporal)
+            || self
+                .marker_size_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_temporal)
+            || self
+                .alpha_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_temporal)
+    }
+
+    fn has_reactive_style_sources(&self) -> bool {
+        self.color_source
+            .as_ref()
+            .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .line_width_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .line_style_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .marker_style_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .marker_size_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+            || self
+                .alpha_source
+                .as_ref()
+                .is_some_and(ReactiveValue::is_reactive)
+    }
+
+    fn mark_rendered_sources(&self) {
+        self.series_type.mark_rendered_sources();
+    }
+
+    fn subscribe_push_updates(
+        &self,
+        callback: &SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) {
+        if let Some(stream) = &self.streaming_source {
+            let stream = stream.clone();
+            let callback = Arc::clone(callback);
+            let id = stream.subscribe_paired(move || callback());
+            teardowns.push(Box::new(move || {
+                stream.unsubscribe_paired(id);
+            }));
+        } else {
+            self.series_type.subscribe_push_updates(callback, teardowns);
+        }
+        if let Some(color_source) = &self.color_source {
+            color_source.subscribe_push_updates(Arc::clone(callback), teardowns);
+        }
+        if let Some(line_width_source) = &self.line_width_source {
+            line_width_source.subscribe_push_updates(Arc::clone(callback), teardowns);
+        }
+        if let Some(line_style_source) = &self.line_style_source {
+            line_style_source.subscribe_push_updates(Arc::clone(callback), teardowns);
+        }
+        if let Some(marker_style_source) = &self.marker_style_source {
+            marker_style_source.subscribe_push_updates(Arc::clone(callback), teardowns);
+        }
+        if let Some(marker_size_source) = &self.marker_size_source {
+            marker_size_source.subscribe_push_updates(Arc::clone(callback), teardowns);
+        }
+        if let Some(alpha_source) = &self.alpha_source {
+            alpha_source.subscribe_push_updates(Arc::clone(callback), teardowns);
+        }
+    }
+
+    fn resolved_color(&self, default_color: Color, time: f64) -> Color {
+        self.color_source
+            .as_ref()
+            .map(|source| source.resolve(time))
+            .or(self.color)
+            .unwrap_or(default_color)
+    }
+
+    fn resolved_line_width(&self, default_width: f32, time: f64) -> f32 {
+        self.line_width_source
+            .as_ref()
+            .map(|source| source.resolve(time))
+            .or(self.line_width)
+            .unwrap_or(default_width)
+            .max(0.1)
+    }
+
+    fn resolved_line_style(&self, default_style: LineStyle, time: f64) -> LineStyle {
+        self.line_style_source
+            .as_ref()
+            .map(|source| source.resolve(time))
+            .or_else(|| self.line_style.clone())
+            .unwrap_or(default_style)
+    }
+
+    fn resolved_marker_style(&self, default_style: MarkerStyle, time: f64) -> MarkerStyle {
+        self.marker_style_source
+            .as_ref()
+            .map(|source| source.resolve(time))
+            .or(self.marker_style)
+            .unwrap_or(default_style)
+    }
+
+    fn resolved_marker_size(&self, default_size: f32, time: f64) -> f32 {
+        self.marker_size_source
+            .as_ref()
+            .map(|source| source.resolve(time))
+            .or(self.marker_size)
+            .unwrap_or(default_size)
+            .max(0.1)
+    }
+
+    fn resolved_alpha(&self, default_alpha: f32, time: f64) -> f32 {
+        self.alpha_source
+            .as_ref()
+            .map(|source| source.resolve(time))
+            .or(self.alpha)
+            .unwrap_or(default_alpha)
+            .clamp(0.0, 1.0)
+    }
+
+    fn resolve_style_sources(&mut self, time: f64) {
+        if let Some(color_source) = &self.color_source {
+            self.color = Some(color_source.resolve(time));
+        }
+        self.color_source = None;
+        if let Some(line_width_source) = &self.line_width_source {
+            self.line_width = Some(line_width_source.resolve(time).max(0.1));
+        }
+        self.line_width_source = None;
+        if let Some(line_style_source) = &self.line_style_source {
+            self.line_style = Some(line_style_source.resolve(time));
+        }
+        self.line_style_source = None;
+        if let Some(marker_style_source) = &self.marker_style_source {
+            self.marker_style = Some(marker_style_source.resolve(time));
+        }
+        self.marker_style_source = None;
+        if let Some(marker_size_source) = &self.marker_size_source {
+            self.marker_size = Some(marker_size_source.resolve(time).max(0.1));
+        }
+        self.marker_size_source = None;
+        if let Some(alpha_source) = &self.alpha_source {
+            self.alpha = Some(alpha_source.resolve(time).clamp(0.0, 1.0));
+        }
+        self.alpha_source = None;
     }
 }
 
@@ -505,6 +853,13 @@ pub(crate) enum SeriesType {
 }
 
 impl SeriesType {
+    pub(crate) fn supports_interactive_surface_fast_path(&self) -> bool {
+        matches!(
+            self,
+            SeriesType::Line { .. } | SeriesType::Scatter { .. } | SeriesType::Heatmap { .. }
+        )
+    }
+
     /// Check if this series contains any reactive data
     pub fn is_reactive(&self) -> bool {
         match self {
@@ -531,6 +886,153 @@ impl SeriesType {
             SeriesType::BoxPlot { data, .. } => data.is_reactive(),
             // Other types use their own data structures, not PlotData
             _ => false,
+        }
+    }
+
+    fn has_temporal_sources(&self) -> bool {
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                x_data.is_temporal() || y_data.is_temporal()
+            }
+            SeriesType::Bar { values, .. } => values.is_temporal(),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => x_data.is_temporal() || y_data.is_temporal() || y_errors.is_temporal(),
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                x_data.is_temporal()
+                    || y_data.is_temporal()
+                    || x_errors.is_temporal()
+                    || y_errors.is_temporal()
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                data.is_temporal()
+            }
+            _ => false,
+        }
+    }
+
+    fn collect_source_versions(&self, versions: &mut Vec<u64>) {
+        let push = |data: &PlotData, versions: &mut Vec<u64>| {
+            if let Some(version) = data.current_version() {
+                versions.push(version);
+            }
+        };
+
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                push(x_data, versions);
+                push(y_data, versions);
+            }
+            SeriesType::Bar { values, .. } => push(values, versions),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                push(x_data, versions);
+                push(y_data, versions);
+                push(y_errors, versions);
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                push(x_data, versions);
+                push(y_data, versions);
+                push(x_errors, versions);
+                push(y_errors, versions);
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                push(data, versions);
+            }
+            _ => {}
+        }
+    }
+
+    fn mark_rendered_sources(&self) {
+        let mark = |data: &PlotData| data.mark_rendered();
+
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                mark(x_data);
+                mark(y_data);
+            }
+            SeriesType::Bar { values, .. } => mark(values),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                mark(x_data);
+                mark(y_data);
+                mark(y_errors);
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                mark(x_data);
+                mark(y_data);
+                mark(x_errors);
+                mark(y_errors);
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                mark(data);
+            }
+            _ => {}
+        }
+    }
+
+    fn subscribe_push_updates(
+        &self,
+        callback: &SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) {
+        let subscribe = |data: &PlotData, teardowns: &mut Vec<ReactiveTeardown>| {
+            data.subscribe_push_updates(Arc::clone(callback), teardowns);
+        };
+
+        match self {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                subscribe(x_data, teardowns);
+                subscribe(y_data, teardowns);
+            }
+            SeriesType::Bar { values, .. } => subscribe(values, teardowns),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                subscribe(x_data, teardowns);
+                subscribe(y_data, teardowns);
+                subscribe(y_errors, teardowns);
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                subscribe(x_data, teardowns);
+                subscribe(y_data, teardowns);
+                subscribe(x_errors, teardowns);
+                subscribe(y_errors, teardowns);
+            }
+            SeriesType::Histogram { data, .. } | SeriesType::BoxPlot { data, .. } => {
+                subscribe(data, teardowns);
+            }
+            _ => {}
         }
     }
 
@@ -863,6 +1365,16 @@ impl Plot {
         plot
     }
 
+    /// Create a reusable prepared runtime for repeated frame rendering.
+    pub fn prepare(&self) -> PreparedPlot {
+        PreparedPlot::new(self.clone())
+    }
+
+    /// Prepare a shared interactive rendering session for repeated viewport-aware frames.
+    pub fn prepare_interactive(&self) -> InteractivePlotSession {
+        InteractivePlotSession::new(self.prepare())
+    }
+
     /// Create a new Plot with a preset style
     ///
     /// # Example
@@ -1116,15 +1628,17 @@ impl Plot {
     ///     .save("titled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn title<S: Into<String>>(mut self, title: S) -> Self {
-        self.display.title = Some(data::PlotText::Static(title.into()));
+    pub fn title(mut self, title: impl Into<data::PlotText>) -> Self {
+        self.display.title = Some(title.into());
         self
     }
 
-    /// Set the plot title as a reactive signal.
+    /// Set the plot title as reactive text.
     ///
-    /// This stores signal-backed text on the plot. Time-aware rendering via
-    /// `render_at()` is still evolving, so this is primarily a data-model API today.
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     ///
     /// # Example
     ///
@@ -1159,12 +1673,17 @@ impl Plot {
     ///     .save("labeled.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.display.xlabel = Some(data::PlotText::Static(label.into()));
+    pub fn xlabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.display.xlabel = Some(label.into());
         self
     }
 
-    /// Set the X-axis label as a reactive signal.
+    /// Set the X-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn xlabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.display.xlabel = Some(label.into());
         self
@@ -1184,12 +1703,17 @@ impl Plot {
     ///     .save("ylabel.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.display.ylabel = Some(data::PlotText::Static(label.into()));
+    pub fn ylabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.display.ylabel = Some(label.into());
         self
     }
 
-    /// Set the Y-axis label as a reactive signal.
+    /// Set the Y-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn ylabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.display.ylabel = Some(label.into());
         self
@@ -1694,6 +2218,124 @@ impl Plot {
             .collect()
     }
 
+    fn resolved_plot(&self, time: f64) -> Plot {
+        let mut resolved = self.clone();
+        resolved.series_mgr.series = self.snapshot_series(time);
+        for series in &mut resolved.series_mgr.series {
+            series.resolve_style_sources(time);
+        }
+        resolved.display.title = self
+            .display
+            .title
+            .as_ref()
+            .map(|title| data::PlotText::Static(title.resolve(time)));
+        resolved.display.xlabel = self
+            .display
+            .xlabel
+            .as_ref()
+            .map(|label| data::PlotText::Static(label.resolve(time)));
+        resolved.display.ylabel = self
+            .display
+            .ylabel
+            .as_ref()
+            .map(|label| data::PlotText::Static(label.resolve(time)));
+        resolved
+    }
+
+    pub(crate) fn prepared_frame_plot(
+        &self,
+        size_px: (u32, u32),
+        scale_factor: f32,
+        time: f64,
+    ) -> Plot {
+        let device_scale = Self::sanitize_prepared_scale_factor(scale_factor);
+        let dpi = (crate::core::REFERENCE_DPI * device_scale).round() as u32;
+
+        self.resolved_plot(time)
+            .dpi(dpi)
+            .set_output_pixels(size_px.0, size_px.1)
+    }
+
+    pub(crate) fn sanitize_prepared_scale_factor(scale_factor: f32) -> f32 {
+        let min_device_scale = crate::core::constants::dpi::MIN as f32 / crate::core::REFERENCE_DPI;
+        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            1.0
+        } else {
+            scale_factor.max(min_device_scale)
+        }
+    }
+
+    fn has_temporal_sources(&self) -> bool {
+        self.display
+            .title
+            .as_ref()
+            .is_some_and(|title| title.is_temporal())
+            || self
+                .display
+                .xlabel
+                .as_ref()
+                .is_some_and(|label| label.is_temporal())
+            || self
+                .display
+                .ylabel
+                .as_ref()
+                .is_some_and(|label| label.is_temporal())
+            || self
+                .series_mgr
+                .series
+                .iter()
+                .any(PlotSeries::has_temporal_sources)
+    }
+
+    pub(crate) fn collect_reactive_versions(&self) -> Vec<u64> {
+        let mut versions = Vec::new();
+        for text in [
+            self.display.title.as_ref(),
+            self.display.xlabel.as_ref(),
+            self.display.ylabel.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(version) = text.current_version() {
+                versions.push(version);
+            }
+        }
+
+        for series in &self.series_mgr.series {
+            series.collect_source_versions(&mut versions);
+        }
+
+        versions
+    }
+
+    pub(crate) fn subscribe_push_updates(
+        &self,
+        callback: SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) {
+        for text in [
+            self.display.title.as_ref(),
+            self.display.xlabel.as_ref(),
+            self.display.ylabel.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            text.subscribe_push_updates(Arc::clone(&callback), teardowns);
+        }
+
+        for series in &self.series_mgr.series {
+            series.subscribe_push_updates(&callback, teardowns);
+        }
+    }
+
+    fn mark_reactive_sources_rendered(&self) {
+        for series in &self.series_mgr.series {
+            series.mark_rendered_sources();
+        }
+    }
+
     /// Get font size in pixels for rendering
     fn font_size_px(&self, points: f32) -> f32 {
         self.render_scale().points_to_pixels(points)
@@ -1851,6 +2493,23 @@ impl Plot {
         )
     }
 
+    /// Add a line series from source-backed data.
+    pub fn line_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::LineConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        PlotBuilder::new(
+            self,
+            PlotInput::XYSource(x_data.into_plot_data(), y_data.into_plot_data()),
+            crate::plots::basic::LineConfig::default(),
+        )
+    }
+
     /// Add a line plot series from streaming data
     ///
     /// This method reads the current data from the StreamingXY buffer at render time.
@@ -1886,27 +2545,30 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        // Read current data from the streaming buffer
-        let x_data = PlotData::Static(stream.read_x());
-        let y_data = PlotData::Static(stream.read_y());
+        let x_data = PlotData::Streaming(stream.x().clone());
+        let y_data = PlotData::Streaming(stream.y().clone());
 
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
+            streaming_source: Some(stream.clone()),
             label: None,
             color: None,
+            color_source: None,
             line_width: None,
+            line_width_source: None,
             line_style: None,
+            line_style_source: None,
             marker_style: None,
+            marker_style_source: None,
             marker_size: None,
+            marker_size_source: None,
             alpha: None,
+            alpha_source: None,
             y_errors: None,
             x_errors: None,
             error_config: None,
             group_id: None,
         };
-
-        // Mark as rendered so partial updates can be tracked
-        stream.mark_rendered();
 
         PlotSeriesBuilder::new(self, series)
     }
@@ -1973,6 +2635,23 @@ impl Plot {
         )
     }
 
+    /// Add a scatter series from source-backed data.
+    pub fn scatter_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        PlotBuilder::new(
+            self,
+            PlotInput::XYSource(x_data.into_plot_data(), y_data.into_plot_data()),
+            crate::plots::basic::ScatterConfig::default(),
+        )
+    }
+
     /// Add a scatter plot series from streaming data
     ///
     /// Similar to `line_streaming`, reads current data from the buffer at render time.
@@ -1993,25 +2672,30 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        let x_data = PlotData::Static(stream.read_x());
-        let y_data = PlotData::Static(stream.read_y());
+        let x_data = PlotData::Streaming(stream.x().clone());
+        let y_data = PlotData::Streaming(stream.y().clone());
 
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
+            streaming_source: Some(stream.clone()),
             label: None,
             color: None,
+            color_source: None,
             line_width: None,
+            line_width_source: None,
             line_style: None,
+            line_style_source: None,
             marker_style: Some(MarkerStyle::Circle),
+            marker_style_source: None,
             marker_size: None,
+            marker_size_source: None,
             alpha: None,
+            alpha_source: None,
             y_errors: None,
             x_errors: None,
             error_config: None,
             group_id: None,
         };
-
-        stream.mark_rendered();
 
         PlotSeriesBuilder::new(self, series)
     }
@@ -2076,6 +2760,26 @@ impl Plot {
         )
     }
 
+    /// Add a bar series from source-backed values.
+    pub fn bar_source<S, V>(
+        self,
+        categories: &[S],
+        values: V,
+    ) -> PlotBuilder<crate::plots::basic::BarConfig>
+    where
+        S: ToString,
+        V: IntoPlotData,
+    {
+        PlotBuilder::new(
+            self,
+            PlotInput::CategoricalSource {
+                categories: categories.iter().map(ToString::to_string).collect(),
+                values: values.into_plot_data(),
+            },
+            crate::plots::basic::BarConfig::default(),
+        )
+    }
+
     /// Add a histogram plot series
     ///
     /// Creates a histogram showing the distribution of data values.
@@ -2115,13 +2819,20 @@ impl Plot {
                 data: PlotData::Static(data_vec),
                 config: hist_config,
             },
+            streaming_source: None,
             label: None,
             color: None,
+            color_source: None,
             line_width: None,
+            line_width_source: None,
             line_style: None,
+            line_style_source: None,
             marker_style: None,
+            marker_style_source: None,
             marker_size: None,
+            marker_size_source: None,
             alpha: None,
+            alpha_source: None,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -2129,6 +2840,40 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(plot, series)
+    }
+
+    /// Add a histogram series from source-backed values.
+    pub fn histogram_source<D: IntoPlotData>(
+        self,
+        data: D,
+        config: Option<HistogramConfig>,
+    ) -> PlotSeriesBuilder {
+        let series = PlotSeries {
+            series_type: SeriesType::Histogram {
+                data: data.into_plot_data(),
+                config: config.unwrap_or_default(),
+            },
+            streaming_source: None,
+            label: None,
+            color: None,
+            color_source: None,
+            line_width: None,
+            line_width_source: None,
+            line_style: None,
+            line_style_source: None,
+            marker_style: None,
+            marker_style_source: None,
+            marker_size: None,
+            marker_size_source: None,
+            alpha: None,
+            alpha_source: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
     }
 
     /// Add a box plot series
@@ -2173,13 +2918,20 @@ impl Plot {
                 data: PlotData::Static(data_vec),
                 config: box_config,
             },
+            streaming_source: None,
             label: None,
             color: None,
+            color_source: None,
             line_width: None,
+            line_width_source: None,
             line_style: None,
+            line_style_source: None,
             marker_style: None,
+            marker_style_source: None,
             marker_size: None,
+            marker_size_source: None,
             alpha: None,
+            alpha_source: None,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -2187,6 +2939,40 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(plot, series)
+    }
+
+    /// Add a box plot series from source-backed values.
+    pub fn boxplot_source<D: IntoPlotData>(
+        self,
+        data: D,
+        config: Option<BoxPlotConfig>,
+    ) -> PlotSeriesBuilder {
+        let series = PlotSeries {
+            series_type: SeriesType::BoxPlot {
+                data: data.into_plot_data(),
+                config: config.unwrap_or_default(),
+            },
+            streaming_source: None,
+            label: None,
+            color: None,
+            color_source: None,
+            line_width: None,
+            line_width_source: None,
+            line_style: None,
+            line_style_source: None,
+            marker_style: None,
+            marker_style_source: None,
+            marker_size: None,
+            marker_size_source: None,
+            alpha: None,
+            alpha_source: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
     }
 
     /// Add a heatmap visualization for 2D array data
@@ -2235,13 +3021,20 @@ impl Plot {
             Ok(heatmap_data) => {
                 let series = PlotSeries {
                     series_type: SeriesType::Heatmap { data: heatmap_data },
+                    streaming_source: None,
                     label: None,
                     color: None,
+                    color_source: None,
                     line_width: None,
+                    line_width_source: None,
                     line_style: None,
+                    line_style_source: None,
                     marker_style: None,
+                    marker_style_source: None,
                     marker_size: None,
+                    marker_size_source: None,
                     alpha: None,
+                    alpha_source: None,
                     y_errors: None,
                     x_errors: None,
                     error_config: None,
@@ -2269,13 +3062,20 @@ impl Plot {
                             config: crate::plots::heatmap::HeatmapConfig::default(),
                         },
                     },
+                    streaming_source: None,
                     label: None,
                     color: None,
+                    color_source: None,
                     line_width: None,
+                    line_width_source: None,
                     line_style: None,
+                    line_style_source: None,
                     marker_style: None,
+                    marker_style_source: None,
                     marker_size: None,
+                    marker_size_source: None,
                     alpha: None,
+                    alpha_source: None,
                     y_errors: None,
                     x_errors: None,
                     error_config: None,
@@ -2322,13 +3122,20 @@ impl Plot {
                 y_data: PlotData::Static(y_vec),
                 y_errors: PlotData::Static(e_vec),
             },
+            streaming_source: None,
             label: None,
             color: None,
+            color_source: None,
             line_width: None,
+            line_width_source: None,
             line_style: None,
+            line_style_source: None,
             marker_style: None,
+            marker_style_source: None,
             marker_size: None,
+            marker_size_source: None,
             alpha: None,
+            alpha_source: None,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -2336,6 +3143,42 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(plot, series)
+    }
+
+    /// Add error bars from source-backed X, Y, and Y-error data.
+    pub fn error_bars_source<X, Y, E>(self, x_data: X, y_data: Y, y_errors: E) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        E: IntoPlotData,
+    {
+        let series = PlotSeries {
+            series_type: SeriesType::ErrorBars {
+                x_data: x_data.into_plot_data(),
+                y_data: y_data.into_plot_data(),
+                y_errors: y_errors.into_plot_data(),
+            },
+            streaming_source: None,
+            label: None,
+            color: None,
+            color_source: None,
+            line_width: None,
+            line_width_source: None,
+            line_style: None,
+            line_style_source: None,
+            marker_style: None,
+            marker_style_source: None,
+            marker_size: None,
+            marker_size_source: None,
+            alpha: None,
+            alpha_source: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
     }
 
     /// Add error bars in both X and Y directions
@@ -2389,13 +3232,20 @@ impl Plot {
                 x_errors: PlotData::Static(ex_vec),
                 y_errors: PlotData::Static(ey_vec),
             },
+            streaming_source: None,
             label: None,
             color: None,
+            color_source: None,
             line_width: None,
+            line_width_source: None,
             line_style: None,
+            line_style_source: None,
             marker_style: None,
+            marker_style_source: None,
             marker_size: None,
+            marker_size_source: None,
             alpha: None,
+            alpha_source: None,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -2403,6 +3253,50 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(plot, series)
+    }
+
+    /// Add X/Y error bars from source-backed data.
+    pub fn error_bars_xy_source<X, Y, EX, EY>(
+        self,
+        x_data: X,
+        y_data: Y,
+        x_errors: EX,
+        y_errors: EY,
+    ) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        EX: IntoPlotData,
+        EY: IntoPlotData,
+    {
+        let series = PlotSeries {
+            series_type: SeriesType::ErrorBarsXY {
+                x_data: x_data.into_plot_data(),
+                y_data: y_data.into_plot_data(),
+                x_errors: x_errors.into_plot_data(),
+                y_errors: y_errors.into_plot_data(),
+            },
+            streaming_source: None,
+            label: None,
+            color: None,
+            color_source: None,
+            line_width: None,
+            line_width_source: None,
+            line_style: None,
+            line_style_source: None,
+            marker_style: None,
+            marker_style_source: None,
+            marker_size: None,
+            marker_size_source: None,
+            alpha: None,
+            alpha_source: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        PlotSeriesBuilder::new(self, series)
     }
 
     /// Add a KDE (Kernel Density Estimation) plot
@@ -3412,17 +4306,24 @@ impl Plot {
                 x_data: PlotData::Static(x_vec),
                 y_data: PlotData::Static(y_vec),
             },
+            streaming_source: None,
             label: None,
             color: Some(
                 self.display
                     .theme
                     .get_color(self.series_mgr.auto_color_index),
             ),
+            color_source: None,
             line_width: None,
+            line_width_source: None,
             line_style: None,
+            line_style_source: None,
             marker_style: None,
+            marker_style_source: None,
             marker_size: None,
+            marker_size_source: None,
             alpha: None,
+            alpha_source: None,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3445,6 +4346,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Kde { data: kde_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -3453,11 +4355,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width,
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha,
+            alpha_source: style.alpha_source,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3477,6 +4385,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Ecdf { data: ecdf_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -3485,11 +4394,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width,
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha,
+            alpha_source: style.alpha_source,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3509,6 +4424,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Contour { data: contour_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -3517,11 +4433,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width,
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha,
+            alpha_source: style.alpha_source,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3541,6 +4463,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Pie { data: pie_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -3549,11 +4472,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width,
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha,
+            alpha_source: style.alpha_source,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3573,6 +4502,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Radar { data: radar_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -3581,11 +4511,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width,
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha,
+            alpha_source: style.alpha_source,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3605,6 +4541,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Violin { data: violin_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -3613,11 +4550,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width,
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha,
+            alpha_source: style.alpha_source,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3637,6 +4580,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Polar { data: polar_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -3645,11 +4589,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width,
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha,
+            alpha_source: style.alpha_source,
             y_errors: None,
             x_errors: None,
             error_config: None,
@@ -3686,6 +4636,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or(config.color).or_else(|| {
                 Some(
@@ -3694,15 +4645,21 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width.or(config.line_width),
+            line_width_source: style.line_width_source,
             line_style: style.line_style.or(Some(config.line_style.clone())),
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style.or(config.marker),
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size.or(if config.show_markers {
                 Some(config.marker_size)
             } else {
                 None
             }),
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha.or(Some(config.alpha)),
+            alpha_source: style.alpha_source,
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
@@ -3741,6 +4698,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or(config.color).or_else(|| {
                 Some(
@@ -3749,11 +4707,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width.or(Some(config.edge_width)),
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style.or(Some(config.marker)),
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size.or(Some(config.size)),
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha.or(Some(config.alpha)),
+            alpha_source: style.alpha_source,
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
@@ -3792,6 +4756,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Bar { categories, values },
+            streaming_source: None,
             label: style.label,
             color: style.color.or(config.color).or_else(|| {
                 Some(
@@ -3800,11 +4765,17 @@ impl Plot {
                         .get_color(self.series_mgr.auto_color_index),
                 )
             }),
+            color_source: style.color_source,
             line_width: style.line_width.or(Some(config.edge_width)),
+            line_width_source: style.line_width_source,
             line_style: style.line_style,
+            line_style_source: style.line_style_source,
             marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
             alpha: style.alpha.or(Some(config.alpha)),
+            alpha_source: style.alpha_source,
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
@@ -3848,6 +4819,12 @@ impl Plot {
                     .collect();
 
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
+                if let Some(marker_style) = series.marker_style {
+                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                    for &(px, py) in &points {
+                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    }
+                }
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
@@ -4514,6 +5491,12 @@ impl Plot {
                     .collect();
 
                 renderer.draw_polyline(&points, color, line_width, line_style)?;
+                if let Some(marker_style) = series.marker_style {
+                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                    for &(px, py) in &points {
+                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    }
+                }
             }
             SeriesType::Scatter { x_data, y_data } => {
                 // Resolve PlotData to concrete Vec<f64>
@@ -4789,8 +5772,20 @@ impl Plot {
         self.validate_runtime_inputs_for_series(&self.series_mgr.series)
     }
 
-    /// Render the plot to an in-memory image
+    /// Render the plot to an in-memory image.
+    ///
+    /// Reactive plots are first resolved into a static snapshot. Temporal
+    /// `Signal` sources are sampled at `0.0`; push-based observables and
+    /// streaming sources use their latest values. Use `render_at()` to sample
+    /// temporal sources at a different time.
     pub fn render(&self) -> Result<Image> {
+        if self.is_reactive() {
+            let resolved = self.resolved_plot(0.0);
+            let image = resolved.render()?;
+            self.mark_reactive_sources_rendered();
+            return Ok(image);
+        }
+
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
         Self::validate_series_list(&snapshot_series)?;
@@ -4814,12 +5809,17 @@ impl Plot {
             return self.render_with_datashader(&snapshot_series);
         }
 
-        // Check if parallel processing should be used
-        // Note: Parallel rendering not supported for reactive plots (Signal uses Rc which is !Send)
+        // Check if parallel processing should be used.
+        // Reactive plots are resolved into a static snapshot above, so they can
+        // reuse the normal backend-selection path here.
         #[cfg(feature = "parallel")]
         {
             let series_count = snapshot_series.len();
-            if !self.is_reactive()
+            let parallel_safe_for_markers = snapshot_series.iter().all(|series| {
+                !matches!(series.series_type, SeriesType::Line { .. })
+                    || series.marker_style.is_none()
+            });
+            if parallel_safe_for_markers
                 && self
                     .render
                     .parallel_renderer
@@ -4838,36 +5838,8 @@ impl Plot {
         let dpi = render_scale.dpi();
         renderer.set_render_scale(render_scale);
 
-        // Calculate or use manual data bounds
-        let (mut x_min, mut x_max, mut y_min, mut y_max) =
-            if let (Some((x_min_manual, x_max_manual)), Some((y_min_manual, y_max_manual))) =
-                (self.layout.x_limits, self.layout.y_limits)
-            {
-                // Use both manual limits
-                (x_min_manual, x_max_manual, y_min_manual, y_max_manual)
-            } else if let Some((x_min_manual, x_max_manual)) = self.layout.x_limits {
-                // Use manual X limits, calculate Y bounds from data
-                let (_, _, y_min_calc, y_max_calc) =
-                    self.calculate_data_bounds_for_series(&snapshot_series)?;
-                (x_min_manual, x_max_manual, y_min_calc, y_max_calc)
-            } else if let Some((y_min_manual, y_max_manual)) = self.layout.y_limits {
-                // Use manual Y limits, calculate X bounds from data
-                let (x_min_calc, x_max_calc, _, _) =
-                    self.calculate_data_bounds_for_series(&snapshot_series)?;
-                (x_min_calc, x_max_calc, y_min_manual, y_max_manual)
-            } else {
-                self.calculate_data_bounds_for_series(&snapshot_series)?
-            };
-
-        // Handle edge case where all data is the same
-        if (x_max - x_min).abs() < f64::EPSILON {
-            x_min -= 1.0;
-            x_max += 1.0;
-        }
-        if (y_max - y_min).abs() < f64::EPSILON {
-            y_min -= 1.0;
-            y_max += 1.0;
-        }
+        let (x_min, x_max, y_min, y_max) =
+            self.effective_data_bounds_for_series(&snapshot_series)?;
 
         // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
@@ -5152,6 +6124,12 @@ impl Plot {
                     if points.len() >= 2 {
                         renderer.draw_polyline(&points, color, line_width, line_style)?;
                     }
+                    if let Some(marker_style) = series.marker_style {
+                        let marker_size_px = self.line_width_px(series.marker_size.unwrap_or(8.0));
+                        for &(px, py) in &points {
+                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                        }
+                    }
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
@@ -5346,38 +6324,43 @@ impl Plot {
         Ok(renderer.into_image())
     }
 
-    /// Render the plot using the current resolved state.
+    /// Render the plot using a caller-provided temporal sample time.
     ///
-    /// The `time` argument is currently reserved for future reactive rendering
-    /// support. At the moment this method behaves the same as [`render`](Self::render).
+    /// Static plots delegate to [`render`](Self::render). Reactive plots first
+    /// resolve a static snapshot, sampling temporal `Signal` sources at `time`
+    /// and reading push-based observables and streaming sources at their latest
+    /// values, then run through the usual backend-selection path.
     ///
     /// # Arguments
     ///
-    /// * `time` - Reserved for future reactive rendering support
+    /// * `time` - Time used to sample temporal `Signal` sources before rendering
     ///
     /// # Example
     ///
     /// ```rust,no_run
+    /// use ruviz::data::Signal;
     /// use ruviz::prelude::*;
+    ///
+    /// let title = Signal::new(|t| format!("t = {:.1}s", t));
     /// let plot = Plot::new()
-    ///     .title("Example")
+    ///     .title_signal(title)
     ///     .line(&[0.0, 1.0], &[0.0, 1.0])
     ///     .end_series();
     ///
-    /// // Currently equivalent to plot.render()
-    /// let image = plot.render_at(0.0)?;
+    /// // Samples the signal-backed title at t = 1.5 before rendering.
+    /// let image = plot.render_at(1.5)?;
     /// # let _ = image;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn render_at(&self, _time: f64) -> Result<Image> {
-        // For now, delegate to render() for backward compatibility.
-        // Future: resolve reactive PlotData and PlotText at the given time.
-        //
-        // TODO: When series modification is complete:
-        // 1. Resolve all PlotData in series at `time`
-        // 2. Resolve PlotText (title, xlabel, ylabel) at `time`
-        // 3. Build resolved data and call render pipeline
-        self.render()
+    pub fn render_at(&self, time: f64) -> Result<Image> {
+        if !self.is_reactive() {
+            return self.render();
+        }
+
+        let resolved = self.resolved_plot(time);
+        let image = resolved.render()?;
+        self.mark_reactive_sources_rendered();
+        Ok(image)
     }
 
     /// Check if this plot contains any reactive data (Signal or Observable).
@@ -5401,14 +6384,28 @@ impl Plot {
     /// assert!(reactive_plot.is_reactive());
     /// ```
     pub fn is_reactive(&self) -> bool {
-        self.series_mgr
-            .series
-            .iter()
-            .any(|s| s.series_type.is_reactive())
+        self.display
+            .title
+            .as_ref()
+            .is_some_and(|title| title.is_reactive())
+            || self
+                .display
+                .xlabel
+                .as_ref()
+                .is_some_and(|label| label.is_reactive())
+            || self
+                .display
+                .ylabel
+                .as_ref()
+                .is_some_and(|label| label.is_reactive())
+            || self.series_mgr.series.iter().any(PlotSeries::is_reactive)
     }
 
     /// Render the plot to an external renderer (used for subplots)
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
+        if self.is_reactive() {
+            return self.resolved_plot(0.0).render_to_renderer(renderer, dpi);
+        }
         if let Some(err) = self.pending_ingestion_error() {
             return Err(err);
         }
@@ -5423,9 +6420,8 @@ impl Plot {
 
         Self::validate_series_list(&snapshot_series)?;
 
-        // Calculate data bounds across all series
         let (x_min, x_max, y_min, y_max) =
-            self.calculate_data_bounds_for_series(&snapshot_series)?;
+            self.effective_data_bounds_for_series(&snapshot_series)?;
 
         // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
@@ -5707,6 +6703,12 @@ impl Plot {
                     if points.len() >= 2 {
                         renderer.draw_polyline(&points, color, line_width, line_style)?;
                     }
+                    if let Some(marker_style) = series.marker_style {
+                        let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
+                        for &(px, py) in &points {
+                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                        }
+                    }
 
                     // Draw attached error bars if present
                     if series.y_errors.is_some() || series.x_errors.is_some() {
@@ -5947,6 +6949,74 @@ impl Plot {
         true
     }
 
+    fn apply_manual_axis_limits(&self, bounds: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+        let (mut x_min, mut x_max, mut y_min, mut y_max) = bounds;
+
+        if let Some((x_min_manual, x_max_manual)) = self.layout.x_limits {
+            x_min = x_min_manual;
+            x_max = x_max_manual;
+        }
+
+        if let Some((y_min_manual, y_max_manual)) = self.layout.y_limits {
+            y_min = y_min_manual;
+            y_max = y_max_manual;
+        }
+
+        if (x_max - x_min).abs() < f64::EPSILON {
+            x_min -= 1.0;
+            x_max += 1.0;
+        }
+        if (y_max - y_min).abs() < f64::EPSILON {
+            y_min -= 1.0;
+            y_max += 1.0;
+        }
+
+        (x_min, x_max, y_min, y_max)
+    }
+
+    fn effective_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
+        self.calculate_data_bounds()
+            .map(|bounds| self.apply_manual_axis_limits(bounds))
+    }
+
+    fn effective_data_bounds_for_series(
+        &self,
+        series_list: &[PlotSeries],
+    ) -> Result<(f64, f64, f64, f64)> {
+        self.calculate_data_bounds_for_series(series_list)
+            .map(|bounds| self.apply_manual_axis_limits(bounds))
+    }
+
+    fn effective_data_bounds_from_resolved(
+        &self,
+        resolved_series: &[ResolvedSeries<'_>],
+    ) -> Result<(f64, f64, f64, f64)> {
+        self.calculate_data_bounds_from_resolved(resolved_series)
+            .map(|bounds| self.apply_manual_axis_limits(bounds))
+    }
+
+    fn apply_auto_padding_to_bounds(
+        &self,
+        bounds: (f64, f64, f64, f64),
+        fraction: f64,
+    ) -> (f64, f64, f64, f64) {
+        let (mut x_min, mut x_max, mut y_min, mut y_max) = bounds;
+
+        if self.layout.x_limits.is_none() {
+            let x_range = x_max - x_min;
+            x_min -= x_range * fraction;
+            x_max += x_range * fraction;
+        }
+
+        if self.layout.y_limits.is_none() {
+            let y_range = y_max - y_min;
+            y_min -= y_range * fraction;
+            y_max += y_range * fraction;
+        }
+
+        self.apply_manual_axis_limits((x_min, x_max, y_min, y_max))
+    }
+
     /// Helper to render attached error bars on Line/Scatter series
     #[allow(clippy::too_many_arguments)]
     fn render_attached_error_bars(
@@ -6175,8 +7245,8 @@ impl Plot {
         Ok(())
     }
 
-    /// Create PlotContent for layout calculation
-    fn create_plot_content(&self, y_min: f64, y_max: f64) -> PlotContent {
+    /// Create PlotContent for layout calculation at a specific frame time.
+    fn create_plot_content_at_time(&self, y_min: f64, y_max: f64, time: f64) -> PlotContent {
         // Estimate max characters in y-tick labels
         let y_ticks = generate_ticks(y_min, y_max, 6);
         let max_ytick_chars = y_ticks
@@ -6194,13 +7264,18 @@ impl Plot {
             .unwrap_or(5);
 
         PlotContent {
-            title: self.display.title.as_ref().map(|t| t.resolve(0.0)),
-            xlabel: self.display.xlabel.as_ref().map(|t| t.resolve(0.0)),
-            ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(0.0)),
+            title: self.display.title.as_ref().map(|t| t.resolve(time)),
+            xlabel: self.display.xlabel.as_ref().map(|t| t.resolve(time)),
+            ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(time)),
             show_tick_labels: self.layout.tick_config.enabled && self.needs_cartesian_axes(),
             max_ytick_chars,
             max_xtick_chars: 5, // Reasonable default
         }
+    }
+
+    /// Create PlotContent for layout calculation.
+    fn create_plot_content(&self, y_min: f64, y_max: f64) -> PlotContent {
+        self.create_plot_content_at_time(y_min, y_max, 0.0)
     }
 
     /// Pre-measure title/xlabel/ylabel for Typst layout parity.
@@ -6393,8 +7468,9 @@ impl Plot {
         let (canvas_width, canvas_height) = self.config_canvas_size();
         let mut datashader =
             DataShader::with_canvas_size(canvas_width as usize, canvas_height as usize);
+        let (x_min, x_max, y_min, y_max) = self.effective_data_bounds_for_series(series_list)?;
 
-        datashader.aggregate(&x_values, &y_values)?;
+        datashader.aggregate_with_bounds(&x_values, &y_values, x_min, x_max, y_min, y_max)?;
         let ds_image = datashader.render();
 
         // Convert to Image format
@@ -6429,9 +7505,9 @@ impl Plot {
             .iter()
             .all(|series| !matches!(series, ResolvedSeries::Other(_)))
         {
-            self.calculate_data_bounds_from_resolved(&resolved_series)?
+            self.effective_data_bounds_from_resolved(&resolved_series)?
         } else {
-            self.calculate_data_bounds()?
+            self.effective_data_bounds()?
         };
 
         // Compute content-driven layout FIRST for consistent positioning
@@ -8076,9 +9152,12 @@ impl Plot {
         }
     }
 
-    /// Save the plot to a PNG file
+    /// Save the plot to a PNG file.
     ///
-    /// Renders the plot and saves it to the specified path.
+    /// Renders the plot and saves it to the specified path. Reactive plots are
+    /// first resolved into a static snapshot: temporal `Signal` sources are
+    /// sampled at `0.0`, while push-based observables and streaming sources use
+    /// their latest values.
     ///
     /// # Example
     ///
@@ -8093,6 +9172,14 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
+        if self.is_reactive() {
+            let result = self.resolved_plot(0.0).save(path);
+            if result.is_ok() {
+                self.mark_reactive_sources_rendered();
+            }
+            return result;
+        }
+
         use crate::render::skia::SkiaRenderer;
 
         self.validate_runtime_environment()?;
@@ -8109,17 +9196,10 @@ impl Plot {
         // Clear background
         renderer.clear();
 
-        // Calculate data bounds first (needed for layout calculation)
-        let (mut x_min, mut x_max, mut y_min, mut y_max) =
-            self.calculate_data_bounds_for_series(&snapshot_series)?;
-
-        // Add padding to data bounds (skip for polar which has its own margins)
-        let x_range = x_max - x_min;
-        let y_range = y_max - y_min;
-        x_min -= x_range * 0.05;
-        x_max += x_range * 0.05;
-        y_min -= y_range * 0.05;
-        y_max += y_range * 0.05;
+        let (x_min, x_max, y_min, y_max) = self.apply_auto_padding_to_bounds(
+            self.effective_data_bounds_for_series(&snapshot_series)?,
+            0.05,
+        );
 
         // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
@@ -8579,7 +9659,8 @@ impl Plot {
                             plot_area.height() as usize,
                         );
 
-                        datashader.aggregate(&x_data, &y_data)?;
+                        datashader
+                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
                         let image = datashader.render();
 
                         // Draw the DataShader result
@@ -8609,7 +9690,8 @@ impl Plot {
                             plot_area.height() as usize,
                         );
 
-                        datashader.aggregate(&x_data, &y_data)?;
+                        datashader
+                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
                         let image = datashader.render();
 
                         // Draw the DataShader result
@@ -8813,6 +9895,12 @@ impl Plot {
     /// Returns the complete SVG content as a string. This can be saved to a file
     /// or converted to other formats like PDF.
     pub fn render_to_svg(&self) -> Result<String> {
+        if self.is_reactive() {
+            let svg = self.resolved_plot(0.0).render_to_svg()?;
+            self.mark_reactive_sources_rendered();
+            return Ok(svg);
+        }
+
         use crate::axes::TickLayout;
         use crate::export::SvgRenderer;
         use crate::render::skia::map_data_to_pixels;
@@ -8830,9 +9918,8 @@ impl Plot {
         svg.set_render_scale(render_scale);
         svg.set_text_engine_mode(self.display.text_engine);
 
-        // Calculate data bounds
         let (x_min, x_max, y_min, y_max) =
-            self.calculate_data_bounds_for_series(&snapshot_series)?;
+            self.effective_data_bounds_for_series(&snapshot_series)?;
 
         // Use the same content-driven layout path as PNG rendering.
         let content = self.create_plot_content(y_min, y_max);
@@ -9081,16 +10168,24 @@ impl Plot {
                         .collect();
 
                     svg.draw_polyline(&points, color, line_width, line_style);
+                    if let Some(marker_style) = series.marker_style {
+                        let marker_size =
+                            render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
+                        for &(px, py) in &points {
+                            svg.draw_marker(px, py, marker_size, marker_style, color);
+                        }
+                    }
                 }
                 SeriesType::Scatter { x_data, y_data } => {
                     let x_data = x_data.resolve(0.0);
                     let y_data = y_data.resolve(0.0);
+                    let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                     let marker_size =
                         render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
                     for (&x, &y) in x_data.iter().zip(y_data.iter()) {
                         let (px, py) =
                             map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
-                        svg.draw_marker(px, py, marker_size, color);
+                        svg.draw_marker(px, py, marker_size, marker_style, color);
                     }
                 }
                 SeriesType::Bar { categories, values } => {
@@ -9310,24 +10405,64 @@ impl SeriesGroupBuilder {
     /// Set shared color applied to all group member series.
     pub fn color(mut self, color: Color) -> Self {
         self.style.color = Some(color);
+        self.style.color_source = None;
+        self
+    }
+
+    /// Set a shared reactive color applied to all group member series.
+    pub fn color_source<S>(mut self, color: S) -> Self
+    where
+        S: Into<ReactiveValue<Color>>,
+    {
+        self.style.set_color_source_value(color.into());
         self
     }
 
     /// Set shared line width applied to all group member series.
     pub fn line_width(mut self, width: f32) -> Self {
         self.style.line_width = Some(width.max(0.1));
+        self.style.line_width_source = None;
+        self
+    }
+
+    /// Set a shared reactive line width applied to all group member series.
+    pub fn line_width_source<S>(mut self, width: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.set_line_width_source_value(width.into());
         self
     }
 
     /// Set shared line style applied to all group member series.
     pub fn line_style(mut self, style: LineStyle) -> Self {
         self.style.line_style = Some(style);
+        self.style.line_style_source = None;
+        self
+    }
+
+    /// Set a shared reactive line style applied to all group member series.
+    pub fn line_style_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<LineStyle>>,
+    {
+        self.style.set_line_style_source_value(style.into());
         self
     }
 
     /// Set shared alpha/transparency applied to all group member series.
     pub fn alpha(mut self, alpha: f32) -> Self {
         self.style.alpha = Some(alpha.clamp(0.0, 1.0));
+        self.style.alpha_source = None;
+        self
+    }
+
+    /// Set a shared reactive alpha/transparency applied to all group member series.
+    pub fn alpha_source<S>(mut self, alpha: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.set_alpha_source_value(alpha.into());
         self
     }
 
@@ -9354,7 +10489,7 @@ impl SeriesGroupBuilder {
 
         let mut style = self.style.clone();
         let mut consume_palette_index = true;
-        if self.style.color.is_none() {
+        if self.style.color.is_none() && self.style.color_source.is_none() {
             if let Some(color) = self.resolved_auto_color {
                 style.color = Some(color);
                 consume_palette_index = false;
@@ -9370,7 +10505,43 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+        if self.style.color.is_none()
+            && self.style.color_source.is_none()
+            && self.resolved_auto_color.is_none()
+        {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
+    /// Add a line series from source-backed data to the current group.
+    pub fn line_source<X, Y>(mut self, x_data: X, y_data: Y) -> Self
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() && self.style.color_source.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_line_series_grouped(
+            x_data.into_plot_data(),
+            y_data.into_plot_data(),
+            &crate::plots::basic::LineConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none()
+            && self.style.color_source.is_none()
+            && self.resolved_auto_color.is_none()
+        {
             self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
         }
         self
@@ -9399,7 +10570,7 @@ impl SeriesGroupBuilder {
 
         let mut style = self.style.clone();
         let mut consume_palette_index = true;
-        if self.style.color.is_none() {
+        if self.style.color.is_none() && self.style.color_source.is_none() {
             if let Some(color) = self.resolved_auto_color {
                 style.color = Some(color);
                 consume_palette_index = false;
@@ -9415,7 +10586,43 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+        if self.style.color.is_none()
+            && self.style.color_source.is_none()
+            && self.resolved_auto_color.is_none()
+        {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
+    /// Add a scatter series from source-backed data to the current group.
+    pub fn scatter_source<X, Y>(mut self, x_data: X, y_data: Y) -> Self
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() && self.style.color_source.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_scatter_series_grouped(
+            x_data.into_plot_data(),
+            y_data.into_plot_data(),
+            &crate::plots::basic::ScatterConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none()
+            && self.style.color_source.is_none()
+            && self.resolved_auto_color.is_none()
+        {
             self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
         }
         self
@@ -9438,7 +10645,7 @@ impl SeriesGroupBuilder {
 
         let mut style = self.style.clone();
         let mut consume_palette_index = true;
-        if self.style.color.is_none() {
+        if self.style.color.is_none() && self.style.color_source.is_none() {
             if let Some(color) = self.resolved_auto_color {
                 style.color = Some(color);
                 consume_palette_index = false;
@@ -9454,7 +10661,43 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none() && self.resolved_auto_color.is_none() {
+        if self.style.color.is_none()
+            && self.style.color_source.is_none()
+            && self.resolved_auto_color.is_none()
+        {
+            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        }
+        self
+    }
+
+    /// Add a bar series from source-backed values to the current group.
+    pub fn bar_source<S, V>(mut self, categories: &[S], values: V) -> Self
+    where
+        S: ToString,
+        V: IntoPlotData,
+    {
+        let mut style = self.style.clone();
+        let mut consume_palette_index = true;
+        if self.style.color.is_none() && self.style.color_source.is_none() {
+            if let Some(color) = self.resolved_auto_color {
+                style.color = Some(color);
+                consume_palette_index = false;
+            }
+        }
+
+        self.plot = self.plot.add_bar_series_grouped(
+            categories.iter().map(ToString::to_string).collect(),
+            values.into_plot_data(),
+            &crate::plots::basic::BarConfig::default(),
+            style,
+            Some(self.group_id),
+            consume_palette_index,
+        );
+
+        if self.style.color.is_none()
+            && self.style.color_source.is_none()
+            && self.resolved_auto_color.is_none()
+        {
             self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
         }
         self
@@ -9521,6 +10764,16 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn color(mut self, color: Color) -> Self {
         self.series.color = Some(color);
+        self.series.color_source = None;
+        self
+    }
+
+    /// Set a reactive series color sampled at render time.
+    pub fn color_source<S>(mut self, color: S) -> Self
+    where
+        S: Into<ReactiveValue<Color>>,
+    {
+        self.series.set_color_source_value(color.into());
         self
     }
 
@@ -9541,6 +10794,16 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn width(mut self, width: f32) -> Self {
         self.series.line_width = Some(width.max(0.1));
+        self.series.line_width_source = None;
+        self
+    }
+
+    /// Set a reactive line width sampled at render time.
+    pub fn width_source<S>(mut self, width: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.series.set_line_width_source_value(width.into());
         self
     }
 
@@ -9562,6 +10825,16 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn style(mut self, style: LineStyle) -> Self {
         self.series.line_style = Some(style);
+        self.series.line_style_source = None;
+        self
+    }
+
+    /// Set a reactive line style sampled at render time.
+    pub fn style_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<LineStyle>>,
+    {
+        self.series.set_line_style_source_value(style.into());
         self
     }
 
@@ -9583,6 +10856,16 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn marker(mut self, marker: MarkerStyle) -> Self {
         self.series.marker_style = Some(marker);
+        self.series.marker_style_source = None;
+        self
+    }
+
+    /// Set a reactive marker style sampled at render time.
+    pub fn marker_source<S>(mut self, marker: S) -> Self
+    where
+        S: Into<ReactiveValue<MarkerStyle>>,
+    {
+        self.series.set_marker_style_source_value(marker.into());
         self
     }
 
@@ -9604,6 +10887,16 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn marker_size(mut self, size: f32) -> Self {
         self.series.marker_size = Some(size.max(0.1));
+        self.series.marker_size_source = None;
+        self
+    }
+
+    /// Set a reactive marker size sampled at render time.
+    pub fn marker_size_source<S>(mut self, size: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.series.set_marker_size_source_value(size.into());
         self
     }
 
@@ -9625,6 +10918,16 @@ impl PlotSeriesBuilder {
     /// ```
     pub fn alpha(mut self, alpha: f32) -> Self {
         self.series.alpha = Some(alpha.clamp(0.0, 1.0));
+        self.series.alpha_source = None;
+        self
+    }
+
+    /// Set a reactive alpha/transparency sampled at render time.
+    pub fn alpha_source<S>(mut self, alpha: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.series.set_alpha_source_value(alpha.into());
         self
     }
 
@@ -9825,7 +11128,7 @@ impl PlotSeriesBuilder {
     )]
     pub fn end_series(mut self) -> Plot {
         // Auto-assign color if none specified
-        if self.series.color.is_none() {
+        if self.series.color.is_none() && self.series.color_source.is_none() {
             self.series.color = Some(
                 self.plot
                     .display
@@ -9900,6 +11203,19 @@ impl PlotSeriesBuilder {
         self.end_series().line(x_data, y_data)
     }
 
+    /// Continue with a new line series from source-backed data.
+    pub fn line_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::LineConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        self.end_series().line_source(x_data, y_data)
+    }
+
     /// Continue with a new scatter series
     pub fn scatter<X, Y>(
         self,
@@ -9913,6 +11229,19 @@ impl PlotSeriesBuilder {
         self.end_series().scatter(x_data, y_data)
     }
 
+    /// Continue with a new scatter series from source-backed data.
+    pub fn scatter_source<X, Y>(
+        self,
+        x_data: X,
+        y_data: Y,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+    {
+        self.end_series().scatter_source(x_data, y_data)
+    }
+
     /// Continue with a new bar series
     pub fn bar<S, V>(
         self,
@@ -9924,6 +11253,19 @@ impl PlotSeriesBuilder {
         V: NumericData1D,
     {
         self.end_series().bar(categories, values)
+    }
+
+    /// Continue with a new bar series from source-backed values.
+    pub fn bar_source<S, V>(
+        self,
+        categories: &[S],
+        values: V,
+    ) -> PlotBuilder<crate::plots::basic::BarConfig>
+    where
+        S: ToString,
+        V: IntoPlotData,
+    {
+        self.end_series().bar_source(categories, values)
     }
 
     /// Continue with a grouped-series scope after finalizing the current series.
@@ -9978,6 +11320,17 @@ impl PlotSeriesBuilder {
         self.end_series().error_bars(x_data, y_data, y_errors)
     }
 
+    /// Continue with a new Y-error-bar series from source-backed data.
+    pub fn error_bars_source<X, Y, E>(self, x_data: X, y_data: Y, y_errors: E) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        E: IntoPlotData,
+    {
+        self.end_series()
+            .error_bars_source(x_data, y_data, y_errors)
+    }
+
     /// Continue with a new error bar series (both X and Y errors)
     ///
     /// # Example
@@ -10014,33 +11367,61 @@ impl PlotSeriesBuilder {
             .error_bars_xy(x_data, y_data, x_errors, y_errors)
     }
 
+    /// Continue with a new X/Y error-bar series from source-backed data.
+    pub fn error_bars_xy_source<X, Y, EX, EY>(
+        self,
+        x_data: X,
+        y_data: Y,
+        x_errors: EX,
+        y_errors: EY,
+    ) -> PlotSeriesBuilder
+    where
+        X: IntoPlotData,
+        Y: IntoPlotData,
+        EX: IntoPlotData,
+        EY: IntoPlotData,
+    {
+        self.end_series()
+            .error_bars_xy_source(x_data, y_data, x_errors, y_errors)
+    }
+
     /// Set plot title
-    pub fn title<S: Into<String>>(mut self, title: S) -> Self {
-        self.plot.display.title = Some(data::PlotText::Static(title.into()));
+    pub fn title(mut self, title: impl Into<data::PlotText>) -> Self {
+        self.plot.display.title = Some(title.into());
         self
     }
 
-    /// Set the plot title as a reactive signal.
+    /// Set the plot title as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn title_signal(mut self, title: impl Into<data::PlotText>) -> Self {
         self.plot.display.title = Some(title.into());
         self
     }
 
     /// Set X-axis label
-    pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.plot.display.xlabel = Some(data::PlotText::Static(label.into()));
+    pub fn xlabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.plot.display.xlabel = Some(label.into());
         self
     }
 
-    /// Set X-axis label as a reactive signal.
+    /// Set X-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn xlabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.plot.display.xlabel = Some(label.into());
         self
     }
 
     /// Set Y-axis label
-    pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
-        self.plot.display.ylabel = Some(data::PlotText::Static(label.into()));
+    pub fn ylabel(mut self, label: impl Into<data::PlotText>) -> Self {
+        self.plot.display.ylabel = Some(label.into());
         self
     }
 
@@ -10050,7 +11431,12 @@ impl PlotSeriesBuilder {
         self
     }
 
-    /// Set Y-axis label as a reactive signal.
+    /// Set Y-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn ylabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.plot.display.ylabel = Some(label.into());
         self
@@ -10404,6 +11790,76 @@ mod tests {
             .parse::<f32>()
             .unwrap_or_else(|_| panic!("invalid translate y for {}", text));
         (x, y)
+    }
+
+    #[test]
+    fn test_plot_series_static_source_helpers_materialize_values() {
+        let mut series = PlotSeries {
+            series_type: SeriesType::Line {
+                x_data: PlotData::Static(vec![0.0, 1.0]),
+                y_data: PlotData::Static(vec![1.0, 2.0]),
+            },
+            streaming_source: None,
+            label: None,
+            color: None,
+            color_source: None,
+            line_width: None,
+            line_width_source: None,
+            line_style: None,
+            line_style_source: None,
+            marker_style: None,
+            marker_style_source: None,
+            marker_size: None,
+            marker_size_source: None,
+            alpha: None,
+            alpha_source: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        series.set_color_source_value(Color::RED.into());
+        series.set_line_width_source_value(0.01_f32.into());
+        series.set_line_style_source_value(LineStyle::Dashed.into());
+        series.set_marker_style_source_value(MarkerStyle::Square.into());
+        series.set_marker_size_source_value(0.01_f32.into());
+        series.set_alpha_source_value(1.5_f32.into());
+
+        assert_eq!(series.color, Some(Color::RED));
+        assert!(series.color_source.is_none());
+        assert_eq!(series.line_width, Some(0.1));
+        assert!(series.line_width_source.is_none());
+        assert_eq!(series.line_style, Some(LineStyle::Dashed));
+        assert!(series.line_style_source.is_none());
+        assert_eq!(series.marker_style, Some(MarkerStyle::Square));
+        assert!(series.marker_style_source.is_none());
+        assert_eq!(series.marker_size, Some(0.1));
+        assert!(series.marker_size_source.is_none());
+        assert_eq!(series.alpha, Some(1.0));
+        assert!(series.alpha_source.is_none());
+    }
+
+    #[test]
+    fn test_series_group_builder_static_source_setters_materialize_values() {
+        let plot = Plot::new().group(|group| {
+            group
+                .color_source(Color::RED)
+                .line_width_source(0.01_f32)
+                .line_style_source(LineStyle::Dashed)
+                .alpha_source(1.5_f32)
+                .line(&[0.0, 1.0], &[1.0, 2.0])
+        });
+
+        let series = &plot.series_mgr.series[0];
+        assert_eq!(series.color, Some(Color::RED));
+        assert!(series.color_source.is_none());
+        assert_eq!(series.line_width, Some(0.1));
+        assert!(series.line_width_source.is_none());
+        assert_eq!(series.line_style, Some(LineStyle::Dashed));
+        assert!(series.line_style_source.is_none());
+        assert_eq!(series.alpha, Some(1.0));
+        assert!(series.alpha_source.is_none());
     }
 
     fn extract_svg_root_attr(svg: &str, attr: &str) -> f32 {
@@ -11213,6 +12669,33 @@ mod tests {
     }
 
     #[test]
+    fn test_render_to_svg_preserves_line_marker_shape() {
+        let marker_color = Color::new(17, 119, 51);
+        let plot = Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .color(marker_color)
+            .marker(MarkerStyle::Square)
+            .marker_size(10.0)
+            .ticks(false)
+            .grid(false)
+            .end_series();
+
+        let svg = plot.render_to_svg().expect("SVG render should succeed");
+        let marker_fill = r#"fill="rgb(17,119,51)""#;
+
+        assert!(
+            svg.lines()
+                .any(|line| line.contains("<rect") && line.contains(marker_fill)),
+            "square line markers should render as filled rects in SVG"
+        );
+        assert!(
+            !svg.lines()
+                .any(|line| line.contains("<circle") && line.contains(marker_fill)),
+            "square line markers should not fall back to circles in SVG"
+        );
+    }
+
+    #[test]
     fn test_render_to_svg_ticks_false_omits_tick_artifacts_but_keeps_axis_labels() {
         let x_data = vec![0.0, 1.0, 2.0, 3.0];
         let y_data = vec![1.0, 3.0, 2.0, 4.0];
@@ -11611,10 +13094,30 @@ mod tests {
 
         assert_eq!(stream.appended_count(), 2);
 
-        let _plot = Plot::new().line_streaming(&stream).end_series();
+        let plot = Plot::new().line_streaming(&stream).end_series();
 
-        // After line_streaming, buffer should be marked as rendered
+        // Construction keeps the stream live. Rendering advances the append mark.
+        assert_eq!(stream.appended_count(), 2);
+        plot.render().expect("streaming plot should render");
         assert_eq!(stream.appended_count(), 0);
+    }
+
+    #[test]
+    fn test_line_streaming_reads_updates_after_build() {
+        use crate::data::StreamingXY;
+
+        let stream = StreamingXY::new(100);
+        stream.push_many(vec![(0.0, 0.0), (1.0, 1.0)]);
+
+        let plot = Plot::new().line_streaming(&stream).end_series();
+        stream.push(2.0, 4.0);
+
+        if let SeriesType::Line { x_data, y_data } = &plot.series_mgr.series[0].series_type {
+            assert_eq!(x_data.resolve(0.0), vec![0.0, 1.0, 2.0]);
+            assert_eq!(y_data.resolve(0.0), vec![0.0, 1.0, 4.0]);
+        } else {
+            panic!("Expected Line series type");
+        }
     }
 
     #[test]
@@ -11803,7 +13306,7 @@ mod tests {
 
         assert!(v1 > v0, "Version should increase after push");
 
-        // Create plot (marks as rendered)
+        // Create plot while keeping the stream live.
         let _plot = Plot::new().line_streaming(&stream).end_series();
 
         // Push more data
@@ -11811,6 +13314,19 @@ mod tests {
         let v2 = stream.version();
 
         assert!(v2 > v1, "Version should increase after second push");
+    }
+
+    #[test]
+    fn test_plot_is_reactive_for_reactive_title() {
+        use crate::data::Observable;
+
+        let title = Observable::new("Reactive Title".to_string());
+        let plot = Plot::new()
+            .title(title)
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .end_series();
+
+        assert!(plot.is_reactive());
     }
 
     // ========== Error Bar Modifier API Tests ==========

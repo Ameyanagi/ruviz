@@ -6,12 +6,15 @@
 #[cfg(feature = "gpu")]
 use crate::render::gpu::GpuRenderer;
 use crate::{
-    core::{Plot, Result},
+    core::{
+        FramePacing, HitResult, ImageTarget, InteractivePlotSession, Plot, QualityPolicy, Result,
+        ViewportPoint,
+    },
     interactive::{
         event::{Annotation, Point2D, Rectangle},
         state::{DataPoint, DataPointId, InteractionState},
     },
-    render::{Color, skia::SkiaRenderer},
+    render::{Color, FontConfig, FontFamily, TextRenderer, skia::SkiaRenderer},
 };
 use std::{
     collections::HashMap,
@@ -27,8 +30,10 @@ pub struct RealTimeRenderer {
 
     // Rendering state
     current_plot: Option<Plot>,
+    interactive_session: Option<InteractivePlotSession>,
     render_cache: RenderCache,
     performance_monitor: PerformanceMonitor,
+    last_device_scale: f32,
 
     // Interactive elements
     hover_highlight_color: Color,
@@ -70,8 +75,10 @@ impl RealTimeRenderer {
             gpu_renderer,
             cpu_renderer,
             current_plot: None,
+            interactive_session: None,
             render_cache: RenderCache::new(),
             performance_monitor: PerformanceMonitor::new(),
+            last_device_scale: 1.0,
 
             hover_highlight_color: Color::new_rgba(255, 165, 0, 180), // Orange with transparency
             selection_highlight_color: Color::new_rgba(255, 0, 0, 120), // Red with transparency
@@ -86,8 +93,14 @@ impl RealTimeRenderer {
 
     /// Set the current plot for rendering
     pub fn set_plot(&mut self, plot: Plot) {
+        self.interactive_session = Some(plot.prepare_interactive());
         self.current_plot = Some(plot);
         self.render_cache.invalidate_all();
+    }
+
+    /// Update the renderer's last known device scale for event-time hit testing.
+    pub fn set_device_scale(&mut self, device_scale: f32) {
+        self.last_device_scale = Self::sanitize_device_scale(device_scale);
     }
 
     /// Render frame with current interaction state
@@ -102,6 +115,7 @@ impl RealTimeRenderer {
 
         // Update renderer dimensions if needed
         self.update_dimensions(width, height)?;
+        self.set_device_scale(device_scale);
 
         // Adaptive quality based on performance
         if self.adaptive_quality {
@@ -169,20 +183,42 @@ impl RealTimeRenderer {
 
         // In real implementation, this would spatial search through plot data
         // For now, simulate finding a nearby point
-        if let Some(ref plot) = self.current_plot {
-            // Simulate hit testing - in reality would use spatial indexing
-            let tolerance = 10.0 / state.zoom_level; // Zoom-adjusted tolerance
-
-            // Mock implementation - would actually search plot data
-            if data_pos.x > 10.0 && data_pos.x < 90.0 && data_pos.y > 10.0 && data_pos.y < 90.0 {
-                return Some(
-                    DataPoint::new(
-                        42, // Mock ID
-                        data_pos.x, data_pos.y, data_pos.y, // Mock value
-                        0,          // Series index
-                    )
-                    .with_metadata("type".to_string(), "simulated".to_string()),
-                );
+        if let Some(session) = &self.interactive_session {
+            self.sync_session_viewport(session, state);
+            match session.hit_test(ViewportPoint::new(screen_pos.x, screen_pos.y)) {
+                HitResult::SeriesPoint {
+                    series_index,
+                    point_index,
+                    data_position,
+                    ..
+                } => {
+                    return Some(DataPoint::new(
+                        point_index,
+                        data_position.x,
+                        data_position.y,
+                        data_position.y,
+                        series_index,
+                    ));
+                }
+                HitResult::HeatmapCell {
+                    series_index,
+                    row,
+                    col,
+                    value,
+                    ..
+                } => {
+                    return Some(
+                        DataPoint::new(
+                            row.saturating_mul(10_000) + col,
+                            col as f64,
+                            row as f64,
+                            value,
+                            series_index,
+                        )
+                        .with_metadata("kind".to_string(), "heatmap".to_string()),
+                    );
+                }
+                HitResult::None => {}
             }
         }
 
@@ -271,7 +307,7 @@ impl RealTimeRenderer {
                 }
                 RenderQuality::Publication => {
                     // High quality rendering
-                    self.render_plot_to_pixels(width, height, device_scale)?
+                    self.render_plot_to_pixels(state, width, height, device_scale)?
                 }
             }
         } else {
@@ -289,49 +325,68 @@ impl RealTimeRenderer {
     /// Render with interactive quality (optimized for speed)
     fn render_interactive_quality(
         &mut self,
-        _state: &InteractionState,
+        state: &InteractionState,
         width: u32,
         height: u32,
         device_scale: f32,
     ) -> Result<Vec<u8>> {
-        self.render_plot_to_pixels(width, height, device_scale)
+        self.render_plot_to_pixels(state, width, height, device_scale)
     }
 
     /// Render with balanced quality
     fn render_balanced_quality(
         &mut self,
-        _state: &InteractionState,
+        state: &InteractionState,
         width: u32,
         height: u32,
         device_scale: f32,
     ) -> Result<Vec<u8>> {
-        self.render_plot_to_pixels(width, height, device_scale)
+        self.render_plot_to_pixels(state, width, height, device_scale)
     }
 
     /// Render the current plot to RGBA pixel data
-    fn render_plot_to_pixels(&self, width: u32, height: u32, device_scale: f32) -> Result<Vec<u8>> {
-        if let Some(ref plot) = self.current_plot {
-            let plot_clone = Self::configure_plot_for_surface(plot, width, height, device_scale);
+    fn render_plot_to_pixels(
+        &self,
+        state: &InteractionState,
+        width: u32,
+        height: u32,
+        device_scale: f32,
+    ) -> Result<Vec<u8>> {
+        if let Some(session) = &self.interactive_session {
+            self.sync_session_viewport(session, state);
+            session.set_frame_pacing(FramePacing::Display);
+            session.set_quality_policy(match self.quality_mode {
+                RenderQuality::Interactive => QualityPolicy::Interactive,
+                RenderQuality::Balanced => QualityPolicy::Balanced,
+                RenderQuality::Publication => QualityPolicy::Publication,
+            });
+            #[cfg(feature = "gpu")]
+            session.set_prefer_gpu(self.gpu_renderer.is_some());
 
-            // Render the plot
-            match plot_clone.render() {
-                Ok(image) => {
-                    // If dimensions match, return directly
-                    if image.width == width && image.height == height {
-                        Ok(image.pixels)
-                    } else {
-                        // Dimensions might differ slightly, return as-is
-                        // The caller should handle any size mismatch
-                        Ok(image.pixels)
-                    }
+            match session.render_to_image(ImageTarget {
+                size_px: (width, height),
+                scale_factor: device_scale,
+                time_seconds: 0.0,
+            }) {
+                Ok(frame) => Ok(frame.image.pixels.clone()),
+                Err(e) => {
+                    log::warn!(
+                        "Interactive session rendering failed: {}, returning white pixels",
+                        e
+                    );
+                    Ok(vec![255u8; (width * height * 4) as usize])
                 }
+            }
+        } else if let Some(ref plot) = self.current_plot {
+            let plot_clone = Self::configure_plot_for_surface(plot, width, height, device_scale);
+            match plot_clone.render() {
+                Ok(image) => Ok(image.pixels),
                 Err(e) => {
                     log::warn!("Plot rendering failed: {}, returning white pixels", e);
                     Ok(vec![255u8; (width * height * 4) as usize])
                 }
             }
         } else {
-            // No plot set, return white background
             Ok(vec![255u8; (width * height * 4) as usize])
         }
     }
@@ -351,6 +406,13 @@ impl RealTimeRenderer {
         plot.clone()
             .dpi(interactive_dpi)
             .set_output_pixels(width, height)
+    }
+
+    fn sync_session_viewport(&self, session: &InteractivePlotSession, state: &InteractionState) {
+        let width = state.screen_bounds.width().max(1.0).round() as u32;
+        let height = state.screen_bounds.height().max(1.0).round() as u32;
+        session.resize((width, height), self.last_device_scale);
+        session.sync_legacy_viewport(state.zoom_level, state.pan_offset.x, state.pan_offset.y);
     }
 
     /// Render hover highlight
@@ -499,22 +561,83 @@ impl RealTimeRenderer {
 
     /// Draw tooltip
     fn draw_tooltip(&self, pixel_data: &mut [u8], content: &str, position: Point2D) -> Result<()> {
-        // Simple tooltip rendering - in production would use proper text rendering
-        // For now, just draw a simple colored rectangle as placeholder
-        let tooltip_width = content.len() as f64 * 8.0 + 20.0;
-        let tooltip_height = 30.0;
+        const TOOLTIP_FONT_SIZE: f32 = 13.0;
+        const TOOLTIP_PADDING_X: f64 = 8.0;
+        const TOOLTIP_PADDING_Y: f64 = 6.0;
+        const TOOLTIP_CURSOR_GAP: f64 = 12.0;
 
-        let tooltip_rect = Rectangle::new(
-            position.x,
-            position.y - tooltip_height,
-            position.x + tooltip_width,
-            position.y,
-        );
+        let text_renderer = TextRenderer::new();
+        let font = FontConfig::new(FontFamily::SansSerif, TOOLTIP_FONT_SIZE);
+        let (text_width, text_height) =
+            text_renderer
+                .measure_text(content, &font)
+                .unwrap_or_else(|_| {
+                    (
+                        content.chars().count() as f32 * TOOLTIP_FONT_SIZE * 0.6,
+                        TOOLTIP_FONT_SIZE * 1.2,
+                    )
+                });
+
+        let tooltip_width = f64::from(text_width) + TOOLTIP_PADDING_X * 2.0;
+        let tooltip_height = f64::from(text_height) + TOOLTIP_PADDING_Y * 2.0;
+        let view_width = self.cpu_renderer.width() as f64;
+        let view_height = self.cpu_renderer.height() as f64;
+        let max_left = (view_width - tooltip_width).max(0.0);
+        let max_top = (view_height - tooltip_height).max(0.0);
+
+        let mut left = position.x + TOOLTIP_CURSOR_GAP;
+        if left + tooltip_width > view_width {
+            left = position.x - tooltip_width - TOOLTIP_CURSOR_GAP;
+        }
+        let mut top = position.y - tooltip_height - TOOLTIP_CURSOR_GAP;
+        if top < 0.0 {
+            top = position.y + TOOLTIP_CURSOR_GAP;
+        }
+
+        left = left.clamp(0.0, max_left);
+        top = top.clamp(0.0, max_top);
+
+        let tooltip_rect = Rectangle::new(left, top, left + tooltip_width, top + tooltip_height);
 
         let tooltip_color = Color::new_rgba(255, 255, 220, 200); // Light yellow
         self.draw_selection_rectangle(pixel_data, tooltip_rect, tooltip_color)?;
 
+        let Some(size) =
+            tiny_skia::IntSize::from_wh(self.cpu_renderer.width(), self.cpu_renderer.height())
+        else {
+            log::debug!("Skipping legacy tooltip text render because frame size is invalid");
+            return Ok(());
+        };
+        let Some(mut pixmap) =
+            tiny_skia::PixmapMut::from_bytes(pixel_data, size.width(), size.height())
+        else {
+            log::debug!("Skipping legacy tooltip text render because pixmap creation failed");
+            return Ok(());
+        };
+
+        if let Err(err) = text_renderer.render_text_mut(
+            &mut pixmap,
+            content,
+            (left + TOOLTIP_PADDING_X) as f32,
+            (top + TOOLTIP_PADDING_Y) as f32,
+            &font,
+            Color::new_rgba(24, 24, 24, 255),
+        ) {
+            log::debug!(
+                "Skipping legacy tooltip text render after text rasterization failed: {err}"
+            );
+            return Ok(());
+        }
+
         Ok(())
+    }
+
+    fn sanitize_device_scale(device_scale: f32) -> f32 {
+        if device_scale.is_finite() && device_scale > 0.0 {
+            device_scale
+        } else {
+            1.0
+        }
     }
 
     /// Get performance statistics
@@ -853,5 +976,19 @@ mod tests {
         assert!((configured.get_config().figure.width - (800.0 / 75.0)).abs() < 1e-6);
         assert!((configured.get_config().figure.height - (600.0 / 75.0)).abs() < 1e-6);
         assert!((configured.get_config().figure.dpi - 75.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_set_device_scale_sanitizes_invalid_values() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should initialize for tests");
+        let mut renderer = runtime
+            .block_on(RealTimeRenderer::new())
+            .expect("renderer should initialize for tests");
+
+        renderer.set_device_scale(2.0);
+        assert!((renderer.last_device_scale - 2.0).abs() < f32::EPSILON);
+
+        renderer.set_device_scale(0.0);
+        assert!((renderer.last_device_scale - 1.0).abs() < f32::EPSILON);
     }
 }

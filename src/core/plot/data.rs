@@ -1,126 +1,211 @@
 //! Reactive data types for plot series
 //!
-//! This module provides `PlotData` and `PlotText` enums that allow plot series
-//! and text attributes to hold either static data or reactive data sources
-//! (Signal or Observable).
+//! This module provides a generic [`ReactiveValue`] abstraction plus
+//! plot-specific wrappers for numeric series and text attributes.
 //!
 //! # Overview
 //!
-//! - `PlotData` - Wraps numeric data (`Vec<f64>`) that can be static or reactive
-//! - `PlotText` - Wraps text (String) that can be static or reactive
-//! - `IntoPlotData` - Trait for converting various types into PlotData
-//!
-//! # Examples
-//!
-//! ```rust,ignore
-//! use ruviz::animation::signal;
-//! use ruviz::core::plot::data::{PlotData, IntoPlotData};
-//!
-//! // Static data (existing behavior)
-//! let static_data: PlotData = vec![1.0, 2.0, 3.0].into_plot_data();
-//!
-//! // Reactive data via Signal
-//! let y_signal = signal::of(|t| (0..100).map(|i| (i as f64 * 0.1 + t).sin()).collect());
-//! let reactive_data: PlotData = y_signal.into_plot_data();
-//!
-//! // Resolve at a specific time
-//! let data_at_0 = static_data.resolve(0.0);
-//! let data_at_1 = reactive_data.resolve(1.0);
-//! ```
+//! - `ReactiveValue<T>` - Generic static/temporal/reactive wrapper
+//! - `PlotData` - Numeric plot payloads, including live streaming buffers
+//! - `PlotText` - Text payloads used by titles and labels
+//! - `IntoPlotData` - Trait for converting common numeric sources into `PlotData`
 
-use crate::data::Observable;
 use crate::data::signal::Signal;
+use crate::data::{Observable, StreamingBuffer, StreamingRenderState};
 use std::borrow::Cow;
+use std::sync::Arc;
 
 // ============================================================================
-// PlotData Enum
+// ReactiveValue
 // ============================================================================
 
-/// Data source for plot series - can be static or reactive.
-///
-/// `PlotData` allows plot series to hold either:
-/// - Static data (`Vec<f64>`) - resolved immediately
-/// - Temporal data (`Signal<Vec<f64>>`) - evaluated at render time based on animation time
-/// - Reactive data (`Observable<Vec<f64>>`) - current value retrieved at render time
-///
-/// This enables the "create plot once, render at different times" pattern for
-/// efficient animations where the plot structure doesn't change, only the data.
+/// Generic source wrapper for static, temporal, or push-based reactive values.
 #[derive(Clone)]
-pub enum PlotData {
-    /// Concrete data (owned, static) - the current behavior
-    Static(Vec<f64>),
-
-    /// Time-varying data (pull-based, for animation recording)
-    /// The signal is evaluated at render time with the current animation time.
-    Temporal(Signal<Vec<f64>>),
-
-    /// Push-based reactive data (for live/interactive updates)
-    /// The current value is retrieved at render time.
-    Reactive(Observable<Vec<f64>>),
+pub enum ReactiveValue<T> {
+    /// Concrete static value.
+    Static(T),
+    /// Time-varying value evaluated at render time.
+    Temporal(Signal<T>),
+    /// Push-based reactive value read at render time.
+    Reactive(Observable<T>),
 }
 
-impl PlotData {
-    /// Resolve the data to a borrowed-or-owned slice at the given time.
-    ///
-    /// Static data is borrowed directly to avoid unnecessary clones in
-    /// render-time hot paths.
-    #[inline]
-    pub fn resolve_cow(&self, time: f64) -> Cow<'_, [f64]> {
-        match self {
-            PlotData::Static(data) => Cow::Borrowed(data.as_slice()),
-            PlotData::Temporal(signal) => Cow::Owned(signal.at(time)),
-            PlotData::Reactive(obs) => Cow::Owned(obs.get()),
-        }
-    }
+pub(crate) type SharedReactiveCallback = Arc<dyn Fn() + Send + Sync + 'static>;
+pub(crate) type ReactiveTeardown = Box<dyn FnMut() + Send + 'static>;
 
-    /// Resolve the data to a concrete `Vec<f64>` at the given time.
-    ///
-    /// - `Static` - Returns a clone of the stored data
-    /// - `Temporal` - Evaluates the signal at the given time
-    /// - `Reactive` - Returns the current value of the observable
-    ///
-    /// # Arguments
-    ///
-    /// * `time` - The time at which to resolve (in seconds). Only used for `Temporal`.
-    #[inline]
-    pub fn resolve(&self, time: f64) -> Vec<f64> {
-        self.resolve_cow(time).into_owned()
-    }
-
-    /// Check if this data is static (no resolution needed).
-    ///
-    /// Returns `true` for `PlotData::Static`, `false` otherwise.
+impl<T> ReactiveValue<T> {
+    /// Check if this value is static.
     #[inline]
     pub fn is_static(&self) -> bool {
-        matches!(self, PlotData::Static(_))
+        matches!(self, Self::Static(_))
     }
 
-    /// Check if this data is reactive (Signal or Observable).
+    /// Check if this value is temporal.
+    #[inline]
+    pub fn is_temporal(&self) -> bool {
+        matches!(self, Self::Temporal(_))
+    }
+
+    /// Check if this value is reactive (temporal or observable).
     #[inline]
     pub fn is_reactive(&self) -> bool {
         !self.is_static()
     }
 
-    /// Get a reference to static data if available.
-    ///
-    /// Returns `Some(&Vec<f64>)` for static data, `None` for reactive.
+    /// Get the static value, if present.
     #[inline]
-    pub fn as_static(&self) -> Option<&Vec<f64>> {
+    pub fn as_static(&self) -> Option<&T> {
         match self {
-            PlotData::Static(data) => Some(data),
+            Self::Static(value) => Some(value),
             _ => None,
         }
     }
 
-    /// Get the length of the data.
-    ///
-    /// For static data, returns the length directly.
-    /// For reactive data, resolves at t=0 and returns that length.
+    /// Get the current observable version if this source is push-based.
+    #[inline]
+    pub fn current_version(&self) -> Option<u64> {
+        match self {
+            Self::Reactive(obs) => Some(obs.version()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn subscribe_push_updates(
+        &self,
+        callback: SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) where
+        T: Send + Sync + 'static,
+    {
+        if let Self::Reactive(obs) = self {
+            let obs = obs.clone();
+            let callback = Arc::clone(&callback);
+            let id = obs.subscribe(move || callback());
+            teardowns.push(Box::new(move || {
+                obs.unsubscribe(id);
+            }));
+        }
+    }
+}
+
+impl<T> From<T> for ReactiveValue<T> {
+    fn from(value: T) -> Self {
+        ReactiveValue::Static(value)
+    }
+}
+
+impl<T> From<Signal<T>> for ReactiveValue<T> {
+    fn from(signal: Signal<T>) -> Self {
+        ReactiveValue::Temporal(signal)
+    }
+}
+
+impl<T> From<Observable<T>> for ReactiveValue<T> {
+    fn from(obs: Observable<T>) -> Self {
+        ReactiveValue::Reactive(obs)
+    }
+}
+
+impl<T: Clone> ReactiveValue<T> {
+    /// Resolve the value at the given time.
+    #[inline]
+    pub fn resolve(&self, time: f64) -> T {
+        match self {
+            Self::Static(value) => value.clone(),
+            Self::Temporal(signal) => signal.at(time),
+            Self::Reactive(obs) => obs.get(),
+        }
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for ReactiveValue<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Static(value) => f.debug_tuple("Static").field(value).finish(),
+            Self::Temporal(_) => f.debug_tuple("Temporal").field(&"Signal<_>").finish(),
+            Self::Reactive(_) => f.debug_tuple("Reactive").field(&"Observable<_>").finish(),
+        }
+    }
+}
+
+/// Generic public name for plot-facing reactive sources.
+pub type PlotSource<T> = ReactiveValue<T>;
+
+// ============================================================================
+// PlotData
+// ============================================================================
+
+/// Data source for plot series.
+///
+/// `PlotData` supports:
+/// - static vectors
+/// - `Signal<Vec<f64>>` temporal sources
+/// - `Observable<Vec<f64>>` push-based sources
+/// - `StreamingBuffer<f64>` live streaming sources
+#[derive(Clone)]
+pub enum PlotData {
+    /// Concrete static data.
+    Static(Vec<f64>),
+    /// Time-varying data evaluated at render time.
+    Temporal(Signal<Vec<f64>>),
+    /// Push-based reactive data read at render time.
+    Reactive(Observable<Vec<f64>>),
+    /// Live streaming data from a ring buffer.
+    Streaming(StreamingBuffer<f64>),
+}
+
+impl PlotData {
+    /// Resolve the data to a borrowed-or-owned slice at the given time.
+    #[inline]
+    pub fn resolve_cow(&self, time: f64) -> Cow<'_, [f64]> {
+        match self {
+            Self::Static(data) => Cow::Borrowed(data.as_slice()),
+            Self::Temporal(signal) => Cow::Owned(signal.at(time)),
+            Self::Reactive(obs) => Cow::Owned(obs.get()),
+            Self::Streaming(buffer) => Cow::Owned(buffer.read()),
+        }
+    }
+
+    /// Resolve the data to a concrete vector at the given time.
+    #[inline]
+    pub fn resolve(&self, time: f64) -> Vec<f64> {
+        self.resolve_cow(time).into_owned()
+    }
+
+    /// Check if this data is static.
+    #[inline]
+    pub fn is_static(&self) -> bool {
+        matches!(self, Self::Static(_))
+    }
+
+    /// Check if this data is temporal.
+    #[inline]
+    pub fn is_temporal(&self) -> bool {
+        matches!(self, Self::Temporal(_))
+    }
+
+    /// Check if this data is reactive.
+    #[inline]
+    pub fn is_reactive(&self) -> bool {
+        !self.is_static()
+    }
+
+    /// Get a reference to the static data if available.
+    #[inline]
+    pub fn as_static(&self) -> Option<&Vec<f64>> {
+        match self {
+            Self::Static(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// Get the current data length.
     pub fn len(&self) -> usize {
         match self {
-            PlotData::Static(data) => data.len(),
-            PlotData::Temporal(signal) => signal.at(0.0).len(),
-            PlotData::Reactive(obs) => obs.get().len(),
+            Self::Static(data) => data.len(),
+            Self::Temporal(signal) => signal.at(0.0).len(),
+            Self::Reactive(obs) => obs.get().len(),
+            Self::Streaming(buffer) => buffer.len(),
         }
     }
 
@@ -128,53 +213,118 @@ impl PlotData {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Get the current version for push-based sources.
+    pub fn current_version(&self) -> Option<u64> {
+        match self {
+            Self::Reactive(obs) => Some(obs.version()),
+            Self::Streaming(buffer) => Some(buffer.version()),
+            _ => None,
+        }
+    }
+
+    /// Mark streaming data as rendered.
+    pub fn mark_rendered(&self) {
+        if let Self::Streaming(buffer) = self {
+            buffer.mark_rendered();
+        }
+    }
+
+    /// Describe the incremental rendering state for streaming sources.
+    pub fn streaming_render_state(&self) -> Option<StreamingRenderState> {
+        match self {
+            Self::Streaming(buffer) => Some(buffer.render_state()),
+            _ => None,
+        }
+    }
+
+    /// Check whether a streaming source can use append-only rendering.
+    pub fn can_partial_render(&self) -> bool {
+        self.streaming_render_state()
+            .is_some_and(StreamingRenderState::can_incrementally_render)
+    }
+
+    /// Get the number of values appended since the last rendered mark.
+    pub fn appended_count(&self) -> usize {
+        match self {
+            Self::Streaming(buffer) => buffer.appended_since_mark(),
+            _ => 0,
+        }
+    }
+
+    /// Read only newly appended data for streaming sources.
+    pub fn resolve_appended(&self) -> Option<Vec<f64>> {
+        match self {
+            Self::Streaming(buffer) => Some(buffer.read_appended()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn subscribe_push_updates(
+        &self,
+        callback: SharedReactiveCallback,
+        teardowns: &mut Vec<ReactiveTeardown>,
+    ) {
+        match self {
+            Self::Reactive(obs) => {
+                let obs = obs.clone();
+                let callback = Arc::clone(&callback);
+                let id = obs.subscribe(move || callback());
+                teardowns.push(Box::new(move || {
+                    obs.unsubscribe(id);
+                }));
+            }
+            Self::Streaming(buffer) => {
+                let buffer = buffer.clone();
+                let callback = Arc::clone(&callback);
+                let id = buffer.subscribe(move || callback());
+                teardowns.push(Box::new(move || {
+                    buffer.unsubscribe(id);
+                }));
+            }
+            Self::Static(_) | Self::Temporal(_) => {}
+        }
+    }
 }
 
 impl std::fmt::Debug for PlotData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlotData::Static(data) => f
+            Self::Static(data) => f
                 .debug_tuple("Static")
                 .field(&format!(
                     "[{}; {}]",
                     if data.is_empty() {
-                        "".to_string()
+                        String::new()
                     } else {
                         format!("{:.2}...", data[0])
                     },
                     data.len()
                 ))
                 .finish(),
-            PlotData::Temporal(_) => f
+            Self::Temporal(_) => f
                 .debug_tuple("Temporal")
                 .field(&"Signal<Vec<f64>>")
                 .finish(),
-            PlotData::Reactive(_) => f
+            Self::Reactive(_) => f
                 .debug_tuple("Reactive")
                 .field(&"Observable<Vec<f64>>")
+                .finish(),
+            Self::Streaming(_) => f
+                .debug_tuple("Streaming")
+                .field(&"StreamingBuffer<f64>")
                 .finish(),
         }
     }
 }
 
 // ============================================================================
-// IntoPlotData Trait
+// IntoPlotData
 // ============================================================================
 
 /// Trait for converting various types into `PlotData`.
-///
-/// This trait enables plot methods to accept multiple data source types
-/// with a unified API, maintaining backward compatibility with existing code.
-///
-/// # Implemented For
-///
-/// - `Vec<f64>` → `PlotData::Static`
-/// - `&[f64]` → `PlotData::Static` (clones the slice)
-/// - `Signal<Vec<f64>>` → `PlotData::Temporal`
-/// - `Observable<Vec<f64>>` → `PlotData::Reactive`
-/// - `PlotData` → `PlotData` (identity)
 pub trait IntoPlotData {
-    /// Convert self into PlotData
+    /// Convert self into `PlotData`.
     fn into_plot_data(self) -> PlotData;
 }
 
@@ -213,6 +363,13 @@ impl IntoPlotData for Observable<Vec<f64>> {
     }
 }
 
+impl IntoPlotData for StreamingBuffer<f64> {
+    #[inline]
+    fn into_plot_data(self) -> PlotData {
+        PlotData::Streaming(self)
+    }
+}
+
 impl IntoPlotData for PlotData {
     #[inline]
     fn into_plot_data(self) -> PlotData {
@@ -221,92 +378,41 @@ impl IntoPlotData for PlotData {
 }
 
 // ============================================================================
-// PlotText Enum
+// PlotText
 // ============================================================================
 
 /// Text attribute that can be static or reactive.
-///
-/// Used for plot title, axis labels, and other text attributes that
-/// may need to update during animation.
-#[derive(Clone)]
-pub enum PlotText {
-    /// Static text
-    Static(String),
+pub type PlotText = ReactiveValue<String>;
 
-    /// Time-varying text (for animation)
-    Temporal(Signal<String>),
-
-    /// Push-based reactive text
-    Reactive(Observable<String>),
-}
-
-impl PlotText {
-    /// Resolve the text to a concrete String at the given time.
-    #[inline]
-    pub fn resolve(&self, time: f64) -> String {
-        match self {
-            PlotText::Static(s) => s.clone(),
-            PlotText::Temporal(signal) => signal.at(time),
-            PlotText::Reactive(obs) => obs.get(),
-        }
-    }
-
-    /// Check if this text is static.
-    #[inline]
-    pub fn is_static(&self) -> bool {
-        matches!(self, PlotText::Static(_))
-    }
-
-    /// Get a reference to static text if available.
-    #[inline]
-    pub fn as_static(&self) -> Option<&str> {
-        match self {
-            PlotText::Static(s) => Some(s.as_str()),
-            _ => None,
-        }
-    }
-}
-
-impl Default for PlotText {
+impl Default for ReactiveValue<String> {
     fn default() -> Self {
-        PlotText::Static(String::new())
+        ReactiveValue::Static(String::new())
     }
 }
 
-impl std::fmt::Debug for PlotText {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PlotText::Static(s) => f.debug_tuple("Static").field(s).finish(),
-            PlotText::Temporal(_) => f.debug_tuple("Temporal").field(&"Signal<String>").finish(),
-            PlotText::Reactive(_) => f
-                .debug_tuple("Reactive")
-                .field(&"Observable<String>")
-                .finish(),
-        }
+impl ReactiveValue<String> {
+    /// Get a reference to the static string, if present.
+    #[inline]
+    pub fn as_static_str(&self) -> Option<&str> {
+        self.as_static().map(String::as_str)
     }
 }
 
-impl From<String> for PlotText {
-    fn from(s: String) -> Self {
-        PlotText::Static(s)
-    }
-}
-
-impl From<&str> for PlotText {
+impl From<&str> for ReactiveValue<String> {
     fn from(s: &str) -> Self {
-        PlotText::Static(s.to_string())
+        ReactiveValue::Static(s.to_string())
     }
 }
 
-impl From<Signal<String>> for PlotText {
-    fn from(signal: Signal<String>) -> Self {
-        PlotText::Temporal(signal)
+impl From<&String> for ReactiveValue<String> {
+    fn from(s: &String) -> Self {
+        ReactiveValue::Static(s.clone())
     }
 }
 
-impl From<Observable<String>> for PlotText {
-    fn from(obs: Observable<String>) -> Self {
-        PlotText::Reactive(obs)
+impl<'a> From<Cow<'a, str>> for ReactiveValue<String> {
+    fn from(s: Cow<'a, str>) -> Self {
+        ReactiveValue::Static(s.into_owned())
     }
 }
 
@@ -351,6 +457,16 @@ mod tests {
     }
 
     #[test]
+    fn test_plot_data_streaming() {
+        let buffer = StreamingBuffer::new(8);
+        buffer.push_many([1.0, 2.0, 3.0]);
+        let data = PlotData::Streaming(buffer.clone());
+        assert!(data.is_reactive());
+        assert_eq!(data.resolve(0.0), vec![1.0, 2.0, 3.0]);
+        assert_eq!(data.current_version(), Some(buffer.version()));
+    }
+
+    #[test]
     fn test_into_plot_data_vec() {
         let data: PlotData = vec![1.0, 2.0].into_plot_data();
         assert!(data.is_static());
@@ -379,10 +495,20 @@ mod tests {
     }
 
     #[test]
+    fn test_into_plot_data_streaming_buffer() {
+        let buffer = StreamingBuffer::new(16);
+        buffer.push_many([1.0, 2.0, 3.0]);
+        let data: PlotData = buffer.into_plot_data();
+        assert!(data.is_reactive());
+        assert_eq!(data.resolve(0.0), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
     fn test_plot_text_static() {
         let text = PlotText::Static("Hello".to_string());
         assert!(text.is_static());
         assert_eq!(text.resolve(0.0), "Hello");
+        assert_eq!(text.as_static_str(), Some("Hello"));
     }
 
     #[test]
@@ -397,12 +523,27 @@ mod tests {
     fn test_plot_text_from_string() {
         let text: PlotText = "Hello".into();
         assert!(text.is_static());
-        assert_eq!(text.as_static(), Some("Hello"));
+        assert_eq!(text.as_static_str(), Some("Hello"));
     }
 
     #[test]
     fn test_plot_text_from_owned_string() {
         let text: PlotText = String::from("World").into();
         assert!(text.is_static());
+    }
+
+    #[test]
+    fn test_plot_text_from_string_ref() {
+        let value = String::from("Borrowed");
+        let text: PlotText = (&value).into();
+        assert!(text.is_static());
+        assert_eq!(text.as_static_str(), Some("Borrowed"));
+    }
+
+    #[test]
+    fn test_plot_text_from_cow_str() {
+        let text: PlotText = Cow::Borrowed("Cow").into();
+        assert!(text.is_static());
+        assert_eq!(text.as_static_str(), Some("Cow"));
     }
 }

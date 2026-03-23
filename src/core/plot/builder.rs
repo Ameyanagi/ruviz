@@ -33,7 +33,7 @@
 //! }
 //! ```
 
-use super::data::PlotData;
+use super::data::{PlotData, ReactiveValue};
 use crate::render::{Color, LineStyle, MarkerStyle};
 
 /// Trait for types that can be converted to a finalized [`Plot`](super::Plot)
@@ -284,6 +284,8 @@ pub enum PlotInput {
     Single(Vec<f64>),
     /// Paired X-Y data (for line, scatter, etc.)
     XY(Vec<f64>, Vec<f64>),
+    /// Paired X-Y data from source-backed plot values.
+    XYSource(super::PlotData, super::PlotData),
     /// 2D grid data (for heatmap, contour)
     Grid2D {
         x: Vec<f64>,
@@ -295,6 +297,11 @@ pub enum PlotInput {
         categories: Vec<String>,
         values: Vec<f64>,
     },
+    /// Categorical data with source-backed values.
+    CategoricalSource {
+        categories: Vec<String>,
+        values: super::PlotData,
+    },
 }
 
 impl PlotInput {
@@ -303,8 +310,10 @@ impl PlotInput {
         match self {
             PlotInput::Single(data) => data.len(),
             PlotInput::XY(x, _) => x.len(),
+            PlotInput::XYSource(x, _) => x.len(),
             PlotInput::Grid2D { x, y, .. } => x.len() * y.len(),
             PlotInput::Categorical { values, .. } => values.len(),
+            PlotInput::CategoricalSource { values, .. } => values.len(),
         }
     }
 }
@@ -318,22 +327,114 @@ pub struct SeriesStyle {
     pub label: Option<String>,
     /// Series color
     pub color: Option<Color>,
+    /// Reactive series color source
+    pub color_source: Option<ReactiveValue<Color>>,
     /// Line width override
     pub line_width: Option<f32>,
+    /// Reactive line width source
+    pub line_width_source: Option<ReactiveValue<f32>>,
     /// Line style override
     pub line_style: Option<LineStyle>,
+    /// Reactive line style source
+    pub line_style_source: Option<ReactiveValue<LineStyle>>,
     /// Marker style (for scatter-like plots)
     pub marker_style: Option<MarkerStyle>,
+    /// Reactive marker style source
+    pub marker_style_source: Option<ReactiveValue<MarkerStyle>>,
     /// Marker size
     pub marker_size: Option<f32>,
+    /// Reactive marker size source
+    pub marker_size_source: Option<ReactiveValue<f32>>,
     /// Alpha/transparency (0.0 = transparent, 1.0 = opaque)
     pub alpha: Option<f32>,
+    /// Reactive alpha/transparency source
+    pub alpha_source: Option<ReactiveValue<f32>>,
     /// Y-axis error bar values
     pub y_errors: Option<crate::plots::error::ErrorValues>,
     /// X-axis error bar values
     pub x_errors: Option<crate::plots::error::ErrorValues>,
     /// Error bar styling configuration
     pub error_config: Option<crate::plots::error::ErrorBarConfig>,
+}
+
+impl SeriesStyle {
+    pub(crate) fn set_color_source_value(&mut self, color: ReactiveValue<Color>) {
+        match color {
+            ReactiveValue::Static(color) => {
+                self.color = Some(color);
+                self.color_source = None;
+            }
+            source => {
+                self.color = None;
+                self.color_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_line_width_source_value(&mut self, width: ReactiveValue<f32>) {
+        match width {
+            ReactiveValue::Static(width) => {
+                self.line_width = Some(width.max(0.1));
+                self.line_width_source = None;
+            }
+            source => {
+                self.line_width = None;
+                self.line_width_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_line_style_source_value(&mut self, style: ReactiveValue<LineStyle>) {
+        match style {
+            ReactiveValue::Static(style) => {
+                self.line_style = Some(style);
+                self.line_style_source = None;
+            }
+            source => {
+                self.line_style = None;
+                self.line_style_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_marker_style_source_value(&mut self, style: ReactiveValue<MarkerStyle>) {
+        match style {
+            ReactiveValue::Static(style) => {
+                self.marker_style = Some(style);
+                self.marker_style_source = None;
+            }
+            source => {
+                self.marker_style = None;
+                self.marker_style_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_marker_size_source_value(&mut self, size: ReactiveValue<f32>) {
+        match size {
+            ReactiveValue::Static(size) => {
+                self.marker_size = Some(size.max(0.1));
+                self.marker_size_source = None;
+            }
+            source => {
+                self.marker_size = None;
+                self.marker_size_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_alpha_source_value(&mut self, alpha: ReactiveValue<f32>) {
+        match alpha {
+            ReactiveValue::Static(alpha) => {
+                self.alpha = Some(alpha.clamp(0.0, 1.0));
+                self.alpha_source = None;
+            }
+            source => {
+                self.alpha = None;
+                self.alpha_source = Some(source);
+            }
+        }
+    }
 }
 
 /// Generic plot builder for trait-based plot types
@@ -425,6 +526,16 @@ where
     /// ```
     pub fn color(mut self, color: Color) -> Self {
         self.style.color = Some(color);
+        self.style.color_source = None;
+        self
+    }
+
+    /// Set a reactive series color source.
+    pub fn color_source<S>(mut self, color: S) -> Self
+    where
+        S: Into<ReactiveValue<Color>>,
+    {
+        self.style.set_color_source_value(color.into());
         self
     }
 
@@ -440,6 +551,16 @@ where
     /// ```
     pub fn line_width(mut self, width: f32) -> Self {
         self.style.line_width = Some(width.max(0.1));
+        self.style.line_width_source = None;
+        self
+    }
+
+    /// Set a reactive line width source.
+    pub fn line_width_source<S>(mut self, width: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.set_line_width_source_value(width.into());
         self
     }
 
@@ -455,6 +576,16 @@ where
     /// ```
     pub fn line_style(mut self, style: LineStyle) -> Self {
         self.style.line_style = Some(style);
+        self.style.line_style_source = None;
+        self
+    }
+
+    /// Set a reactive line style source.
+    pub fn line_style_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<LineStyle>>,
+    {
+        self.style.set_line_style_source_value(style.into());
         self
     }
 
@@ -472,6 +603,16 @@ where
     /// ```
     pub fn alpha(mut self, alpha: f32) -> Self {
         self.style.alpha = Some(alpha.clamp(0.0, 1.0));
+        self.style.alpha_source = None;
+        self
+    }
+
+    /// Set a reactive alpha/transparency source.
+    pub fn alpha_source<S>(mut self, alpha: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.set_alpha_source_value(alpha.into());
         self
     }
 
@@ -571,7 +712,7 @@ where
     /// Set plot title
     ///
     /// This method forwards to the inner Plot.
-    pub fn title<S: Into<String>>(mut self, title: S) -> Self {
+    pub fn title(mut self, title: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.title(title);
         self
     }
@@ -579,7 +720,7 @@ where
     /// Set X-axis label
     ///
     /// This method forwards to the inner Plot.
-    pub fn xlabel<S: Into<String>>(mut self, label: S) -> Self {
+    pub fn xlabel(mut self, label: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.xlabel(label);
         self
     }
@@ -587,7 +728,7 @@ where
     /// Set Y-axis label
     ///
     /// This method forwards to the inner Plot.
-    pub fn ylabel<S: Into<String>>(mut self, label: S) -> Self {
+    pub fn ylabel(mut self, label: impl Into<super::PlotText>) -> Self {
         self.plot = self.plot.ylabel(label);
         self
     }
@@ -1852,6 +1993,18 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = Some(style);
         self.config.show_markers = true;
+        self.style.marker_style = Some(style);
+        self.style.marker_style_source = None;
+        self
+    }
+
+    /// Set a reactive marker style.
+    pub fn marker_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<crate::render::MarkerStyle>>,
+    {
+        self.config.show_markers = true;
+        self.style.set_marker_style_source_value(style.into());
         self
     }
 
@@ -1861,6 +2014,17 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.marker_size = size.max(0.1);
+        self.style.marker_size = Some(size.max(0.1));
+        self.style.marker_size_source = None;
+        self
+    }
+
+    /// Set a reactive marker size.
+    pub fn marker_size_source<S>(mut self, size: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.set_marker_size_source_value(size.into());
         self
     }
 
@@ -1890,6 +2054,16 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// ```
     pub fn style(mut self, line_style: crate::render::LineStyle) -> Self {
         self.style.line_style = Some(line_style);
+        self.style.line_style_source = None;
+        self
+    }
+
+    /// Set a reactive line style.
+    pub fn style_source<S>(mut self, line_style: S) -> Self
+    where
+        S: Into<ReactiveValue<crate::render::LineStyle>>,
+    {
+        self.style.set_line_style_source_value(line_style.into());
         self
     }
 
@@ -1897,6 +2071,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     fn finalize(self) -> super::Plot {
         let (x_data, y_data) = match &self.input {
             PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
+            PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
             PlotInput::Single(y) => {
                 // Generate x values as indices
                 let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
@@ -1930,6 +2105,17 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// ```
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = style;
+        self.style.marker_style = Some(style);
+        self.style.marker_style_source = None;
+        self
+    }
+
+    /// Set a reactive marker style.
+    pub fn marker_source<S>(mut self, style: S) -> Self
+    where
+        S: Into<ReactiveValue<crate::render::MarkerStyle>>,
+    {
+        self.style.set_marker_style_source_value(style.into());
         self
     }
 
@@ -1939,6 +2125,17 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.size = size.max(0.1);
+        self.style.marker_size = Some(size.max(0.1));
+        self.style.marker_size_source = None;
+        self
+    }
+
+    /// Set a reactive marker size.
+    pub fn marker_size_source<S>(mut self, size: S) -> Self
+    where
+        S: Into<ReactiveValue<f32>>,
+    {
+        self.style.set_marker_size_source_value(size.into());
         self
     }
 
@@ -1961,6 +2158,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     fn finalize(self) -> super::Plot {
         let (x_data, y_data) = match &self.input {
             PlotInput::XY(x, y) => (PlotData::Static(x.clone()), PlotData::Static(y.clone())),
+            PlotInput::XYSource(x, y) => (x.clone(), y.clone()),
             PlotInput::Single(y) => {
                 let x: Vec<f64> = (0..y.len()).map(|i| i as f64).collect();
                 (PlotData::Static(x), PlotData::Static(y.clone()))
@@ -2034,6 +2232,9 @@ impl PlotBuilder<crate::plots::basic::BarConfig> {
         let (categories, values) = match &self.input {
             PlotInput::Categorical { categories, values } => {
                 (categories.clone(), PlotData::Static(values.clone()))
+            }
+            PlotInput::CategoricalSource { categories, values } => {
+                (categories.clone(), values.clone())
             }
             PlotInput::Single(y) => {
                 // Generate category labels as indices
@@ -2138,6 +2339,31 @@ mod tests {
     }
 
     #[test]
+    fn test_static_source_setters_materialize_generic_builder_values() {
+        let builder = super::super::Plot::new()
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .color_source(Color::RED)
+            .line_width_source(0.01_f32)
+            .style_source(LineStyle::Dashed)
+            .marker_source(MarkerStyle::Square)
+            .marker_size_source(0.01_f32)
+            .alpha_source(1.5_f32);
+
+        assert_eq!(builder.style.color, Some(Color::RED));
+        assert!(builder.style.color_source.is_none());
+        assert_eq!(builder.style.line_width, Some(0.1));
+        assert!(builder.style.line_width_source.is_none());
+        assert_eq!(builder.style.line_style, Some(LineStyle::Dashed));
+        assert!(builder.style.line_style_source.is_none());
+        assert_eq!(builder.style.marker_style, Some(MarkerStyle::Square));
+        assert!(builder.style.marker_style_source.is_none());
+        assert_eq!(builder.style.marker_size, Some(0.1));
+        assert!(builder.style.marker_size_source.is_none());
+        assert_eq!(builder.style.alpha, Some(1.0));
+        assert!(builder.style.alpha_source.is_none());
+    }
+
+    #[test]
     fn test_plot_input_variants() {
         // Test Single variant
         let single = PlotInput::Single(vec![1.0, 2.0]);
@@ -2156,6 +2382,18 @@ mod tests {
             _ => panic!("Expected XY variant"),
         }
 
+        let xy_source = PlotInput::XYSource(
+            PlotData::Static(vec![1.0, 2.0]),
+            PlotData::Static(vec![3.0, 4.0]),
+        );
+        match xy_source {
+            PlotInput::XYSource(x, y) => {
+                assert_eq!(x.len(), 2);
+                assert_eq!(y.len(), 2);
+            }
+            _ => panic!("Expected XYSource variant"),
+        }
+
         // Test Categorical variant
         let cat = PlotInput::Categorical {
             categories: vec!["A".to_string(), "B".to_string()],
@@ -2167,6 +2405,18 @@ mod tests {
                 assert_eq!(values.len(), 2);
             }
             _ => panic!("Expected Categorical variant"),
+        }
+
+        let cat_source = PlotInput::CategoricalSource {
+            categories: vec!["A".to_string(), "B".to_string()],
+            values: PlotData::Static(vec![10.0, 20.0]),
+        };
+        match cat_source {
+            PlotInput::CategoricalSource { categories, values } => {
+                assert_eq!(categories.len(), 2);
+                assert_eq!(values.len(), 2);
+            }
+            _ => panic!("Expected CategoricalSource variant"),
         }
     }
 }

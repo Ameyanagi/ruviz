@@ -62,9 +62,21 @@ assert_eq!(plot.get_backend_name(), "datashader");
 `render()` returns an in-memory `Image` and currently chooses its path like this:
 
 - Above `100_000` points: DataShader
-- Otherwise, if the `parallel` feature is enabled and the plot is not reactive:
+- Otherwise, if the `parallel` feature is enabled:
   - parallel rendering is used when `ParallelRenderer::should_use_parallel(...)` returns `true`
 - Otherwise: CPU/tiny-skia rendering
+
+Reactive plots first resolve a static snapshot, then run through the same
+backend-selection logic:
+
+- temporal `Signal` inputs in plain `render()` are sampled at `0.0`
+- push-based `Observable` inputs and streaming buffers read their latest values
+- `render_at(t)` uses the same backend-selection logic after sampling temporal
+  inputs at `t`
+
+That means signal-backed, observable-backed, and streaming-backed
+line/scatter/bar/error/histogram/box plots can still reach the parallel and
+DataShader paths after resolution.
 
 The default parallel renderer activates when either:
 
@@ -114,6 +126,10 @@ ruviz = { version = "0.1.4", features = ["parallel", "simd"] }
 - Otherwise, if `gpu(true)` is enabled and the plot has at least `5_000` points:
   - GPU rendering path
 - Otherwise: CPU/tiny-skia rendering
+
+Reactive snapshotting works the same as `render()`: temporal `Signal` sources
+are sampled at `0.0`, while push-based `Observable` and streaming sources use
+their latest values before backend selection.
 
 Two important details:
 

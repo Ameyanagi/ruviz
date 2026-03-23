@@ -48,9 +48,12 @@ Useful opt-in features:
 `render()` chooses its execution path from actual plot content:
 
 - Above `100_000` total points: DataShader
-- Otherwise, with `parallel` enabled and for non-reactive plots:
+- Otherwise, with `parallel` enabled:
   - parallel rendering is used when the internal threshold logic says it is worthwhile
 - Otherwise: CPU/tiny-skia rendering
+
+Reactive plots now resolve to a static snapshot first, so push-based and
+streaming sources can still benefit from the same parallel/DataShader decisions.
 
 ### Parallel rendering
 

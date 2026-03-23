@@ -52,8 +52,10 @@
 //! ## Animation APIs
 //!
 //! Create smooth animations with `record!` closures today. Signal-backed plot data
-//! and labels can also be attached to a plot, but `render_at()` currently behaves
-//! the same as `render()`.
+//! and labels can also be attached to a plot. Plain `render()` and `save()`
+//! sample temporal sources at `0.0`, while `render_at()` lets you choose the
+//! sampling time before using the normal backend-selection path. Push-based
+//! reactive sources use their latest value when the plot snapshot is built.
 //!
 //! ### Basic Animation with record! Macro
 //!
@@ -759,10 +761,14 @@ pub mod animation;
 pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
-        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, GridSpec, HatchPattern,
-        IntoPlot, Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot,
-        PlotBuilder, PlotInput, Position, Result, SeriesStyle, ShapeStyle, SubplotFigure,
-        TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, subplots, subplots_default,
+        Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, FramePacing, FrameStats,
+        GridSpec, HatchPattern, HitResult, ImageTarget, InteractiveFrame, InteractivePlotSession,
+        IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem, LegendItemType,
+        LegendPosition, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource, Position,
+        PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, Result,
+        SeriesStyle, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget, TextAlign,
+        TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect, subplots,
+        subplots_default,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,

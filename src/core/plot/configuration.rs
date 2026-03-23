@@ -152,7 +152,7 @@ impl PlotConfiguration {
     /// Returns `None` if title is reactive or not set.
     /// Use `title_text()` for access to PlotText.
     pub fn title(&self) -> Option<&str> {
-        self.title.as_ref().and_then(|t| t.as_static())
+        self.title.as_ref().and_then(|t| t.as_static_str())
     }
 
     /// Get the plot title as PlotText
@@ -167,7 +167,7 @@ impl PlotConfiguration {
 
     /// Get the X-axis label (static only - for backward compatibility)
     pub fn xlabel(&self) -> Option<&str> {
-        self.xlabel.as_ref().and_then(|t| t.as_static())
+        self.xlabel.as_ref().and_then(|t| t.as_static_str())
     }
 
     /// Get the X-axis label as PlotText
@@ -182,7 +182,7 @@ impl PlotConfiguration {
 
     /// Get the Y-axis label (static only - for backward compatibility)
     pub fn ylabel(&self) -> Option<&str> {
-        self.ylabel.as_ref().and_then(|t| t.as_static())
+        self.ylabel.as_ref().and_then(|t| t.as_static_str())
     }
 
     /// Get the Y-axis label as PlotText
