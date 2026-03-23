@@ -357,6 +357,86 @@ pub struct SeriesStyle {
     pub error_config: Option<crate::plots::error::ErrorBarConfig>,
 }
 
+impl SeriesStyle {
+    pub(crate) fn set_color_source_value(&mut self, color: ReactiveValue<Color>) {
+        match color {
+            ReactiveValue::Static(color) => {
+                self.color = Some(color);
+                self.color_source = None;
+            }
+            source => {
+                self.color = None;
+                self.color_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_line_width_source_value(&mut self, width: ReactiveValue<f32>) {
+        match width {
+            ReactiveValue::Static(width) => {
+                self.line_width = Some(width.max(0.1));
+                self.line_width_source = None;
+            }
+            source => {
+                self.line_width = None;
+                self.line_width_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_line_style_source_value(&mut self, style: ReactiveValue<LineStyle>) {
+        match style {
+            ReactiveValue::Static(style) => {
+                self.line_style = Some(style);
+                self.line_style_source = None;
+            }
+            source => {
+                self.line_style = None;
+                self.line_style_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_marker_style_source_value(&mut self, style: ReactiveValue<MarkerStyle>) {
+        match style {
+            ReactiveValue::Static(style) => {
+                self.marker_style = Some(style);
+                self.marker_style_source = None;
+            }
+            source => {
+                self.marker_style = None;
+                self.marker_style_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_marker_size_source_value(&mut self, size: ReactiveValue<f32>) {
+        match size {
+            ReactiveValue::Static(size) => {
+                self.marker_size = Some(size.max(0.1));
+                self.marker_size_source = None;
+            }
+            source => {
+                self.marker_size = None;
+                self.marker_size_source = Some(source);
+            }
+        }
+    }
+
+    pub(crate) fn set_alpha_source_value(&mut self, alpha: ReactiveValue<f32>) {
+        match alpha {
+            ReactiveValue::Static(alpha) => {
+                self.alpha = Some(alpha.clamp(0.0, 1.0));
+                self.alpha_source = None;
+            }
+            source => {
+                self.alpha = None;
+                self.alpha_source = Some(source);
+            }
+        }
+    }
+}
+
 /// Generic plot builder for trait-based plot types
 ///
 /// `PlotBuilder<C>` owns the `Plot` and accumulates series configuration
@@ -455,8 +535,7 @@ where
     where
         S: Into<ReactiveValue<Color>>,
     {
-        self.style.color = None;
-        self.style.color_source = Some(color.into());
+        self.style.set_color_source_value(color.into());
         self
     }
 
@@ -481,8 +560,7 @@ where
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.line_width = None;
-        self.style.line_width_source = Some(width.into());
+        self.style.set_line_width_source_value(width.into());
         self
     }
 
@@ -507,8 +585,7 @@ where
     where
         S: Into<ReactiveValue<LineStyle>>,
     {
-        self.style.line_style = None;
-        self.style.line_style_source = Some(style.into());
+        self.style.set_line_style_source_value(style.into());
         self
     }
 
@@ -535,8 +612,7 @@ where
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.alpha = None;
-        self.style.alpha_source = Some(alpha.into());
+        self.style.set_alpha_source_value(alpha.into());
         self
     }
 
@@ -1928,8 +2004,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
         S: Into<ReactiveValue<crate::render::MarkerStyle>>,
     {
         self.config.show_markers = true;
-        self.style.marker_style = None;
-        self.style.marker_style_source = Some(style.into());
+        self.style.set_marker_style_source_value(style.into());
         self
     }
 
@@ -1949,8 +2024,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.marker_size = None;
-        self.style.marker_size_source = Some(size.into());
+        self.style.set_marker_size_source_value(size.into());
         self
     }
 
@@ -1989,8 +2063,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     where
         S: Into<ReactiveValue<crate::render::LineStyle>>,
     {
-        self.style.line_style = None;
-        self.style.line_style_source = Some(line_style.into());
+        self.style.set_line_style_source_value(line_style.into());
         self
     }
 
@@ -2042,8 +2115,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     where
         S: Into<ReactiveValue<crate::render::MarkerStyle>>,
     {
-        self.style.marker_style = None;
-        self.style.marker_style_source = Some(style.into());
+        self.style.set_marker_style_source_value(style.into());
         self
     }
 
@@ -2063,8 +2135,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.marker_size = None;
-        self.style.marker_size_source = Some(size.into());
+        self.style.set_marker_size_source_value(size.into());
         self
     }
 
@@ -2265,6 +2336,31 @@ mod tests {
 
         let builder = PlotBuilder::new(plot, input, config).line_width(0.01); // Should clamp to 0.1
         assert_eq!(builder.style.line_width, Some(0.1));
+    }
+
+    #[test]
+    fn test_static_source_setters_materialize_generic_builder_values() {
+        let builder = super::super::Plot::new()
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .color_source(Color::RED)
+            .line_width_source(0.01_f32)
+            .style_source(LineStyle::Dashed)
+            .marker_source(MarkerStyle::Square)
+            .marker_size_source(0.01_f32)
+            .alpha_source(1.5_f32);
+
+        assert_eq!(builder.style.color, Some(Color::RED));
+        assert!(builder.style.color_source.is_none());
+        assert_eq!(builder.style.line_width, Some(0.1));
+        assert!(builder.style.line_width_source.is_none());
+        assert_eq!(builder.style.line_style, Some(LineStyle::Dashed));
+        assert!(builder.style.line_style_source.is_none());
+        assert_eq!(builder.style.marker_style, Some(MarkerStyle::Square));
+        assert!(builder.style.marker_style_source.is_none());
+        assert_eq!(builder.style.marker_size, Some(0.1));
+        assert!(builder.style.marker_size_source.is_none());
+        assert_eq!(builder.style.alpha, Some(1.0));
+        assert!(builder.style.alpha_source.is_none());
     }
 
     #[test]

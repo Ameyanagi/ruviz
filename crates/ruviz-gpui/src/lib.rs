@@ -650,21 +650,7 @@ mod supported {
         where
             P: IntoPlotSession,
         {
-            self.session = plot.into_plot_session();
-            apply_performance_options(&self.session, self.options.performance);
-            let (reactive_notify_pending, reactive_receiver, subscription) =
-                bind_reactive_session(&self.session);
-            self.subscription = subscription;
-            self.reactive_notify_pending = reactive_notify_pending;
-            self.reactive_receiver = Some(reactive_receiver);
-            self.reactive_watcher = None;
-            self.presentation_clock
-                .lock()
-                .expect("RuvizPlot presentation clock lock poisoned")
-                .reset();
-            self.reset_pointer_state();
-            self.scheduler.reset();
-            self.in_flight_render = None;
+            self.replace_session(plot.into_plot_session());
             cx.notify();
         }
 
@@ -734,6 +720,26 @@ mod supported {
             self.session.invalidate();
             self.scheduler.reset();
             self.in_flight_render = None;
+        }
+
+        fn replace_session(&mut self, session: InteractivePlotSession) {
+            self.session = session;
+            apply_performance_options(&self.session, self.options.performance);
+            let (reactive_notify_pending, reactive_receiver, subscription) =
+                bind_reactive_session(&self.session);
+            self.subscription = subscription;
+            self.reactive_notify_pending = reactive_notify_pending;
+            self.reactive_receiver = Some(reactive_receiver);
+            self.reactive_watcher = None;
+            self.presentation_clock
+                .lock()
+                .expect("RuvizPlot presentation clock lock poisoned")
+                .reset();
+            self.reset_pointer_state();
+            self.retire_cached_frame();
+            self.scheduler.reset();
+            self.in_flight_render = None;
+            self.last_layout = None;
         }
 
         fn reset_pointer_state(&mut self) {
@@ -1800,6 +1806,58 @@ mod supported {
 
             assert!(pending.load(Ordering::Acquire));
             assert!(receiver.try_recv().is_ok());
+        }
+
+        #[test]
+        fn test_replace_session_retires_cached_frame() {
+            let initial_plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
+            let initial_session = initial_plot.prepare_interactive();
+            let (pending, receiver, subscription) = bind_reactive_session(&initial_session);
+            let cached_primary =
+                render_image_from_ruviz(ruviz::core::plot::Image::new(1, 1, vec![0, 0, 0, 255]));
+            let cached_frame = CachedFrame {
+                request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                primary: PrimaryFrame::Image(cached_primary),
+                overlay_image: None,
+                stats: FrameStats::default(),
+                target: RenderTargetKind::Surface,
+                surface_capability: SurfaceCapability::FallbackImage,
+                layer_state: LayerRenderState::default(),
+            };
+            let mut view = RuvizPlot {
+                session: initial_session,
+                subscription,
+                reactive_notify_pending: pending,
+                reactive_receiver: Some(receiver),
+                reactive_watcher: None,
+                presentation_clock: Arc::new(Mutex::new(PresentationClock::default())),
+                options: RuvizPlotOptions::default(),
+                cached_frame: Some(cached_frame),
+                retired_images: Vec::new(),
+                #[cfg(all(feature = "gpu", target_os = "macos"))]
+                surface_upload: SurfaceUploadState::default(),
+                scheduler: RenderScheduler::default(),
+                in_flight_render: None,
+                last_layout: Some(InteractionLayout {
+                    bounds: Bounds::default(),
+                    content_bounds: Bounds::default(),
+                    frame_size_px: (320, 240),
+                }),
+                pointer_down_px: Some(ViewportPoint::new(1.0, 1.0)),
+                last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
+                drag_mode: DragMode::Pan,
+            };
+
+            let replacement_plot: Plot = Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]).into();
+            let replacement_session = replacement_plot.prepare_interactive();
+            view.replace_session(replacement_session);
+
+            assert!(view.cached_frame.is_none());
+            assert_eq!(view.retired_images.len(), 1);
+            assert!(view.last_layout.is_none());
+            assert_eq!(view.drag_mode, DragMode::None);
+            assert!(view.pointer_down_px.is_none());
+            assert!(view.last_pointer_px.is_none());
         }
 
         #[test]

@@ -318,6 +318,12 @@ struct TooltipState {
     position_px: ViewportPoint,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TooltipSource {
+    Hover,
+    Manual,
+}
+
 #[derive(Clone, Debug)]
 struct SessionState {
     size_px: (u32, u32),
@@ -332,6 +338,7 @@ struct SessionState {
     brush_anchor: Option<ViewportPoint>,
     brushed_region: Option<ViewportRect>,
     tooltip: Option<TooltipState>,
+    tooltip_source: Option<TooltipSource>,
     base_cache: Option<InteractiveFrameCache>,
     overlay_cache: Option<OverlayFrameCache>,
     geometry: Option<GeometrySnapshot>,
@@ -353,6 +360,7 @@ impl Default for SessionState {
             brush_anchor: None,
             brushed_region: None,
             tooltip: None,
+            tooltip_source: None,
             base_cache: None,
             overlay_cache: None,
             geometry: None,
@@ -653,28 +661,67 @@ impl InteractivePlotSession {
                 }
             }
             PlotInputEvent::Zoom { factor, center_px } => {
-                let pre_zoom_visible = visible_bounds(&state);
-                let anchor_before = screen_to_data(&state, pre_zoom_visible, center_px);
-                let old_zoom = state.zoom_level;
+                let state_snapshot = state.clone();
+                drop(state);
+                let current_geometry = match self.geometry_snapshot() {
+                    Ok(geometry) => geometry,
+                    Err(_) => return,
+                };
+
+                let plot = self.inner.prepared.plot();
+                let pre_zoom_visible = visible_bounds(&state_snapshot);
+                let anchor_before =
+                    screen_to_data(pre_zoom_visible, current_geometry.plot_area, center_px);
+                let old_zoom = state_snapshot.zoom_level;
                 let new_zoom = (old_zoom * factor).clamp(0.1, 100.0);
                 if (new_zoom - old_zoom).abs() > f64::EPSILON {
-                    state.zoom_level = new_zoom;
-                    let post_zoom_visible = visible_bounds(&state);
-                    let anchor_after = screen_to_data(&state, post_zoom_visible, center_px);
-                    state.pan_offset.x += anchor_before.x - anchor_after.x;
-                    state.pan_offset.y += anchor_before.y - anchor_after.y;
+                    let mut next_state = state_snapshot.clone();
+                    next_state.zoom_level = new_zoom;
+                    let post_zoom_visible = visible_bounds(&next_state);
+                    let post_geometry = match geometry_snapshot_for_state(
+                        plot,
+                        &next_state,
+                        build_frame_key(plot, &next_state),
+                    ) {
+                        Ok(geometry) => geometry,
+                        Err(_) => return,
+                    };
+                    let anchor_after =
+                        screen_to_data(post_zoom_visible, post_geometry.plot_area, center_px);
+                    next_state.pan_offset.x += anchor_before.x - anchor_after.x;
+                    next_state.pan_offset.y += anchor_before.y - anchor_after.y;
+
+                    let mut state = self
+                        .inner
+                        .state
+                        .lock()
+                        .expect("InteractivePlotSession state lock poisoned");
+                    state.zoom_level = next_state.zoom_level;
+                    state.pan_offset = next_state.pan_offset;
                     drop(state);
                     self.mark_dirty(DirtyDomain::Data);
                     self.mark_dirty(DirtyDomain::Overlay);
                     return;
                 }
+                return;
             }
             PlotInputEvent::Pan { delta_px } => {
-                let visible = visible_bounds(&state);
+                let state_snapshot = state.clone();
+                drop(state);
+                let current_geometry = match self.geometry_snapshot() {
+                    Ok(geometry) => geometry,
+                    Err(_) => return,
+                };
+                let visible = visible_bounds(&state_snapshot);
                 let width = visible.width().max(f64::EPSILON);
                 let height = visible.height().max(f64::EPSILON);
-                let size_x = state.size_px.0.max(1) as f64;
-                let size_y = state.size_px.1.max(1) as f64;
+                let size_x = f64::from(current_geometry.plot_area.width()).max(1.0);
+                let size_y = f64::from(current_geometry.plot_area.height()).max(1.0);
+                let mut state = self
+                    .inner
+                    .state
+                    .lock()
+                    .expect("InteractivePlotSession state lock poisoned");
                 state.pan_offset.x -= (delta_px.x / size_x) * width;
                 state.pan_offset.y += (delta_px.y / size_y) * height;
                 drop(state);
@@ -690,12 +737,17 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                let changed = state.hovered != Some(hit.clone());
-                state.hovered = match hit {
+                let next_hovered = match hit {
                     HitResult::None => None,
                     other => Some(other),
                 };
-                state.tooltip = state.hovered.as_ref().map(tooltip_from_hit);
+                let next_tooltip = next_hovered.as_ref().map(tooltip_from_hit);
+                let changed = state.hovered != next_hovered
+                    || state.tooltip != next_tooltip
+                    || state.tooltip_source != next_hovered.as_ref().map(|_| TooltipSource::Hover);
+                state.hovered = next_hovered;
+                state.tooltip = next_tooltip;
+                state.tooltip_source = state.hovered.as_ref().map(|_| TooltipSource::Hover);
                 if changed {
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
@@ -703,7 +755,14 @@ impl InteractivePlotSession {
                 return;
             }
             PlotInputEvent::ClearHover => {
-                if state.hovered.take().is_some() || state.tooltip.take().is_some() {
+                let hover_changed = state.hovered.take().is_some();
+                let tooltip_changed = if state.tooltip_source == Some(TooltipSource::Hover) {
+                    state.tooltip_source = None;
+                    state.tooltip.take().is_some()
+                } else {
+                    false
+                };
+                if hover_changed || tooltip_changed {
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
                     return;
@@ -772,12 +831,14 @@ impl InteractivePlotSession {
                     content,
                     position_px,
                 });
+                state.tooltip_source = Some(TooltipSource::Manual);
                 drop(state);
                 self.mark_dirty(DirtyDomain::Overlay);
                 return;
             }
             PlotInputEvent::HideTooltip => {
                 if state.tooltip.take().is_some() {
+                    state.tooltip_source = None;
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
                     return;
@@ -975,6 +1036,7 @@ impl InteractivePlotSession {
         };
 
         let geometry = self.ensure_geometry(&base_key)?;
+        self.refresh_overlay_state(&geometry, dirty_before_render)?;
         let base_result = self.ensure_base_image(&base_key, &geometry, dirty_before_render)?;
         let overlay_result = self.ensure_overlay_image(size_px, dirty_before_render)?;
         let composed = if target == RenderTargetKind::Image {
@@ -1035,21 +1097,8 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
-        let visible = visible_bounds(&state);
-        let layout = compute_plot_layout(
-            self.inner.prepared.plot(),
-            state.size_px,
-            state.scale_factor,
-            state.time_seconds,
-            visible,
-        )?;
-
-        let geometry = GeometrySnapshot {
-            key: key.clone(),
-            plot_area: layout.plot_area_rect,
-            x_bounds: (visible.x_min, visible.x_max),
-            y_bounds: (visible.y_min, visible.y_max),
-        };
+        let geometry =
+            geometry_snapshot_for_state(self.inner.prepared.plot(), &state, key.clone())?;
 
         let mut state = self
             .inner
@@ -1217,6 +1266,69 @@ impl InteractivePlotSession {
             image,
             updated: true,
         })
+    }
+
+    fn refresh_overlay_state(
+        &self,
+        geometry: &GeometrySnapshot,
+        dirty_before_render: DirtyDomains,
+    ) -> Result<()> {
+        if !dirty_before_render.layout && !dirty_before_render.data && !dirty_before_render.temporal
+        {
+            return Ok(());
+        }
+
+        let state_snapshot = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+
+        if state_snapshot.hovered.is_none()
+            && state_snapshot.selected.is_empty()
+            && state_snapshot.tooltip_source != Some(TooltipSource::Hover)
+        {
+            return Ok(());
+        }
+
+        let snapshot = self
+            .inner
+            .prepared
+            .plot()
+            .snapshot_series(state_snapshot.time_seconds);
+        let refreshed_hovered = state_snapshot
+            .hovered
+            .as_ref()
+            .and_then(|hit| refresh_hit_result(hit, &snapshot, geometry));
+        let refreshed_selected = state_snapshot
+            .selected
+            .iter()
+            .filter_map(|hit| refresh_hit_result(hit, &snapshot, geometry))
+            .collect::<Vec<_>>();
+        let (refreshed_tooltip, refreshed_tooltip_source) =
+            if state_snapshot.tooltip_source == Some(TooltipSource::Hover) {
+                (
+                    refreshed_hovered.as_ref().map(tooltip_from_hit),
+                    refreshed_hovered.as_ref().map(|_| TooltipSource::Hover),
+                )
+            } else {
+                (
+                    state_snapshot.tooltip.clone(),
+                    state_snapshot.tooltip_source,
+                )
+            };
+
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        state.hovered = refreshed_hovered;
+        state.selected = refreshed_selected;
+        state.tooltip = refreshed_tooltip;
+        state.tooltip_source = refreshed_tooltip_source;
+        Ok(())
     }
 
     fn geometry_snapshot(&self) -> Result<GeometrySnapshot> {
@@ -1402,6 +1514,8 @@ impl InteractivePlotSession {
             data_position: point,
             distance_px: 0.0,
         });
+        state.tooltip = state.hovered.as_ref().map(tooltip_from_hit);
+        state.tooltip_source = state.hovered.as_ref().map(|_| TooltipSource::Hover);
         drop(state);
         self.mark_dirty(DirtyDomain::Overlay);
     }
@@ -1451,14 +1565,20 @@ fn visible_bounds(state: &SessionState) -> DataBounds {
 }
 
 fn screen_to_data(
-    state: &SessionState,
     bounds: DataBounds,
+    plot_area: tiny_skia::Rect,
     position_px: ViewportPoint,
 ) -> ViewportPoint {
-    let width = state.size_px.0.max(1) as f64;
-    let height = state.size_px.1.max(1) as f64;
-    let normalized_x = position_px.x / width;
-    let normalized_y = position_px.y / height;
+    let left = plot_area.left() as f64;
+    let right = plot_area.right() as f64;
+    let top = plot_area.top() as f64;
+    let bottom = plot_area.bottom() as f64;
+    let clamped_x = position_px.x.clamp(left, right);
+    let clamped_y = position_px.y.clamp(top, bottom);
+    let width = f64::from(plot_area.width()).max(1.0);
+    let height = f64::from(plot_area.height()).max(1.0);
+    let normalized_x = ((clamped_x - left) / width).clamp(0.0, 1.0);
+    let normalized_y = ((clamped_y - top) / height).clamp(0.0, 1.0);
     ViewportPoint::new(
         bounds.x_min + bounds.width() * normalized_x,
         bounds.y_max - bounds.height() * normalized_y,
@@ -1491,6 +1611,111 @@ fn sanitize_scale_factor(scale_factor: f32) -> f32 {
 
 struct ComputedSessionLayout {
     plot_area_rect: tiny_skia::Rect,
+}
+
+fn geometry_snapshot_for_state(
+    plot: &Plot,
+    state: &SessionState,
+    key: InteractiveFrameKey,
+) -> Result<GeometrySnapshot> {
+    let visible = visible_bounds(state);
+    let layout = compute_plot_layout(
+        plot,
+        state.size_px,
+        state.scale_factor,
+        state.time_seconds,
+        visible,
+    )?;
+
+    Ok(GeometrySnapshot {
+        key,
+        plot_area: layout.plot_area_rect,
+        x_bounds: (visible.x_min, visible.x_max),
+        y_bounds: (visible.y_min, visible.y_max),
+    })
+}
+
+fn refresh_hit_result(
+    hit: &HitResult,
+    snapshot: &[PlotSeries],
+    geometry: &GeometrySnapshot,
+) -> Option<HitResult> {
+    match hit {
+        HitResult::SeriesPoint {
+            series_index,
+            point_index,
+            distance_px,
+            ..
+        } => {
+            let series = snapshot.get(*series_index)?;
+            let (x_val, y_val) = match &series.series_type {
+                SeriesType::Line { x_data, y_data }
+                | SeriesType::Scatter { x_data, y_data }
+                | SeriesType::ErrorBars { x_data, y_data, .. }
+                | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                    let x = x_data.resolve(0.0);
+                    let y = y_data.resolve(0.0);
+                    (*x.get(*point_index)?, *y.get(*point_index)?)
+                }
+                _ => return None,
+            };
+            if !x_val.is_finite() || !y_val.is_finite() {
+                return None;
+            }
+            let (screen_x, screen_y) = map_data_to_pixels(
+                x_val,
+                y_val,
+                geometry.x_bounds.0,
+                geometry.x_bounds.1,
+                geometry.y_bounds.0,
+                geometry.y_bounds.1,
+                geometry.plot_area,
+            );
+
+            Some(HitResult::SeriesPoint {
+                series_index: *series_index,
+                point_index: *point_index,
+                screen_position: ViewportPoint::new(screen_x as f64, screen_y as f64),
+                data_position: ViewportPoint::new(x_val, y_val),
+                distance_px: *distance_px,
+            })
+        }
+        HitResult::HeatmapCell {
+            series_index,
+            row,
+            col,
+            ..
+        } => {
+            let series = snapshot.get(*series_index)?;
+            let SeriesType::Heatmap { data } = &series.series_type else {
+                return None;
+            };
+            if *row >= data.n_rows || *col >= data.n_cols {
+                return None;
+            }
+
+            let cell_width = f64::from(geometry.plot_area.width()) / data.n_cols.max(1) as f64;
+            let cell_height = f64::from(geometry.plot_area.height()) / data.n_rows.max(1) as f64;
+            let row_from_top = data.n_rows.saturating_sub(*row + 1);
+            Some(HitResult::HeatmapCell {
+                series_index: *series_index,
+                row: *row,
+                col: *col,
+                value: data.values[*row][*col],
+                screen_rect: ViewportRect {
+                    min: ViewportPoint::new(
+                        geometry.plot_area.left() as f64 + cell_width * *col as f64,
+                        geometry.plot_area.top() as f64 + cell_height * row_from_top as f64,
+                    ),
+                    max: ViewportPoint::new(
+                        geometry.plot_area.left() as f64 + cell_width * (*col as f64 + 1.0),
+                        geometry.plot_area.top() as f64 + cell_height * (row_from_top as f64 + 1.0),
+                    ),
+                },
+            })
+        }
+        HitResult::None => None,
+    }
 }
 
 fn compute_plot_layout(
@@ -2408,8 +2633,21 @@ mod tests {
             .expect("surface frame should render");
         assert!(first.layer_state.base_dirty);
 
+        let geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after first frame");
+        let (hover_x, hover_y) = map_data_to_pixels(
+            1.0,
+            1.0,
+            geometry.x_bounds.0,
+            geometry.x_bounds.1,
+            geometry.y_bounds.0,
+            geometry.y_bounds.1,
+            geometry.plot_area,
+        );
+
         session.apply_input(PlotInputEvent::Hover {
-            position_px: ViewportPoint::new(160.0, 120.0),
+            position_px: ViewportPoint::new(hover_x as f64, hover_y as f64),
         });
         let second = session
             .render_to_surface(SurfaceTarget {
@@ -2559,9 +2797,12 @@ mod tests {
     }
 
     #[test]
-    fn test_zoom_keeps_cursor_anchor_stable() {
+    fn test_hover_and_selection_refresh_after_view_change() {
         let plot: Plot = Plot::new()
-            .line(&[0.0, 10.0], &[0.0, 10.0])
+            .line(&[0.0, 5.0, 10.0], &[0.0, 5.0, 10.0])
+            .title("Overlay Refresh")
+            .xlabel("X Label")
+            .ylabel("Y Label")
             .xlim(0.0, 10.0)
             .ylim(0.0, 10.0)
             .into();
@@ -2571,7 +2812,190 @@ mod tests {
             .render_to_surface(render_target())
             .expect("initial surface frame should render");
 
-        let anchor_px = ViewportPoint::new(0.0, 120.0);
+        let before_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available before hover");
+        let (hover_x, hover_y) = map_data_to_pixels(
+            5.0,
+            5.0,
+            before_geometry.x_bounds.0,
+            before_geometry.x_bounds.1,
+            before_geometry.y_bounds.0,
+            before_geometry.y_bounds.1,
+            before_geometry.plot_area,
+        );
+        let hover_px = ViewportPoint::new(hover_x as f64, hover_y as f64);
+
+        session.apply_input(PlotInputEvent::Hover {
+            position_px: hover_px,
+        });
+        session.apply_input(PlotInputEvent::SelectAt {
+            position_px: hover_px,
+        });
+        session.apply_input(PlotInputEvent::Pan {
+            delta_px: ViewportPoint::new(36.0, 18.0),
+        });
+        session
+            .render_to_surface(render_target())
+            .expect("surface frame should rerender after pan");
+
+        let after_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after pan");
+        let (expected_x, expected_y) = map_data_to_pixels(
+            5.0,
+            5.0,
+            after_geometry.x_bounds.0,
+            after_geometry.x_bounds.1,
+            after_geometry.y_bounds.0,
+            after_geometry.y_bounds.1,
+            after_geometry.plot_area,
+        );
+        let state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        let hovered = state.hovered.expect("hovered hit should be refreshed");
+        let selected = state
+            .selected
+            .first()
+            .cloned()
+            .expect("selected hit should be refreshed");
+        let tooltip = state.tooltip.expect("hover tooltip should be refreshed");
+
+        match hovered {
+            HitResult::SeriesPoint {
+                screen_position,
+                data_position,
+                ..
+            } => {
+                assert!((screen_position.x - expected_x as f64).abs() < 1e-6);
+                assert!((screen_position.y - expected_y as f64).abs() < 1e-6);
+                assert_eq!(data_position, ViewportPoint::new(5.0, 5.0));
+                assert_eq!(tooltip.position_px, screen_position);
+            }
+            other => panic!("expected series-point hover hit, got {other:?}"),
+        }
+
+        match selected {
+            HitResult::SeriesPoint {
+                screen_position,
+                data_position,
+                ..
+            } => {
+                assert!((screen_position.x - expected_x as f64).abs() < 1e-6);
+                assert!((screen_position.y - expected_y as f64).abs() < 1e-6);
+                assert_eq!(data_position, ViewportPoint::new(5.0, 5.0));
+            }
+            other => panic!("expected series-point selection hit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_hover_refreshes_after_time_change() {
+        let temporal_y = signal::of(|time| vec![time, 1.0 + time, 2.0 + time]);
+        let plot: Plot = Plot::new()
+            .line_source(vec![0.0, 1.0, 2.0], temporal_y)
+            .xlim(0.0, 2.0)
+            .ylim(0.0, 4.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial temporal surface frame should render");
+
+        let before_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available before temporal update");
+        let (hover_x, hover_y) = map_data_to_pixels(
+            1.0,
+            1.0,
+            before_geometry.x_bounds.0,
+            before_geometry.x_bounds.1,
+            before_geometry.y_bounds.0,
+            before_geometry.y_bounds.1,
+            before_geometry.plot_area,
+        );
+        session.apply_input(PlotInputEvent::Hover {
+            position_px: ViewportPoint::new(hover_x as f64, hover_y as f64),
+        });
+
+        session
+            .render_to_surface(SurfaceTarget {
+                time_seconds: 1.0,
+                ..render_target()
+            })
+            .expect("temporal surface frame should render at updated time");
+
+        let after_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after temporal update");
+        let (expected_x, expected_y) = map_data_to_pixels(
+            1.0,
+            2.0,
+            after_geometry.x_bounds.0,
+            after_geometry.x_bounds.1,
+            after_geometry.y_bounds.0,
+            after_geometry.y_bounds.1,
+            after_geometry.plot_area,
+        );
+        let state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        let hovered = state
+            .hovered
+            .expect("hovered hit should survive temporal update");
+        let tooltip = state
+            .tooltip
+            .expect("hover tooltip should survive temporal update");
+
+        match hovered {
+            HitResult::SeriesPoint {
+                screen_position,
+                data_position,
+                ..
+            } => {
+                assert_eq!(data_position, ViewportPoint::new(1.0, 2.0));
+                assert!((screen_position.x - expected_x as f64).abs() < 1e-6);
+                assert!((screen_position.y - expected_y as f64).abs() < 1e-6);
+            }
+            other => panic!("expected series-point hover hit, got {other:?}"),
+        }
+        assert_eq!(tooltip.content, "x=1.000, y=2.000");
+        assert!((tooltip.position_px.x - expected_x as f64).abs() < 1e-6);
+        assert!((tooltip.position_px.y - expected_y as f64).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_zoom_keeps_cursor_anchor_stable() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 10.0])
+            .title("Zoom Anchor")
+            .xlabel("Time")
+            .ylabel("Value")
+            .xlim(0.0, 10.0)
+            .ylim(0.0, 10.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial surface frame should render");
+
+        let before_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available before zoom");
+        let anchor_px = ViewportPoint::new(
+            0.0,
+            before_geometry.plot_area.top() as f64
+                + f64::from(before_geometry.plot_area.height()) * 0.5,
+        );
         let before_state = session
             .inner
             .state
@@ -2579,7 +3003,7 @@ mod tests {
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
         let before_visible = visible_bounds(&before_state);
-        let anchor_before = screen_to_data(&before_state, before_visible, anchor_px);
+        let anchor_before = screen_to_data(before_visible, before_geometry.plot_area, anchor_px);
 
         session.apply_input(PlotInputEvent::Zoom {
             factor: 2.0,
@@ -2593,10 +3017,61 @@ mod tests {
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
         let after_visible = visible_bounds(&after_state);
-        let anchor_after = screen_to_data(&after_state, after_visible, anchor_px);
+        let after_geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available after zoom");
+        let anchor_after = screen_to_data(after_visible, after_geometry.plot_area, anchor_px);
 
         assert!((anchor_before.x - anchor_after.x).abs() < 1e-9);
         assert!((anchor_before.y - anchor_after.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_pan_uses_plot_area_dimensions() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 10.0])
+            .title("Pan Scale")
+            .xlabel("X Axis")
+            .ylabel("Y Axis")
+            .xlim(0.0, 10.0)
+            .ylim(0.0, 10.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial surface frame should render");
+
+        let before_state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        let before_visible = visible_bounds(&before_state);
+        let geometry = session
+            .geometry_snapshot()
+            .expect("geometry should be available before pan");
+        let delta_px = ViewportPoint::new(40.0, 24.0);
+
+        session.apply_input(PlotInputEvent::Pan { delta_px });
+
+        let after_state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        let after_visible = visible_bounds(&after_state);
+        let expected_dx =
+            -(delta_px.x / f64::from(geometry.plot_area.width())) * before_visible.width();
+        let expected_dy =
+            (delta_px.y / f64::from(geometry.plot_area.height())) * before_visible.height();
+
+        assert!(((after_visible.x_min - before_visible.x_min) - expected_dx).abs() < 1e-9);
+        assert!(((after_visible.x_max - before_visible.x_max) - expected_dx).abs() < 1e-9);
+        assert!(((after_visible.y_min - before_visible.y_min) - expected_dy).abs() < 1e-9);
+        assert!(((after_visible.y_max - before_visible.y_max) - expected_dy).abs() < 1e-9);
     }
 
     #[test]

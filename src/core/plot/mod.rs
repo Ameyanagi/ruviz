@@ -327,6 +327,84 @@ pub(crate) struct PlotSeries {
 }
 
 impl PlotSeries {
+    fn set_color_source_value(&mut self, color: ReactiveValue<Color>) {
+        match color {
+            ReactiveValue::Static(color) => {
+                self.color = Some(color);
+                self.color_source = None;
+            }
+            source => {
+                self.color = None;
+                self.color_source = Some(source);
+            }
+        }
+    }
+
+    fn set_line_width_source_value(&mut self, width: ReactiveValue<f32>) {
+        match width {
+            ReactiveValue::Static(width) => {
+                self.line_width = Some(width.max(0.1));
+                self.line_width_source = None;
+            }
+            source => {
+                self.line_width = None;
+                self.line_width_source = Some(source);
+            }
+        }
+    }
+
+    fn set_line_style_source_value(&mut self, style: ReactiveValue<LineStyle>) {
+        match style {
+            ReactiveValue::Static(style) => {
+                self.line_style = Some(style);
+                self.line_style_source = None;
+            }
+            source => {
+                self.line_style = None;
+                self.line_style_source = Some(source);
+            }
+        }
+    }
+
+    fn set_marker_style_source_value(&mut self, marker: ReactiveValue<MarkerStyle>) {
+        match marker {
+            ReactiveValue::Static(marker) => {
+                self.marker_style = Some(marker);
+                self.marker_style_source = None;
+            }
+            source => {
+                self.marker_style = None;
+                self.marker_style_source = Some(source);
+            }
+        }
+    }
+
+    fn set_marker_size_source_value(&mut self, size: ReactiveValue<f32>) {
+        match size {
+            ReactiveValue::Static(size) => {
+                self.marker_size = Some(size.max(0.1));
+                self.marker_size_source = None;
+            }
+            source => {
+                self.marker_size = None;
+                self.marker_size_source = Some(source);
+            }
+        }
+    }
+
+    fn set_alpha_source_value(&mut self, alpha: ReactiveValue<f32>) {
+        match alpha {
+            ReactiveValue::Static(alpha) => {
+                self.alpha = Some(alpha.clamp(0.0, 1.0));
+                self.alpha_source = None;
+            }
+            source => {
+                self.alpha = None;
+                self.alpha_source = Some(source);
+            }
+        }
+    }
+
     fn to_legend_item_with_label(
         &self,
         label: String,
@@ -10313,8 +10391,7 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<Color>>,
     {
-        self.style.color = None;
-        self.style.color_source = Some(color.into());
+        self.style.set_color_source_value(color.into());
         self
     }
 
@@ -10330,8 +10407,7 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.line_width = None;
-        self.style.line_width_source = Some(width.into());
+        self.style.set_line_width_source_value(width.into());
         self
     }
 
@@ -10347,8 +10423,7 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<LineStyle>>,
     {
-        self.style.line_style = None;
-        self.style.line_style_source = Some(style.into());
+        self.style.set_line_style_source_value(style.into());
         self
     }
 
@@ -10364,8 +10439,7 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.alpha = None;
-        self.style.alpha_source = Some(alpha.into());
+        self.style.set_alpha_source_value(alpha.into());
         self
     }
 
@@ -10676,8 +10750,7 @@ impl PlotSeriesBuilder {
     where
         S: Into<ReactiveValue<Color>>,
     {
-        self.series.color = None;
-        self.series.color_source = Some(color.into());
+        self.series.set_color_source_value(color.into());
         self
     }
 
@@ -10707,8 +10780,7 @@ impl PlotSeriesBuilder {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.series.line_width = None;
-        self.series.line_width_source = Some(width.into());
+        self.series.set_line_width_source_value(width.into());
         self
     }
 
@@ -10739,8 +10811,7 @@ impl PlotSeriesBuilder {
     where
         S: Into<ReactiveValue<LineStyle>>,
     {
-        self.series.line_style = None;
-        self.series.line_style_source = Some(style.into());
+        self.series.set_line_style_source_value(style.into());
         self
     }
 
@@ -10771,8 +10842,7 @@ impl PlotSeriesBuilder {
     where
         S: Into<ReactiveValue<MarkerStyle>>,
     {
-        self.series.marker_style = None;
-        self.series.marker_style_source = Some(marker.into());
+        self.series.set_marker_style_source_value(marker.into());
         self
     }
 
@@ -10803,8 +10873,7 @@ impl PlotSeriesBuilder {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.series.marker_size = None;
-        self.series.marker_size_source = Some(size.into());
+        self.series.set_marker_size_source_value(size.into());
         self
     }
 
@@ -10835,8 +10904,7 @@ impl PlotSeriesBuilder {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.series.alpha = None;
-        self.series.alpha_source = Some(alpha.into());
+        self.series.set_alpha_source_value(alpha.into());
         self
     }
 
@@ -11684,6 +11752,76 @@ mod tests {
             .parse::<f32>()
             .unwrap_or_else(|_| panic!("invalid translate y for {}", text));
         (x, y)
+    }
+
+    #[test]
+    fn test_plot_series_static_source_helpers_materialize_values() {
+        let mut series = PlotSeries {
+            series_type: SeriesType::Line {
+                x_data: PlotData::Static(vec![0.0, 1.0]),
+                y_data: PlotData::Static(vec![1.0, 2.0]),
+            },
+            streaming_source: None,
+            label: None,
+            color: None,
+            color_source: None,
+            line_width: None,
+            line_width_source: None,
+            line_style: None,
+            line_style_source: None,
+            marker_style: None,
+            marker_style_source: None,
+            marker_size: None,
+            marker_size_source: None,
+            alpha: None,
+            alpha_source: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            group_id: None,
+        };
+
+        series.set_color_source_value(Color::RED.into());
+        series.set_line_width_source_value(0.01_f32.into());
+        series.set_line_style_source_value(LineStyle::Dashed.into());
+        series.set_marker_style_source_value(MarkerStyle::Square.into());
+        series.set_marker_size_source_value(0.01_f32.into());
+        series.set_alpha_source_value(1.5_f32.into());
+
+        assert_eq!(series.color, Some(Color::RED));
+        assert!(series.color_source.is_none());
+        assert_eq!(series.line_width, Some(0.1));
+        assert!(series.line_width_source.is_none());
+        assert_eq!(series.line_style, Some(LineStyle::Dashed));
+        assert!(series.line_style_source.is_none());
+        assert_eq!(series.marker_style, Some(MarkerStyle::Square));
+        assert!(series.marker_style_source.is_none());
+        assert_eq!(series.marker_size, Some(0.1));
+        assert!(series.marker_size_source.is_none());
+        assert_eq!(series.alpha, Some(1.0));
+        assert!(series.alpha_source.is_none());
+    }
+
+    #[test]
+    fn test_series_group_builder_static_source_setters_materialize_values() {
+        let plot = Plot::new().group(|group| {
+            group
+                .color_source(Color::RED)
+                .line_width_source(0.01_f32)
+                .line_style_source(LineStyle::Dashed)
+                .alpha_source(1.5_f32)
+                .line(&[0.0, 1.0], &[1.0, 2.0])
+        });
+
+        let series = &plot.series_mgr.series[0];
+        assert_eq!(series.color, Some(Color::RED));
+        assert!(series.color_source.is_none());
+        assert_eq!(series.line_width, Some(0.1));
+        assert!(series.line_width_source.is_none());
+        assert_eq!(series.line_style, Some(LineStyle::Dashed));
+        assert!(series.line_style_source.is_none());
+        assert_eq!(series.alpha, Some(1.0));
+        assert!(series.alpha_source.is_none());
     }
 
     fn extract_svg_root_attr(svg: &str, attr: &str) -> f32 {
