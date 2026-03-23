@@ -649,7 +649,6 @@ impl InteractivePlotSession {
                 drop(state);
                 if changed {
                     self.mark_dirty(DirtyDomain::Layout);
-                    return;
                 }
             }
             PlotInputEvent::SetTime { time_seconds } => {
@@ -657,7 +656,6 @@ impl InteractivePlotSession {
                     state.time_seconds = time_seconds;
                     drop(state);
                     self.mark_dirty(DirtyDomain::Temporal);
-                    return;
                 }
             }
             PlotInputEvent::Zoom { factor, center_px } => {
@@ -701,9 +699,7 @@ impl InteractivePlotSession {
                     drop(state);
                     self.mark_dirty(DirtyDomain::Data);
                     self.mark_dirty(DirtyDomain::Overlay);
-                    return;
                 }
-                return;
             }
             PlotInputEvent::Pan { delta_px } => {
                 let state_snapshot = state.clone();
@@ -727,7 +723,6 @@ impl InteractivePlotSession {
                 drop(state);
                 self.mark_dirty(DirtyDomain::Data);
                 self.mark_dirty(DirtyDomain::Overlay);
-                return;
             }
             PlotInputEvent::Hover { position_px } => {
                 drop(state);
@@ -752,7 +747,6 @@ impl InteractivePlotSession {
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
                 }
-                return;
             }
             PlotInputEvent::ClearHover => {
                 let hover_changed = state.hovered.take().is_some();
@@ -765,7 +759,6 @@ impl InteractivePlotSession {
                 if hover_changed || tooltip_changed {
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
-                    return;
                 }
             }
             PlotInputEvent::ResetView => {
@@ -774,7 +767,6 @@ impl InteractivePlotSession {
                 drop(state);
                 self.mark_dirty(DirtyDomain::Data);
                 self.mark_dirty(DirtyDomain::Overlay);
-                return;
             }
             PlotInputEvent::SelectAt { position_px } => {
                 drop(state);
@@ -790,14 +782,12 @@ impl InteractivePlotSession {
                 }
                 drop(state);
                 self.mark_dirty(DirtyDomain::Overlay);
-                return;
             }
             PlotInputEvent::ClearSelection => {
                 if !state.selected.is_empty() {
                     state.selected.clear();
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
-                    return;
                 }
             }
             PlotInputEvent::BrushStart { position_px } => {
@@ -805,14 +795,12 @@ impl InteractivePlotSession {
                 state.brushed_region = Some(ViewportRect::from_points(position_px, position_px));
                 drop(state);
                 self.mark_dirty(DirtyDomain::Overlay);
-                return;
             }
             PlotInputEvent::BrushMove { position_px } => {
                 if let Some(anchor) = state.brush_anchor {
                     state.brushed_region = Some(ViewportRect::from_points(anchor, position_px));
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
-                    return;
                 }
             }
             PlotInputEvent::BrushEnd { position_px } => {
@@ -820,7 +808,6 @@ impl InteractivePlotSession {
                     state.brushed_region = Some(ViewportRect::from_points(anchor, position_px));
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
-                    return;
                 }
             }
             PlotInputEvent::ShowTooltip {
@@ -834,14 +821,12 @@ impl InteractivePlotSession {
                 state.tooltip_source = Some(TooltipSource::Manual);
                 drop(state);
                 self.mark_dirty(DirtyDomain::Overlay);
-                return;
             }
             PlotInputEvent::HideTooltip => {
                 if state.tooltip.take().is_some() {
                     state.tooltip_source = None;
                     drop(state);
                     self.mark_dirty(DirtyDomain::Overlay);
-                    return;
                 }
             }
         }
