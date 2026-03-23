@@ -151,7 +151,7 @@ impl PreparedPlot {
     fn frame_key(&self, size_px: (u32, u32), scale_factor: f32, time: f64) -> PreparedFrameKey {
         PreparedFrameKey {
             size_px,
-            scale_bits: scale_factor.to_bits(),
+            scale_bits: Plot::sanitize_prepared_scale_factor(scale_factor).to_bits(),
             time_bits: self.plot.has_temporal_sources().then_some(time.to_bits()),
             versions: self.plot.collect_reactive_versions(),
         }
@@ -299,6 +299,21 @@ mod tests {
         assert!(
             errors.lock().expect("error lock poisoned").is_empty(),
             "streaming rerender in callback should not observe mismatched x/y data"
+        );
+    }
+
+    #[test]
+    fn test_prepared_plot_normalizes_invalid_scale_factor_in_cache_key() {
+        let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+        let prepared = plot.prepare();
+
+        prepared
+            .render_frame((320, 240), 0.0, 0.0)
+            .expect("prepared plot should render with sanitized scale factor");
+
+        assert!(
+            !prepared.is_dirty((320, 240), -1.0, 0.0),
+            "equivalent sanitized scale factors should reuse the cached frame"
         );
     }
 }

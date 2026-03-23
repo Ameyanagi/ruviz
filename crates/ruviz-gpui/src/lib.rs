@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 compile_error!("ruviz-gpui currently supports macOS and Linux only.");
 
@@ -29,9 +27,9 @@ mod supported {
     use ruviz::{
         core::plot::Image as RuvizImage,
         core::{
-            FramePacing, FrameStats, ImageTarget, InteractivePlotSession, LayerRenderState, Plot,
-            PlotInputEvent, PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind,
-            SurfaceCapability, SurfaceTarget, ViewportPoint,
+            FramePacing, FrameStats, ImageTarget, InteractivePlotSession, Plot, PlotInputEvent,
+            PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind, SurfaceCapability,
+            SurfaceTarget, ViewportPoint,
         },
     };
     use smallvec::smallvec;
@@ -338,8 +336,6 @@ mod supported {
         overlay_image: Option<Arc<RenderImage>>,
         stats: FrameStats,
         target: RenderTargetKind,
-        surface_capability: SurfaceCapability,
-        layer_state: LayerRenderState,
     }
 
     struct RenderedFrame {
@@ -347,8 +343,6 @@ mod supported {
         overlay_image: Option<Arc<RenderImage>>,
         stats: FrameStats,
         target: RenderTargetKind,
-        surface_capability: SurfaceCapability,
-        layer_state: LayerRenderState,
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -495,7 +489,6 @@ mod supported {
 
     #[derive(Clone)]
     struct InteractionLayout {
-        bounds: Bounds<Pixels>,
         content_bounds: Bounds<Pixels>,
         frame_size_px: (u32, u32),
     }
@@ -794,8 +787,6 @@ mod supported {
                 overlay_image,
                 stats: frame.stats,
                 target: frame.target,
-                surface_capability: frame.surface_capability,
-                layer_state: frame.layer_state,
             });
         }
 
@@ -857,7 +848,7 @@ mod supported {
                     let entity_for_notify = entity.clone();
                     let pending_for_notify = Arc::clone(&pending);
                     cx.on_next_frame(move |_, cx| {
-                        let _ = entity_for_notify.update(cx, |_, cx| {
+                        entity_for_notify.update(cx, |_, cx| {
                             pending_for_notify.store(false, Ordering::Release);
                             cx.notify();
                         });
@@ -930,7 +921,6 @@ mod supported {
                 .get_bounds(bounds, image_size);
 
             self.last_layout = Some(InteractionLayout {
-                bounds,
                 content_bounds,
                 frame_size_px,
             });
@@ -976,7 +966,7 @@ mod supported {
             let task = window.spawn(cx, async move |cx| {
                 let result = render_job.await;
                 cx.on_next_frame(move |_, cx| {
-                    let _ = entity_for_update.update(cx, |view, cx| {
+                    entity_for_update.update(cx, |view, cx| {
                         view.finish_render(scheduled_for_update, result, cx);
                         cx.notify();
                     });
@@ -1237,7 +1227,7 @@ mod supported {
                 .on_mouse_down(MouseButton::Left, {
                     let entity = entity.clone();
                     move |event, _, cx| {
-                        let _ = entity.update(cx, |view, cx| {
+                        entity.update(cx, |view, cx| {
                             view.handle_mouse_down(event, cx);
                         });
                     }
@@ -1245,7 +1235,7 @@ mod supported {
                 .on_mouse_move({
                     let entity = entity.clone();
                     move |event, _, cx| {
-                        let _ = entity.update(cx, |view, cx| {
+                        entity.update(cx, |view, cx| {
                             view.handle_mouse_move(event, cx);
                         });
                     }
@@ -1253,7 +1243,7 @@ mod supported {
                 .on_mouse_up(MouseButton::Left, {
                     let entity = entity.clone();
                     move |event, _, cx| {
-                        let _ = entity.update(cx, |view, cx| {
+                        entity.update(cx, |view, cx| {
                             view.handle_mouse_up(event, cx);
                         });
                     }
@@ -1261,7 +1251,7 @@ mod supported {
                 .on_mouse_up_out(MouseButton::Left, {
                     let entity = entity.clone();
                     move |event, _, cx| {
-                        let _ = entity.update(cx, |view, cx| {
+                        entity.update(cx, |view, cx| {
                             view.handle_mouse_up(event, cx);
                         });
                     }
@@ -1269,7 +1259,7 @@ mod supported {
                 .on_scroll_wheel({
                     let entity = entity.clone();
                     move |event, _, cx| {
-                        let _ = entity.update(cx, |view, cx| {
+                        entity.update(cx, |view, cx| {
                             view.handle_scroll_wheel(event, cx);
                         });
                     }
@@ -1278,7 +1268,7 @@ mod supported {
             root.interactivity().on_hover({
                 let entity = entity.clone();
                 move |hovered, _, cx| {
-                    let _ = entity.update(cx, |view, cx| {
+                    entity.update(cx, |view, cx| {
                         view.handle_hover_change(*hovered, cx);
                     });
                 }
@@ -1570,9 +1560,14 @@ mod supported {
 
         let unlock_status = pixel_buffer.unlock_base_address(0);
         if unlock_status != 0 {
-            return Err(format!(
-                "Failed to unlock CVPixelBuffer base address: {unlock_status}"
-            ));
+            return match copy_result {
+                Ok(()) => Err(format!(
+                    "Failed to unlock CVPixelBuffer base address: {unlock_status}"
+                )),
+                Err(copy_err) => Err(format!(
+                    "Failed to unlock CVPixelBuffer base address: {unlock_status}; copy error: {copy_err}"
+                )),
+            };
         }
 
         copy_result
@@ -1581,6 +1576,12 @@ mod supported {
     #[cfg(all(feature = "gpu", target_os = "macos"))]
     fn rgba_at(rgba_pixels: &[u8], width: usize, row: usize, col: usize) -> (u8, u8, u8, u8) {
         let offset = (row * width + col) * 4;
+        let end = offset.saturating_add(4);
+        debug_assert!(
+            rgba_pixels.len() >= end,
+            "pixel buffer too small for ({row}, {col}) in {width}-wide image: len={} need>={end}",
+            rgba_pixels.len()
+        );
         (
             rgba_pixels[offset],
             rgba_pixels[offset + 1],
@@ -1678,16 +1679,23 @@ mod supported {
             },
             stats: frame.stats,
             target: frame.target,
-            surface_capability: frame.surface_capability,
-            layer_state,
         })
     }
 
     fn render_image_from_ruviz(image: RuvizImage) -> Arc<RenderImage> {
+        let width = image.width;
+        let height = image.height;
         let mut pixels = image.pixels;
         rgba_to_bgra_in_place(&mut pixels);
-        let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(image.width, image.height, pixels)
-            .expect("rendered frame size must match RGBA pixel buffer");
+        let actual_len = pixels.len();
+        let expected_len = width as usize * height as usize * 4;
+        let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, pixels)
+            .unwrap_or_else(|| {
+                panic!(
+                    "rendered frame size must match RGBA pixel buffer ({}x{}, expected {} bytes, got {})",
+                    width, height, expected_len, actual_len
+                )
+            });
         Arc::new(RenderImage::new(smallvec![Frame::new(buffer)]))
     }
 
@@ -1821,8 +1829,6 @@ mod supported {
                 overlay_image: None,
                 stats: FrameStats::default(),
                 target: RenderTargetKind::Surface,
-                surface_capability: SurfaceCapability::FallbackImage,
-                layer_state: LayerRenderState::default(),
             };
             let mut view = RuvizPlot {
                 session: initial_session,
@@ -1839,7 +1845,6 @@ mod supported {
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
                 last_layout: Some(InteractionLayout {
-                    bounds: Bounds::default(),
                     content_bounds: Bounds::default(),
                     frame_size_px: (320, 240),
                 }),
@@ -1953,12 +1958,6 @@ mod supported {
                 overlay_image: None,
                 stats: FrameStats::default(),
                 target: RenderTargetKind::Surface,
-                surface_capability: SurfaceCapability::FallbackImage,
-                layer_state: LayerRenderState {
-                    base_dirty: true,
-                    overlay_dirty: false,
-                    used_incremental_data: true,
-                },
             };
 
             assert_eq!(
@@ -1989,12 +1988,6 @@ mod supported {
                 overlay_image: None,
                 stats: FrameStats::default(),
                 target: RenderTargetKind::Surface,
-                surface_capability: SurfaceCapability::FastPath,
-                layer_state: LayerRenderState {
-                    base_dirty: true,
-                    overlay_dirty: false,
-                    used_incremental_data: false,
-                },
             };
 
             assert_eq!(

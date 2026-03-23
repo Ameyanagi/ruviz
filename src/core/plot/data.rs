@@ -404,6 +404,18 @@ impl From<&str> for ReactiveValue<String> {
     }
 }
 
+impl From<&String> for ReactiveValue<String> {
+    fn from(s: &String) -> Self {
+        ReactiveValue::Static(s.clone())
+    }
+}
+
+impl<'a> From<Cow<'a, str>> for ReactiveValue<String> {
+    fn from(s: Cow<'a, str>) -> Self {
+        ReactiveValue::Static(s.into_owned())
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -518,5 +530,20 @@ mod tests {
     fn test_plot_text_from_owned_string() {
         let text: PlotText = String::from("World").into();
         assert!(text.is_static());
+    }
+
+    #[test]
+    fn test_plot_text_from_string_ref() {
+        let value = String::from("Borrowed");
+        let text: PlotText = (&value).into();
+        assert!(text.is_static());
+        assert_eq!(text.as_static_str(), Some("Borrowed"));
+    }
+
+    #[test]
+    fn test_plot_text_from_cow_str() {
+        let text: PlotText = Cow::Borrowed("Cow").into();
+        assert!(text.is_static());
+        assert_eq!(text.as_static_str(), Some("Cow"));
     }
 }

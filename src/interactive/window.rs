@@ -117,6 +117,7 @@ impl InteractiveWindow {
 
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.scale_factor = scale_factor;
+                self.renderer.set_device_scale(scale_factor as f32);
                 self.interaction_state.needs_redraw = true;
             }
 

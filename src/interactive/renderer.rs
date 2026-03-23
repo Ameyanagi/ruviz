@@ -98,6 +98,11 @@ impl RealTimeRenderer {
         self.render_cache.invalidate_all();
     }
 
+    /// Update the renderer's last known device scale for event-time hit testing.
+    pub fn set_device_scale(&mut self, device_scale: f32) {
+        self.last_device_scale = Self::sanitize_device_scale(device_scale);
+    }
+
     /// Render frame with current interaction state
     pub fn render_interactive(
         &mut self,
@@ -110,7 +115,7 @@ impl RealTimeRenderer {
 
         // Update renderer dimensions if needed
         self.update_dimensions(width, height)?;
-        self.last_device_scale = device_scale;
+        self.set_device_scale(device_scale);
 
         // Adaptive quality based on performance
         if self.adaptive_quality {
@@ -603,12 +608,14 @@ impl RealTimeRenderer {
             log::debug!("Skipping legacy tooltip text render because frame size is invalid");
             return Ok(());
         };
-        let Some(mut pixmap) = tiny_skia::Pixmap::from_vec(pixel_data.to_vec(), size) else {
+        let Some(mut pixmap) =
+            tiny_skia::PixmapMut::from_bytes(pixel_data, size.width(), size.height())
+        else {
             log::debug!("Skipping legacy tooltip text render because pixmap creation failed");
             return Ok(());
         };
 
-        if let Err(err) = text_renderer.render_text(
+        if let Err(err) = text_renderer.render_text_mut(
             &mut pixmap,
             content,
             (left + TOOLTIP_PADDING_X) as f32,
@@ -622,10 +629,15 @@ impl RealTimeRenderer {
             return Ok(());
         }
 
-        let rendered = pixmap.take();
-        pixel_data.copy_from_slice(&rendered);
-
         Ok(())
+    }
+
+    fn sanitize_device_scale(device_scale: f32) -> f32 {
+        if device_scale.is_finite() && device_scale > 0.0 {
+            device_scale
+        } else {
+            1.0
+        }
     }
 
     /// Get performance statistics
@@ -964,5 +976,19 @@ mod tests {
         assert!((configured.get_config().figure.width - (800.0 / 75.0)).abs() < 1e-6);
         assert!((configured.get_config().figure.height - (600.0 / 75.0)).abs() < 1e-6);
         assert!((configured.get_config().figure.dpi - 75.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_set_device_scale_sanitizes_invalid_values() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should initialize for tests");
+        let mut renderer = runtime
+            .block_on(RealTimeRenderer::new())
+            .expect("renderer should initialize for tests");
+
+        renderer.set_device_scale(2.0);
+        assert!((renderer.last_device_scale - 2.0).abs() < f32::EPSILON);
+
+        renderer.set_device_scale(0.0);
+        assert!((renderer.last_device_scale - 1.0).abs() < f32::EPSILON);
     }
 }

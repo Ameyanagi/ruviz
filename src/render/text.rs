@@ -26,7 +26,7 @@ use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping,
     Style as CosmicStyle, SwashCache, Weight as CosmicWeight,
 };
-use tiny_skia::{Pixmap, PremultipliedColorU8};
+use tiny_skia::{Pixmap, PixmapMut, PremultipliedColorU8};
 
 use crate::core::error::{PlottingError, Result};
 use crate::render::Color;
@@ -34,6 +34,40 @@ use crate::render::text_anchor::TextPlacementMetrics;
 
 const MAX_TEXT_RASTER_DIMENSION: u32 = 8_192;
 const MAX_TEXT_RASTER_BYTES: usize = 128 * 1024 * 1024;
+
+trait PixmapTarget {
+    fn width(&self) -> u32;
+    fn height(&self) -> u32;
+    fn pixels_mut(&mut self) -> &mut [PremultipliedColorU8];
+}
+
+impl PixmapTarget for Pixmap {
+    fn width(&self) -> u32 {
+        self.width()
+    }
+
+    fn height(&self) -> u32 {
+        self.height()
+    }
+
+    fn pixels_mut(&mut self) -> &mut [PremultipliedColorU8] {
+        self.pixels_mut()
+    }
+}
+
+impl PixmapTarget for PixmapMut<'_> {
+    fn width(&self) -> u32 {
+        self.width()
+    }
+
+    fn height(&self) -> u32 {
+        self.height()
+    }
+
+    fn pixels_mut(&mut self) -> &mut [PremultipliedColorU8] {
+        self.pixels_mut()
+    }
+}
 
 fn validate_text_raster_size(width: u32, height: u32, context: &str) -> Result<()> {
     if width > MAX_TEXT_RASTER_DIMENSION || height > MAX_TEXT_RASTER_DIMENSION {
@@ -393,6 +427,31 @@ impl TextRenderer {
         config: &FontConfig,
         color: Color,
     ) -> Result<()> {
+        self.render_text_impl(pixmap, text, x, y, config, color)
+    }
+
+    /// Render text to a mutable pixmap view without cloning the frame buffer.
+    pub fn render_text_mut(
+        &self,
+        pixmap: &mut PixmapMut<'_>,
+        text: &str,
+        x: f32,
+        y: f32,
+        config: &FontConfig,
+        color: Color,
+    ) -> Result<()> {
+        self.render_text_impl(pixmap, text, x, y, config, color)
+    }
+
+    fn render_text_impl<T: PixmapTarget>(
+        &self,
+        pixmap: &mut T,
+        text: &str,
+        x: f32,
+        y: f32,
+        config: &FontConfig,
+        color: Color,
+    ) -> Result<()> {
         if text.is_empty() {
             return Ok(());
         }
@@ -420,6 +479,9 @@ impl TextRenderer {
 
         // Convert color
         let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
+        let width = pixmap.width();
+        let height = pixmap.height();
+        let pixels = pixmap.pixels_mut();
 
         // Render each glyph
         for run in buffer.layout_runs() {
@@ -438,14 +500,13 @@ impl TextRenderer {
 
                         if pixel_x >= 0
                             && pixel_y >= 0
-                            && (pixel_x as u32) < pixmap.width()
-                            && (pixel_y as u32) < pixmap.height()
+                            && (pixel_x as u32) < width
+                            && (pixel_y as u32) < height
                         {
                             let alpha = glyph_color.a();
                             if alpha > 0 {
-                                let idx =
-                                    (pixel_y as u32 * pixmap.width() + pixel_x as u32) as usize;
-                                let background = pixmap.pixels()[idx];
+                                let idx = (pixel_y as u32 * width + pixel_x as u32) as usize;
+                                let background = pixels[idx];
 
                                 // Alpha blend
                                 let alpha_f = alpha as f32 / 255.0;
@@ -464,7 +525,7 @@ impl TextRenderer {
                                 if let Some(blended) = PremultipliedColorU8::from_rgba(
                                     blended_r, blended_g, blended_b, 255,
                                 ) {
-                                    pixmap.pixels_mut()[idx] = blended;
+                                    pixels[idx] = blended;
                                 }
                             }
                         }

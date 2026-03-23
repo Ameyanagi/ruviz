@@ -2248,17 +2248,21 @@ impl Plot {
         scale_factor: f32,
         time: f64,
     ) -> Plot {
-        let min_device_scale = crate::core::constants::dpi::MIN as f32 / crate::core::REFERENCE_DPI;
-        let device_scale = if !scale_factor.is_finite() || scale_factor <= 0.0 {
-            1.0
-        } else {
-            scale_factor.max(min_device_scale)
-        };
+        let device_scale = Self::sanitize_prepared_scale_factor(scale_factor);
         let dpi = (crate::core::REFERENCE_DPI * device_scale).round() as u32;
 
         self.resolved_plot(time)
             .dpi(dpi)
             .set_output_pixels(size_px.0, size_px.1)
+    }
+
+    pub(crate) fn sanitize_prepared_scale_factor(scale_factor: f32) -> f32 {
+        let min_device_scale = crate::core::constants::dpi::MIN as f32 / crate::core::REFERENCE_DPI;
+        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            1.0
+        } else {
+            scale_factor.max(min_device_scale)
+        }
     }
 
     fn has_temporal_sources(&self) -> bool {
