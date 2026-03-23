@@ -1,5 +1,7 @@
 [workspace]
 members = ["crates/ruviz-gpui"]
+# Keep plain root cargo commands focused on the cross-platform core crate.
+default-members = ["."]
 resolver = "2"
 
 [package]

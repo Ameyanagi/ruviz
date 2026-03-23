@@ -1412,6 +1412,8 @@ impl<T: Clone> Clone for StreamingBuffer<T> {
 pub struct StreamingXY {
     x: StreamingBuffer<f64>,
     y: StreamingBuffer<f64>,
+    subscribers: Arc<RwLock<Vec<Subscriber>>>,
+    next_subscriber_id: Arc<AtomicU64>,
 }
 
 impl StreamingXY {
@@ -1420,6 +1422,8 @@ impl StreamingXY {
         Self {
             x: StreamingBuffer::new(capacity),
             y: StreamingBuffer::new(capacity),
+            subscribers: Arc::new(RwLock::new(Vec::new())),
+            next_subscriber_id: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -1427,13 +1431,20 @@ impl StreamingXY {
     pub fn push(&self, x: f64, y: f64) {
         self.x.push(x);
         self.y.push(y);
+        self.notify_subscribers();
     }
 
     /// Push multiple X/Y points
     pub fn push_many(&self, points: impl IntoIterator<Item = (f64, f64)>) {
+        let mut pushed_any = false;
         for (x, y) in points {
             self.x.push(x);
             self.y.push(y);
+            pushed_any = true;
+        }
+
+        if pushed_any {
+            self.notify_subscribers();
         }
     }
 
@@ -1548,6 +1559,43 @@ impl StreamingXY {
     pub fn clear(&self) {
         self.x.clear();
         self.y.clear();
+        self.notify_subscribers();
+    }
+
+    pub(crate) fn subscribe_paired<F>(&self, callback: F) -> SubscriberId
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        let id = SubscriberId(self.next_subscriber_id.fetch_add(1, Ordering::Relaxed));
+        let subscriber = Subscriber {
+            id,
+            callback: Arc::new(callback),
+        };
+        self.subscribers
+            .write()
+            .expect("Lock poisoned")
+            .push(subscriber);
+        id
+    }
+
+    pub(crate) fn unsubscribe_paired(&self, id: SubscriberId) -> bool {
+        let mut subscribers = self.subscribers.write().expect("Lock poisoned");
+        if let Some(pos) = subscribers
+            .iter()
+            .position(|subscriber| subscriber.id == id)
+        {
+            subscribers.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn notify_subscribers(&self) {
+        let callbacks = collect_subscriber_callbacks(&self.subscribers, "Lock poisoned");
+        for callback in callbacks {
+            callback();
+        }
     }
 }
 
@@ -1556,7 +1604,18 @@ impl Clone for StreamingXY {
         Self {
             x: self.x.clone(),
             y: self.y.clone(),
+            subscribers: Arc::clone(&self.subscribers),
+            next_subscriber_id: Arc::clone(&self.next_subscriber_id),
         }
+    }
+}
+
+impl std::fmt::Debug for StreamingXY {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingXY")
+            .field("len", &self.len())
+            .field("version", &self.version())
+            .finish()
     }
 }
 
@@ -2154,6 +2213,25 @@ mod tests {
 
         assert_eq!(xy.read_x(), vec![1.0, 2.0, 3.0]);
         assert_eq!(xy.read_y(), vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn test_streaming_xy_paired_subscribers_fire_once_per_batch() {
+        let xy = StreamingXY::new(100);
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_callback = Arc::clone(&hits);
+        let id = xy.subscribe_paired(move || {
+            hits_for_callback.fetch_add(1, AtomicOrdering::Relaxed);
+        });
+
+        xy.push(1.0, 10.0);
+        xy.push_many(vec![(2.0, 20.0), (3.0, 30.0)]);
+
+        assert_eq!(hits.load(AtomicOrdering::Relaxed), 2);
+
+        xy.unsubscribe_paired(id);
+        xy.push(4.0, 40.0);
+        assert_eq!(hits.load(AtomicOrdering::Relaxed), 2);
     }
 
     #[test]

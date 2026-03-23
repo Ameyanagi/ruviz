@@ -350,9 +350,127 @@ impl SvgRenderer {
         }
     }
 
-    /// Draw a marker (circle) at a point
-    pub fn draw_marker(&mut self, x: f32, y: f32, size: f32, color: Color) {
-        self.draw_circle(x, y, size / 2.0, color, true);
+    fn draw_polygon_marker(&mut self, points: &[(f32, f32)], color: Color, filled: bool) {
+        let color_str = self.color_to_svg(color);
+        let points_str = points
+            .iter()
+            .map(|(x, y)| format!("{:.2},{:.2}", x, y))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if filled {
+            writeln!(
+                self.content,
+                r#"  <polygon points="{}" fill="{}"/>"#,
+                points_str, color_str
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                self.content,
+                r#"  <polygon points="{}" fill="none" stroke="{}" stroke-width="1"/>"#,
+                points_str, color_str
+            )
+            .unwrap();
+        }
+    }
+
+    /// Draw a marker at a point, matching the raster marker semantics.
+    pub fn draw_marker(&mut self, x: f32, y: f32, size: f32, style: MarkerStyle, color: Color) {
+        let radius = size / 2.0;
+
+        match style {
+            MarkerStyle::Circle => self.draw_circle(x, y, radius, color, true),
+            MarkerStyle::CircleOpen => self.draw_circle(x, y, radius, color, false),
+            MarkerStyle::Square => {
+                self.draw_rectangle(x - radius, y - radius, size, size, color, true)
+            }
+            MarkerStyle::SquareOpen => {
+                self.draw_rectangle(x - radius, y - radius, size, size, color, false)
+            }
+            MarkerStyle::Triangle => self.draw_polygon_marker(
+                &[
+                    (x, y - radius),
+                    (x - radius * 0.866, y + radius * 0.5),
+                    (x + radius * 0.866, y + radius * 0.5),
+                ],
+                color,
+                true,
+            ),
+            MarkerStyle::TriangleOpen => self.draw_polygon_marker(
+                &[
+                    (x, y - radius),
+                    (x - radius * 0.866, y + radius * 0.5),
+                    (x + radius * 0.866, y + radius * 0.5),
+                ],
+                color,
+                false,
+            ),
+            MarkerStyle::Diamond => self.draw_polygon_marker(
+                &[
+                    (x, y - radius),
+                    (x + radius, y),
+                    (x, y + radius),
+                    (x - radius, y),
+                ],
+                color,
+                true,
+            ),
+            MarkerStyle::DiamondOpen => self.draw_polygon_marker(
+                &[
+                    (x, y - radius),
+                    (x + radius, y),
+                    (x, y + radius),
+                    (x - radius, y),
+                ],
+                color,
+                false,
+            ),
+            MarkerStyle::Plus => {
+                let line_width = (size * 0.25).max(1.0);
+                self.draw_line(
+                    x - radius,
+                    y,
+                    x + radius,
+                    y,
+                    color,
+                    line_width,
+                    LineStyle::Solid,
+                );
+                self.draw_line(
+                    x,
+                    y - radius,
+                    x,
+                    y + radius,
+                    color,
+                    line_width,
+                    LineStyle::Solid,
+                );
+            }
+            MarkerStyle::Cross => {
+                let line_width = (size * 0.25).max(1.0);
+                let offset = radius * 0.707;
+                self.draw_line(
+                    x - offset,
+                    y - offset,
+                    x + offset,
+                    y + offset,
+                    color,
+                    line_width,
+                    LineStyle::Solid,
+                );
+                self.draw_line(
+                    x - offset,
+                    y + offset,
+                    x + offset,
+                    y - offset,
+                    color,
+                    line_width,
+                    LineStyle::Solid,
+                );
+            }
+            _ => self.draw_circle(x, y, radius, color, style.is_filled()),
+        }
     }
 
     /// Draw text at specified position.
@@ -870,70 +988,7 @@ impl SvgRenderer {
         size: f32,
     ) {
         let center_x = x + length / 2.0;
-        let color_str = self.color_to_svg(color);
-        let radius = size / 2.0;
-
-        match marker {
-            MarkerStyle::Circle => {
-                writeln!(
-                    self.content,
-                    r#"  <circle cx="{:.2}" cy="{:.2}" r="{:.2}" fill="{}"/>"#,
-                    center_x, y, radius, color_str
-                )
-                .unwrap();
-            }
-            MarkerStyle::Square => {
-                writeln!(
-                    self.content,
-                    r#"  <rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}"/>"#,
-                    center_x - radius,
-                    y - radius,
-                    size,
-                    size,
-                    color_str
-                )
-                .unwrap();
-            }
-            MarkerStyle::Triangle => {
-                let x1 = center_x;
-                let y1 = y - radius;
-                let x2 = center_x - radius;
-                let y2 = y + radius;
-                let x3 = center_x + radius;
-                let y3 = y + radius;
-                writeln!(
-                    self.content,
-                    r#"  <polygon points="{:.2},{:.2} {:.2},{:.2} {:.2},{:.2}" fill="{}"/>"#,
-                    x1, y1, x2, y2, x3, y3, color_str
-                )
-                .unwrap();
-            }
-            MarkerStyle::Diamond => {
-                let x1 = center_x;
-                let y1 = y - radius;
-                let x2 = center_x + radius;
-                let y2 = y;
-                let x3 = center_x;
-                let y3 = y + radius;
-                let x4 = center_x - radius;
-                let y4 = y;
-                writeln!(
-                    self.content,
-                    r#"  <polygon points="{:.2},{:.2} {:.2},{:.2} {:.2},{:.2} {:.2},{:.2}" fill="{}"/>"#,
-                    x1, y1, x2, y2, x3, y3, x4, y4, color_str
-                )
-                .unwrap();
-            }
-            _ => {
-                // Default to circle for other marker types
-                writeln!(
-                    self.content,
-                    r#"  <circle cx="{:.2}" cy="{:.2}" r="{:.2}" fill="{}"/>"#,
-                    center_x, y, radius, color_str
-                )
-                .unwrap();
-            }
-        }
+        self.draw_marker(center_x, y, size, *marker, color);
     }
 
     /// Draw a bar handle in the legend
@@ -1035,7 +1090,7 @@ impl SvgRenderer {
                 .unwrap();
                 // Draw marker in center
                 let marker_size = handle_height * 0.4;
-                self.draw_marker(center_x, y, marker_size, item.color);
+                self.draw_marker(center_x, y, marker_size, MarkerStyle::Circle, item.color);
             }
         }
 

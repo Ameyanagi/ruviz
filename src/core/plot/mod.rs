@@ -288,6 +288,8 @@ impl PendingIngestionError {
 pub(crate) struct PlotSeries {
     /// Series type
     series_type: SeriesType,
+    /// Original paired streaming source for line/scatter streaming series.
+    streaming_source: Option<StreamingXY>,
     /// Series label for legend
     label: Option<String>,
     /// Series color (None for auto-color)
@@ -592,7 +594,16 @@ impl PlotSeries {
         callback: &SharedReactiveCallback,
         teardowns: &mut Vec<ReactiveTeardown>,
     ) {
-        self.series_type.subscribe_push_updates(callback, teardowns);
+        if let Some(stream) = &self.streaming_source {
+            let stream = stream.clone();
+            let callback = Arc::clone(callback);
+            let id = stream.subscribe_paired(move || callback());
+            teardowns.push(Box::new(move || {
+                stream.unsubscribe_paired(id);
+            }));
+        } else {
+            self.series_type.subscribe_push_updates(callback, teardowns);
+        }
         if let Some(color_source) = &self.color_source {
             color_source.subscribe_push_updates(Arc::clone(callback), teardowns);
         }
@@ -2445,6 +2456,7 @@ impl Plot {
 
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
+            streaming_source: Some(stream.clone()),
             label: None,
             color: None,
             color_source: None,
@@ -2571,6 +2583,7 @@ impl Plot {
 
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
+            streaming_source: Some(stream.clone()),
             label: None,
             color: None,
             color_source: None,
@@ -2712,6 +2725,7 @@ impl Plot {
                 data: PlotData::Static(data_vec),
                 config: hist_config,
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -2745,6 +2759,7 @@ impl Plot {
                 data: data.into_plot_data(),
                 config: config.unwrap_or_default(),
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -2809,6 +2824,7 @@ impl Plot {
                 data: PlotData::Static(data_vec),
                 config: box_config,
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -2842,6 +2858,7 @@ impl Plot {
                 data: data.into_plot_data(),
                 config: config.unwrap_or_default(),
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -2910,6 +2927,7 @@ impl Plot {
             Ok(heatmap_data) => {
                 let series = PlotSeries {
                     series_type: SeriesType::Heatmap { data: heatmap_data },
+                    streaming_source: None,
                     label: None,
                     color: None,
                     color_source: None,
@@ -2950,6 +2968,7 @@ impl Plot {
                             config: crate::plots::heatmap::HeatmapConfig::default(),
                         },
                     },
+                    streaming_source: None,
                     label: None,
                     color: None,
                     color_source: None,
@@ -3009,6 +3028,7 @@ impl Plot {
                 y_data: PlotData::Static(y_vec),
                 y_errors: PlotData::Static(e_vec),
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -3044,6 +3064,7 @@ impl Plot {
                 y_data: y_data.into_plot_data(),
                 y_errors: y_errors.into_plot_data(),
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -3117,6 +3138,7 @@ impl Plot {
                 x_errors: PlotData::Static(ex_vec),
                 y_errors: PlotData::Static(ey_vec),
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -3160,6 +3182,7 @@ impl Plot {
                 x_errors: x_errors.into_plot_data(),
                 y_errors: y_errors.into_plot_data(),
             },
+            streaming_source: None,
             label: None,
             color: None,
             color_source: None,
@@ -4189,6 +4212,7 @@ impl Plot {
                 x_data: PlotData::Static(x_vec),
                 y_data: PlotData::Static(y_vec),
             },
+            streaming_source: None,
             label: None,
             color: Some(
                 self.display
@@ -4228,6 +4252,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Kde { data: kde_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -4266,6 +4291,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Ecdf { data: ecdf_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -4304,6 +4330,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Contour { data: contour_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -4342,6 +4369,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Pie { data: pie_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -4380,6 +4408,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Radar { data: radar_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -4418,6 +4447,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Violin { data: violin_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -4456,6 +4486,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Polar { data: polar_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or_else(|| {
                 Some(
@@ -4511,6 +4542,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or(config.color).or_else(|| {
                 Some(
@@ -4572,6 +4604,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
+            streaming_source: None,
             label: style.label,
             color: style.color.or(config.color).or_else(|| {
                 Some(
@@ -4629,6 +4662,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Bar { categories, values },
+            streaming_source: None,
             label: style.label,
             color: style.color.or(config.color).or_else(|| {
                 Some(
@@ -7107,8 +7141,8 @@ impl Plot {
         Ok(())
     }
 
-    /// Create PlotContent for layout calculation
-    fn create_plot_content(&self, y_min: f64, y_max: f64) -> PlotContent {
+    /// Create PlotContent for layout calculation at a specific frame time.
+    fn create_plot_content_at_time(&self, y_min: f64, y_max: f64, time: f64) -> PlotContent {
         // Estimate max characters in y-tick labels
         let y_ticks = generate_ticks(y_min, y_max, 6);
         let max_ytick_chars = y_ticks
@@ -7126,13 +7160,18 @@ impl Plot {
             .unwrap_or(5);
 
         PlotContent {
-            title: self.display.title.as_ref().map(|t| t.resolve(0.0)),
-            xlabel: self.display.xlabel.as_ref().map(|t| t.resolve(0.0)),
-            ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(0.0)),
+            title: self.display.title.as_ref().map(|t| t.resolve(time)),
+            xlabel: self.display.xlabel.as_ref().map(|t| t.resolve(time)),
+            ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(time)),
             show_tick_labels: self.layout.tick_config.enabled && self.needs_cartesian_axes(),
             max_ytick_chars,
             max_xtick_chars: 5, // Reasonable default
         }
+    }
+
+    /// Create PlotContent for layout calculation.
+    fn create_plot_content(&self, y_min: f64, y_max: f64) -> PlotContent {
+        self.create_plot_content_at_time(y_min, y_max, 0.0)
     }
 
     /// Pre-measure title/xlabel/ylabel for Typst layout parity.
@@ -10028,23 +10067,24 @@ impl Plot {
                         .collect();
 
                     svg.draw_polyline(&points, color, line_width, line_style);
-                    if series.marker_style.is_some() {
+                    if let Some(marker_style) = series.marker_style {
                         let marker_size =
                             render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
                         for &(px, py) in &points {
-                            svg.draw_marker(px, py, marker_size, color);
+                            svg.draw_marker(px, py, marker_size, marker_style, color);
                         }
                     }
                 }
                 SeriesType::Scatter { x_data, y_data } => {
                     let x_data = x_data.resolve(0.0);
                     let y_data = y_data.resolve(0.0);
+                    let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                     let marker_size =
                         render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
                     for (&x, &y) in x_data.iter().zip(y_data.iter()) {
                         let (px, py) =
                             map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
-                        svg.draw_marker(px, py, marker_size, color);
+                        svg.draw_marker(px, py, marker_size, marker_style, color);
                     }
                 }
                 SeriesType::Bar { categories, values } => {
@@ -12449,6 +12489,33 @@ mod tests {
             ylabel_y,
             ylabel_pos.x,
             ylabel_pos.y
+        );
+    }
+
+    #[test]
+    fn test_render_to_svg_preserves_line_marker_shape() {
+        let marker_color = Color::new(17, 119, 51);
+        let plot = Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .color(marker_color)
+            .marker(MarkerStyle::Square)
+            .marker_size(10.0)
+            .ticks(false)
+            .grid(false)
+            .end_series();
+
+        let svg = plot.render_to_svg().expect("SVG render should succeed");
+        let marker_fill = r#"fill="rgb(17,119,51)""#;
+
+        assert!(
+            svg.lines()
+                .any(|line| line.contains("<rect") && line.contains(marker_fill)),
+            "square line markers should render as filled rects in SVG"
+        );
+        assert!(
+            !svg.lines()
+                .any(|line| line.contains("<circle") && line.contains(marker_fill)),
+            "square line markers should not fall back to circles in SVG"
         );
     }
 

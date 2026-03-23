@@ -618,17 +618,9 @@ impl InteractivePlotSession {
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
-        let normalized = (size_px.0.max(1), size_px.1.max(1));
-        if state.size_px != normalized {
-            state.size_px = normalized;
-            drop(state);
-            self.mark_dirty(DirtyDomain::Layout);
-            return;
-        }
-        let scale_factor = sanitize_scale_factor(scale_factor);
-        if state.scale_factor.to_bits() != scale_factor.to_bits() {
-            state.scale_factor = scale_factor;
-            drop(state);
+        let changed = Self::update_resize_state(&mut state, size_px, scale_factor);
+        drop(state);
+        if changed {
             self.mark_dirty(DirtyDomain::Layout);
         }
     }
@@ -645,17 +637,9 @@ impl InteractivePlotSession {
                 size_px,
                 scale_factor,
             } => {
-                let normalized = (size_px.0.max(1), size_px.1.max(1));
-                if state.size_px != normalized {
-                    state.size_px = normalized;
-                    drop(state);
-                    self.mark_dirty(DirtyDomain::Layout);
-                    return;
-                }
-                let scale_factor = sanitize_scale_factor(scale_factor);
-                if state.scale_factor.to_bits() != scale_factor.to_bits() {
-                    state.scale_factor = scale_factor;
-                    drop(state);
+                let changed = Self::update_resize_state(&mut state, size_px, scale_factor);
+                drop(state);
+                if changed {
                     self.mark_dirty(DirtyDomain::Layout);
                     return;
                 }
@@ -669,15 +653,16 @@ impl InteractivePlotSession {
                 }
             }
             PlotInputEvent::Zoom { factor, center_px } => {
+                let pre_zoom_visible = visible_bounds(&state);
+                let anchor_before = screen_to_data(&state, pre_zoom_visible, center_px);
                 let old_zoom = state.zoom_level;
-                state.zoom_level = (state.zoom_level * factor).clamp(0.1, 100.0);
-                if (state.zoom_level - old_zoom).abs() > f64::EPSILON {
-                    let visible = visible_bounds(&state);
-                    let center_data = screen_to_data(&state, visible, center_px);
-                    let current_center = visible.center();
-                    let adjust = 1.0 - old_zoom / state.zoom_level;
-                    state.pan_offset.x += (center_data.x - current_center.x) * adjust;
-                    state.pan_offset.y += (center_data.y - current_center.y) * adjust;
+                let new_zoom = (old_zoom * factor).clamp(0.1, 100.0);
+                if (new_zoom - old_zoom).abs() > f64::EPSILON {
+                    state.zoom_level = new_zoom;
+                    let post_zoom_visible = visible_bounds(&state);
+                    let anchor_after = screen_to_data(&state, post_zoom_visible, center_px);
+                    state.pan_offset.x += anchor_before.x - anchor_after.x;
+                    state.pan_offset.y += anchor_before.y - anchor_after.y;
                     drop(state);
                     self.mark_dirty(DirtyDomain::Data);
                     self.mark_dirty(DirtyDomain::Overlay);
@@ -1050,17 +1035,12 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
-        let snapshot = self
-            .inner
-            .prepared
-            .plot()
-            .snapshot_series(state.time_seconds);
         let visible = visible_bounds(&state);
         let layout = compute_plot_layout(
             self.inner.prepared.plot(),
-            &snapshot,
             state.size_px,
             state.scale_factor,
+            state.time_seconds,
             visible,
         )?;
 
@@ -1257,6 +1237,26 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession dirty lock poisoned")
             .mark(domain);
+    }
+
+    fn update_resize_state(
+        state: &mut SessionState,
+        size_px: (u32, u32),
+        scale_factor: f32,
+    ) -> bool {
+        let normalized_size = (size_px.0.max(1), size_px.1.max(1));
+        let normalized_scale = sanitize_scale_factor(scale_factor);
+        let size_changed = state.size_px != normalized_size;
+        let scale_changed = state.scale_factor.to_bits() != normalized_scale.to_bits();
+
+        if size_changed {
+            state.size_px = normalized_size;
+        }
+        if scale_changed {
+            state.scale_factor = normalized_scale;
+        }
+
+        size_changed || scale_changed
     }
 
     fn clear_dirty_after_render(&self, dirty_epoch_before_render: u64) {
@@ -1495,28 +1495,23 @@ struct ComputedSessionLayout {
 
 fn compute_plot_layout(
     plot: &Plot,
-    _snapshot_series: &[super::PlotSeries],
     size_px: (u32, u32),
     scale_factor: f32,
+    time_seconds: f64,
     visible: DataBounds,
 ) -> Result<ComputedSessionLayout> {
-    let min_device_scale = crate::core::constants::dpi::MIN as f32 / REFERENCE_DPI;
-    let device_scale = if !scale_factor.is_finite() || scale_factor <= 0.0 {
-        1.0
-    } else {
-        scale_factor.max(min_device_scale)
-    };
-    let dpi = (REFERENCE_DPI * device_scale).round();
+    let layout_plot = plot.prepared_frame_plot(size_px, scale_factor, time_seconds);
+    let dpi = layout_plot.display.config.figure.dpi;
 
-    let mut renderer = SkiaRenderer::new(size_px.0, size_px.1, plot.display.theme.clone())?;
-    renderer.set_text_engine_mode(plot.display.text_engine);
-    renderer.set_render_scale(plot.render_scale());
+    let mut renderer = SkiaRenderer::new(size_px.0, size_px.1, layout_plot.display.theme.clone())?;
+    renderer.set_text_engine_mode(layout_plot.display.text_engine);
+    renderer.set_render_scale(layout_plot.render_scale());
 
-    let content = plot.create_plot_content(visible.y_min, visible.y_max);
-    let measured_dimensions = plot.measure_layout_text(&renderer, &content, dpi)?;
+    let content = layout_plot.create_plot_content(visible.y_min, visible.y_max);
+    let measured_dimensions = layout_plot.measure_layout_text(&renderer, &content, dpi)?;
     let measurements = measured_dimensions.as_ref();
 
-    let layout = match &plot.display.config.margins {
+    let layout = match &layout_plot.display.config.margins {
         MarginConfig::ContentDriven {
             edge_buffer,
             center_plot,
@@ -1529,8 +1524,8 @@ fn compute_plot_layout(
             LayoutCalculator::new(layout_config).compute(
                 size_px,
                 &content,
-                &plot.display.config.typography,
-                &plot.display.config.spacing,
+                &layout_plot.display.config.typography,
+                &layout_plot.display.config.spacing,
                 dpi,
                 measurements,
             )
@@ -1538,8 +1533,8 @@ fn compute_plot_layout(
         _ => LayoutCalculator::new(LayoutConfig::default()).compute(
             size_px,
             &content,
-            &plot.display.config.typography,
-            &plot.display.config.spacing,
+            &layout_plot.display.config.typography,
+            &layout_plot.display.config.spacing,
             dpi,
             measurements,
         ),
@@ -2209,7 +2204,7 @@ fn tooltip_from_hit(hit: &HitResult) -> TooltipState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{Observable, StreamingXY};
+    use crate::data::{Observable, StreamingXY, signal};
     use crate::prelude::Plot;
     use crate::render::{Color, MarkerStyle};
     use std::sync::{Arc, atomic::Ordering};
@@ -2307,6 +2302,45 @@ mod tests {
 
         dirty.clear_overlay();
         assert!(!dirty.overlay);
+    }
+
+    #[test]
+    fn test_resize_updates_size_and_scale_factor_together() {
+        let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+        let session = plot.prepare_interactive();
+
+        session.resize((640, 480), 2.0);
+
+        let state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        assert_eq!(state.size_px, (640, 480));
+        assert_eq!(state.scale_factor, 2.0);
+        assert!(session.dirty_domains().layout);
+    }
+
+    #[test]
+    fn test_resize_event_updates_size_and_scale_factor_together() {
+        let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+        let session = plot.prepare_interactive();
+
+        session.apply_input(PlotInputEvent::Resize {
+            size_px: (640, 480),
+            scale_factor: 2.0,
+        });
+
+        let state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        assert_eq!(state.size_px, (640, 480));
+        assert_eq!(state.scale_factor, 2.0);
+        assert!(session.dirty_domains().layout);
     }
 
     #[test]
@@ -2522,6 +2556,85 @@ mod tests {
 
         assert!(!rerendered.layer_state.used_incremental_data);
         assert_eq!(stream.appended_count(), 0);
+    }
+
+    #[test]
+    fn test_zoom_keeps_cursor_anchor_stable() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 10.0])
+            .xlim(0.0, 10.0)
+            .ylim(0.0, 10.0)
+            .into();
+        let session = plot.prepare_interactive();
+
+        session
+            .render_to_surface(render_target())
+            .expect("initial surface frame should render");
+
+        let anchor_px = ViewportPoint::new(0.0, 120.0);
+        let before_state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        let before_visible = visible_bounds(&before_state);
+        let anchor_before = screen_to_data(&before_state, before_visible, anchor_px);
+
+        session.apply_input(PlotInputEvent::Zoom {
+            factor: 2.0,
+            center_px: anchor_px,
+        });
+
+        let after_state = session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        let after_visible = visible_bounds(&after_state);
+        let anchor_after = screen_to_data(&after_state, after_visible, anchor_px);
+
+        assert!((anchor_before.x - anchor_after.x).abs() < 1e-9);
+        assert!((anchor_before.y - anchor_after.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_temporal_layout_content_uses_current_frame_labels() {
+        let xlabel = signal::of(|time| {
+            if time < 1.0 {
+                "baseline".to_string()
+            } else {
+                "updated temporal label".to_string()
+            }
+        });
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .xlabel(xlabel)
+            .into();
+        let visible = DataBounds::from_limits(0.0, 2.0, 0.0, 4.0);
+
+        let baseline_content = plot.create_plot_content(visible.y_min, visible.y_max);
+        let current_content = plot.create_plot_content_at_time(visible.y_min, visible.y_max, 1.0);
+        let prepared_content = plot
+            .prepared_frame_plot(render_target().size_px, render_target().scale_factor, 1.0)
+            .create_plot_content(visible.y_min, visible.y_max);
+
+        assert_eq!(baseline_content.xlabel.as_deref(), Some("baseline"));
+        assert_eq!(
+            current_content.xlabel.as_deref(),
+            Some("updated temporal label")
+        );
+        assert_eq!(prepared_content.xlabel, current_content.xlabel);
+
+        compute_plot_layout(
+            &plot,
+            render_target().size_px,
+            render_target().scale_factor,
+            1.0,
+            visible,
+        )
+        .expect("interactive layout should compute using current-frame labels");
     }
 
     #[test]
@@ -2752,12 +2865,11 @@ mod tests {
         .expect("direct red marker pixels should be present");
 
         let visible = DataBounds::from_limits(0.0, 1.0, -2.0, 2.0);
-        let snapshot_series = plain_plot.snapshot_series(0.0);
         let layout = compute_plot_layout(
             &plain_plot,
-            &snapshot_series,
             render_target().size_px,
             render_target().scale_factor,
+            0.0,
             visible,
         )
         .expect("plot layout should compute for manual bounds");

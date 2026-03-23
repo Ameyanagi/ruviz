@@ -269,6 +269,36 @@ mod tests {
 
         stream.push(1.0, 1.0);
 
-        assert_eq!(hits.load(Ordering::Relaxed), 2);
+        assert_eq!(hits.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_prepared_plot_streaming_callback_can_render_immediately() {
+        let stream = StreamingXY::new(32);
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .xlim(0.0, 4.0)
+            .ylim(0.0, 4.0)
+            .into();
+        let prepared = plot.prepare();
+        let prepared_for_callback = prepared.clone();
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let errors_for_callback = Arc::clone(&errors);
+
+        let _subscription = prepared.subscribe_reactive(move || {
+            if let Err(err) = prepared_for_callback.render_frame((320, 240), 1.0, 0.0) {
+                errors_for_callback
+                    .lock()
+                    .expect("error lock poisoned")
+                    .push(err.to_string());
+            }
+        });
+
+        stream.push(1.0, 1.0);
+
+        assert!(
+            errors.lock().expect("error lock poisoned").is_empty(),
+            "streaming rerender in callback should not observe mismatched x/y data"
+        );
     }
 }
