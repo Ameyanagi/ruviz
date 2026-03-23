@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CRATES_IO_USER_AGENT: ruviz-release-workflow/1.0 (https://github.com/Ameyanagi/ruviz)
 
 jobs:
   check-ci:
@@ -93,7 +94,9 @@ jobs:
           VERSION="$(cargo pkgid -p ruviz | sed 's/.*#.*@//')"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-          if curl --silent --fail "https://crates.io/api/v1/crates/ruviz/${VERSION}" >/dev/null; then
+          if curl --silent --fail \
+              --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
+              "https://crates.io/api/v1/crates/ruviz/${VERSION}" >/dev/null; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
@@ -125,7 +128,9 @@ jobs:
           VERSION="$(cargo pkgid -p ruviz-gpui | sed 's/.*#.*@//')"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-          if curl --silent --fail "https://crates.io/api/v1/crates/ruviz-gpui/${VERSION}" >/dev/null; then
+          if curl --silent --fail \
+              --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
+              "https://crates.io/api/v1/crates/ruviz-gpui/${VERSION}" >/dev/null; then
             echo "published=true" >> "$GITHUB_OUTPUT"
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
@@ -134,16 +139,23 @@ jobs:
       - name: Wait for ruviz-gpui packaging to resolve against crates.io
         if: steps.gpui-version.outputs.published != 'true'
         run: |
-          for attempt in $(seq 1 30); do
-            if cargo package --package ruviz-gpui --allow-dirty --no-verify >/dev/null 2>&1; then
+          last_output=""
+
+          for attempt in $(seq 1 60); do
+            if output="$(cargo package --package ruviz-gpui --allow-dirty --no-verify 2>&1)"; then
               exit 0
             fi
 
-            echo "Waiting for crates.io index to serve ruviz-gpui dependencies (attempt ${attempt}/30)..."
-            sleep 10
+            last_output="${output}"
+            echo "Waiting for crates.io index to serve ruviz-gpui dependencies (attempt ${attempt}/60)..."
+            sleep 20
           done
 
           echo "Timed out waiting for ruviz-gpui packaging to resolve against crates.io"
+          if [ -n "${last_output}" ]; then
+            echo "Last cargo package error output:"
+            printf '%s\n' "${last_output}"
+          fi
           exit 1
 
       - name: Publish ruviz-gpui to crates.io

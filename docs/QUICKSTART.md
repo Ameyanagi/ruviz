@@ -4,9 +4,9 @@ Get started with ruviz in less than 5 minutes!
 
 ## What's New in v0.1.5
 
-- Grouped series API for shared styling and single legend entries: `Plot::group(|g| ...)`
-- Improved grouped auto-palette behavior (consistent color within each group)
-- DPI-independent dashed line spacing for more consistent visual output
+- New `ruviz-gpui` crate: GPUI component adapter for interactive and reactive plotting.
+- GPUI interactive session support and reactive plotting hooks for embedded and streaming use cases.
+- Default tick marks now render on all four sides of the plot frame (`.ticks_bottom_left()` restores the old layout).
 
 See full details:
 - [Release notes for v0.1.5](releases/v0.1.5.md)
