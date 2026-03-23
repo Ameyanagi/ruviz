@@ -46,7 +46,7 @@ jobs:
 
       - name: Validate release tag matches ruviz version
         run: |
-          VERSION="$(cargo pkgid -p ruviz | sed 's/.*#.*@//')"
+          VERSION="$(cargo pkgid -p ruviz | sed 's/.*[#@]//')"
           TAG="${{ github.ref_name }}"
 
           if [ "v${VERSION}" != "${TAG}" ]; then
@@ -91,7 +91,7 @@ jobs:
       - name: Detect published ruviz version
         id: ruviz-version
         run: |
-          VERSION="$(cargo pkgid -p ruviz | sed 's/.*#.*@//')"
+          VERSION="$(cargo pkgid -p ruviz | sed 's/.*[#@]//')"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           if curl --silent --fail \
@@ -125,7 +125,7 @@ jobs:
       - name: Detect published ruviz-gpui version
         id: gpui-version
         run: |
-          VERSION="$(cargo pkgid -p ruviz-gpui | sed 's/.*#.*@//')"
+          VERSION="$(cargo pkgid -p ruviz-gpui | sed 's/.*[#@]//')"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           if curl --silent --fail \
