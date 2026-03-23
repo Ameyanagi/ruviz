@@ -1633,10 +1633,12 @@ impl Plot {
         self
     }
 
-    /// Set the plot title as a reactive signal.
+    /// Set the plot title as reactive text.
     ///
-    /// This stores signal-backed text on the plot. Time-aware rendering via
-    /// `render_at()` is still evolving, so this is primarily a data-model API today.
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     ///
     /// # Example
     ///
@@ -1676,7 +1678,12 @@ impl Plot {
         self
     }
 
-    /// Set the X-axis label as a reactive signal.
+    /// Set the X-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn xlabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.display.xlabel = Some(label.into());
         self
@@ -1701,7 +1708,12 @@ impl Plot {
         self
     }
 
-    /// Set the Y-axis label as a reactive signal.
+    /// Set the Y-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn ylabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.display.ylabel = Some(label.into());
         self
@@ -5756,7 +5768,12 @@ impl Plot {
         self.validate_runtime_inputs_for_series(&self.series_mgr.series)
     }
 
-    /// Render the plot to an in-memory image
+    /// Render the plot to an in-memory image.
+    ///
+    /// Reactive plots are first resolved into a static snapshot. Temporal
+    /// `Signal` sources are sampled at `0.0`; push-based observables and
+    /// streaming sources use their latest values. Use `render_at()` to sample
+    /// temporal sources at a different time.
     pub fn render(&self) -> Result<Image> {
         if self.is_reactive() {
             let resolved = self.resolved_plot(0.0);
@@ -6303,26 +6320,31 @@ impl Plot {
         Ok(renderer.into_image())
     }
 
-    /// Render the plot using the current resolved state.
+    /// Render the plot using a caller-provided temporal sample time.
     ///
-    /// The `time` argument is currently reserved for future reactive rendering
-    /// support. At the moment this method behaves the same as [`render`](Self::render).
+    /// Static plots delegate to [`render`](Self::render). Reactive plots first
+    /// resolve a static snapshot, sampling temporal `Signal` sources at `time`
+    /// and reading push-based observables and streaming sources at their latest
+    /// values, then run through the usual backend-selection path.
     ///
     /// # Arguments
     ///
-    /// * `time` - Reserved for future reactive rendering support
+    /// * `time` - Time used to sample temporal `Signal` sources before rendering
     ///
     /// # Example
     ///
     /// ```rust,no_run
+    /// use ruviz::data::Signal;
     /// use ruviz::prelude::*;
+    ///
+    /// let title = Signal::new(|t| format!("t = {:.1}s", t));
     /// let plot = Plot::new()
-    ///     .title("Example")
+    ///     .title_signal(title)
     ///     .line(&[0.0, 1.0], &[0.0, 1.0])
     ///     .end_series();
     ///
-    /// // Currently equivalent to plot.render()
-    /// let image = plot.render_at(0.0)?;
+    /// // Samples the signal-backed title at t = 1.5 before rendering.
+    /// let image = plot.render_at(1.5)?;
     /// # let _ = image;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -9126,9 +9148,12 @@ impl Plot {
         }
     }
 
-    /// Save the plot to a PNG file
+    /// Save the plot to a PNG file.
     ///
-    /// Renders the plot and saves it to the specified path.
+    /// Renders the plot and saves it to the specified path. Reactive plots are
+    /// first resolved into a static snapshot: temporal `Signal` sources are
+    /// sampled at `0.0`, while push-based observables and streaming sources use
+    /// their latest values.
     ///
     /// # Example
     ///
@@ -11368,7 +11393,12 @@ impl PlotSeriesBuilder {
         self
     }
 
-    /// Set the plot title as a reactive signal.
+    /// Set the plot title as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn title_signal(mut self, title: impl Into<data::PlotText>) -> Self {
         self.plot.display.title = Some(title.into());
         self
@@ -11380,7 +11410,12 @@ impl PlotSeriesBuilder {
         self
     }
 
-    /// Set X-axis label as a reactive signal.
+    /// Set X-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn xlabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.plot.display.xlabel = Some(label.into());
         self
@@ -11398,7 +11433,12 @@ impl PlotSeriesBuilder {
         self
     }
 
-    /// Set Y-axis label as a reactive signal.
+    /// Set Y-axis label as reactive text.
+    ///
+    /// Temporal `Signal` sources are sampled when the plot is rendered:
+    /// `render_at()` uses the requested time, while `render()` and `save()` use
+    /// `0.0`. Push-based observables use their latest value when the snapshot is
+    /// built.
     pub fn ylabel_signal(mut self, label: impl Into<data::PlotText>) -> Self {
         self.plot.display.ylabel = Some(label.into());
         self

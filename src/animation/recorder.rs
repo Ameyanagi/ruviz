@@ -761,9 +761,10 @@ where
 /// Record a pre-built plot to an animation file.
 ///
 /// Unlike `record_simple` which creates a new Plot per frame via closure,
-/// this function reuses the same Plot for every frame. At the moment,
-/// `Plot::render_at()` behaves the same as `render()`, so time-varying
-/// signal resolution is not wired through this path yet.
+/// this function reuses the same Plot for every frame. Each frame calls
+/// `Plot::render_at(time)`, so temporal `Signal` sources are sampled at that
+/// frame time while push-based observables and streaming sources use their
+/// latest values.
 ///
 /// # Arguments
 ///

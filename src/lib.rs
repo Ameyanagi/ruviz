@@ -52,8 +52,10 @@
 //! ## Animation APIs
 //!
 //! Create smooth animations with `record!` closures today. Signal-backed plot data
-//! and labels can also be attached to a plot, and `render_at()` resolves those
-//! temporal sources before using the normal backend-selection path.
+//! and labels can also be attached to a plot. Plain `render()` and `save()`
+//! sample temporal sources at `0.0`, while `render_at()` lets you choose the
+//! sampling time before using the normal backend-selection path. Push-based
+//! reactive sources use their latest value when the plot snapshot is built.
 //!
 //! ### Basic Animation with record! Macro
 //!
