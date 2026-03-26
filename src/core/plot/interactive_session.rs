@@ -45,6 +45,31 @@ impl ViewportRect {
             max: ViewportPoint::new(a.x.max(b.x), a.y.max(b.y)),
         }
     }
+
+    pub fn contains(&self, point: ViewportPoint) -> bool {
+        point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
+    }
+
+    pub fn width(&self) -> f64 {
+        self.max.x - self.min.x
+    }
+
+    pub fn height(&self) -> f64 {
+        self.max.y - self.min.y
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct InteractiveViewportSnapshot {
+    pub zoom_level: f64,
+    pub pan_offset: ViewportPoint,
+    pub base_bounds: ViewportRect,
+    pub visible_bounds: ViewportRect,
+    pub plot_area: ViewportRect,
+    pub selected_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -964,6 +989,25 @@ impl InteractivePlotSession {
             .expect("InteractivePlotSession dirty lock poisoned")
     }
 
+    pub(crate) fn viewport_snapshot(&self) -> Result<InteractiveViewportSnapshot> {
+        let geometry = self.geometry_snapshot()?;
+        let state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+
+        Ok(InteractiveViewportSnapshot {
+            zoom_level: state.zoom_level,
+            pan_offset: state.pan_offset,
+            base_bounds: data_bounds_to_viewport_rect(state.base_bounds),
+            visible_bounds: data_bounds_to_viewport_rect(visible_bounds(&state)),
+            plot_area: plot_area_to_viewport_rect(geometry.plot_area),
+            selected_count: state.selected.len(),
+        })
+    }
+
     fn render_to_target(
         &self,
         target: RenderTargetKind,
@@ -1547,6 +1591,20 @@ fn visible_bounds(state: &SessionState) -> DataBounds {
         center.y - height * 0.5,
         center.y + height * 0.5,
     )
+}
+
+fn data_bounds_to_viewport_rect(bounds: DataBounds) -> ViewportRect {
+    ViewportRect {
+        min: ViewportPoint::new(bounds.x_min, bounds.y_min),
+        max: ViewportPoint::new(bounds.x_max, bounds.y_max),
+    }
+}
+
+fn plot_area_to_viewport_rect(plot_area: tiny_skia::Rect) -> ViewportRect {
+    ViewportRect {
+        min: ViewportPoint::new(plot_area.left() as f64, plot_area.top() as f64),
+        max: ViewportPoint::new(plot_area.right() as f64, plot_area.bottom() as f64),
+    }
 }
 
 fn screen_to_data(

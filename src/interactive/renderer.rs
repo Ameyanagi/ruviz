@@ -6,9 +6,10 @@
 #[cfg(feature = "gpu")]
 use crate::render::gpu::GpuRenderer;
 use crate::{
+    core::plot::InteractiveViewportSnapshot,
     core::{
-        FramePacing, HitResult, ImageTarget, InteractivePlotSession, Plot, QualityPolicy, Result,
-        ViewportPoint,
+        FramePacing, HitResult, ImageTarget, InteractivePlotSession, Plot, PlotInputEvent,
+        QualityPolicy, Result, ViewportPoint,
     },
     interactive::{
         event::{Annotation, Point2D, Rectangle},
@@ -103,6 +104,26 @@ impl RealTimeRenderer {
         self.last_device_scale = Self::sanitize_device_scale(device_scale);
     }
 
+    pub(crate) fn apply_session_input(
+        &mut self,
+        event: PlotInputEvent,
+        size_px: (u32, u32),
+        device_scale: f32,
+    ) {
+        self.set_device_scale(device_scale);
+        if let Some(session) = &self.interactive_session {
+            self.sync_session_target(session, size_px, self.last_device_scale);
+            session.apply_input(event);
+        }
+    }
+
+    pub(crate) fn viewport_snapshot(&self) -> Result<Option<InteractiveViewportSnapshot>> {
+        let Some(session) = &self.interactive_session else {
+            return Ok(None);
+        };
+        session.viewport_snapshot().map(Some)
+    }
+
     /// Render frame with current interaction state
     pub fn render_interactive(
         &mut self,
@@ -177,14 +198,16 @@ impl RealTimeRenderer {
     pub fn get_data_point_at(
         &self,
         screen_pos: Point2D,
-        state: &InteractionState,
+        _state: &InteractionState,
     ) -> Option<DataPoint> {
-        let data_pos = state.screen_to_data(screen_pos);
-
         // In real implementation, this would spatial search through plot data
         // For now, simulate finding a nearby point
         if let Some(session) = &self.interactive_session {
-            self.sync_session_viewport(session, state);
+            self.sync_session_target(
+                session,
+                (self.cpu_renderer.width(), self.cpu_renderer.height()),
+                self.last_device_scale,
+            );
             match session.hit_test(ViewportPoint::new(screen_pos.x, screen_pos.y)) {
                 HitResult::SeriesPoint {
                     series_index,
@@ -353,7 +376,7 @@ impl RealTimeRenderer {
         device_scale: f32,
     ) -> Result<Vec<u8>> {
         if let Some(session) = &self.interactive_session {
-            self.sync_session_viewport(session, state);
+            self.sync_session_target(session, (width, height), device_scale);
             session.set_frame_pacing(FramePacing::Display);
             session.set_quality_policy(match self.quality_mode {
                 RenderQuality::Interactive => QualityPolicy::Interactive,
@@ -408,11 +431,13 @@ impl RealTimeRenderer {
             .set_output_pixels(width, height)
     }
 
-    fn sync_session_viewport(&self, session: &InteractivePlotSession, state: &InteractionState) {
-        let width = state.screen_bounds.width().max(1.0).round() as u32;
-        let height = state.screen_bounds.height().max(1.0).round() as u32;
-        session.resize((width, height), self.last_device_scale);
-        session.sync_legacy_viewport(state.zoom_level, state.pan_offset.x, state.pan_offset.y);
+    fn sync_session_target(
+        &self,
+        session: &InteractivePlotSession,
+        size_px: (u32, u32),
+        device_scale: f32,
+    ) {
+        session.resize(size_px, Self::sanitize_device_scale(device_scale));
     }
 
     /// Render hover highlight
@@ -421,6 +446,9 @@ impl RealTimeRenderer {
         state: &InteractionState,
         pixel_data: &mut [u8],
     ) -> Result<()> {
+        if self.interactive_session.is_some() {
+            return Ok(());
+        }
         if let Some(ref hover_point) = state.hover_point {
             let screen_pos = state.data_to_screen(hover_point.position);
             self.draw_highlight_circle(pixel_data, screen_pos, 8.0, self.hover_highlight_color)?;
@@ -434,6 +462,9 @@ impl RealTimeRenderer {
         state: &InteractionState,
         pixel_data: &mut [u8],
     ) -> Result<()> {
+        if self.interactive_session.is_some() {
+            return Ok(());
+        }
         for point_id in &state.selected_points {
             // In real implementation, would look up actual point coordinates
             // For now, simulate highlighting at fixed positions
@@ -454,6 +485,9 @@ impl RealTimeRenderer {
         state: &InteractionState,
         pixel_data: &mut [u8],
     ) -> Result<()> {
+        if self.interactive_session.is_some() {
+            return Ok(());
+        }
         if let Some(region) = state.brushed_region {
             self.draw_selection_rectangle(pixel_data, region, self.brush_color)?;
         }
@@ -480,6 +514,9 @@ impl RealTimeRenderer {
 
     /// Render tooltip
     fn render_tooltip(&mut self, state: &InteractionState, pixel_data: &mut [u8]) -> Result<()> {
+        if self.interactive_session.is_some() {
+            return Ok(());
+        }
         if state.tooltip_visible && !state.tooltip_content.is_empty() {
             self.draw_tooltip(pixel_data, &state.tooltip_content, state.tooltip_position)?;
         }

@@ -5,8 +5,8 @@
 //! Controls:
 //! - Mouse wheel: Zoom in/out
 //! - Left click + drag: Pan
-//! - Double click: Reset view
-//! - Escape: Exit
+//! - Escape: Reset view
+//! - Close window: Exit
 
 use ruviz::prelude::*;
 
