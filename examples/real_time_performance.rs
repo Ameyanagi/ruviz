@@ -1,21 +1,33 @@
 //! Real-time performance demonstration
 //!
-//! Shows smooth 60fps interactions with large datasets using GPU acceleration.
+//! Shows zoom and pan behavior on a large line dataset.
 //!
 //! Controls:
-//! - Mouse wheel: Smooth zoom (should maintain 60fps)
-//! - Left drag: Smooth pan (should maintain 60fps)
-//! - 'P': Toggle performance overlay
-//! - 'Q': Toggle rendering quality
-//! - '+'/'-': Increase/decrease dataset size
-//! - Space: Regenerate dataset
+//! - Mouse wheel: Zoom in/out
+//! - Left click + drag: Box zoom
+//! - Right click + drag: Pan
+//! - Escape: Reset view
+//! - Close window: Exit
 
 use ruviz::prelude::*;
 use std::time::Instant;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create current-thread Tokio runtime for interactive example")
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     println!("Starting real-time performance demo...");
+    println!("Controls:");
+    println!("  - Mouse wheel: Zoom in/out");
+    println!("  - Left click + drag: Box zoom");
+    println!("  - Right click + drag: Pan");
+    println!("  - Escape: Reset view");
+    println!("  - Close window to exit");
     std::fs::create_dir_all("examples/output").ok();
 
     // Generate large dataset
@@ -29,10 +41,7 @@ async fn main() -> Result<()> {
 
     // Create performance demonstration plot
     let plot: Plot = Plot::new()
-        .title(format!(
-            "Real-time Performance Demo - {} points",
-            initial_size
-        ))
+        .title(format!("Large Dataset Explorer - {} points", initial_size))
         .xlabel("Time (s)")
         .ylabel("Signal Amplitude")
         .legend(Position::TopLeft)

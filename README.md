@@ -287,6 +287,34 @@ record!(
 
 ![Animation Example](docs/images/animation_sine_wave.gif)
 
+### Interactive And Animation Example Catalog
+
+Interactive window examples:
+
+```bash
+cargo run --features interactive --example basic_interaction
+cargo run --features interactive --example interactive_multi_series
+cargo run --features interactive --example interactive_scatter_clusters
+cargo run --features interactive --example interactive_heatmap
+cargo run --features interactive --example data_brushing
+cargo run --features interactive --example real_time_performance
+```
+
+Animation export examples:
+
+```bash
+cargo run --features animation --example animation_basic
+cargo run --features animation --example animation_simple
+cargo run --features animation --example animation_wave
+cargo run --features animation --example animation_easing
+cargo run --features animation --example animation_reactive
+cargo run --features animation --example generate_animation_gallery
+```
+
+Use the interactive examples when you want zoom/pan exploration in a window. Use the
+animation examples when you want rendered GIF output with the `record!` macro and easing
+helpers.
+
 ### Typst Text Example
 
 Run:

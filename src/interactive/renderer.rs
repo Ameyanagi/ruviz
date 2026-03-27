@@ -6,10 +6,10 @@
 #[cfg(feature = "gpu")]
 use crate::render::gpu::GpuRenderer;
 use crate::{
-    core::plot::InteractiveViewportSnapshot,
+    core::plot::{Image, InteractiveViewportSnapshot},
     core::{
-        FramePacing, HitResult, ImageTarget, InteractivePlotSession, Plot, PlotInputEvent,
-        QualityPolicy, Result, ViewportPoint,
+        FramePacing, HitResult, InteractivePlotSession, Plot, PlotInputEvent, QualityPolicy,
+        ReactiveSubscription, Result, SurfaceTarget, ViewportPoint,
     },
     interactive::{
         event::{Annotation, Point2D, Rectangle},
@@ -19,8 +19,21 @@ use crate::{
 };
 use std::{
     collections::HashMap,
+    sync::Arc,
     time::{Duration, Instant},
 };
+
+#[derive(Clone, Debug)]
+pub(crate) enum InteractiveRenderOutput {
+    Pixels(Vec<u8>),
+    Layers(InteractiveLayerOutput),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct InteractiveLayerOutput {
+    pub base: Arc<Image>,
+    pub overlays: Vec<Arc<Image>>,
+}
 
 /// Real-time renderer for interactive plotting
 pub struct RealTimeRenderer {
@@ -109,12 +122,24 @@ impl RealTimeRenderer {
         event: PlotInputEvent,
         size_px: (u32, u32),
         device_scale: f32,
-    ) {
+    ) -> bool {
         self.set_device_scale(device_scale);
         if let Some(session) = &self.interactive_session {
             self.sync_session_target(session, size_px, self.last_device_scale);
+            let dirty_before = session.dirty_domains();
             session.apply_input(event);
+            return session.dirty_domains() != dirty_before;
         }
+        false
+    }
+
+    pub(crate) fn subscribe_reactive<F>(&self, callback: F) -> Option<ReactiveSubscription>
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.interactive_session
+            .as_ref()
+            .map(|session| session.subscribe_reactive(callback))
     }
 
     pub(crate) fn viewport_snapshot(&self) -> Result<Option<InteractiveViewportSnapshot>> {
@@ -125,13 +150,13 @@ impl RealTimeRenderer {
     }
 
     /// Render frame with current interaction state
-    pub fn render_interactive(
+    pub(crate) fn render_interactive(
         &mut self,
         state: &InteractionState,
         width: u32,
         height: u32,
         device_scale: f32,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<InteractiveRenderOutput> {
         let frame_start = Instant::now();
 
         // Update renderer dimensions if needed
@@ -141,6 +166,12 @@ impl RealTimeRenderer {
         // Adaptive quality based on performance
         if self.adaptive_quality {
             self.update_quality_mode(state);
+        }
+
+        if self.interactive_session.is_some() {
+            let frame = self.render_session_frame(state, width, height, device_scale)?;
+            self.performance_monitor.record_frame(frame_start.elapsed());
+            return Ok(frame);
         }
 
         // Render base plot (cached when possible)
@@ -156,7 +187,7 @@ impl RealTimeRenderer {
         // Update performance metrics
         self.performance_monitor.record_frame(frame_start.elapsed());
 
-        Ok(pixel_data)
+        Ok(InteractiveRenderOutput::Pixels(pixel_data))
     }
 
     /// Render high-quality static version for export
@@ -285,17 +316,79 @@ impl RealTimeRenderer {
 
     /// Update quality mode based on performance
     fn update_quality_mode(&mut self, state: &InteractionState) {
+        let active_interaction = state.mouse_button_pressed
+            || state.brush_active
+            || state.viewport_dirty
+            || !matches!(
+                state.animation_state,
+                crate::interactive::state::AnimationState::Idle
+            );
         let current_fps = self.performance_monitor.get_current_fps();
         let is_animating = !matches!(
             state.animation_state,
             crate::interactive::state::AnimationState::Idle
         );
 
-        if is_animating || current_fps < self.target_fps * 0.8 {
+        if active_interaction || is_animating || current_fps < self.target_fps * 0.8 {
             self.quality_mode = RenderQuality::Interactive;
         } else if current_fps > self.target_fps * 0.95 {
             self.quality_mode = RenderQuality::Balanced;
         }
+    }
+
+    fn render_session_frame(
+        &mut self,
+        state: &InteractionState,
+        width: u32,
+        height: u32,
+        device_scale: f32,
+    ) -> Result<InteractiveRenderOutput> {
+        let session = self
+            .interactive_session
+            .as_ref()
+            .expect("interactive session should exist for session rendering");
+
+        self.sync_session_target(session, (width, height), device_scale);
+        session.set_frame_pacing(FramePacing::Display);
+        session.set_quality_policy(match self.quality_mode {
+            RenderQuality::Interactive => QualityPolicy::Interactive,
+            RenderQuality::Balanced => QualityPolicy::Balanced,
+            RenderQuality::Publication => QualityPolicy::Publication,
+        });
+        #[cfg(feature = "gpu")]
+        session.set_prefer_gpu(self.gpu_renderer.is_some());
+
+        let frame = match session.render_to_surface(SurfaceTarget {
+            size_px: (width, height),
+            scale_factor: device_scale,
+            time_seconds: 0.0,
+        }) {
+            Ok(frame) => frame,
+            Err(e) => {
+                log::warn!(
+                    "Interactive session surface rendering failed: {}, returning white pixels",
+                    e
+                );
+                return Ok(InteractiveRenderOutput::Pixels(vec![
+                    255u8;
+                    (width * height * 4)
+                        as usize
+                ]));
+            }
+        };
+
+        let mut overlays = Vec::new();
+        if let Some(overlay) = frame.layers.overlay.as_ref() {
+            overlays.push(Arc::clone(overlay));
+        }
+        if let Some(local_overlay) = self.render_local_overlay(state, width, height, true)? {
+            overlays.push(Arc::new(Image::new(width, height, local_overlay)));
+        }
+
+        Ok(InteractiveRenderOutput::Layers(InteractiveLayerOutput {
+            base: Arc::clone(&frame.layers.base),
+            overlays,
+        }))
     }
 
     /// Render base plot with caching
@@ -370,37 +463,12 @@ impl RealTimeRenderer {
     /// Render the current plot to RGBA pixel data
     fn render_plot_to_pixels(
         &self,
-        state: &InteractionState,
+        _state: &InteractionState,
         width: u32,
         height: u32,
         device_scale: f32,
     ) -> Result<Vec<u8>> {
-        if let Some(session) = &self.interactive_session {
-            self.sync_session_target(session, (width, height), device_scale);
-            session.set_frame_pacing(FramePacing::Display);
-            session.set_quality_policy(match self.quality_mode {
-                RenderQuality::Interactive => QualityPolicy::Interactive,
-                RenderQuality::Balanced => QualityPolicy::Balanced,
-                RenderQuality::Publication => QualityPolicy::Publication,
-            });
-            #[cfg(feature = "gpu")]
-            session.set_prefer_gpu(self.gpu_renderer.is_some());
-
-            match session.render_to_image(ImageTarget {
-                size_px: (width, height),
-                scale_factor: device_scale,
-                time_seconds: 0.0,
-            }) {
-                Ok(frame) => Ok(frame.image.pixels.clone()),
-                Err(e) => {
-                    log::warn!(
-                        "Interactive session rendering failed: {}, returning white pixels",
-                        e
-                    );
-                    Ok(vec![255u8; (width * height * 4) as usize])
-                }
-            }
-        } else if let Some(ref plot) = self.current_plot {
+        if let Some(ref plot) = self.current_plot {
             let plot_clone = Self::configure_plot_for_surface(plot, width, height, device_scale);
             match plot_clone.render() {
                 Ok(image) => Ok(image.pixels),
@@ -412,6 +480,41 @@ impl RealTimeRenderer {
         } else {
             Ok(vec![255u8; (width * height * 4) as usize])
         }
+    }
+
+    fn render_local_overlay(
+        &mut self,
+        state: &InteractionState,
+        width: u32,
+        height: u32,
+        session_managed_overlay: bool,
+    ) -> Result<Option<Vec<u8>>> {
+        let render_annotations = !state.annotations.is_empty()
+            && !(session_managed_overlay && self.should_defer_nonessential_overlays(state));
+        let render_brush = state.brushed_region.is_some();
+
+        if !render_annotations && !render_brush {
+            return Ok(None);
+        }
+
+        let mut pixel_data = vec![0u8; (width * height * 4) as usize];
+        if render_brush {
+            self.render_brush_region(state, &mut pixel_data)?;
+        }
+        if render_annotations {
+            self.render_annotations(state, &mut pixel_data)?;
+        }
+        Ok(Some(pixel_data))
+    }
+
+    fn should_defer_nonessential_overlays(&self, state: &InteractionState) -> bool {
+        matches!(self.quality_mode, RenderQuality::Interactive)
+            && (state.mouse_button_pressed
+                || state.brush_active
+                || !matches!(
+                    state.animation_state,
+                    crate::interactive::state::AnimationState::Idle
+                ))
     }
 
     fn configure_plot_for_surface(plot: &Plot, width: u32, height: u32, device_scale: f32) -> Plot {
@@ -485,9 +588,6 @@ impl RealTimeRenderer {
         state: &InteractionState,
         pixel_data: &mut [u8],
     ) -> Result<()> {
-        if self.interactive_session.is_some() {
-            return Ok(());
-        }
         if let Some(region) = state.brushed_region {
             self.draw_selection_rectangle(pixel_data, region, self.brush_color)?;
         }
@@ -500,6 +600,9 @@ impl RealTimeRenderer {
         state: &InteractionState,
         pixel_data: &mut [u8],
     ) -> Result<()> {
+        if state.annotations.is_empty() {
+            return Ok(());
+        }
         for annotation in &state.annotations {
             self.annotation_renderer.render_annotation(
                 annotation,
@@ -836,16 +939,11 @@ impl AnnotationRenderer {
     ) -> Result<()> {
         match annotation {
             Annotation::Text {
-                content,
+                content: _,
                 position,
                 style: _,
             } => {
-                let screen_pos = state.data_to_screen(*position);
-                // In real implementation, would render text using cosmic-text
-                println!(
-                    "Rendering text annotation: '{}' at {:?}",
-                    content, screen_pos
-                );
+                let _ = state.data_to_screen(*position);
             }
 
             Annotation::Arrow {
@@ -853,28 +951,20 @@ impl AnnotationRenderer {
                 end,
                 style: _,
             } => {
-                let screen_start = state.data_to_screen(*start);
-                let screen_end = state.data_to_screen(*end);
-                // In real implementation, would draw arrow line
-                println!(
-                    "Rendering arrow from {:?} to {:?}",
-                    screen_start, screen_end
-                );
+                let _ = state.data_to_screen(*start);
+                let _ = state.data_to_screen(*end);
             }
 
             Annotation::Shape { geometry, style: _ } => {
-                // In real implementation, would render geometric shapes
-                println!("Rendering shape annotation: {:?}", geometry);
+                let _ = geometry;
             }
 
             Annotation::Equation {
-                latex,
+                latex: _,
                 position,
                 style: _,
             } => {
-                let screen_pos = state.data_to_screen(*position);
-                // In real implementation, would render LaTeX equation
-                println!("Rendering equation '{}' at {:?}", latex, screen_pos);
+                let _ = state.data_to_screen(*position);
             }
         }
 

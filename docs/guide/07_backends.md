@@ -230,6 +230,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 For GPU-backed interactive work, switch the feature flag to `interactive-gpu`
 and enable `.gpu(true)` on the plot before `end_series()`.
 
+Curated examples in this repository:
+
+- `cargo run --features interactive --example basic_interaction`
+- `cargo run --features interactive --example interactive_multi_series`
+- `cargo run --features interactive --example interactive_scatter_clusters`
+- `cargo run --features interactive --example interactive_heatmap`
+- `cargo run --features interactive --example data_brushing`
+- `cargo run --features interactive --example real_time_performance`
+
+Animation examples live behind the separate `animation` feature:
+
+- `cargo run --features animation --example animation_basic`
+- `cargo run --features animation --example animation_simple`
+- `cargo run --features animation --example animation_wave`
+- `cargo run --features animation --example animation_easing`
+- `cargo run --features animation --example animation_reactive`
+- `cargo run --features animation --example generate_animation_gallery`
+
 ## Memory pooling
 
 Memory pooling is separate from backend selection and is always opt-in:

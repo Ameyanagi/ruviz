@@ -311,8 +311,28 @@ path = "examples/data_brushing.rs"
 required-features = ["interactive"]
 
 [[example]]
+name = "interactive_heatmap"
+path = "examples/interactive_heatmap.rs"
+required-features = ["interactive"]
+
+[[example]]
+name = "interactive_multi_series"
+path = "examples/interactive_multi_series.rs"
+required-features = ["interactive"]
+
+[[example]]
+name = "interactive_scatter_clusters"
+path = "examples/interactive_scatter_clusters.rs"
+required-features = ["interactive"]
+
+[[example]]
 name = "reactive_example"
 path = "examples/reactive_example.rs"
+required-features = ["interactive"]
+
+[[example]]
+name = "real_time_performance"
+path = "examples/real_time_performance.rs"
 required-features = ["interactive"]
 
 # Animation examples (require animation feature)

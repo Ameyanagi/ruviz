@@ -4804,6 +4804,12 @@ impl Plot {
         let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let clip_rect = (
+            plot_area.x(),
+            plot_area.y(),
+            plot_area.width(),
+            plot_area.height(),
+        );
 
         match &series.series_type {
             SeriesType::Line { x_data, y_data } => {
@@ -4819,11 +4825,19 @@ impl Plot {
                     })
                     .collect();
 
-                renderer.draw_polyline(&points, color, line_width, line_style)?;
+                renderer
+                    .draw_polyline_clipped(&points, color, line_width, line_style, clip_rect)?;
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                     for &(px, py) in &points {
-                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                        renderer.draw_marker_clipped(
+                            px,
+                            py,
+                            marker_size,
+                            marker_style,
+                            color,
+                            clip_rect,
+                        )?;
                     }
                 }
 
@@ -4857,7 +4871,14 @@ impl Plot {
                     let (px, py) = crate::render::skia::map_data_to_pixels(
                         x, y, x_min, x_max, y_min, y_max, plot_area,
                     );
-                    renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    renderer.draw_marker_clipped(
+                        px,
+                        py,
+                        marker_size,
+                        marker_style,
+                        color,
+                        clip_rect,
+                    )?;
                 }
 
                 // Draw attached error bars if present
@@ -4896,13 +4917,14 @@ impl Plot {
                     let (_, py_zero) = crate::render::skia::map_data_to_pixels(
                         x, 0.0, x_min, x_max, y_min, y_max, plot_area,
                     );
-                    renderer.draw_rectangle(
+                    renderer.draw_rectangle_clipped(
                         px - bar_width / 2.0,
                         py.min(py_zero),
                         bar_width,
                         (py - py_zero).abs(),
                         color,
                         true,
+                        clip_rect,
                     )?;
                 }
             }
@@ -4937,13 +4959,14 @@ impl Plot {
                             x_center, 0.0, x_min, x_max, y_min, y_max, plot_area,
                         );
 
-                        renderer.draw_rectangle(
+                        renderer.draw_rectangle_clipped(
                             px - bar_width_px / 2.0,
                             py.min(py_zero),
                             bar_width_px,
                             (py - py_zero).abs(),
                             color,
                             true,
+                            clip_rect,
                         )?;
                     }
                 }
@@ -5025,14 +5048,16 @@ impl Plot {
                     && box_width.is_finite()
                     && box_height.is_finite()
                 {
-                    renderer.draw_rectangle(
-                        box_left, box_top, box_width, box_height, color, false, // outline only
+                    renderer.draw_rectangle_clipped(
+                        box_left, box_top, box_width, box_height, color,
+                        false, // outline only
+                        clip_rect,
                     )?;
                 }
 
                 // Draw median line - validate coordinates
                 if box_left.is_finite() && median_y.is_finite() && box_right.is_finite() {
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         box_left,
                         median_y,
                         box_right,
@@ -5040,12 +5065,13 @@ impl Plot {
                         color,
                         line_width * 1.5, // thicker median line
                         line_style.clone(),
+                        clip_rect,
                     )?;
                 }
 
                 // Draw lower whisker - validate coordinates
                 if x_center_px.is_finite() && q1_y.is_finite() && lower_whisker_y.is_finite() {
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         x_center_px,
                         q1_y,
                         x_center_px,
@@ -5053,12 +5079,13 @@ impl Plot {
                         color,
                         line_width,
                         line_style.clone(),
+                        clip_rect,
                     )?;
                 }
 
                 // Draw upper whisker - validate coordinates
                 if x_center_px.is_finite() && q3_y.is_finite() && upper_whisker_y.is_finite() {
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         x_center_px,
                         q3_y,
                         x_center_px,
@@ -5066,13 +5093,14 @@ impl Plot {
                         color,
                         line_width,
                         line_style.clone(),
+                        clip_rect,
                     )?;
                 }
 
                 // Draw whisker caps - validate coordinates
                 let cap_width = box_half_width * 0.6;
                 if x_center_px.is_finite() && lower_whisker_y.is_finite() && cap_width.is_finite() {
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         x_center_px - cap_width,
                         lower_whisker_y,
                         x_center_px + cap_width,
@@ -5080,11 +5108,12 @@ impl Plot {
                         color,
                         line_width,
                         line_style.clone(),
+                        clip_rect,
                     )?;
                 }
 
                 if x_center_px.is_finite() && upper_whisker_y.is_finite() && cap_width.is_finite() {
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         x_center_px - cap_width,
                         upper_whisker_y,
                         x_center_px + cap_width,
@@ -5092,6 +5121,7 @@ impl Plot {
                         color,
                         line_width,
                         line_style.clone(),
+                        clip_rect,
                     )?;
                 }
 
@@ -5101,12 +5131,13 @@ impl Plot {
                         0.0, outlier, x_min, x_max, y_min, y_max, plot_area,
                     );
                     if x_center_px.is_finite() && outlier_y.is_finite() {
-                        renderer.draw_marker(
+                        renderer.draw_marker_clipped(
                             x_center_px,
                             outlier_y,
                             4.0, // outlier marker size
                             MarkerStyle::Circle,
                             color,
+                            clip_rect,
                         )?;
                     }
                 }
@@ -5201,7 +5232,14 @@ impl Plot {
                         let (px, py) = crate::render::skia::map_data_to_pixels(
                             x, y, x_min, x_max, y_min, y_max, plot_area,
                         );
-                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                        renderer.draw_marker_clipped(
+                            px,
+                            py,
+                            marker_size,
+                            marker_style,
+                            color,
+                            clip_rect,
+                        )?;
                     }
                 }
 
@@ -5243,7 +5281,14 @@ impl Plot {
                         let (px, py) = crate::render::skia::map_data_to_pixels(
                             x, y, x_min, x_max, y_min, y_max, plot_area,
                         );
-                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                        renderer.draw_marker_clipped(
+                            px,
+                            py,
+                            marker_size,
+                            marker_style,
+                            color,
+                            clip_rect,
+                        )?;
                     }
                 }
 
@@ -5457,6 +5502,12 @@ impl Plot {
         let color = series.color.unwrap_or(Color::new(0, 0, 0));
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let clip_rect = (
+            plot_area.x(),
+            plot_area.y(),
+            plot_area.width(),
+            plot_area.height(),
+        );
 
         match &series.series_type {
             SeriesType::Line { x_data, y_data } => {
@@ -5491,11 +5542,19 @@ impl Plot {
                     .map(|(&x, &y)| (x, y))
                     .collect();
 
-                renderer.draw_polyline(&points, color, line_width, line_style)?;
+                renderer
+                    .draw_polyline_clipped(&points, color, line_width, line_style, clip_rect)?;
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                     for &(px, py) in &points {
-                        renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                        renderer.draw_marker_clipped(
+                            px,
+                            py,
+                            marker_size,
+                            marker_style,
+                            color,
+                            clip_rect,
+                        )?;
                     }
                 }
             }
@@ -5529,7 +5588,14 @@ impl Plot {
 
                 // Draw markers at transformed coordinates
                 for (&px, &py) in x_transformed.iter().zip(y_transformed.iter()) {
-                    renderer.draw_marker(px, py, marker_size, marker_style, color)?;
+                    renderer.draw_marker_clipped(
+                        px,
+                        py,
+                        marker_size,
+                        marker_style,
+                        color,
+                        clip_rect,
+                    )?;
                 }
             }
             // For other series types, fall back to normal rendering
@@ -5945,6 +6011,12 @@ impl Plot {
                     (skia_rect, Some(layout))
                 }
             };
+        let clip_rect = (
+            plot_area.x(),
+            plot_area.y(),
+            plot_area.width(),
+            plot_area.height(),
+        );
 
         // Generate nice tick values - adapt count to available space
         // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
@@ -6123,12 +6195,21 @@ impl Plot {
                     }
 
                     if points.len() >= 2 {
-                        renderer.draw_polyline(&points, color, line_width, line_style)?;
+                        renderer.draw_polyline_clipped(
+                            &points, color, line_width, line_style, clip_rect,
+                        )?;
                     }
                     if let Some(marker_style) = series.marker_style {
                         let marker_size_px = self.line_width_px(series.marker_size.unwrap_or(8.0));
                         for &(px, py) in &points {
-                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                            renderer.draw_marker_clipped(
+                                px,
+                                py,
+                                marker_size_px,
+                                marker_style,
+                                color,
+                                clip_rect,
+                            )?;
                         }
                     }
 
@@ -6164,7 +6245,14 @@ impl Plot {
                             let (px, py) = map_data_to_pixels(
                                 x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
                             );
-                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                            renderer.draw_marker_clipped(
+                                px,
+                                py,
+                                marker_size_px,
+                                marker_style,
+                                color,
+                                clip_rect,
+                            )?;
                         }
                     }
 
@@ -6210,12 +6298,12 @@ impl Plot {
                             let bar_x = px - bar_width * 0.5;
 
                             if value >= 0.0 {
-                                renderer.draw_rectangle(
-                                    bar_x, py, bar_width, bar_height, color, true,
+                                renderer.draw_rectangle_clipped(
+                                    bar_x, py, bar_width, bar_height, color, true, clip_rect,
                                 )?;
                             } else {
-                                renderer.draw_rectangle(
-                                    bar_x, baseline, bar_width, bar_height, color, true,
+                                renderer.draw_rectangle_clipped(
+                                    bar_x, baseline, bar_width, bar_height, color, true, clip_rect,
                                 )?;
                             }
                         }
@@ -6277,13 +6365,14 @@ impl Plot {
                             let bar_height = (baseline - py).abs();
                             let bar_x = px - bar_width_px * 0.5;
 
-                            renderer.draw_rectangle(
+                            renderer.draw_rectangle_clipped(
                                 bar_x,
                                 py,
                                 bar_width_px,
                                 bar_height,
                                 color,
                                 true,
+                                clip_rect,
                             )?;
                         }
                     }
@@ -6305,12 +6394,13 @@ impl Plot {
                                     let (px, py) = map_data_to_pixels(
                                         x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
                                     );
-                                    renderer.draw_marker(
+                                    renderer.draw_marker_clipped(
                                         px,
                                         py,
                                         marker_size_px,
                                         MarkerStyle::Circle,
                                         color,
+                                        clip_rect,
                                     )?;
                                 }
                             }
@@ -6525,6 +6615,12 @@ impl Plot {
                     (skia_rect, Some(layout))
                 }
             };
+        let clip_rect = (
+            plot_area.x(),
+            plot_area.y(),
+            plot_area.width(),
+            plot_area.height(),
+        );
 
         // Generate nice tick values - adapt count to available space
         // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
@@ -6702,12 +6798,21 @@ impl Plot {
                     }
 
                     if points.len() >= 2 {
-                        renderer.draw_polyline(&points, color, line_width, line_style)?;
+                        renderer.draw_polyline_clipped(
+                            &points, color, line_width, line_style, clip_rect,
+                        )?;
                     }
                     if let Some(marker_style) = series.marker_style {
                         let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
                         for &(px, py) in &points {
-                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                            renderer.draw_marker_clipped(
+                                px,
+                                py,
+                                marker_size_px,
+                                marker_style,
+                                color,
+                                clip_rect,
+                            )?;
                         }
                     }
 
@@ -6743,7 +6848,14 @@ impl Plot {
                             let (px, py) = map_data_to_pixels(
                                 x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
                             );
-                            renderer.draw_marker(px, py, marker_size_px, marker_style, color)?;
+                            renderer.draw_marker_clipped(
+                                px,
+                                py,
+                                marker_size_px,
+                                marker_style,
+                                color,
+                                clip_rect,
+                            )?;
                         }
                     }
 
@@ -6789,12 +6901,12 @@ impl Plot {
                             let bar_x = px - bar_width * 0.5;
 
                             if value >= 0.0 {
-                                renderer.draw_rectangle(
-                                    bar_x, py, bar_width, bar_height, color, true,
+                                renderer.draw_rectangle_clipped(
+                                    bar_x, py, bar_width, bar_height, color, true, clip_rect,
                                 )?;
                             } else {
-                                renderer.draw_rectangle(
-                                    bar_x, baseline, bar_width, bar_height, color, true,
+                                renderer.draw_rectangle_clipped(
+                                    bar_x, baseline, bar_width, bar_height, color, true, clip_rect,
                                 )?;
                             }
                         }
@@ -6815,12 +6927,13 @@ impl Plot {
                                     let (px, py) = map_data_to_pixels(
                                         x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
                                     );
-                                    renderer.draw_marker(
+                                    renderer.draw_marker_clipped(
                                         px,
                                         py,
                                         marker_size_px,
                                         MarkerStyle::Circle,
                                         color,
+                                        clip_rect,
                                     )?;
                                 }
                             }
@@ -8202,13 +8315,20 @@ impl Plot {
             },
         )?;
 
+        let clip_rect = (
+            plot_area.x(),
+            plot_area.y(),
+            plot_area.width(),
+            plot_area.height(),
+        );
+
         // Render processed series (sequential - final drawing)
         for processed in processed_series {
             match processed.series_type {
                 RenderSeriesType::Line { segments } => {
                     // Draw all line segments
                     for segment in segments {
-                        renderer.draw_polyline(
+                        renderer.draw_polyline_clipped(
                             &[
                                 (segment.start.x, segment.start.y),
                                 (segment.end.x, segment.end.y),
@@ -8216,43 +8336,47 @@ impl Plot {
                             segment.color,
                             segment.width,
                             segment.style,
+                            clip_rect,
                         )?;
                     }
                 }
                 RenderSeriesType::Scatter { markers } => {
                     // Draw all markers
                     for marker in markers {
-                        renderer.draw_marker(
+                        renderer.draw_marker_clipped(
                             marker.position.x,
                             marker.position.y,
                             marker.size,
                             marker.style,
                             marker.color,
+                            clip_rect,
                         )?;
                     }
                 }
                 RenderSeriesType::Bar { bars } => {
                     // Draw all bars
                     for bar in bars {
-                        renderer
-                            .draw_rectangle(bar.x, bar.y, bar.width, bar.height, bar.color, true)?;
+                        renderer.draw_rectangle_clipped(
+                            bar.x, bar.y, bar.width, bar.height, bar.color, true, clip_rect,
+                        )?;
                     }
                 }
                 RenderSeriesType::BoxPlot { box_data } => {
                     // Draw box plot components
 
                     // Draw the box (IQR)
-                    renderer.draw_rectangle(
+                    renderer.draw_rectangle_clipped(
                         box_data.box_left,
                         box_data.q3_y,
                         box_data.box_right - box_data.box_left,
                         box_data.q1_y - box_data.q3_y,
                         box_data.box_color,
                         false, // outline only
+                        clip_rect,
                     )?;
 
                     // Draw median line
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         box_data.box_left,
                         box_data.median_y,
                         box_data.box_right,
@@ -8260,10 +8384,11 @@ impl Plot {
                         box_data.line_color,
                         2.0, // median line width
                         LineStyle::Solid,
+                        clip_rect,
                     )?;
 
                     // Draw lower whisker
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         box_data.x_center,
                         box_data.q1_y,
                         box_data.x_center,
@@ -8271,10 +8396,11 @@ impl Plot {
                         box_data.line_color,
                         1.0,
                         LineStyle::Solid,
+                        clip_rect,
                     )?;
 
                     // Draw upper whisker
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         box_data.x_center,
                         box_data.q3_y,
                         box_data.x_center,
@@ -8282,11 +8408,12 @@ impl Plot {
                         box_data.line_color,
                         1.0,
                         LineStyle::Solid,
+                        clip_rect,
                     )?;
 
                     // Draw whisker caps
                     let cap_width = (box_data.box_right - box_data.box_left) * 0.3;
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         box_data.x_center - cap_width,
                         box_data.lower_whisker_y,
                         box_data.x_center + cap_width,
@@ -8294,9 +8421,10 @@ impl Plot {
                         box_data.line_color,
                         1.0,
                         LineStyle::Solid,
+                        clip_rect,
                     )?;
 
-                    renderer.draw_line(
+                    renderer.draw_line_clipped(
                         box_data.x_center - cap_width,
                         box_data.upper_whisker_y,
                         box_data.x_center + cap_width,
@@ -8304,16 +8432,18 @@ impl Plot {
                         box_data.line_color,
                         1.0,
                         LineStyle::Solid,
+                        clip_rect,
                     )?;
 
                     // Draw outliers
                     for outlier in &box_data.outliers {
-                        renderer.draw_marker(
+                        renderer.draw_marker_clipped(
                             outlier.x,
                             outlier.y,
                             4.0, // outlier marker size
                             MarkerStyle::Circle,
                             box_data.outlier_color,
+                            clip_rect,
                         )?;
                     }
                 }
@@ -8323,13 +8453,14 @@ impl Plot {
                 RenderSeriesType::Heatmap { cells, .. } => {
                     // Draw all heatmap cells as filled rectangles
                     for cell in cells {
-                        renderer.draw_rectangle(
+                        renderer.draw_rectangle_clipped(
                             cell.x,
                             cell.y,
                             cell.width,
                             cell.height,
                             cell.color,
                             true, // filled
+                            clip_rect,
                         )?;
                     }
                 }
@@ -9641,11 +9772,11 @@ impl Plot {
             })
             .sum();
 
-        const DATASHADER_THRESHOLD: usize = 100_000; // Activate DataShader for >100K points
+        const DATASHADER_THRESHOLD: usize = 100_000; // Activate DataShader for >=100K points
         #[cfg(feature = "gpu")]
         const GPU_THRESHOLD: usize = 5_000; // Activate GPU for >5K points
 
-        if total_points > DATASHADER_THRESHOLD {
+        if total_points >= DATASHADER_THRESHOLD {
             // Use DataShader for massive datasets - simplified version
             use crate::data::DataShader;
 

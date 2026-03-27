@@ -4,10 +4,10 @@
 //! handling and integration with the real-time renderer.
 
 use crate::{
-    core::{Plot, PlotInputEvent, PlottingError, Result, ViewportPoint},
+    core::{Plot, PlotInputEvent, PlottingError, ReactiveSubscription, Result, ViewportPoint},
     interactive::{
         event::{EventHandler, EventProcessor, InteractionEvent, Point2D, Rectangle, Vector2D},
-        renderer::RealTimeRenderer,
+        renderer::{InteractiveRenderOutput, RealTimeRenderer},
         state::InteractionState,
     },
 };
@@ -17,7 +17,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent},
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle},
     window::{Window, WindowAttributes, WindowId},
 };
 
@@ -29,8 +29,34 @@ use std::{
 
 const DRAG_THRESHOLD_PX: f64 = 3.0;
 const LINE_SCROLL_DELTA_PX: f64 = 50.0;
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 type WindowSurface = SoftbufferSurface<OwnedDisplayHandle, Arc<Window>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InteractiveAppEvent {
+    ReactiveUpdate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ActiveDrag {
+    LeftZoom {
+        anchor_px: Point2D,
+        current_px: Point2D,
+        crossed_threshold: bool,
+    },
+    RightPan {
+        anchor_px: Point2D,
+        last_px: Point2D,
+        crossed_threshold: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PendingHover {
+    Hover(Point2D),
+    Clear,
+}
 
 /// Interactive window for displaying plots with real-time interactions
 pub struct InteractiveWindow {
@@ -40,13 +66,18 @@ pub struct InteractiveWindow {
     renderer: RealTimeRenderer,
     interaction_state: InteractionState,
     event_handler: Box<dyn EventHandler>,
+    title: String,
+    resizable: bool,
+    decorations: bool,
 
     // Window state
     window_size: PhysicalSize<u32>,
     scale_factor: f64,
     mouse_position: PhysicalPosition<f64>,
-    pointer_down_px: Option<Point2D>,
-    last_pointer_px: Option<Point2D>,
+    active_drag: Option<ActiveDrag>,
+    pending_hover: Option<PendingHover>,
+    surface_size: Option<(u32, u32)>,
+    reactive_subscription: Option<ReactiveSubscription>,
 
     // Performance tracking
     last_frame_time: Instant,
@@ -56,7 +87,7 @@ pub struct InteractiveWindow {
 
 impl InteractiveWindow {
     /// Create new interactive window
-    pub async fn new(plot: Plot, _title: &str, width: u32, height: u32) -> Result<Self> {
+    pub async fn new(plot: Plot, title: &str, width: u32, height: u32) -> Result<Self> {
         let renderer = RealTimeRenderer::new().await?;
         // Set up data bounds based on plot data
         // In real implementation, would analyze plot data to determine bounds
@@ -80,11 +111,16 @@ impl InteractiveWindow {
             renderer,
             interaction_state,
             event_handler,
+            title: title.to_string(),
+            resizable: true,
+            decorations: true,
             window_size: PhysicalSize::new(width, height),
             scale_factor: 1.0,
             mouse_position: PhysicalPosition::new(0.0, 0.0),
-            pointer_down_px: None,
-            last_pointer_px: None,
+            active_drag: None,
+            pending_hover: None,
+            surface_size: None,
+            reactive_subscription: None,
             last_frame_time: Instant::now(),
             frame_count: 0,
             should_close: false,
@@ -93,7 +129,16 @@ impl InteractiveWindow {
 
     /// Run the interactive window event loop
     pub fn run(mut self, plot: Plot) -> Result<()> {
-        let event_loop = EventLoop::new().map_err(|e| {
+        let mut event_loop_builder = EventLoop::<InteractiveAppEvent>::with_user_event();
+        #[cfg(target_os = "macos")]
+        {
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+
+            event_loop_builder
+                .with_activation_policy(ActivationPolicy::Regular)
+                .with_activate_ignoring_other_apps(true);
+        }
+        let event_loop = event_loop_builder.build().map_err(|e| {
             PlottingError::RenderError(format!("Failed to create event loop: {}", e))
         })?;
         self.surface_context = Some(
@@ -104,6 +149,7 @@ impl InteractiveWindow {
                 ))
             })?,
         );
+        self.install_reactive_wakeup(event_loop.create_proxy());
 
         // Set the plot for rendering
         self.renderer.set_plot(plot);
@@ -116,6 +162,12 @@ impl InteractiveWindow {
             .map_err(|e| PlottingError::RenderError(format!("Event loop error: {}", e)))?;
 
         Ok(())
+    }
+
+    fn install_reactive_wakeup(&mut self, proxy: EventLoopProxy<InteractiveAppEvent>) {
+        self.reactive_subscription = self.renderer.subscribe_reactive(move || {
+            let _ = proxy.send_event(InteractiveAppEvent::ReactiveUpdate);
+        });
     }
 
     /// Handle window event
@@ -150,12 +202,21 @@ impl InteractiveWindow {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                if button == WinitMouseButton::Left {
-                    let position = self.current_pointer_position();
-                    match state {
-                        ElementState::Pressed => self.handle_left_button_pressed(position)?,
-                        ElementState::Released => self.handle_left_button_released(position)?,
+                let position = self.current_pointer_position();
+                match (button, state) {
+                    (WinitMouseButton::Left, ElementState::Pressed) => {
+                        self.handle_left_button_pressed(position)?
                     }
+                    (WinitMouseButton::Left, ElementState::Released) => {
+                        self.handle_left_button_released(position)?
+                    }
+                    (WinitMouseButton::Right, ElementState::Pressed) => {
+                        self.handle_right_button_pressed(position)?
+                    }
+                    (WinitMouseButton::Right, ElementState::Released) => {
+                        self.handle_right_button_released(position)?
+                    }
+                    _ => {}
                 }
             }
 
@@ -184,7 +245,7 @@ impl InteractiveWindow {
             WindowEvent::CursorLeft { .. } => {
                 self.interaction_state.mouse_in_window = false;
                 self.reset_pointer_state();
-                self.apply_plot_input(PlotInputEvent::ClearHover, false)?;
+                self.queue_hover_clear();
             }
 
             WindowEvent::CloseRequested => {
@@ -226,10 +287,11 @@ impl InteractiveWindow {
                 PlottingError::RenderError(format!("Failed to create window surface: {}", e))
             })?,
         );
+        self.surface_size = None;
         Ok(())
     }
 
-    fn present_frame(&mut self, pixel_data: &[u8]) -> Result<()> {
+    fn present_frame(&mut self, frame: &InteractiveRenderOutput) -> Result<()> {
         if self.window.is_none() || self.surface_context.is_none() {
             return Ok(());
         }
@@ -244,41 +306,114 @@ impl InteractiveWindow {
             .surface
             .as_mut()
             .expect("surface should be initialized");
-        surface.resize(width, height).map_err(|e| {
-            PlottingError::RenderError(format!("Failed to resize window surface: {}", e))
-        })?;
+        let surface_size = (width.get(), height.get());
+        if self.surface_size != Some(surface_size) {
+            surface.resize(width, height).map_err(|e| {
+                PlottingError::RenderError(format!("Failed to resize window surface: {}", e))
+            })?;
+            self.surface_size = Some(surface_size);
+        }
 
         let mut buffer = surface.buffer_mut().map_err(|e| {
             PlottingError::RenderError(format!("Failed to acquire window buffer: {}", e))
         })?;
-        copy_rgba_to_softbuffer(pixel_data, &mut buffer);
+        match frame {
+            InteractiveRenderOutput::Pixels(pixel_data) => {
+                copy_rgba_to_softbuffer(pixel_data, &mut buffer)
+            }
+            InteractiveRenderOutput::Layers(layers) => {
+                copy_rgba_to_softbuffer(&layers.base.pixels, &mut buffer);
+                for overlay in &layers.overlays {
+                    blend_rgba_into_softbuffer(&overlay.pixels, &mut buffer);
+                }
+            }
+        }
         buffer.present().map_err(|e| {
             PlottingError::RenderError(format!("Failed to present window buffer: {}", e))
         })
     }
 
     fn reset_pointer_state(&mut self) {
-        self.pointer_down_px = None;
-        self.last_pointer_px = None;
+        let had_drag = self.active_drag.take().is_some();
+        self.active_drag = None;
         self.interaction_state.mouse_button_pressed = false;
+        if had_drag {
+            self.interaction_state.needs_redraw = true;
+        }
+        self.clear_pending_hover();
+        self.clear_brush_overlay();
+    }
+
+    fn clear_brush_overlay(&mut self) {
+        let had_brush = self.interaction_state.brushed_region.take().is_some();
+        self.interaction_state.brushed_region = None;
+        self.interaction_state.brush_active = false;
+        self.interaction_state.brush_start = None;
+        if had_brush {
+            self.interaction_state.needs_redraw = true;
+        }
+    }
+
+    fn box_zoom_drag_active(&self) -> bool {
+        matches!(self.active_drag, Some(ActiveDrag::LeftZoom { .. }))
     }
 
     fn apply_plot_input(&mut self, event: PlotInputEvent, viewport_dirty: bool) -> Result<()> {
-        self.renderer.apply_session_input(
+        let session_changed = self.renderer.apply_session_input(
             event,
             (self.window_size.width, self.window_size.height),
             self.scale_factor as f32,
         );
-        self.sync_interaction_state_from_session()?;
-        self.interaction_state.viewport_dirty = viewport_dirty;
-        self.interaction_state.needs_redraw = true;
+        if session_changed || viewport_dirty {
+            self.sync_interaction_state_from_session()?;
+            self.interaction_state.viewport_dirty = viewport_dirty;
+            self.interaction_state.needs_redraw = true;
+        }
         Ok(())
+    }
+
+    fn clear_pending_hover(&mut self) {
+        self.pending_hover = None;
+    }
+
+    fn queue_hover(&mut self, position: Point2D) {
+        self.pending_hover = Some(PendingHover::Hover(position));
+        self.interaction_state.needs_redraw = true;
+    }
+
+    fn queue_hover_clear(&mut self) {
+        self.pending_hover = Some(PendingHover::Clear);
+        self.interaction_state.needs_redraw = true;
+    }
+
+    fn flush_pending_hover(&mut self) -> Result<()> {
+        let Some(pending_hover) = self.pending_hover.take() else {
+            return Ok(());
+        };
+
+        match pending_hover {
+            PendingHover::Hover(position) => self.apply_plot_input(
+                PlotInputEvent::Hover {
+                    position_px: ViewportPoint::new(position.x, position.y),
+                },
+                false,
+            ),
+            PendingHover::Clear => self.apply_plot_input(PlotInputEvent::ClearHover, false),
+        }
     }
 
     fn sync_interaction_state_from_session(&mut self) -> Result<()> {
         let Some(snapshot) = self.renderer.viewport_snapshot()? else {
             return Ok(());
         };
+        let preserve_brush_overlay = self.box_zoom_drag_active();
+        let brushed_region = preserve_brush_overlay
+            .then_some(self.interaction_state.brushed_region)
+            .flatten();
+        let brush_active = preserve_brush_overlay && self.interaction_state.brush_active;
+        let brush_start = preserve_brush_overlay
+            .then_some(self.interaction_state.brush_start)
+            .flatten();
 
         self.interaction_state.zoom_level = snapshot.zoom_level;
         self.interaction_state.pan_offset =
@@ -298,20 +433,41 @@ impl InteractiveWindow {
         self.interaction_state.last_mouse_pos = self.current_pointer_position();
         self.interaction_state.hover_point = None;
         self.interaction_state.selected_points.clear();
-        self.interaction_state.brushed_region = None;
+        self.interaction_state.brushed_region = brushed_region;
+        self.interaction_state.brush_active = brush_active;
+        self.interaction_state.brush_start = brush_start;
         self.interaction_state.tooltip_visible = false;
         self.interaction_state.tooltip_content.clear();
         self.interaction_state.tooltip_position = Point2D::zero();
         Ok(())
     }
 
+    fn plot_area_rect(&self) -> Result<Option<Rectangle>> {
+        Ok(self.renderer.viewport_snapshot()?.map(|snapshot| {
+            Rectangle::new(
+                snapshot.plot_area.min.x,
+                snapshot.plot_area.min.y,
+                snapshot.plot_area.max.x,
+                snapshot.plot_area.max.y,
+            )
+        }))
+    }
+
     fn plot_area_contains(&self, position: Point2D) -> Result<bool> {
-        let Some(snapshot) = self.renderer.viewport_snapshot()? else {
+        let Some(plot_area) = self.plot_area_rect()? else {
             return Ok(false);
         };
-        Ok(snapshot
-            .plot_area
-            .contains(ViewportPoint::new(position.x, position.y)))
+        Ok(plot_area.contains(position))
+    }
+
+    fn clamp_to_plot_area(&self, position: Point2D) -> Result<Option<Point2D>> {
+        let Some(plot_area) = self.plot_area_rect()? else {
+            return Ok(None);
+        };
+        Ok(Some(Point2D::new(
+            position.x.clamp(plot_area.min.x, plot_area.max.x),
+            position.y.clamp(plot_area.min.y, plot_area.max.y),
+        )))
     }
 
     fn handle_left_button_pressed(&mut self, position: Point2D) -> Result<()> {
@@ -320,66 +476,162 @@ impl InteractiveWindow {
             return Ok(());
         }
 
-        self.pointer_down_px = Some(position);
-        self.last_pointer_px = Some(position);
+        self.clear_pending_hover();
+        self.active_drag = Some(ActiveDrag::LeftZoom {
+            anchor_px: position,
+            current_px: position,
+            crossed_threshold: false,
+        });
+        self.interaction_state.last_mouse_pos = position;
+        self.interaction_state.mouse_button_pressed = true;
+        self.interaction_state.brush_start = Some(position);
+        Ok(())
+    }
+
+    fn handle_left_button_released(&mut self, position: Point2D) -> Result<()> {
+        self.interaction_state.last_mouse_pos = position;
+        let Some(active_drag) = self.active_drag else {
+            return Ok(());
+        };
+        self.reset_pointer_state();
+
+        if let ActiveDrag::LeftZoom {
+            anchor_px,
+            current_px,
+            crossed_threshold,
+        } = active_drag
+        {
+            if crossed_threshold {
+                let release_px = self.clamp_to_plot_area(position)?.unwrap_or(current_px);
+                let region_px = crate::core::ViewportRect::from_points(
+                    ViewportPoint::new(anchor_px.x, anchor_px.y),
+                    ViewportPoint::new(release_px.x, release_px.y),
+                );
+                if region_px.width() > f64::EPSILON && region_px.height() > f64::EPSILON {
+                    self.apply_plot_input(PlotInputEvent::ZoomRect { region_px }, true)?;
+                }
+            } else if self.plot_area_contains(position)? {
+                self.apply_plot_input(
+                    PlotInputEvent::SelectAt {
+                        position_px: ViewportPoint::new(position.x, position.y),
+                    },
+                    false,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_right_button_pressed(&mut self, position: Point2D) -> Result<()> {
+        if !self.plot_area_contains(position)? {
+            self.reset_pointer_state();
+            return Ok(());
+        }
+
+        self.clear_pending_hover();
+        self.active_drag = Some(ActiveDrag::RightPan {
+            anchor_px: position,
+            last_px: position,
+            crossed_threshold: false,
+        });
         self.interaction_state.last_mouse_pos = position;
         self.interaction_state.mouse_button_pressed = true;
         Ok(())
     }
 
-    fn handle_left_button_released(&mut self, position: Point2D) -> Result<()> {
-        let pointer_down = self.pointer_down_px;
+    fn handle_right_button_released(&mut self, position: Point2D) -> Result<()> {
         self.interaction_state.last_mouse_pos = position;
-        self.reset_pointer_state();
-
-        let Some(pointer_down) = pointer_down else {
-            return Ok(());
-        };
-
-        if pointer_down.distance_to(position) <= DRAG_THRESHOLD_PX
-            && self.plot_area_contains(position)?
-        {
-            self.apply_plot_input(
-                PlotInputEvent::SelectAt {
-                    position_px: ViewportPoint::new(position.x, position.y),
-                },
-                false,
-            )?;
+        if matches!(self.active_drag, Some(ActiveDrag::RightPan { .. })) {
+            self.reset_pointer_state();
         }
-
         Ok(())
     }
 
     fn handle_pointer_moved(&mut self, position: Point2D) -> Result<()> {
         self.interaction_state.last_mouse_pos = position;
 
-        if let Some(pointer_down) = self.pointer_down_px {
-            if pointer_down.distance_to(position) > DRAG_THRESHOLD_PX {
-                let previous = self.last_pointer_px.unwrap_or(pointer_down);
-                let delta_x = position.x - previous.x;
-                let delta_y = position.y - previous.y;
-                if delta_x.abs() > f64::EPSILON || delta_y.abs() > f64::EPSILON {
-                    self.apply_plot_input(
-                        PlotInputEvent::Pan {
-                            delta_px: ViewportPoint::new(delta_x, delta_y),
-                        },
-                        true,
-                    )?;
-                    self.last_pointer_px = Some(position);
+        if let Some(active_drag) = self.active_drag {
+            self.clear_pending_hover();
+            match active_drag {
+                ActiveDrag::LeftZoom {
+                    anchor_px,
+                    current_px: _,
+                    crossed_threshold,
+                } => {
+                    let clamped_position = self.clamp_to_plot_area(position)?.unwrap_or(anchor_px);
+                    let crossed_threshold_now =
+                        crossed_threshold || anchor_px.distance_to(position) > DRAG_THRESHOLD_PX;
+                    self.active_drag = Some(ActiveDrag::LeftZoom {
+                        anchor_px,
+                        current_px: clamped_position,
+                        crossed_threshold: crossed_threshold_now,
+                    });
+                    if crossed_threshold_now {
+                        if !crossed_threshold {
+                            self.apply_plot_input(PlotInputEvent::ClearHover, false)?;
+                        }
+                        self.interaction_state.brush_start = Some(anchor_px);
+                        self.interaction_state.brush_active = true;
+                        self.interaction_state.brushed_region =
+                            Some(Rectangle::from_points(anchor_px, clamped_position));
+                        self.interaction_state.needs_redraw = true;
+                    }
+                    return Ok(());
+                }
+                ActiveDrag::RightPan {
+                    anchor_px,
+                    last_px,
+                    crossed_threshold,
+                } => {
+                    let crossed_threshold_now =
+                        crossed_threshold || anchor_px.distance_to(position) > DRAG_THRESHOLD_PX;
+                    let previous = if crossed_threshold {
+                        last_px
+                    } else {
+                        anchor_px
+                    };
+                    if crossed_threshold_now {
+                        if !crossed_threshold {
+                            self.apply_plot_input(PlotInputEvent::ClearHover, false)?;
+                        }
+                        let delta_x = position.x - previous.x;
+                        let delta_y = position.y - previous.y;
+                        if delta_x.abs() > f64::EPSILON || delta_y.abs() > f64::EPSILON {
+                            self.active_drag = Some(ActiveDrag::RightPan {
+                                anchor_px,
+                                last_px: position,
+                                crossed_threshold: true,
+                            });
+                            self.apply_plot_input(
+                                PlotInputEvent::Pan {
+                                    delta_px: ViewportPoint::new(delta_x, delta_y),
+                                },
+                                true,
+                            )?;
+                        } else {
+                            self.active_drag = Some(ActiveDrag::RightPan {
+                                anchor_px,
+                                last_px,
+                                crossed_threshold: true,
+                            });
+                        }
+                    } else {
+                        self.active_drag = Some(ActiveDrag::RightPan {
+                            anchor_px,
+                            last_px,
+                            crossed_threshold: false,
+                        });
+                    }
+                    return Ok(());
                 }
             }
-            return Ok(());
         }
 
         if self.plot_area_contains(position)? {
-            self.apply_plot_input(
-                PlotInputEvent::Hover {
-                    position_px: ViewportPoint::new(position.x, position.y),
-                },
-                false,
-            )?;
+            self.queue_hover(position);
         } else {
-            self.apply_plot_input(PlotInputEvent::ClearHover, false)?;
+            self.queue_hover_clear();
         }
 
         Ok(())
@@ -407,7 +659,10 @@ impl InteractiveWindow {
 
     fn handle_key_string(&mut self, key: &str) -> Result<()> {
         match key {
-            "Escape" => self.apply_plot_input(PlotInputEvent::ResetView, true),
+            "Escape" => {
+                self.reset_pointer_state();
+                self.apply_plot_input(PlotInputEvent::ResetView, true)
+            }
             "Delete" => self.apply_plot_input(PlotInputEvent::ClearSelection, false),
             _ => Ok(()),
         }
@@ -507,17 +762,18 @@ impl InteractiveWindow {
 
         // Update event handler
         self.event_handler.update(dt)?;
+        self.flush_pending_hover()?;
 
         // Render frame if needed
-        if self.interaction_state.needs_redraw || self.event_handler.needs_redraw() {
-            let pixel_data = self.renderer.render_interactive(
+        if self.has_pending_redraw() {
+            let frame = self.renderer.render_interactive(
                 &self.interaction_state,
                 self.window_size.width,
                 self.window_size.height,
                 self.scale_factor as f32,
             )?;
 
-            self.present_frame(&pixel_data)?;
+            self.present_frame(&frame)?;
             self.sync_interaction_state_from_session()?;
             self.interaction_state.needs_redraw = false;
             self.interaction_state.mark_viewport_clean();
@@ -529,6 +785,29 @@ impl InteractiveWindow {
         self.interaction_state.update_frame_timing();
 
         Ok(())
+    }
+
+    fn has_pending_redraw(&self) -> bool {
+        self.pending_hover.is_some()
+            || self.interaction_state.needs_redraw
+            || self.event_handler.needs_redraw()
+    }
+
+    fn needs_frame_timer(&self) -> bool {
+        !matches!(
+            self.interaction_state.animation_state,
+            crate::interactive::state::AnimationState::Idle
+        ) || self.event_handler.needs_redraw()
+    }
+
+    fn request_redraw_if_needed(&self) {
+        if !self.has_pending_redraw() && !self.needs_frame_timer() {
+            return;
+        }
+
+        if let Some(ref window) = self.window {
+            window.request_redraw();
+        }
     }
 
     /// Convert keyboard event to string representation
@@ -562,20 +841,31 @@ impl InteractiveApp {
     }
 }
 
-impl ApplicationHandler for InteractiveApp {
+impl ApplicationHandler<InteractiveAppEvent> for InteractiveApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(ref mut window_state) = self.window_state {
             if window_state.window.is_none() {
                 let window_attrs = WindowAttributes::default()
-                    .with_title("Interactive Plot")
-                    .with_inner_size(window_state.window_size);
+                    .with_title(window_state.title.clone())
+                    .with_inner_size(window_state.window_size)
+                    .with_resizable(window_state.resizable)
+                    .with_decorations(window_state.decorations)
+                    .with_visible(true)
+                    .with_active(true);
 
                 match event_loop.create_window(window_attrs) {
                     Ok(window) => {
+                        window.set_visible(true);
+                        window.focus_window();
+                        window.request_user_attention(Some(
+                            winit::window::UserAttentionType::Informational,
+                        ));
                         window_state.window = Some(Arc::new(window));
                         if let Err(err) = window_state.ensure_surface_initialized() {
                             eprintln!("Failed to initialize window surface: {}", err);
                             event_loop.exit();
+                        } else {
+                            window_state.request_redraw_if_needed();
                         }
                     }
                     Err(e) => {
@@ -599,10 +889,7 @@ impl ApplicationHandler for InteractiveApp {
                     if window_state.should_close {
                         event_loop.exit();
                     } else {
-                        // Request redraw for next frame
-                        if let Some(ref window) = window_state.window {
-                            window.request_redraw();
-                        }
+                        window_state.request_redraw_if_needed();
                     }
                 }
                 Err(e) => {
@@ -613,16 +900,25 @@ impl ApplicationHandler for InteractiveApp {
         }
     }
 
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: InteractiveAppEvent) {
+        if let (InteractiveAppEvent::ReactiveUpdate, Some(window_state)) =
+            (event, self.window_state.as_mut())
+        {
+            window_state.interaction_state.needs_redraw = true;
+            window_state.request_redraw_if_needed();
+        }
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // Continuously request redraws to maintain smooth animation
         if let Some(ref window_state) = self.window_state {
-            if let Some(ref window) = window_state.window {
-                window.request_redraw();
+            window_state.request_redraw_if_needed();
+            if window_state.needs_frame_timer() {
+                event_loop.set_control_flow(ControlFlow::wait_duration(FRAME_INTERVAL));
+                return;
             }
         }
 
-        // Set control flow for smooth animation
-        event_loop.set_control_flow(ControlFlow::Poll);
+        event_loop.set_control_flow(ControlFlow::Wait);
     }
 }
 
@@ -633,6 +929,37 @@ fn copy_rgba_to_softbuffer(src_rgba: &[u8], dst_rgbx: &mut [u32]) {
         let blue = rgba[2] as u32;
         *dst = (red << 16) | (green << 8) | blue;
     }
+}
+
+fn blend_rgba_into_softbuffer(src_rgba: &[u8], dst_rgbx: &mut [u32]) {
+    for (dst, rgba) in dst_rgbx.iter_mut().zip(src_rgba.chunks_exact(4)) {
+        let alpha = rgba[3];
+        if alpha == 0 {
+            continue;
+        }
+        if alpha == u8::MAX {
+            let red = rgba[0] as u32;
+            let green = rgba[1] as u32;
+            let blue = rgba[2] as u32;
+            *dst = (red << 16) | (green << 8) | blue;
+            continue;
+        }
+
+        let dst_red = ((*dst >> 16) & 0xff) as u8;
+        let dst_green = ((*dst >> 8) & 0xff) as u8;
+        let dst_blue = (*dst & 0xff) as u8;
+        let alpha = alpha as f32 / 255.0;
+        let red = blend_channel(dst_red, rgba[0], alpha) as u32;
+        let green = blend_channel(dst_green, rgba[1], alpha) as u32;
+        let blue = blend_channel(dst_blue, rgba[2], alpha) as u32;
+        *dst = (red << 16) | (green << 8) | blue;
+    }
+}
+
+fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
+    let bg = background as f32 / 255.0;
+    let fg = foreground as f32 / 255.0;
+    ((bg * (1.0 - alpha) + fg * alpha) * 255.0) as u8
 }
 
 /// Default event handler implementation
@@ -740,11 +1067,10 @@ impl InteractiveWindowBuilder {
     }
 
     pub async fn build(self, plot: Plot) -> Result<InteractiveWindow> {
-        let window = InteractiveWindow::new(plot, &self.title, self.width, self.height).await?;
+        let mut window = InteractiveWindow::new(plot, &self.title, self.width, self.height).await?;
 
-        // Apply builder settings
-        // Note: Some settings like resizable/decorations would be applied
-        // when creating the actual winit window
+        window.resizable = self.resizable;
+        window.decorations = self.decorations;
 
         Ok(window)
     }
@@ -797,6 +1123,28 @@ mod tests {
             visible_bounds.min.x + visible_bounds.width() * normalized_x,
             visible_bounds.max.y - visible_bounds.height() * normalized_y,
         )
+    }
+
+    fn assert_visible_bounds_close(
+        actual: crate::core::ViewportRect,
+        expected: crate::core::ViewportRect,
+    ) {
+        assert!(
+            (actual.min.x - expected.min.x).abs() < 1e-6,
+            "min.x mismatch: actual={actual:?}, expected={expected:?}"
+        );
+        assert!(
+            (actual.max.x - expected.max.x).abs() < 1e-6,
+            "max.x mismatch: actual={actual:?}, expected={expected:?}"
+        );
+        assert!(
+            (actual.min.y - expected.min.y).abs() < 1e-6,
+            "min.y mismatch: actual={actual:?}, expected={expected:?}"
+        );
+        assert!(
+            (actual.max.y - expected.max.y).abs() < 1e-6,
+            "max.y mismatch: actual={actual:?}, expected={expected:?}"
+        );
     }
 
     async fn interactive_window_for_test() -> InteractiveWindow {
@@ -867,6 +1215,21 @@ mod tests {
         assert_eq!(dst, [0x00123456, 0x00abcdef]);
     }
 
+    #[test]
+    fn test_blend_rgba_into_softbuffer() {
+        let src = [
+            0xff, 0x00, 0x00, 0x80, //
+            0x00, 0xff, 0x00, 0xff,
+        ];
+        let mut dst = [0x000000ff, 0x000000ff];
+
+        blend_rgba_into_softbuffer(&src, &mut dst);
+
+        assert_eq!(dst[1], 0x0000ff00);
+        assert_ne!(dst[0], 0x000000ff);
+        assert_ne!(dst[0], 0x00ff0000);
+    }
+
     #[tokio::test]
     async fn test_scroll_zoom_keeps_cursor_anchor_stable() {
         let mut window = interactive_window_for_test().await;
@@ -903,17 +1266,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_drag_pan_uses_incremental_pointer_deltas() {
+    async fn test_left_drag_zoom_rect_updates_visible_bounds() {
         let mut window = interactive_window_for_test().await;
         let before = viewport_snapshot(&window);
-        let start = plot_area_center(&window);
+        let start = Point2D::new(before.plot_area.min.x + 40.0, before.plot_area.min.y + 36.0);
+        let end = Point2D::new(
+            before.plot_area.min.x + 220.0,
+            before.plot_area.min.y + 168.0,
+        );
+        let start_data = screen_to_data(before.visible_bounds, before.plot_area, start);
+        let end_data = screen_to_data(before.visible_bounds, before.plot_area, end);
+        let expected = crate::core::ViewportRect::from_points(
+            ViewportPoint::new(start_data.x, start_data.y),
+            ViewportPoint::new(end_data.x, end_data.y),
+        );
 
         window
             .handle_left_button_pressed(start)
             .expect("mouse down should succeed");
         window
-            .handle_pointer_moved(Point2D::new(start.x + 40.0, start.y + 24.0))
+            .handle_pointer_moved(end)
+            .expect("box zoom drag should succeed");
+        assert_eq!(
+            window.interaction_state.brushed_region,
+            Some(Rectangle::from_points(start, end))
+        );
+        window
+            .handle_left_button_released(end)
+            .expect("box zoom release should succeed");
+        window
+            .render_frame()
+            .expect("render after box zoom should succeed");
+
+        let after = viewport_snapshot(&window);
+        assert_visible_bounds_close(after.visible_bounds, expected);
+        assert_eq!(after.selected_count, 0);
+        assert!(window.interaction_state.brushed_region.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_right_drag_pan_uses_incremental_pointer_deltas() {
+        let mut window = interactive_window_for_test().await;
+        let before = viewport_snapshot(&window);
+        let start = plot_area_center(&window);
+        let end = Point2D::new(start.x + 40.0, start.y + 24.0);
+
+        window
+            .handle_right_button_pressed(start)
+            .expect("mouse down should succeed");
+        window
+            .handle_pointer_moved(end)
             .expect("drag move should succeed");
+        window
+            .handle_right_button_released(end)
+            .expect("mouse up should succeed");
         window
             .render_frame()
             .expect("render after pan should succeed");
@@ -936,7 +1342,7 @@ mod tests {
         );
         assert!(
             ((after.visible_bounds.max.y - before.visible_bounds.max.y) - expected_dy).abs() < 1e-6,
-            "max.y delta mismatch: before={before:?}, after={after:?}, expected_dy={expected_dy}"
+            "max.y delta mismatch: before={before:?}, after={after:?}, expected_dx={expected_dx}"
         );
     }
 
@@ -963,5 +1369,32 @@ mod tests {
 
         assert_eq!(after.visible_bounds, before.visible_bounds);
         assert_eq!(after.selected_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_hover_updates_are_batched_until_render() {
+        let mut window = interactive_window_for_test().await;
+        let center = plot_area_center(&window);
+
+        window
+            .handle_pointer_moved(center)
+            .expect("hover move should queue successfully");
+
+        assert!(matches!(window.pending_hover, Some(PendingHover::Hover(_))));
+        assert!(window.has_pending_redraw());
+
+        window
+            .render_frame()
+            .expect("render after queued hover should succeed");
+
+        assert!(window.pending_hover.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_static_window_uses_demand_driven_redraws() {
+        let window = interactive_window_for_test().await;
+
+        assert!(!window.has_pending_redraw());
+        assert!(!window.needs_frame_timer());
     }
 }
