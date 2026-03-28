@@ -109,11 +109,10 @@ mod data_integration_tests {
         }.expect("DataFrame creation should succeed");
         
         // Will fail until polars Data1D implementation is complete
+        let x_column = df.column("x").expect("x column should exist");
+        let y_column = df.column("y").expect("y column should exist");
         let result = Plot::new()
-            .line(
-                df.column("x").expect("x column should exist"), 
-                df.column("y").expect("y column should exist")
-            )
+            .line(x_column.as_materialized_series(), y_column.as_materialized_series())
             .title("polars DataFrame Integration")
             .xlabel("X (polars Series)")
             .ylabel("Y (polars Series)")
@@ -131,16 +130,21 @@ mod data_integration_tests {
             &col("category").eq(lit("B"))
         ).expect("Filter should work");
         
+        let category_a_x = category_a_df.column("x").unwrap();
+        let category_a_value = category_a_df.column("value").unwrap();
+        let category_b_x = category_b_df.column("x").unwrap();
+        let category_b_value = category_b_df.column("value").unwrap();
+
         let result2 = Plot::new()
             .scatter(
-                category_a_df.column("x").unwrap(),
-                category_a_df.column("value").unwrap()
+                category_a_x.as_materialized_series(),
+                category_a_value.as_materialized_series()
             )
                 .label("Category A")
                 .color(Color::RED)
             .scatter(
-                category_b_df.column("x").unwrap(), 
-                category_b_df.column("value").unwrap()
+                category_b_x.as_materialized_series(), 
+                category_b_value.as_materialized_series()
             )
                 .label("Category B")
                 .color(Color::BLUE)

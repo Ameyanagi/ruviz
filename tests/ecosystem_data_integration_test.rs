@@ -43,14 +43,16 @@ fn test_polars_series_and_chunked_input() {
     }
     .unwrap();
 
-    let x_series = df.column("x").unwrap();
-    let y_series = df.column("y").unwrap();
+    let x_column = df.column("x").unwrap();
+    let y_column = df.column("y").unwrap();
+    let x_series = x_column.as_materialized_series();
+    let y_series = y_column.as_materialized_series();
 
     let series_result = Plot::new().line(x_series, y_series).render();
     assert!(series_result.is_ok(), "polars Series ingestion failed");
 
-    let x_chunked = x_series.f64().unwrap();
-    let y_chunked = y_series.f64().unwrap();
+    let x_chunked = x_column.f64().unwrap();
+    let y_chunked = y_column.f64().unwrap();
 
     let chunked_result = Plot::new().scatter(x_chunked, y_chunked).render();
     assert!(
@@ -64,8 +66,8 @@ fn test_polars_series_and_chunked_input() {
 fn test_polars_null_policy_default_error() {
     use polars::prelude::*;
 
-    let x = Series::new("x", &[Some(1.0), None, Some(3.0)]);
-    let y = Series::new("y", &[Some(2.0), Some(4.0), Some(6.0)]);
+    let x = Series::new("x".into(), &[Some(1.0), None, Some(3.0)]);
+    let y = Series::new("y".into(), &[Some(2.0), Some(4.0), Some(6.0)]);
 
     let result = Plot::new().line(&x, &y).render();
     assert!(result.is_err(), "strict null policy should reject nulls");
@@ -82,8 +84,8 @@ fn test_polars_null_policy_default_error() {
 fn test_polars_null_policy_drop() {
     use polars::prelude::*;
 
-    let x = Series::new("x", &[Some(1.0), None, Some(3.0)]);
-    let y = Series::new("y", &[Some(2.0), None, Some(6.0)]);
+    let x = Series::new("x".into(), &[Some(1.0), None, Some(3.0)]);
+    let y = Series::new("y".into(), &[Some(2.0), None, Some(6.0)]);
 
     let result = Plot::new()
         .null_policy(NullPolicy::Drop)

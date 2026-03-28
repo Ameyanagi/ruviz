@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     let start = Instant::now();
 
     match gpu_renderer.transform_coordinates_optimal(&x_data, &y_data, x_range, y_range, viewport) {
-        Ok((x_result, _y_result)) => {
+        Ok((x_result, y_result)) => {
             let elapsed = start.elapsed();
             println!(
                 "✅ Success: {} ms, {} points transformed",

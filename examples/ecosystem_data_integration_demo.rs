@@ -55,8 +55,8 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "polars_support")]
     {
-        let x = Series::new("x", &[Some(1.0), None, Some(3.0), Some(4.0)]);
-        let y = Series::new("y", &[Some(2.0), None, Some(6.0), Some(8.0)]);
+        let x = Series::new("x".into(), &[Some(1.0), None, Some(3.0), Some(4.0)]);
+        let y = Series::new("y".into(), &[Some(2.0), None, Some(6.0), Some(8.0)]);
 
         let strict_is_error = Plot::new().line(&x, &y).render().is_err();
         println!("polars strict null policy errors: {strict_is_error}");
