@@ -3116,7 +3116,11 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Consume the renderer and convert to an Image
+    /// Consume the renderer and convert to an `Image`.
+    ///
+    /// The returned pixel buffer preserves tiny-skia's native premultiplied
+    /// alpha representation so it can be composed back into other pixmaps
+    /// without a lossy round-trip.
     pub fn into_image(self) -> Image {
         Image {
             width: self.width,
@@ -3125,13 +3129,14 @@ impl SkiaRenderer {
         }
     }
 
-    /// Save the current pixmap as PNG
+    /// Save the current pixmap as a PNG with straight-alpha RGBA encoding.
     pub fn save_png<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let png_bytes = self
-            .pixmap
-            .encode_png()
-            .map_err(|_| PlottingError::IoError(std::io::Error::other("Failed to encode PNG")))?;
-        crate::export::write_bytes_atomic(path, &png_bytes)
+        let image = Image {
+            width: self.width,
+            height: self.height,
+            pixels: self.pixmap.clone().take_demultiplied(),
+        };
+        crate::export::write_rgba_png_atomic(path, &image)
     }
 
     /// Export as SVG (simplified - tiny-skia doesn't directly support SVG export)

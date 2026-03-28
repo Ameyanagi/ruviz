@@ -3,20 +3,26 @@
 //! Tests that DPI settings scale fonts and lines consistently for publication quality
 //! Expected: Higher DPI = proportionally larger fonts and thicker lines
 
+use ruviz::core::plot::Image;
 use ruviz::prelude::*;
-use std::fs;
 
-/// Setup test output directory
-fn setup_test_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("tests/output")?;
-    Ok(())
+fn total_ink(image: &Image) -> u64 {
+    image
+        .pixels
+        .chunks_exact(4)
+        .map(|pixel| {
+            let alpha = pixel[3] as u64;
+            let darkness = (255_u64 - pixel[0] as u64)
+                + (255_u64 - pixel[1] as u64)
+                + (255_u64 - pixel[2] as u64);
+            darkness * alpha / 255
+        })
+        .sum()
 }
 
 #[test]
 fn test_dpi_font_scaling_visual_consistency() -> std::result::Result<(), Box<dyn std::error::Error>>
 {
-    setup_test_output_dir()?;
-
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     let y_data = vec![2.0, 4.0, 1.0, 3.0, 5.0];
 
@@ -29,32 +35,21 @@ fn test_dpi_font_scaling_visual_consistency() -> std::result::Result<(), Box<dyn
         .line(&x_data, &y_data);
 
     // Test font scaling at different DPI values
-    base_plot
-        .clone()
-        .dpi(96)
-        .save("tests/output/font_scale_96_test.png")?; // 1x scale
-    base_plot
-        .clone()
-        .dpi(192)
-        .save("tests/output/font_scale_192_test.png")?; // 2x scale
-    base_plot
-        .clone()
-        .dpi(288)
-        .save("tests/output/font_scale_288_test.png")?; // 3x scale
+    let image_96 = base_plot.clone().dpi(96).render()?; // 1x scale
+    let image_192 = base_plot.clone().dpi(192).render()?; // 2x scale
+    let image_288 = base_plot.clone().dpi(288).render()?; // 3x scale
 
-    // Verify file sizes increase due to scaled typography
-    let size_96 = fs::metadata("tests/output/font_scale_96_test.png")?.len();
-    let size_192 = fs::metadata("tests/output/font_scale_192_test.png")?.len();
-    let size_288 = fs::metadata("tests/output/font_scale_288_test.png")?.len();
+    let ink_96 = total_ink(&image_96);
+    let ink_192 = total_ink(&image_192);
+    let ink_288 = total_ink(&image_288);
 
     println!(
-        "Font scaling sizes - 96 DPI: {} bytes, 192 DPI: {} bytes, 288 DPI: {} bytes",
-        size_96, size_192, size_288
+        "Font scaling ink - 96 DPI: {}, 192 DPI: {}, 288 DPI: {}",
+        ink_96, ink_192, ink_288
     );
 
-    // Font scaling should contribute to overall file size increases
-    let font_ratio_2x = size_192 as f64 / size_96 as f64;
-    let font_ratio_3x = size_288 as f64 / size_96 as f64;
+    let font_ratio_2x = ink_192 as f64 / ink_96 as f64;
+    let font_ratio_3x = ink_288 as f64 / ink_96 as f64;
 
     assert!(
         font_ratio_2x > 2.0,
@@ -76,8 +71,6 @@ fn test_dpi_font_scaling_visual_consistency() -> std::result::Result<(), Box<dyn
 
 #[test]
 fn test_dpi_line_width_scaling() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    setup_test_output_dir()?;
-
     let x_data = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y_data = vec![0.0, 2.0, 1.5, 3.0, 2.5];
 
@@ -90,20 +83,13 @@ fn test_dpi_line_width_scaling() -> std::result::Result<(), Box<dyn std::error::
         .line(&x_data, &y_data);
 
     // Test at standard DPI values
-    base_plot
-        .clone()
-        .dpi(96)
-        .save("tests/output/line_width_96_test.png")?; // Base line width
-    base_plot
-        .clone()
-        .dpi(300)
-        .save("tests/output/line_width_300_test.png")?; // Scaled line width
+    let image_96 = base_plot.clone().dpi(96).render()?; // Base line width
+    let image_300 = base_plot.clone().dpi(300).render()?; // Scaled line width
 
-    let size_96 = fs::metadata("tests/output/line_width_96_test.png")?.len();
-    let size_300 = fs::metadata("tests/output/line_width_300_test.png")?.len();
+    let ink_96 = total_ink(&image_96);
+    let ink_300 = total_ink(&image_300);
 
-    // Line width scaling should contribute to file size differences
-    let line_width_ratio = size_300 as f64 / size_96 as f64;
+    let line_width_ratio = ink_300 as f64 / ink_96 as f64;
 
     // Expect significant scaling due to both canvas size and line thickness
     assert!(
@@ -122,8 +108,6 @@ fn test_dpi_line_width_scaling() -> std::result::Result<(), Box<dyn std::error::
 #[test]
 fn test_publication_dpi_typography_standards() -> std::result::Result<(), Box<dyn std::error::Error>>
 {
-    setup_test_output_dir()?;
-
     let x_data = vec![1.0, 2.0, 3.0];
     let y_data = vec![1.5, 2.5, 1.8];
 
@@ -136,50 +120,39 @@ fn test_publication_dpi_typography_standards() -> std::result::Result<(), Box<dy
         .line(&x_data, &y_data);
 
     // Test IEEE 600 DPI publication standard
-    ieee_plot
-        .clone()
-        .dpi(600)
-        .save("tests/output/ieee_typography_600_test.png")?;
-
-    // Test Nature/Science 300 DPI standard
-    ieee_plot
-        .clone()
-        .dpi(300)
-        .save("tests/output/nature_typography_300_test.png")?;
-
-    let ieee_size = fs::metadata("tests/output/ieee_typography_600_test.png")?.len();
-    let nature_size = fs::metadata("tests/output/nature_typography_300_test.png")?.len();
-
-    // Publication standards should produce significantly large, high-quality files
-    let publication_ratio = ieee_size as f64 / nature_size as f64;
+    let ieee_image = ieee_plot.clone().dpi(600).render()?;
+    let nature_image = ieee_plot.clone().dpi(300).render()?;
+    let ieee_ink = total_ink(&ieee_image);
+    let nature_ink = total_ink(&nature_image);
+    let publication_ratio = ieee_ink as f64 / nature_ink as f64;
 
     assert!(
-        ieee_size > 200_000,
-        "IEEE 600 DPI should produce large publication files: {} bytes",
-        ieee_size
+        ieee_image.width == 3000 && ieee_image.height == 2400,
+        "IEEE 600 DPI should produce a 3000x2400 raster, got {}x{}",
+        ieee_image.width,
+        ieee_image.height
     );
     assert!(
-        nature_size > 80_000,
-        "Nature 300 DPI should produce quality files: {} bytes",
-        nature_size
+        nature_image.width == 1500 && nature_image.height == 1200,
+        "Nature 300 DPI should produce a 1500x1200 raster, got {}x{}",
+        nature_image.width,
+        nature_image.height
     );
     assert!(
-        publication_ratio > 2.0,
+        publication_ratio > 3.5,
         "IEEE/Nature ratio should reflect DPI difference: {:.1}x",
         publication_ratio
     );
 
     println!(
-        "✓ Publication typography: IEEE {} bytes, Nature {} bytes, ratio {:.1}x",
-        ieee_size, nature_size, publication_ratio
+        "✓ Publication typography: IEEE ink {}, Nature ink {}, ratio {:.1}x",
+        ieee_ink, nature_ink, publication_ratio
     );
     Ok(())
 }
 
 #[test]
 fn test_font_line_ratio_consistency() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    setup_test_output_dir()?;
-
     let x_data = vec![0.0, 5.0, 10.0];
     let y_data = vec![0.0, 25.0, 100.0];
 
@@ -192,26 +165,16 @@ fn test_font_line_ratio_consistency() -> std::result::Result<(), Box<dyn std::er
         .line(&x_data, &y_data);
 
     // Test at multiple DPI values for ratio consistency
-    ratio_plot
-        .clone()
-        .dpi(96)
-        .save("tests/output/ratio_96_test.png")?;
-    ratio_plot
-        .clone()
-        .dpi(150)
-        .save("tests/output/ratio_150_test.png")?;
-    ratio_plot
-        .clone()
-        .dpi(300)
-        .save("tests/output/ratio_300_test.png")?;
+    let image_96 = ratio_plot.clone().dpi(96).render()?;
+    let image_150 = ratio_plot.clone().dpi(150).render()?;
+    let image_300 = ratio_plot.clone().dpi(300).render()?;
 
-    let size_96 = fs::metadata("tests/output/ratio_96_test.png")?.len();
-    let size_150 = fs::metadata("tests/output/ratio_150_test.png")?.len();
-    let size_300 = fs::metadata("tests/output/ratio_300_test.png")?.len();
+    let ink_96 = total_ink(&image_96);
+    let ink_150 = total_ink(&image_150);
+    let ink_300 = total_ink(&image_300);
 
-    // Calculate scaling ratios to verify consistency
-    let ratio_150_96 = size_150 as f64 / size_96 as f64;
-    let ratio_300_96 = size_300 as f64 / size_96 as f64;
+    let ratio_150_96 = ink_150 as f64 / ink_96 as f64;
+    let ratio_300_96 = ink_300 as f64 / ink_96 as f64;
 
     println!(
         "Font-line consistency ratios - 150/96: {:.2}, 300/96: {:.2}",

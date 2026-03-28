@@ -7,7 +7,11 @@ pub struct Image {
     pub width: u32,
     /// Height in pixels
     pub height: u32,
-    /// Pixel data in RGBA format
+    /// Pixel data in RGBA byte order.
+    ///
+    /// The alpha representation depends on the producer. Renderer-native images
+    /// are typically premultiplied alpha for efficient composition, while PNG
+    /// encoding expects straight-alpha RGBA bytes.
     pub pixels: Vec<u8>,
 }
 
