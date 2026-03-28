@@ -11,7 +11,10 @@ use crate::{
     core::plot::Image,
     core::{PlottingError, Result},
 };
-use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
+use image::{
+    ColorType, ImageEncoder,
+    codecs::png::{CompressionType, FilterType, PngEncoder},
+};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -244,7 +247,10 @@ pub(crate) fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> R
     }
 
     write_with_atomic_writer(path, |writer| {
-        PngEncoder::new(writer)
+        // Keep PNG export settings explicit so DPI-sensitive raster tests stay
+        // stable across image crate updates instead of drifting with default
+        // compression/filter heuristics.
+        PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::NoFilter)
             .write_image(
                 &image.pixels,
                 image.width,
