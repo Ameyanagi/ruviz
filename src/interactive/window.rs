@@ -86,6 +86,14 @@ pub struct InteractiveWindow {
 }
 
 impl InteractiveWindow {
+    fn normalize_scroll_delta(delta: MouseScrollDelta) -> f64 {
+        match delta {
+            // Normalize to physical gesture direction so wheel and touchpad inputs agree.
+            MouseScrollDelta::LineDelta(_, y) => -(y as f64) * LINE_SCROLL_DELTA_PX,
+            MouseScrollDelta::PixelDelta(pos) => pos.y,
+        }
+    }
+
     /// Create new interactive window
     pub async fn new(plot: Plot, title: &str, width: u32, height: u32) -> Result<Self> {
         let renderer = RealTimeRenderer::new().await?;
@@ -221,10 +229,7 @@ impl InteractiveWindow {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
-                let scroll_delta = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y as f64 * LINE_SCROLL_DELTA_PX,
-                    MouseScrollDelta::PixelDelta(pos) => pos.y,
-                };
+                let scroll_delta = Self::normalize_scroll_delta(delta);
                 self.handle_scroll_delta(scroll_delta)?;
             }
 
@@ -1213,6 +1218,18 @@ mod tests {
         copy_rgba_to_softbuffer(&src, &mut dst);
 
         assert_eq!(dst, [0x00123456, 0x00abcdef]);
+    }
+
+    #[test]
+    fn test_scroll_delta_normalization_respects_physical_direction() {
+        let line_delta =
+            InteractiveWindow::normalize_scroll_delta(MouseScrollDelta::LineDelta(0.0, 1.0));
+        let pixel_delta = InteractiveWindow::normalize_scroll_delta(MouseScrollDelta::PixelDelta(
+            PhysicalPosition::new(0.0, 50.0),
+        ));
+
+        assert_eq!(line_delta, -LINE_SCROLL_DELTA_PX);
+        assert_eq!(pixel_delta, 50.0);
     }
 
     #[test]
