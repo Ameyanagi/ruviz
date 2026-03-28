@@ -22,6 +22,8 @@ async fn async_main() -> Result<()> {
     println!("  - Right click: Context menu");
     println!("  - Right click + drag: Box zoom");
     println!("  - Escape: Reset view");
+    println!("  - Cmd/Ctrl+S: Save PNG");
+    println!("  - Cmd/Ctrl+C: Copy image");
     println!("  - Close window to exit");
 
     let (cluster_a_x, cluster_a_y) = build_cluster(1.5, 2.0, 0.0, 110);

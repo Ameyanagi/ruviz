@@ -26,6 +26,7 @@ use winit::{
     dpi::{PhysicalPosition, PhysicalSize},
     event::{ElementState, MouseButton as WinitMouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle},
+    keyboard::ModifiersState,
     window::{Window, WindowAttributes, WindowId},
 };
 
@@ -196,6 +197,7 @@ pub struct InteractiveWindow {
     pending_hover: Option<PendingHover>,
     surface_size: Option<(u32, u32)>,
     reactive_subscription: Option<ReactiveSubscription>,
+    modifiers_state: ModifiersState,
     context_menu_config: InteractiveContextMenuConfig,
     context_menu_action_handler: Option<ContextMenuActionHandler>,
     context_menu: Option<ContextMenuState>,
@@ -251,6 +253,7 @@ impl InteractiveWindow {
             pending_hover: None,
             surface_size: None,
             reactive_subscription: None,
+            modifiers_state: ModifiersState::default(),
             context_menu_config: InteractiveContextMenuConfig::default(),
             context_menu_action_handler: None,
             context_menu: None,
@@ -373,6 +376,14 @@ impl InteractiveWindow {
                         self.handle_key_string(&key_string)?;
                     }
                 }
+            }
+
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers_state = modifiers.state();
+            }
+
+            WindowEvent::Focused(false) => {
+                self.modifiers_state = ModifiersState::default();
             }
 
             WindowEvent::CursorLeft { .. } => {
@@ -1386,6 +1397,11 @@ impl InteractiveWindow {
     }
 
     fn handle_key_string(&mut self, key: &str) -> Result<()> {
+        if let Some(action) = self.builtin_shortcut_action_for_key(key) {
+            self.close_context_menu();
+            return self.execute_builtin_context_menu_action(action);
+        }
+
         match key {
             "Escape" => {
                 if self.context_menu.is_some() {
@@ -1398,6 +1414,34 @@ impl InteractiveWindow {
             }
             "Delete" => self.apply_plot_input(PlotInputEvent::ClearSelection, false),
             _ => Ok(()),
+        }
+    }
+
+    fn primary_shortcut_active(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.modifiers_state.super_key()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.modifiers_state.control_key()
+        }
+    }
+
+    fn builtin_shortcut_action_for_key(&self, key: &str) -> Option<BuiltinContextMenuAction> {
+        if !self.primary_shortcut_active() || self.modifiers_state.alt_key() {
+            return None;
+        }
+
+        match key {
+            "s" if self.context_menu_config.show_save_png => {
+                Some(BuiltinContextMenuAction::SavePng)
+            }
+            "c" if self.context_menu_config.show_copy_image => {
+                Some(BuiltinContextMenuAction::CopyImage)
+            }
+            _ => None,
         }
     }
 
@@ -1555,7 +1599,7 @@ impl InteractiveWindow {
                 NamedKey::Enter => Some("Enter".to_string()),
                 _ => None,
             },
-            Key::Character(ch) => Some(ch.to_string()),
+            Key::Character(ch) => Some(ch.to_lowercase()),
             _ => None,
         }
     }
@@ -1998,6 +2042,7 @@ pub async fn show_interactive(plot: Plot) -> Result<()> {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    use winit::keyboard::ModifiersState;
 
     fn plot_area_center(window: &InteractiveWindow) -> Point2D {
         Point2D::new(
@@ -2056,6 +2101,18 @@ mod tests {
             .expect("menu entry should exist");
         let bounds = entry.bounds.expect("menu entry should have bounds");
         bounds.center()
+    }
+
+    fn primary_shortcut_modifiers() -> ModifiersState {
+        #[cfg(target_os = "macos")]
+        {
+            ModifiersState::SUPER
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            ModifiersState::CONTROL
+        }
     }
 
     fn assert_visible_bounds_close(
@@ -2189,6 +2246,37 @@ mod tests {
         assert_eq!(dst[1], 0x0000ff00);
         assert_ne!(dst[0], 0x000000ff);
         assert_ne!(dst[0], 0x00ff0000);
+    }
+
+    #[tokio::test]
+    async fn test_primary_shortcut_maps_s_to_save_png() {
+        let mut window = interactive_window_for_test().await;
+        window.modifiers_state = primary_shortcut_modifiers();
+
+        assert_eq!(
+            window.builtin_shortcut_action_for_key("s"),
+            Some(BuiltinContextMenuAction::SavePng)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_primary_shortcut_maps_c_to_copy_image() {
+        let mut window = interactive_window_for_test().await;
+        window.modifiers_state = primary_shortcut_modifiers();
+
+        assert_eq!(
+            window.builtin_shortcut_action_for_key("c"),
+            Some(BuiltinContextMenuAction::CopyImage)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_primary_shortcut_respects_disabled_copy_image_action() {
+        let mut window = interactive_window_for_test().await;
+        window.modifiers_state = primary_shortcut_modifiers();
+        window.context_menu_config.show_copy_image = false;
+
+        assert_eq!(window.builtin_shortcut_action_for_key("c"), None);
     }
 
     #[tokio::test]

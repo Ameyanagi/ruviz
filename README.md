@@ -300,6 +300,22 @@ cargo run --features interactive --example data_brushing
 cargo run --features interactive --example real_time_performance
 ```
 
+Default interactive window controls:
+
+- `Mouse wheel`: zoom in/out under the cursor
+- `Left click + drag`: pan
+- `Right click`: open the context menu
+- `Right click + drag`: box zoom
+- `Escape`: close the menu or reset the view
+- `Cmd/Ctrl+S`: save the current view as PNG
+- `Cmd/Ctrl+C`: copy the current view as an image
+
+The built-in context menu includes `Reset View`, `Set Current View As Home`,
+`Go To Home View`, `Save PNG...`, `Copy Image`, `Copy Cursor Coordinates`, and
+`Copy Visible Bounds`. You can extend it with custom items through
+`InteractiveWindowBuilder::context_menu(...)` and
+`InteractiveWindowBuilder::on_context_menu_action(...)`.
+
 Animation export examples:
 
 ```bash

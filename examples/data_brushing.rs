@@ -10,6 +10,8 @@
 //! - Right click: Context menu
 //! - Right click + drag: Box zoom
 //! - Escape: Reset view
+//! - Cmd/Ctrl+S: Save PNG
+//! - Cmd/Ctrl+C: Copy image
 
 use ruviz::prelude::*;
 
@@ -29,6 +31,8 @@ async fn async_main() -> Result<()> {
     println!("  - Right click: Context menu");
     println!("  - Right click + drag: Box zoom");
     println!("  - Escape: Reset view");
+    println!("  - Cmd/Ctrl+S: Save PNG");
+    println!("  - Cmd/Ctrl+C: Copy image");
 
     // Generate correlated data for demonstration
     let n_points = 500;

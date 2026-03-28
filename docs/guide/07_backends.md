@@ -207,13 +207,13 @@ dependency for you.
 ```toml
 [dependencies]
 ruviz = { version = "0.1.5", features = ["interactive"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
 ```rust
 use ruviz::prelude::*;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
@@ -228,6 +228,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+On macOS, keep `show_interactive(...)` on the main/current-thread runtime. `winit`
+window creation can stall if the interactive event loop is started from a worker
+thread.
+
 For GPU-backed interactive work, switch the feature flag to `interactive-gpu`
 and enable `.gpu(true)` on the plot before `end_series()`.
 
@@ -239,6 +243,55 @@ Curated examples in this repository:
 - `cargo run --features interactive --example interactive_heatmap`
 - `cargo run --features interactive --example data_brushing`
 - `cargo run --features interactive --example real_time_performance`
+
+Current window controls:
+
+- `Mouse wheel`: zoom in/out under the cursor
+- `Left click + drag`: pan
+- `Right click`: open the context menu
+- `Right click + drag`: box zoom
+- `Escape`: close the menu first, then reset the view
+- `Cmd/Ctrl+S`: save the visible viewport as PNG
+- `Cmd/Ctrl+C`: copy the visible viewport as an image
+
+The built-in context menu includes:
+
+- `Reset View`
+- `Set Current View As Home`
+- `Go To Home View`
+- `Save PNG...`
+- `Copy Image`
+- `Copy Cursor Coordinates`
+- `Copy Visible Bounds`
+
+You can add custom menu items with `InteractiveWindowBuilder`:
+
+```rust
+use ruviz::prelude::*;
+
+let plot = Plot::new()
+    .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
+    .title("Interactive Plot")
+    .end_series();
+
+let menu = InteractiveContextMenuConfig {
+    custom_items: vec![InteractiveContextMenuItem::new("export-csv", "Export CSV")],
+    ..Default::default()
+};
+
+let window = InteractiveWindowBuilder::new()
+    .context_menu(menu)
+    .on_context_menu_action(|context| {
+        if context.action_id == "export-csv" {
+            println!("export from bounds: {:?}", context.visible_bounds);
+        }
+        Ok(())
+    })
+    .build(plot.clone())
+    .await?;
+
+window.run(plot)?;
+```
 
 Animation examples live behind the separate `animation` feature:
 
