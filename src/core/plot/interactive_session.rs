@@ -1104,6 +1104,28 @@ impl InteractivePlotSession {
         })
     }
 
+    pub(crate) fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
+        let next_visible = DataBounds::from_points(bounds.min, bounds.max);
+        if next_visible.width() <= VIEWPORT_EPSILON || next_visible.height() <= VIEWPORT_EPSILON {
+            return false;
+        }
+
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        if bounds_close(state.visible_bounds, next_visible) {
+            return false;
+        }
+
+        set_visible_bounds(&mut state, next_visible);
+        drop(state);
+        self.mark_dirty(DirtyDomain::Data);
+        self.mark_dirty(DirtyDomain::Overlay);
+        true
+    }
+
     fn render_to_target(
         &self,
         target: RenderTargetKind,
@@ -1399,11 +1421,12 @@ impl InteractivePlotSession {
             draw_hit(&mut pixels, size_px, hit, Color::new_rgba(255, 0, 0, 180));
         }
         if let Some(region) = state.brushed_region {
-            draw_rect(
+            draw_brush_rect(
                 &mut pixels,
                 size_px,
                 region,
                 Color::new_rgba(0, 100, 255, 72),
+                Color::new_rgba(96, 208, 255, 220),
             );
         }
         if let Some(tooltip) = &state.tooltip {
@@ -2586,6 +2609,51 @@ fn draw_rect(pixels: &mut [u8], size_px: (u32, u32), rect: ViewportRect, color: 
     }
 }
 
+fn draw_rect_outline(
+    pixels: &mut [u8],
+    size_px: (u32, u32),
+    rect: ViewportRect,
+    color: Color,
+    thickness: i32,
+) {
+    let width = size_px.0 as i32;
+    let height = size_px.1 as i32;
+    let x1 = rect.min.x.round() as i32;
+    let y1 = rect.min.y.round() as i32;
+    let x2 = rect.max.x.round() as i32;
+    let y2 = rect.max.y.round() as i32;
+    let thickness = thickness.max(1);
+    let alpha = color.a as f32 / 255.0;
+
+    for y in y1.max(0)..=y2.min(height - 1) {
+        for x in x1.max(0)..=x2.min(width - 1) {
+            let on_border = x - x1 < thickness
+                || x2 - x < thickness
+                || y - y1 < thickness
+                || y2 - y < thickness;
+            if !on_border {
+                continue;
+            }
+            let index = ((y * width + x) * 4) as usize;
+            pixels[index] = blend_channel(pixels[index], color.r, alpha);
+            pixels[index + 1] = blend_channel(pixels[index + 1], color.g, alpha);
+            pixels[index + 2] = blend_channel(pixels[index + 2], color.b, alpha);
+            pixels[index + 3] = color.a;
+        }
+    }
+}
+
+fn draw_brush_rect(
+    pixels: &mut [u8],
+    size_px: (u32, u32),
+    rect: ViewportRect,
+    fill_color: Color,
+    outline_color: Color,
+) {
+    draw_rect(pixels, size_px, rect, fill_color);
+    draw_rect_outline(pixels, size_px, rect, outline_color, 2);
+}
+
 fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), tooltip: &TooltipState) {
     const TOOLTIP_FONT_SIZE: f32 = 13.0;
     const TOOLTIP_PADDING_X: f64 = 8.0;
@@ -3007,6 +3075,44 @@ mod tests {
         assert!(
             dark_text_pixels > 0,
             "tooltip overlay should contain dark text pixels in addition to the background box"
+        );
+    }
+
+    #[test]
+    fn test_brush_overlay_renders_visible_outline() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+            .title("Brush")
+            .into();
+        let session = plot.prepare_interactive();
+
+        session.apply_input(PlotInputEvent::BrushStart {
+            position_px: ViewportPoint::new(96.0, 72.0),
+        });
+        session.apply_input(PlotInputEvent::BrushMove {
+            position_px: ViewportPoint::new(160.0, 136.0),
+        });
+
+        let frame = session
+            .render_to_surface(SurfaceTarget {
+                size_px: (320, 240),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            })
+            .expect("surface frame should render with brush overlay");
+
+        let overlay = frame
+            .layers
+            .overlay
+            .expect("surface frame should include brush overlay");
+        let width = frame.layers.base.width as usize;
+
+        let border_index = ((72usize * width + 96usize) * 4) as usize;
+        let interior_index = ((104usize * width + 128usize) * 4) as usize;
+
+        assert!(
+            overlay.pixels[border_index + 3] > overlay.pixels[interior_index + 3],
+            "brush outline should be more visible than the fill interior"
         );
     }
 

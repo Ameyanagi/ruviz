@@ -43,6 +43,9 @@ A: `.auto_optimize()` stores an inferred backend name based on data size:
 - 100,000+ points → GPU when built with the `gpu` feature, otherwise DataShader
 
 The `render()` and `save()` paths still use their own internal heuristics.
+Those runtime heuristics are more conservative than the stored label for very
+large datasets: automatic DataShader is reserved for aggregation-safe series
+such as scatter and histogram.
 You can also inspect or override the stored backend label:
 ```rust
 use ruviz::core::BackendType;

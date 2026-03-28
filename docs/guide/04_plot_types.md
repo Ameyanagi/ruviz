@@ -634,7 +634,8 @@ ruviz = { version = "0.1.5", features = ["parallel", "simd"] }
 ```
 
 ### Very Large Datasets (> 100K points)
-DataShader-style aggregation activates above `100_000` total points. The exact
+DataShader-style aggregation can activate above `100_000` total points for
+aggregation-friendly series such as scatter and histogram. The exact
 `render()` vs `save()` behavior is documented in [Performance](08_performance.md).
 
 ---

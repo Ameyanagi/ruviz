@@ -47,7 +47,8 @@ Useful opt-in features:
 
 `render()` chooses its execution path from actual plot content:
 
-- Above `100_000` total points: DataShader
+- Above `100_000` total points for aggregation-safe series such as scatter and histogram:
+  - DataShader
 - Otherwise, with `parallel` enabled:
   - parallel rendering is used when the internal threshold logic says it is worthwhile
 - Otherwise: CPU/tiny-skia rendering
@@ -125,7 +126,7 @@ If GPU initialization fails, `save()` falls back to CPU rendering.
 ## DataShader
 
 DataShader-style aggregation activates automatically above `100_000` total
-points.
+points for aggregation-safe series such as scatter and histogram.
 
 ```rust
 use ruviz::prelude::*;
@@ -135,7 +136,7 @@ let x: Vec<f64> = (0..points).map(|i| i as f64 * 0.001).collect();
 let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
 Plot::new()
-    .line(&x, &y)
+    .scatter(&x, &y)
     .save("datashader_plot.png")?;
 ```
 

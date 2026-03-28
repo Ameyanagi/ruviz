@@ -6,8 +6,9 @@
 //!
 //! Controls:
 //! - Mouse wheel: Zoom in/out
-//! - Left click + drag: Box zoom
-//! - Right click + drag: Pan
+//! - Left click + drag: Pan
+//! - Right click: Context menu
+//! - Right click + drag: Box zoom
 //! - Escape: Reset view
 
 use ruviz::prelude::*;
@@ -24,8 +25,9 @@ async fn async_main() -> Result<()> {
     println!("Starting data brushing example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
-    println!("  - Left click + drag: Box zoom");
-    println!("  - Right click + drag: Pan");
+    println!("  - Left click + drag: Pan");
+    println!("  - Right click: Context menu");
+    println!("  - Right click + drag: Box zoom");
     println!("  - Escape: Reset view");
 
     // Generate correlated data for demonstration

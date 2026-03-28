@@ -5869,7 +5869,7 @@ impl Plot {
             );
         }
 
-        let use_datashader = DataShader::should_activate(total_points);
+        let use_datashader = Self::should_auto_use_datashader(&snapshot_series, total_points);
 
         if use_datashader {
             // Use DataShader for large datasets
@@ -7044,6 +7044,20 @@ impl Plot {
                 SeriesType::Polar { data } => data.points.len(),
             })
             .sum()
+    }
+
+    fn should_auto_use_datashader(series_list: &[PlotSeries], total_points: usize) -> bool {
+        DataShader::should_activate(total_points)
+            && series_list
+                .iter()
+                .all(Self::series_supports_auto_datashader)
+    }
+
+    fn series_supports_auto_datashader(series: &PlotSeries) -> bool {
+        matches!(
+            series.series_type,
+            SeriesType::Scatter { .. } | SeriesType::Histogram { .. }
+        )
     }
 
     /// Check if the plot needs standard Cartesian axes
@@ -9748,42 +9762,17 @@ impl Plot {
         }
 
         // Check if we should use DataShader for large datasets
-        let total_points: usize = self
-            .series_mgr
-            .series
-            .iter()
-            .map(|series| match &series.series_type {
-                SeriesType::Line { x_data, .. }
-                | SeriesType::Scatter { x_data, .. }
-                | SeriesType::ErrorBars { x_data, .. }
-                | SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
-                SeriesType::Bar { categories, .. } => categories.len(),
-                SeriesType::Histogram { data, .. } => data.len(),
-                SeriesType::BoxPlot { data, .. } => data.len(),
-                SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
-                SeriesType::Kde { data } => data.x.len(),
-                SeriesType::Ecdf { data } => data.x.len(),
-                SeriesType::Violin { data } => data.data.len(),
-                SeriesType::Boxen { data } => data.boxes.len() * 4,
-                SeriesType::Contour { data } => data.x.len() * data.y.len(),
-                SeriesType::Pie { data } => data.values.len(),
-                SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
-                SeriesType::Polar { data } => data.points.len(),
-            })
-            .sum();
-
-        const DATASHADER_THRESHOLD: usize = 100_000; // Activate DataShader for >=100K points
+        let total_points = Self::calculate_total_points_for_series(&snapshot_series);
         #[cfg(feature = "gpu")]
         const GPU_THRESHOLD: usize = 5_000; // Activate GPU for >5K points
 
-        if total_points >= DATASHADER_THRESHOLD {
+        if Self::should_auto_use_datashader(&snapshot_series, total_points) {
             // Use DataShader for massive datasets - simplified version
             use crate::data::DataShader;
 
             for series in &snapshot_series {
                 match &series.series_type {
-                    SeriesType::Scatter { x_data, y_data }
-                    | SeriesType::Line { x_data, y_data } => {
+                    SeriesType::Scatter { x_data, y_data } => {
                         let x_data = x_data.resolve(0.0);
                         let y_data = y_data.resolve(0.0);
                         let mut datashader = DataShader::with_canvas_size(
@@ -12241,12 +12230,61 @@ mod tests {
     }
 
     #[test]
-    fn test_render_datashader_path_still_validates_mismatched_series() {
+    fn test_auto_datashader_policy_excludes_large_line_series() {
+        let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|x| x.sin()).collect();
+        let plot = Plot::new().line(&x, &y).end_series();
+        let snapshot_series = plot.snapshot_series(0.0);
+        let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
+
+        assert!(DataShader::should_activate(total_points));
+        assert!(!Plot::should_auto_use_datashader(
+            &snapshot_series,
+            total_points
+        ));
+    }
+
+    #[test]
+    fn test_auto_datashader_policy_keeps_large_scatter_series_eligible() {
+        let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|x| x.sin()).collect();
+        let plot = Plot::new().scatter(&x, &y).end_series();
+        let snapshot_series = plot.snapshot_series(0.0);
+        let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
+
+        assert!(DataShader::should_activate(total_points));
+        assert!(Plot::should_auto_use_datashader(
+            &snapshot_series,
+            total_points
+        ));
+    }
+
+    #[test]
+    fn test_prepared_frame_large_line_stays_off_auto_datashader() {
+        let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|x| x.sin()).collect();
+        let prepared =
+            Plot::new()
+                .line(&x, &y)
+                .end_series()
+                .prepared_frame_plot((1280, 720), 1.0, 0.0);
+        let snapshot_series = prepared.snapshot_series(0.0);
+        let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
+
+        assert!(DataShader::should_activate(total_points));
+        assert!(!Plot::should_auto_use_datashader(
+            &snapshot_series,
+            total_points
+        ));
+    }
+
+    #[test]
+    fn test_render_datashader_path_still_validates_mismatched_scatter_series() {
         let x: Vec<f64> = (0..100_001).map(|i| i as f64).collect();
         let y: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
 
         let err = Plot::new()
-            .line(&x, &y)
+            .scatter(&x, &y)
             .render()
             .expect_err("datashader path should reject mismatched inputs");
 

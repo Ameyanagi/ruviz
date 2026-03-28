@@ -16,4 +16,7 @@ pub mod test_utils;
 pub use event::{EventHandler, InteractionEvent};
 pub use renderer::RealTimeRenderer;
 pub use state::{AnimationState, InteractionState};
-pub use window::InteractiveWindow;
+pub use window::{
+    InteractiveContextMenuActionContext, InteractiveContextMenuConfig, InteractiveContextMenuItem,
+    InteractiveWindow, InteractiveWindowBuilder, show_interactive,
+};

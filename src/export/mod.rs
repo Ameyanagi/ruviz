@@ -5,9 +5,13 @@
 //! - SVG: Vector export via `Plot::to_svg()` or `Plot::render_to_svg()`
 //! - PDF: Vector export via `Plot::save_pdf()` (requires `pdf` feature)
 //!
-//! The PDF export uses an SVG → PDF pipeline for high-quality vector output.
+//! The PDF export uses an SVG -> PDF pipeline for high-quality vector output.
 
-use crate::core::{PlottingError, Result};
+use crate::{
+    core::plot::Image,
+    core::{PlottingError, Result},
+};
+use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -224,6 +228,27 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
     }
 
     Ok(())
+}
+
+pub(crate) fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> Result<()> {
+    let expected_len = (image.width as usize)
+        .saturating_mul(image.height as usize)
+        .saturating_mul(4);
+    if image.pixels.len() != expected_len {
+        return Err(PlottingError::InvalidInput(format!(
+            "RGBA image buffer length mismatch: expected {expected_len} bytes for {}x{}, got {}",
+            image.width,
+            image.height,
+            image.pixels.len()
+        )));
+    }
+
+    let mut encoded = Vec::new();
+    PngEncoder::new(&mut encoded)
+        .write_image(&image.pixels, image.width, image.height, ColorType::Rgba8)
+        .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))?;
+
+    write_bytes_atomic(path, &encoded)
 }
 
 pub(crate) fn write_with_atomic_writer<P, F>(path: P, writer: F) -> Result<()>
