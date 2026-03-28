@@ -97,30 +97,38 @@ impl<T> Data1D<T> for &[T] {
 #[cfg(feature = "ndarray_support")]
 impl<T> Data1D<T> for ndarray::Array1<T> {
     fn len(&self) -> usize {
-        self.len()
+        self.shape()[0]
     }
 
     fn get(&self, index: usize) -> Option<&T> {
-        self.get(index)
+        if index < self.shape()[0] {
+            Some(&self[index])
+        } else {
+            None
+        }
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &T> + '_> {
-        Box::new(self.iter())
+        Box::new((0..self.shape()[0]).map(move |index| &self[index]))
     }
 }
 
 #[cfg(feature = "ndarray_support")]
 impl<'a, T> Data1D<T> for ndarray::ArrayView1<'a, T> {
     fn len(&self) -> usize {
-        self.len()
+        self.shape()[0]
     }
 
     fn get(&self, index: usize) -> Option<&T> {
-        self.get(index)
+        if index < self.shape()[0] {
+            Some(&self[index])
+        } else {
+            None
+        }
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &T> + '_> {
-        Box::new(self.iter())
+        Box::new((0..self.shape()[0]).map(move |index| &self[index]))
     }
 }
 
@@ -278,28 +286,28 @@ macro_rules! impl_numeric_data_1d_for_primitive_collections {
             #[cfg(feature = "ndarray_support")]
             impl NumericData1D for ndarray::Array1<$ty> {
                 fn len(&self) -> usize {
-                    self.len()
+                    self.shape()[0]
                 }
 
                 fn try_collect_f64_with_policy(
                     &self,
                     _null_policy: NullPolicy,
                 ) -> Result<Vec<f64>, PlottingError> {
-                    Ok(self.iter().map(|v| *v as f64).collect())
+                    Ok((0..self.shape()[0]).map(|index| self[index] as f64).collect())
                 }
             }
 
             #[cfg(feature = "ndarray_support")]
             impl<'a> NumericData1D for ndarray::ArrayView1<'a, $ty> {
                 fn len(&self) -> usize {
-                    self.len()
+                    self.shape()[0]
                 }
 
                 fn try_collect_f64_with_policy(
                     &self,
                     _null_policy: NullPolicy,
                 ) -> Result<Vec<f64>, PlottingError> {
-                    Ok(self.iter().map(|v| *v as f64).collect())
+                    Ok((0..self.shape()[0]).map(|index| self[index] as f64).collect())
                 }
             }
         )+
