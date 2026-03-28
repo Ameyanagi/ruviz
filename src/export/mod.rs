@@ -233,7 +233,8 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
     Ok(())
 }
 
-pub(crate) fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> Result<()> {
+/// Atomically writes an RGBA image as a PNG file.
+pub fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> Result<()> {
     let expected_len = (image.width as usize)
         .saturating_mul(image.height as usize)
         .saturating_mul(4);

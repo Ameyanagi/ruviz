@@ -16,6 +16,8 @@ ruviz = { version = "0.1.5", path = "../.." }
 image = "0.25"
 smallvec = "1.15"
 futures = "0.3"
+arboard = "3.6.1"
+rfd = "=0.15.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
@@ -24,3 +26,9 @@ core-video = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = "0.2.2"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui = { version = "0.2.2", features = ["runtime_shaders", "test-support"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }

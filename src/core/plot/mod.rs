@@ -60,11 +60,10 @@ pub use config::{BackendType, GridMode, TickDirection, TickSides};
 pub use configuration::{PlotConfiguration, TextEngineMode};
 pub use data::{IntoPlotData, PlotData, PlotSource, PlotText, ReactiveValue};
 pub use image::Image;
-pub(crate) use interactive_session::InteractiveViewportSnapshot;
 pub use interactive_session::{
     DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget, InteractiveFrame,
-    InteractivePlotSession, LayerRenderState, PlotInputEvent, QualityPolicy, RenderTargetKind,
-    SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
+    InteractivePlotSession, InteractiveViewportSnapshot, LayerRenderState, PlotInputEvent,
+    QualityPolicy, RenderTargetKind, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
 };
 pub use layout_manager::LayoutManager;
 pub use prepared::{PreparedPlot, ReactiveSubscription};

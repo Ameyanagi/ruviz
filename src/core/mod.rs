@@ -40,10 +40,11 @@ pub use legend::{
 };
 pub use plot::{
     BackendType, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget,
-    InteractiveFrame, InteractivePlotSession, IntoPlot, LayerRenderState, Plot, PlotBuilder,
-    PlotInput, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy, ReactiveSubscription,
-    ReactiveValue, RenderTargetKind, SeriesStyle, SurfaceCapability, SurfaceTarget, TextEngineMode,
-    TickDirection, TickSides, ViewportPoint, ViewportRect,
+    InteractiveFrame, InteractivePlotSession, InteractiveViewportSnapshot, IntoPlot,
+    LayerRenderState, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource, PreparedPlot,
+    QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle,
+    SurfaceCapability, SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint,
+    ViewportRect,
 };
 pub use position::Position;
 pub use style::PlotStyle;

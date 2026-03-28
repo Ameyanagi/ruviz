@@ -63,7 +63,7 @@ impl ViewportRect {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct InteractiveViewportSnapshot {
+pub struct InteractiveViewportSnapshot {
     pub zoom_level: f64,
     pub pan_offset: ViewportPoint,
     pub base_bounds: ViewportRect,
@@ -1085,7 +1085,8 @@ impl InteractivePlotSession {
             .expect("InteractivePlotSession dirty lock poisoned")
     }
 
-    pub(crate) fn viewport_snapshot(&self) -> Result<InteractiveViewportSnapshot> {
+    /// Returns the current interactive viewport state.
+    pub fn viewport_snapshot(&self) -> Result<InteractiveViewportSnapshot> {
         let geometry = self.geometry_snapshot()?;
         let state = self
             .inner
@@ -1104,7 +1105,8 @@ impl InteractivePlotSession {
         })
     }
 
-    pub(crate) fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
+    /// Restores the visible bounds for the interactive viewport.
+    pub fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
         let next_visible = DataBounds::from_points(bounds.min, bounds.max);
         if next_visible.width() <= VIEWPORT_EPSILON || next_visible.height() <= VIEWPORT_EPSILON {
             return false;
