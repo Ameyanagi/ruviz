@@ -173,8 +173,9 @@ impl GpuBackend {
             } else {
                 wgpu::InstanceFlags::default()
             },
-            dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
-            gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
+            display: None,
         };
 
         Ok(wgpu::Instance::new(instance_desc))

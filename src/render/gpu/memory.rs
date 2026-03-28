@@ -359,8 +359,10 @@ impl GpuMemoryPool {
         });
 
         // Wait for mapping to complete
-        self.device
-            .poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        });
 
         pollster::block_on(receiver.receive())
             .ok_or_else(|| GpuError::OperationFailed("Buffer mapping failed".to_string()))?

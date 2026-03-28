@@ -346,6 +346,7 @@ mod supported {
         overlay_image: Option<Arc<RenderImage>>,
         stats: FrameStats,
         target: RenderTargetKind,
+        surface_capability: SurfaceCapability,
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1682,6 +1683,7 @@ mod supported {
             },
             stats: frame.stats,
             target: frame.target,
+            surface_capability: frame.surface_capability,
         })
     }
 

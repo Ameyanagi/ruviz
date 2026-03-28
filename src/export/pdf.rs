@@ -4,116 +4,233 @@
 
 use crate::core::{PlottingError, Result};
 use crate::render::{Color, LineStyle};
-use std::path::Path;
+use std::{cell::RefCell, fmt::Write as _, path::Path};
 
 #[cfg(feature = "pdf")]
-use printpdf::{
-    Color as PdfColor, IndirectFontRef, Line, LineDashPattern, Mm, PdfDocumentReference,
-    PdfLayerReference, Point, Rgb,
-};
+#[derive(Debug, Clone, Copy)]
+struct PdfRgb {
+    r: f32,
+    g: f32,
+    b: f32,
+}
+
+#[cfg(feature = "pdf")]
+#[derive(Debug, Clone)]
+enum PdfCommand {
+    Line {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        width: f32,
+        style: LineStyle,
+    },
+    Polyline {
+        points: Vec<(f32, f32)>,
+        color: Color,
+        width: f32,
+        style: LineStyle,
+    },
+    Rectangle {
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        filled: bool,
+    },
+    Text {
+        text: String,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+    },
+    Marker {
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+    },
+}
 
 /// PDF renderer for vector-based plot export
 #[cfg(feature = "pdf")]
 pub struct PdfRenderer {
     width_mm: f32,
     height_mm: f32,
-    doc: PdfDocumentReference,
-    current_layer: PdfLayerReference,
-    font: IndirectFontRef,
+    title: String,
+    commands: RefCell<Vec<PdfCommand>>,
 }
 
 #[cfg(feature = "pdf")]
 impl PdfRenderer {
     /// Create a new PDF renderer with specified dimensions in millimeters
     pub fn new(width_mm: f64, height_mm: f64, title: &str) -> Result<Self> {
-        let w = width_mm as f32;
-        let h = height_mm as f32;
-
-        let (doc, page1, layer1) = printpdf::PdfDocument::new(title, Mm(w), Mm(h), "Plot Layer");
-
-        let current_layer = doc.get_page(page1).get_layer(layer1);
-
-        // Use built-in Helvetica font (always available)
-        let font = doc
-            .add_builtin_font(printpdf::BuiltinFont::Helvetica)
-            .map_err(|e| PlottingError::RenderError(format!("Failed to add font: {}", e)))?;
-
         Ok(Self {
-            width_mm: w,
-            height_mm: h,
-            doc,
-            current_layer,
-            font,
+            width_mm: width_mm as f32,
+            height_mm: height_mm as f32,
+            title: title.to_string(),
+            commands: RefCell::new(Vec::new()),
         })
     }
 
-    /// Convert pixel coordinates to PDF millimeters
-    /// Assumes 96 DPI for pixel-to-mm conversion
-    fn px_to_mm(&self, px: f32) -> Mm {
-        // 1 inch = 25.4 mm, 96 pixels = 1 inch
-        Mm(px * 25.4 / 96.0)
+    /// Convert pixel coordinates to millimeters.
+    /// Assumes 96 DPI for pixel-to-mm conversion.
+    fn px_to_mm(&self, px: f32) -> f32 {
+        px * 25.4 / 96.0
     }
 
-    /// Convert Y coordinate (flip for PDF coordinate system where origin is bottom-left)
+    /// Convert Y coordinate from top-left origin to bottom-left origin.
     fn flip_y(&self, y: f32) -> f32 {
-        (self.height_mm * 96.0 / 25.4) - y
+        self.height_px() - y
     }
 
-    /// Convert Color to PDF Rgb
-    fn color_to_pdf(&self, color: Color) -> Rgb {
-        Rgb::new(
-            color.r as f32 / 255.0,
-            color.g as f32 / 255.0,
-            color.b as f32 / 255.0,
-            None, // ICC profile
-        )
-    }
-
-    /// Set line dash pattern based on LineStyle
-    fn set_line_style(&self, style: &LineStyle) -> Option<LineDashPattern> {
-        match style {
-            LineStyle::Solid => None,
-            LineStyle::Dashed => Some(LineDashPattern {
-                dash_1: Some(6),
-                gap_1: Some(3),
-                dash_2: None,
-                gap_2: None,
-                dash_3: None,
-                gap_3: None,
-                offset: 0,
-            }),
-            LineStyle::Dotted => Some(LineDashPattern {
-                dash_1: Some(2),
-                gap_1: Some(2),
-                dash_2: None,
-                gap_2: None,
-                dash_3: None,
-                gap_3: None,
-                offset: 0,
-            }),
-            LineStyle::DashDot => Some(LineDashPattern {
-                dash_1: Some(6),
-                gap_1: Some(2),
-                dash_2: Some(2),
-                gap_2: Some(2),
-                dash_3: None,
-                gap_3: None,
-                offset: 0,
-            }),
-            LineStyle::DashDotDot => Some(LineDashPattern {
-                dash_1: Some(6),
-                gap_1: Some(2),
-                dash_2: Some(2),
-                gap_2: Some(2),
-                dash_3: Some(2),
-                gap_3: Some(2),
-                offset: 0,
-            }),
-            LineStyle::Custom(_) => None, // Custom patterns not supported in PDF yet
+    /// Convert Color to normalized RGB components.
+    fn color_to_pdf(&self, color: Color) -> PdfRgb {
+        PdfRgb {
+            r: color.r as f32 / 255.0,
+            g: color.g as f32 / 255.0,
+            b: color.b as f32 / 255.0,
         }
     }
 
-    /// Draw a line from (x1, y1) to (x2, y2)
+    fn color_to_svg(&self, color: Color) -> String {
+        format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+    }
+
+    fn dash_pattern(&self, style: &LineStyle) -> Option<String> {
+        match style {
+            LineStyle::Solid => None,
+            LineStyle::Dashed => Some("6 3".to_string()),
+            LineStyle::Dotted => Some("2 2".to_string()),
+            LineStyle::DashDot => Some("6 2 2 2".to_string()),
+            LineStyle::DashDotDot => Some("6 2 2 2 2 2".to_string()),
+            LineStyle::Custom(pattern) if !pattern.is_empty() => Some(
+                pattern
+                    .iter()
+                    .map(|value| format!("{value:.2}"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+            LineStyle::Custom(_) => None,
+        }
+    }
+
+    fn escape_xml(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    }
+
+    fn build_svg(&self) -> String {
+        let width_px = self.width_px();
+        let height_px = self.height_px();
+        let mut svg = String::new();
+        let _ = writeln!(
+            svg,
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width_px:.2}\" height=\"{height_px:.2}\" viewBox=\"0 0 {width_px:.2} {height_px:.2}\">"
+        );
+        let _ = writeln!(svg, "<title>{}</title>", Self::escape_xml(&self.title));
+
+        for command in self.commands.borrow().iter() {
+            match command {
+                PdfCommand::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    color,
+                    width,
+                    style,
+                } => {
+                    let dash = self
+                        .dash_pattern(style)
+                        .map(|pattern| format!(" stroke-dasharray=\"{pattern}\""))
+                        .unwrap_or_default();
+                    let _ = writeln!(
+                        svg,
+                        "<line x1=\"{x1:.2}\" y1=\"{y1:.2}\" x2=\"{x2:.2}\" y2=\"{y2:.2}\" stroke=\"{}\" stroke-width=\"{width:.2}\" stroke-linecap=\"round\"{dash} />",
+                        self.color_to_svg(*color),
+                    );
+                }
+                PdfCommand::Polyline {
+                    points,
+                    color,
+                    width,
+                    style,
+                } => {
+                    let point_list = points
+                        .iter()
+                        .map(|(x, y)| format!("{x:.2},{y:.2}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let dash = self
+                        .dash_pattern(style)
+                        .map(|pattern| format!(" stroke-dasharray=\"{pattern}\""))
+                        .unwrap_or_default();
+                    let _ = writeln!(
+                        svg,
+                        "<polyline points=\"{point_list}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{width:.2}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"{dash} />",
+                        self.color_to_svg(*color),
+                    );
+                }
+                PdfCommand::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                    color,
+                    filled,
+                } => {
+                    let fill = if *filled {
+                        self.color_to_svg(*color)
+                    } else {
+                        "none".to_string()
+                    };
+                    let stroke = if *filled {
+                        "none".to_string()
+                    } else {
+                        self.color_to_svg(*color)
+                    };
+                    let _ = writeln!(
+                        svg,
+                        "<rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{width:.2}\" height=\"{height:.2}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1.00\" />"
+                    );
+                }
+                PdfCommand::Text {
+                    text,
+                    x,
+                    y,
+                    size,
+                    color,
+                } => {
+                    let _ = writeln!(
+                        svg,
+                        "<text x=\"{x:.2}\" y=\"{y:.2}\" fill=\"{}\" font-family=\"Helvetica, Arial, sans-serif\" font-size=\"{size:.2}\" dominant-baseline=\"hanging\">{}</text>",
+                        self.color_to_svg(*color),
+                        Self::escape_xml(text),
+                    );
+                }
+                PdfCommand::Marker { x, y, size, color } => {
+                    let radius = size / 2.0;
+                    let _ = writeln!(
+                        svg,
+                        "<circle cx=\"{x:.2}\" cy=\"{y:.2}\" r=\"{radius:.2}\" fill=\"{}\" />",
+                        self.color_to_svg(*color),
+                    );
+                }
+            }
+        }
+
+        svg.push_str("</svg>\n");
+        svg
+    }
+
+    /// Draw a line from `(x1, y1)` to `(x2, y2)`.
     pub fn draw_line(
         &self,
         x1: f32,
@@ -124,80 +241,32 @@ impl PdfRenderer {
         width: f32,
         style: LineStyle,
     ) {
-        let y1_flipped = self.flip_y(y1);
-        let y2_flipped = self.flip_y(y2);
-
-        let points = vec![
-            (
-                Point::new(self.px_to_mm(x1), self.px_to_mm(y1_flipped)),
-                false,
-            ),
-            (
-                Point::new(self.px_to_mm(x2), self.px_to_mm(y2_flipped)),
-                false,
-            ),
-        ];
-
-        let line = Line {
-            points,
-            is_closed: false,
-        };
-
-        self.current_layer
-            .set_outline_color(PdfColor::Rgb(self.color_to_pdf(color)));
-        self.current_layer
-            .set_outline_thickness(self.px_to_mm(width).0);
-
-        if let Some(dash) = self.set_line_style(&style) {
-            self.current_layer.set_line_dash_pattern(dash);
-        }
-
-        self.current_layer.add_line(line);
-
-        // Reset dash pattern
-        self.current_layer
-            .set_line_dash_pattern(LineDashPattern::default());
+        self.commands.borrow_mut().push(PdfCommand::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            color,
+            width,
+            style,
+        });
     }
 
-    /// Draw a polyline (connected line segments)
+    /// Draw a polyline (connected line segments).
     pub fn draw_polyline(&self, points: &[(f32, f32)], color: Color, width: f32, style: LineStyle) {
         if points.len() < 2 {
             return;
         }
 
-        let pdf_points: Vec<(Point, bool)> = points
-            .iter()
-            .map(|(x, y)| {
-                let y_flipped = self.flip_y(*y);
-                (
-                    Point::new(self.px_to_mm(*x), self.px_to_mm(y_flipped)),
-                    false,
-                )
-            })
-            .collect();
-
-        let line = Line {
-            points: pdf_points,
-            is_closed: false,
-        };
-
-        self.current_layer
-            .set_outline_color(PdfColor::Rgb(self.color_to_pdf(color)));
-        self.current_layer
-            .set_outline_thickness(self.px_to_mm(width).0);
-
-        if let Some(dash) = self.set_line_style(&style) {
-            self.current_layer.set_line_dash_pattern(dash);
-        }
-
-        self.current_layer.add_line(line);
-
-        // Reset dash pattern
-        self.current_layer
-            .set_line_dash_pattern(LineDashPattern::default());
+        self.commands.borrow_mut().push(PdfCommand::Polyline {
+            points: points.to_vec(),
+            color,
+            width,
+            style,
+        });
     }
 
-    /// Draw a filled or stroked rectangle
+    /// Draw a filled or stroked rectangle.
     pub fn draw_rectangle(
         &self,
         x: f32,
@@ -207,94 +276,47 @@ impl PdfRenderer {
         color: Color,
         filled: bool,
     ) {
-        let y_flipped = self.flip_y(y + height); // Bottom-left corner in PDF coords
-
-        let x_mm = self.px_to_mm(x);
-        let y_mm = self.px_to_mm(y_flipped);
-        let w_mm = self.px_to_mm(width);
-        let h_mm = self.px_to_mm(height);
-
-        let points = vec![
-            (Point::new(x_mm, y_mm), false),
-            (Point::new(Mm(x_mm.0 + w_mm.0), y_mm), false),
-            (Point::new(Mm(x_mm.0 + w_mm.0), Mm(y_mm.0 + h_mm.0)), false),
-            (Point::new(x_mm, Mm(y_mm.0 + h_mm.0)), false),
-        ];
-
-        let rect = Line {
-            points,
-            is_closed: true,
-        };
-
-        let pdf_color = PdfColor::Rgb(self.color_to_pdf(color));
-
-        if filled {
-            self.current_layer.set_fill_color(pdf_color);
-        } else {
-            self.current_layer.set_outline_color(pdf_color);
-            self.current_layer.set_outline_thickness(1.0);
-        }
-
-        self.current_layer.add_line(rect);
+        self.commands.borrow_mut().push(PdfCommand::Rectangle {
+            x,
+            y,
+            width,
+            height,
+            color,
+            filled,
+        });
     }
 
-    /// Draw text at the specified position
-    pub fn draw_text(&self, text: &str, x: f32, y: f32, size: f32, _color: Color) {
-        let y_flipped = self.flip_y(y);
-
-        self.current_layer.use_text(
-            text,
+    /// Draw text at the specified position.
+    pub fn draw_text(&self, text: &str, x: f32, y: f32, size: f32, color: Color) {
+        self.commands.borrow_mut().push(PdfCommand::Text {
+            text: text.to_string(),
+            x,
+            y,
             size,
-            self.px_to_mm(x),
-            self.px_to_mm(y_flipped),
-            &self.font,
-        );
-
-        // Note: printpdf doesn't easily support text color per-text-block
-        // Text will render in black by default
+            color,
+        });
     }
 
-    /// Draw a circle/marker at the specified position
+    /// Draw a circle/marker at the specified position.
     pub fn draw_marker(&self, x: f32, y: f32, size: f32, color: Color) {
-        let y_flipped = self.flip_y(y);
-        let radius = size / 2.0;
-
-        // Approximate circle with polygon
-        let num_segments = 16;
-        let points: Vec<(Point, bool)> = (0..=num_segments)
-            .map(|i| {
-                let angle = 2.0 * std::f32::consts::PI * i as f32 / num_segments as f32;
-                let px = x + radius * angle.cos();
-                let py = y_flipped + radius * angle.sin();
-                (Point::new(self.px_to_mm(px), self.px_to_mm(py)), false)
-            })
-            .collect();
-
-        let circle = Line {
-            points,
-            is_closed: true,
-        };
-
-        self.current_layer
-            .set_fill_color(PdfColor::Rgb(self.color_to_pdf(color)));
-        self.current_layer.add_line(circle);
+        self.commands
+            .borrow_mut()
+            .push(PdfCommand::Marker { x, y, size, color });
     }
 
-    /// Save the PDF to a file
+    /// Save the PDF to a file.
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
-        crate::export::write_with_atomic_writer(path, |writer| {
-            self.doc
-                .save(writer)
-                .map_err(|e| PlottingError::RenderError(format!("Failed to save PDF: {}", e)))
-        })
+        let svg = self.build_svg();
+        let pdf_data = crate::export::svg_to_pdf(&svg)?;
+        crate::export::write_bytes_atomic(path, &pdf_data)
     }
 
-    /// Get width in pixels (at 96 DPI)
+    /// Get width in pixels (at 96 DPI).
     pub fn width_px(&self) -> f32 {
         self.width_mm * 96.0 / 25.4
     }
 
-    /// Get height in pixels (at 96 DPI)
+    /// Get height in pixels (at 96 DPI).
     pub fn height_px(&self) -> f32 {
         self.height_mm * 96.0 / 25.4
     }
@@ -329,9 +351,8 @@ mod tests {
     #[test]
     fn test_px_to_mm_conversion() {
         let renderer = PdfRenderer::new(160.0, 120.0, "Test").unwrap();
-        // 96 px = 1 inch = 25.4 mm
         let mm = renderer.px_to_mm(96.0);
-        assert!((mm.0 - 25.4).abs() < 0.01);
+        assert!((mm - 25.4).abs() < 0.01);
     }
 
     #[test]
@@ -342,5 +363,11 @@ mod tests {
         assert!((pdf_color.r - 1.0).abs() < 0.01);
         assert!((pdf_color.g - 0.5).abs() < 0.01);
         assert!((pdf_color.b - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_flip_y_uses_top_left_coordinates() {
+        let renderer = PdfRenderer::new(160.0, 120.0, "Test").unwrap();
+        assert!((renderer.flip_y(0.0) - renderer.height_px()).abs() < 0.01);
     }
 }
