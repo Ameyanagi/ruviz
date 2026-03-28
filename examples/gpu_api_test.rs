@@ -1,18 +1,21 @@
-//! Test actual wgpu 22.1 API compatibility
+//! Test actual wgpu 29 API compatibility
 
 #[tokio::main]
 async fn main() {
-    println!("🧪 Testing wgpu 22.1 API...");
+    println!("🧪 Testing wgpu 29 API...");
 
     // Create instance
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
-        ..Default::default()
+        flags: wgpu::InstanceFlags::default(),
+        memory_budget_thresholds: Default::default(),
+        backend_options: Default::default(),
+        display: None,
     });
     println!("✅ Instance created");
 
-    // Test enumerate_adapters - it returns Vec directly
-    let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all());
+    // Test enumerate_adapters
+    let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
     println!(
         "✅ enumerate_adapters() called and returned {} adapters",
         adapters.len()
@@ -24,15 +27,14 @@ async fn main() {
 
         // Test device creation
         match adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Test Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Test Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+            })
             .await
         {
             Ok((device, _queue)) => {

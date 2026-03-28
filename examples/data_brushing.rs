@@ -6,9 +6,12 @@
 //!
 //! Controls:
 //! - Mouse wheel: Zoom in/out
-//! - Left click + drag: Box zoom
-//! - Right click + drag: Pan
+//! - Left click + drag: Pan
+//! - Right click: Context menu
+//! - Right click + drag: Box zoom
 //! - Escape: Reset view
+//! - Cmd/Ctrl+S: Save PNG
+//! - Cmd/Ctrl+C: Copy image
 
 use ruviz::prelude::*;
 
@@ -24,9 +27,12 @@ async fn async_main() -> Result<()> {
     println!("Starting data brushing example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
-    println!("  - Left click + drag: Box zoom");
-    println!("  - Right click + drag: Pan");
+    println!("  - Left click + drag: Pan");
+    println!("  - Right click: Context menu");
+    println!("  - Right click + drag: Box zoom");
     println!("  - Escape: Reset view");
+    println!("  - Cmd/Ctrl+S: Save PNG");
+    println!("  - Cmd/Ctrl+C: Copy image");
 
     // Generate correlated data for demonstration
     let n_points = 500;

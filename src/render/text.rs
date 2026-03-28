@@ -472,7 +472,7 @@ impl TextRenderer {
 
         // Set text with font attributes
         let attrs = config.to_cosmic_attrs();
-        buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
+        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
 
         // Shape the text
         buffer.shape_until_scroll(&mut font_system, false);
@@ -600,7 +600,7 @@ impl TextRenderer {
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
         let attrs = config.to_cosmic_attrs();
-        buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
+        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
@@ -785,7 +785,7 @@ impl TextRenderer {
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
         let attrs = config.to_cosmic_attrs();
-        buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
+        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         let mut width: f32 = 0.0;

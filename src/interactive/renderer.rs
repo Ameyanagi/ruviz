@@ -53,6 +53,7 @@ pub struct RealTimeRenderer {
     hover_highlight_color: Color,
     selection_highlight_color: Color,
     brush_color: Color,
+    brush_outline_color: Color,
     annotation_renderer: AnnotationRenderer,
 
     // Optimization settings
@@ -97,6 +98,7 @@ impl RealTimeRenderer {
             hover_highlight_color: Color::new_rgba(255, 165, 0, 180), // Orange with transparency
             selection_highlight_color: Color::new_rgba(255, 0, 0, 120), // Red with transparency
             brush_color: Color::new_rgba(0, 100, 255, 60),            // Blue with high transparency
+            brush_outline_color: Color::new_rgba(96, 208, 255, 220),
             annotation_renderer: AnnotationRenderer::new(),
 
             quality_mode: RenderQuality::Interactive,
@@ -147,6 +149,20 @@ impl RealTimeRenderer {
             return Ok(None);
         };
         session.viewport_snapshot().map(Some)
+    }
+
+    pub(crate) fn restore_visible_bounds(
+        &mut self,
+        visible_bounds: crate::core::ViewportRect,
+        size_px: (u32, u32),
+        device_scale: f32,
+    ) -> bool {
+        self.set_device_scale(device_scale);
+        if let Some(session) = &self.interactive_session {
+            self.sync_session_target(session, size_px, self.last_device_scale);
+            return session.restore_visible_bounds(visible_bounds);
+        }
+        false
     }
 
     /// Render frame with current interaction state
@@ -588,7 +604,7 @@ impl RealTimeRenderer {
         pixel_data: &mut [u8],
     ) -> Result<()> {
         if let Some(region) = state.brushed_region {
-            self.draw_selection_rectangle(pixel_data, region, self.brush_color)?;
+            self.draw_brush_guide_rectangle(pixel_data, region)?;
         }
         Ok(())
     }
@@ -691,6 +707,49 @@ impl RealTimeRenderer {
                     pixel_data[index] = blend_channel(pixel_data[index], color.r, alpha);
                     pixel_data[index + 1] = blend_channel(pixel_data[index + 1], color.g, alpha);
                     pixel_data[index + 2] = blend_channel(pixel_data[index + 2], color.b, alpha);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn draw_brush_guide_rectangle(&self, pixel_data: &mut [u8], region: Rectangle) -> Result<()> {
+        self.draw_selection_rectangle(pixel_data, region, self.brush_color)?;
+        self.draw_rectangle_outline(pixel_data, region, self.brush_outline_color, 2)
+    }
+
+    fn draw_rectangle_outline(
+        &self,
+        pixel_data: &mut [u8],
+        region: Rectangle,
+        color: Color,
+        thickness: i32,
+    ) -> Result<()> {
+        let width = self.cpu_renderer.width() as i32;
+        let height = self.cpu_renderer.height() as i32;
+        let x1 = region.min.x.round() as i32;
+        let y1 = region.min.y.round() as i32;
+        let x2 = region.max.x.round() as i32;
+        let y2 = region.max.y.round() as i32;
+        let thickness = thickness.max(1);
+        let alpha = color.a as f32 / 255.0;
+
+        for y in y1.max(0)..=y2.min(height - 1) {
+            for x in x1.max(0)..=x2.min(width - 1) {
+                let on_border = x - x1 < thickness
+                    || x2 - x < thickness
+                    || y - y1 < thickness
+                    || y2 - y < thickness;
+                if !on_border {
+                    continue;
+                }
+                let index = ((y * width + x) * 4) as usize;
+                if index + 3 < pixel_data.len() {
+                    pixel_data[index] = blend_channel(pixel_data[index], color.r, alpha);
+                    pixel_data[index + 1] = blend_channel(pixel_data[index + 1], color.g, alpha);
+                    pixel_data[index + 2] = blend_channel(pixel_data[index + 2], color.b, alpha);
+                    pixel_data[index + 3] = color.a;
                 }
             }
         }
@@ -1116,5 +1175,33 @@ mod tests {
 
         renderer.set_device_scale(0.0);
         assert!((renderer.last_device_scale - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_brush_guide_rectangle_draws_outline_over_fill() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should initialize for tests");
+        let mut renderer = runtime
+            .block_on(RealTimeRenderer::new())
+            .expect("renderer should initialize for tests");
+        let mut pixels = vec![
+            0u8;
+            (renderer.cpu_renderer.width() * renderer.cpu_renderer.height() * 4)
+                as usize
+        ];
+        let mut state = InteractionState::default();
+        state.brushed_region = Some(Rectangle::new(24.0, 24.0, 88.0, 88.0));
+
+        renderer
+            .render_brush_region(&state, &mut pixels)
+            .expect("brush guide should render");
+
+        let width = renderer.cpu_renderer.width() as usize;
+        let border_index = ((24usize * width + 24usize) * 4) as usize;
+        let interior_index = ((56usize * width + 56usize) * 4) as usize;
+
+        assert!(
+            pixels[border_index + 3] > pixels[interior_index + 3],
+            "brush outline should be more visible than the fill interior"
+        );
     }
 }

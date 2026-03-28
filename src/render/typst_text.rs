@@ -533,11 +533,18 @@ mod imp {
         let expected_height = logical_height.ceil().max(1.0) as u32;
         validate_raster_size(expected_width, expected_height, operation)?;
 
-        let pixmap = typst_render::render(&page, 1.0);
-        let pixel_width = pixmap.width();
-        let pixel_height = pixmap.height();
+        let rendered_pixmap = typst_render::render(&page, 1.0);
+        let pixel_width = rendered_pixmap.width();
+        let pixel_height = rendered_pixmap.height();
         validate_raster_size(pixel_width, pixel_height, operation)?;
-        let pixel_bytes = pixmap.data().len();
+        let size = IntSize::from_wh(pixel_width, pixel_height).ok_or_else(|| {
+            PlottingError::RenderError("Typst raster output has invalid dimensions".to_string())
+        })?;
+        let pixmap = Pixmap::from_vec(rendered_pixmap.data().to_vec(), size).ok_or_else(|| {
+            PlottingError::RenderError("Failed to convert Typst raster output".to_string())
+        })?;
+        let pixels = pixmap.data().to_vec();
+        let pixel_bytes = pixels.len();
         let mut cache = lock_cache()?;
         if pixel_bytes > MAX_CACHE_BYTES {
             remove_cached_value(&mut cache, &key);
@@ -546,7 +553,7 @@ mod imp {
                 &mut cache,
                 key,
                 CachedValue::Raster {
-                    pixels: pixmap.data().to_vec(),
+                    pixels,
                     pixel_width,
                     pixel_height,
                     logical_width,

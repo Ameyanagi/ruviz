@@ -790,7 +790,11 @@ pub mod prelude {
         event::{InteractionEvent, Point2D, Rectangle, Vector2D},
         renderer::RealTimeRenderer,
         state::InteractionState,
-        window::{InteractiveWindow, InteractiveWindowBuilder, show_interactive},
+        window::{
+            InteractiveContextMenuActionContext, InteractiveContextMenuConfig,
+            InteractiveContextMenuItem, InteractiveWindow, InteractiveWindowBuilder,
+            show_interactive,
+        },
     };
 
     #[cfg(feature = "animation")]

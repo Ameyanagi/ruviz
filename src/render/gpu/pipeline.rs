@@ -92,8 +92,8 @@ impl RenderPipeline {
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         // Create shaders
@@ -113,13 +113,13 @@ impl RenderPipeline {
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &vertex_shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[vertex_buffer_layout],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &fragment_shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.color_format,
                     blend: config.blend_state,
@@ -138,8 +138,8 @@ impl RenderPipeline {
             },
             depth_stencil: config.depth_format.map(|format| wgpu::DepthStencilState {
                 format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -148,7 +148,7 @@ impl RenderPipeline {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -247,8 +247,8 @@ impl ComputePipeline {
         // Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Compute Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         // Create compute shader
@@ -262,7 +262,7 @@ impl ComputePipeline {
             label: Some("Compute Pipeline"),
             layout: Some(&pipeline_layout),
             module: &compute_shader,
-            entry_point: "cs_main",
+            entry_point: Some("cs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });

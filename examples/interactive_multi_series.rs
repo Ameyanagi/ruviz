@@ -19,9 +19,12 @@ async fn async_main() -> Result<()> {
     println!("Starting interactive multi-series example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
-    println!("  - Left click + drag: Box zoom");
-    println!("  - Right click + drag: Pan");
+    println!("  - Left click + drag: Pan");
+    println!("  - Right click: Context menu");
+    println!("  - Right click + drag: Box zoom");
     println!("  - Escape: Reset view");
+    println!("  - Cmd/Ctrl+S: Save PNG");
+    println!("  - Cmd/Ctrl+C: Copy image");
     println!("  - Close window to exit");
 
     let sample_count = 4_000;

@@ -805,7 +805,7 @@ mod tests {
     fn test_polars_series_strict_null_error() {
         use polars::prelude::*;
 
-        let series = Series::new("x", &[Some(1.0), None, Some(3.0)]);
+        let series = Series::new("x".into(), &[Some(1.0), None, Some(3.0)]);
         let err = series.try_collect_f64().unwrap_err();
         assert!(matches!(err, PlottingError::NullValueNotAllowed { .. }));
     }
@@ -815,7 +815,7 @@ mod tests {
     fn test_polars_series_drop_nulls() {
         use polars::prelude::*;
 
-        let series = Series::new("x", &[Some(1.0), None, Some(3.0)]);
+        let series = Series::new("x".into(), &[Some(1.0), None, Some(3.0)]);
         let values = series
             .try_collect_f64_with_policy(NullPolicy::Drop)
             .unwrap();

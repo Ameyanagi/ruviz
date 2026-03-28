@@ -86,8 +86,8 @@ impl ComputeManager {
             .device
             .create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: Some("Transform Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
             });
 
         let pipeline = self
@@ -96,7 +96,7 @@ impl ComputeManager {
                 label: Some("Transform Pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader_module,
-                entry_point: "main",
+                entry_point: Some("main"),
                 compilation_options: PipelineCompilationOptions::default(),
                 cache: None,
             });
@@ -159,8 +159,8 @@ impl ComputeManager {
             .device
             .create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: Some("Aggregation Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&bind_group_layout)],
+                immediate_size: 0,
             });
 
         let pipeline = self
@@ -169,7 +169,7 @@ impl ComputeManager {
                 label: Some("Aggregation Pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader_module,
-                entry_point: "main",
+                entry_point: Some("main"),
                 compilation_options: PipelineCompilationOptions::default(),
                 cache: None,
             });
@@ -240,7 +240,7 @@ impl ComputeManager {
         self.queue.submit([command_buffer]);
 
         // Wait for completion with timeout to prevent hanging
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         Ok(())
     }
@@ -306,7 +306,7 @@ impl ComputeManager {
         self.queue.submit([command_buffer]);
 
         // Wait for completion
-        self.device.poll(Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         Ok(())
     }

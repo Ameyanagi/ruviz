@@ -7,14 +7,15 @@ async fn main() {
     // Test 1: Create instance
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
-        dx12_shader_compiler: Default::default(),
         flags: wgpu::InstanceFlags::default(),
-        gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
+        memory_budget_thresholds: Default::default(),
+        backend_options: Default::default(),
+        display: None,
     });
     println!("✅ Instance created");
 
     // Test 2: Enumerate adapters
-    let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all());
+    let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
     println!("✅ Found {} adapters", adapters.len());
 
     if let Some(adapter) = adapters.first() {
@@ -23,15 +24,14 @@ async fn main() {
 
         // Test 3: Request device
         match adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Test Device"),
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Test Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+            })
             .await
         {
             Ok((device, queue)) => {

@@ -67,7 +67,7 @@ impl CosmicTextRenderer {
         // Set text with sans-serif font fallback (system fonts are discovered automatically)
         let attrs = Attrs::new().family(Family::SansSerif);
 
-        buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
+        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         // Convert color to cosmic-text format
@@ -159,7 +159,7 @@ impl CosmicTextRenderer {
 
         let attrs = Attrs::new().family(Family::SansSerif);
 
-        buffer.set_text(&mut font_system, text, attrs, Shaping::Advanced);
+        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         let mut width: f32 = 0.0;

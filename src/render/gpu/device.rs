@@ -84,7 +84,7 @@ impl DeviceSelector {
         &self,
         instance: &wgpu::Instance,
     ) -> Result<wgpu::Adapter, PlottingError> {
-        let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all());
+        let adapters: Vec<_> = instance.enumerate_adapters(wgpu::Backends::all()).await;
 
         if adapters.is_empty() {
             return Err(PlottingError::GpuNotAvailable(
@@ -219,15 +219,14 @@ impl GpuDevice {
 
         // Request device with required features and limits
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Plotting GPU Device"),
-                    required_features: config.required_features,
-                    required_limits: config.required_limits.clone(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None, // No trace path
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Plotting GPU Device"),
+                required_features: config.required_features,
+                required_limits: config.required_limits.clone(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
             .await
             .map_err(|e| PlottingError::GpuInitError {
                 backend: format!("{:?}", adapter_info.backend),
@@ -235,7 +234,7 @@ impl GpuDevice {
             })?;
 
         // Set up error handling
-        device.on_uncaptured_error(Box::new(|error| {
+        device.on_uncaptured_error(Arc::new(|error| {
             log::error!("GPU Error: {}", error);
         }));
 
@@ -358,17 +357,17 @@ impl GpuDevice {
     /// Write texture data
     pub fn write_texture(
         &self,
-        texture: wgpu::ImageCopyTexture,
+        texture: wgpu::TexelCopyTextureInfo<'_>,
         data: &[u8],
-        data_layout: wgpu::ImageDataLayout,
+        data_layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
         self.queue.write_texture(texture, data, data_layout, size);
     }
 
     /// Poll for completed operations
-    pub fn poll(&self, maintain: wgpu::Maintain) -> wgpu::MaintainResult {
-        self.device.poll(maintain)
+    pub fn poll(&self, poll_type: wgpu::PollType) -> Result<wgpu::PollStatus, wgpu::PollError> {
+        self.device.poll(poll_type)
     }
 
     /// Get GPU memory limits (wgpu doesn't expose actual usage)
