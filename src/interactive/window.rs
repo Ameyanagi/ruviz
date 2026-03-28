@@ -149,10 +149,10 @@ impl InteractiveWindow {
                 ))
             })?,
         );
-        self.install_reactive_wakeup(event_loop.create_proxy());
 
         // Set the plot for rendering
         self.renderer.set_plot(plot);
+        self.install_reactive_wakeup(event_loop.create_proxy());
 
         // Create window application handler
         let mut app_handler = InteractiveApp::new(self);

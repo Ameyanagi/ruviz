@@ -12,8 +12,29 @@ use crate::{
     },
 };
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tiny_skia::*;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ClipMaskKey {
+    x_bits: u32,
+    y_bits: u32,
+    width_bits: u32,
+    height_bits: u32,
+}
+
+impl ClipMaskKey {
+    fn new((x, y, width, height): (f32, f32, f32, f32)) -> Self {
+        Self {
+            x_bits: x.to_bits(),
+            y_bits: y.to_bits(),
+            width_bits: width.to_bits(),
+            height_bits: height.to_bits(),
+        }
+    }
+}
 
 /// Tiny-skia based renderer with cosmic-text for professional typography
 pub struct SkiaRenderer {
@@ -28,6 +49,7 @@ pub struct SkiaRenderer {
     render_scale: RenderScale,
     /// Active text rendering engine.
     text_engine_mode: TextEngineMode,
+    clip_mask_cache: HashMap<ClipMaskKey, Arc<Mask>>,
 }
 
 impl SkiaRenderer {
@@ -65,6 +87,7 @@ impl SkiaRenderer {
             font_config,
             render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
+            clip_mask_cache: HashMap::new(),
         })
     }
 
@@ -188,8 +211,8 @@ impl SkiaRenderer {
         style: LineStyle,
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
-        let mask = self.create_clip_mask(clip_rect)?;
-        self.draw_line_with_mask(x1, y1, x2, y2, color, width, style, Some(&mask))
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_line_with_mask(x1, y1, x2, y2, color, width, style, Some(mask.as_ref()))
     }
 
     fn draw_line_with_mask(
@@ -294,8 +317,19 @@ impl SkiaRenderer {
         style: LineStyle,
         clip_rect: (f32, f32, f32, f32), // (x, y, width, height)
     ) -> Result<()> {
-        let mask = self.create_clip_mask(clip_rect)?;
-        self.draw_polyline_with_mask(points, color, width, style, Some(&mask))
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_polyline_with_mask(points, color, width, style, Some(mask.as_ref()))
+    }
+
+    fn get_clip_mask(&mut self, clip_rect: (f32, f32, f32, f32)) -> Result<Arc<Mask>> {
+        let key = ClipMaskKey::new(clip_rect);
+        if let Some(mask) = self.clip_mask_cache.get(&key) {
+            return Ok(Arc::clone(mask));
+        }
+
+        let mask = Arc::new(self.create_clip_mask(clip_rect)?);
+        self.clip_mask_cache.insert(key, Arc::clone(&mask));
+        Ok(mask)
     }
 
     fn create_clip_mask(&self, clip_rect: (f32, f32, f32, f32)) -> Result<Mask> {
@@ -314,7 +348,7 @@ impl SkiaRenderer {
                 "Failed to create clip path".to_string(),
             ))?
         };
-        mask.fill_path(&clip_path, FillRule::Winding, false, Transform::identity());
+        mask.fill_path(&clip_path, FillRule::Winding, true, Transform::identity());
         Ok(mask)
     }
 
@@ -326,22 +360,8 @@ impl SkiaRenderer {
         transform: Transform,
         mask: Option<&Mask>,
     ) -> Result<()> {
-        if let Some(mask) = mask {
-            let mut layer =
-                Pixmap::new(self.width, self.height).ok_or(PlottingError::OutOfMemory)?;
-            layer.fill_path(path, paint, fill_rule, transform, None);
-            self.pixmap.draw_pixmap(
-                0,
-                0,
-                layer.as_ref(),
-                &PixmapPaint::default(),
-                Transform::identity(),
-                Some(mask),
-            );
-        } else {
-            self.pixmap
-                .fill_path(path, paint, fill_rule, transform, None);
-        }
+        self.pixmap
+            .fill_path(path, paint, fill_rule, transform, mask);
 
         Ok(())
     }
@@ -354,22 +374,8 @@ impl SkiaRenderer {
         transform: Transform,
         mask: Option<&Mask>,
     ) -> Result<()> {
-        if let Some(mask) = mask {
-            let mut layer =
-                Pixmap::new(self.width, self.height).ok_or(PlottingError::OutOfMemory)?;
-            layer.stroke_path(path, paint, stroke, transform, None);
-            self.pixmap.draw_pixmap(
-                0,
-                0,
-                layer.as_ref(),
-                &PixmapPaint::default(),
-                Transform::identity(),
-                Some(mask),
-            );
-        } else {
-            self.pixmap
-                .stroke_path(path, paint, stroke, transform, None);
-        }
+        self.pixmap
+            .stroke_path(path, paint, stroke, transform, mask);
 
         Ok(())
     }
@@ -443,8 +449,8 @@ impl SkiaRenderer {
         filled: bool,
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
-        let mask = self.create_clip_mask(clip_rect)?;
-        self.draw_rectangle_with_mask(x, y, width, height, color, filled, Some(&mask))
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_rectangle_with_mask(x, y, width, height, color, filled, Some(mask.as_ref()))
     }
 
     fn draw_rectangle_with_mask(
@@ -719,7 +725,7 @@ impl SkiaRenderer {
         };
 
         // Fill mask with clip region (white = allow rendering)
-        mask.fill_path(&clip_path, FillRule::Winding, false, Transform::identity());
+        mask.fill_path(&clip_path, FillRule::Winding, true, Transform::identity());
 
         // Create polygon path
         let mut pb = PathBuilder::new();
@@ -816,8 +822,8 @@ impl SkiaRenderer {
         color: Color,
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
-        let mask = self.create_clip_mask(clip_rect)?;
-        self.draw_marker_with_mask(x, y, size, style, color, Some(&mask))
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_marker_with_mask(x, y, size, style, color, Some(mask.as_ref()))
     }
 
     fn draw_marker_with_mask(

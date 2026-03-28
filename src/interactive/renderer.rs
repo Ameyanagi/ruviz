@@ -369,11 +369,10 @@ impl RealTimeRenderer {
                     "Interactive session surface rendering failed: {}, returning white pixels",
                     e
                 );
-                return Ok(InteractiveRenderOutput::Pixels(vec![
-                    255u8;
-                    (width * height * 4)
-                        as usize
-                ]));
+                let num_bytes = (width as usize)
+                    .saturating_mul(height as usize)
+                    .saturating_mul(4);
+                return Ok(InteractiveRenderOutput::Pixels(vec![255u8; num_bytes]));
             }
         };
 

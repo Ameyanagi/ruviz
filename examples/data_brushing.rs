@@ -36,40 +36,6 @@ async fn async_main() -> Result<()> {
 
     // Create multiple plots showing different aspects of the same data
 
-    // Plot 1: Time series
-    let _time_plot = Plot::new()
-        .line(&data.time, &data.values)
-        .scatter(&data.time, &data.values)
-        .title("Time Series View")
-        .xlabel("Time")
-        .ylabel("Value")
-        .legend(Position::TopLeft);
-
-    // Plot 2: Phase space (derivative vs value)
-    let _phase_plot = Plot::new()
-        .scatter(&data.values, &data.derivatives)
-        .title("Phase Space View")
-        .xlabel("Value")
-        .ylabel("Derivative")
-        .legend(Position::TopRight);
-
-    // Plot 3: Correlation plot
-    let _correlation_plot = Plot::new()
-        .scatter(&data.values, &data.noise)
-        .title("Value vs Noise Correlation")
-        .xlabel("Value")
-        .ylabel("Noise Component")
-        .legend(Position::BottomRight);
-
-    // Plot 4: Histogram of values
-    // Note: This would use the histogram API once implemented
-    let _histogram_plot = Plot::new()
-        .scatter(&data.histogram_bins, &data.histogram_counts)
-        .title("Value Distribution")
-        .xlabel("Value Bins")
-        .ylabel("Frequency")
-        .legend(Position::TopLeft);
-
     println!("Created 4 derived plots for the brushing workflow");
 
     // In a real implementation, we would show all plots in a multi-panel layout
@@ -91,11 +57,45 @@ async fn async_main() -> Result<()> {
         println!("Interactive features not enabled.");
         println!("To enable: cargo run --features interactive --example data_brushing");
 
+        // Plot 1: Time series
+        let time_plot = Plot::new()
+            .line(&data.time, &data.values)
+            .scatter(&data.time, &data.values)
+            .title("Time Series View")
+            .xlabel("Time")
+            .ylabel("Value")
+            .legend(Position::TopLeft);
+
+        // Plot 2: Phase space (derivative vs value)
+        let phase_plot = Plot::new()
+            .scatter(&data.values, &data.derivatives)
+            .title("Phase Space View")
+            .xlabel("Value")
+            .ylabel("Derivative")
+            .legend(Position::TopRight);
+
+        // Plot 3: Correlation plot
+        let correlation_plot = Plot::new()
+            .scatter(&data.values, &data.noise)
+            .title("Value vs Noise Correlation")
+            .xlabel("Value")
+            .ylabel("Noise Component")
+            .legend(Position::BottomRight);
+
+        // Plot 4: Histogram of values
+        // Note: This would use the histogram API once implemented
+        let histogram_plot = Plot::new()
+            .scatter(&data.histogram_bins, &data.histogram_counts)
+            .title("Value Distribution")
+            .xlabel("Value Bins")
+            .ylabel("Frequency")
+            .legend(Position::TopLeft);
+
         // Save static versions
-        _time_plot.save("examples/output/data_brushing_time_series.png")?;
-        _phase_plot.save("examples/output/data_brushing_phase_space.png")?;
-        _correlation_plot.save("examples/output/data_brushing_correlation.png")?;
-        _histogram_plot.save("examples/output/data_brushing_histogram.png")?;
+        time_plot.save("examples/output/data_brushing_time_series.png")?;
+        phase_plot.save("examples/output/data_brushing_phase_space.png")?;
+        correlation_plot.save("examples/output/data_brushing_correlation.png")?;
+        histogram_plot.save("examples/output/data_brushing_histogram.png")?;
 
         println!("Saved static versions:");
         println!("  - examples/output/data_brushing_time_series.png");
@@ -109,6 +109,7 @@ async fn async_main() -> Result<()> {
 }
 
 /// Generate correlated data for demonstration
+#[cfg_attr(feature = "interactive", allow(dead_code))]
 struct CorrelatedData {
     time: Vec<f64>,
     values: Vec<f64>,
