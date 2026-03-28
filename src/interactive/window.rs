@@ -175,6 +175,7 @@ struct ContextMenuState {
     panel_bounds: Rectangle,
     entries: Vec<ContextMenuEntry>,
     hovered_index: Option<usize>,
+    trigger_position: Point2D,
 }
 
 /// Interactive window for displaying plots with real-time interactions
@@ -201,6 +202,7 @@ pub struct InteractiveWindow {
     context_menu_config: InteractiveContextMenuConfig,
     context_menu_action_handler: Option<ContextMenuActionHandler>,
     context_menu: Option<ContextMenuState>,
+    context_menu_overlay_buffer: Vec<u8>,
     home_view_bounds: Option<ViewportRect>,
 
     // Performance tracking
@@ -257,6 +259,7 @@ impl InteractiveWindow {
             context_menu_config: InteractiveContextMenuConfig::default(),
             context_menu_action_handler: None,
             context_menu: None,
+            context_menu_overlay_buffer: Vec::new(),
             home_view_bounds: None,
             last_frame_time: Instant::now(),
             frame_count: 0,
@@ -452,39 +455,44 @@ impl InteractiveWindow {
             .expect("window width is clamped to non-zero");
         let height = NonZeroU32::new(self.window_size.height.max(1))
             .expect("window height is clamped to non-zero");
-        let menu_overlay = self.render_context_menu_overlay()?;
-        let surface = self
-            .surface
-            .as_mut()
-            .expect("surface should be initialized");
-        let surface_size = (width.get(), height.get());
-        if self.surface_size != Some(surface_size) {
-            surface.resize(width, height).map_err(|e| {
-                PlottingError::RenderError(format!("Failed to resize window surface: {}", e))
-            })?;
-            self.surface_size = Some(surface_size);
-        }
-
-        let mut buffer = surface.buffer_mut().map_err(|e| {
-            PlottingError::RenderError(format!("Failed to acquire window buffer: {}", e))
-        })?;
-        match frame {
-            InteractiveRenderOutput::Pixels(pixel_data) => {
-                copy_rgba_to_softbuffer(pixel_data, &mut buffer)
+        let mut menu_overlay_buffer = std::mem::take(&mut self.context_menu_overlay_buffer);
+        let present_result = (|| -> Result<()> {
+            let menu_overlay = self.render_context_menu_overlay(&mut menu_overlay_buffer)?;
+            let surface = self
+                .surface
+                .as_mut()
+                .expect("surface should be initialized");
+            let surface_size = (width.get(), height.get());
+            if self.surface_size != Some(surface_size) {
+                surface.resize(width, height).map_err(|e| {
+                    PlottingError::RenderError(format!("Failed to resize window surface: {}", e))
+                })?;
+                self.surface_size = Some(surface_size);
             }
-            InteractiveRenderOutput::Layers(layers) => {
-                copy_rgba_to_softbuffer(&layers.base.pixels, &mut buffer);
-                for overlay in &layers.overlays {
-                    blend_rgba_into_softbuffer(&overlay.pixels, &mut buffer);
+
+            let mut buffer = surface.buffer_mut().map_err(|e| {
+                PlottingError::RenderError(format!("Failed to acquire window buffer: {}", e))
+            })?;
+            match frame {
+                InteractiveRenderOutput::Pixels(pixel_data) => {
+                    copy_rgba_to_softbuffer(pixel_data, &mut buffer)
+                }
+                InteractiveRenderOutput::Layers(layers) => {
+                    copy_rgba_to_softbuffer(&layers.base.pixels, &mut buffer);
+                    for overlay in &layers.overlays {
+                        blend_rgba_into_softbuffer(&overlay.pixels, &mut buffer);
+                    }
                 }
             }
-        }
-        if let Some(menu_overlay) = menu_overlay {
-            blend_rgba_into_softbuffer(&menu_overlay, &mut buffer);
-        }
-        buffer.present().map_err(|e| {
-            PlottingError::RenderError(format!("Failed to present window buffer: {}", e))
-        })
+            if let Some(menu_overlay) = menu_overlay {
+                blend_rgba_into_softbuffer(menu_overlay, &mut buffer);
+            }
+            buffer.present().map_err(|e| {
+                PlottingError::RenderError(format!("Failed to present window buffer: {}", e))
+            })
+        })();
+        self.context_menu_overlay_buffer = menu_overlay_buffer;
+        present_result
     }
 
     fn restore_visible_bounds(&mut self, visible_bounds: ViewportRect) -> Result<()> {
@@ -519,11 +527,11 @@ impl InteractiveWindow {
     fn build_action_context(
         &mut self,
         action_id: String,
+        cursor_position_px: ViewportPoint,
     ) -> Result<Option<InteractiveContextMenuActionContext>> {
         let Some(snapshot) = self.renderer.viewport_snapshot()? else {
             return Ok(None);
         };
-        let cursor_position_px = ViewportPoint::new(self.mouse_position.x, self.mouse_position.y);
         let cursor_data_position = cursor_data_position(
             snapshot.visible_bounds,
             snapshot.plot_area,
@@ -585,6 +593,35 @@ impl InteractiveWindow {
         }
     }
 
+    fn spawn_save_png_dialog(&self, image: Image) -> Result<()> {
+        let file_name = self.default_export_filename();
+        let dialog = if let Some(window) = self.window.as_ref() {
+            rfd::AsyncFileDialog::new()
+                .add_filter("PNG image", &["png"])
+                .set_file_name(&file_name)
+                .set_parent(window.as_ref())
+        } else {
+            rfd::AsyncFileDialog::new()
+                .add_filter("PNG image", &["png"])
+                .set_file_name(&file_name)
+        };
+
+        std::thread::Builder::new()
+            .name("ruviz-save-png".to_string())
+            .spawn(move || {
+                let Some(file_handle) = block_on_future(dialog.save_file()) else {
+                    return;
+                };
+                if let Err(err) = write_rgba_png_atomic(file_handle.path(), &image) {
+                    log::warn!("interactive PNG export failed: {err}");
+                }
+            })
+            .map(|_| ())
+            .map_err(|err| {
+                PlottingError::SystemError(format!("failed to spawn save dialog worker: {err}"))
+            })
+    }
+
     fn close_context_menu(&mut self) {
         if self.context_menu.take().is_some() {
             self.interaction_state.needs_redraw = true;
@@ -608,9 +645,11 @@ impl InteractiveWindow {
         })
     }
 
-    fn build_context_menu_entries(&mut self) -> Result<Vec<ContextMenuEntry>> {
+    fn build_context_menu_entries(
+        &mut self,
+        cursor_position_px: ViewportPoint,
+    ) -> Result<Vec<ContextMenuEntry>> {
         let snapshot = self.renderer.viewport_snapshot()?;
-        let cursor_position_px = ViewportPoint::new(self.mouse_position.x, self.mouse_position.y);
         let cursor_available = snapshot
             .as_ref()
             .map(|current| {
@@ -743,7 +782,8 @@ impl InteractiveWindow {
     }
 
     fn build_context_menu(&mut self, position: Point2D) -> Result<Option<ContextMenuState>> {
-        let mut entries = self.build_context_menu_entries()?;
+        let cursor_position_px = ViewportPoint::new(position.x, position.y);
+        let mut entries = self.build_context_menu_entries(cursor_position_px)?;
         if entries.is_empty() {
             return Ok(None);
         }
@@ -804,6 +844,7 @@ impl InteractiveWindow {
             panel_bounds,
             entries,
             hovered_index,
+            trigger_position: position,
         }))
     }
 
@@ -836,6 +877,7 @@ impl InteractiveWindow {
             return;
         };
         if !menu.entries.get(index).is_some_and(|entry| entry.enabled) {
+            // Match native context menus: clicking a disabled item should not dismiss the menu.
             return;
         }
 
@@ -851,17 +893,19 @@ impl InteractiveWindow {
         let Some(entry) = menu.entries.get(index).cloned() else {
             return Ok(());
         };
+        let trigger_position_px =
+            ViewportPoint::new(menu.trigger_position.x, menu.trigger_position.y);
         self.close_context_menu();
 
         match entry.kind {
             ContextMenuEntryKind::Builtin(action) => {
-                self.execute_builtin_context_menu_action(action)
+                self.execute_builtin_context_menu_action(action, trigger_position_px)
             }
             ContextMenuEntryKind::Custom { id } => {
                 let Some(handler) = self.context_menu_action_handler.clone() else {
                     return Ok(());
                 };
-                let Some(context) = self.build_action_context(id)? else {
+                let Some(context) = self.build_action_context(id, trigger_position_px)? else {
                     return Ok(());
                 };
                 handler(context)
@@ -873,6 +917,7 @@ impl InteractiveWindow {
     fn execute_builtin_context_menu_action(
         &mut self,
         action: BuiltinContextMenuAction,
+        cursor_position_px: ViewportPoint,
     ) -> Result<()> {
         match action {
             BuiltinContextMenuAction::ResetView => {
@@ -893,14 +938,7 @@ impl InteractiveWindow {
             }
             BuiltinContextMenuAction::SavePng => {
                 let image = self.capture_visible_view_image()?;
-                let Some(path) = rfd::FileDialog::new()
-                    .add_filter("PNG image", &["png"])
-                    .set_file_name(&self.default_export_filename())
-                    .save_file()
-                else {
-                    return Ok(());
-                };
-                write_rgba_png_atomic(path, &image)
+                self.spawn_save_png_dialog(image)
             }
             BuiltinContextMenuAction::CopyImage => {
                 let image = self.capture_visible_view_image()?;
@@ -910,8 +948,6 @@ impl InteractiveWindow {
                 let Some(snapshot) = self.renderer.viewport_snapshot()? else {
                     return Ok(());
                 };
-                let cursor_position_px =
-                    ViewportPoint::new(self.mouse_position.x, self.mouse_position.y);
                 let Some(cursor_data_position) = cursor_data_position(
                     snapshot.visible_bounds,
                     snapshot.plot_area,
@@ -939,22 +975,29 @@ impl InteractiveWindow {
         }
     }
 
-    fn render_context_menu_overlay(&self) -> Result<Option<Vec<u8>>> {
+    fn render_context_menu_overlay<'a>(
+        &self,
+        pixel_data: &'a mut Vec<u8>,
+    ) -> Result<Option<&'a [u8]>> {
         let Some(menu) = self.context_menu.as_ref() else {
             return Ok(None);
         };
         let width = self.window_size.width;
         let height = self.window_size.height;
-        let mut pixel_data = vec![0u8; (width as usize) * (height as usize) * 4];
+        let required_len = (width as usize)
+            .saturating_mul(height as usize)
+            .saturating_mul(4);
+        pixel_data.resize(required_len, 0);
+        pixel_data.fill(0);
         fill_rgba_rectangle(
-            &mut pixel_data,
+            pixel_data,
             width,
             height,
             menu.panel_bounds,
             Color::new_rgba(28, 31, 36, 244),
         );
         draw_rgba_rectangle_outline(
-            &mut pixel_data,
+            pixel_data,
             width,
             height,
             menu.panel_bounds,
@@ -974,7 +1017,7 @@ impl InteractiveWindow {
                                 + index as f64 * MENU_SEPARATOR_HEIGHT_PX
                         });
                     fill_rgba_rectangle(
-                        &mut pixel_data,
+                        pixel_data,
                         width,
                         height,
                         Rectangle::new(
@@ -992,7 +1035,7 @@ impl InteractiveWindow {
                     };
                     if menu.hovered_index == Some(index) && entry.enabled {
                         fill_rgba_rectangle(
-                            &mut pixel_data,
+                            pixel_data,
                             width,
                             height,
                             Rectangle::new(
@@ -1009,12 +1052,14 @@ impl InteractiveWindow {
         }
 
         let Some(size) = tiny_skia::IntSize::from_wh(width, height) else {
-            return Ok(Some(pixel_data));
+            return Ok(Some(pixel_data.as_slice()));
         };
-        let Some(mut pixmap) =
-            tiny_skia::PixmapMut::from_bytes(&mut pixel_data, size.width(), size.height())
-        else {
-            return Ok(Some(pixel_data));
+        let Some(mut pixmap) = tiny_skia::PixmapMut::from_bytes(
+            pixel_data.as_mut_slice(),
+            size.width(),
+            size.height(),
+        ) else {
+            return Ok(Some(pixel_data.as_slice()));
         };
         let text_renderer = TextRenderer::new();
         let font = FontConfig::new(FontFamily::SansSerif, MENU_FONT_SIZE);
@@ -1039,7 +1084,7 @@ impl InteractiveWindow {
             }
         }
 
-        Ok(Some(pixel_data))
+        Ok(Some(pixel_data.as_slice()))
     }
 
     fn reset_pointer_state(&mut self) {
@@ -1399,7 +1444,10 @@ impl InteractiveWindow {
     fn handle_key_string(&mut self, key: &str) -> Result<()> {
         if let Some(action) = self.builtin_shortcut_action_for_key(key) {
             self.close_context_menu();
-            return self.execute_builtin_context_menu_action(action);
+            return self.execute_builtin_context_menu_action(
+                action,
+                ViewportPoint::new(self.mouse_position.x, self.mouse_position.y),
+            );
         }
 
         match key {
@@ -1876,12 +1924,51 @@ fn cursor_data_position(
         return None;
     }
 
-    let normalized_x = ((position_px.x - plot_area.min.x) / plot_area.width()).clamp(0.0, 1.0);
-    let normalized_y = ((position_px.y - plot_area.min.y) / plot_area.height()).clamp(0.0, 1.0);
+    let plot_width = plot_area.width();
+    let plot_height = plot_area.height();
+    if plot_width <= f64::EPSILON || plot_height <= f64::EPSILON {
+        return None;
+    }
+
+    let normalized_x = ((position_px.x - plot_area.min.x) / plot_width).clamp(0.0, 1.0);
+    let normalized_y = ((position_px.y - plot_area.min.y) / plot_height).clamp(0.0, 1.0);
     Some(ViewportPoint::new(
         visible_bounds.min.x + visible_bounds.width() * normalized_x,
         visible_bounds.max.y - visible_bounds.height() * normalized_y,
     ))
+}
+
+fn block_on_future<F>(future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    use std::{
+        sync::Arc,
+        task::{Context, Poll, Wake, Waker},
+    };
+
+    struct ThreadWaker(std::thread::Thread);
+
+    impl Wake for ThreadWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let mut future = std::pin::pin!(future);
+
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(result) => return result,
+            Poll::Pending => std::thread::park(),
+        }
+    }
 }
 
 /// Default event handler implementation
@@ -2234,6 +2321,33 @@ mod tests {
     }
 
     #[test]
+    fn test_cursor_data_position_returns_none_for_zero_sized_plot_area() {
+        let visible_bounds =
+            ViewportRect::from_points(ViewportPoint::new(0.0, 0.0), ViewportPoint::new(10.0, 10.0));
+        let zero_width_plot_area =
+            ViewportRect::from_points(ViewportPoint::new(4.0, 2.0), ViewportPoint::new(4.0, 8.0));
+        let zero_height_plot_area =
+            ViewportRect::from_points(ViewportPoint::new(2.0, 6.0), ViewportPoint::new(8.0, 6.0));
+
+        assert_eq!(
+            cursor_data_position(
+                visible_bounds,
+                zero_width_plot_area,
+                ViewportPoint::new(4.0, 5.0),
+            ),
+            None
+        );
+        assert_eq!(
+            cursor_data_position(
+                visible_bounds,
+                zero_height_plot_area,
+                ViewportPoint::new(5.0, 6.0),
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn test_blend_rgba_into_softbuffer() {
         let src = [
             0xff, 0x00, 0x00, 0x80, //
@@ -2534,7 +2648,9 @@ mod tests {
             .xlim(0.0, 10.0)
             .ylim(0.0, 10.0)
             .into();
-        let observed = Arc::new(Mutex::new(None::<(String, (u32, u32), bool)>));
+        let observed = Arc::new(Mutex::new(
+            None::<(String, (u32, u32), ViewportPoint, Option<ViewportPoint>)>,
+        ));
         let observed_clone = Arc::clone(&observed);
         let mut window = InteractiveWindowBuilder::new()
             .context_menu(InteractiveContextMenuConfig {
@@ -2545,7 +2661,8 @@ mod tests {
                 *observed_clone.lock().expect("callback lock should succeed") = Some((
                     context.action_id,
                     context.window_size_px,
-                    context.cursor_data_position.is_some(),
+                    context.cursor_position_px,
+                    context.cursor_data_position,
                 ));
                 Ok(())
             })
@@ -2558,8 +2675,15 @@ mod tests {
             .expect("initial render should populate session geometry");
 
         let center = plot_area_center(&window);
+        let snapshot = viewport_snapshot(&window);
+        let expected_cursor_data = cursor_data_position(
+            snapshot.visible_bounds,
+            snapshot.plot_area,
+            ViewportPoint::new(center.x, center.y),
+        );
         open_context_menu(&mut window, center);
         let custom_center = context_menu_entry_center(&window, "Export CSV");
+        window.mouse_position = PhysicalPosition::new(custom_center.x, custom_center.y);
         window
             .handle_left_button_pressed(custom_center)
             .expect("custom action click should succeed");
@@ -2570,7 +2694,8 @@ mod tests {
             Some((
                 "export-csv".to_string(),
                 (window.window_size.width, window.window_size.height),
-                true,
+                ViewportPoint::new(center.x, center.y),
+                expected_cursor_data,
             ))
         );
     }

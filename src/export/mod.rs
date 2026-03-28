@@ -243,12 +243,16 @@ pub(crate) fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> R
         )));
     }
 
-    let mut encoded = Vec::new();
-    PngEncoder::new(&mut encoded)
-        .write_image(&image.pixels, image.width, image.height, ColorType::Rgba8)
-        .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))?;
-
-    write_bytes_atomic(path, &encoded)
+    write_with_atomic_writer(path, |writer| {
+        PngEncoder::new(writer)
+            .write_image(
+                &image.pixels,
+                image.width,
+                image.height,
+                ColorType::Rgba8.into(),
+            )
+            .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))
+    })
 }
 
 pub(crate) fn write_with_atomic_writer<P, F>(path: P, writer: F) -> Result<()>
