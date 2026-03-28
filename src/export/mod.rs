@@ -247,8 +247,10 @@ pub(crate) fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> R
     }
 
     write_with_atomic_writer(path, |writer| {
-        // Keep PNG export settings explicit so output remains predictable
-        // across dependency updates without forcing oversized user-facing PNGs.
+        // Explicit settings keep encoder output stable across `image` crate
+        // updates. `CompressionType::Fast` trades a bit of file size for lower
+        // encode latency, while `FilterType::Adaptive` retains the normal
+        // per-scanline filtering step.
         PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Adaptive)
             .write_image(
                 &image.pixels,
