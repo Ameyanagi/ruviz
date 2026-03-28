@@ -110,6 +110,7 @@ pub struct InteractiveContextMenuConfig {
     pub show_set_home_view: bool,
     pub show_go_to_home_view: bool,
     pub show_save_png: bool,
+    /// Enables the built-in `Cmd/Ctrl+C` shortcut to copy the current plot image.
     pub show_copy_image: bool,
     pub show_copy_cursor_coordinates: bool,
     pub show_copy_visible_bounds: bool,

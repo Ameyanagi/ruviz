@@ -2635,10 +2635,12 @@ fn draw_rect_outline(
                 continue;
             }
             let index = ((y * width + x) * 4) as usize;
-            pixels[index] = blend_channel(pixels[index], color.r, alpha);
-            pixels[index + 1] = blend_channel(pixels[index + 1], color.g, alpha);
-            pixels[index + 2] = blend_channel(pixels[index + 2], color.b, alpha);
-            pixels[index + 3] = color.a;
+            if index + 3 < pixels.len() {
+                pixels[index] = blend_channel(pixels[index], color.r, alpha);
+                pixels[index + 1] = blend_channel(pixels[index + 1], color.g, alpha);
+                pixels[index + 2] = blend_channel(pixels[index + 2], color.b, alpha);
+                pixels[index + 3] = color.a;
+            }
         }
     }
 }
@@ -3113,6 +3115,24 @@ mod tests {
         assert!(
             overlay.pixels[border_index + 3] > overlay.pixels[interior_index + 3],
             "brush outline should be more visible than the fill interior"
+        );
+    }
+
+    #[test]
+    fn test_draw_rect_outline_clamps_to_buffer_bounds() {
+        let mut pixels = vec![0u8; 4 * 4 * 4];
+
+        draw_rect_outline(
+            &mut pixels,
+            (4, 4),
+            ViewportRect::from_points(ViewportPoint::new(-1.0, -1.0), ViewportPoint::new(3.0, 3.0)),
+            Color::new_rgba(255, 128, 64, 255),
+            2,
+        );
+
+        assert!(
+            pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+            "outline should still draw visible pixels when clamped to the frame"
         );
     }
 

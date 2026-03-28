@@ -7047,6 +7047,8 @@ impl Plot {
     }
 
     fn should_auto_use_datashader(series_list: &[PlotSeries], total_points: usize) -> bool {
+        // Keep auto-selection conservative for mixed charts until we can shade only the
+        // aggregation-safe series without changing the semantics of the rest of the plot.
         DataShader::should_activate(total_points)
             && series_list
                 .iter()
