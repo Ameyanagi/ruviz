@@ -92,43 +92,63 @@ impl<T> Data1D<T> for &[T] {
     }
 }
 
+#[cfg(feature = "ndarray_support")]
+fn ndarray_len_1d<T, S>(array: &ndarray::ArrayBase<S, ndarray::Ix1>) -> usize
+where
+    S: ndarray::Data<Elem = T>,
+{
+    <ndarray::ArrayBase<S, ndarray::Ix1>>::len(array)
+}
+
+#[cfg(feature = "ndarray_support")]
+fn ndarray_get_1d<T, S>(array: &ndarray::ArrayBase<S, ndarray::Ix1>, index: usize) -> Option<&T>
+where
+    S: ndarray::Data<Elem = T>,
+{
+    let array_ref: &ndarray::ArrayRef<T, ndarray::Ix1> = std::borrow::Borrow::borrow(array);
+    <ndarray::ArrayRef<T, ndarray::Ix1>>::get(array_ref, index)
+}
+
+#[cfg(feature = "ndarray_support")]
+fn ndarray_iter_1d<'a, T, S>(
+    array: &'a ndarray::ArrayBase<S, ndarray::Ix1>,
+) -> impl Iterator<Item = &'a T> + 'a
+where
+    S: ndarray::Data<Elem = T>,
+{
+    let array_ref: &ndarray::ArrayRef<T, ndarray::Ix1> = std::borrow::Borrow::borrow(array);
+    <ndarray::ArrayRef<T, ndarray::Ix1>>::iter(array_ref)
+}
+
 // Optional feature-gated implementations
 
 #[cfg(feature = "ndarray_support")]
 impl<T> Data1D<T> for ndarray::Array1<T> {
     fn len(&self) -> usize {
-        self.shape()[0]
+        ndarray_len_1d(self)
     }
 
     fn get(&self, index: usize) -> Option<&T> {
-        if index < self.shape()[0] {
-            Some(&self[index])
-        } else {
-            None
-        }
+        ndarray_get_1d(self, index)
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &T> + '_> {
-        Box::new((0..self.shape()[0]).map(move |index| &self[index]))
+        Box::new(ndarray_iter_1d(self))
     }
 }
 
 #[cfg(feature = "ndarray_support")]
 impl<'a, T> Data1D<T> for ndarray::ArrayView1<'a, T> {
     fn len(&self) -> usize {
-        self.shape()[0]
+        ndarray_len_1d(self)
     }
 
     fn get(&self, index: usize) -> Option<&T> {
-        if index < self.shape()[0] {
-            Some(&self[index])
-        } else {
-            None
-        }
+        ndarray_get_1d(self, index)
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = &T> + '_> {
-        Box::new((0..self.shape()[0]).map(move |index| &self[index]))
+        Box::new(ndarray_iter_1d(self))
     }
 }
 
@@ -286,28 +306,28 @@ macro_rules! impl_numeric_data_1d_for_primitive_collections {
             #[cfg(feature = "ndarray_support")]
             impl NumericData1D for ndarray::Array1<$ty> {
                 fn len(&self) -> usize {
-                    self.shape()[0]
+                    ndarray_len_1d(self)
                 }
 
                 fn try_collect_f64_with_policy(
                     &self,
                     _null_policy: NullPolicy,
                 ) -> Result<Vec<f64>, PlottingError> {
-                    Ok((0..self.shape()[0]).map(|index| self[index] as f64).collect())
+                    Ok(ndarray_iter_1d(self).map(|value| *value as f64).collect())
                 }
             }
 
             #[cfg(feature = "ndarray_support")]
             impl<'a> NumericData1D for ndarray::ArrayView1<'a, $ty> {
                 fn len(&self) -> usize {
-                    self.shape()[0]
+                    ndarray_len_1d(self)
                 }
 
                 fn try_collect_f64_with_policy(
                     &self,
                     _null_policy: NullPolicy,
                 ) -> Result<Vec<f64>, PlottingError> {
-                    Ok((0..self.shape()[0]).map(|index| self[index] as f64).collect())
+                    Ok(ndarray_iter_1d(self).map(|value| *value as f64).collect())
                 }
             }
         )+

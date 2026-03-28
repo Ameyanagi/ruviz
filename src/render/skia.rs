@@ -3116,7 +3116,11 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Consume the renderer and convert to an Image
+    /// Consume the renderer and convert to an `Image`.
+    ///
+    /// The returned pixel buffer preserves tiny-skia's native premultiplied
+    /// alpha representation so it can be composed back into other pixmaps
+    /// without a lossy round-trip.
     pub fn into_image(self) -> Image {
         Image {
             width: self.width,
@@ -3125,7 +3129,7 @@ impl SkiaRenderer {
         }
     }
 
-    /// Save the current pixmap as PNG
+    /// Save the current pixmap as a PNG with straight-alpha RGBA encoding.
     pub fn save_png<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let image = Image {
             width: self.width,

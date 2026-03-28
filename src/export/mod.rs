@@ -247,10 +247,9 @@ pub(crate) fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> R
     }
 
     write_with_atomic_writer(path, |writer| {
-        // Keep PNG export settings explicit so DPI-sensitive raster tests stay
-        // stable across image crate updates instead of drifting with default
-        // compression/filter heuristics.
-        PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::NoFilter)
+        // Keep PNG export settings explicit so output remains predictable
+        // across dependency updates without forcing oversized user-facing PNGs.
+        PngEncoder::new_with_quality(writer, CompressionType::Fast, FilterType::Adaptive)
             .write_image(
                 &image.pixels,
                 image.width,
