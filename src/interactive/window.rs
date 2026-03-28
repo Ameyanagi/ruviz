@@ -592,11 +592,11 @@ impl InteractiveWindow {
     }
 
     fn update_context_menu_hover(&mut self, hovered_index: Option<usize>) {
-        if let Some(menu) = self.context_menu.as_mut()
-            && menu.hovered_index != hovered_index
-        {
-            menu.hovered_index = hovered_index;
-            self.interaction_state.needs_redraw = true;
+        if let Some(menu) = self.context_menu.as_mut() {
+            if menu.hovered_index != hovered_index {
+                menu.hovered_index = hovered_index;
+                self.interaction_state.needs_redraw = true;
+            }
         }
     }
 
