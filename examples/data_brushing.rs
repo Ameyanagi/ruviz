@@ -1,79 +1,49 @@
-//! Data brushing example with multiple linked plots
+//! Selection-focused interactive example with multiple derived views
 //!
-//! Demonstrates interactive selection across multiple synchronized plots.
-//! When you select data in one plot, corresponding points are highlighted
-//! in all linked plots.
+//! Demonstrates the linked-data setup behind brushing workflows.
+//! The current public window shows a single interactive plot while the
+//! linked multi-plot layout remains a follow-up item.
 //!
 //! Controls:
-//! - Left click + drag: Brush select data points
 //! - Mouse wheel: Zoom in/out
+//! - Left click + drag: Box zoom
 //! - Right click + drag: Pan
-//! - Delete key: Clear selection
-//! - Escape: Reset all views
+//! - Escape: Reset view
 
 use ruviz::prelude::*;
-use std::f64::consts::PI;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    println!("🎮 Starting data brushing example...");
+fn main() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create current-thread Tokio runtime for interactive example")
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
+    println!("Starting data brushing example...");
     println!("Controls:");
-    println!("  - Left click + drag: Brush select data points");
     println!("  - Mouse wheel: Zoom in/out");
+    println!("  - Left click + drag: Box zoom");
     println!("  - Right click + drag: Pan");
-    println!("  - Delete key: Clear selection");
-    println!("  - Escape: Reset all views");
+    println!("  - Escape: Reset view");
 
     // Generate correlated data for demonstration
     let n_points = 500;
     let data = generate_correlated_data(n_points);
 
-    println!("📊 Generated {} correlated data points", n_points);
+    println!("Generated {} correlated data points", n_points);
 
     // Create multiple plots showing different aspects of the same data
 
-    // Plot 1: Time series
-    let time_plot = Plot::new()
-        .line(&data.time, &data.values)
-        .scatter(&data.time, &data.values)
-        .title("Time Series View")
-        .xlabel("Time")
-        .ylabel("Value")
-        .legend(Position::TopLeft);
-
-    // Plot 2: Phase space (derivative vs value)
-    let phase_plot = Plot::new()
-        .scatter(&data.values, &data.derivatives)
-        .title("Phase Space View")
-        .xlabel("Value")
-        .ylabel("Derivative")
-        .legend(Position::TopRight);
-
-    // Plot 3: Correlation plot
-    let correlation_plot = Plot::new()
-        .scatter(&data.values, &data.noise)
-        .title("Value vs Noise Correlation")
-        .xlabel("Value")
-        .ylabel("Noise Component")
-        .legend(Position::BottomRight);
-
-    // Plot 4: Histogram of values
-    // Note: This would use the histogram API once implemented
-    let histogram_plot = Plot::new()
-        .scatter(&data.histogram_bins, &data.histogram_counts)
-        .title("Value Distribution")
-        .xlabel("Value Bins")
-        .ylabel("Frequency")
-        .legend(Position::TopLeft);
-
-    println!("📈 Created 4 linked plots for data brushing");
+    println!("Created 4 derived plots for the brushing workflow");
 
     // In a real implementation, we would show all plots in a multi-panel layout
     // For this example, we'll focus on the time series plot
 
     #[cfg(feature = "interactive")]
     {
-        println!("🚀 Opening interactive data brushing demo...");
+        println!("Opening interactive data brushing demo...");
         println!("Note: Full multi-plot brushing requires subplot layout implementation");
 
         // Create an enhanced plot with brushing capabilities
@@ -84,8 +54,42 @@ async fn main() -> Result<()> {
 
     #[cfg(not(feature = "interactive"))]
     {
-        println!("⚠️ Interactive features not enabled.");
+        println!("Interactive features not enabled.");
         println!("To enable: cargo run --features interactive --example data_brushing");
+
+        // Plot 1: Time series
+        let time_plot = Plot::new()
+            .line(&data.time, &data.values)
+            .scatter(&data.time, &data.values)
+            .title("Time Series View")
+            .xlabel("Time")
+            .ylabel("Value")
+            .legend(Position::TopLeft);
+
+        // Plot 2: Phase space (derivative vs value)
+        let phase_plot = Plot::new()
+            .scatter(&data.values, &data.derivatives)
+            .title("Phase Space View")
+            .xlabel("Value")
+            .ylabel("Derivative")
+            .legend(Position::TopRight);
+
+        // Plot 3: Correlation plot
+        let correlation_plot = Plot::new()
+            .scatter(&data.values, &data.noise)
+            .title("Value vs Noise Correlation")
+            .xlabel("Value")
+            .ylabel("Noise Component")
+            .legend(Position::BottomRight);
+
+        // Plot 4: Histogram of values
+        // Note: This would use the histogram API once implemented
+        let histogram_plot = Plot::new()
+            .scatter(&data.histogram_bins, &data.histogram_counts)
+            .title("Value Distribution")
+            .xlabel("Value Bins")
+            .ylabel("Frequency")
+            .legend(Position::TopLeft);
 
         // Save static versions
         time_plot.save("examples/output/data_brushing_time_series.png")?;
@@ -93,18 +97,19 @@ async fn main() -> Result<()> {
         correlation_plot.save("examples/output/data_brushing_correlation.png")?;
         histogram_plot.save("examples/output/data_brushing_histogram.png")?;
 
-        println!("💾 Saved static versions:");
+        println!("Saved static versions:");
         println!("  - examples/output/data_brushing_time_series.png");
         println!("  - examples/output/data_brushing_phase_space.png");
         println!("  - examples/output/data_brushing_correlation.png");
         println!("  - examples/output/data_brushing_histogram.png");
     }
 
-    println!("✅ Data brushing example completed!");
+    println!("Data brushing example completed!");
     Ok(())
 }
 
 /// Generate correlated data for demonstration
+#[cfg_attr(feature = "interactive", allow(dead_code))]
 struct CorrelatedData {
     time: Vec<f64>,
     values: Vec<f64>,
@@ -187,6 +192,7 @@ fn create_brushing_demo_plot(data: &CorrelatedData) -> Result<Plot> {
 }
 
 /// Simulate data brushing logic
+#[cfg_attr(not(test), allow(dead_code))]
 fn simulate_brushing_selection(
     data: &CorrelatedData,
     selection_region: (f64, f64, f64, f64),

@@ -4,18 +4,27 @@
 //!
 //! Controls:
 //! - Mouse wheel: Zoom in/out
-//! - Left click + drag: Pan
-//! - Double click: Reset view
-//! - Escape: Exit
+//! - Left click + drag: Box zoom
+//! - Right click + drag: Pan
+//! - Escape: Reset view
+//! - Close window: Exit
 
 use ruviz::prelude::*;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create current-thread Tokio runtime for interactive example")
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     println!("Starting basic interactive plot example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
-    println!("  - Left click + drag: Pan");
+    println!("  - Left click + drag: Box zoom");
+    println!("  - Right click + drag: Pan");
     println!("  - Escape: Reset view");
     println!("  - Close window to exit");
 

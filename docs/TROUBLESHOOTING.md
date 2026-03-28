@@ -428,7 +428,7 @@ A: WASM support is planned but not yet implemented. Follow GitHub issues for upd
 
 **Q: Does ruviz support interactive plots?**
 
-A: Yes, experimentally. Enable the `interactive` feature and start from `examples/basic_interaction.rs` or `show_interactive(plot).await`.
+A: Yes, experimentally. Enable the `interactive` feature and start from `examples/basic_interaction.rs`, `examples/interactive_multi_series.rs`, `examples/interactive_scatter_clusters.rs`, or `examples/interactive_heatmap.rs`. For GIF export examples instead of live windows, enable `animation` and run `examples/animation_basic.rs` or `examples/animation_wave.rs`.
 
 **Q: How does ruviz compare to matplotlib/plotly?**
 

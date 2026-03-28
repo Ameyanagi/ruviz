@@ -12,8 +12,29 @@ use crate::{
     },
 };
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tiny_skia::*;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ClipMaskKey {
+    x_bits: u32,
+    y_bits: u32,
+    width_bits: u32,
+    height_bits: u32,
+}
+
+impl ClipMaskKey {
+    fn new((x, y, width, height): (f32, f32, f32, f32)) -> Self {
+        Self {
+            x_bits: x.to_bits(),
+            y_bits: y.to_bits(),
+            width_bits: width.to_bits(),
+            height_bits: height.to_bits(),
+        }
+    }
+}
 
 /// Tiny-skia based renderer with cosmic-text for professional typography
 pub struct SkiaRenderer {
@@ -28,6 +49,7 @@ pub struct SkiaRenderer {
     render_scale: RenderScale,
     /// Active text rendering engine.
     text_engine_mode: TextEngineMode,
+    clip_mask_cache: HashMap<ClipMaskKey, Arc<Mask>>,
 }
 
 impl SkiaRenderer {
@@ -65,6 +87,7 @@ impl SkiaRenderer {
             font_config,
             render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
+            clip_mask_cache: HashMap::new(),
         })
     }
 
@@ -173,6 +196,36 @@ impl SkiaRenderer {
         width: f32,
         style: LineStyle,
     ) -> Result<()> {
+        self.draw_line_with_mask(x1, y1, x2, y2, color, width, style, None)
+    }
+
+    /// Draw a line clipped to a rectangular region
+    pub fn draw_line_clipped(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        width: f32,
+        style: LineStyle,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_line_with_mask(x1, y1, x2, y2, color, width, style, Some(mask.as_ref()))
+    }
+
+    fn draw_line_with_mask(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        width: f32,
+        style: LineStyle,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
         let mut paint = Paint::default();
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
@@ -195,8 +248,7 @@ impl SkiaRenderer {
             "Failed to create line path".to_string(),
         ))?;
 
-        self.pixmap
-            .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
 
         Ok(())
     }
@@ -208,6 +260,17 @@ impl SkiaRenderer {
         color: Color,
         width: f32,
         style: LineStyle,
+    ) -> Result<()> {
+        self.draw_polyline_with_mask(points, color, width, style, None)
+    }
+
+    fn draw_polyline_with_mask(
+        &mut self,
+        points: &[(f32, f32)],
+        color: Color,
+        width: f32,
+        style: LineStyle,
+        mask: Option<&Mask>,
     ) -> Result<()> {
         if points.len() < 2 {
             return Ok(());
@@ -240,8 +303,7 @@ impl SkiaRenderer {
             "Failed to create polyline path".to_string(),
         ))?;
 
-        self.pixmap
-            .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
 
         Ok(())
     }
@@ -255,16 +317,25 @@ impl SkiaRenderer {
         style: LineStyle,
         clip_rect: (f32, f32, f32, f32), // (x, y, width, height)
     ) -> Result<()> {
-        if points.len() < 2 {
-            return Ok(());
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_polyline_with_mask(points, color, width, style, Some(mask.as_ref()))
+    }
+
+    fn get_clip_mask(&mut self, clip_rect: (f32, f32, f32, f32)) -> Result<Arc<Mask>> {
+        let key = ClipMaskKey::new(clip_rect);
+        if let Some(mask) = self.clip_mask_cache.get(&key) {
+            return Ok(Arc::clone(mask));
         }
 
-        // Create clip mask
+        let mask = Arc::new(self.create_clip_mask(clip_rect)?);
+        self.clip_mask_cache.insert(key, Arc::clone(&mask));
+        Ok(mask)
+    }
+
+    fn create_clip_mask(&self, clip_rect: (f32, f32, f32, f32)) -> Result<Mask> {
         let mut mask = Mask::new(self.width, self.height).ok_or(PlottingError::RenderError(
             "Failed to create clip mask".to_string(),
         ))?;
-
-        // Create clip path from rectangle
         let clip_path = {
             let mut pb = PathBuilder::new();
             let (x, y, w, h) = clip_rect;
@@ -277,39 +348,34 @@ impl SkiaRenderer {
                 "Failed to create clip path".to_string(),
             ))?
         };
-
-        // Fill mask with clip region
         mask.fill_path(&clip_path, FillRule::Winding, true, Transform::identity());
+        Ok(mask)
+    }
 
-        let mut paint = Paint::default();
-        paint.set_color(color.to_tiny_skia_color());
-        paint.anti_alias = true;
-
-        let mut stroke = Stroke {
-            width: width.max(0.1),
-            line_cap: LineCap::Round,
-            line_join: LineJoin::Round,
-            ..Stroke::default()
-        };
-
-        // Apply line style (dash lengths scale with DPI for physical consistency)
-        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
-            stroke.dash = StrokeDash::new(dash_pattern, 0.0);
-        }
-
-        let mut path = PathBuilder::new();
-        path.move_to(points[0].0, points[0].1);
-
-        for &(x, y) in &points[1..] {
-            path.line_to(x, y);
-        }
-
-        let path = path.finish().ok_or(PlottingError::RenderError(
-            "Failed to create polyline path".to_string(),
-        ))?;
-
+    fn fill_path_masked(
+        &mut self,
+        path: &tiny_skia::Path,
+        paint: &Paint,
+        fill_rule: FillRule,
+        transform: Transform,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
         self.pixmap
-            .stroke_path(&path, &paint, &stroke, Transform::identity(), Some(&mask));
+            .fill_path(path, paint, fill_rule, transform, mask);
+
+        Ok(())
+    }
+
+    fn stroke_path_masked(
+        &mut self,
+        path: &tiny_skia::Path,
+        paint: &Paint,
+        stroke: &Stroke,
+        transform: Transform,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
+        self.pixmap
+            .stroke_path(path, paint, stroke, transform, mask);
 
         Ok(())
     }
@@ -323,6 +389,18 @@ impl SkiaRenderer {
         color: Color,
         filled: bool,
     ) -> Result<()> {
+        self.draw_circle_with_mask(x, y, radius, color, filled, None)
+    }
+
+    fn draw_circle_with_mask(
+        &mut self,
+        x: f32,
+        y: f32,
+        radius: f32,
+        color: Color,
+        filled: bool,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
         let mut paint = Paint::default();
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
@@ -334,17 +412,16 @@ impl SkiaRenderer {
         ))?;
 
         if filled {
-            self.pixmap.fill_path(
+            self.fill_path_masked(
                 &path,
                 &paint,
                 FillRule::Winding,
                 Transform::identity(),
-                None,
-            );
+                mask,
+            )?;
         } else {
             let stroke = Stroke::default();
-            self.pixmap
-                .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
         }
 
         Ok(())
@@ -358,6 +435,33 @@ impl SkiaRenderer {
         height: f32,
         color: Color,
         filled: bool,
+    ) -> Result<()> {
+        self.draw_rectangle_with_mask(x, y, width, height, color, filled, None)
+    }
+
+    pub fn draw_rectangle_clipped(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        filled: bool,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_rectangle_with_mask(x, y, width, height, color, filled, Some(mask.as_ref()))
+    }
+
+    fn draw_rectangle_with_mask(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        filled: bool,
+        mask: Option<&Mask>,
     ) -> Result<()> {
         let rect = Rect::from_xywh(x, y, width, height).ok_or(PlottingError::RenderError(
             "Invalid rectangle dimensions".to_string(),
@@ -384,13 +488,13 @@ impl SkiaRenderer {
             fill_paint.anti_alias = true;
 
             // Fill the rectangle
-            self.pixmap.fill_path(
+            self.fill_path_masked(
                 &path,
                 &fill_paint,
                 FillRule::Winding,
                 Transform::identity(),
-                None,
-            );
+                mask,
+            )?;
 
             // Add professional border for definition
             let mut border_paint = Paint::default();
@@ -414,8 +518,7 @@ impl SkiaRenderer {
                 ..Stroke::default()
             };
 
-            self.pixmap
-                .stroke_path(&path, &border_paint, &stroke, Transform::identity(), None);
+            self.stroke_path_masked(&path, &border_paint, &stroke, Transform::identity(), mask)?;
         } else {
             // Outline only
             let mut paint = Paint::default();
@@ -423,8 +526,7 @@ impl SkiaRenderer {
             paint.anti_alias = true;
 
             let stroke = Stroke::default();
-            self.pixmap
-                .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
         }
 
         Ok(())
@@ -649,13 +751,13 @@ impl SkiaRenderer {
         paint.anti_alias = true;
 
         // Draw with clip mask
-        self.pixmap.fill_path(
+        self.fill_path_masked(
             &path,
             &paint,
             FillRule::Winding,
             Transform::identity(),
             Some(&mask),
-        );
+        )?;
 
         Ok(())
     }
@@ -708,39 +810,86 @@ impl SkiaRenderer {
         style: MarkerStyle,
         color: Color,
     ) -> Result<()> {
+        self.draw_marker_with_mask(x, y, size, style, color, None)
+    }
+
+    pub fn draw_marker_clipped(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_marker_with_mask(x, y, size, style, color, Some(mask.as_ref()))
+    }
+
+    fn draw_marker_with_mask(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
         let radius = size * 0.5;
 
         match style {
-            MarkerStyle::Circle => {
-                self.draw_circle(x, y, radius, color, true)?;
+            MarkerStyle::Circle | MarkerStyle::CircleOpen => {
+                self.draw_circle_with_mask(x, y, radius, color, style.is_filled(), mask)?;
             }
-            MarkerStyle::Square => {
+            MarkerStyle::Square | MarkerStyle::SquareOpen => {
                 let half_size = radius;
-                self.draw_rectangle(x - half_size, y - half_size, size, size, color, true)?;
+                self.draw_rectangle_with_mask(
+                    x - half_size,
+                    y - half_size,
+                    size,
+                    size,
+                    color,
+                    style.is_filled(),
+                    mask,
+                )?;
             }
-            MarkerStyle::Triangle => {
+            MarkerStyle::Triangle | MarkerStyle::TriangleOpen | MarkerStyle::TriangleDown => {
                 let mut paint = Paint::default();
                 paint.set_color(color.to_tiny_skia_color());
                 paint.anti_alias = true;
 
                 let mut path = PathBuilder::new();
-                path.move_to(x, y - radius);
-                path.line_to(x - radius * 0.866, y + radius * 0.5); // 60 degree angles
-                path.line_to(x + radius * 0.866, y + radius * 0.5);
+                if style == MarkerStyle::TriangleDown {
+                    path.move_to(x, y + radius);
+                    path.line_to(x - radius * 0.866, y - radius * 0.5);
+                    path.line_to(x + radius * 0.866, y - radius * 0.5);
+                } else {
+                    path.move_to(x, y - radius);
+                    path.line_to(x - radius * 0.866, y + radius * 0.5); // 60 degree angles
+                    path.line_to(x + radius * 0.866, y + radius * 0.5);
+                }
                 path.close();
 
                 let path = path.finish().ok_or(PlottingError::RenderError(
                     "Failed to create triangle path".to_string(),
                 ))?;
-                self.pixmap.fill_path(
-                    &path,
-                    &paint,
-                    FillRule::Winding,
-                    Transform::identity(),
-                    None,
-                );
+                if style.is_filled() {
+                    self.fill_path_masked(
+                        &path,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        mask,
+                    )?;
+                } else {
+                    let stroke = Stroke {
+                        width: (size * 0.15).max(1.0),
+                        ..Stroke::default()
+                    };
+                    self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+                }
             }
-            MarkerStyle::Diamond => {
+            MarkerStyle::Diamond | MarkerStyle::DiamondOpen => {
                 let mut paint = Paint::default();
                 paint.set_color(color.to_tiny_skia_color());
                 paint.anti_alias = true;
@@ -755,18 +904,26 @@ impl SkiaRenderer {
                 let path = path.finish().ok_or(PlottingError::RenderError(
                     "Failed to create diamond path".to_string(),
                 ))?;
-                self.pixmap.fill_path(
-                    &path,
-                    &paint,
-                    FillRule::Winding,
-                    Transform::identity(),
-                    None,
-                );
+                if style.is_filled() {
+                    self.fill_path_masked(
+                        &path,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        mask,
+                    )?;
+                } else {
+                    let stroke = Stroke {
+                        width: (size * 0.15).max(1.0),
+                        ..Stroke::default()
+                    };
+                    self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+                }
             }
             MarkerStyle::Plus => {
                 // Draw cross with lines - line width proportional to marker size
                 let marker_line_width = (size * 0.25).max(1.0);
-                self.draw_line(
+                self.draw_line_with_mask(
                     x - radius,
                     y,
                     x + radius,
@@ -774,8 +931,9 @@ impl SkiaRenderer {
                     color,
                     marker_line_width,
                     LineStyle::Solid,
+                    mask,
                 )?;
-                self.draw_line(
+                self.draw_line_with_mask(
                     x,
                     y - radius,
                     x,
@@ -783,13 +941,14 @@ impl SkiaRenderer {
                     color,
                     marker_line_width,
                     LineStyle::Solid,
+                    mask,
                 )?;
             }
             MarkerStyle::Cross => {
                 // Draw X with lines - line width proportional to marker size
                 let marker_line_width = (size * 0.25).max(1.0);
                 let offset = radius * 0.707; // sin(45°)
-                self.draw_line(
+                self.draw_line_with_mask(
                     x - offset,
                     y - offset,
                     x + offset,
@@ -797,8 +956,9 @@ impl SkiaRenderer {
                     color,
                     marker_line_width,
                     LineStyle::Solid,
+                    mask,
                 )?;
-                self.draw_line(
+                self.draw_line_with_mask(
                     x - offset,
                     y + offset,
                     x + offset,
@@ -806,11 +966,52 @@ impl SkiaRenderer {
                     color,
                     marker_line_width,
                     LineStyle::Solid,
+                    mask,
                 )?;
             }
-            _ => {
-                // For other marker types, fallback to circle
-                self.draw_circle(x, y, radius, color, style.is_filled())?;
+            MarkerStyle::Star => {
+                let marker_line_width = (size * 0.22).max(1.0);
+                self.draw_line_with_mask(
+                    x - radius,
+                    y,
+                    x + radius,
+                    y,
+                    color,
+                    marker_line_width,
+                    LineStyle::Solid,
+                    mask,
+                )?;
+                self.draw_line_with_mask(
+                    x,
+                    y - radius,
+                    x,
+                    y + radius,
+                    color,
+                    marker_line_width,
+                    LineStyle::Solid,
+                    mask,
+                )?;
+                let offset = radius * 0.707;
+                self.draw_line_with_mask(
+                    x - offset,
+                    y - offset,
+                    x + offset,
+                    y + offset,
+                    color,
+                    marker_line_width,
+                    LineStyle::Solid,
+                    mask,
+                )?;
+                self.draw_line_with_mask(
+                    x - offset,
+                    y + offset,
+                    x + offset,
+                    y - offset,
+                    color,
+                    marker_line_width,
+                    LineStyle::Solid,
+                    mask,
+                )?;
             }
         }
 
@@ -3956,6 +4157,30 @@ mod tests {
             .all(|channel| *channel < 220)
     }
 
+    fn count_red_pixels_outside_rect(image: &Image, rect: Rect) -> usize {
+        let left = rect.left().floor() as i32;
+        let right = rect.right().ceil() as i32;
+        let top = rect.top().floor() as i32;
+        let bottom = rect.bottom().ceil() as i32;
+        let mut count = 0usize;
+
+        for y in 0..image.height as i32 {
+            for x in 0..image.width as i32 {
+                if x >= left && x < right && y >= top && y < bottom {
+                    continue;
+                }
+
+                let idx = ((y as u32 * image.width + x as u32) * 4) as usize;
+                let pixel = &image.pixels[idx..idx + 4];
+                if pixel[3] > 0 && pixel[0] > 160 && pixel[1] < 80 && pixel[2] < 80 {
+                    count += 1;
+                }
+            }
+        }
+
+        count
+    }
+
     #[test]
     fn test_renderer_creation() {
         let theme = Theme::default();
@@ -4108,6 +4333,31 @@ mod tests {
                 false,
             )
             .expect("collapsed ranges should use centered label placement");
+    }
+
+    #[test]
+    fn test_draw_polyline_clipped_keeps_pixels_inside_clip_rect() {
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(120, 120, theme).unwrap();
+        let clip_rect = Rect::from_xywh(20.0, 20.0, 80.0, 80.0).unwrap();
+
+        renderer
+            .draw_polyline_clipped(
+                &[(20.0, 20.0), (100.0, 100.0)],
+                Color::new(220, 20, 20),
+                18.0,
+                LineStyle::Solid,
+                (
+                    clip_rect.x(),
+                    clip_rect.y(),
+                    clip_rect.width(),
+                    clip_rect.height(),
+                ),
+            )
+            .unwrap();
+
+        let image = renderer.into_image();
+        assert_eq!(count_red_pixels_outside_rect(&image, clip_rect), 0);
     }
 
     #[cfg(feature = "typst-math")]

@@ -270,7 +270,7 @@ impl DataShader {
 
     /// Check if DataShader should be activated for the given point count
     pub fn should_activate(point_count: usize) -> bool {
-        point_count > 100_000
+        point_count >= 100_000
     }
 
     /// Create canvas size recommendation based on data points and dimensions
@@ -414,6 +414,7 @@ mod tests {
     fn test_should_activate() {
         assert!(!DataShader::should_activate(1000));
         assert!(!DataShader::should_activate(50000));
+        assert!(DataShader::should_activate(100000));
         assert!(DataShader::should_activate(150000));
         assert!(DataShader::should_activate(1000000));
     }
