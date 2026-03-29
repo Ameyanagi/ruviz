@@ -353,6 +353,8 @@ jobs:
 
       - name: Publish npm package
         if: steps.npm-version.outputs.published != 'true'
+        # npm Trusted Publishing is configured for the `ruviz` package, so
+        # GitHub OIDC supplies publish authentication and provenance here.
         run: cd packages/ruviz-web && npm publish --access public --provenance
 
       - name: Skip npm publish
