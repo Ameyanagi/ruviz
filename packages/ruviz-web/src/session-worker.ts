@@ -269,7 +269,6 @@ self.onmessage = async (event: MessageEvent<WorkerEnvelope>) => {
       }
       case "destroy": {
         getSession().destroy();
-        session = null;
         postResponse("ack", requestId);
         return;
       }

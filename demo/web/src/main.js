@@ -507,6 +507,11 @@ async function main() {
   window.__ruvizDemo = {
     capabilities,
     directExportPlot,
+    sdk: {
+      createCanvasSession,
+      createPlot,
+      createSineSignal,
+    },
     mainSession,
     workerSession,
     temporalSession,

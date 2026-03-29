@@ -78,6 +78,108 @@ test("temporal playback updates the signal-driven canvas", async ({ page }) => {
   expect(before.equals(after)).toBeFalsy();
 });
 
+test("canvas initialTime is preserved before the first plot attachment", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const changed = await page.evaluate(async () => {
+    const demo = window.__ruvizDemo;
+    if (!demo?.sdk) {
+      throw new Error("SDK test hooks are unavailable");
+    }
+
+    const { createCanvasSession, createPlot, createSineSignal } = demo.sdk;
+    const x = Array.from({ length: 96 }, (_, index) => (index / 95) * Math.PI * 4);
+
+    const createCanvas = () => {
+      const canvas = document.createElement("canvas");
+      canvas.style.cssText = [
+        "position: fixed",
+        "left: -10000px",
+        "top: -10000px",
+        "width: 320px",
+        "height: 180px",
+      ].join(";");
+      document.body.appendChild(canvas);
+      return canvas;
+    };
+
+    const buildPlot = () =>
+      createPlot()
+        .setSizePx(320, 180)
+        .setTheme("dark")
+        .setTitle("initial-time regression")
+        .addLine({
+          x,
+          y: createSineSignal({
+            points: x.length,
+            domain: [x[0], x[x.length - 1]],
+            amplitude: 1,
+            cycles: 2,
+            phaseVelocity: 1.25,
+          }),
+        });
+
+    const renderWithTime = async (initialTime) => {
+      const canvas = createCanvas();
+      const session = await createCanvasSession(canvas, {
+        autoResize: false,
+        bindInput: false,
+        initialTime,
+      });
+
+      await session.setPlot(buildPlot());
+      const png = await session.exportPng();
+      session.dispose();
+      canvas.remove();
+      return png;
+    };
+
+    const [atZero, atOffset] = await Promise.all([renderWithTime(0), renderWithTime(1.5)]);
+    if (atZero.length !== atOffset.length) {
+      return true;
+    }
+
+    for (let index = 0; index < atZero.length; index += 1) {
+      if (atZero[index] !== atOffset[index]) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+
+  expect(changed).toBeTruthy();
+});
+
+test("worker destroy does not leave hasPlot stale after an in-flight setPlot", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const workerStatus = (await page.locator("#worker-status").textContent()) || "";
+  test.skip(!workerStatus.includes("ready"), "worker mode is unavailable in this browser");
+
+  const result = await page.evaluate(async () => {
+    const demo = window.__ruvizDemo;
+    if (!demo?.workerSession || !demo?.directExportPlot) {
+      throw new Error("worker session test hook is unavailable");
+    }
+
+    const pending = demo.workerSession.setPlot(demo.directExportPlot.clone());
+    demo.workerSession.destroy();
+    await pending;
+
+    const hasPlotAfterRace = demo.workerSession.hasPlot();
+    await demo.workerSession.setPlot(demo.directExportPlot.clone());
+
+    return {
+      hasPlotAfterRace,
+      hasPlotAfterReattach: demo.workerSession.hasPlot(),
+    };
+  });
+
+  expect(result.hasPlotAfterRace).toBeFalsy();
+  expect(result.hasPlotAfterReattach).toBeTruthy();
+});
+
 test("png and svg exports work for the demo panels", async ({ page }) => {
   await waitForDemoReady(page);
 

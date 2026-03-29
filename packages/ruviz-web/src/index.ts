@@ -750,9 +750,7 @@ export class CanvasSession {
   }
 
   setTime(timeSeconds: number): void {
-    this.#withAttachedPlot(() => {
-      this.#rawSession.set_time(timeSeconds);
-    });
+    this.#rawSession.set_time(timeSeconds);
   }
 
   setBackendPreference(backendPreference: BackendPreference): void {
@@ -848,6 +846,7 @@ export class WorkerSession {
   #resolveReady: (() => void) | null;
   #rejectReady: ((reason: unknown) => void) | null;
   #hasPlot: boolean;
+  #sessionEpoch: number;
 
   constructor(canvas: HTMLCanvasElement, mode: SessionMode, fallbackSession?: CanvasSession) {
     this.mode = mode;
@@ -858,6 +857,7 @@ export class WorkerSession {
     this.#pendingRequests = new Map();
     this.#nextRequestId = 1;
     this.#hasPlot = false;
+    this.#sessionEpoch = 0;
     this.#resolveReady = null;
     this.#rejectReady = null;
     if (this.#fallbackSession) {
@@ -899,11 +899,18 @@ export class WorkerSession {
       return;
     }
 
+    const sessionEpoch = this.#sessionEpoch;
+
     try {
       await this.#request("setPlot", { snapshot: plot.toSnapshot() });
+      if (sessionEpoch !== this.#sessionEpoch || !this.#worker) {
+        return;
+      }
       this.#hasPlot = true;
     } catch (error) {
-      this.#hasPlot = false;
+      if (sessionEpoch === this.#sessionEpoch) {
+        this.#hasPlot = false;
+      }
       throw error;
     }
   }
@@ -928,7 +935,7 @@ export class WorkerSession {
       return;
     }
 
-    if (!this.#canDispatchPlotCommand()) {
+    if (!this.#worker) {
       return;
     }
 
@@ -1074,6 +1081,7 @@ export class WorkerSession {
       return;
     }
 
+    this.#sessionEpoch += 1;
     this.#hasPlot = false;
     this.#post("destroy");
   }
@@ -1090,6 +1098,7 @@ export class WorkerSession {
       return;
     }
 
+    this.#sessionEpoch += 1;
     this.#hasPlot = false;
     this.#worker?.terminate();
     this.#worker = null;
@@ -1156,6 +1165,7 @@ export class WorkerSession {
   }
 
   #failAll(reason: unknown): void {
+    this.#hasPlot = false;
     this.#rejectReady?.(reason);
     this.#resolveReady = null;
     this.#rejectReady = null;
