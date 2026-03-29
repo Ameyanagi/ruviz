@@ -1,19 +1,12 @@
+mod support;
+
 use gpui::{
     App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use ruviz::{data::StreamingXY, prelude::*};
 use ruviz_gpui::{PerformancePreset, RuvizPlot, plot_builder};
-use std::{env, rc::Rc, time::Duration};
-
-#[cfg(target_os = "macos")]
-fn application() -> gpui::Application {
-    gpui::Application::with_platform(Rc::new(gpui_macos::MacPlatform::new(false)))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn application() -> gpui::Application {
-    unimplemented!("GPUI examples are only wired up for macOS in this forked setup")
-}
+use std::{env, time::Duration};
+use support::{application, sleep};
 
 struct StreamingEmbedDemo {
     plot: gpui::Entity<RuvizPlot>,
@@ -48,7 +41,7 @@ impl StreamingEmbedDemo {
                 async move |_| {
                     let mut t = 240.0 * 0.02;
                     loop {
-                        smol::Timer::after(Duration::from_millis(producer_interval_ms)).await;
+                        sleep(Duration::from_millis(producer_interval_ms)).await;
                         stream.push(t, (t * 1.5).sin());
                         t += 0.02;
                     }
@@ -60,7 +53,7 @@ impl StreamingEmbedDemo {
             .spawn(cx, {
                 let plot = plot.clone();
                 async move |cx| loop {
-                    smol::Timer::after(Duration::from_secs(1)).await;
+                    sleep(Duration::from_secs(1)).await;
                     let plot = plot.clone();
                     cx.on_next_frame(move |_, cx| {
                         let plot = plot.read(cx);

@@ -1,20 +1,12 @@
+mod support;
+
 use gpui::{
     App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb,
     size,
 };
 use ruviz::prelude::*;
 use ruviz_gpui::{GpuiContextMenuConfig, GpuiContextMenuItem, RuvizPlot, plot_builder};
-use std::rc::Rc;
-
-#[cfg(target_os = "macos")]
-fn application() -> gpui::Application {
-    gpui::Application::with_platform(Rc::new(gpui_macos::MacPlatform::new(false)))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn application() -> gpui::Application {
-    unimplemented!("GPUI examples are only wired up for macOS in this forked setup")
-}
+use support::application;
 
 struct StaticEmbedDemo {
     plot: gpui::Entity<RuvizPlot>,

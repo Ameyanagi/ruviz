@@ -3,6 +3,9 @@ compile_error!("ruviz-gpui currently supports macOS and Linux only.");
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod supported {
+    mod interaction;
+    mod presentation;
+
     use arboard::{Clipboard, ImageData};
     #[cfg(all(feature = "gpu", target_os = "macos"))]
     use core_foundation::{
@@ -45,6 +48,9 @@ mod supported {
         },
         time::{Duration, Instant},
     };
+
+    use self::interaction::*;
+    use self::presentation::*;
 
     pub use gpui;
     pub use ruviz;
@@ -487,63 +493,6 @@ mod supported {
         }
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum BuiltinContextMenuAction {
-        ResetView,
-        SetCurrentViewAsHome,
-        GoToHomeView,
-        SavePng,
-        CopyImage,
-        CopyCursorCoordinates,
-        CopyVisibleBounds,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    enum ContextMenuEntryKind {
-        Builtin(BuiltinContextMenuAction),
-        Custom { id: String },
-        Separator,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    struct ContextMenuEntry {
-        kind: ContextMenuEntryKind,
-        label: String,
-        enabled: bool,
-        bounds: Option<Bounds<Pixels>>,
-    }
-
-    #[derive(Clone, Debug, PartialEq)]
-    struct ContextMenuState {
-        panel_bounds: Bounds<Pixels>,
-        entries: Vec<ContextMenuEntry>,
-        hovered_index: Option<usize>,
-        trigger_position: Point<Pixels>,
-        trigger_position_px: ViewportPoint,
-    }
-
-    #[derive(Clone, Copy, Debug, Default, PartialEq)]
-    enum ActiveDrag {
-        #[default]
-        None,
-        LeftPan {
-            anchor_px: ViewportPoint,
-            last_px: ViewportPoint,
-            crossed_threshold: bool,
-        },
-        RightZoom {
-            anchor_px: ViewportPoint,
-            current_px: ViewportPoint,
-            crossed_threshold: bool,
-            zoom_enabled: bool,
-        },
-        Brush {
-            anchor_px: ViewportPoint,
-            current_px: ViewportPoint,
-            crossed_threshold: bool,
-        },
-    }
-
     pub struct RuvizPlotBuilder<P> {
         plot: P,
         options: RuvizPlotOptions,
@@ -623,24 +572,38 @@ mod supported {
             self
         }
 
-        pub fn build<V>(self, cx: &mut Context<V>) -> Entity<RuvizPlot>
-        where
-            V: 'static,
-        {
+        fn validate(&self) -> Result<()> {
             if self.options.context_menu.enabled
                 && !self.options.context_menu.custom_items.is_empty()
                 && self.context_menu_action_handler.is_none()
             {
-                panic!(
+                return Err(PlottingError::InvalidInput(
                     "GPUI context menu custom items require on_context_menu_action(...) before build()"
-                );
+                        .to_string(),
+                ));
             }
+            Ok(())
+        }
+
+        pub fn try_build<V>(self, cx: &mut Context<V>) -> Result<Entity<RuvizPlot>>
+        where
+            V: 'static,
+        {
+            self.validate()?;
             let options = self.options;
             let plot = self.plot;
             let context_menu_action_handler = self.context_menu_action_handler;
-            cx.new(move |cx| {
+            Ok(cx.new(move |cx| {
                 RuvizPlot::from_options_impl(plot, options, context_menu_action_handler, cx)
-            })
+            }))
+        }
+
+        pub fn build<V>(self, cx: &mut Context<V>) -> Entity<RuvizPlot>
+        where
+            V: 'static,
+        {
+            self.try_build(cx)
+                .unwrap_or_else(|err| panic!("failed to build RuvizPlot: {err}"))
         }
     }
 
@@ -703,11 +666,8 @@ mod supported {
         in_flight_render: Option<Task<()>>,
         last_layout: Option<InteractionLayout>,
         focus_handle: FocusHandle,
-        last_pointer_px: Option<ViewportPoint>,
-        active_drag: ActiveDrag,
+        interaction_state: InteractionState,
         context_menu_action_handler: Option<ContextMenuActionHandler>,
-        context_menu: Option<ContextMenuState>,
-        home_view_bounds: Option<ViewportRect>,
     }
 
     impl RuvizPlot {
@@ -740,11 +700,8 @@ mod supported {
                 in_flight_render: None,
                 last_layout: None,
                 focus_handle: cx.focus_handle(),
-                last_pointer_px: None,
-                active_drag: ActiveDrag::None,
+                interaction_state: InteractionState::default(),
                 context_menu_action_handler,
-                context_menu: None,
-                home_view_bounds: None,
             }
         }
 
@@ -842,13 +799,14 @@ mod supported {
         }
 
         pub fn set_current_view_as_home(&mut self, cx: &mut Context<Self>) -> Result<()> {
-            self.home_view_bounds = Some(self.session.viewport_snapshot()?.visible_bounds);
+            self.interaction_state.home_view_bounds =
+                Some(self.session.viewport_snapshot()?.visible_bounds);
             cx.notify();
             Ok(())
         }
 
         pub fn go_to_home_view(&mut self, cx: &mut Context<Self>) -> Result<()> {
-            let Some(home_view_bounds) = self.home_view_bounds else {
+            let Some(home_view_bounds) = self.interaction_state.home_view_bounds else {
                 return Ok(());
             };
             if self.session.restore_visible_bounds(home_view_bounds) {
@@ -974,1241 +932,7 @@ mod supported {
             self.scheduler.reset();
             self.in_flight_render = None;
             self.last_layout = None;
-            self.context_menu = None;
-            self.home_view_bounds = None;
-        }
-
-        fn reset_pointer_state(&mut self) {
-            self.last_pointer_px = None;
-            self.active_drag = ActiveDrag::None;
-        }
-
-        fn retire_cached_frame(&mut self) {
-            if let Some(frame) = self.cached_frame.take() {
-                retire_primary_frame(&mut self.retired_images, frame.primary);
-                if let Some(overlay_image) = frame.overlay_image {
-                    self.retired_images.push(overlay_image);
-                }
-            }
-        }
-
-        fn replace_cached_frame(&mut self, request: RenderRequest, mut frame: RenderedFrame) {
-            let previous = self.cached_frame.take();
-            let primary = self
-                .resolve_primary_frame(previous.as_ref(), &mut frame)
-                .expect("rendered frame must include a primary layer on first render");
-            let overlay_image = if frame.target == RenderTargetKind::Image {
-                None
-            } else {
-                frame.overlay_image.or_else(|| {
-                    previous
-                        .as_ref()
-                        .and_then(|cached| cached.overlay_image.as_ref().map(Arc::clone))
-                })
-            };
-
-            if let Some(previous) = previous {
-                maybe_retire_replaced_primary(
-                    &mut self.retired_images,
-                    &previous.primary,
-                    &primary,
-                );
-                if let Some(previous_overlay) = previous.overlay_image {
-                    let overlay_reused = overlay_image
-                        .as_ref()
-                        .is_some_and(|current| Arc::ptr_eq(current, &previous_overlay));
-                    if !overlay_reused {
-                        self.retired_images.push(previous_overlay);
-                    }
-                }
-            }
-
-            self.cached_frame = Some(CachedFrame {
-                request,
-                primary,
-                overlay_image,
-                stats: frame.stats,
-                target: frame.target,
-            });
-        }
-
-        fn resolve_primary_frame(
-            &mut self,
-            previous: Option<&CachedFrame>,
-            frame: &mut RenderedFrame,
-        ) -> Option<PrimaryFrame> {
-            match frame.primary.take() {
-                Some(RenderedPrimary::Image(image)) => Some(PrimaryFrame::Image(image)),
-                #[cfg(all(feature = "gpu", target_os = "macos"))]
-                Some(RenderedPrimary::Surface(base_image)) => {
-                    let previous_surface = previous.and_then(|cached| match &cached.primary {
-                        PrimaryFrame::Surface(surface) => Some(surface),
-                        PrimaryFrame::Image(_) => None,
-                    });
-
-                    match self
-                        .surface_upload
-                        .update(previous_surface, base_image.as_ref())
-                    {
-                        Ok(surface) => Some(PrimaryFrame::Surface(surface)),
-                        Err(_) => Some(PrimaryFrame::Image(render_image_from_ruviz(
-                            base_image.as_ref().clone(),
-                        ))),
-                    }
-                }
-                None => previous.map(|cached| cached.primary.clone()),
-            }
-        }
-
-        fn flush_retired_images(&mut self, mut window: Option<&mut Window>, cx: &mut App) {
-            for image in self.retired_images.drain(..) {
-                cx.drop_image(image, window.as_deref_mut());
-            }
-        }
-
-        fn ensure_reactive_watcher(
-            &mut self,
-            entity: Entity<Self>,
-            window: &mut Window,
-            cx: &mut Context<Self>,
-        ) {
-            if self.reactive_watcher.is_some() || self.subscription.is_empty() {
-                return;
-            }
-
-            let mut receiver = match self.reactive_receiver.take() {
-                Some(receiver) => receiver,
-                None => return,
-            };
-
-            let pending = Arc::clone(&self.reactive_notify_pending);
-            let task = window.spawn(cx, async move |cx| {
-                while receiver.next().await.is_some() {
-                    let entity_for_notify = entity.clone();
-                    let pending_for_notify = Arc::clone(&pending);
-                    cx.on_next_frame(move |_, cx| {
-                        entity_for_notify.update(cx, |_, cx| {
-                            pending_for_notify.store(false, Ordering::Release);
-                            cx.notify();
-                        });
-                    });
-                }
-            });
-
-            self.reactive_watcher = Some(task);
-        }
-
-        fn effective_presentation_mode(&self) -> PresentationMode {
-            resolve_presentation_mode(self.options.presentation_mode)
-        }
-
-        fn current_request(
-            &self,
-            bounds: Bounds<Pixels>,
-            window: &Window,
-        ) -> Option<RenderRequest> {
-            let size_px = match self.options.sizing_policy {
-                SizingPolicy::Fill => {
-                    let width = u32::from(bounds.size.width.ceil());
-                    let height = u32::from(bounds.size.height.ceil());
-                    (width, height)
-                }
-                SizingPolicy::FixedPixels { width, height } => (width, height),
-            };
-
-            if size_px.0 == 0 || size_px.1 == 0 {
-                return None;
-            }
-
-            Some(RenderRequest::new(
-                size_px,
-                window.scale_factor(),
-                self.options.interaction.time_seconds,
-                self.effective_presentation_mode(),
-            ))
-        }
-
-        fn prepaint(
-            &mut self,
-            entity: Entity<Self>,
-            bounds: Bounds<Pixels>,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> Option<PaintFrame> {
-            self.flush_retired_images(Some(window), cx);
-
-            if let Some(request) = self.current_request(bounds, window) {
-                self.update_layout(bounds, request.size_px);
-                self.start_render_if_needed(entity, request, window, cx);
-            } else {
-                self.last_layout = None;
-            }
-
-            self.cached_frame.as_ref().map(|frame| PaintFrame {
-                primary: frame.primary.clone(),
-                overlay_image: frame.overlay_image.as_ref().map(Arc::clone),
-            })
-        }
-
-        fn update_layout(&mut self, bounds: Bounds<Pixels>, frame_size_px: (u32, u32)) {
-            let image_size = size(frame_size_px.0.into(), frame_size_px.1.into());
-            let content_bounds = self
-                .options
-                .interaction
-                .image_fit
-                .into_gpui()
-                .get_bounds(bounds, image_size);
-
-            self.last_layout = Some(InteractionLayout {
-                component_bounds: bounds,
-                content_bounds,
-                frame_size_px,
-            });
-        }
-
-        fn start_render_if_needed(
-            &mut self,
-            entity: Entity<Self>,
-            request: RenderRequest,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
-            let cache_is_current = self
-                .cached_frame
-                .as_ref()
-                .is_some_and(|frame| frame.request == request && !request.is_dirty(&self.session));
-            if cache_is_current {
-                return;
-            }
-
-            let Some(scheduled) = self.scheduler.schedule(request) else {
-                return;
-            };
-
-            self.start_render(entity, scheduled, window, cx);
-        }
-
-        fn start_render(
-            &mut self,
-            entity: Entity<Self>,
-            scheduled: ScheduledRender,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
-            let session = self.session.clone();
-            let request_for_task = scheduled.request.clone();
-            let render_job = cx
-                .background_executor()
-                .spawn(async move { render_frame_from_session(session, request_for_task) });
-
-            let entity_for_update = entity.clone();
-            let scheduled_for_update = scheduled.clone();
-            let task = window.spawn(cx, async move |cx| {
-                let result = render_job.await;
-                cx.on_next_frame(move |_, cx| {
-                    entity_for_update.update(cx, |view, cx| {
-                        view.finish_render(scheduled_for_update, result, cx);
-                        cx.notify();
-                    });
-                });
-            });
-
-            self.scheduler.start(scheduled);
-            self.in_flight_render = Some(task);
-        }
-
-        fn finish_render(
-            &mut self,
-            scheduled: ScheduledRender,
-            result: std::result::Result<RenderedFrame, String>,
-            cx: &mut Context<Self>,
-        ) {
-            if !self.scheduler.finish(&scheduled) {
-                return;
-            }
-
-            self.in_flight_render = None;
-
-            if let Ok(frame) = result {
-                self.replace_cached_frame(scheduled.request.clone(), frame);
-            }
-
-            if self.scheduler.take_queued().is_some() {
-                cx.notify();
-            }
-        }
-
-        fn local_viewport_point(&self, window_position: Point<Pixels>) -> Option<ViewportPoint> {
-            let layout = self.last_layout.as_ref()?;
-            if !layout.content_bounds.contains(&window_position) {
-                return None;
-            }
-
-            let local_x = f64::from(window_position.x - layout.content_bounds.origin.x);
-            let local_y = f64::from(window_position.y - layout.content_bounds.origin.y);
-            let content_width = f64::from(layout.content_bounds.size.width).max(1.0);
-            let content_height = f64::from(layout.content_bounds.size.height).max(1.0);
-
-            Some(ViewportPoint::new(
-                ((local_x / content_width) * layout.frame_size_px.0 as f64)
-                    .clamp(0.0, layout.frame_size_px.0 as f64),
-                ((local_y / content_height) * layout.frame_size_px.1 as f64)
-                    .clamp(0.0, layout.frame_size_px.1 as f64),
-            ))
-        }
-
-        fn clamped_viewport_point(&self, window_position: Point<Pixels>) -> Option<ViewportPoint> {
-            let layout = self.last_layout.as_ref()?;
-            let min_x = layout.content_bounds.origin.x;
-            let min_y = layout.content_bounds.origin.y;
-            let max_x = min_x + layout.content_bounds.size.width;
-            let max_y = min_y + layout.content_bounds.size.height;
-            let clamped = Point {
-                x: window_position.x.max(min_x).min(max_x),
-                y: window_position.y.max(min_y).min(max_y),
-            };
-            self.local_viewport_point(clamped)
-        }
-
-        fn viewport_point_to_window_position(
-            &self,
-            viewport_point: ViewportPoint,
-        ) -> Option<Point<Pixels>> {
-            let layout = self.last_layout.as_ref()?;
-            let content_width = f64::from(layout.content_bounds.size.width).max(1.0);
-            let content_height = f64::from(layout.content_bounds.size.height).max(1.0);
-            let normalized_x =
-                (viewport_point.x / layout.frame_size_px.0.max(1) as f64).clamp(0.0, 1.0);
-            let normalized_y =
-                (viewport_point.y / layout.frame_size_px.1.max(1) as f64).clamp(0.0, 1.0);
-            Some(Point {
-                x: layout.content_bounds.origin.x + px((normalized_x * content_width) as f32),
-                y: layout.content_bounds.origin.y + px((normalized_y * content_height) as f32),
-            })
-        }
-
-        fn current_cursor_position_px(&self) -> Option<ViewportPoint> {
-            self.last_pointer_px
-        }
-
-        fn current_capture_target(&self, window: &Window) -> Option<ImageTarget> {
-            if let Some(frame) = self.cached_frame.as_ref() {
-                return Some(ImageTarget {
-                    size_px: frame.request.size_px,
-                    scale_factor: frame.request.scale_factor(),
-                    time_seconds: frame.request.time_seconds(),
-                });
-            }
-
-            self.last_layout.as_ref().map(|layout| ImageTarget {
-                size_px: layout.frame_size_px,
-                scale_factor: window.scale_factor(),
-                time_seconds: self.options.interaction.time_seconds,
-            })
-        }
-
-        fn capture_visible_view_image(&self, window: &Window) -> Result<RuvizImage> {
-            let target = self.current_capture_target(window).ok_or_else(|| {
-                PlottingError::InvalidInput(
-                    "plot image capture is unavailable before the GPUI view has been laid out"
-                        .to_string(),
-                )
-            })?;
-            let frame = self.session.render_to_image(target)?;
-            Ok(frame.image.as_ref().clone())
-        }
-
-        fn build_action_context(
-            &self,
-            action_id: String,
-            window: &Window,
-            cursor_position_px: ViewportPoint,
-        ) -> Result<Option<GpuiContextMenuActionContext>> {
-            let snapshot = self.session.viewport_snapshot()?;
-            let cursor_data_position = cursor_data_position(
-                snapshot.visible_bounds,
-                snapshot.plot_area,
-                cursor_position_px,
-            );
-            let image = self.capture_visible_view_image(window)?;
-            Ok(Some(GpuiContextMenuActionContext {
-                action_id,
-                visible_bounds: snapshot.visible_bounds,
-                plot_area_px: snapshot.plot_area,
-                frame_size_px: (image.width, image.height),
-                scale_factor: self
-                    .current_capture_target(window)
-                    .map_or(1.0, |t| t.scale_factor),
-                cursor_position_px,
-                cursor_data_position,
-                image,
-            }))
-        }
-
-        fn copy_text_to_clipboard(&self, text: &str) -> Result<()> {
-            let mut clipboard = Clipboard::new().map_err(|err| {
-                PlottingError::SystemError(format!("clipboard unavailable: {err}"))
-            })?;
-            clipboard
-                .set_text(text.to_string())
-                .map_err(|err| PlottingError::SystemError(format!("failed to copy text: {err}")))
-        }
-
-        fn copy_image_to_clipboard(&self, image: &RuvizImage) -> Result<()> {
-            let mut clipboard = Clipboard::new().map_err(|err| {
-                PlottingError::SystemError(format!("clipboard unavailable: {err}"))
-            })?;
-            clipboard
-                .set_image(ImageData {
-                    width: image.width as usize,
-                    height: image.height as usize,
-                    bytes: Cow::Owned(image.pixels.clone()),
-                })
-                .map_err(|err| PlottingError::SystemError(format!("failed to copy image: {err}")))
-        }
-
-        fn default_export_filename(&self) -> String {
-            "gpui-plot.png".to_string()
-        }
-
-        fn spawn_save_png_dialog(&self, image: RuvizImage) -> Result<()> {
-            let file_name = self.default_export_filename();
-            let dialog = rfd::AsyncFileDialog::new()
-                .add_filter("PNG image", &["png"])
-                .set_file_name(&file_name);
-
-            std::thread::Builder::new()
-                .name("ruviz-gpui-save-png".to_string())
-                .spawn(move || {
-                    let Some(file_handle) = block_on(dialog.save_file()) else {
-                        return;
-                    };
-                    let _ = write_rgba_png_atomic(file_handle.path(), &image);
-                })
-                .map(|_| ())
-                .map_err(|err| {
-                    PlottingError::SystemError(format!(
-                        "failed to spawn GPUI PNG export worker: {err}"
-                    ))
-                })
-        }
-
-        fn close_context_menu(&mut self, cx: &mut Context<Self>) {
-            if self.context_menu.take().is_some() {
-                cx.notify();
-            }
-        }
-
-        fn update_context_menu_hover(
-            &mut self,
-            hovered_index: Option<usize>,
-            cx: &mut Context<Self>,
-        ) {
-            if let Some(menu) = self.context_menu.as_mut() {
-                if menu.hovered_index != hovered_index {
-                    menu.hovered_index = hovered_index;
-                    cx.notify();
-                }
-            }
-        }
-
-        fn context_menu_entry_index_at(&self, position: Point<Pixels>) -> Option<usize> {
-            let menu = self.context_menu.as_ref()?;
-            menu.entries.iter().position(|entry| {
-                !matches!(entry.kind, ContextMenuEntryKind::Separator)
-                    && entry
-                        .bounds
-                        .is_some_and(|bounds| bounds.contains(&position))
-            })
-        }
-
-        fn build_context_menu_entries(
-            &self,
-            cursor_position_px: ViewportPoint,
-        ) -> Result<Vec<ContextMenuEntry>> {
-            let snapshot = self.session.viewport_snapshot()?;
-            let cursor_available = cursor_data_position(
-                snapshot.visible_bounds,
-                snapshot.plot_area,
-                cursor_position_px,
-            )
-            .is_some();
-            let mut entries = Vec::new();
-
-            let push_entry = |entries: &mut Vec<ContextMenuEntry>,
-                              kind: ContextMenuEntryKind,
-                              label: &str,
-                              enabled: bool| {
-                entries.push(ContextMenuEntry {
-                    kind,
-                    label: label.to_string(),
-                    enabled,
-                    bounds: None,
-                });
-            };
-            let push_separator = |entries: &mut Vec<ContextMenuEntry>| {
-                if !entries.is_empty()
-                    && !matches!(
-                        entries.last().map(|entry| &entry.kind),
-                        Some(ContextMenuEntryKind::Separator)
-                    )
-                {
-                    entries.push(ContextMenuEntry {
-                        kind: ContextMenuEntryKind::Separator,
-                        label: String::new(),
-                        enabled: false,
-                        bounds: None,
-                    });
-                }
-            };
-
-            if self.options.context_menu.show_reset_view {
-                push_entry(
-                    &mut entries,
-                    ContextMenuEntryKind::Builtin(BuiltinContextMenuAction::ResetView),
-                    "Reset View",
-                    true,
-                );
-            }
-            if self.options.context_menu.show_set_home_view {
-                push_entry(
-                    &mut entries,
-                    ContextMenuEntryKind::Builtin(BuiltinContextMenuAction::SetCurrentViewAsHome),
-                    "Set Current View As Home",
-                    true,
-                );
-            }
-            if self.options.context_menu.show_go_to_home_view {
-                push_entry(
-                    &mut entries,
-                    ContextMenuEntryKind::Builtin(BuiltinContextMenuAction::GoToHomeView),
-                    "Go To Home View",
-                    self.home_view_bounds.is_some(),
-                );
-            }
-
-            let export_group_enabled = self.options.context_menu.show_save_png
-                || self.options.context_menu.show_copy_image
-                || self.options.context_menu.show_copy_cursor_coordinates
-                || self.options.context_menu.show_copy_visible_bounds;
-            if !entries.is_empty() && export_group_enabled {
-                push_separator(&mut entries);
-            }
-
-            if self.options.context_menu.show_save_png {
-                push_entry(
-                    &mut entries,
-                    ContextMenuEntryKind::Builtin(BuiltinContextMenuAction::SavePng),
-                    "Save PNG...",
-                    true,
-                );
-            }
-            if self.options.context_menu.show_copy_image {
-                push_entry(
-                    &mut entries,
-                    ContextMenuEntryKind::Builtin(BuiltinContextMenuAction::CopyImage),
-                    "Copy Image",
-                    true,
-                );
-            }
-            if self.options.context_menu.show_copy_cursor_coordinates {
-                push_entry(
-                    &mut entries,
-                    ContextMenuEntryKind::Builtin(BuiltinContextMenuAction::CopyCursorCoordinates),
-                    "Copy Cursor Coordinates",
-                    cursor_available,
-                );
-            }
-            if self.options.context_menu.show_copy_visible_bounds {
-                push_entry(
-                    &mut entries,
-                    ContextMenuEntryKind::Builtin(BuiltinContextMenuAction::CopyVisibleBounds),
-                    "Copy Visible Bounds",
-                    true,
-                );
-            }
-
-            if !self.options.context_menu.custom_items.is_empty() {
-                push_separator(&mut entries);
-                for item in &self.options.context_menu.custom_items {
-                    entries.push(ContextMenuEntry {
-                        kind: ContextMenuEntryKind::Custom {
-                            id: item.id.clone(),
-                        },
-                        label: item.label.clone(),
-                        enabled: item.enabled,
-                        bounds: None,
-                    });
-                }
-            }
-
-            while matches!(
-                entries.last().map(|entry| &entry.kind),
-                Some(ContextMenuEntryKind::Separator)
-            ) {
-                entries.pop();
-            }
-
-            Ok(entries)
-        }
-
-        fn build_context_menu(
-            &self,
-            position: Point<Pixels>,
-            cursor_position_px: ViewportPoint,
-        ) -> Result<Option<ContextMenuState>> {
-            let layout = match self.last_layout.as_ref() {
-                Some(layout) => layout,
-                None => return Ok(None),
-            };
-            let mut entries = self.build_context_menu_entries(cursor_position_px)?;
-            if entries.is_empty() {
-                return Ok(None);
-            }
-
-            let max_chars = entries
-                .iter()
-                .filter(|entry| !matches!(entry.kind, ContextMenuEntryKind::Separator))
-                .map(|entry| entry.label.chars().count())
-                .max()
-                .unwrap_or(0);
-            let panel_width =
-                MENU_MIN_WIDTH_PX.max(max_chars as f32 * 7.2 + MENU_PADDING_X_PX * 2.0);
-            let content_height = entries.iter().fold(0.0, |height, entry| {
-                height
-                    + if matches!(entry.kind, ContextMenuEntryKind::Separator) {
-                        MENU_SEPARATOR_HEIGHT_PX
-                    } else {
-                        MENU_ITEM_HEIGHT_PX
-                    }
-            });
-            let panel_height = content_height + MENU_PADDING_Y_PX * 2.0;
-
-            let min_left = layout.component_bounds.origin.x + px(MENU_EDGE_MARGIN_PX);
-            let min_top = layout.component_bounds.origin.y + px(MENU_EDGE_MARGIN_PX);
-            let max_left = (layout.component_bounds.origin.x + layout.component_bounds.size.width)
-                - px(panel_width + MENU_EDGE_MARGIN_PX);
-            let max_top = (layout.component_bounds.origin.y + layout.component_bounds.size.height)
-                - px(panel_height + MENU_EDGE_MARGIN_PX);
-            let left = position.x.max(min_left).min(max_left.max(min_left));
-            let top = position.y.max(min_top).min(max_top.max(min_top));
-            let panel_bounds =
-                Bounds::new(point(left, top), size(px(panel_width), px(panel_height)));
-
-            let mut cursor_y = top + px(MENU_PADDING_Y_PX);
-            for entry in &mut entries {
-                let entry_height = if matches!(entry.kind, ContextMenuEntryKind::Separator) {
-                    MENU_SEPARATOR_HEIGHT_PX
-                } else {
-                    MENU_ITEM_HEIGHT_PX
-                };
-                entry.bounds = Some(Bounds::new(
-                    point(left, cursor_y),
-                    size(px(panel_width), px(entry_height)),
-                ));
-                cursor_y += px(entry_height);
-            }
-
-            let hovered_index = entries.iter().position(|entry| {
-                !matches!(entry.kind, ContextMenuEntryKind::Separator)
-                    && entry
-                        .bounds
-                        .is_some_and(|bounds| bounds.contains(&position))
-            });
-            Ok(Some(ContextMenuState {
-                panel_bounds,
-                entries,
-                hovered_index,
-                trigger_position: position,
-                trigger_position_px: cursor_position_px,
-            }))
-        }
-
-        fn open_context_menu(
-            &mut self,
-            position: Point<Pixels>,
-            cursor_position_px: ViewportPoint,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            if !self.options.context_menu.enabled {
-                return Ok(());
-            }
-
-            self.session.apply_input(PlotInputEvent::ClearHover);
-            self.session.apply_input(PlotInputEvent::HideTooltip);
-            self.context_menu = self.build_context_menu(position, cursor_position_px)?;
-            cx.notify();
-            Ok(())
-        }
-
-        fn handle_context_menu_left_click(
-            &mut self,
-            position: Point<Pixels>,
-            window: &Window,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            let Some(index) = self.context_menu_entry_index_at(position) else {
-                self.close_context_menu(cx);
-                return Ok(());
-            };
-
-            let Some(menu) = self.context_menu.as_ref() else {
-                return Ok(());
-            };
-            if !menu.entries.get(index).is_some_and(|entry| entry.enabled) {
-                return Ok(());
-            }
-
-            self.activate_context_menu_entry(index, window, cx)
-        }
-
-        fn activate_context_menu_entry(
-            &mut self,
-            index: usize,
-            window: &Window,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            let Some(menu) = self.context_menu.as_ref() else {
-                return Ok(());
-            };
-            let Some(entry) = menu.entries.get(index).cloned() else {
-                return Ok(());
-            };
-            let trigger_position_px = menu.trigger_position_px;
-            self.close_context_menu(cx);
-
-            match entry.kind {
-                ContextMenuEntryKind::Builtin(action) => {
-                    self.execute_builtin_context_menu_action(action, window, cx)
-                }
-                ContextMenuEntryKind::Custom { id } => {
-                    let Some(handler) = self.context_menu_action_handler.clone() else {
-                        return Ok(());
-                    };
-                    let Some(context) =
-                        self.build_action_context(id, window, trigger_position_px)?
-                    else {
-                        return Ok(());
-                    };
-                    handler(context)
-                }
-                ContextMenuEntryKind::Separator => Ok(()),
-            }
-        }
-
-        fn execute_builtin_context_menu_action(
-            &mut self,
-            action: BuiltinContextMenuAction,
-            window: &Window,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            match action {
-                BuiltinContextMenuAction::ResetView => {
-                    self.reset_view(cx);
-                    Ok(())
-                }
-                BuiltinContextMenuAction::SetCurrentViewAsHome => self.set_current_view_as_home(cx),
-                BuiltinContextMenuAction::GoToHomeView => self.go_to_home_view(cx),
-                BuiltinContextMenuAction::SavePng => self.save_png(window, cx),
-                BuiltinContextMenuAction::CopyImage => self.copy_image(window, cx),
-                BuiltinContextMenuAction::CopyCursorCoordinates => self.copy_cursor_coordinates(),
-                BuiltinContextMenuAction::CopyVisibleBounds => self.copy_visible_bounds(),
-            }
-        }
-
-        fn builtin_shortcut_action_for_keystroke(
-            &self,
-            event: &KeyDownEvent,
-        ) -> Option<BuiltinContextMenuAction> {
-            if !event.keystroke.modifiers.secondary() || event.keystroke.modifiers.alt {
-                return None;
-            }
-
-            match event.keystroke.key.as_str() {
-                "s" if self.options.context_menu.show_save_png => {
-                    Some(BuiltinContextMenuAction::SavePng)
-                }
-                "c" if self.options.context_menu.show_copy_image => {
-                    Some(BuiltinContextMenuAction::CopyImage)
-                }
-                _ => None,
-            }
-        }
-
-        fn zoom_overlay_bounds(&self) -> Option<Bounds<Pixels>> {
-            let ActiveDrag::RightZoom {
-                anchor_px,
-                current_px,
-                crossed_threshold,
-                zoom_enabled,
-            } = self.active_drag
-            else {
-                return None;
-            };
-            if !crossed_threshold || !zoom_enabled {
-                return None;
-            }
-
-            let start = self.viewport_point_to_window_position(anchor_px)?;
-            let end = self.viewport_point_to_window_position(current_px)?;
-            let left = start.x.min(end.x);
-            let top = start.y.min(end.y);
-            let width = (start.x.max(end.x) - left).max(px(1.0));
-            let height = (start.y.max(end.y) - top).max(px(1.0));
-            Some(Bounds::new(point(left, top), size(width, height)))
-        }
-
-        fn handle_left_mouse_down(
-            &mut self,
-            event: &MouseDownEvent,
-            window: &mut Window,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            window.focus(&self.focus_handle, cx);
-
-            if self.context_menu.is_some() {
-                return self.handle_context_menu_left_click(event.position, window, cx);
-            }
-
-            let Some(position_px) = self.local_viewport_point(event.position) else {
-                return Ok(());
-            };
-
-            self.last_pointer_px = Some(position_px);
-            if event.click_count >= 2 {
-                self.reset_view(cx);
-                return Ok(());
-            }
-
-            if event.modifiers.shift && self.options.interaction.selection {
-                self.active_drag = ActiveDrag::Brush {
-                    anchor_px: position_px,
-                    current_px: position_px,
-                    crossed_threshold: false,
-                };
-                self.session
-                    .apply_input(PlotInputEvent::BrushStart { position_px });
-                cx.notify();
-                return Ok(());
-            }
-
-            if self.options.interaction.pan {
-                self.active_drag = ActiveDrag::LeftPan {
-                    anchor_px: position_px,
-                    last_px: position_px,
-                    crossed_threshold: false,
-                };
-            } else {
-                self.active_drag = ActiveDrag::None;
-            }
-            cx.notify();
-            Ok(())
-        }
-
-        fn handle_right_mouse_down(
-            &mut self,
-            event: &MouseDownEvent,
-            window: &mut Window,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            window.focus(&self.focus_handle, cx);
-            if self.context_menu.is_some() {
-                self.close_context_menu(cx);
-            }
-
-            let Some(position_px) = self.local_viewport_point(event.position) else {
-                return Ok(());
-            };
-            self.last_pointer_px = Some(position_px);
-            self.active_drag = ActiveDrag::RightZoom {
-                anchor_px: position_px,
-                current_px: position_px,
-                crossed_threshold: false,
-                zoom_enabled: self.options.interaction.zoom,
-            };
-            cx.notify();
-            Ok(())
-        }
-
-        fn handle_mouse_move(
-            &mut self,
-            event: &MouseMoveEvent,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            if self.context_menu.is_some() {
-                let hovered_index = self.context_menu_entry_index_at(event.position);
-                self.update_context_menu_hover(hovered_index, cx);
-                return Ok(());
-            }
-
-            let position_px = self.local_viewport_point(event.position);
-            if let Some(position_px) = position_px {
-                self.last_pointer_px = Some(position_px);
-            }
-
-            match (self.active_drag, event.pressed_button) {
-                (
-                    ActiveDrag::LeftPan {
-                        anchor_px,
-                        last_px,
-                        crossed_threshold,
-                    },
-                    Some(MouseButton::Left),
-                ) if self.options.interaction.pan => {
-                    let Some(position_px) = position_px else {
-                        return Ok(());
-                    };
-                    let crossed_threshold_now = crossed_threshold
-                        || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
-                    let delta_px =
-                        ViewportPoint::new(position_px.x - last_px.x, position_px.y - last_px.y);
-                    if delta_px.x.abs() > f64::EPSILON || delta_px.y.abs() > f64::EPSILON {
-                        self.session.apply_input(PlotInputEvent::Pan { delta_px });
-                        cx.notify();
-                    }
-                    self.active_drag = ActiveDrag::LeftPan {
-                        anchor_px,
-                        last_px: position_px,
-                        crossed_threshold: crossed_threshold_now,
-                    };
-                    return Ok(());
-                }
-                (
-                    ActiveDrag::Brush {
-                        anchor_px,
-                        current_px: _,
-                        crossed_threshold,
-                    },
-                    Some(MouseButton::Left),
-                ) if self.options.interaction.selection => {
-                    let Some(position_px) = position_px else {
-                        return Ok(());
-                    };
-                    let crossed_threshold_now = crossed_threshold
-                        || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
-                    self.session
-                        .apply_input(PlotInputEvent::BrushMove { position_px });
-                    self.active_drag = ActiveDrag::Brush {
-                        anchor_px,
-                        current_px: position_px,
-                        crossed_threshold: crossed_threshold_now,
-                    };
-                    cx.notify();
-                    return Ok(());
-                }
-                (
-                    ActiveDrag::RightZoom {
-                        anchor_px,
-                        current_px: _,
-                        crossed_threshold,
-                        zoom_enabled,
-                    },
-                    Some(MouseButton::Right),
-                ) => {
-                    let position_px = if zoom_enabled {
-                        self.clamped_viewport_point(event.position)
-                            .unwrap_or(anchor_px)
-                    } else {
-                        position_px.unwrap_or(anchor_px)
-                    };
-                    let crossed_threshold_now = crossed_threshold
-                        || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
-                    if crossed_threshold_now {
-                        self.session.apply_input(PlotInputEvent::ClearHover);
-                        self.session.apply_input(PlotInputEvent::HideTooltip);
-                    }
-                    self.active_drag = ActiveDrag::RightZoom {
-                        anchor_px,
-                        current_px: position_px,
-                        crossed_threshold: crossed_threshold_now,
-                        zoom_enabled,
-                    };
-                    cx.notify();
-                    return Ok(());
-                }
-                _ => {}
-            }
-
-            match position_px {
-                Some(position_px) if self.options.interaction.hover => {
-                    self.session
-                        .apply_input(PlotInputEvent::Hover { position_px });
-                    if !self.options.interaction.tooltips {
-                        self.session.apply_input(PlotInputEvent::HideTooltip);
-                    }
-                    cx.notify();
-                }
-                None if self.options.interaction.hover => {
-                    self.session.apply_input(PlotInputEvent::ClearHover);
-                    self.session.apply_input(PlotInputEvent::HideTooltip);
-                    cx.notify();
-                }
-                None | Some(_) => {}
-            }
-
-            Ok(())
-        }
-
-        fn handle_left_mouse_up(
-            &mut self,
-            event: &MouseUpEvent,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            let position_px = self
-                .local_viewport_point(event.position)
-                .or(self.last_pointer_px);
-
-            match (self.active_drag, position_px) {
-                (
-                    ActiveDrag::Brush {
-                        anchor_px: _,
-                        current_px: _,
-                        crossed_threshold: _,
-                    },
-                    Some(position_px),
-                ) if self.options.interaction.selection => {
-                    self.session
-                        .apply_input(PlotInputEvent::BrushEnd { position_px });
-                    cx.notify();
-                }
-                (
-                    ActiveDrag::LeftPan {
-                        anchor_px,
-                        last_px: _,
-                        crossed_threshold,
-                    },
-                    Some(position_px),
-                ) if self.options.interaction.selection && !crossed_threshold => {
-                    if distance_px(anchor_px, position_px) <= DRAG_THRESHOLD_PX {
-                        self.session
-                            .apply_input(PlotInputEvent::SelectAt { position_px });
-                        cx.notify();
-                    }
-                }
-                _ => {}
-            }
-
-            self.reset_pointer_state();
-            Ok(())
-        }
-
-        fn handle_right_mouse_up(
-            &mut self,
-            event: &MouseUpEvent,
-            window: &Window,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            let position_px = self
-                .local_viewport_point(event.position)
-                .or_else(|| self.clamped_viewport_point(event.position))
-                .or(self.last_pointer_px);
-
-            match (self.active_drag, position_px) {
-                (
-                    ActiveDrag::RightZoom {
-                        anchor_px,
-                        current_px: _,
-                        crossed_threshold,
-                        zoom_enabled,
-                    },
-                    Some(position_px),
-                ) => {
-                    let crossed_threshold_now = crossed_threshold
-                        || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
-                    if crossed_threshold_now {
-                        if zoom_enabled {
-                            let region_px = ViewportRect::from_points(anchor_px, position_px);
-                            if region_px.width() > DRAG_THRESHOLD_PX
-                                && region_px.height() > DRAG_THRESHOLD_PX
-                            {
-                                self.session
-                                    .apply_input(PlotInputEvent::ZoomRect { region_px });
-                                self.invalidate_frame_state();
-                                cx.notify();
-                            }
-                        }
-                    } else {
-                        self.open_context_menu(event.position, position_px, cx)?;
-                    }
-                }
-                (ActiveDrag::RightZoom { .. }, None) => {
-                    self.close_context_menu(cx);
-                }
-                _ => {}
-            }
-
-            self.reset_pointer_state();
-            let _ = window;
-            Ok(())
-        }
-
-        fn handle_hover_change(&mut self, hovered: bool, cx: &mut Context<Self>) {
-            if hovered {
-                return;
-            }
-
-            if self.context_menu.is_some() {
-                self.update_context_menu_hover(None, cx);
-                return;
-            }
-
-            self.session.apply_input(PlotInputEvent::ClearHover);
-            self.session.apply_input(PlotInputEvent::HideTooltip);
-            if !matches!(
-                self.active_drag,
-                ActiveDrag::RightZoom { .. }
-                    | ActiveDrag::LeftPan { .. }
-                    | ActiveDrag::Brush { .. }
-            ) {
-                self.reset_pointer_state();
-            }
-            cx.notify();
-        }
-
-        fn normalize_scroll_delta(delta: ScrollDelta) -> f64 {
-            match delta {
-                ScrollDelta::Pixels(delta) => f64::from(delta.y),
-                ScrollDelta::Lines(delta) => -(delta.y as f64) * f64::from(LINE_SCROLL_DELTA_PX),
-            }
-        }
-
-        fn handle_scroll_wheel(
-            &mut self,
-            event: &ScrollWheelEvent,
-            cx: &mut Context<Self>,
-        ) -> Result<()> {
-            if !self.options.interaction.zoom || self.context_menu.is_some() {
-                return Ok(());
-            }
-
-            let Some(center_px) = self.local_viewport_point(event.position) else {
-                return Ok(());
-            };
-
-            let delta_y = Self::normalize_scroll_delta(event.delta);
-            if delta_y.abs() <= f64::EPSILON {
-                return Ok(());
-            }
-
-            let factor = (1.0025f64).powf(-delta_y).clamp(0.25, 4.0);
-            self.session
-                .apply_input(PlotInputEvent::Zoom { factor, center_px });
-            cx.notify();
-            Ok(())
-        }
-
-        fn handle_key_down(
-            &mut self,
-            event: &KeyDownEvent,
-            window: &Window,
-            cx: &mut Context<Self>,
-        ) -> Result<bool> {
-            if let Some(action) = self.builtin_shortcut_action_for_keystroke(event) {
-                self.close_context_menu(cx);
-                self.execute_builtin_context_menu_action(action, window, cx)?;
-                return Ok(true);
-            }
-
-            match event.keystroke.key.as_str() {
-                "escape" => {
-                    if self.context_menu.is_some() {
-                        self.close_context_menu(cx);
-                    } else {
-                        self.reset_view(cx);
-                    }
-                    Ok(true)
-                }
-                "delete" => {
-                    self.session.apply_input(PlotInputEvent::ClearSelection);
-                    self.invalidate_frame_state();
-                    cx.notify();
-                    Ok(true)
-                }
-                _ => Ok(false),
-            }
-        }
-
-        fn render_zoom_overlay(&self, bounds: Bounds<Pixels>) -> AnyElement {
-            let layout = self
-                .last_layout
-                .as_ref()
-                .expect("zoom overlay requires an active layout");
-            let local_left = bounds.origin.x - layout.component_bounds.origin.x;
-            let local_top = bounds.origin.y - layout.component_bounds.origin.y;
-            div()
-                .absolute()
-                .left(local_left)
-                .top(local_top)
-                .w(bounds.size.width)
-                .h(bounds.size.height)
-                .bg(rgba(0x5aa9e633))
-                .border_1()
-                .border_color(rgba(0x7fc8f8ff))
-                .rounded_sm()
-                .into_any_element()
-        }
-
-        fn render_context_menu_overlay(&self) -> Option<AnyElement> {
-            let layout = self.last_layout.as_ref()?;
-            let menu = self.context_menu.as_ref()?;
-            let panel_left = menu.panel_bounds.origin.x - layout.component_bounds.origin.x;
-            let panel_top = menu.panel_bounds.origin.y - layout.component_bounds.origin.y;
-            let mut panel = div()
-                .absolute()
-                .left(panel_left)
-                .top(panel_top)
-                .w(menu.panel_bounds.size.width)
-                .bg(rgb(0x1b1e24))
-                .border_1()
-                .border_color(rgba(0x46515eff))
-                .rounded_md()
-                .shadow_lg()
-                .overflow_hidden()
-                .flex()
-                .flex_col()
-                .py(px(MENU_PADDING_Y_PX));
-
-            let mut children = Vec::new();
-            for (index, entry) in menu.entries.iter().enumerate() {
-                if matches!(entry.kind, ContextMenuEntryKind::Separator) {
-                    children.push(
-                        div()
-                            .h(px(1.0))
-                            .mx(px(MENU_PADDING_X_PX))
-                            .my(px((MENU_SEPARATOR_HEIGHT_PX - 1.0) * 0.5))
-                            .bg(rgba(0x46515eff))
-                            .into_any_element(),
-                    );
-                    continue;
-                }
-
-                let is_hovered = menu.hovered_index == Some(index) && entry.enabled;
-                let text_color = if entry.enabled {
-                    rgb(0xf5f7fb)
-                } else {
-                    rgb(0x707781)
-                };
-
-                let entry_bg = if is_hovered {
-                    rgba(0x3b4d6333)
-                } else {
-                    rgba(0x00000000)
-                };
-                children.push(
-                    div()
-                        .h(px(MENU_ITEM_HEIGHT_PX))
-                        .px(px(MENU_PADDING_X_PX))
-                        .bg(entry_bg)
-                        .text_color(text_color)
-                        .text_sm()
-                        .flex()
-                        .items_center()
-                        .child(entry.label.clone())
-                        .into_any_element(),
-                );
-            }
-            panel = panel.children(children);
-            Some(panel.into_any_element())
+            self.interaction_state.reset();
         }
     }
 
@@ -2292,7 +1016,7 @@ mod supported {
                     move |event, window, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_left_mouse_down(event, window, cx) {
-                                eprintln!("ruviz-gpui left mouse down failed: {err}");
+                                log_interaction_error("left mouse down", &err);
                             }
                         });
                     }
@@ -2302,7 +1026,7 @@ mod supported {
                     move |event, window, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_right_mouse_down(event, window, cx) {
-                                eprintln!("ruviz-gpui right mouse down failed: {err}");
+                                log_interaction_error("right mouse down", &err);
                             }
                         });
                     }
@@ -2312,7 +1036,7 @@ mod supported {
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_mouse_move(event, cx) {
-                                eprintln!("ruviz-gpui mouse move failed: {err}");
+                                log_interaction_error("mouse move", &err);
                             }
                         });
                     }
@@ -2322,7 +1046,7 @@ mod supported {
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_left_mouse_up(event, cx) {
-                                eprintln!("ruviz-gpui left mouse up failed: {err}");
+                                log_interaction_error("left mouse up", &err);
                             }
                         });
                     }
@@ -2332,7 +1056,7 @@ mod supported {
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_left_mouse_up(event, cx) {
-                                eprintln!("ruviz-gpui left mouse up-out failed: {err}");
+                                log_interaction_error("left mouse up-out", &err);
                             }
                         });
                     }
@@ -2342,7 +1066,7 @@ mod supported {
                     move |event, window, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_right_mouse_up(event, window, cx) {
-                                eprintln!("ruviz-gpui right mouse up failed: {err}");
+                                log_interaction_error("right mouse up", &err);
                             }
                         });
                     }
@@ -2352,7 +1076,7 @@ mod supported {
                     move |event, window, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_right_mouse_up(event, window, cx) {
-                                eprintln!("ruviz-gpui right mouse up-out failed: {err}");
+                                log_interaction_error("right mouse up-out", &err);
                             }
                         });
                     }
@@ -2362,7 +1086,7 @@ mod supported {
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
                             if let Err(err) = view.handle_scroll_wheel(event, cx) {
-                                eprintln!("ruviz-gpui scroll handling failed: {err}");
+                                log_interaction_error("scroll handling", &err);
                             }
                         });
                     }
@@ -2374,7 +1098,7 @@ mod supported {
                             match view.handle_key_down(event, window, cx) {
                                 Ok(true) => cx.stop_propagation(),
                                 Ok(false) => {}
-                                Err(err) => eprintln!("ruviz-gpui key handling failed: {err}"),
+                                Err(err) => log_interaction_error("key handling", &err),
                             }
                         });
                     }
@@ -2399,446 +1123,6 @@ mod supported {
             }
 
             root
-        }
-    }
-
-    fn bind_reactive_session(
-        session: &InteractivePlotSession,
-    ) -> (Arc<AtomicBool>, UnboundedReceiver<()>, ReactiveSubscription) {
-        let reactive_notify_pending = Arc::new(AtomicBool::new(false));
-        let (sender, receiver) = unbounded();
-        let pending_for_callback = Arc::clone(&reactive_notify_pending);
-        let subscription = session.subscribe_reactive(move || {
-            if pending_for_callback
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                let _ = sender.unbounded_send(());
-            }
-        });
-
-        (reactive_notify_pending, receiver, subscription)
-    }
-
-    fn apply_performance_options(session: &InteractivePlotSession, options: PerformanceOptions) {
-        session.set_frame_pacing(options.frame_pacing);
-        session.set_quality_policy(options.quality_policy);
-        session.set_prefer_gpu(options.prefer_gpu);
-    }
-
-    fn active_backend_for_frame(frame: &CachedFrame) -> ActiveBackend {
-        match frame.target {
-            RenderTargetKind::Image => ActiveBackend::Image,
-            #[cfg(all(feature = "gpu", target_os = "macos"))]
-            RenderTargetKind::Surface => match frame.primary {
-                PrimaryFrame::Surface(_) => ActiveBackend::HybridFastPath,
-                PrimaryFrame::Image(_) => ActiveBackend::HybridFallback,
-            },
-            #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-            RenderTargetKind::Surface => ActiveBackend::HybridFallback,
-        }
-    }
-
-    fn distance_px(a: ViewportPoint, b: ViewportPoint) -> f64 {
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        (dx * dx + dy * dy).sqrt()
-    }
-
-    fn cursor_data_position(
-        visible_bounds: ViewportRect,
-        plot_area: ViewportRect,
-        cursor_position_px: ViewportPoint,
-    ) -> Option<ViewportPoint> {
-        let plot_width = plot_area.width();
-        let plot_height = plot_area.height();
-        if plot_width <= f64::EPSILON || plot_height <= f64::EPSILON {
-            return None;
-        }
-        if !plot_area.contains(cursor_position_px) {
-            return None;
-        }
-
-        let normalized_x = (cursor_position_px.x - plot_area.min.x) / plot_width;
-        let normalized_y = (cursor_position_px.y - plot_area.min.y) / plot_height;
-        Some(ViewportPoint::new(
-            visible_bounds.min.x + visible_bounds.width() * normalized_x,
-            visible_bounds.max.y - visible_bounds.height() * normalized_y,
-        ))
-    }
-
-    fn sanitize_scale_factor(scale_factor: f32) -> f32 {
-        if scale_factor.is_finite() && scale_factor > 0.0 {
-            scale_factor
-        } else {
-            1.0
-        }
-    }
-
-    #[allow(deprecated)]
-    fn resolve_presentation_mode(requested: PresentationMode) -> PresentationMode {
-        match requested {
-            PresentationMode::Image => PresentationMode::Image,
-            PresentationMode::Hybrid => {
-                #[cfg(feature = "gpu")]
-                {
-                    PresentationMode::Hybrid
-                }
-                #[cfg(not(feature = "gpu"))]
-                {
-                    PresentationMode::Image
-                }
-            }
-            PresentationMode::SurfaceExperimental => {
-                #[cfg(feature = "gpu")]
-                {
-                    PresentationMode::Hybrid
-                }
-                #[cfg(not(feature = "gpu"))]
-                {
-                    PresentationMode::Image
-                }
-            }
-        }
-    }
-
-    fn retire_primary_frame(retired_images: &mut Vec<Arc<RenderImage>>, primary: PrimaryFrame) {
-        match primary {
-            PrimaryFrame::Image(image) => retired_images.push(image),
-            #[cfg(all(feature = "gpu", target_os = "macos"))]
-            PrimaryFrame::Surface(_) => {}
-        }
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn maybe_retire_replaced_primary(
-        retired_images: &mut Vec<Arc<RenderImage>>,
-        previous: &PrimaryFrame,
-        current: &PrimaryFrame,
-    ) {
-        match (previous, current) {
-            (PrimaryFrame::Image(previous), PrimaryFrame::Image(current))
-                if !Arc::ptr_eq(previous, current) =>
-            {
-                retired_images.push(Arc::clone(previous));
-            }
-            (PrimaryFrame::Image(previous), _) => retired_images.push(Arc::clone(previous)),
-            _ => {}
-        }
-    }
-
-    #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-    fn maybe_retire_replaced_primary(
-        retired_images: &mut Vec<Arc<RenderImage>>,
-        previous: &PrimaryFrame,
-        current: &PrimaryFrame,
-    ) {
-        let PrimaryFrame::Image(previous) = previous;
-        let PrimaryFrame::Image(current) = current;
-        if !Arc::ptr_eq(previous, current) {
-            retired_images.push(Arc::clone(previous));
-        }
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    #[allow(deprecated)]
-    fn should_use_surface_primary(
-        presentation_mode: PresentationMode,
-        target: RenderTargetKind,
-        surface_capability: SurfaceCapability,
-    ) -> bool {
-        matches!(
-            presentation_mode,
-            PresentationMode::Hybrid | PresentationMode::SurfaceExperimental
-        ) && target == RenderTargetKind::Surface
-            && surface_capability == SurfaceCapability::FastPath
-    }
-
-    #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-    fn should_use_surface_primary(
-        _presentation_mode: PresentationMode,
-        _target: RenderTargetKind,
-        _surface_capability: SurfaceCapability,
-    ) -> bool {
-        false
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn make_surface_pixel_buffer_options() -> CFDictionary<CFString, CFType> {
-        let iosurface_key: CFString = CVPixelBufferKeys::IOSurfaceProperties.into();
-        let metal_key: CFString = CVPixelBufferKeys::MetalCompatibility.into();
-        let cg_image_key: CFString = CVPixelBufferKeys::CGImageCompatibility.into();
-        let bitmap_context_key: CFString = CVPixelBufferKeys::CGBitmapContextCompatibility.into();
-        let iosurface_value = CFDictionary::<CFString, CFType>::from_CFType_pairs(&[]);
-
-        CFDictionary::from_CFType_pairs(&[
-            (iosurface_key, iosurface_value.as_CFType()),
-            (metal_key, CFBoolean::true_value().as_CFType()),
-            (cg_image_key, CFBoolean::true_value().as_CFType()),
-            (bitmap_context_key, CFBoolean::true_value().as_CFType()),
-        ])
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    impl SurfaceUploadState {
-        fn update(
-            &mut self,
-            previous: Option<&CVPixelBuffer>,
-            image: &RuvizImage,
-        ) -> std::result::Result<CVPixelBuffer, String> {
-            let width = image.width as usize;
-            let height = image.height as usize;
-            let pixel_buffer = match previous {
-                Some(previous)
-                    if previous.get_width() == width && previous.get_height() == height =>
-                {
-                    previous.clone()
-                }
-                _ => CVPixelBuffer::new(
-                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-                    width,
-                    height,
-                    Some(&self.pixel_buffer_options),
-                )
-                .map_err(|status| format!("Failed to create CVPixelBuffer: {status}"))?,
-            };
-
-            write_surface_pixels(&pixel_buffer, width, height, &image.pixels)?;
-            Ok(pixel_buffer)
-        }
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn write_surface_pixels(
-        pixel_buffer: &CVPixelBuffer,
-        width: usize,
-        height: usize,
-        rgba_pixels: &[u8],
-    ) -> std::result::Result<(), String> {
-        let lock_status = pixel_buffer.lock_base_address(0);
-        if lock_status != 0 {
-            return Err(format!(
-                "Failed to lock CVPixelBuffer base address: {lock_status}"
-            ));
-        }
-
-        let copy_result = (|| {
-            if !pixel_buffer.is_planar() || pixel_buffer.get_plane_count() < 2 {
-                return Err("Expected a bi-planar 420f CVPixelBuffer".to_string());
-            }
-
-            let y_width = pixel_buffer.get_width_of_plane(0);
-            let y_height = pixel_buffer.get_height_of_plane(0);
-            let y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
-            let y_plane = unsafe { pixel_buffer.get_base_address_of_plane(0) } as *mut u8;
-            if y_plane.is_null() {
-                return Err("CVPixelBuffer luma plane base address was null".to_string());
-            }
-
-            for row in 0..height.min(y_height) {
-                for col in 0..width.min(y_width) {
-                    let pixel = rgba_at(rgba_pixels, width, row, col);
-                    let y = rgb_to_ycbcr_full_range(pixel.0, pixel.1, pixel.2).0;
-                    unsafe {
-                        *y_plane.add(row * y_stride + col) = y;
-                    }
-                }
-            }
-
-            let uv_width = pixel_buffer.get_width_of_plane(1);
-            let uv_height = pixel_buffer.get_height_of_plane(1);
-            let uv_stride = pixel_buffer.get_bytes_per_row_of_plane(1);
-            let uv_plane = unsafe { pixel_buffer.get_base_address_of_plane(1) } as *mut u8;
-            if uv_plane.is_null() {
-                return Err("CVPixelBuffer chroma plane base address was null".to_string());
-            }
-
-            for uv_row in 0..uv_height {
-                for uv_col in 0..uv_width {
-                    let x0 = uv_col * 2;
-                    let y0 = uv_row * 2;
-                    if x0 >= width || y0 >= height {
-                        continue;
-                    }
-
-                    let mut r_sum: u32 = 0;
-                    let mut g_sum: u32 = 0;
-                    let mut b_sum: u32 = 0;
-                    let mut sample_count: u32 = 0;
-
-                    for sample_y in y0..(y0 + 2).min(height) {
-                        for sample_x in x0..(x0 + 2).min(width) {
-                            let (r, g, b, _) = rgba_at(rgba_pixels, width, sample_y, sample_x);
-                            r_sum += r as u32;
-                            g_sum += g as u32;
-                            b_sum += b as u32;
-                            sample_count += 1;
-                        }
-                    }
-
-                    if sample_count == 0 {
-                        continue;
-                    }
-
-                    let r = (r_sum / sample_count) as u8;
-                    let g = (g_sum / sample_count) as u8;
-                    let b = (b_sum / sample_count) as u8;
-                    let (_, cb, cr) = rgb_to_ycbcr_full_range(r, g, b);
-                    let uv_offset = uv_row * uv_stride + uv_col * 2;
-                    unsafe {
-                        *uv_plane.add(uv_offset) = cb;
-                        *uv_plane.add(uv_offset + 1) = cr;
-                    }
-                }
-            }
-
-            Ok(())
-        })();
-
-        let unlock_status = pixel_buffer.unlock_base_address(0);
-        if unlock_status != 0 {
-            return match copy_result {
-                Ok(()) => Err(format!(
-                    "Failed to unlock CVPixelBuffer base address: {unlock_status}"
-                )),
-                Err(copy_err) => Err(format!(
-                    "Failed to unlock CVPixelBuffer base address: {unlock_status}; copy error: {copy_err}"
-                )),
-            };
-        }
-
-        copy_result
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn rgba_at(rgba_pixels: &[u8], width: usize, row: usize, col: usize) -> (u8, u8, u8, u8) {
-        let offset = (row * width + col) * 4;
-        let end = offset.saturating_add(4);
-        debug_assert!(
-            rgba_pixels.len() >= end,
-            "pixel buffer too small for ({row}, {col}) in {width}-wide image: len={} need>={end}",
-            rgba_pixels.len()
-        );
-        (
-            rgba_pixels[offset],
-            rgba_pixels[offset + 1],
-            rgba_pixels[offset + 2],
-            rgba_pixels[offset + 3],
-        )
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn rgb_to_ycbcr_full_range(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
-        let r = r as i32;
-        let g = g as i32;
-        let b = b as i32;
-
-        let y = ((77 * r + 150 * g + 29 * b + 128) >> 8).clamp(0, 255) as u8;
-        let cb = (((-43 * r - 85 * g + 128 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-        let cr = (((128 * r - 107 * g - 21 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-
-        (y, cb, cr)
-    }
-
-    fn render_frame_from_session(
-        session: InteractivePlotSession,
-        request: RenderRequest,
-    ) -> std::result::Result<RenderedFrame, String> {
-        let frame = match request.presentation_mode {
-            PresentationMode::Image => session
-                .render_to_image(ImageTarget {
-                    size_px: request.size_px,
-                    scale_factor: request.scale_factor(),
-                    time_seconds: request.time_seconds(),
-                })
-                .map_err(|err| err.to_string())?,
-            PresentationMode::Hybrid => session
-                .render_to_surface(SurfaceTarget {
-                    size_px: request.size_px,
-                    scale_factor: request.scale_factor(),
-                    time_seconds: request.time_seconds(),
-                })
-                .map_err(|err| err.to_string())?,
-            #[allow(deprecated)]
-            PresentationMode::SurfaceExperimental => session
-                .render_to_surface(SurfaceTarget {
-                    size_px: request.size_px,
-                    scale_factor: request.scale_factor(),
-                    time_seconds: request.time_seconds(),
-                })
-                .map_err(|err| err.to_string())?,
-        };
-
-        let layer_state = frame.layer_state;
-        let use_surface_primary = should_use_surface_primary(
-            request.presentation_mode,
-            frame.target,
-            frame.surface_capability,
-        );
-        Ok(RenderedFrame {
-            primary: if use_surface_primary {
-                #[cfg(all(feature = "gpu", target_os = "macos"))]
-                {
-                    layer_state
-                        .base_dirty
-                        .then(|| RenderedPrimary::Surface(Arc::clone(&frame.layers.base)))
-                }
-                #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-                {
-                    unreachable!("surface primary is only enabled on macOS with the gpu feature")
-                }
-            } else {
-                match request.presentation_mode {
-                    PresentationMode::Image => Some(RenderedPrimary::Image(
-                        render_image_from_ruviz(frame.image.as_ref().clone()),
-                    )),
-                    PresentationMode::Hybrid => layer_state.base_dirty.then(|| {
-                        RenderedPrimary::Image(render_image_from_ruviz(
-                            frame.layers.base.as_ref().clone(),
-                        ))
-                    }),
-                    #[allow(deprecated)]
-                    PresentationMode::SurfaceExperimental => layer_state.base_dirty.then(|| {
-                        RenderedPrimary::Image(render_image_from_ruviz(
-                            frame.layers.base.as_ref().clone(),
-                        ))
-                    }),
-                }
-            },
-            overlay_image: if matches!(request.presentation_mode, PresentationMode::Image) {
-                None
-            } else {
-                frame.layers.overlay.as_ref().and_then(|overlay| {
-                    layer_state
-                        .overlay_dirty
-                        .then(|| render_image_from_ruviz(overlay.as_ref().clone()))
-                })
-            },
-            stats: frame.stats,
-            target: frame.target,
-        })
-    }
-
-    fn render_image_from_ruviz(image: RuvizImage) -> Arc<RenderImage> {
-        let width = image.width;
-        let height = image.height;
-        let mut pixels = image.pixels;
-        rgba_to_bgra_in_place(&mut pixels);
-        let actual_len = pixels.len();
-        let expected_len = width as usize * height as usize * 4;
-        let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, pixels)
-            .unwrap_or_else(|| {
-                panic!(
-                    "rendered frame size must match RGBA pixel buffer ({}x{}, expected {} bytes, got {})",
-                    width, height, expected_len, actual_len
-                )
-            });
-        Arc::new(RenderImage::new(smallvec![Frame::new(buffer)]))
-    }
-
-    fn rgba_to_bgra_in_place(pixels: &mut [u8]) {
-        for pixel in pixels.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
         }
     }
 
@@ -2990,15 +1274,17 @@ mod supported {
                     frame_size_px: (320, 240),
                 }),
                 focus_handle,
-                last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
-                active_drag: ActiveDrag::LeftPan {
-                    anchor_px: ViewportPoint::new(1.0, 1.0),
-                    last_px: ViewportPoint::new(2.0, 2.0),
-                    crossed_threshold: true,
+                interaction_state: InteractionState {
+                    last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
+                    active_drag: ActiveDrag::LeftPan {
+                        anchor_px: ViewportPoint::new(1.0, 1.0),
+                        last_px: ViewportPoint::new(2.0, 2.0),
+                        crossed_threshold: true,
+                    },
+                    context_menu: None,
+                    home_view_bounds: None,
                 },
                 context_menu_action_handler: None,
-                context_menu: None,
-                home_view_bounds: None,
             };
 
             let replacement_plot: Plot = Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]).into();
@@ -3008,8 +1294,8 @@ mod supported {
             assert!(view.cached_frame.is_none());
             assert_eq!(view.retired_images.len(), 1);
             assert!(view.last_layout.is_none());
-            assert_eq!(view.active_drag, ActiveDrag::None);
-            assert!(view.last_pointer_px.is_none());
+            assert_eq!(view.interaction_state.active_drag, ActiveDrag::None);
+            assert!(view.interaction_state.last_pointer_px.is_none());
         }
 
         #[test]
@@ -3033,11 +1319,8 @@ mod supported {
                 in_flight_render: None,
                 last_layout: None,
                 focus_handle: TestAppContext::single().update(|cx| cx.focus_handle()),
-                last_pointer_px: None,
-                active_drag: ActiveDrag::None,
+                interaction_state: InteractionState::default(),
                 context_menu_action_handler: None,
-                context_menu: None,
-                home_view_bounds: None,
             };
 
             let save = KeyDownEvent {
@@ -3114,7 +1397,7 @@ mod supported {
             let (context_menu_open, final_bounds) = cx.read(|app| {
                 app.read_entity(&view, |view, _| {
                     (
-                        view.context_menu.is_some(),
+                        view.interaction_state.context_menu.is_some(),
                         view.session
                             .viewport_snapshot()
                             .expect("viewport snapshot should succeed")
