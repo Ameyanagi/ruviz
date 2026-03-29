@@ -1,9 +1,20 @@
 use gpui::{
-    App, Application, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
+    App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb,
+    size,
 };
 use ruviz::prelude::*;
 use ruviz_gpui::{GpuiContextMenuConfig, GpuiContextMenuItem, RuvizPlot, plot_builder};
+use std::rc::Rc;
+
+#[cfg(target_os = "macos")]
+fn application() -> gpui::Application {
+    gpui::Application::with_platform(Rc::new(gpui_macos::MacPlatform::new(false)))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn application() -> gpui::Application {
+    unimplemented!("GPUI examples are only wired up for macOS in this forked setup")
+}
 
 struct StaticEmbedDemo {
     plot: gpui::Entity<RuvizPlot>,
@@ -50,46 +61,13 @@ impl Render for StaticEmbedDemo {
         div()
             .size_full()
             .p_4()
-            .gap_3()
-            .flex()
-            .flex_col()
             .bg(rgb(0xf6f7fb))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(0xd6dae5))
-                    .bg(rgb(0xffffff))
-                    .p_3()
-                    .child(div().font_weight(gpui::FontWeight::BOLD).child("GPUI Interactive Controls"))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x475467))
-                            .child("Left drag: pan  •  Right drag: box zoom  •  Right click: menu"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x475467))
-                            .child("Shift + left drag: brush  •  Cmd/Ctrl+S: save PNG  •  Cmd/Ctrl+C: copy image"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x475467))
-                            .child("The custom menu item in this example prints the current visible bounds to stdout."),
-                    ),
-            )
-            .child(div().flex_1().min_h_0().child(self.plot.clone()))
+            .child(self.plot.clone())
     }
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
         cx.open_window(
             WindowOptions {

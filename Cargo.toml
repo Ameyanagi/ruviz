@@ -4,6 +4,9 @@ members = ["crates/ruviz-gpui"]
 default-members = ["."]
 resolver = "2"
 
+[patch.crates-io]
+gpui = { git = "https://github.com/Ameyanagi/zed", rev = "6e43ecd17f28afe6f55df34657cb9b21493d46b1" }
+
 [package]
 name = "ruviz"
 version = "0.1.5"

@@ -1,10 +1,19 @@
 use gpui::{
-    App, Application, Bounds, Context, Render, Timer, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, size,
+    App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use ruviz::{data::Observable, prelude::*};
 use ruviz_gpui::{PerformancePreset, RuvizPlot, plot_builder};
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
+
+#[cfg(target_os = "macos")]
+fn application() -> gpui::Application {
+    gpui::Application::with_platform(Rc::new(gpui_macos::MacPlatform::new(false)))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn application() -> gpui::Application {
+    unimplemented!("GPUI examples are only wired up for macOS in this forked setup")
+}
 
 struct ObservableEmbedDemo {
     plot: gpui::Entity<RuvizPlot>,
@@ -29,7 +38,7 @@ impl ObservableEmbedDemo {
             .spawn(cx, {
                 let y = y.clone();
                 async move |_| {
-                    Timer::after(Duration::from_millis(750)).await;
+                    smol::Timer::after(Duration::from_millis(750)).await;
                     y.set(x.iter().map(|value| (value * 1.5).cos()).collect());
                 }
             })
@@ -46,7 +55,7 @@ impl Render for ObservableEmbedDemo {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
         cx.open_window(
             WindowOptions {

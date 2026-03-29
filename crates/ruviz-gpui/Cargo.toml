@@ -20,15 +20,19 @@ arboard = "3.6.1"
 rfd = "=0.15.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+gpui = "0.2.2"
 core-foundation = "0.10"
 core-video = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = "0.2.2"
 
+[dev-dependencies]
+smol = "2"
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-gpui = { version = "0.2.2", features = ["runtime_shaders", "test-support"] }
+gpui = { version = "0.2.2", features = ["test-support"] }
+gpui_macos = { git = "https://github.com/Ameyanagi/zed", rev = "6e43ecd17f28afe6f55df34657cb9b21493d46b1", package = "gpui_macos", features = ["runtime_shaders"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }

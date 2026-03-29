@@ -1,10 +1,19 @@
 use gpui::{
-    App, Application, Bounds, Context, Render, Timer, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, size,
+    App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
 };
 use ruviz::{data::Observable, prelude::*};
 use ruviz_gpui::{InteractionOptions, PerformancePreset, RuvizPlot, plot_builder};
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
+
+#[cfg(target_os = "macos")]
+fn application() -> gpui::Application {
+    gpui::Application::with_platform(Rc::new(gpui_macos::MacPlatform::new(false)))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn application() -> gpui::Application {
+    unimplemented!("GPUI examples are only wired up for macOS in this forked setup")
+}
 
 const WINDOW_SECONDS: f64 = 12.0;
 const SAMPLE_COUNT: usize = 480;
@@ -35,8 +44,6 @@ impl FixedBoundsDashboardDemo {
         ))
         .interactive()
         .interaction_options(InteractionOptions {
-            pan: false,
-            zoom: false,
             selection: false,
             ..InteractionOptions::default()
         })
@@ -53,7 +60,7 @@ impl FixedBoundsDashboardDemo {
                 async move |_| {
                     let mut phase = 0.0;
                     loop {
-                        Timer::after(Duration::from_millis(DATA_INTERVAL_MS)).await;
+                        smol::Timer::after(Duration::from_millis(DATA_INTERVAL_MS)).await;
                         phase += 0.12;
 
                         let next_primary = synthesize_primary(&x, phase);
@@ -75,7 +82,7 @@ impl FixedBoundsDashboardDemo {
                 async move |_| {
                     let mut palette_index = 1usize;
                     loop {
-                        Timer::after(Duration::from_millis(COLOR_INTERVAL_MS)).await;
+                        smol::Timer::after(Duration::from_millis(COLOR_INTERVAL_MS)).await;
                         let next_accent = accent_palette(palette_index);
                         palette_index = (palette_index + 1) % 5;
                         accent.set(next_accent);
@@ -88,7 +95,7 @@ impl FixedBoundsDashboardDemo {
             .spawn(cx, {
                 let plot = plot.clone();
                 async move |cx| loop {
-                    Timer::after(Duration::from_secs(1)).await;
+                    smol::Timer::after(Duration::from_secs(1)).await;
                     let plot = plot.clone();
                     cx.on_next_frame(move |_, cx| {
                         let plot = plot.read(cx);
@@ -117,7 +124,7 @@ impl Render for FixedBoundsDashboardDemo {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1080.0), px(720.0)), cx);
         cx.open_window(
             WindowOptions {

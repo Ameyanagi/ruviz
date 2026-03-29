@@ -1764,7 +1764,7 @@ mod supported {
             window: &mut Window,
             cx: &mut Context<Self>,
         ) -> Result<()> {
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
 
             if self.context_menu.is_some() {
                 return self.handle_context_menu_left_click(event.position, window, cx);
@@ -1811,7 +1811,7 @@ mod supported {
             window: &mut Window,
             cx: &mut Context<Self>,
         ) -> Result<()> {
-            window.focus(&self.focus_handle);
+            window.focus(&self.focus_handle, cx);
             if self.context_menu.is_some() {
                 self.close_context_menu(cx);
             }
@@ -2013,7 +2013,9 @@ mod supported {
                     },
                     Some(position_px),
                 ) => {
-                    if crossed_threshold {
+                    let crossed_threshold_now = crossed_threshold
+                        || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
+                    if crossed_threshold_now {
                         if zoom_enabled {
                             let region_px = ViewportRect::from_points(anchor_px, position_px);
                             if region_px.width() > DRAG_THRESHOLD_PX
@@ -2052,7 +2054,14 @@ mod supported {
 
             self.session.apply_input(PlotInputEvent::ClearHover);
             self.session.apply_input(PlotInputEvent::HideTooltip);
-            self.reset_pointer_state();
+            if !matches!(
+                self.active_drag,
+                ActiveDrag::RightZoom { .. }
+                    | ActiveDrag::LeftPan { .. }
+                    | ActiveDrag::Brush { .. }
+            ) {
+                self.reset_pointer_state();
+            }
             cx.notify();
         }
 
@@ -2836,7 +2845,7 @@ mod supported {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use gpui::{Modifiers, TestAppContext};
+        use gpui::{Modifiers, MouseButton, TestAppContext};
         use ruviz::{data::Observable, prelude::Plot};
 
         #[test]
@@ -3038,6 +3047,7 @@ mod supported {
                     key_char: None,
                 },
                 is_held: false,
+                prefer_character_input: false,
             };
             let copy = KeyDownEvent {
                 keystroke: gpui::Keystroke {
@@ -3046,6 +3056,7 @@ mod supported {
                     key_char: None,
                 },
                 is_held: false,
+                prefer_character_input: false,
             };
 
             assert_eq!(
@@ -3056,6 +3067,64 @@ mod supported {
                 view.builtin_shortcut_action_for_keystroke(&copy),
                 Some(BuiltinContextMenuAction::CopyImage)
             );
+        }
+
+        #[test]
+        fn test_right_mouse_up_far_from_anchor_zooms_without_move_events() {
+            let mut app = TestAppContext::single();
+            let (view, cx) = app.add_window_view(|_, cx| {
+                let plot: Plot = Plot::new()
+                    .line(&[0.0, 1.0, 2.0, 3.0], &[0.0, 1.0, 0.5, 1.5])
+                    .into();
+                RuvizPlot::from_options_impl(plot, RuvizPlotOptions::default(), None, cx)
+            });
+
+            cx.refresh().expect("window refresh should succeed");
+            cx.run_until_parked();
+
+            let (start, end, initial_bounds) = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    let layout = view
+                        .last_layout
+                        .clone()
+                        .expect("plot should have a resolved layout");
+                    let start = point(
+                        layout.content_bounds.origin.x + layout.content_bounds.size.width * 0.25,
+                        layout.content_bounds.origin.y + layout.content_bounds.size.height * 0.25,
+                    );
+                    let end = point(
+                        layout.content_bounds.origin.x + layout.content_bounds.size.width * 0.75,
+                        layout.content_bounds.origin.y + layout.content_bounds.size.height * 0.75,
+                    );
+                    (
+                        start,
+                        end,
+                        view.session
+                            .viewport_snapshot()
+                            .expect("viewport snapshot should succeed")
+                            .visible_bounds,
+                    )
+                })
+            });
+
+            cx.simulate_mouse_down(start, MouseButton::Right, Modifiers::default());
+            cx.simulate_mouse_up(end, MouseButton::Right, Modifiers::default());
+            cx.run_until_parked();
+
+            let (context_menu_open, final_bounds) = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    (
+                        view.context_menu.is_some(),
+                        view.session
+                            .viewport_snapshot()
+                            .expect("viewport snapshot should succeed")
+                            .visible_bounds,
+                    )
+                })
+            });
+
+            assert!(!context_menu_open);
+            assert_ne!(final_bounds, initial_bounds);
         }
 
         #[test]
