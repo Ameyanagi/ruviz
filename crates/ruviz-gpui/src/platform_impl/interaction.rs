@@ -400,9 +400,12 @@ impl RuvizPlot {
         self.close_context_menu(cx);
 
         match entry.kind {
-            ContextMenuEntryKind::Builtin(action) => {
-                self.execute_builtin_context_menu_action(action, window, cx)
-            }
+            ContextMenuEntryKind::Builtin(action) => self.execute_builtin_context_menu_action(
+                action,
+                Some(trigger_position_px),
+                window,
+                cx,
+            ),
             ContextMenuEntryKind::Custom { id } => {
                 let Some(handler) = self.context_menu_action_handler.clone() else {
                     return Ok(());
@@ -420,6 +423,7 @@ impl RuvizPlot {
     fn execute_builtin_context_menu_action(
         &mut self,
         action: BuiltinContextMenuAction,
+        trigger_position_px: Option<ViewportPoint>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -432,7 +436,10 @@ impl RuvizPlot {
             BuiltinContextMenuAction::GoToHomeView => self.go_to_home_view(cx),
             BuiltinContextMenuAction::SavePng => self.save_png(window, cx),
             BuiltinContextMenuAction::CopyImage => self.copy_image(window, cx),
-            BuiltinContextMenuAction::CopyCursorCoordinates => self.copy_cursor_coordinates(),
+            BuiltinContextMenuAction::CopyCursorCoordinates => trigger_position_px.map_or_else(
+                || self.copy_cursor_coordinates(),
+                |px| self.copy_cursor_coordinates_at(px),
+            ),
             BuiltinContextMenuAction::CopyVisibleBounds => self.copy_visible_bounds(),
         }
     }
@@ -818,7 +825,7 @@ impl RuvizPlot {
     ) -> Result<bool> {
         if let Some(action) = self.builtin_shortcut_action_for_keystroke(event) {
             self.close_context_menu(cx);
-            self.execute_builtin_context_menu_action(action, window, cx)?;
+            self.execute_builtin_context_menu_action(action, None, window, cx)?;
             return Ok(true);
         }
 

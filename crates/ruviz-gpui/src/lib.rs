@@ -840,6 +840,13 @@ mod platform_impl {
                         .to_string(),
                 )
             })?;
+            self.copy_cursor_coordinates_at(cursor_position_px)
+        }
+
+        pub(crate) fn copy_cursor_coordinates_at(
+            &self,
+            cursor_position_px: ViewportPoint,
+        ) -> Result<()> {
             let snapshot = self.session.viewport_snapshot()?;
             let cursor_data_position = cursor_data_position(
                 snapshot.visible_bounds,
