@@ -397,7 +397,12 @@ impl RuvizPlot {
                 let Some(file_handle) = block_on(dialog.save_file()) else {
                     return;
                 };
-                let _ = write_rgba_png_atomic(file_handle.path(), &image);
+                if let Err(err) = write_rgba_png_atomic(file_handle.path(), &image) {
+                    eprintln!(
+                        "ruviz-gpui: failed to export PNG to {}: {err}",
+                        file_handle.path().display()
+                    );
+                }
             })
             .map(|_| ())
             .map_err(|err| {

@@ -1063,9 +1063,9 @@ mod platform_impl {
                 })
                 .on_mouse_up(MouseButton::Right, {
                     let entity = entity.clone();
-                    move |event, window, cx| {
+                    move |event, _, cx| {
                         entity.update(cx, |view, cx| {
-                            if let Err(err) = view.handle_right_mouse_up(event, window, cx) {
+                            if let Err(err) = view.handle_right_mouse_up(event, cx) {
                                 log_interaction_error("right mouse up", &err);
                             }
                         });
@@ -1073,9 +1073,9 @@ mod platform_impl {
                 })
                 .on_mouse_up_out(MouseButton::Right, {
                     let entity = entity.clone();
-                    move |event, window, cx| {
+                    move |event, _, cx| {
                         entity.update(cx, |view, cx| {
-                            if let Err(err) = view.handle_right_mouse_up(event, window, cx) {
+                            if let Err(err) = view.handle_right_mouse_up(event, cx) {
                                 log_interaction_error("right mouse up-out", &err);
                             }
                         });

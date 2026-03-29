@@ -10,7 +10,7 @@ pub fn application() -> gpui::Application {
 
 #[cfg(not(target_os = "macos"))]
 pub fn application() -> gpui::Application {
-    unimplemented!("GPUI examples are only wired up for macOS in this forked setup")
+    gpui::Application::new()
 }
 
 #[allow(dead_code)]

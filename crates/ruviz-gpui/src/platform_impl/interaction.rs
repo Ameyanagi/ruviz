@@ -377,6 +377,7 @@ impl RuvizPlot {
             return Ok(());
         };
         if !menu.entries.get(index).is_some_and(|entry| entry.enabled) {
+            self.close_context_menu(cx);
             return Ok(());
         }
 
@@ -715,7 +716,6 @@ impl RuvizPlot {
     pub(super) fn handle_right_mouse_up(
         &mut self,
         event: &MouseUpEvent,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let position_px = self
@@ -758,7 +758,6 @@ impl RuvizPlot {
         }
 
         self.reset_pointer_state();
-        let _ = window;
         Ok(())
     }
 
@@ -870,6 +869,7 @@ impl RuvizPlot {
             .left(panel_left)
             .top(panel_top)
             .w(menu.panel_bounds.size.width)
+            .h(menu.panel_bounds.size.height)
             .bg(rgb(0x1b1e24))
             .border_1()
             .border_color(rgba(0x46515eff))
