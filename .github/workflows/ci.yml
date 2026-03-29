@@ -228,12 +228,14 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-wasm-web-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-web-
 
       - name: Cache Bun
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked

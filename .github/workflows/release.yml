@@ -63,7 +63,7 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
           RUST_WEB_VERSION="$(cargo pkgid -p ruviz-web | sed 's/.*[#@]//')"
-          NPM_WEB_VERSION="$(sed -n 's/  "version": "\(.*\)",/\1/p' packages/ruviz-web/package.json | head -n 1)"
+          NPM_WEB_VERSION="$(python3 -c "import json; print(json.load(open('packages/ruviz-web/package.json'))['version'])")"
 
           if [ "v${RUST_WEB_VERSION}" != "${TAG}" ]; then
             echo "Release tag ${TAG} does not match ruviz-web crate version v${RUST_WEB_VERSION}"
@@ -307,7 +307,7 @@ jobs:
       - name: Validate npm package version matches release tag
         run: |
           TAG="${{ github.ref_name }}"
-          VERSION="$(sed -n 's/  "version": "\(.*\)",/\1/p' packages/ruviz-web/package.json | head -n 1)"
+          VERSION="$(python3 -c "import json; print(json.load(open('packages/ruviz-web/package.json'))['version'])")"
 
           if [ "v${VERSION}" != "${TAG}" ]; then
             echo "Release tag ${TAG} does not match npm package version v${VERSION}"

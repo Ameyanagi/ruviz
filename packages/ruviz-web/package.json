@@ -47,9 +47,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "engines": {
-    "bun": ">=1.3.5"
-  },
   "scripts": {
     "build:wasm": "PATH=\"$HOME/.cargo/bin:$PATH\" wasm-pack build ../../crates/ruviz-web --target web --out-dir \"$PWD/generated/raw\" --out-name ruviz_web_raw",
     "build:js": "tsc -p tsconfig.json",

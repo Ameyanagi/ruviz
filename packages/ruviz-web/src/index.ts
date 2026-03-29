@@ -719,6 +719,22 @@ export class CanvasSession {
     return this.#rawSession.has_plot();
   }
 
+  #withAttachedPlot(fn: () => void): void {
+    if (!this.hasPlot()) {
+      return;
+    }
+
+    fn();
+  }
+
+  #withAttachedPlotResult<T>(fn: () => T): T | null {
+    if (!this.hasPlot()) {
+      return null;
+    }
+
+    return fn();
+  }
+
   async setPlot(plot: PlotBuilder): Promise<void> {
     const rawPlot = await plot._toRawPlot(this.#module);
     this.#rawSession.set_plot(rawPlot);
@@ -734,7 +750,9 @@ export class CanvasSession {
   }
 
   setTime(timeSeconds: number): void {
-    this.#rawSession.set_time(timeSeconds);
+    this.#withAttachedPlot(() => {
+      this.#rawSession.set_time(timeSeconds);
+    });
   }
 
   setBackendPreference(backendPreference: BackendPreference): void {
@@ -744,39 +762,61 @@ export class CanvasSession {
   }
 
   render(): void {
-    this.#rawSession.render();
+    this.#withAttachedPlot(() => {
+      this.#rawSession.render();
+    });
   }
 
   resetView(): void {
-    this.#rawSession.reset_view();
+    this.#withAttachedPlot(() => {
+      this.#rawSession.reset_view();
+    });
   }
 
   pointerDown(x: number, y: number, button: number): void {
-    this.#rawSession.pointer_down(x, y, button);
+    this.#withAttachedPlot(() => {
+      this.#rawSession.pointer_down(x, y, button);
+    });
   }
 
   pointerMove(x: number, y: number): void {
-    this.#rawSession.pointer_move(x, y);
+    this.#withAttachedPlot(() => {
+      this.#rawSession.pointer_move(x, y);
+    });
   }
 
   pointerUp(x: number, y: number, button: number): void {
-    this.#rawSession.pointer_up(x, y, button);
+    this.#withAttachedPlot(() => {
+      this.#rawSession.pointer_up(x, y, button);
+    });
   }
 
   pointerLeave(): void {
-    this.#rawSession.pointer_leave();
+    this.#withAttachedPlot(() => {
+      this.#rawSession.pointer_leave();
+    });
   }
 
   wheel(deltaY: number, x: number, y: number): void {
-    this.#rawSession.wheel(deltaY, x, y);
+    this.#withAttachedPlot(() => {
+      this.#rawSession.wheel(deltaY, x, y);
+    });
   }
 
   async exportPng(): Promise<Uint8Array> {
-    return this.#rawSession.export_png();
+    const result = this.#withAttachedPlotResult(() => this.#rawSession.export_png());
+    if (result === null) {
+      throw new Error("no plot is attached to this session");
+    }
+    return result;
   }
 
   async exportSvg(): Promise<string> {
-    return this.#rawSession.export_svg();
+    const result = this.#withAttachedPlotResult(() => this.#rawSession.export_svg());
+    if (result === null) {
+      throw new Error("no plot is attached to this session");
+    }
+    return result;
   }
 
   destroy(): void {
@@ -849,14 +889,23 @@ export class WorkerSession {
     return this.#fallbackSession ? this.#fallbackSession.hasPlot() : this.#hasPlot;
   }
 
+  #canDispatchPlotCommand(): boolean {
+    return this.#fallbackSession ? this.#fallbackSession.hasPlot() : this.#hasPlot;
+  }
+
   async setPlot(plot: PlotBuilder): Promise<void> {
     if (this.#fallbackSession) {
       await this.#fallbackSession.setPlot(plot);
       return;
     }
 
-    this.#hasPlot = true;
-    await this.#request("setPlot", { snapshot: plot.toSnapshot() });
+    try {
+      await this.#request("setPlot", { snapshot: plot.toSnapshot() });
+      this.#hasPlot = true;
+    } catch (error) {
+      this.#hasPlot = false;
+      throw error;
+    }
   }
 
   resize(width?: number, height?: number, scaleFactor?: number): void {
@@ -876,6 +925,10 @@ export class WorkerSession {
   setTime(timeSeconds: number): void {
     if (this.#fallbackSession) {
       this.#fallbackSession.setTime(timeSeconds);
+      return;
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
       return;
     }
 
@@ -899,12 +952,20 @@ export class WorkerSession {
       return;
     }
 
+    if (!this.#canDispatchPlotCommand()) {
+      return;
+    }
+
     this.#post("render");
   }
 
   resetView(): void {
     if (this.#fallbackSession) {
       this.#fallbackSession.resetView();
+      return;
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
       return;
     }
 
@@ -917,12 +978,20 @@ export class WorkerSession {
       return;
     }
 
+    if (!this.#canDispatchPlotCommand()) {
+      return;
+    }
+
     this.#post("pointerDown", { x, y, button });
   }
 
   pointerMove(x: number, y: number): void {
     if (this.#fallbackSession) {
       this.#fallbackSession.pointerMove(x, y);
+      return;
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
       return;
     }
 
@@ -935,12 +1004,20 @@ export class WorkerSession {
       return;
     }
 
+    if (!this.#canDispatchPlotCommand()) {
+      return;
+    }
+
     this.#post("pointerUp", { x, y, button });
   }
 
   pointerLeave(): void {
     if (this.#fallbackSession) {
       this.#fallbackSession.pointerLeave();
+      return;
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
       return;
     }
 
@@ -953,12 +1030,20 @@ export class WorkerSession {
       return;
     }
 
+    if (!this.#canDispatchPlotCommand()) {
+      return;
+    }
+
     this.#post("wheel", { deltaY, x, y });
   }
 
   async exportPng(): Promise<Uint8Array> {
     if (this.#fallbackSession) {
       return this.#fallbackSession.exportPng();
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      throw new Error("no plot is attached to this worker session");
     }
 
     const payload = await this.#request("exportPng");
@@ -968,6 +1053,10 @@ export class WorkerSession {
   async exportSvg(): Promise<string> {
     if (this.#fallbackSession) {
       return this.#fallbackSession.exportSvg();
+    }
+
+    if (!this.#canDispatchPlotCommand()) {
+      throw new Error("no plot is attached to this worker session");
     }
 
     const payload = await this.#request("exportSvg");
