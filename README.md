@@ -61,8 +61,9 @@ Need typeset math labels? See [Typst Text Mode](#typst-text-mode) below.
 - **Parallel rendering**: Multi-threaded for large datasets (rayon)
 - **GPU acceleration**: Optional wgpu backend (experimental)
 - **Interactive plots**: Optional winit window integration
+- **Browser runtime**: Experimental `ruviz-web` adapter and `ruviz` npm SDK for `wasm32` canvas rendering
 - **Animation**: GIF export with `record!` macro and easing functions
-- **Cross-platform**: Linux, macOS, Windows
+- **Cross-platform**: Linux, macOS, Windows, and experimental browser/wasm targets
 
 ## Installation
 
@@ -98,6 +99,26 @@ ruviz = { version = "0.1.5", features = ["parallel", "simd"] }
 | `full` | Most bundled features (excludes HQ GIF/video extras) | Power users |
 
 For minimal builds: `default-features = false`
+
+### Experimental WASM Support
+
+The core crate now compiles for `wasm32-unknown-unknown` with in-memory output helpers such as
+`Plot::render_png_bytes()`, `Plot::render_to_svg()`, and `Image::encode_png()`.
+
+For browser interactivity, use the companion Rust bridge crate in
+[`crates/ruviz-web`](crates/ruviz-web) and the public JS/TS SDK package
+[`ruviz`](packages/ruviz-web). The reference browser demo lives in
+[`demo/web`](demo/web). Native file-path export helpers remain desktop-only.
+
+Note:
+- `ruviz` automatically registers a bundled browser fallback font for canvas sessions.
+- Custom browser fonts can still be added explicitly via `ruviz::render::register_font_bytes(...)`.
+- The current browser adapter provides main-thread canvas and OffscreenCanvas worker sessions, plus
+  `web_runtime_capabilities()` for feature diagnostics.
+- The Vite demo includes direct wasm export, main-thread interactivity, worker interactivity, and
+  temporal signal playback plus Observable-driven updates.
+- The JS workspace is Bun-first. Use `bun install`, `bun run build:web`, and `bun run test:web`
+  from the repo root for browser package and demo work.
 
 ### Typst Text Mode
 
@@ -384,6 +405,8 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing
 git clone https://github.com/Ameyanagi/ruviz.git
 cd ruviz
 
+bun install
+
 # Setup pre-commit hooks (recommended)
 make setup-hooks
 
@@ -400,7 +423,7 @@ cargo run --example basic_example --release
 cargo bench --all-features
 ```
 
-The pre-commit hooks will automatically run `cargo fmt --check` and `cargo clippy` before each commit to ensure code quality.
+The pre-commit hooks will automatically run `cargo fmt --check`, `cargo clippy`, `oxfmt --check`, and `oxlint --deny-warnings` before each commit.
 
 ## Roadmap
 

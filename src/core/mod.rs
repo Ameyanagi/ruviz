@@ -39,7 +39,7 @@ pub use legend::{
     LegendSpacingPixels, LegendStyle, find_best_position,
 };
 pub use plot::{
-    BackendType, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget,
+    BackendType, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, Image, ImageTarget,
     InteractiveFrame, InteractivePlotSession, InteractiveViewportSnapshot, IntoPlot,
     LayerRenderState, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource, PreparedPlot,
     QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle,

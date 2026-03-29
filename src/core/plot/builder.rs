@@ -112,6 +112,7 @@ macro_rules! impl_terminal_methods {
             /// Save the plot to a file
             ///
             /// Finalizes the series and then saves.
+            #[cfg(not(target_arch = "wasm32"))]
             pub fn save<P: AsRef<std::path::Path>>(self, path: P) -> crate::core::Result<()> {
                 self.finalize().save(path)
             }
@@ -121,6 +122,13 @@ macro_rules! impl_terminal_methods {
             /// Finalizes the series before rendering.
             pub fn render(self) -> crate::core::Result<super::Image> {
                 self.finalize().render()
+            }
+
+            /// Render the plot to PNG bytes.
+            ///
+            /// Finalizes the series before rendering.
+            pub fn render_png_bytes(self) -> crate::core::Result<Vec<u8>> {
+                self.finalize().render_png_bytes()
             }
 
             /// Render the plot to an SVG string
@@ -133,6 +141,7 @@ macro_rules! impl_terminal_methods {
             /// Export to SVG file
             ///
             /// Finalizes the series before exporting.
+            #[cfg(not(target_arch = "wasm32"))]
             pub fn export_svg<P: AsRef<std::path::Path>>(self, path: P) -> crate::core::Result<()> {
                 self.finalize().export_svg(path)
             }
@@ -140,7 +149,7 @@ macro_rules! impl_terminal_methods {
             /// Save to PDF file
             ///
             /// Finalizes the series before saving.
-            #[cfg(feature = "pdf")]
+            #[cfg(all(feature = "pdf", not(target_arch = "wasm32")))]
             pub fn save_pdf<P: AsRef<std::path::Path>>(self, path: P) -> crate::core::Result<()> {
                 self.finalize().save_pdf(path)
             }
@@ -148,6 +157,7 @@ macro_rules! impl_terminal_methods {
             /// Save with specific dimensions
             ///
             /// Finalizes the series before saving.
+            #[cfg(not(target_arch = "wasm32"))]
             pub fn save_with_size<P: AsRef<std::path::Path>>(
                 self,
                 path: P,

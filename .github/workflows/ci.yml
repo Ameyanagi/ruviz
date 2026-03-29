@@ -202,6 +202,68 @@ jobs:
         if: ${{ !matrix.platform.cross }}
         run: cargo check --target ${{ matrix.platform.target }}
 
+  wasm-web:
+    name: WASM + Web
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-wasm-web-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-web-
+
+      - name: Cache Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Check core wasm targets
+        run: |
+          cargo check --target wasm32-unknown-unknown --no-default-features
+          cargo check --target wasm32-unknown-unknown --no-default-features --features svg
+          cargo check --target wasm32-unknown-unknown --no-default-features --features gpu
+
+      - name: Check ruviz-web
+        run: cargo check -p ruviz-web --target wasm32-unknown-unknown
+
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check JS/TS formatting and lint
+        run: bun run check:web
+
+      - name: Build web SDK and demo
+        run: bun run build:web
+
+      - name: Install Playwright browsers
+        run: bun run install:web-browsers
+
+      - name: Run browser smoke tests
+        run: bun run test:web
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest

@@ -256,11 +256,11 @@ mod platform;
 mod platform {
     use crate::core::error::PlottingError;
 
-    pub fn get_total_memory() -> Result<u64, RuvizError> {
+    pub fn get_total_memory() -> Result<u64, PlottingError> {
         Ok(8 * 1024 * 1024 * 1024) // 8GB default
     }
 
-    pub fn get_available_memory() -> Result<u64, RuvizError> {
+    pub fn get_available_memory() -> Result<u64, PlottingError> {
         Ok(4 * 1024 * 1024 * 1024) // 4GB default
     }
 
@@ -276,7 +276,7 @@ mod platform {
         false
     }
 
-    pub fn check_memory_mapping_support() -> Result<bool, RuvizError> {
+    pub fn check_memory_mapping_support() -> Result<bool, PlottingError> {
         Ok(false)
     }
 }

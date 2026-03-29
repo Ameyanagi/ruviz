@@ -1,0 +1,59 @@
+{
+  "name": "ruviz",
+  "version": "0.1.5",
+  "description": "Browser-first JS/TS SDK for ruviz WebAssembly rendering",
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ameyanagi/ruviz.git"
+  },
+  "homepage": "https://github.com/Ameyanagi/ruviz",
+  "bugs": {
+    "url": "https://github.com/Ameyanagi/ruviz/issues"
+  },
+  "files": [
+    "README.md",
+    "dist/index.d.ts",
+    "dist/index.js",
+    "dist/index.js.map",
+    "dist/session-worker.d.ts",
+    "dist/session-worker.js",
+    "dist/session-worker.js.map",
+    "dist/shared.d.ts",
+    "dist/shared.js",
+    "dist/shared.js.map",
+    "generated/raw/LICENSE",
+    "generated/raw/package.json",
+    "generated/raw/README.md",
+    "generated/raw/ruviz_web_raw_bg.wasm",
+    "generated/raw/ruviz_web_raw_bg.wasm.d.ts",
+    "generated/raw/ruviz_web_raw.d.ts",
+    "generated/raw/ruviz_web_raw.js"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./raw": {
+      "types": "./generated/raw/ruviz_web_raw.d.ts",
+      "import": "./generated/raw/ruviz_web_raw.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build:wasm": "PATH=\"$HOME/.cargo/bin:$PATH\" wasm-pack build ../../crates/ruviz-web --target web --out-dir \"$PWD/generated/raw\" --out-name ruviz_web_raw",
+    "build:js": "tsc -p tsconfig.json",
+    "build": "bun run build:wasm && bun run build:js",
+    "pack:dry": "bun pm pack --dry-run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

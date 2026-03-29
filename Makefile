@@ -3,7 +3,7 @@
 # This Makefile generates all example outputs to a single organized folder,
 # demonstrating both static and interactive plotting capabilities.
 
-.PHONY: all examples static-examples interactive-examples performance-examples web-examples clean help setup-hooks check fmt clippy doc-images
+.PHONY: all examples static-examples interactive-examples performance-examples web-examples clean help setup-hooks check fmt clippy check-web doc-images
 
 # Default target - generate all examples
 all: examples
@@ -141,10 +141,10 @@ setup-hooks:
 	@echo "🔧 Setting up git hooks..."
 	git config core.hooksPath .githooks
 	@echo "✓ Git hooks configured to use .githooks/"
-	@echo "Pre-commit will now run: cargo fmt --check && cargo clippy"
+	@echo "Pre-commit will now run: cargo fmt --check, cargo clippy, oxfmt, and oxlint"
 
 # Run all code quality checks (same as pre-commit)
-check: fmt clippy
+check: fmt clippy check-web
 	@echo "✓ All checks passed!"
 
 # Check code formatting
@@ -156,6 +156,11 @@ fmt:
 clippy:
 	@echo "Running clippy..."
 	cargo clippy --all-targets --all-features -- -D warnings
+
+# Run JS/TS formatting and lint checks
+check-web:
+	@echo "Running JS/TS checks..."
+	bun run check:web
 
 # Generate documentation images at 300 DPI
 doc-images:
@@ -176,9 +181,10 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  setup-hooks         - Configure git pre-commit hooks"
-	@echo "  check               - Run all code quality checks (fmt + clippy)"
+	@echo "  check               - Run all code quality checks (fmt + clippy + web)"
 	@echo "  fmt                 - Check code formatting"
 	@echo "  clippy              - Run clippy linter"
+	@echo "  check-web           - Run JS/TS oxfmt + oxlint checks"
 	@echo "  doc-images          - Generate documentation images"
 	@echo ""
 	@echo "Examples:"
