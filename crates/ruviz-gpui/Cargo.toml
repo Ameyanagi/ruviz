@@ -32,6 +32,8 @@ smol = "2"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
+# Keep this fork pin aligned with the workspace GPUI override until
+# https://github.com/zed-industries/zed/issues/52643 is fixed upstream.
 gpui_macos = { git = "https://github.com/Ameyanagi/zed", rev = "6e43ecd17f28afe6f55df34657cb9b21493d46b1", package = "gpui_macos", features = ["runtime_shaders"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
