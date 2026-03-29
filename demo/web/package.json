@@ -12,7 +12,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "ruviz-web": "workspace:*"
+    "ruviz": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

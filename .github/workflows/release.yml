@@ -263,13 +263,22 @@ jobs:
         run: echo "ruviz-gpui v${{ steps.gpui-version.outputs.version }} is already published on crates.io"
 
   publish-npm-web:
-    name: Publish ruviz-web to npm
+    name: Publish ruviz JS SDK to npm
     runs-on: ubuntu-latest
     needs: [publish-ruviz, publish-ruviz-web, publish-ruviz-gpui]
-    if: ${{ !contains(github.ref_name, '-') && secrets.NPM_TOKEN != '' }}
+    if: ${{ !contains(github.ref_name, '-') }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -320,18 +329,27 @@ jobs:
       - name: Validate npm tarball
         run: bun run --cwd packages/ruviz-web pack:dry
 
-      - name: Configure npm auth
+      - name: Detect published npm package version
+        id: npm-version
         run: |
-          cat <<EOF > "${HOME}/.npmrc"
-          //registry.npmjs.org/:_authToken=${NPM_TOKEN}
-          EOF
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE_NAME="$(python3 -c "import json; print(json.load(open('packages/ruviz-web/package.json'))['name'])")"
+          VERSION="$(python3 -c "import json; print(json.load(open('packages/ruviz-web/package.json'))['version'])")"
+          echo "package=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish npm package
-        run: cd packages/ruviz-web && bun publish --access public --tolerate-republish
-        env:
-          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        if: steps.npm-version.outputs.published != 'true'
+        run: cd packages/ruviz-web && npm publish --access public
+
+      - name: Skip npm publish
+        if: steps.npm-version.outputs.published == 'true'
+        run: echo "${{ steps.npm-version.outputs.package }} v${{ steps.npm-version.outputs.version }} is already published on npm"
 
   create-github-release:
     name: Create GitHub Release

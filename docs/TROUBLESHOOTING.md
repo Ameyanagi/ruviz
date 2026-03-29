@@ -432,8 +432,8 @@ bindings live in `crates/ruviz-web` with a working demo in `demo/web`.
 
 Current caveats:
 - Native path-based helpers such as `.save(...)` and windowed interactive APIs remain desktop-only.
-- Browser usage should prefer `render_png_bytes()`, `render_to_svg()`, and the `ruviz-web` session APIs.
-- `ruviz-web` auto-registers a bundled browser fallback font for canvas sessions; register custom bytes through `ruviz::render::register_font_bytes(...)` when you need a different face.
+- Browser usage should prefer `render_png_bytes()`, `render_to_svg()`, and the `ruviz` session APIs.
+- `ruviz` auto-registers a bundled browser fallback font for canvas sessions; register custom bytes through `ruviz::render::register_font_bytes(...)` when you need a different face.
 - `web_runtime_capabilities()` can be used to detect worker, touch, and WebGPU availability before wiring browser-only features.
 
 **Q: Does ruviz support interactive plots?**

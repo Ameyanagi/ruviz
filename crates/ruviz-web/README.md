@@ -1,6 +1,6 @@
 # ruviz-web
 
-`ruviz-web` is the low-level Rust wasm bridge for `ruviz`.
+`ruviz-web` is the low-level Rust wasm bridge behind the public `ruviz` JS/TS SDK.
 
 If you are building a browser app in JavaScript or TypeScript, use the npm package in
 [`packages/ruviz-web`](../../packages/ruviz-web) instead of importing these raw wasm-bindgen

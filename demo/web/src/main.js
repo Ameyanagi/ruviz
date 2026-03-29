@@ -5,7 +5,7 @@ import {
   createSineSignal,
   createWorkerSession,
   getRuntimeCapabilities,
-} from "ruviz-web";
+} from "ruviz";
 
 const TAU = Math.PI * 2;
 const TEMPORAL_DURATION = TAU * 2;

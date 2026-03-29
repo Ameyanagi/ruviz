@@ -1,5 +1,5 @@
 {
-  "name": "ruviz-web",
+  "name": "ruviz",
   "version": "0.1.5",
   "description": "Browser-first JS/TS SDK for ruviz WebAssembly rendering",
   "type": "module",

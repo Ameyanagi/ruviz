@@ -391,8 +391,8 @@ Experimental WASM support is now available:
 
 - `ruviz` compiles for `wasm32-unknown-unknown` and supports in-memory PNG/SVG output.
 - `crates/ruviz-web` provides browser canvas bindings for interactive rendering.
-- `ruviz-web` registers a bundled browser fallback font automatically for canvas sessions.
-- `ruviz-web` exposes `web_runtime_capabilities()` so apps can detect worker, touch, and WebGPU availability.
+- `ruviz` registers a bundled browser fallback font automatically for canvas sessions.
+- `ruviz` exposes `web_runtime_capabilities()` so apps can detect worker, touch, and WebGPU availability.
 - `demo/web` contains a Vite example for main-thread, OffscreenCanvas, and Observable usage.
 
 Current limitations:

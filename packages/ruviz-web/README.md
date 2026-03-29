@@ -1,6 +1,6 @@
-# ruviz-web
+# ruviz
 
-`ruviz-web` is the public browser-first JS/TS SDK for `ruviz`.
+`ruviz` is the public browser-first JS/TS SDK for `ruviz`.
 
 It wraps the low-level wasm bridge in [`crates/ruviz-web`](../../crates/ruviz-web) with:
 
@@ -9,7 +9,7 @@ It wraps the low-level wasm bridge in [`crates/ruviz-web`](../../crates/ruviz-we
 - worker-session fallback to the main thread when `OffscreenCanvas` is unavailable
 - direct PNG/SVG export from plot builders
 - Observable and signal helpers for reactive demos
-- a raw escape hatch at `ruviz-web/raw`
+- a raw escape hatch at `ruviz/raw`
 
 ## Install
 
@@ -28,7 +28,7 @@ import {
   createPlot,
   createWorkerSession,
   getRuntimeCapabilities,
-} from "ruviz-web";
+} from "ruviz";
 ```
 
 Main exports:
@@ -46,7 +46,7 @@ Main exports:
 Advanced users can access the raw wasm-bindgen layer directly:
 
 ```ts
-import initRaw, { JsPlot, WebCanvasSession } from "ruviz-web/raw";
+import initRaw, { JsPlot, WebCanvasSession } from "ruviz/raw";
 ```
 
 That subpath is intentionally close to the Rust naming and runtime model. The package root is the
