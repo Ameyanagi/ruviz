@@ -205,8 +205,11 @@ mod platform_impl {
         pub show_reset_view: bool,
         pub show_set_home_view: bool,
         pub show_go_to_home_view: bool,
+        /// Controls whether the "Save PNG..." context menu item and built-in `Cmd/Ctrl+S`
+        /// shortcut are available.
         pub show_save_png: bool,
-        /// Enables the built-in `Cmd/Ctrl+C` shortcut to copy the current plot image.
+        /// Controls whether the "Copy Image" context menu item and built-in `Cmd/Ctrl+C`
+        /// shortcut are available.
         pub show_copy_image: bool,
         pub show_copy_cursor_coordinates: bool,
         pub show_copy_visible_bounds: bool,
@@ -238,6 +241,9 @@ mod platform_impl {
         pub scale_factor: f32,
         pub cursor_position_px: ViewportPoint,
         pub cursor_data_position: Option<ViewportPoint>,
+        /// Snapshot of the current visible plot image, captured eagerly when the action context
+        /// is built. Cached image-backed frames are reused when available; otherwise this may
+        /// trigger a fresh image render.
         pub image: RuvizImage,
     }
 
@@ -1137,6 +1143,64 @@ mod platform_impl {
             let mut pixels = vec![1, 2, 3, 255, 10, 20, 30, 128];
             rgba_to_bgra_in_place(&mut pixels);
             assert_eq!(pixels, vec![3, 2, 1, 255, 30, 20, 10, 128]);
+        }
+
+        #[test]
+        fn test_render_image_to_ruviz_round_trips_pixels() {
+            let original = ruviz::core::plot::Image::new(2, 1, vec![1, 2, 3, 255, 10, 20, 30, 128]);
+            let render = render_image_from_ruviz(original.clone());
+            let restored = render_image_to_ruviz(render.as_ref())
+                .expect("render image should decode back into RGBA pixels");
+            assert_eq!(restored.width, original.width);
+            assert_eq!(restored.height, original.height);
+            assert_eq!(restored.pixels, original.pixels);
+        }
+
+        #[test]
+        fn test_cached_frame_capture_reuses_cached_image_and_overlay() {
+            let cx = TestAppContext::single();
+            let focus_handle = cx.update(|cx| cx.focus_handle());
+            let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+            let session = plot.prepare_interactive();
+            let (pending, receiver, subscription) = bind_reactive_session(&session);
+
+            let base = ruviz::core::plot::Image::new(1, 1, vec![20, 40, 60, 255]);
+            let overlay = ruviz::core::plot::Image::new(1, 1, vec![200, 100, 50, 128]);
+            let mut expected = base.pixels.clone();
+            blend_rgba_into_rgba(&overlay.pixels, &mut expected);
+
+            let view = RuvizPlot {
+                session,
+                subscription,
+                reactive_notify_pending: pending,
+                reactive_receiver: Some(receiver),
+                reactive_watcher: None,
+                presentation_clock: Arc::new(Mutex::new(PresentationClock::default())),
+                options: RuvizPlotOptions::default(),
+                cached_frame: Some(CachedFrame {
+                    request: RenderRequest::new((1, 1), 1.0, 0.0, PresentationMode::Hybrid),
+                    primary: PrimaryFrame::Image(render_image_from_ruviz(base)),
+                    overlay_image: Some(render_image_from_ruviz(overlay)),
+                    stats: FrameStats::default(),
+                    target: RenderTargetKind::Surface,
+                }),
+                retired_images: Vec::new(),
+                #[cfg(all(feature = "gpu", target_os = "macos"))]
+                surface_upload: SurfaceUploadState::default(),
+                scheduler: RenderScheduler::default(),
+                in_flight_render: None,
+                last_layout: None,
+                focus_handle,
+                interaction_state: InteractionState::default(),
+                context_menu_action_handler: None,
+            };
+
+            let captured = view
+                .capture_visible_view_image_from_cache()
+                .expect("cached frame should provide a visible image");
+            assert_eq!(captured.width, 1);
+            assert_eq!(captured.height, 1);
+            assert_eq!(captured.pixels, expected);
         }
 
         #[test]
