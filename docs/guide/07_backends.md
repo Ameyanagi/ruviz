@@ -13,6 +13,7 @@ current codebase.
 | Very large scatter/histogram datasets | Let DataShader activate automatically above `100_000` points |
 | GPU-accelerated PNG export | Enable `gpu` and call `.gpu(true)` |
 | Interactive window | Enable `interactive` or `interactive-gpu` and use `show_interactive()` |
+| Embedded GPUI interactive plot | Use the `ruviz-gpui` crate and `plot_builder(...).interactive()` |
 | Lower allocation pressure | `.with_memory_pooling(true)` |
 
 ## Important Distinction
@@ -31,6 +32,32 @@ There are two separate concepts in the current implementation:
 The stored backend selection is metadata today. It is visible through
 `get_backend_name()`, but the current `render()` and `save()` implementations do
 not directly dispatch on `self.render.backend`.
+
+## GPUI Embedded Interactive Backend
+
+`ruviz-gpui` is the embedded interactive adapter for GPUI applications. It uses
+the same shared `InteractivePlotSession` core as the standalone winit window,
+so the main interaction behaviors now line up closely:
+
+- left drag pans
+- right drag performs box zoom
+- right click opens a built-in context menu
+- `Shift + left drag` keeps GPUI brush selection available
+- `Cmd/Ctrl+S` saves PNG
+- `Cmd/Ctrl+C` copies the current visible plot image
+
+The built-in GPUI context menu includes:
+
+- `Reset View`
+- `Set Current View As Home`
+- `Go To Home View`
+- `Save PNG...`
+- `Copy Image`
+- `Copy Cursor Coordinates`
+- `Copy Visible Bounds`
+
+Host applications can also trigger the same built-in actions directly from the
+`RuvizPlot` runtime methods, so they are not limited to the right-click menu.
 
 ### What `.auto_optimize()` does today
 

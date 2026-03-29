@@ -2,7 +2,11 @@
 compile_error!("ruviz-gpui currently supports macOS and Linux only.");
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod supported {
+mod platform_impl {
+    mod interaction;
+    mod presentation;
+
+    use arboard::{Clipboard, ImageData};
     #[cfg(all(feature = "gpu", target_os = "macos"))]
     use core_foundation::{
         base::{CFType, TCFType},
@@ -17,23 +21,27 @@ mod supported {
     use futures::{
         StreamExt,
         channel::mpsc::{UnboundedReceiver, unbounded},
+        executor::block_on,
     };
     use gpui::{
-        App, Bounds, Context, Corners, Entity, InteractiveElement, IntoElement, MouseButton,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Render, RenderImage,
-        ScrollWheelEvent, Task, Window, canvas, div, prelude::*, px, size,
+        AnyElement, App, Bounds, Context, Corners, Entity, FocusHandle, InteractiveElement,
+        IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        ObjectFit, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent, Task, Window,
+        canvas, div, point, prelude::*, px, rgb, rgba, size,
     };
     use image::{Frame, ImageBuffer, Rgba};
     use ruviz::{
         core::plot::Image as RuvizImage,
         core::{
             FramePacing, FrameStats, ImageTarget, InteractivePlotSession, Plot, PlotInputEvent,
-            PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind, SurfaceCapability,
-            SurfaceTarget, ViewportPoint,
+            PlottingError, PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind,
+            Result, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
         },
+        export::write_rgba_png_atomic,
     };
     use smallvec::smallvec;
     use std::{
+        borrow::Cow,
         sync::{
             Arc, Mutex,
             atomic::{AtomicBool, Ordering},
@@ -41,8 +49,23 @@ mod supported {
         time::{Duration, Instant},
     };
 
+    use self::interaction::*;
+    use self::presentation::*;
+
     pub use gpui;
     pub use ruviz;
+
+    const DRAG_THRESHOLD_PX: f64 = 3.0;
+    const LINE_SCROLL_DELTA_PX: f32 = 50.0;
+    const MENU_MIN_WIDTH_PX: f32 = 220.0;
+    const MENU_ITEM_HEIGHT_PX: f32 = 30.0;
+    const MENU_SEPARATOR_HEIGHT_PX: f32 = 10.0;
+    const MENU_PADDING_X_PX: f32 = 14.0;
+    const MENU_PADDING_Y_PX: f32 = 8.0;
+    const MENU_EDGE_MARGIN_PX: f32 = 8.0;
+
+    type ContextMenuActionHandler =
+        Arc<dyn Fn(GpuiContextMenuActionContext) -> Result<()> + Send + Sync>;
 
     pub trait IntoPlotSession {
         fn into_plot_session(self) -> InteractivePlotSession;
@@ -150,6 +173,80 @@ mod supported {
         }
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct GpuiContextMenuItem {
+        pub id: String,
+        pub label: String,
+        pub enabled: bool,
+    }
+
+    impl GpuiContextMenuItem {
+        pub fn new<I, L>(id: I, label: L) -> Self
+        where
+            I: Into<String>,
+            L: Into<String>,
+        {
+            Self {
+                id: id.into(),
+                label: label.into(),
+                enabled: true,
+            }
+        }
+
+        pub fn enabled(mut self, enabled: bool) -> Self {
+            self.enabled = enabled;
+            self
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct GpuiContextMenuConfig {
+        pub enabled: bool,
+        pub show_reset_view: bool,
+        pub show_set_home_view: bool,
+        pub show_go_to_home_view: bool,
+        /// Controls whether the "Save PNG..." context menu item and built-in `Cmd/Ctrl+S`
+        /// shortcut are available.
+        pub show_save_png: bool,
+        /// Controls whether the "Copy Image" context menu item and built-in `Cmd/Ctrl+C`
+        /// shortcut are available.
+        pub show_copy_image: bool,
+        pub show_copy_cursor_coordinates: bool,
+        pub show_copy_visible_bounds: bool,
+        pub custom_items: Vec<GpuiContextMenuItem>,
+    }
+
+    impl Default for GpuiContextMenuConfig {
+        fn default() -> Self {
+            Self {
+                enabled: true,
+                show_reset_view: true,
+                show_set_home_view: true,
+                show_go_to_home_view: true,
+                show_save_png: true,
+                show_copy_image: true,
+                show_copy_cursor_coordinates: true,
+                show_copy_visible_bounds: true,
+                custom_items: Vec::new(),
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct GpuiContextMenuActionContext {
+        pub action_id: String,
+        pub visible_bounds: ViewportRect,
+        pub plot_area_px: ViewportRect,
+        pub frame_size_px: (u32, u32),
+        pub scale_factor: f32,
+        pub cursor_position_px: ViewportPoint,
+        pub cursor_data_position: Option<ViewportPoint>,
+        /// Snapshot of the current visible plot image, captured eagerly when the action context
+        /// is built. Cached image-backed frames are reused when available; otherwise this may
+        /// trigger a fresh image render.
+        pub image: RuvizImage,
+    }
+
     /// Performance tuning options for the shared interactive session.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct PerformanceOptions {
@@ -201,6 +298,7 @@ mod supported {
         pub sizing_policy: SizingPolicy,
         pub performance: PerformanceOptions,
         pub interaction: InteractionOptions,
+        pub context_menu: GpuiContextMenuConfig,
     }
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -346,7 +444,6 @@ mod supported {
         overlay_image: Option<Arc<RenderImage>>,
         stats: FrameStats,
         target: RenderTargetKind,
-        surface_capability: SurfaceCapability,
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -405,6 +502,7 @@ mod supported {
     pub struct RuvizPlotBuilder<P> {
         plot: P,
         options: RuvizPlotOptions,
+        context_menu_action_handler: Option<ContextMenuActionHandler>,
     }
 
     impl<P> RuvizPlotBuilder<P>
@@ -415,6 +513,7 @@ mod supported {
             Self {
                 plot,
                 options: RuvizPlotOptions::default(),
+                context_menu_action_handler: None,
             }
         }
 
@@ -466,13 +565,51 @@ mod supported {
             self
         }
 
+        pub fn context_menu(mut self, context_menu: GpuiContextMenuConfig) -> Self {
+            self.options.context_menu = context_menu;
+            self
+        }
+
+        pub fn on_context_menu_action<F>(mut self, handler: F) -> Self
+        where
+            F: Fn(GpuiContextMenuActionContext) -> Result<()> + Send + Sync + 'static,
+        {
+            self.context_menu_action_handler = Some(Arc::new(handler));
+            self
+        }
+
+        fn validate(&self) -> Result<()> {
+            if self.options.context_menu.enabled
+                && !self.options.context_menu.custom_items.is_empty()
+                && self.context_menu_action_handler.is_none()
+            {
+                return Err(PlottingError::InvalidInput(
+                    "GPUI context menu custom items require on_context_menu_action(...) before build()"
+                        .to_string(),
+                ));
+            }
+            Ok(())
+        }
+
+        pub fn try_build<V>(self, cx: &mut Context<V>) -> Result<Entity<RuvizPlot>>
+        where
+            V: 'static,
+        {
+            self.validate()?;
+            let options = self.options;
+            let plot = self.plot;
+            let context_menu_action_handler = self.context_menu_action_handler;
+            Ok(cx.new(move |cx| {
+                RuvizPlot::from_options_impl(plot, options, context_menu_action_handler, cx)
+            }))
+        }
+
         pub fn build<V>(self, cx: &mut Context<V>) -> Entity<RuvizPlot>
         where
             V: 'static,
         {
-            let options = self.options;
-            let plot = self.plot;
-            cx.new(move |cx| RuvizPlot::from_options_impl(plot, options, cx))
+            self.try_build(cx)
+                .unwrap_or_else(|err| panic!("failed to build RuvizPlot: {err}"))
         }
     }
 
@@ -493,6 +630,7 @@ mod supported {
 
     #[derive(Clone)]
     struct InteractionLayout {
+        component_bounds: Bounds<Pixels>,
         content_bounds: Bounds<Pixels>,
         frame_size_px: (u32, u32),
     }
@@ -517,14 +655,6 @@ mod supported {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    enum DragMode {
-        #[default]
-        None,
-        Pan,
-        Brush,
-    }
-
     /// GPUI view that renders a `ruviz` plot into a cached `RenderImage`.
     pub struct RuvizPlot {
         session: InteractivePlotSession,
@@ -541,13 +671,18 @@ mod supported {
         scheduler: RenderScheduler,
         in_flight_render: Option<Task<()>>,
         last_layout: Option<InteractionLayout>,
-        pointer_down_px: Option<ViewportPoint>,
-        last_pointer_px: Option<ViewportPoint>,
-        drag_mode: DragMode,
+        focus_handle: FocusHandle,
+        interaction_state: InteractionState,
+        context_menu_action_handler: Option<ContextMenuActionHandler>,
     }
 
     impl RuvizPlot {
-        fn from_options_impl<P>(plot: P, options: RuvizPlotOptions, _cx: &mut Context<Self>) -> Self
+        fn from_options_impl<P>(
+            plot: P,
+            options: RuvizPlotOptions,
+            context_menu_action_handler: Option<ContextMenuActionHandler>,
+            cx: &mut Context<Self>,
+        ) -> Self
         where
             P: IntoPlotSession,
         {
@@ -570,9 +705,9 @@ mod supported {
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
                 last_layout: None,
-                pointer_down_px: None,
-                last_pointer_px: None,
-                drag_mode: DragMode::None,
+                focus_handle: cx.focus_handle(),
+                interaction_state: InteractionState::default(),
+                context_menu_action_handler,
             }
         }
 
@@ -581,7 +716,7 @@ mod supported {
         where
             P: IntoPlotSession,
         {
-            Self::from_options_impl(plot, RuvizPlotOptions::default(), cx)
+            Self::from_options_impl(plot, RuvizPlotOptions::default(), None, cx)
         }
 
         #[deprecated(note = "Use ruviz_gpui::plot_builder(...).build(cx).")]
@@ -589,7 +724,7 @@ mod supported {
         where
             P: IntoPlotSession,
         {
-            Self::from_options_impl(plot, options, _cx)
+            Self::from_options_impl(plot, options, None, _cx)
         }
 
         pub fn interactive_session(&self) -> &InteractivePlotSession {
@@ -614,6 +749,10 @@ mod supported {
 
         pub fn interaction_options(&self) -> &InteractionOptions {
             &self.options.interaction
+        }
+
+        pub fn context_menu_config(&self) -> &GpuiContextMenuConfig {
+            &self.options.context_menu
         }
 
         pub fn stats(&self) -> PlotStats {
@@ -663,6 +802,75 @@ mod supported {
             self.reset_pointer_state();
             self.invalidate_frame_state();
             cx.notify();
+        }
+
+        pub fn set_current_view_as_home(&mut self, cx: &mut Context<Self>) -> Result<()> {
+            self.interaction_state.home_view_bounds =
+                Some(self.session.viewport_snapshot()?.visible_bounds);
+            cx.notify();
+            Ok(())
+        }
+
+        pub fn go_to_home_view(&mut self, cx: &mut Context<Self>) -> Result<()> {
+            let Some(home_view_bounds) = self.interaction_state.home_view_bounds else {
+                return Ok(());
+            };
+            if self.session.restore_visible_bounds(home_view_bounds) {
+                self.reset_pointer_state();
+                self.invalidate_frame_state();
+                cx.notify();
+            }
+            Ok(())
+        }
+
+        pub fn save_png(&mut self, window: &Window, _cx: &mut Context<Self>) -> Result<()> {
+            let image = self.capture_visible_view_image(window)?;
+            self.spawn_save_png_dialog(image)
+        }
+
+        pub fn copy_image(&mut self, window: &Window, _cx: &mut Context<Self>) -> Result<()> {
+            let image = self.capture_visible_view_image(window)?;
+            self.copy_image_to_clipboard(&image)
+        }
+
+        pub fn copy_cursor_coordinates(&self) -> Result<()> {
+            let cursor_position_px = self.current_cursor_position_px().ok_or_else(|| {
+                PlottingError::InvalidInput(
+                    "cursor coordinates are unavailable until the pointer enters the plot area"
+                        .to_string(),
+                )
+            })?;
+            self.copy_cursor_coordinates_at(cursor_position_px)
+        }
+
+        pub(crate) fn copy_cursor_coordinates_at(
+            &self,
+            cursor_position_px: ViewportPoint,
+        ) -> Result<()> {
+            let snapshot = self.session.viewport_snapshot()?;
+            let cursor_data_position = cursor_data_position(
+                snapshot.visible_bounds,
+                snapshot.plot_area,
+                cursor_position_px,
+            )
+            .ok_or_else(|| {
+                PlottingError::InvalidInput("cursor is outside the plotted data area".to_string())
+            })?;
+            self.copy_text_to_clipboard(&format!(
+                "x={:.6}, y={:.6}",
+                cursor_data_position.x, cursor_data_position.y
+            ))
+        }
+
+        pub fn copy_visible_bounds(&self) -> Result<()> {
+            let snapshot = self.session.viewport_snapshot()?;
+            self.copy_text_to_clipboard(&format!(
+                "x=[{:.6}, {:.6}], y=[{:.6}, {:.6}]",
+                snapshot.visible_bounds.min.x,
+                snapshot.visible_bounds.max.x,
+                snapshot.visible_bounds.min.y,
+                snapshot.visible_bounds.max.y
+            ))
         }
 
         #[deprecated(note = "Use ruviz_gpui::plot_builder(...).presentation(...).build(cx).")]
@@ -737,426 +945,7 @@ mod supported {
             self.scheduler.reset();
             self.in_flight_render = None;
             self.last_layout = None;
-        }
-
-        fn reset_pointer_state(&mut self) {
-            self.pointer_down_px = None;
-            self.last_pointer_px = None;
-            self.drag_mode = DragMode::None;
-        }
-
-        fn retire_cached_frame(&mut self) {
-            if let Some(frame) = self.cached_frame.take() {
-                retire_primary_frame(&mut self.retired_images, frame.primary);
-                if let Some(overlay_image) = frame.overlay_image {
-                    self.retired_images.push(overlay_image);
-                }
-            }
-        }
-
-        fn replace_cached_frame(&mut self, request: RenderRequest, mut frame: RenderedFrame) {
-            let previous = self.cached_frame.take();
-            let primary = self
-                .resolve_primary_frame(previous.as_ref(), &mut frame)
-                .expect("rendered frame must include a primary layer on first render");
-            let overlay_image = if frame.target == RenderTargetKind::Image {
-                None
-            } else {
-                frame.overlay_image.or_else(|| {
-                    previous
-                        .as_ref()
-                        .and_then(|cached| cached.overlay_image.as_ref().map(Arc::clone))
-                })
-            };
-
-            if let Some(previous) = previous {
-                maybe_retire_replaced_primary(
-                    &mut self.retired_images,
-                    &previous.primary,
-                    &primary,
-                );
-                if let Some(previous_overlay) = previous.overlay_image {
-                    let overlay_reused = overlay_image
-                        .as_ref()
-                        .is_some_and(|current| Arc::ptr_eq(current, &previous_overlay));
-                    if !overlay_reused {
-                        self.retired_images.push(previous_overlay);
-                    }
-                }
-            }
-
-            self.cached_frame = Some(CachedFrame {
-                request,
-                primary,
-                overlay_image,
-                stats: frame.stats,
-                target: frame.target,
-            });
-        }
-
-        fn resolve_primary_frame(
-            &mut self,
-            previous: Option<&CachedFrame>,
-            frame: &mut RenderedFrame,
-        ) -> Option<PrimaryFrame> {
-            match frame.primary.take() {
-                Some(RenderedPrimary::Image(image)) => Some(PrimaryFrame::Image(image)),
-                #[cfg(all(feature = "gpu", target_os = "macos"))]
-                Some(RenderedPrimary::Surface(base_image)) => {
-                    let previous_surface = previous.and_then(|cached| match &cached.primary {
-                        PrimaryFrame::Surface(surface) => Some(surface),
-                        PrimaryFrame::Image(_) => None,
-                    });
-
-                    match self
-                        .surface_upload
-                        .update(previous_surface, base_image.as_ref())
-                    {
-                        Ok(surface) => Some(PrimaryFrame::Surface(surface)),
-                        Err(_) => {
-                            frame.surface_capability = SurfaceCapability::FallbackImage;
-                            Some(PrimaryFrame::Image(render_image_from_ruviz(
-                                base_image.as_ref().clone(),
-                            )))
-                        }
-                    }
-                }
-                None => previous.map(|cached| cached.primary.clone()),
-            }
-        }
-
-        fn flush_retired_images(&mut self, mut window: Option<&mut Window>, cx: &mut App) {
-            for image in self.retired_images.drain(..) {
-                cx.drop_image(image, window.as_deref_mut());
-            }
-        }
-
-        fn ensure_reactive_watcher(
-            &mut self,
-            entity: Entity<Self>,
-            window: &mut Window,
-            cx: &mut Context<Self>,
-        ) {
-            if self.reactive_watcher.is_some() || self.subscription.is_empty() {
-                return;
-            }
-
-            let mut receiver = match self.reactive_receiver.take() {
-                Some(receiver) => receiver,
-                None => return,
-            };
-
-            let pending = Arc::clone(&self.reactive_notify_pending);
-            let task = window.spawn(cx, async move |cx| {
-                while receiver.next().await.is_some() {
-                    let entity_for_notify = entity.clone();
-                    let pending_for_notify = Arc::clone(&pending);
-                    cx.on_next_frame(move |_, cx| {
-                        entity_for_notify.update(cx, |_, cx| {
-                            pending_for_notify.store(false, Ordering::Release);
-                            cx.notify();
-                        });
-                    });
-                }
-            });
-
-            self.reactive_watcher = Some(task);
-        }
-
-        fn effective_presentation_mode(&self) -> PresentationMode {
-            resolve_presentation_mode(self.options.presentation_mode)
-        }
-
-        fn current_request(
-            &self,
-            bounds: Bounds<Pixels>,
-            window: &Window,
-        ) -> Option<RenderRequest> {
-            let size_px = match self.options.sizing_policy {
-                SizingPolicy::Fill => {
-                    let width = u32::from(bounds.size.width.ceil());
-                    let height = u32::from(bounds.size.height.ceil());
-                    (width, height)
-                }
-                SizingPolicy::FixedPixels { width, height } => (width, height),
-            };
-
-            if size_px.0 == 0 || size_px.1 == 0 {
-                return None;
-            }
-
-            Some(RenderRequest::new(
-                size_px,
-                window.scale_factor(),
-                self.options.interaction.time_seconds,
-                self.effective_presentation_mode(),
-            ))
-        }
-
-        fn prepaint(
-            &mut self,
-            entity: Entity<Self>,
-            bounds: Bounds<Pixels>,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> Option<PaintFrame> {
-            self.flush_retired_images(Some(window), cx);
-
-            if let Some(request) = self.current_request(bounds, window) {
-                self.update_layout(bounds, request.size_px);
-                self.start_render_if_needed(entity, request, window, cx);
-            } else {
-                self.last_layout = None;
-            }
-
-            self.cached_frame.as_ref().map(|frame| PaintFrame {
-                primary: frame.primary.clone(),
-                overlay_image: frame.overlay_image.as_ref().map(Arc::clone),
-            })
-        }
-
-        fn update_layout(&mut self, bounds: Bounds<Pixels>, frame_size_px: (u32, u32)) {
-            let image_size = size(frame_size_px.0.into(), frame_size_px.1.into());
-            let content_bounds = self
-                .options
-                .interaction
-                .image_fit
-                .into_gpui()
-                .get_bounds(bounds, image_size);
-
-            self.last_layout = Some(InteractionLayout {
-                content_bounds,
-                frame_size_px,
-            });
-        }
-
-        fn start_render_if_needed(
-            &mut self,
-            entity: Entity<Self>,
-            request: RenderRequest,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
-            let cache_is_current = self
-                .cached_frame
-                .as_ref()
-                .is_some_and(|frame| frame.request == request && !request.is_dirty(&self.session));
-            if cache_is_current {
-                return;
-            }
-
-            let Some(scheduled) = self.scheduler.schedule(request) else {
-                return;
-            };
-
-            self.start_render(entity, scheduled, window, cx);
-        }
-
-        fn start_render(
-            &mut self,
-            entity: Entity<Self>,
-            scheduled: ScheduledRender,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
-            let session = self.session.clone();
-            let request_for_task = scheduled.request.clone();
-            let render_job = cx
-                .background_executor()
-                .spawn(async move { render_frame_from_session(session, request_for_task) });
-
-            let entity_for_update = entity.clone();
-            let scheduled_for_update = scheduled.clone();
-            let task = window.spawn(cx, async move |cx| {
-                let result = render_job.await;
-                cx.on_next_frame(move |_, cx| {
-                    entity_for_update.update(cx, |view, cx| {
-                        view.finish_render(scheduled_for_update, result, cx);
-                        cx.notify();
-                    });
-                });
-            });
-
-            self.scheduler.start(scheduled);
-            self.in_flight_render = Some(task);
-        }
-
-        fn finish_render(
-            &mut self,
-            scheduled: ScheduledRender,
-            result: std::result::Result<RenderedFrame, String>,
-            cx: &mut Context<Self>,
-        ) {
-            if !self.scheduler.finish(&scheduled) {
-                return;
-            }
-
-            self.in_flight_render = None;
-
-            if let Ok(frame) = result {
-                self.replace_cached_frame(scheduled.request.clone(), frame);
-            }
-
-            if self.scheduler.take_queued().is_some() {
-                cx.notify();
-            }
-        }
-
-        fn local_viewport_point(
-            &self,
-            window_position: gpui::Point<Pixels>,
-        ) -> Option<ViewportPoint> {
-            let layout = self.last_layout.as_ref()?;
-            if !layout.content_bounds.contains(&window_position) {
-                return None;
-            }
-
-            let local_x = f64::from(window_position.x - layout.content_bounds.origin.x);
-            let local_y = f64::from(window_position.y - layout.content_bounds.origin.y);
-            let content_width = f64::from(layout.content_bounds.size.width).max(1.0);
-            let content_height = f64::from(layout.content_bounds.size.height).max(1.0);
-
-            Some(ViewportPoint::new(
-                ((local_x / content_width) * layout.frame_size_px.0 as f64)
-                    .clamp(0.0, layout.frame_size_px.0 as f64),
-                ((local_y / content_height) * layout.frame_size_px.1 as f64)
-                    .clamp(0.0, layout.frame_size_px.1 as f64),
-            ))
-        }
-
-        fn handle_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
-            let Some(position_px) = self.local_viewport_point(event.position) else {
-                return;
-            };
-
-            if event.click_count >= 2 {
-                self.session.apply_input(PlotInputEvent::ResetView);
-                self.reset_pointer_state();
-                self.invalidate_frame_state();
-                cx.notify();
-                return;
-            }
-
-            self.pointer_down_px = Some(position_px);
-            self.last_pointer_px = Some(position_px);
-
-            if event.modifiers.shift && self.options.interaction.selection {
-                self.drag_mode = DragMode::Brush;
-                self.session
-                    .apply_input(PlotInputEvent::BrushStart { position_px });
-            } else if self.options.interaction.pan {
-                self.drag_mode = DragMode::Pan;
-            } else {
-                self.drag_mode = DragMode::None;
-            }
-
-            cx.notify();
-        }
-
-        fn handle_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-            let position_px = match self.local_viewport_point(event.position) {
-                Some(position_px) => position_px,
-                None => {
-                    if !event.dragging() && self.options.interaction.hover {
-                        self.session.apply_input(PlotInputEvent::ClearHover);
-                        self.session.apply_input(PlotInputEvent::HideTooltip);
-                        cx.notify();
-                    }
-                    return;
-                }
-            };
-
-            if event.dragging() {
-                match self.drag_mode {
-                    DragMode::Pan if self.options.interaction.pan => {
-                        if let Some(previous) = self.last_pointer_px {
-                            let delta_px = ViewportPoint::new(
-                                position_px.x - previous.x,
-                                position_px.y - previous.y,
-                            );
-                            if delta_px.x.abs() > f64::EPSILON || delta_px.y.abs() > f64::EPSILON {
-                                self.session.apply_input(PlotInputEvent::Pan { delta_px });
-                                cx.notify();
-                            }
-                        }
-                    }
-                    DragMode::Brush if self.options.interaction.selection => {
-                        self.session
-                            .apply_input(PlotInputEvent::BrushMove { position_px });
-                        cx.notify();
-                    }
-                    DragMode::Pan | DragMode::Brush | DragMode::None => {}
-                }
-            } else if self.options.interaction.hover {
-                self.session
-                    .apply_input(PlotInputEvent::Hover { position_px });
-                if !self.options.interaction.tooltips {
-                    self.session.apply_input(PlotInputEvent::HideTooltip);
-                }
-                cx.notify();
-            }
-
-            self.last_pointer_px = Some(position_px);
-        }
-
-        fn handle_mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
-            let position_px = self
-                .local_viewport_point(event.position)
-                .or(self.last_pointer_px)
-                .or(self.pointer_down_px);
-
-            match (self.drag_mode, position_px) {
-                (DragMode::Brush, Some(position_px)) if self.options.interaction.selection => {
-                    self.session
-                        .apply_input(PlotInputEvent::BrushEnd { position_px });
-                    cx.notify();
-                }
-                (_, Some(position_px)) if self.options.interaction.selection => {
-                    if self
-                        .pointer_down_px
-                        .is_some_and(|origin| distance_px(origin, position_px) <= 3.0)
-                    {
-                        self.session
-                            .apply_input(PlotInputEvent::SelectAt { position_px });
-                        cx.notify();
-                    }
-                }
-                _ => {}
-            }
-
-            self.reset_pointer_state();
-        }
-
-        fn handle_hover_change(&mut self, hovered: bool, cx: &mut Context<Self>) {
-            if hovered {
-                return;
-            }
-
-            self.session.apply_input(PlotInputEvent::ClearHover);
-            self.session.apply_input(PlotInputEvent::HideTooltip);
-            self.reset_pointer_state();
-            cx.notify();
-        }
-
-        fn handle_scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
-            if !self.options.interaction.zoom {
-                return;
-            }
-
-            let Some(center_px) = self.local_viewport_point(event.position) else {
-                return;
-            };
-
-            let delta = event.delta.pixel_delta(px(16.0));
-            let delta_y = f64::from(delta.y);
-            if delta_y.abs() <= f64::EPSILON {
-                return;
-            }
-
-            let factor = (1.0025f64).powf(-delta_y).clamp(0.25, 4.0);
-            self.session
-                .apply_input(PlotInputEvent::Zoom { factor, center_px });
-            cx.notify();
+            self.interaction_state.reset();
         }
     }
 
@@ -1227,12 +1016,31 @@ mod supported {
 
             let mut root = div()
                 .relative()
+                .track_focus(&self.focus_handle)
                 .child(plot_canvas)
+                .when_some(self.zoom_overlay_bounds(), |this, bounds| {
+                    this.child(self.render_zoom_overlay(bounds))
+                })
+                .when_some(self.render_context_menu_overlay(), |this, menu_overlay| {
+                    this.child(menu_overlay)
+                })
                 .on_mouse_down(MouseButton::Left, {
                     let entity = entity.clone();
-                    move |event, _, cx| {
+                    move |event, window, cx| {
                         entity.update(cx, |view, cx| {
-                            view.handle_mouse_down(event, cx);
+                            if let Err(err) = view.handle_left_mouse_down(event, window, cx) {
+                                log_interaction_error("left mouse down", &err);
+                            }
+                        });
+                    }
+                })
+                .on_mouse_down(MouseButton::Right, {
+                    let entity = entity.clone();
+                    move |event, window, cx| {
+                        entity.update(cx, |view, cx| {
+                            if let Err(err) = view.handle_right_mouse_down(event, window, cx) {
+                                log_interaction_error("right mouse down", &err);
+                            }
                         });
                     }
                 })
@@ -1240,7 +1048,9 @@ mod supported {
                     let entity = entity.clone();
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
-                            view.handle_mouse_move(event, cx);
+                            if let Err(err) = view.handle_mouse_move(event, cx) {
+                                log_interaction_error("mouse move", &err);
+                            }
                         });
                     }
                 })
@@ -1248,7 +1058,9 @@ mod supported {
                     let entity = entity.clone();
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
-                            view.handle_mouse_up(event, cx);
+                            if let Err(err) = view.handle_left_mouse_up(event, cx) {
+                                log_interaction_error("left mouse up", &err);
+                            }
                         });
                     }
                 })
@@ -1256,7 +1068,29 @@ mod supported {
                     let entity = entity.clone();
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
-                            view.handle_mouse_up(event, cx);
+                            if let Err(err) = view.handle_left_mouse_up(event, cx) {
+                                log_interaction_error("left mouse up-out", &err);
+                            }
+                        });
+                    }
+                })
+                .on_mouse_up(MouseButton::Right, {
+                    let entity = entity.clone();
+                    move |event, _, cx| {
+                        entity.update(cx, |view, cx| {
+                            if let Err(err) = view.handle_right_mouse_up(event, cx) {
+                                log_interaction_error("right mouse up", &err);
+                            }
+                        });
+                    }
+                })
+                .on_mouse_up_out(MouseButton::Right, {
+                    let entity = entity.clone();
+                    move |event, _, cx| {
+                        entity.update(cx, |view, cx| {
+                            if let Err(err) = view.handle_right_mouse_up(event, cx) {
+                                log_interaction_error("right mouse up-out", &err);
+                            }
                         });
                     }
                 })
@@ -1264,7 +1098,21 @@ mod supported {
                     let entity = entity.clone();
                     move |event, _, cx| {
                         entity.update(cx, |view, cx| {
-                            view.handle_scroll_wheel(event, cx);
+                            if let Err(err) = view.handle_scroll_wheel(event, cx) {
+                                log_interaction_error("scroll handling", &err);
+                            }
+                        });
+                    }
+                })
+                .on_key_down({
+                    let entity = entity.clone();
+                    move |event, window, cx| {
+                        entity.update(cx, |view, cx| {
+                            match view.handle_key_down(event, window, cx) {
+                                Ok(true) => cx.stop_propagation(),
+                                Ok(false) => {}
+                                Err(err) => log_interaction_error("key handling", &err),
+                            }
                         });
                     }
                 });
@@ -1291,428 +1139,10 @@ mod supported {
         }
     }
 
-    fn bind_reactive_session(
-        session: &InteractivePlotSession,
-    ) -> (Arc<AtomicBool>, UnboundedReceiver<()>, ReactiveSubscription) {
-        let reactive_notify_pending = Arc::new(AtomicBool::new(false));
-        let (sender, receiver) = unbounded();
-        let pending_for_callback = Arc::clone(&reactive_notify_pending);
-        let subscription = session.subscribe_reactive(move || {
-            if pending_for_callback
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                let _ = sender.unbounded_send(());
-            }
-        });
-
-        (reactive_notify_pending, receiver, subscription)
-    }
-
-    fn apply_performance_options(session: &InteractivePlotSession, options: PerformanceOptions) {
-        session.set_frame_pacing(options.frame_pacing);
-        session.set_quality_policy(options.quality_policy);
-        session.set_prefer_gpu(options.prefer_gpu);
-    }
-
-    fn active_backend_for_frame(frame: &CachedFrame) -> ActiveBackend {
-        match frame.target {
-            RenderTargetKind::Image => ActiveBackend::Image,
-            #[cfg(all(feature = "gpu", target_os = "macos"))]
-            RenderTargetKind::Surface => match frame.primary {
-                PrimaryFrame::Surface(_) => ActiveBackend::HybridFastPath,
-                PrimaryFrame::Image(_) => ActiveBackend::HybridFallback,
-            },
-            #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-            RenderTargetKind::Surface => ActiveBackend::HybridFallback,
-        }
-    }
-
-    fn distance_px(a: ViewportPoint, b: ViewportPoint) -> f64 {
-        let dx = a.x - b.x;
-        let dy = a.y - b.y;
-        (dx * dx + dy * dy).sqrt()
-    }
-
-    fn sanitize_scale_factor(scale_factor: f32) -> f32 {
-        if scale_factor.is_finite() && scale_factor > 0.0 {
-            scale_factor
-        } else {
-            1.0
-        }
-    }
-
-    #[allow(deprecated)]
-    fn resolve_presentation_mode(requested: PresentationMode) -> PresentationMode {
-        match requested {
-            PresentationMode::Image => PresentationMode::Image,
-            PresentationMode::Hybrid => {
-                #[cfg(feature = "gpu")]
-                {
-                    PresentationMode::Hybrid
-                }
-                #[cfg(not(feature = "gpu"))]
-                {
-                    PresentationMode::Image
-                }
-            }
-            PresentationMode::SurfaceExperimental => {
-                #[cfg(feature = "gpu")]
-                {
-                    PresentationMode::Hybrid
-                }
-                #[cfg(not(feature = "gpu"))]
-                {
-                    PresentationMode::Image
-                }
-            }
-        }
-    }
-
-    fn retire_primary_frame(retired_images: &mut Vec<Arc<RenderImage>>, primary: PrimaryFrame) {
-        match primary {
-            PrimaryFrame::Image(image) => retired_images.push(image),
-            #[cfg(all(feature = "gpu", target_os = "macos"))]
-            PrimaryFrame::Surface(_) => {}
-        }
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn maybe_retire_replaced_primary(
-        retired_images: &mut Vec<Arc<RenderImage>>,
-        previous: &PrimaryFrame,
-        current: &PrimaryFrame,
-    ) {
-        match (previous, current) {
-            (PrimaryFrame::Image(previous), PrimaryFrame::Image(current))
-                if !Arc::ptr_eq(previous, current) =>
-            {
-                retired_images.push(Arc::clone(previous));
-            }
-            (PrimaryFrame::Image(previous), _) => retired_images.push(Arc::clone(previous)),
-            _ => {}
-        }
-    }
-
-    #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-    fn maybe_retire_replaced_primary(
-        retired_images: &mut Vec<Arc<RenderImage>>,
-        previous: &PrimaryFrame,
-        current: &PrimaryFrame,
-    ) {
-        let PrimaryFrame::Image(previous) = previous;
-        let PrimaryFrame::Image(current) = current;
-        if !Arc::ptr_eq(previous, current) {
-            retired_images.push(Arc::clone(previous));
-        }
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    #[allow(deprecated)]
-    fn should_use_surface_primary(
-        presentation_mode: PresentationMode,
-        target: RenderTargetKind,
-        surface_capability: SurfaceCapability,
-    ) -> bool {
-        matches!(
-            presentation_mode,
-            PresentationMode::Hybrid | PresentationMode::SurfaceExperimental
-        ) && target == RenderTargetKind::Surface
-            && surface_capability == SurfaceCapability::FastPath
-    }
-
-    #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-    fn should_use_surface_primary(
-        _presentation_mode: PresentationMode,
-        _target: RenderTargetKind,
-        _surface_capability: SurfaceCapability,
-    ) -> bool {
-        false
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn make_surface_pixel_buffer_options() -> CFDictionary<CFString, CFType> {
-        let iosurface_key: CFString = CVPixelBufferKeys::IOSurfaceProperties.into();
-        let metal_key: CFString = CVPixelBufferKeys::MetalCompatibility.into();
-        let cg_image_key: CFString = CVPixelBufferKeys::CGImageCompatibility.into();
-        let bitmap_context_key: CFString = CVPixelBufferKeys::CGBitmapContextCompatibility.into();
-        let iosurface_value = CFDictionary::<CFString, CFType>::from_CFType_pairs(&[]);
-
-        CFDictionary::from_CFType_pairs(&[
-            (iosurface_key, iosurface_value.as_CFType()),
-            (metal_key, CFBoolean::true_value().as_CFType()),
-            (cg_image_key, CFBoolean::true_value().as_CFType()),
-            (bitmap_context_key, CFBoolean::true_value().as_CFType()),
-        ])
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    impl SurfaceUploadState {
-        fn update(
-            &mut self,
-            previous: Option<&CVPixelBuffer>,
-            image: &RuvizImage,
-        ) -> std::result::Result<CVPixelBuffer, String> {
-            let width = image.width as usize;
-            let height = image.height as usize;
-            let pixel_buffer = match previous {
-                Some(previous)
-                    if previous.get_width() == width && previous.get_height() == height =>
-                {
-                    previous.clone()
-                }
-                _ => CVPixelBuffer::new(
-                    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-                    width,
-                    height,
-                    Some(&self.pixel_buffer_options),
-                )
-                .map_err(|status| format!("Failed to create CVPixelBuffer: {status}"))?,
-            };
-
-            write_surface_pixels(&pixel_buffer, width, height, &image.pixels)?;
-            Ok(pixel_buffer)
-        }
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn write_surface_pixels(
-        pixel_buffer: &CVPixelBuffer,
-        width: usize,
-        height: usize,
-        rgba_pixels: &[u8],
-    ) -> std::result::Result<(), String> {
-        let lock_status = pixel_buffer.lock_base_address(0);
-        if lock_status != 0 {
-            return Err(format!(
-                "Failed to lock CVPixelBuffer base address: {lock_status}"
-            ));
-        }
-
-        let copy_result = (|| {
-            if !pixel_buffer.is_planar() || pixel_buffer.get_plane_count() < 2 {
-                return Err("Expected a bi-planar 420f CVPixelBuffer".to_string());
-            }
-
-            let y_width = pixel_buffer.get_width_of_plane(0);
-            let y_height = pixel_buffer.get_height_of_plane(0);
-            let y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
-            let y_plane = unsafe { pixel_buffer.get_base_address_of_plane(0) } as *mut u8;
-            if y_plane.is_null() {
-                return Err("CVPixelBuffer luma plane base address was null".to_string());
-            }
-
-            for row in 0..height.min(y_height) {
-                for col in 0..width.min(y_width) {
-                    let pixel = rgba_at(rgba_pixels, width, row, col);
-                    let y = rgb_to_ycbcr_full_range(pixel.0, pixel.1, pixel.2).0;
-                    unsafe {
-                        *y_plane.add(row * y_stride + col) = y;
-                    }
-                }
-            }
-
-            let uv_width = pixel_buffer.get_width_of_plane(1);
-            let uv_height = pixel_buffer.get_height_of_plane(1);
-            let uv_stride = pixel_buffer.get_bytes_per_row_of_plane(1);
-            let uv_plane = unsafe { pixel_buffer.get_base_address_of_plane(1) } as *mut u8;
-            if uv_plane.is_null() {
-                return Err("CVPixelBuffer chroma plane base address was null".to_string());
-            }
-
-            for uv_row in 0..uv_height {
-                for uv_col in 0..uv_width {
-                    let x0 = uv_col * 2;
-                    let y0 = uv_row * 2;
-                    if x0 >= width || y0 >= height {
-                        continue;
-                    }
-
-                    let mut r_sum: u32 = 0;
-                    let mut g_sum: u32 = 0;
-                    let mut b_sum: u32 = 0;
-                    let mut sample_count: u32 = 0;
-
-                    for sample_y in y0..(y0 + 2).min(height) {
-                        for sample_x in x0..(x0 + 2).min(width) {
-                            let (r, g, b, _) = rgba_at(rgba_pixels, width, sample_y, sample_x);
-                            r_sum += r as u32;
-                            g_sum += g as u32;
-                            b_sum += b as u32;
-                            sample_count += 1;
-                        }
-                    }
-
-                    if sample_count == 0 {
-                        continue;
-                    }
-
-                    let r = (r_sum / sample_count) as u8;
-                    let g = (g_sum / sample_count) as u8;
-                    let b = (b_sum / sample_count) as u8;
-                    let (_, cb, cr) = rgb_to_ycbcr_full_range(r, g, b);
-                    let uv_offset = uv_row * uv_stride + uv_col * 2;
-                    unsafe {
-                        *uv_plane.add(uv_offset) = cb;
-                        *uv_plane.add(uv_offset + 1) = cr;
-                    }
-                }
-            }
-
-            Ok(())
-        })();
-
-        let unlock_status = pixel_buffer.unlock_base_address(0);
-        if unlock_status != 0 {
-            return match copy_result {
-                Ok(()) => Err(format!(
-                    "Failed to unlock CVPixelBuffer base address: {unlock_status}"
-                )),
-                Err(copy_err) => Err(format!(
-                    "Failed to unlock CVPixelBuffer base address: {unlock_status}; copy error: {copy_err}"
-                )),
-            };
-        }
-
-        copy_result
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn rgba_at(rgba_pixels: &[u8], width: usize, row: usize, col: usize) -> (u8, u8, u8, u8) {
-        let offset = (row * width + col) * 4;
-        let end = offset.saturating_add(4);
-        debug_assert!(
-            rgba_pixels.len() >= end,
-            "pixel buffer too small for ({row}, {col}) in {width}-wide image: len={} need>={end}",
-            rgba_pixels.len()
-        );
-        (
-            rgba_pixels[offset],
-            rgba_pixels[offset + 1],
-            rgba_pixels[offset + 2],
-            rgba_pixels[offset + 3],
-        )
-    }
-
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
-    fn rgb_to_ycbcr_full_range(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
-        let r = r as i32;
-        let g = g as i32;
-        let b = b as i32;
-
-        let y = ((77 * r + 150 * g + 29 * b + 128) >> 8).clamp(0, 255) as u8;
-        let cb = (((-43 * r - 85 * g + 128 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-        let cr = (((128 * r - 107 * g - 21 * b + 128) >> 8) + 128).clamp(0, 255) as u8;
-
-        (y, cb, cr)
-    }
-
-    fn render_frame_from_session(
-        session: InteractivePlotSession,
-        request: RenderRequest,
-    ) -> std::result::Result<RenderedFrame, String> {
-        let frame = match request.presentation_mode {
-            PresentationMode::Image => session
-                .render_to_image(ImageTarget {
-                    size_px: request.size_px,
-                    scale_factor: request.scale_factor(),
-                    time_seconds: request.time_seconds(),
-                })
-                .map_err(|err| err.to_string())?,
-            PresentationMode::Hybrid => session
-                .render_to_surface(SurfaceTarget {
-                    size_px: request.size_px,
-                    scale_factor: request.scale_factor(),
-                    time_seconds: request.time_seconds(),
-                })
-                .map_err(|err| err.to_string())?,
-            #[allow(deprecated)]
-            PresentationMode::SurfaceExperimental => session
-                .render_to_surface(SurfaceTarget {
-                    size_px: request.size_px,
-                    scale_factor: request.scale_factor(),
-                    time_seconds: request.time_seconds(),
-                })
-                .map_err(|err| err.to_string())?,
-        };
-
-        let layer_state = frame.layer_state;
-        let use_surface_primary = should_use_surface_primary(
-            request.presentation_mode,
-            frame.target,
-            frame.surface_capability,
-        );
-        Ok(RenderedFrame {
-            primary: if use_surface_primary {
-                #[cfg(all(feature = "gpu", target_os = "macos"))]
-                {
-                    layer_state
-                        .base_dirty
-                        .then(|| RenderedPrimary::Surface(Arc::clone(&frame.layers.base)))
-                }
-                #[cfg(not(all(feature = "gpu", target_os = "macos")))]
-                {
-                    unreachable!("surface primary is only enabled on macOS with the gpu feature")
-                }
-            } else {
-                match request.presentation_mode {
-                    PresentationMode::Image => Some(RenderedPrimary::Image(
-                        render_image_from_ruviz(frame.image.as_ref().clone()),
-                    )),
-                    PresentationMode::Hybrid => layer_state.base_dirty.then(|| {
-                        RenderedPrimary::Image(render_image_from_ruviz(
-                            frame.layers.base.as_ref().clone(),
-                        ))
-                    }),
-                    #[allow(deprecated)]
-                    PresentationMode::SurfaceExperimental => layer_state.base_dirty.then(|| {
-                        RenderedPrimary::Image(render_image_from_ruviz(
-                            frame.layers.base.as_ref().clone(),
-                        ))
-                    }),
-                }
-            },
-            overlay_image: if matches!(request.presentation_mode, PresentationMode::Image) {
-                None
-            } else {
-                frame.layers.overlay.as_ref().and_then(|overlay| {
-                    layer_state
-                        .overlay_dirty
-                        .then(|| render_image_from_ruviz(overlay.as_ref().clone()))
-                })
-            },
-            stats: frame.stats,
-            target: frame.target,
-            surface_capability: frame.surface_capability,
-        })
-    }
-
-    fn render_image_from_ruviz(image: RuvizImage) -> Arc<RenderImage> {
-        let width = image.width;
-        let height = image.height;
-        let mut pixels = image.pixels;
-        rgba_to_bgra_in_place(&mut pixels);
-        let actual_len = pixels.len();
-        let expected_len = width as usize * height as usize * 4;
-        let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, pixels)
-            .unwrap_or_else(|| {
-                panic!(
-                    "rendered frame size must match RGBA pixel buffer ({}x{}, expected {} bytes, got {})",
-                    width, height, expected_len, actual_len
-                )
-            });
-        Arc::new(RenderImage::new(smallvec![Frame::new(buffer)]))
-    }
-
-    fn rgba_to_bgra_in_place(pixels: &mut [u8]) {
-        for pixel in pixels.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
-        }
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
+        use gpui::{Modifiers, MouseButton, TestAppContext};
         use ruviz::{data::Observable, prelude::Plot};
 
         #[test]
@@ -1720,6 +1150,64 @@ mod supported {
             let mut pixels = vec![1, 2, 3, 255, 10, 20, 30, 128];
             rgba_to_bgra_in_place(&mut pixels);
             assert_eq!(pixels, vec![3, 2, 1, 255, 30, 20, 10, 128]);
+        }
+
+        #[test]
+        fn test_render_image_to_ruviz_round_trips_pixels() {
+            let original = ruviz::core::plot::Image::new(2, 1, vec![1, 2, 3, 255, 10, 20, 30, 128]);
+            let render = render_image_from_ruviz(original.clone());
+            let restored = render_image_to_ruviz(render.as_ref())
+                .expect("render image should decode back into RGBA pixels");
+            assert_eq!(restored.width, original.width);
+            assert_eq!(restored.height, original.height);
+            assert_eq!(restored.pixels, original.pixels);
+        }
+
+        #[test]
+        fn test_cached_frame_capture_reuses_cached_image_and_overlay() {
+            let cx = TestAppContext::single();
+            let focus_handle = cx.update(|cx| cx.focus_handle());
+            let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+            let session = plot.prepare_interactive();
+            let (pending, receiver, subscription) = bind_reactive_session(&session);
+
+            let base = ruviz::core::plot::Image::new(1, 1, vec![20, 40, 60, 255]);
+            let overlay = ruviz::core::plot::Image::new(1, 1, vec![200, 100, 50, 128]);
+            let mut expected = base.pixels.clone();
+            blend_rgba_into_rgba(&overlay.pixels, &mut expected);
+
+            let view = RuvizPlot {
+                session,
+                subscription,
+                reactive_notify_pending: pending,
+                reactive_receiver: Some(receiver),
+                reactive_watcher: None,
+                presentation_clock: Arc::new(Mutex::new(PresentationClock::default())),
+                options: RuvizPlotOptions::default(),
+                cached_frame: Some(CachedFrame {
+                    request: RenderRequest::new((1, 1), 1.0, 0.0, PresentationMode::Hybrid),
+                    primary: PrimaryFrame::Image(render_image_from_ruviz(base)),
+                    overlay_image: Some(render_image_from_ruviz(overlay)),
+                    stats: FrameStats::default(),
+                    target: RenderTargetKind::Surface,
+                }),
+                retired_images: Vec::new(),
+                #[cfg(all(feature = "gpu", target_os = "macos"))]
+                surface_upload: SurfaceUploadState::default(),
+                scheduler: RenderScheduler::default(),
+                in_flight_render: None,
+                last_layout: None,
+                focus_handle,
+                interaction_state: InteractionState::default(),
+                context_menu_action_handler: None,
+            };
+
+            let captured = view
+                .capture_visible_view_image_from_cache()
+                .expect("cached frame should provide a visible image");
+            assert_eq!(captured.width, 1);
+            assert_eq!(captured.height, 1);
+            assert_eq!(captured.pixels, expected);
         }
 
         #[test]
@@ -1823,6 +1311,8 @@ mod supported {
 
         #[test]
         fn test_replace_session_retires_cached_frame() {
+            let cx = TestAppContext::single();
+            let focus_handle = cx.update(|cx| cx.focus_handle());
             let initial_plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
             let initial_session = initial_plot.prepare_interactive();
             let (pending, receiver, subscription) = bind_reactive_session(&initial_session);
@@ -1850,12 +1340,22 @@ mod supported {
                 scheduler: RenderScheduler::default(),
                 in_flight_render: None,
                 last_layout: Some(InteractionLayout {
+                    component_bounds: Bounds::default(),
                     content_bounds: Bounds::default(),
                     frame_size_px: (320, 240),
                 }),
-                pointer_down_px: Some(ViewportPoint::new(1.0, 1.0)),
-                last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
-                drag_mode: DragMode::Pan,
+                focus_handle,
+                interaction_state: InteractionState {
+                    last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
+                    active_drag: ActiveDrag::LeftPan {
+                        anchor_px: ViewportPoint::new(1.0, 1.0),
+                        last_px: ViewportPoint::new(2.0, 2.0),
+                        crossed_threshold: true,
+                    },
+                    context_menu: None,
+                    home_view_bounds: None,
+                },
+                context_menu_action_handler: None,
             };
 
             let replacement_plot: Plot = Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]).into();
@@ -1865,9 +1365,138 @@ mod supported {
             assert!(view.cached_frame.is_none());
             assert_eq!(view.retired_images.len(), 1);
             assert!(view.last_layout.is_none());
-            assert_eq!(view.drag_mode, DragMode::None);
-            assert!(view.pointer_down_px.is_none());
-            assert!(view.last_pointer_px.is_none());
+            assert_eq!(view.interaction_state.active_drag, ActiveDrag::None);
+            assert!(view.interaction_state.last_pointer_px.is_none());
+        }
+
+        #[test]
+        fn test_secondary_shortcut_maps_to_builtins() {
+            let view = RuvizPlot {
+                session: {
+                    let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+                    plot.prepare_interactive()
+                },
+                subscription: ReactiveSubscription::default(),
+                reactive_notify_pending: Arc::new(AtomicBool::new(false)),
+                reactive_receiver: None,
+                reactive_watcher: None,
+                presentation_clock: Arc::new(Mutex::new(PresentationClock::default())),
+                options: RuvizPlotOptions::default(),
+                cached_frame: None,
+                retired_images: Vec::new(),
+                #[cfg(all(feature = "gpu", target_os = "macos"))]
+                surface_upload: SurfaceUploadState::default(),
+                scheduler: RenderScheduler::default(),
+                in_flight_render: None,
+                last_layout: None,
+                focus_handle: TestAppContext::single().update(|cx| cx.focus_handle()),
+                interaction_state: InteractionState::default(),
+                context_menu_action_handler: None,
+            };
+
+            let save = KeyDownEvent {
+                keystroke: gpui::Keystroke {
+                    modifiers: Modifiers::secondary_key(),
+                    key: "s".to_string(),
+                    key_char: None,
+                },
+                is_held: false,
+                prefer_character_input: false,
+            };
+            let copy = KeyDownEvent {
+                keystroke: gpui::Keystroke {
+                    modifiers: Modifiers::secondary_key(),
+                    key: "c".to_string(),
+                    key_char: None,
+                },
+                is_held: false,
+                prefer_character_input: false,
+            };
+
+            assert_eq!(
+                view.builtin_shortcut_action_for_keystroke(&save),
+                Some(BuiltinContextMenuAction::SavePng)
+            );
+            assert_eq!(
+                view.builtin_shortcut_action_for_keystroke(&copy),
+                Some(BuiltinContextMenuAction::CopyImage)
+            );
+        }
+
+        #[test]
+        fn test_right_mouse_up_far_from_anchor_zooms_without_move_events() {
+            let mut app = TestAppContext::single();
+            let (view, cx) = app.add_window_view(|_, cx| {
+                let plot: Plot = Plot::new()
+                    .line(&[0.0, 1.0, 2.0, 3.0], &[0.0, 1.0, 0.5, 1.5])
+                    .into();
+                RuvizPlot::from_options_impl(plot, RuvizPlotOptions::default(), None, cx)
+            });
+
+            cx.refresh().expect("window refresh should succeed");
+            cx.run_until_parked();
+
+            let (start, end, initial_bounds) = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    let layout = view
+                        .last_layout
+                        .clone()
+                        .expect("plot should have a resolved layout");
+                    let start = point(
+                        layout.content_bounds.origin.x + layout.content_bounds.size.width * 0.25,
+                        layout.content_bounds.origin.y + layout.content_bounds.size.height * 0.25,
+                    );
+                    let end = point(
+                        layout.content_bounds.origin.x + layout.content_bounds.size.width * 0.75,
+                        layout.content_bounds.origin.y + layout.content_bounds.size.height * 0.75,
+                    );
+                    (
+                        start,
+                        end,
+                        view.session
+                            .viewport_snapshot()
+                            .expect("viewport snapshot should succeed")
+                            .visible_bounds,
+                    )
+                })
+            });
+
+            cx.simulate_mouse_down(start, MouseButton::Right, Modifiers::default());
+            cx.simulate_mouse_up(end, MouseButton::Right, Modifiers::default());
+            cx.run_until_parked();
+
+            let (context_menu_open, final_bounds) = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    (
+                        view.interaction_state.context_menu.is_some(),
+                        view.session
+                            .viewport_snapshot()
+                            .expect("viewport snapshot should succeed")
+                            .visible_bounds,
+                    )
+                })
+            });
+
+            assert!(!context_menu_open);
+            assert_ne!(final_bounds, initial_bounds);
+        }
+
+        #[test]
+        fn test_cursor_data_position_maps_plot_area() {
+            let visible = ViewportRect::from_points(
+                ViewportPoint::new(0.0, 0.0),
+                ViewportPoint::new(10.0, 20.0),
+            );
+            let plot_area = ViewportRect::from_points(
+                ViewportPoint::new(100.0, 50.0),
+                ViewportPoint::new(300.0, 250.0),
+            );
+            let cursor = ViewportPoint::new(200.0, 150.0);
+
+            let data = cursor_data_position(visible, plot_area, cursor)
+                .expect("cursor inside plot area should map to data coordinates");
+            assert!((data.x - 5.0).abs() < 1e-6);
+            assert!((data.y - 10.0).abs() < 1e-6);
         }
 
         #[test]
@@ -2050,4 +1679,4 @@ mod supported {
 pub use gpui;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub use supported::*;
+pub use platform_impl::*;

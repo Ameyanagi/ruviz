@@ -55,6 +55,30 @@ cargo run --release
 
 You should now have a `plot.png` file in your project directory!
 
+## Optional: Embedded GPUI Interactive Plot
+
+If you're building a GPUI application, use the `ruviz-gpui` adapter crate for
+an embedded interactive plot view:
+
+```toml
+[dependencies]
+ruviz = "0.1.5"
+ruviz-gpui = "0.1.0"
+```
+
+The embedded GPUI plot now supports the same core workflow as the standalone
+interactive window:
+
+- left drag to pan
+- right drag to box zoom
+- right click to open the built-in context menu
+- `Shift + left drag` to brush-select
+- `Cmd/Ctrl+S` to save PNG
+- `Cmd/Ctrl+C` to copy the current plot image
+
+See [`crates/ruviz-gpui/examples/static_embed.rs`](../crates/ruviz-gpui/examples/static_embed.rs)
+for a minimal example.
+
 ## Optional: Math Labels with Typst
 
 If you want publication-style math in labels and titles, enable Typst text rendering:
