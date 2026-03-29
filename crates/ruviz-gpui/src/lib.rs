@@ -2,7 +2,7 @@
 compile_error!("ruviz-gpui currently supports macOS and Linux only.");
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod supported {
+mod platform_impl {
     mod interaction;
     mod presentation;
 
@@ -1608,4 +1608,4 @@ mod supported {
 pub use gpui;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub use supported::*;
+pub use platform_impl::*;
