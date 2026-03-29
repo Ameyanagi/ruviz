@@ -471,11 +471,18 @@ pub struct PipelineStats {
 }
 
 /// Global GPU backend instance
+#[cfg(not(target_arch = "wasm32"))]
 static GPU_BACKEND: OnceLock<Option<GpuBackend>> = OnceLock::new();
 
+/// Create a fresh GPU backend instance without global caching.
+pub async fn create_gpu_backend() -> Result<GpuBackend, PlottingError> {
+    GpuBackend::new().await
+}
+
 /// Initialize GPU backend (call once at startup)
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn initialize_gpu_backend() -> Result<(), PlottingError> {
-    let backend = match GpuBackend::new().await {
+    let backend = match create_gpu_backend().await {
         Ok(backend) => Some(backend),
         Err(e) => {
             log::warn!("Failed to initialize GPU backend: {}", e);
@@ -493,9 +500,26 @@ pub async fn initialize_gpu_backend() -> Result<(), PlottingError> {
     Ok(())
 }
 
+/// Initialize GPU backend on wasm without storing a global backend.
+#[cfg(target_arch = "wasm32")]
+pub async fn initialize_gpu_backend() -> Result<(), PlottingError> {
+    if let Err(err) = create_gpu_backend().await {
+        log::warn!("Failed to initialize GPU backend: {}", err);
+    }
+
+    Ok(())
+}
+
 /// Get global GPU backend instance
+#[cfg(not(target_arch = "wasm32"))]
 pub fn get_gpu_backend() -> Option<&'static GpuBackend> {
     GPU_BACKEND.get().and_then(|backend| backend.as_ref())
+}
+
+/// No global GPU backend is cached on wasm targets.
+#[cfg(target_arch = "wasm32")]
+pub fn get_gpu_backend() -> Option<&'static GpuBackend> {
+    None
 }
 
 /// Check if GPU acceleration is available

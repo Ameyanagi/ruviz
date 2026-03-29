@@ -98,6 +98,17 @@ fn validate_text_raster_size(width: u32, height: u32, context: &str) -> Result<(
     Ok(())
 }
 
+fn is_renderable_text(text: &str) -> bool {
+    !text.trim().is_empty()
+}
+
+fn estimate_text_metrics(text: &str, config: &FontConfig) -> TextPlacementMetrics {
+    let char_count = text.chars().count() as f32;
+    let height = (config.size * 1.2).max(config.size);
+    let width = char_count * config.size * 0.6;
+    TextPlacementMetrics::new(width, height, config.size)
+}
+
 // =============================================================================
 // Global Singletons
 // =============================================================================
@@ -165,6 +176,13 @@ pub fn initialize_text_system() {
     let _ = get_font_system();
     let _ = get_swash_cache();
     log::info!("Text rendering system initialized");
+}
+
+/// Register a font from raw bytes with the global text system.
+pub fn register_font_bytes(bytes: Vec<u8>) -> Result<()> {
+    let mut font_system = lock_font_system()?;
+    font_system.db_mut().load_font_data(bytes);
+    Ok(())
 }
 
 // =============================================================================
@@ -452,11 +470,15 @@ impl TextRenderer {
         config: &FontConfig,
         color: Color,
     ) -> Result<()> {
-        if text.is_empty() {
+        if !is_renderable_text(text) {
             return Ok(());
         }
 
         let mut font_system = lock_font_system()?;
+        if font_system.db().is_empty() {
+            log::debug!("Skipping text render because no fonts are registered");
+            return Ok(());
+        }
         let mut swash_cache = lock_swash_cache()?;
 
         // Create metrics for the buffer
@@ -582,11 +604,15 @@ impl TextRenderer {
         config: &FontConfig,
         color: Color,
     ) -> Result<()> {
-        if text.is_empty() {
+        if !is_renderable_text(text) {
             return Ok(());
         }
 
         let mut font_system = lock_font_system()?;
+        if font_system.db().is_empty() {
+            log::debug!("Skipping rotated text render because no fonts are registered");
+            return Ok(());
+        }
         let mut swash_cache = lock_swash_cache()?;
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
@@ -771,11 +797,15 @@ impl TextRenderer {
         text: &str,
         config: &FontConfig,
     ) -> Result<TextPlacementMetrics> {
-        if text.is_empty() {
+        if !is_renderable_text(text) {
             return Ok(TextPlacementMetrics::new(0.0, config.size, config.size));
         }
 
         let mut font_system = lock_font_system()?;
+        if font_system.db().is_empty() {
+            log::debug!("Estimating text metrics because no fonts are registered");
+            return Ok(estimate_text_metrics(text, config));
+        }
 
         let metrics = Metrics::new(config.size, config.size * 1.2);
         let mut buffer = Buffer::new(&mut font_system, metrics);
@@ -955,5 +985,15 @@ mod tests {
         // Non-empty string should have positive width
         let (w, _h) = renderer.measure_text("Hello", &config).unwrap();
         assert!(w > 0.0);
+    }
+
+    #[test]
+    fn whitespace_text_is_treated_as_empty() {
+        let renderer = TextRenderer::new();
+        let config = FontConfig::new(FontFamily::SansSerif, 12.0);
+
+        let (w, h) = renderer.measure_text("   \n\t", &config).unwrap();
+        assert_eq!(w, 0.0);
+        assert_eq!(h, 12.0);
     }
 }

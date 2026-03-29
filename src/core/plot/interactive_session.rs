@@ -17,8 +17,11 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ViewportPoint {
@@ -75,6 +78,30 @@ pub struct InteractiveViewportSnapshot {
 const MIN_ZOOM_LEVEL: f64 = 0.1;
 const MAX_ZOOM_LEVEL: f64 = 100.0;
 const VIEWPORT_EPSILON: f64 = 1e-9;
+
+#[cfg(not(target_arch = "wasm32"))]
+type FrameTimer = Instant;
+
+#[cfg(target_arch = "wasm32")]
+type FrameTimer = ();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_frame_timer() -> FrameTimer {
+    Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_frame_timer() -> FrameTimer {}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn elapsed_frame_time(start: FrameTimer) -> Duration {
+    start.elapsed()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn elapsed_frame_time(_start: FrameTimer) -> Duration {
+    Duration::ZERO
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum FramePacing {
@@ -1135,7 +1162,7 @@ impl InteractivePlotSession {
         scale_factor: f32,
         time_seconds: f64,
     ) -> Result<InteractiveFrame> {
-        let frame_start = Instant::now();
+        let frame_start = start_frame_timer();
         self.resize(size_px, scale_factor);
         self.apply_input(PlotInputEvent::SetTime { time_seconds });
 
@@ -1220,7 +1247,8 @@ impl InteractivePlotSession {
         } else {
             SurfaceCapability::Unsupported
         };
-        let stats = self.record_frame_stats(frame_start.elapsed(), target, surface_capability);
+        let stats =
+            self.record_frame_stats(elapsed_frame_time(frame_start), target, surface_capability);
 
         Ok(InteractiveFrame {
             image: composed,

@@ -34,4 +34,9 @@ impl Image {
     pub fn height(&self) -> u32 {
         self.height
     }
+
+    /// Encode the image as PNG bytes.
+    pub fn encode_png(&self) -> crate::core::Result<Vec<u8>> {
+        crate::export::encode_rgba_png(self)
+    }
 }

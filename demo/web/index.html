@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ruviz wasm demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        background:
+          radial-gradient(circle at top, rgba(37, 99, 235, 0.12), transparent 30%),
+          linear-gradient(180deg, #f8fafc 0%, #eff6ff 100%);
+        color: #0f172a;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 40px 20px 56px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 5vw, 3.5rem);
+        line-height: 1;
+      }
+
+      p {
+        margin: 0 0 24px;
+        max-width: 720px;
+        line-height: 1.5;
+      }
+
+      .capability-bar {
+        margin: 0 0 24px;
+        border: 1px solid rgba(37, 99, 235, 0.14);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.72);
+        padding: 10px 14px;
+        font-size: 0.9rem;
+        color: #334155;
+        backdrop-filter: blur(16px);
+      }
+
+      .grid {
+        display: grid;
+        gap: 20px;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      }
+
+      .panel {
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.85);
+        box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+        padding: 16px;
+        backdrop-filter: blur(16px);
+      }
+
+      .panel h2 {
+        margin: 0 0 8px;
+        font-size: 1.05rem;
+      }
+
+      .panel p {
+        margin-bottom: 12px;
+        color: #334155;
+        font-size: 0.95rem;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .panel-wide {
+        grid-column: 1 / -1;
+      }
+
+      .control-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 14px;
+      }
+
+      .control-row label {
+        font-size: 0.9rem;
+        color: #334155;
+      }
+
+      .control-row input[type="range"] {
+        width: min(360px, 100%);
+      }
+
+      .phase-value {
+        min-width: 5.5rem;
+        font-variant-numeric: tabular-nums;
+        color: #0f172a;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        background: #0f172a;
+        color: white;
+        padding: 10px 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+
+      canvas {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border-radius: 16px;
+        background: white;
+        box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06);
+        touch-action: none;
+        user-select: none;
+      }
+
+      .status {
+        margin-top: 10px;
+        min-height: 1.25rem;
+        font-size: 0.85rem;
+        color: #475569;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ruviz in the browser</h1>
+      <p>
+        This demo uses the new <code>ruviz-web</code> crate to render and interact with plots from
+        WebAssembly. Left-drag pans, right-drag box-zooms, and the mouse wheel zooms around the
+        pointer. The second panel runs through an <code>OffscreenCanvas</code> worker when the
+        browser supports it.
+      </p>
+      <div id="capability-status" class="capability-bar"></div>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Direct Export</h2>
+          <p>
+            Static export through <code>Plot::render_png_bytes()</code> and
+            <code>Plot::render_to_svg()</code> without creating an interactive canvas session.
+          </p>
+          <div class="toolbar">
+            <button id="export-direct-png">Download PNG</button>
+            <button id="export-direct-svg" class="secondary">Download SVG</button>
+          </div>
+          <div id="export-status" class="status"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Main-thread Canvas</h2>
+          <p>CPU-backed interactive rendering directly on an HTML canvas.</p>
+          <div class="toolbar">
+            <button id="main-reset">Reset View</button>
+            <button id="main-export" class="secondary">Download PNG</button>
+          </div>
+          <canvas id="main-canvas" width="640" height="360"></canvas>
+          <div id="main-status" class="status"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Offscreen Worker</h2>
+          <p>Interactive rendering delegated to a worker using <code>OffscreenCanvas</code>.</p>
+          <div class="toolbar">
+            <button id="worker-reset">Reset View</button>
+            <button id="worker-export" class="secondary">Download PNG</button>
+          </div>
+          <canvas id="worker-canvas" width="640" height="360"></canvas>
+          <div id="worker-status" class="status"></div>
+        </section>
+
+        <section class="panel panel-wide">
+          <h2>Observable Interactive View</h2>
+          <p>
+            Reactive plot data backed by <code>ruviz::data::Observable&lt;Vec&lt;f64&gt;&gt;</code>.
+            Move the phase slider or press Play to mutate the series while keeping the current
+            interactive viewport.
+          </p>
+          <div class="toolbar">
+            <button id="observable-play">Play</button>
+            <button id="observable-reset" class="secondary">Reset View</button>
+            <button id="observable-export" class="secondary">Download PNG</button>
+          </div>
+          <div class="control-row">
+            <label for="observable-phase">Phase</label>
+            <input
+              id="observable-phase"
+              type="range"
+              min="0"
+              max="6.283185307179586"
+              step="0.01"
+              value="0"
+            />
+            <span id="observable-phase-value" class="phase-value">0.00 rad</span>
+          </div>
+          <canvas id="observable-canvas" width="960" height="360"></canvas>
+          <div id="observable-status" class="status"></div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

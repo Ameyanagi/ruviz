@@ -387,7 +387,17 @@ rustup default stable-gnu
 
 ### WebAssembly (WASM)
 
-WASM is not currently supported in the published crate. If web support is a requirement today, use a native build target or track future work in the repository issues.
+Experimental WASM support is now available:
+
+- `ruviz` compiles for `wasm32-unknown-unknown` and supports in-memory PNG/SVG output.
+- `crates/ruviz-web` provides browser canvas bindings for interactive rendering.
+- `ruviz-web` registers a bundled browser fallback font automatically for canvas sessions.
+- `ruviz-web` exposes `web_runtime_capabilities()` so apps can detect worker, touch, and WebGPU availability.
+- `demo/web` contains a Vite example for main-thread, OffscreenCanvas, and Observable usage.
+
+Current limitations:
+- Desktop-only helpers such as file-path export and native window integration are not exposed on wasm.
+- A dedicated WebGPU canvas fast path is not implemented yet; browser sessions currently render through the CPU image path.
 
 ## Next Steps
 

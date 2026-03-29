@@ -46,6 +46,14 @@ examples/output/performance/*.csv
 *.rej
 *.orig
 
+# Web demo outputs
+demo/web/node_modules/
+demo/web/pkg/
+demo/web/dist/
+demo/web/playwright-report/
+demo/web/test-results/
+crates/ruviz-web/pkg/
+
 # AI/Assistant artifacts
 .serena/
 .claude/

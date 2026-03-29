@@ -34,7 +34,9 @@ pub use simd::{CoordinateBounds, PixelViewport, SIMDPerformanceInfo, SIMDTransfo
 pub use skia::SkiaRenderer;
 pub use style::{LineStyle, MarkerStyle};
 pub use text::{FontConfig, FontFamily, FontStyle, FontWeight};
-pub use text::{TextRenderer, get_font_system, get_swash_cache, initialize_text_system};
+pub use text::{
+    TextRenderer, get_font_system, get_swash_cache, initialize_text_system, register_font_bytes,
+};
 pub use theme::{Theme, ThemeBuilder, ThemeVariant};
 
 /// Viewport defining visible data bounds with optional margin

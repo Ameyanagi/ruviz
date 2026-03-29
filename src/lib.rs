@@ -746,15 +746,16 @@ pub mod export;
 pub mod layout;
 pub mod plots;
 pub mod render;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod simple;
 pub mod stats;
 pub mod style;
 pub mod text;
 
-#[cfg(feature = "interactive")]
+#[cfg(all(feature = "interactive", not(target_arch = "wasm32")))]
 pub mod interactive;
 
-#[cfg(feature = "animation")]
+#[cfg(all(feature = "animation", not(target_arch = "wasm32")))]
 pub mod animation;
 
 /// Convenience re-exports for common usage
@@ -762,13 +763,13 @@ pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
         Annotation, ArrowHead, ArrowStyle, BackendType, FillStyle, FramePacing, FrameStats,
-        GridSpec, HatchPattern, HitResult, ImageTarget, InteractiveFrame, InteractivePlotSession,
-        InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem,
-        LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource,
-        Position, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
-        RenderTargetKind, Result, SeriesStyle, ShapeStyle, SubplotFigure, SurfaceCapability,
-        SurfaceTarget, TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint,
-        ViewportRect, subplots, subplots_default,
+        GridSpec, HatchPattern, HitResult, Image, ImageTarget, InteractiveFrame,
+        InteractivePlotSession, InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Legend,
+        LegendAnchor, LegendItem, LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInput,
+        PlotInputEvent, PlotSource, Position, PreparedPlot, QualityPolicy, ReactiveSubscription,
+        ReactiveValue, RenderTargetKind, Result, SeriesStyle, ShapeStyle, SubplotFigure,
+        SurfaceCapability, SurfaceTarget, TextAlign, TextStyle, TextVAlign, TickDirection,
+        TickSides, ViewportPoint, ViewportRect, subplots, subplots_default,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,
@@ -785,7 +786,7 @@ pub mod prelude {
     // Top-level convenience functions
     pub use crate::{bar, line, scatter};
 
-    #[cfg(feature = "interactive")]
+    #[cfg(all(feature = "interactive", not(target_arch = "wasm32")))]
     pub use crate::interactive::{
         event::{InteractionEvent, Point2D, Rectangle, Vector2D},
         renderer::RealTimeRenderer,
@@ -797,7 +798,7 @@ pub mod prelude {
         },
     };
 
-    #[cfg(feature = "animation")]
+    #[cfg(all(feature = "animation", not(target_arch = "wasm32")))]
     #[allow(deprecated)]
     pub use crate::animation::{
         DurationExt, RecordConfig, Signal, Tick, easing, record_plot, record_simple, signal,

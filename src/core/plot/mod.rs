@@ -6453,6 +6453,11 @@ impl Plot {
         Ok(image)
     }
 
+    /// Render the plot and encode it as PNG bytes.
+    pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
+        self.render()?.encode_png()
+    }
+
     /// Check if this plot contains any reactive data (Signal or Observable).
     ///
     /// Returns `true` if any series data or text attributes are reactive,
@@ -9318,6 +9323,7 @@ impl Plot {
     ///     .save("output.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         if self.is_reactive() {
             let result = self.resolved_plot(0.0).save(path);
@@ -9993,6 +9999,7 @@ impl Plot {
     }
 
     /// Save the plot to a PNG file with custom dimensions
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_with_size<P: AsRef<Path>>(
         mut self,
         path: P,
@@ -10007,6 +10014,7 @@ impl Plot {
     ///
     /// Renders the plot to a vector SVG file with full visual fidelity.
     /// Includes axes, grid, tick marks, labels, legend, and all data series.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
         let svg_content = self.render_to_svg()?;
         crate::export::write_bytes_atomic(path, svg_content.as_bytes())
@@ -10407,7 +10415,7 @@ impl Plot {
     ///     .save_pdf("plot.pdf")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    #[cfg(feature = "pdf")]
+    #[cfg(all(feature = "pdf", not(target_arch = "wasm32")))]
     pub fn save_pdf<P: AsRef<Path>>(self, path: P) -> Result<()> {
         self.save_pdf_with_size(path, None)
     }
@@ -10420,7 +10428,7 @@ impl Plot {
     /// # Arguments
     /// * `path` - Output file path
     /// * `size` - Optional (width_mm, height_mm). If None, uses 160x120mm.
-    #[cfg(feature = "pdf")]
+    #[cfg(all(feature = "pdf", not(target_arch = "wasm32")))]
     pub fn save_pdf_with_size<P: AsRef<Path>>(
         mut self,
         path: P,
@@ -10461,7 +10469,7 @@ impl Plot {
     /// # Returns
     ///
     /// RGB pixel data as a `Vec<u8>` (width * height * 3 bytes)
-    #[cfg(feature = "animation")]
+    #[cfg(all(feature = "animation", not(target_arch = "wasm32")))]
     pub fn render_frame(&self, width: u32, height: u32) -> Result<Vec<u8>> {
         // Create a sized version of the plot
         let sized_plot = self.clone().set_output_pixels(width, height);
@@ -11624,12 +11632,19 @@ impl PlotSeriesBuilder {
         self.end_series().render()
     }
 
+    /// Render the plot to PNG bytes
+    pub fn render_png_bytes(self) -> Result<Vec<u8>> {
+        self.end_series().render_png_bytes()
+    }
+
     /// Save the plot to file
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         self.end_series().save(path)
     }
 
     /// Save the plot to file with custom dimensions
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_with_size<P: AsRef<Path>>(
         mut self,
         path: P,
@@ -11641,6 +11656,7 @@ impl PlotSeriesBuilder {
     }
 
     /// Export to SVG
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
         self.end_series().export_svg(path)
     }
@@ -11651,13 +11667,13 @@ impl PlotSeriesBuilder {
     }
 
     /// Export to PDF (requires `pdf` feature)
-    #[cfg(feature = "pdf")]
+    #[cfg(all(feature = "pdf", not(target_arch = "wasm32")))]
     pub fn save_pdf<P: AsRef<Path>>(self, path: P) -> Result<()> {
         self.end_series().save_pdf(path)
     }
 
     /// Export to PDF with custom size (requires `pdf` feature)
-    #[cfg(feature = "pdf")]
+    #[cfg(all(feature = "pdf", not(target_arch = "wasm32")))]
     pub fn save_pdf_with_size<P: AsRef<Path>>(
         self,
         path: P,

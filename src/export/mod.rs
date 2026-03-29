@@ -44,6 +44,39 @@ pub use pdf::PdfRenderer;
 #[cfg(feature = "pdf")]
 pub use svg_to_pdf::{page_sizes, svg_to_pdf, svg_to_pdf_file};
 
+fn validate_rgba_image(image: &Image) -> Result<()> {
+    let expected_len = (image.width as usize)
+        .saturating_mul(image.height as usize)
+        .saturating_mul(4);
+    if image.pixels.len() != expected_len {
+        return Err(PlottingError::InvalidInput(format!(
+            "RGBA image buffer length mismatch: expected {expected_len} bytes for {}x{}, got {}",
+            image.width,
+            image.height,
+            image.pixels.len()
+        )));
+    }
+
+    Ok(())
+}
+
+/// Encode an in-memory RGBA image as PNG bytes.
+pub fn encode_rgba_png(image: &Image) -> Result<Vec<u8>> {
+    validate_rgba_image(image)?;
+
+    let mut bytes = Vec::new();
+    PngEncoder::new_with_quality(&mut bytes, CompressionType::Fast, FilterType::Adaptive)
+        .write_image(
+            &image.pixels,
+            image.width,
+            image.height,
+            ColorType::Rgba8.into(),
+        )
+        .map_err(|err| PlottingError::RenderError(format!("failed to encode PNG: {err}")))?;
+
+    Ok(bytes)
+}
+
 fn atomic_temp_path(path: &Path) -> PathBuf {
     static TEMP_PATH_NONCE: AtomicU64 = AtomicU64::new(0);
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -235,17 +268,7 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
 
 /// Atomically writes an RGBA image as a PNG file.
 pub fn write_rgba_png_atomic<P: AsRef<Path>>(path: P, image: &Image) -> Result<()> {
-    let expected_len = (image.width as usize)
-        .saturating_mul(image.height as usize)
-        .saturating_mul(4);
-    if image.pixels.len() != expected_len {
-        return Err(PlottingError::InvalidInput(format!(
-            "RGBA image buffer length mismatch: expected {expected_len} bytes for {}x{}, got {}",
-            image.width,
-            image.height,
-            image.pixels.len()
-        )));
-    }
+    validate_rgba_image(image)?;
 
     write_with_atomic_writer(path, |writer| {
         // Explicit settings keep encoder output stable across `image` crate
