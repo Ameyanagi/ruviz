@@ -105,8 +105,10 @@ For minimal builds: `default-features = false`
 The core crate now compiles for `wasm32-unknown-unknown` with in-memory output helpers such as
 `Plot::render_png_bytes()`, `Plot::render_to_svg()`, and `Image::encode_png()`.
 
-For browser interactivity, use the companion `ruviz-web` crate in [`crates/ruviz-web`](crates/ruviz-web)
-and the Vite demo in [`demo/web`](demo/web). Native file-path export helpers remain desktop-only.
+For browser interactivity, use the companion Rust bridge crate in
+[`crates/ruviz-web`](crates/ruviz-web) and the public JS/TS SDK package in
+[`packages/ruviz-web`](packages/ruviz-web). The reference browser demo lives in
+[`demo/web`](demo/web). Native file-path export helpers remain desktop-only.
 
 Note:
 - `ruviz-web` automatically registers a bundled browser fallback font for canvas sessions.
@@ -114,7 +116,9 @@ Note:
 - The current browser adapter provides main-thread canvas and OffscreenCanvas worker sessions, plus
   `web_runtime_capabilities()` for feature diagnostics.
 - The Vite demo includes direct wasm export, main-thread interactivity, worker interactivity, and
-  Observable-driven updates.
+  temporal signal playback plus Observable-driven updates.
+- The JS workspace is Bun-first. Use `bun install`, `bun run build:web`, and `bun run test:web`
+  from the repo root for browser package and demo work.
 
 ### Typst Text Mode
 

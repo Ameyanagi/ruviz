@@ -123,6 +123,15 @@
         color: #0f172a;
       }
 
+      select {
+        border: none;
+        border-radius: 999px;
+        background: #e2e8f0;
+        color: #0f172a;
+        padding: 10px 14px;
+        font: inherit;
+      }
+
       canvas {
         width: 100%;
         aspect-ratio: 16 / 9;
@@ -145,10 +154,11 @@
     <main>
       <h1>ruviz in the browser</h1>
       <p>
-        This demo uses the new <code>ruviz-web</code> crate to render and interact with plots from
-        WebAssembly. Left-drag pans, right-drag box-zooms, and the mouse wheel zooms around the
-        pointer. The second panel runs through an <code>OffscreenCanvas</code> worker when the
-        browser supports it.
+        This demo uses the new <code>ruviz-web</code> JS/TS SDK on top of the wasm bridge to
+        render and interact with plots in the browser. Left-drag pans, right-drag box-zooms, and
+        the mouse wheel zooms around the pointer. The panels below cover direct export,
+        main-thread sessions, worker sessions, temporal signal playback, and observable/reactive
+        updates.
       </p>
       <div id="capability-status" class="capability-bar"></div>
 
@@ -168,10 +178,25 @@
 
         <section class="panel">
           <h2>Main-thread Canvas</h2>
-          <p>CPU-backed interactive rendering directly on an HTML canvas.</p>
+          <p>
+            Browser-session API coverage on an HTML canvas, including backend preference, viewport
+            SVG export, and detach/reattach lifecycle controls.
+          </p>
           <div class="toolbar">
             <button id="main-reset">Reset View</button>
             <button id="main-export" class="secondary">Download PNG</button>
+            <button id="main-export-svg" class="secondary">Download SVG</button>
+            <button id="main-reattach" class="secondary">Reattach</button>
+            <button id="main-destroy" class="secondary">Detach</button>
+          </div>
+          <div class="control-row">
+            <label for="main-backend">Backend</label>
+            <select id="main-backend">
+              <option value="auto">Auto</option>
+              <option value="cpu">CPU</option>
+              <option value="svg">SVG</option>
+              <option value="gpu">GPU preference</option>
+            </select>
           </div>
           <canvas id="main-canvas" width="640" height="360"></canvas>
           <div id="main-status" class="status"></div>
@@ -183,9 +208,38 @@
           <div class="toolbar">
             <button id="worker-reset">Reset View</button>
             <button id="worker-export" class="secondary">Download PNG</button>
+            <button id="worker-export-svg" class="secondary">Download SVG</button>
           </div>
           <canvas id="worker-canvas" width="640" height="360"></canvas>
           <div id="worker-status" class="status"></div>
+        </section>
+
+        <section class="panel panel-wide">
+          <h2>Temporal Signal View</h2>
+          <p>
+            Time-varying data backed by <code>Signal&lt;Vec&lt;f64&gt;&gt;</code>. Use the time
+            slider or Play to drive <code>session.set_time(...)</code> on a plot built from signal
+            sources.
+          </p>
+          <div class="toolbar">
+            <button id="temporal-play">Play</button>
+            <button id="temporal-reset" class="secondary">Reset View</button>
+            <button id="temporal-export" class="secondary">Download PNG</button>
+          </div>
+          <div class="control-row">
+            <label for="temporal-time">Time</label>
+            <input
+              id="temporal-time"
+              type="range"
+              min="0"
+              max="12.566370614359172"
+              step="0.01"
+              value="0"
+            />
+            <span id="temporal-time-value" class="phase-value">0.00 s</span>
+          </div>
+          <canvas id="temporal-canvas" width="960" height="360"></canvas>
+          <div id="temporal-status" class="status"></div>
         </section>
 
         <section class="panel panel-wide">

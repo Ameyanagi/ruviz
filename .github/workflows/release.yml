@@ -44,6 +44,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
       - name: Validate release tag matches ruviz version
         run: |
           VERSION="$(cargo pkgid -p ruviz | sed 's/.*[#@]//')"
@@ -51,6 +56,22 @@ jobs:
 
           if [ "v${VERSION}" != "${TAG}" ]; then
             echo "Release tag ${TAG} does not match ruviz version v${VERSION}"
+            exit 1
+          fi
+
+      - name: Validate web package versions match release tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          RUST_WEB_VERSION="$(cargo pkgid -p ruviz-web | sed 's/.*[#@]//')"
+          NPM_WEB_VERSION="$(sed -n 's/  "version": "\(.*\)",/\1/p' packages/ruviz-web/package.json | head -n 1)"
+
+          if [ "v${RUST_WEB_VERSION}" != "${TAG}" ]; then
+            echo "Release tag ${TAG} does not match ruviz-web crate version v${RUST_WEB_VERSION}"
+            exit 1
+          fi
+
+          if [ "${NPM_WEB_VERSION}" != "${RUST_WEB_VERSION}" ]; then
+            echo "packages/ruviz-web version ${NPM_WEB_VERSION} does not match ruviz-web crate version ${RUST_WEB_VERSION}"
             exit 1
           fi
 
@@ -64,6 +85,16 @@ jobs:
           key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-release-
 
+      - name: Cache Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
+
       - name: Build release
         run: cargo build --release --all-features
 
@@ -74,6 +105,15 @@ jobs:
 
       - name: Verify ruviz-gpui compiles
         run: cargo check -p ruviz-gpui
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Build JS/TS web package
+        run: bun run --cwd packages/ruviz-web build
+
+      - name: Validate npm tarball
+        run: bun run --cwd packages/ruviz-web pack:dry
 
   publish-ruviz:
     name: Publish ruviz to crates.io
@@ -109,6 +149,62 @@ jobs:
       - name: Skip ruviz publish
         if: steps.ruviz-version.outputs.published == 'true'
         run: echo "ruviz v${{ steps.ruviz-version.outputs.version }} is already published on crates.io"
+
+  publish-ruviz-web:
+    name: Publish ruviz-web to crates.io
+    runs-on: ubuntu-latest
+    needs: publish-ruviz
+    if: ${{ !contains(github.ref_name, '-') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Detect published ruviz-web version
+        id: web-version
+        run: |
+          VERSION="$(cargo pkgid -p ruviz-web | sed 's/.*[#@]//')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          if curl --silent --fail \
+              --header "User-Agent: ${CRATES_IO_USER_AGENT}" \
+              "https://crates.io/api/v1/crates/ruviz-web/${VERSION}" >/dev/null; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for ruviz-web packaging to resolve against crates.io
+        if: steps.web-version.outputs.published != 'true'
+        run: |
+          last_output=""
+
+          for attempt in $(seq 1 60); do
+            if output="$(cargo package --package ruviz-web --allow-dirty --no-verify 2>&1)"; then
+              exit 0
+            fi
+
+            last_output="${output}"
+            echo "Waiting for crates.io index to serve ruviz-web dependencies (attempt ${attempt}/60)..."
+            sleep 20
+          done
+
+          echo "Timed out waiting for ruviz-web packaging to resolve against crates.io"
+          if [ -n "${last_output}" ]; then
+            echo "Last cargo package error output:"
+            printf '%s\n' "${last_output}"
+          fi
+          exit 1
+
+      - name: Publish ruviz-web to crates.io
+        if: steps.web-version.outputs.published != 'true'
+        run: cargo publish --package ruviz-web --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Skip ruviz-web publish
+        if: steps.web-version.outputs.published == 'true'
+        run: echo "ruviz-web v${{ steps.web-version.outputs.version }} is already published on crates.io"
 
   publish-ruviz-gpui:
     name: Publish ruviz-gpui to crates.io
@@ -166,11 +262,82 @@ jobs:
         if: steps.gpui-version.outputs.published == 'true'
         run: echo "ruviz-gpui v${{ steps.gpui-version.outputs.version }} is already published on crates.io"
 
+  publish-npm-web:
+    name: Publish ruviz-web to npm
+    runs-on: ubuntu-latest
+    needs: [publish-ruviz, publish-ruviz-web, publish-ruviz-gpui]
+    if: ${{ !contains(github.ref_name, '-') && secrets.NPM_TOKEN != '' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-web-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-web-
+
+      - name: Cache Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Validate npm package version matches release tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="$(sed -n 's/  "version": "\(.*\)",/\1/p' packages/ruviz-web/package.json | head -n 1)"
+
+          if [ "v${VERSION}" != "${TAG}" ]; then
+            echo "Release tag ${TAG} does not match npm package version v${VERSION}"
+            exit 1
+          fi
+
+      - name: Build npm package
+        run: bun run --cwd packages/ruviz-web build
+
+      - name: Validate npm tarball
+        run: bun run --cwd packages/ruviz-web pack:dry
+
+      - name: Configure npm auth
+        run: |
+          cat <<EOF > "${HOME}/.npmrc"
+          //registry.npmjs.org/:_authToken=${NPM_TOKEN}
+          EOF
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish npm package
+        run: cd packages/ruviz-web && bun publish --access public --tolerate-republish
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+
   create-github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-release, publish-ruviz, publish-ruviz-gpui]
-    if: ${{ always() && needs.build-release.result == 'success' && (needs.publish-ruviz.result == 'success' || needs.publish-ruviz.result == 'skipped') && (needs.publish-ruviz-gpui.result == 'success' || needs.publish-ruviz-gpui.result == 'skipped') }}
+    needs: [build-release, publish-ruviz, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web]
+    if: ${{ always() && needs.build-release.result == 'success' && (needs.publish-ruviz.result == 'success' || needs.publish-ruviz.result == 'skipped') && (needs.publish-ruviz-web.result == 'success' || needs.publish-ruviz-web.result == 'skipped') && (needs.publish-ruviz-gpui.result == 'success' || needs.publish-ruviz-gpui.result == 'skipped') && (needs.publish-npm-web.result == 'success' || needs.publish-npm-web.result == 'skipped') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

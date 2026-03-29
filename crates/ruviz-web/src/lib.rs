@@ -10,7 +10,7 @@ mod wasm {
             Image, ImageTarget, InteractivePlotSession, IntoPlot, Plot, PlotInputEvent,
             ViewportPoint, ViewportRect,
         },
-        data::Observable,
+        data::{Observable, Signal},
         render::register_font_bytes,
     };
     use wasm_bindgen::{Clamped, JsCast, JsValue, prelude::*};
@@ -181,6 +181,91 @@ mod wasm {
     }
 
     #[wasm_bindgen]
+    pub struct SignalVecF64 {
+        inner: Signal<Vec<f64>>,
+        len: usize,
+    }
+
+    #[wasm_bindgen]
+    impl SignalVecF64 {
+        #[wasm_bindgen(js_name = sineWave)]
+        pub fn sine_wave(
+            points: usize,
+            domain_start: f64,
+            domain_end: f64,
+            amplitude: f64,
+            cycles: f64,
+            phase_velocity: f64,
+            phase_offset: f64,
+            vertical_offset: f64,
+        ) -> Self {
+            let len = points.max(2);
+            let start = if domain_start.is_finite() {
+                domain_start
+            } else {
+                0.0
+            };
+            let end = if domain_end.is_finite() && domain_end.to_bits() != start.to_bits() {
+                domain_end
+            } else {
+                start + std::f64::consts::TAU
+            };
+            let amplitude = if amplitude.is_finite() {
+                amplitude
+            } else {
+                1.0
+            };
+            let cycles = if cycles.is_finite() { cycles } else { 1.0 };
+            let phase_velocity = if phase_velocity.is_finite() {
+                phase_velocity
+            } else {
+                0.0
+            };
+            let phase_offset = if phase_offset.is_finite() {
+                phase_offset
+            } else {
+                0.0
+            };
+            let vertical_offset = if vertical_offset.is_finite() {
+                vertical_offset
+            } else {
+                0.0
+            };
+            let span = end - start;
+
+            let inner = Signal::new(move |time_seconds| {
+                let phase = phase_offset + phase_velocity * time_seconds;
+                let denom = (len - 1) as f64;
+
+                (0..len)
+                    .map(|index| {
+                        let progress = index as f64 / denom;
+                        let x = start + span * progress;
+                        vertical_offset + amplitude * (cycles * x + phase).sin()
+                    })
+                    .collect()
+            });
+
+            Self { inner, len }
+        }
+
+        pub fn values_at(&self, time_seconds: f64) -> Vec<f64> {
+            self.inner.at(time_seconds)
+        }
+
+        pub fn len(&self) -> usize {
+            self.len
+        }
+
+        pub fn clone_handle(&self) -> SignalVecF64 {
+            Self {
+                inner: self.inner.clone(),
+                len: self.len,
+            }
+        }
+    }
+
+    #[wasm_bindgen]
     pub struct JsPlot {
         inner: Plot,
     }
@@ -225,6 +310,30 @@ mod wasm {
             }
 
             self.replace_with_series(|plot| plot.scatter(&x, &y).into_plot());
+            Ok(())
+        }
+
+        pub fn line_signal(&mut self, x: Vec<f64>, y: &SignalVecF64) -> Result<(), JsValue> {
+            if x.len() != y.len() {
+                return Err(JsValue::from_str(
+                    "signal y data and x must have the same length",
+                ));
+            }
+
+            let y_signal = y.inner.clone();
+            self.replace_with_series(|plot| plot.line_source(x, y_signal).into_plot());
+            Ok(())
+        }
+
+        pub fn scatter_signal(&mut self, x: Vec<f64>, y: &SignalVecF64) -> Result<(), JsValue> {
+            if x.len() != y.len() {
+                return Err(JsValue::from_str(
+                    "signal y data and x must have the same length",
+                ));
+            }
+
+            let y_signal = y.inner.clone();
+            self.replace_with_series(|plot| plot.scatter_source(x, y_signal).into_plot());
             Ok(())
         }
 

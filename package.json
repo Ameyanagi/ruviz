@@ -1,0 +1,19 @@
+{
+  "name": "ruviz-workspace",
+  "private": true,
+  "packageManager": "bun@1.3.5",
+  "workspaces": [
+    "packages/*",
+    "demo/web"
+  ],
+  "scripts": {
+    "build:web-sdk": "bun run --cwd packages/ruviz-web build",
+    "build:web-demo": "bun run --cwd demo/web build",
+    "build:web": "bun run build:web-sdk && bun run build:web-demo",
+    "dev:web": "bun run --cwd demo/web dev",
+    "preview:web": "bun run --cwd demo/web preview",
+    "test:web": "bun run --cwd demo/web test:e2e",
+    "install:web-browsers": "cd demo/web && bunx playwright install --with-deps chromium firefox webkit",
+    "pack:web-sdk": "bun run --cwd packages/ruviz-web pack:dry"
+  }
+}

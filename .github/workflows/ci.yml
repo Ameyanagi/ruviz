@@ -215,12 +215,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: demo/web/package-lock.json
+          bun-version: 1.3.5
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -230,6 +228,12 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-wasm-web-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
@@ -243,21 +247,17 @@ jobs:
       - name: Check ruviz-web
         run: cargo check -p ruviz-web --target wasm32-unknown-unknown
 
-      - name: Install web demo dependencies
-        run: npm ci
-        working-directory: demo/web
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
 
-      - name: Build web demo
-        run: npm run build
-        working-directory: demo/web
+      - name: Build web SDK and demo
+        run: bun run build:web
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
-        working-directory: demo/web
+        run: bun run install:web-browsers
 
       - name: Run browser smoke tests
-        run: npm run test:e2e
-        working-directory: demo/web
+        run: bun run test:web
 
   docs:
     name: Documentation

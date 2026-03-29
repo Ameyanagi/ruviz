@@ -4,12 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build:wasm": "PATH=\"$HOME/.cargo/bin:$PATH\" wasm-pack build ../../crates/ruviz-web --target web --out-dir ../../demo/web/pkg",
-    "dev": "npm run build:wasm && vite",
-    "build": "npm run build:wasm && vite build",
+    "build:sdk": "bun run --cwd ../../packages/ruviz-web build",
+    "dev": "bun run build:sdk && vite",
+    "build": "bun run build:sdk && vite build",
     "preview": "vite preview",
     "preview:ci": "vite preview --host 127.0.0.1 --port 4173",
     "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "ruviz-web": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
