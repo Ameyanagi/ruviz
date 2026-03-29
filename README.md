@@ -405,6 +405,8 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing
 git clone https://github.com/Ameyanagi/ruviz.git
 cd ruviz
 
+bun install
+
 # Setup pre-commit hooks (recommended)
 make setup-hooks
 
@@ -421,7 +423,7 @@ cargo run --example basic_example --release
 cargo bench --all-features
 ```
 
-The pre-commit hooks will automatically run `cargo fmt --check` and `cargo clippy` before each commit to ensure code quality.
+The pre-commit hooks will automatically run `cargo fmt --check`, `cargo clippy`, `oxfmt --check`, and `oxlint --deny-warnings` before each commit.
 
 ## Roadmap
 

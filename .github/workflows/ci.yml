@@ -238,7 +238,7 @@ jobs:
           restore-keys: ${{ runner.os }}-bun-
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Check core wasm targets
         run: |
@@ -251,6 +251,9 @@ jobs:
 
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
+
+      - name: Check JS/TS formatting and lint
+        run: bun run check:web
 
       - name: Build web SDK and demo
         run: bun run build:web

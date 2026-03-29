@@ -1,6 +1,6 @@
 #!/bin/bash
 # Pre-commit hook for ruviz
-# Runs cargo fmt check and clippy before allowing commits
+# Runs Rust and JS/TS checks before allowing commits
 #
 # Setup: make setup-hooks
 
@@ -27,6 +27,41 @@ if ! cargo clippy --all-features -- -D warnings 2>/dev/null; then
     exit 1
 fi
 echo "✓ Clippy OK"
+
+staged_web_files=()
+while IFS= read -r file; do
+    staged_web_files+=("$file")
+done < <(
+    git diff --cached --name-only --diff-filter=ACMR | grep -E \
+        '^(packages/ruviz-web/src/.*\.(js|ts)|demo/web/src/.*\.(js|ts)|demo/web/tests/.*\.(js|ts)|demo/web/playwright\.config\.js)$' || true
+)
+
+if [ ${#staged_web_files[@]} -gt 0 ]; then
+    if ! command -v bun >/dev/null 2>&1; then
+        echo ""
+        echo "❌ Bun is required for JS/TS pre-commit checks."
+        echo "Install Bun and run 'bun install' before committing."
+        exit 1
+    fi
+
+    echo "Checking JS/TS formatting with oxfmt..."
+    if ! bunx oxfmt --check "${staged_web_files[@]}"; then
+        echo ""
+        echo "❌ JS/TS formatting check failed!"
+        echo "Run 'bun run format:web:write' to fix formatting issues."
+        exit 1
+    fi
+    echo "✓ oxfmt OK"
+
+    echo "Running JS/TS lint checks with oxlint..."
+    if ! bunx oxlint --deny-warnings "${staged_web_files[@]}"; then
+        echo ""
+        echo "❌ JS/TS lint check failed!"
+        echo "Run 'bun run lint:web' to inspect the reported issues."
+        exit 1
+    fi
+    echo "✓ oxlint OK"
+fi
 
 echo ""
 echo "✓ All pre-commit checks passed!"

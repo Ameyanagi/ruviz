@@ -61,7 +61,9 @@ function toRawBackendPreference(module: RawModule, backendPreference: BackendPre
   }
 }
 
-function sourceValues(source: XSourceSnapshot | Exclude<YSourceSnapshot, { kind: "sine-signal" }>): number[] {
+function sourceValues(
+  source: XSourceSnapshot | Exclude<YSourceSnapshot, { kind: "sine-signal" }>,
+): number[] {
   return [...source.values];
 }
 
@@ -167,8 +169,17 @@ function getSession(): raw.OffscreenCanvasSession {
 }
 
 self.onmessage = async (event: MessageEvent<WorkerEnvelope>) => {
-  const { backendPreference, canvas, height, initialTime, payload, requestId, scaleFactor, type, width } =
-    event.data;
+  const {
+    backendPreference,
+    canvas,
+    height,
+    initialTime,
+    payload,
+    requestId,
+    scaleFactor,
+    type,
+    width,
+  } = event.data;
 
   try {
     const module = await ensureRawModule();
@@ -215,7 +226,9 @@ self.onmessage = async (event: MessageEvent<WorkerEnvelope>) => {
         currentSession.set_backend_preference(
           toRawBackendPreference(
             module,
-            normalizeBackendPreference((payload as { backendPreference: BackendPreference }).backendPreference),
+            normalizeBackendPreference(
+              (payload as { backendPreference: BackendPreference }).backendPreference,
+            ),
           ),
         );
         postResponse("ack", requestId);

@@ -189,10 +189,7 @@ async function setupMainThreadDemo() {
   });
 
   function syncStatus(mode = session.hasPlot() ? "ready" : "detached") {
-    status(
-      mainStatus,
-      `${mode} | backend ${backendPreference()} | has_plot ${session.hasPlot()}`,
-    );
+    status(mainStatus, `${mode} | backend ${backendPreference()} | has_plot ${session.hasPlot()}`);
   }
 
   async function attachPlot() {

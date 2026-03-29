@@ -134,10 +134,7 @@ function normalizeBackendPreference(
   }
 }
 
-function toRawBackendPreference(
-  module: RawModule,
-  backendPreference: BackendPreference,
-): number {
+function toRawBackendPreference(module: RawModule, backendPreference: BackendPreference): number {
   switch (backendPreference) {
     case "cpu":
       return module.WebBackendPreference.Cpu;
@@ -319,10 +316,6 @@ function staticValuesFromXSource(source: XSourceDefinition): number[] {
   return source.kind === "observable" ? source.source.snapshotValues() : [...source.values];
 }
 
-function staticValuesFromYSource(source: Exclude<YSourceDefinition, { kind: "sine-signal" }>): number[] {
-  return source.kind === "observable" ? source.source.snapshotValues() : [...source.values];
-}
-
 function xSourceLength(source: XSourceDefinition): number {
   return source.kind === "observable" ? source.source.length : source.values.length;
 }
@@ -346,9 +339,7 @@ function normalizeXSource(source: NumericArray | ObservableSeries): XSourceDefin
   return { kind: "static", values: toNumberArray(source) };
 }
 
-function normalizeYSource(
-  source: NumericArray | ObservableSeries | SineSignal,
-): YSourceDefinition {
+function normalizeYSource(source: NumericArray | ObservableSeries | SineSignal): YSourceDefinition {
   if (source instanceof ObservableSeries) {
     return { kind: "observable", source };
   }
@@ -563,10 +554,13 @@ export class PlotBuilder {
     this.#state = state
       ? {
           ...state,
-          sizePx: state.sizePx ? [...state.sizePx] as [number, number] : undefined,
+          sizePx: state.sizePx ? ([...state.sizePx] as [number, number]) : undefined,
           series: state.series.map((series) => ({
             kind: series.kind,
-            x: series.x.kind === "static" ? { kind: "static", values: [...series.x.values] } : series.x,
+            x:
+              series.x.kind === "static"
+                ? { kind: "static", values: [...series.x.values] }
+                : series.x,
             y:
               series.y.kind === "static"
                 ? { kind: "static", values: [...series.y.values] }
@@ -620,7 +614,7 @@ export class PlotBuilder {
 
   toSnapshot(): PlotSnapshot {
     const snapshot: PlotSnapshot = {
-      sizePx: this.#state.sizePx ? [...this.#state.sizePx] as [number, number] : undefined,
+      sizePx: this.#state.sizePx ? ([...this.#state.sizePx] as [number, number]) : undefined,
       theme: this.#state.theme,
       ticks: this.#state.ticks,
       title: this.#state.title,
@@ -1071,7 +1065,7 @@ export class WorkerSession {
   }
 
   async ready(): Promise<void> {
-    await this.#readyPromise;
+    return this.#readyPromise;
   }
 
   destroy(): void {
@@ -1286,9 +1280,11 @@ export async function createWorkerSession(
   });
   session.attachWorker(worker);
 
-  const offscreen = (canvas as HTMLCanvasElement & {
-    transferControlToOffscreen(): OffscreenCanvas;
-  }).transferControlToOffscreen();
+  const offscreen = (
+    canvas as HTMLCanvasElement & {
+      transferControlToOffscreen(): OffscreenCanvas;
+    }
+  ).transferControlToOffscreen();
   const initialMetrics = getCanvasMetrics(canvas);
 
   worker.postMessage(

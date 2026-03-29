@@ -7,6 +7,10 @@
     "demo/web"
   ],
   "scripts": {
+    "lint:web": "oxlint --deny-warnings packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
+    "format:web": "oxfmt --check packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
+    "format:web:write": "oxfmt --write packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
+    "check:web": "bun run lint:web && bun run format:web",
     "build:web-sdk": "bun run --cwd packages/ruviz-web build",
     "build:web-demo": "bun run --cwd demo/web build",
     "build:web": "bun run build:web-sdk && bun run build:web-demo",
@@ -15,5 +19,9 @@
     "test:web": "bun run --cwd demo/web test:e2e",
     "install:web-browsers": "cd demo/web && bunx playwright install --with-deps chromium firefox webkit",
     "pack:web-sdk": "bun run --cwd packages/ruviz-web pack:dry"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.42.0",
+    "oxlint": "^1.57.0"
   }
 }

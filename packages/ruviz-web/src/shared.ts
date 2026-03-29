@@ -60,7 +60,10 @@ export interface SignalSourceSnapshot {
 }
 
 export type XSourceSnapshot = StaticSourceSnapshot | ObservableSourceSnapshot;
-export type YSourceSnapshot = StaticSourceSnapshot | ObservableSourceSnapshot | SignalSourceSnapshot;
+export type YSourceSnapshot =
+  | StaticSourceSnapshot
+  | ObservableSourceSnapshot
+  | SignalSourceSnapshot;
 
 export interface PlotSeriesSnapshot {
   kind: "line" | "scatter";
@@ -86,13 +89,14 @@ function finiteNumber(value: number | undefined, fallback: number): number {
   return Number.isFinite(value) ? Number(value) : fallback;
 }
 
-export function normalizeSineSignalOptions(options: SineSignalOptions): NormalizedSineSignalOptions {
+export function normalizeSineSignalOptions(
+  options: SineSignalOptions,
+): NormalizedSineSignalOptions {
   const points = Math.max(2, Math.floor(finiteNumber(options.points, 2)));
   const domainStart = finiteNumber(options.domain?.[0], 0);
   const defaultDomainEnd = domainStart + Math.PI * 2;
   const rawDomainEnd = finiteNumber(options.domain?.[1], defaultDomainEnd);
-  const domainEnd =
-    rawDomainEnd === domainStart ? defaultDomainEnd : rawDomainEnd;
+  const domainEnd = rawDomainEnd === domainStart ? defaultDomainEnd : rawDomainEnd;
 
   return {
     points,
@@ -124,7 +128,7 @@ export function cloneSourceSnapshot(
 
 export function clonePlotSnapshot(snapshot: PlotSnapshot): PlotSnapshot {
   return {
-    sizePx: snapshot.sizePx ? [...snapshot.sizePx] as [number, number] : undefined,
+    sizePx: snapshot.sizePx ? ([...snapshot.sizePx] as [number, number]) : undefined,
     theme: snapshot.theme,
     ticks: snapshot.ticks,
     title: snapshot.title,
