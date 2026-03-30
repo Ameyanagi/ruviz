@@ -1,5 +1,11 @@
 #[cfg(feature = "polars_support")]
 use ruviz::core::PlottingError;
+#[cfg(any(
+    feature = "ndarray_support",
+    feature = "polars_support",
+    feature = "nalgebra_support",
+    feature = "nalgebra"
+))]
 use ruviz::prelude::*;
 
 #[cfg(feature = "ndarray_support")]

@@ -235,9 +235,9 @@ fn main() -> Result<()> {
     // 24. Unicode text
     println!("[{}/25] Unicode text...", count + 1);
     Plot::new()
-        .title("Unicode: a B y d e 0 l p o w")
-        .xlabel("Temperature (C)")
-        .ylabel("Result")
+        .title("Unicode: α β γ δ ε θ λ π σ ω")
+        .xlabel("Température (°C)")
+        .ylabel("Résultat")
         .line(&x, &y)
         .save("tests/golden_images/24_unicode.png")?;
     count += 1;

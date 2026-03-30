@@ -41,7 +41,7 @@ fn test_parallel_rendering_basic() {
 }
 
 #[test]
-#[ignore = "Flaky: performance timing is non-deterministic"]
+#[ignore = "Manual benchmark: performance timing is non-deterministic"]
 fn test_parallel_vs_sequential_performance() {
     // Test that demonstrates parallel processing capability
     let n = 25_000;
@@ -67,12 +67,6 @@ fn test_parallel_vs_sequential_performance() {
         parallel_time.as_millis()
     );
     println!("   - Points processed: {}", n);
-
-    // Basic performance validation - should be reasonable for this size
-    assert!(
-        parallel_time.as_millis() < 1000,
-        "Rendering should complete in reasonable time"
-    );
 }
 
 #[cfg(feature = "parallel")]
