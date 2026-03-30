@@ -1,0 +1,5 @@
+error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in the current scope
+ --> tests/ui/typst_requires_feature/plot_typst.rs:4:25
+  |
+4 |     let _ = Plot::new().typst(true);
+  |                         ^^^^^ method not found in `ruviz::core::Plot`

@@ -149,7 +149,40 @@ Plot::new()
 
 Notes:
 - Invalid Typst snippets fail render/export with a `TypstError`.
-- If `typst-math` is not enabled, `.typst(true)` returns `FeatureNotEnabled` at render/export.
+- `.typst(true)` is only available when `typst-math` is enabled at compile time. If you make
+  Typst optional in your crate, guard the call with `#[cfg(feature = "typst-math")]`.
+- Without `typst-math`, the compiler reports:
+
+```text
+error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in the current scope
+```
+
+- If you select the text engine directly, `TextEngineMode::Typst` is also unavailable without
+  `typst-math`, and the compiler reports:
+
+```text
+error[E0599]: no variant or associated item named `Typst` found for enum `TextEngineMode` in the current scope
+```
+
+- A typical optional-feature pattern looks like this:
+
+```rust
+use ruviz::prelude::*;
+
+let mut plot = Plot::new()
+    .line(&x, &y)
+    .title("$f(x) = e^(-x)$")
+    .xlabel("$x$")
+    .ylabel("$f(x)$");
+
+#[cfg(feature = "typst-math")]
+{
+    plot = plot.typst(true);
+}
+
+plot.save("typst_plot.png")?;
+```
+
 - Migration: `.latex(true)` has been removed; use `.typst(true)` instead.
 - Typst text in PNG output is rasterized at native output scale (1x).
 - For maximum text sharpness, prefer higher DPI (for example `.dpi(300)`) or vector export (`.export_svg(...)` / `.save_pdf(...)`).

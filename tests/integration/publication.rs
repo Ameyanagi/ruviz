@@ -257,6 +257,7 @@ mod publication_integration_tests {
     }
 
     /// Integration Test: Typst-style mathematical expressions
+    #[cfg(feature = "typst-math")]
     #[test]
     fn test_typst_expressions_integration() {
         let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
@@ -269,61 +270,42 @@ mod publication_integration_tests {
             .ylabel("Amplitude $A(t)$")
             .typst(true);
 
-        #[cfg(feature = "typst-math")]
+        let png_result = plot.clone().save("test_typst_expressions.png");
+        assert!(
+            png_result.is_ok(),
+            "Typst PNG expressions failed: {:?}",
+            png_result.err()
+        );
+
+        let svg_result = plot.clone().export_svg("test_typst_expressions.svg");
+        assert!(
+            svg_result.is_ok(),
+            "Typst SVG expressions failed: {:?}",
+            svg_result.err()
+        );
+
+        let svg_inline = plot
+            .clone()
+            .render_to_svg()
+            .expect("Typst SVG inline rendering should succeed");
+        assert!(
+            svg_inline.contains("data-ruviz-text-engine=\"typst\""),
+            "Expected Typst SVG groups in render_to_svg output"
+        );
+
+        #[cfg(feature = "pdf")]
         {
-            let png_result = plot.clone().save("test_typst_expressions.png");
+            let pdf_result = plot.clone().save_pdf("test_typst_expressions.pdf");
             assert!(
-                png_result.is_ok(),
-                "Typst PNG expressions failed: {:?}",
-                png_result.err()
+                pdf_result.is_ok(),
+                "Typst PDF expressions failed: {:?}",
+                pdf_result.err()
             );
-
-            let svg_result = plot.clone().export_svg("test_typst_expressions.svg");
-            assert!(
-                svg_result.is_ok(),
-                "Typst SVG expressions failed: {:?}",
-                svg_result.err()
-            );
-
-            let svg_inline = plot
-                .clone()
-                .render_to_svg()
-                .expect("Typst SVG inline rendering should succeed");
-            assert!(
-                svg_inline.contains("data-ruviz-text-engine=\"typst\""),
-                "Expected Typst SVG groups in render_to_svg output"
-            );
-
-            #[cfg(feature = "pdf")]
-            {
-                let pdf_result = plot.clone().save_pdf("test_typst_expressions.pdf");
-                assert!(
-                    pdf_result.is_ok(),
-                    "Typst PDF expressions failed: {:?}",
-                    pdf_result.err()
-                );
-                std::fs::remove_file("test_typst_expressions.pdf").ok();
-            }
-
-            std::fs::remove_file("test_typst_expressions.png").ok();
-            std::fs::remove_file("test_typst_expressions.svg").ok();
+            std::fs::remove_file("test_typst_expressions.pdf").ok();
         }
 
-        #[cfg(not(feature = "typst-math"))]
-        {
-            let png_result = plot.clone().save("test_typst_expressions.png");
-            assert!(png_result.is_err(), "Expected typst-math feature gate error");
-
-            let svg_result = plot.clone().export_svg("test_typst_expressions.svg");
-            assert!(svg_result.is_err(), "Expected typst-math feature gate error");
-
-            if std::path::Path::new("test_typst_expressions.png").exists() {
-                std::fs::remove_file("test_typst_expressions.png").ok();
-            }
-            if std::path::Path::new("test_typst_expressions.svg").exists() {
-                std::fs::remove_file("test_typst_expressions.svg").ok();
-            }
-        }
+        std::fs::remove_file("test_typst_expressions.png").ok();
+        std::fs::remove_file("test_typst_expressions.svg").ok();
     }
 
     /// Integration Test: Color-blind friendly palettes
