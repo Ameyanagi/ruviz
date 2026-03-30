@@ -195,6 +195,8 @@ macro_rules! impl_terminal_methods {
             /// Finish configuring this series and return to the main Plot
             ///
             /// **Deprecated**: Series finalize automatically. Use `.save()` directly.
+            /// Mixed Cartesian/non-Cartesian plots also render through normal
+            /// fluent chaining, so this is not needed as a workaround.
             #[deprecated(
                 since = "0.8.0",
                 note = "Not needed - series finalize automatically. Use .save() directly."
@@ -303,6 +305,8 @@ pub struct SeriesStyle {
     pub x_errors: Option<crate::plots::error::ErrorValues>,
     /// Error bar styling configuration
     pub error_config: Option<crate::plots::error::ErrorBarConfig>,
+    /// Inset placement for non-Cartesian series in mixed plots.
+    pub inset_layout: Option<super::InsetLayout>,
 }
 
 impl SeriesStyle {
@@ -1455,6 +1459,37 @@ impl_terminal_methods!(crate::plots::ContourConfig);
 // =============================================================================
 
 impl PlotBuilder<crate::plots::PieConfig> {
+    /// Override inset placement for mixed Cartesian/non-Cartesian plots.
+    pub fn inset_layout(mut self, layout: super::InsetLayout) -> Self {
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set the inset anchor used when this pie chart is rendered inside a mixed plot.
+    pub fn inset_anchor(mut self, anchor: super::InsetAnchor) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.anchor = anchor;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set inset width/height as fractions of the main plot area.
+    pub fn inset_size_frac(mut self, width_frac: f32, height_frac: f32) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.width_frac = width_frac;
+        layout.height_frac = height_frac;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set inset margin in points.
+    pub fn inset_margin_pt(mut self, margin_pt: f32) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.margin_pt = margin_pt;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
     /// Set slice labels
     ///
     /// # Example
@@ -1569,6 +1604,37 @@ impl_terminal_methods!(crate::plots::PieConfig);
 // - current_series_idx: Option<usize> for chained styling
 
 impl PlotBuilder<crate::plots::RadarConfig> {
+    /// Override inset placement for mixed Cartesian/non-Cartesian plots.
+    pub fn inset_layout(mut self, layout: super::InsetLayout) -> Self {
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set the inset anchor used when this radar chart is rendered inside a mixed plot.
+    pub fn inset_anchor(mut self, anchor: super::InsetAnchor) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.anchor = anchor;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set inset width/height as fractions of the main plot area.
+    pub fn inset_size_frac(mut self, width_frac: f32, height_frac: f32) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.width_frac = width_frac;
+        layout.height_frac = height_frac;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set inset margin in points.
+    pub fn inset_margin_pt(mut self, margin_pt: f32) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.margin_pt = margin_pt;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
     /// Add a data series to the radar chart
     ///
     /// # Example
@@ -1869,6 +1935,37 @@ impl_terminal_methods!(crate::plots::RadarConfig);
 // =============================================================================
 
 impl PlotBuilder<crate::plots::PolarPlotConfig> {
+    /// Override inset placement for mixed Cartesian/non-Cartesian plots.
+    pub fn inset_layout(mut self, layout: super::InsetLayout) -> Self {
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set the inset anchor used when this polar plot is rendered inside a mixed plot.
+    pub fn inset_anchor(mut self, anchor: super::InsetAnchor) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.anchor = anchor;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set inset width/height as fractions of the main plot area.
+    pub fn inset_size_frac(mut self, width_frac: f32, height_frac: f32) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.width_frac = width_frac;
+        layout.height_frac = height_frac;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
+    /// Set inset margin in points.
+    pub fn inset_margin_pt(mut self, margin_pt: f32) -> Self {
+        let mut layout = self.style.inset_layout.unwrap_or_default();
+        layout.margin_pt = margin_pt;
+        self.style.inset_layout = Some(layout.normalized());
+        self
+    }
+
     /// Enable fill under the polar curve
     pub fn fill(mut self, fill: bool) -> Self {
         self.config.fill = fill;

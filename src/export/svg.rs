@@ -332,6 +332,48 @@ impl SvgRenderer {
         .unwrap();
     }
 
+    /// Draw a filled polygon.
+    pub fn draw_filled_polygon(&mut self, points: &[(f32, f32)], color: Color) {
+        if points.len() < 3 {
+            return;
+        }
+
+        let color_str = self.color_to_svg(color);
+        let points_str = points
+            .iter()
+            .map(|(x, y)| format!("{:.2},{:.2}", x, y))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        writeln!(
+            self.content,
+            r#"  <polygon points="{}" fill="{}" stroke="none"/>"#,
+            points_str, color_str
+        )
+        .unwrap();
+    }
+
+    /// Draw a polygon outline.
+    pub fn draw_polygon_outline(&mut self, points: &[(f32, f32)], color: Color, width: f32) {
+        if points.len() < 2 {
+            return;
+        }
+
+        let color_str = self.color_to_svg(color);
+        let points_str = points
+            .iter()
+            .map(|(x, y)| format!("{:.2},{:.2}", x, y))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        writeln!(
+            self.content,
+            r#"  <polygon points="{}" fill="none" stroke="{}" stroke-width="{:.2}" stroke-linejoin="round"/>"#,
+            points_str, color_str, width
+        )
+        .unwrap();
+    }
+
     /// Draw a filled circle
     pub fn draw_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color, filled: bool) {
         let color_str = self.color_to_svg(color);
