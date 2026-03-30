@@ -88,6 +88,48 @@ If you want publication-style math in labels and titles, enable Typst text rende
 ruviz = { version = "0.1.5", features = ["typst-math"] }
 ```
 
+`.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
+
+```text
+error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in the current scope
+```
+
+If you want Typst to stay optional in your own crate, forward a local feature first:
+
+```toml
+[dependencies]
+ruviz = { version = "0.1.5", default-features = false }
+
+[features]
+default = []
+typst-math = ["ruviz/typst-math"]
+```
+
+Then guard the call:
+
+```rust
+use ruviz::prelude::*;
+
+fn main() -> Result<()> {
+    let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
+
+    let mut plot = Plot::new()
+        .line(&x, &y)
+        .title("Quadratic: $y = x^2$")
+        .xlabel("$x$")
+        .ylabel("$y$");
+
+    #[cfg(feature = "typst-math")]
+    {
+        plot = plot.typst(true);
+    }
+
+    plot.save("plot_typst.png")?;
+    Ok(())
+}
+```
+
 ```rust
 use ruviz::prelude::*;
 

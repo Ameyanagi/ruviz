@@ -1,0 +1,5 @@
+error[E0599]: no method named `typst` found for struct `PlotBuilder<C>` in the current scope
+ --> tests/ui/typst_requires_feature/series_builder_typst.rs:6:38
+  |
+6 |     let _ = Plot::new().line(&x, &y).typst(true);
+  |                                      ^^^^^ method not found in `PlotBuilder<ruviz::plots::LineConfig>`

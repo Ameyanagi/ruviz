@@ -1553,6 +1553,7 @@ impl SkiaRenderer {
                 self.text_renderer
                     .render_text(&mut self.pixmap, text, x, y, &config, color)
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
                 let rendered =
@@ -1585,6 +1586,7 @@ impl SkiaRenderer {
                 self.text_renderer
                     .render_text_rotated(&mut self.pixmap, text, x, y, &config, color)
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_raster(
@@ -1629,6 +1631,7 @@ impl SkiaRenderer {
                     color,
                 )
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_raster(
@@ -1658,6 +1661,7 @@ impl SkiaRenderer {
                 let config = FontConfig::new(self.font_config.family.clone(), size);
                 self.text_renderer.measure_text(text, &config)
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
                 typst_text::measure_text(
@@ -1673,11 +1677,12 @@ impl SkiaRenderer {
     }
 
     fn generated_label<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        if matches!(self.text_engine_mode, TextEngineMode::Typst) {
-            Cow::Owned(typst_text::literal_text_snippet(text))
-        } else {
-            Cow::Borrowed(text)
+        #[cfg(feature = "typst-math")]
+        if self.text_engine_mode.uses_typst() {
+            return Cow::Owned(typst_text::literal_text_snippet(text));
         }
+
+        Cow::Borrowed(text)
     }
 
     /// Draw axis labels and tick values using spacing configuration

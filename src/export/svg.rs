@@ -178,11 +178,12 @@ impl SvgRenderer {
     }
 
     fn generated_label<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        if matches!(self.text_engine_mode, TextEngineMode::Typst) {
-            Cow::Owned(typst_text::literal_text_snippet(text))
-        } else {
-            Cow::Borrowed(text)
+        #[cfg(feature = "typst-math")]
+        if self.text_engine_mode.uses_typst() {
+            return Cow::Owned(typst_text::literal_text_snippet(text));
         }
+
+        Cow::Borrowed(text)
     }
 
     fn plain_text_metrics(&self, text: &str, font_size: f32) -> Result<TextPlacementMetrics> {
@@ -196,6 +197,7 @@ impl SvgRenderer {
                 let metrics = self.plain_text_metrics(text, font_size)?;
                 Ok((metrics.width, metrics.height))
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(font_size);
                 typst_text::measure_text(
@@ -490,6 +492,7 @@ impl SvgRenderer {
                 .unwrap();
                 Ok(())
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
                 let rendered =
@@ -537,6 +540,7 @@ impl SvgRenderer {
                 .unwrap();
                 Ok(())
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_svg(
@@ -589,6 +593,7 @@ impl SvgRenderer {
                 .unwrap();
                 Ok(())
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
                 let rendered = typst_text::render_svg(
@@ -1201,6 +1206,7 @@ impl SvgRenderer {
                 let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
                 (width, height, max_label_len as f32 * char_width)
             }
+            #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let mut max_label_width = 0.0_f32;
                 for item in items {
