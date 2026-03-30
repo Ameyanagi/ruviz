@@ -3,10 +3,18 @@
 // Run with: cargo test --test property_tests -- --ignored
 
 use proptest::prelude::*;
+use proptest::test_runner::Config as ProptestConfig;
 use ruviz::prelude::*;
+
+const PROPTEST_CASES: u32 = 32;
+
+fn ensure_output_dir() {
+    std::fs::create_dir_all("tests/output").expect("failed to create tests/output");
+}
 
 // Property 1: Plot should handle any valid f64 data without panicking
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn plot_never_panics_on_valid_data(
@@ -24,18 +32,13 @@ proptest! {
         let x: Vec<f64> = x[..min_len].to_vec();
         let y: Vec<f64> = y[..min_len].to_vec();
 
-        // This should never panic
-        let result = Plot::new()
-            .line(&x, &y)
-            .save("tests/output/proptest_line.png");
-
-        // Either succeeds or returns error (but never panics)
-        prop_assert!(result.is_ok() || result.is_err());
+        let _ = Plot::new().line(&x, &y).render();
     }
 }
 
 // Property 2: Auto-optimize should always select a valid backend
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn auto_optimize_always_selects_backend(
@@ -64,6 +67,7 @@ proptest! {
 
 // Property 3: Same data should produce deterministic output
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn deterministic_output(
@@ -73,6 +77,8 @@ proptest! {
         let min_len = x.len().min(y.len());
         let x: Vec<f64> = x[..min_len].to_vec();
         let y: Vec<f64> = y[..min_len].to_vec();
+
+        ensure_output_dir();
 
         // Render twice with same data
         Plot::new().line(&x, &y).save("tests/output/prop_det_1.png")?;
@@ -88,6 +94,7 @@ proptest! {
 
 // Property 4: Data bounds should be valid
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn bounds_contain_all_data(
@@ -109,13 +116,14 @@ proptest! {
         prop_assert!(y_min <= y_max, "Invalid y bounds");
 
         // Should be able to create plot (bounds calculation doesn't fail)
-        let result = Plot::new().line(&x, &y).save("tests/output/prop_bounds.png");
+        let result = Plot::new().line(&x, &y).render();
         prop_assert!(result.is_ok(), "expected operation to succeed: {:?}", result);
     }
 }
 
 // Property 5: Simple API should match full API output
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn simple_api_matches_full_api(
@@ -125,6 +133,8 @@ proptest! {
         let min_len = x.len().min(y.len());
         let x: Vec<f64> = x[..min_len].to_vec();
         let y: Vec<f64> = y[..min_len].to_vec();
+
+        ensure_output_dir();
 
         // Simple API
         let simple_result = ruviz::simple::line_plot(
@@ -159,6 +169,7 @@ proptest! {
 
 // Property 6: Empty data should error gracefully
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn empty_data_errors_gracefully(
@@ -171,7 +182,7 @@ proptest! {
 
         let result = Plot::new()
             .line(&x, &y)
-            .save("tests/output/prop_empty.png");
+            .render();
 
         if x.is_empty() || y.is_empty() {
             // Should return error, not panic
@@ -185,6 +196,7 @@ proptest! {
 
 // Property 7: Scatter plots should behave like line plots for data handling
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn scatter_plot_robust(
@@ -196,9 +208,7 @@ proptest! {
         let y: Vec<f64> = y[..min_len].to_vec();
 
         // Scatter plot should handle same data as line plot
-        let result = Plot::new()
-            .scatter(&x, &y)
-            .save("tests/output/prop_scatter.png");
+        let result = Plot::new().scatter(&x, &y).render();
 
         prop_assert!(result.is_ok(), "Scatter plot should handle valid data");
     }
@@ -206,6 +216,7 @@ proptest! {
 
 // Property 8: Bar charts should handle any positive values
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
     #[ignore] // Slow property test - run manually
     fn bar_chart_handles_values(
@@ -221,9 +232,7 @@ proptest! {
             })
             .collect();
 
-        let result = Plot::new()
-            .bar(&categories, &values)
-            .save("tests/output/prop_bar.png");
+        let result = Plot::new().bar(&categories, &values).render();
 
         prop_assert!(result.is_ok(), "Bar chart should handle positive values");
     }

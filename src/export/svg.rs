@@ -332,6 +332,48 @@ impl SvgRenderer {
         .unwrap();
     }
 
+    /// Draw a filled polygon.
+    pub fn draw_filled_polygon(&mut self, points: &[(f32, f32)], color: Color) {
+        if points.len() < 3 {
+            return;
+        }
+
+        let color_str = self.color_to_svg(color);
+        let points_str = points
+            .iter()
+            .map(|(x, y)| format!("{:.2},{:.2}", x, y))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        writeln!(
+            self.content,
+            r#"  <polygon points="{}" fill="{}" stroke="none"/>"#,
+            points_str, color_str
+        )
+        .unwrap();
+    }
+
+    /// Draw a polygon outline.
+    pub fn draw_polygon_outline(&mut self, points: &[(f32, f32)], color: Color, width: f32) {
+        if points.len() < 3 {
+            return;
+        }
+
+        let color_str = self.color_to_svg(color);
+        let points_str = points
+            .iter()
+            .map(|(x, y)| format!("{:.2},{:.2}", x, y))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        writeln!(
+            self.content,
+            r#"  <polygon points="{}" fill="none" stroke="{}" stroke-width="{:.2}" stroke-linejoin="round"/>"#,
+            points_str, color_str, width
+        )
+        .unwrap();
+    }
+
     /// Draw a filled circle
     pub fn draw_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color, filled: bool) {
         let color_str = self.color_to_svg(color);
@@ -1545,6 +1587,18 @@ mod tests {
         assert!(svg.contains("svg"));
         assert!(svg.contains("rect"));
         assert!(svg.contains("line"));
+    }
+
+    #[test]
+    fn test_polygon_outline_requires_three_points() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.draw_polygon_outline(&[(10.0, 10.0), (20.0, 20.0)], Color::BLACK, 2.0);
+
+        let svg = renderer.to_svg_string();
+        assert!(
+            !svg.contains("<polygon"),
+            "two-point polygon outlines should be ignored to match raster rendering"
+        );
     }
 
     #[test]

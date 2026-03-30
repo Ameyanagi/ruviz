@@ -4,7 +4,7 @@
 // Note: Requires golden images in tests/golden_images/ directory
 
 use image::{GenericImageView, Pixel};
-use std::path::Path;
+use std::{fs, path::Path};
 
 /// Calculate perceptual difference between two PNG images
 /// Returns percentage difference (0.0 = identical, 100.0 = completely different)
@@ -60,6 +60,17 @@ fn test_against_golden(
     golden_path: &str,
     tolerance: f64,
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = Path::new(test_path).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if !Path::new(golden_path).exists() {
+        return Err(format!(
+            "Missing golden image fixture: {}. Run `cargo run --example generate_golden_images` to create or refresh tests/golden_images.",
+            golden_path
+        )
+        .into());
+    }
+
     // Generate test image
     generate_fn()?;
 

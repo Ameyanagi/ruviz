@@ -238,6 +238,19 @@ macro_rules! impl_series_continuation_methods {
             $self_.$finalize().radar(labels)
         }
 
+        /// Continue with a polar line series.
+        pub fn polar_line<R, T>(
+            $self_,
+            r: &R,
+            theta: &T,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::PolarPlotConfig>
+        where
+            R: $crate::data::Data1D<f64>,
+            T: $crate::data::Data1D<f64>,
+        {
+            $self_.$finalize().polar_line(r, theta)
+        }
+
         /// Continue with a violin series.
         pub fn violin<T, D: $crate::data::Data1D<T>>(
             $self_,
@@ -574,6 +587,60 @@ impl PendingIngestionError {
 }
 
 /// Configuration for a single data series
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InsetAnchor {
+    Auto,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    TopCenter,
+    BottomCenter,
+    CenterLeft,
+    CenterRight,
+    Center,
+    Custom { x_frac: f32, y_frac: f32 },
+}
+
+/// Inset placement for non-Cartesian series rendered inside a Cartesian plot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InsetLayout {
+    pub anchor: InsetAnchor,
+    pub width_frac: f32,
+    pub height_frac: f32,
+    pub margin_pt: f32,
+}
+
+impl InsetLayout {
+    pub const DEFAULT_WIDTH_FRAC: f32 = 0.32;
+    pub const DEFAULT_HEIGHT_FRAC: f32 = 0.32;
+    pub const DEFAULT_MARGIN_PT: f32 = 12.0;
+
+    pub fn auto() -> Self {
+        Self {
+            anchor: InsetAnchor::Auto,
+            width_frac: Self::DEFAULT_WIDTH_FRAC,
+            height_frac: Self::DEFAULT_HEIGHT_FRAC,
+            margin_pt: Self::DEFAULT_MARGIN_PT,
+        }
+    }
+
+    fn normalized(self) -> Self {
+        Self {
+            anchor: self.anchor,
+            width_frac: self.width_frac.clamp(0.12, 0.95),
+            height_frac: self.height_frac.clamp(0.12, 0.95),
+            margin_pt: self.margin_pt.max(0.0),
+        }
+    }
+}
+
+impl Default for InsetLayout {
+    fn default() -> Self {
+        Self::auto()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PlotSeries {
     /// Series type
@@ -612,6 +679,8 @@ pub(crate) struct PlotSeries {
     x_errors: Option<ErrorValues>,
     /// Error bar configuration (cap size, line width, etc.)
     error_config: Option<ErrorBarConfig>,
+    /// Inset placement for non-Cartesian series in mixed plots.
+    inset_layout: Option<InsetLayout>,
     /// Optional group ID if this series was created inside `Plot::group(...)`.
     group_id: Option<usize>,
 }
@@ -2857,6 +2926,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -2984,6 +3054,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3126,6 +3197,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3160,6 +3232,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3225,6 +3298,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3259,6 +3333,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3328,6 +3403,7 @@ impl Plot {
                     y_errors: None,
                     x_errors: None,
                     error_config: None,
+                    inset_layout: None,
                     group_id: None,
                 };
                 PlotSeriesBuilder::new(self, series)
@@ -3369,6 +3445,7 @@ impl Plot {
                     y_errors: None,
                     x_errors: None,
                     error_config: None,
+                    inset_layout: None,
                     group_id: None,
                 };
                 PlotSeriesBuilder::new(self, series)
@@ -3429,6 +3506,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3465,6 +3543,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3539,6 +3618,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3583,6 +3663,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -3731,6 +3812,8 @@ impl Plot {
     ///
     /// Creates a pie chart with optional labels, exploded segments, and donut style.
     /// Returns a `PlotBuilder<PieConfig>` for method chaining.
+    /// When mixed with Cartesian series, the pie chart renders as an inset and
+    /// can be positioned with the builder's `inset_*` methods.
     ///
     /// # Example
     ///
@@ -3766,6 +3849,8 @@ impl Plot {
     ///
     /// Creates a radar chart with multiple axes arranged in a circle.
     /// Returns a `PlotBuilder<RadarConfig>` for method chaining.
+    /// When mixed with Cartesian series, the radar chart renders as an inset and
+    /// can be positioned with the builder's `inset_*` methods.
     ///
     /// # Arguments
     ///
@@ -3849,6 +3934,8 @@ impl Plot {
     ///
     /// Creates a polar plot with r (radius) and theta (angle in radians) data.
     /// Returns a `PlotBuilder<PolarPlotConfig>` for method chaining with polar-specific options.
+    /// When mixed with Cartesian series, the polar chart renders as an inset and
+    /// can be positioned with the builder's `inset_*` methods.
     ///
     /// # Arguments
     ///
@@ -4623,6 +4710,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -4665,6 +4753,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -4704,6 +4793,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -4743,6 +4833,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -4782,6 +4873,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
             group_id: None,
         };
 
@@ -4821,6 +4913,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
             group_id: None,
         };
 
@@ -4860,6 +4953,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -4899,6 +4993,7 @@ impl Plot {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
             group_id: None,
         };
 
@@ -4959,6 +5054,7 @@ impl Plot {
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
+            inset_layout: None,
             group_id,
         };
 
@@ -5017,6 +5113,7 @@ impl Plot {
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
+            inset_layout: None,
             group_id,
         };
 
@@ -5075,6 +5172,7 @@ impl Plot {
             y_errors: style.y_errors,
             x_errors: style.x_errors,
             error_config: style.error_config,
+            inset_layout: None,
             group_id,
         };
 
@@ -5731,32 +5829,7 @@ impl Plot {
             SeriesType::Radar { data } => {
                 // Use PlotRender trait to render Radar with 1:1 aspect ratio
                 // and extra top padding for title clearance
-                let (square_area, adjusted_y, adjusted_height) = {
-                    let size = plot_area.width().min(plot_area.height());
-                    let x_offset = (plot_area.width() - size) / 2.0;
-                    // Add extra top margin to avoid title overlap with top axis labels
-                    // Radar axis labels are positioned at r=1.15 (15% outside the chart)
-                    // Plus we need space for the label text itself (~10% more)
-                    // Total: 25% clearance for proper separation
-                    let title_clearance = size * 0.20;
-                    let y_offset = (plot_area.height() - size) / 2.0 + title_clearance;
-                    let adjusted_size = size - title_clearance;
-                    (
-                        plot_area.x() + x_offset,
-                        plot_area.y() + y_offset,
-                        adjusted_size,
-                    )
-                };
-                let radar_plot_area = crate::plots::PlotArea::new(
-                    square_area,
-                    adjusted_y,
-                    adjusted_height, // square
-                    adjusted_height, // square
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                );
+                let radar_plot_area = Self::radar_plot_area(plot_area, x_min, x_max, y_min, y_max);
                 data.render(renderer, &radar_plot_area, &self.display.theme, color)?;
             }
             SeriesType::Polar { data } => {
@@ -6154,6 +6227,7 @@ impl Plot {
 
         // Check if DataShader optimization should be used
         let total_points = Self::calculate_total_points_for_series(&snapshot_series);
+        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
 
         // Warn for very large datasets
         const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
@@ -6164,7 +6238,8 @@ impl Plot {
             );
         }
 
-        let use_datashader = Self::should_auto_use_datashader(&snapshot_series, total_points);
+        let use_datashader = !has_mixed_coordinates
+            && Self::should_auto_use_datashader(&snapshot_series, total_points);
 
         if use_datashader {
             // Use DataShader for large datasets
@@ -6181,7 +6256,8 @@ impl Plot {
                 !matches!(series.series_type, SeriesType::Line { .. })
                     || series.marker_style.is_none()
             });
-            if parallel_safe_for_markers
+            if !has_mixed_coordinates
+                && parallel_safe_for_markers
                 && self
                     .render
                     .parallel_renderer
@@ -6201,7 +6277,7 @@ impl Plot {
         renderer.set_render_scale(render_scale);
 
         let (x_min, x_max, y_min, y_max) =
-            self.effective_data_bounds_for_series(&snapshot_series)?;
+            self.effective_main_panel_bounds_for_series(&snapshot_series)?;
 
         // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
@@ -6332,7 +6408,8 @@ impl Plot {
 
         // Draw grid if enabled - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
+        if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
             renderer.draw_grid(
@@ -6353,7 +6430,6 @@ impl Plot {
             &violin_positions,
         );
 
-        let draw_axes = self.needs_cartesian_axes();
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
         if draw_ticks {
             let x_axis_ticks = categorical_x_tick_pixels
@@ -6457,254 +6533,16 @@ impl Plot {
             }
         }
 
-        // Render each data series
-        for series in &snapshot_series {
-            // Get series styling with defaults
-            let color = series.color.unwrap_or_else(|| {
-                let palette = Color::default_palette();
-                palette[self.series_mgr.auto_color_index % palette.len()]
-            });
-            // Use config data line width, or series override if specified
-            let line_width_pt = series
-                .line_width
-                .unwrap_or(self.display.config.lines.data_width);
-            let line_width = self.line_width_px(line_width_pt);
-            let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
-            let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
-                    // Convert data to pixel coordinates
-                    let mut points = Vec::new();
-                    for i in 0..x_data.len() {
-                        let x_val = x_data[i];
-                        let y_val = y_data[i];
-                        if x_val.is_finite() && y_val.is_finite() {
-                            let (px, py) = map_data_to_pixels(
-                                x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
-                            );
-                            points.push((px, py));
-                        }
-                    }
-
-                    if points.len() >= 2 {
-                        renderer.draw_polyline_clipped(
-                            &points, color, line_width, line_style, clip_rect,
-                        )?;
-                    }
-                    if let Some(marker_style) = series.marker_style {
-                        let marker_size_px = self.line_width_px(series.marker_size.unwrap_or(8.0));
-                        for &(px, py) in &points {
-                            renderer.draw_marker_clipped(
-                                px,
-                                py,
-                                marker_size_px,
-                                marker_style,
-                                color,
-                                clip_rect,
-                            )?;
-                        }
-                    }
-
-                    // Draw attached error bars if present
-                    if series.y_errors.is_some() || series.x_errors.is_some() {
-                        Self::render_attached_error_bars(
-                            &mut renderer,
-                            &x_data,
-                            &y_data,
-                            series.y_errors.as_ref(),
-                            series.x_errors.as_ref(),
-                            series.error_config.as_ref(),
-                            color,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            plot_area,
-                            line_width,
-                            self.render_scale(),
-                        )?;
-                    }
-                }
-                SeriesType::Scatter { x_data, y_data } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
-                    // Draw individual markers
-                    let marker_size_px = self.line_width_px(series.marker_size.unwrap_or(8.0)); // 8pt default marker
-                    for i in 0..x_data.len() {
-                        let x_val = x_data[i];
-                        let y_val = y_data[i];
-                        if x_val.is_finite() && y_val.is_finite() {
-                            let (px, py) = map_data_to_pixels(
-                                x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
-                            );
-                            renderer.draw_marker_clipped(
-                                px,
-                                py,
-                                marker_size_px,
-                                marker_style,
-                                color,
-                                clip_rect,
-                            )?;
-                        }
-                    }
-
-                    // Draw attached error bars if present
-                    if series.y_errors.is_some() || series.x_errors.is_some() {
-                        Self::render_attached_error_bars(
-                            &mut renderer,
-                            &x_data,
-                            &y_data,
-                            series.y_errors.as_ref(),
-                            series.x_errors.as_ref(),
-                            series.error_config.as_ref(),
-                            color,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            plot_area,
-                            line_width,
-                            self.render_scale(),
-                        )?;
-                    }
-                }
-                SeriesType::Bar { categories, values } => {
-                    let values = values.resolve(0.0);
-                    // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
-                    let bar_width_fraction = 0.8;
-                    let data_range = (x_max - x_min) as f32;
-                    let pixels_per_unit = plot_area.width() / data_range;
-                    let bar_width = bar_width_fraction * pixels_per_unit;
-
-                    // Draw bars from baseline to data value
-                    let baseline =
-                        map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area).1;
-
-                    for (i, &value) in values.iter().enumerate() {
-                        if value.is_finite() {
-                            let x_val = i as f64;
-                            let (px, py) = map_data_to_pixels(
-                                x_val, value, x_min, x_max, y_min, y_max, plot_area,
-                            );
-                            let bar_height = (baseline - py).abs();
-                            let bar_x = px - bar_width * 0.5;
-
-                            if value >= 0.0 {
-                                renderer.draw_rectangle_clipped(
-                                    bar_x, py, bar_width, bar_height, color, true, clip_rect,
-                                )?;
-                            } else {
-                                renderer.draw_rectangle_clipped(
-                                    bar_x, baseline, bar_width, bar_height, color, true, clip_rect,
-                                )?;
-                            }
-                        }
-                    }
-                }
-                SeriesType::Histogram { data, config } => {
-                    let data = data.resolve(0.0);
-                    // Calculate histogram data
-                    let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
-                        .map_err(|e| {
-                            PlottingError::RenderError(format!(
-                                "Histogram calculation failed: {}",
-                                e
-                            ))
-                        })?;
-
-                    // Calculate bar width from bin edges
-                    let bar_width_data = if hist_data.bin_edges.len() > 1 {
-                        hist_data.bin_edges[1] - hist_data.bin_edges[0]
-                    } else {
-                        1.0
-                    };
-
-                    // Convert to pixel width
-                    let left_px = map_data_to_pixels(
-                        hist_data.bin_edges[0],
-                        0.0,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                    )
-                    .0;
-                    let right_px = map_data_to_pixels(
-                        hist_data.bin_edges[0] + bar_width_data,
-                        0.0,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                    )
-                    .0;
-                    let bar_width_px = (right_px - left_px).abs();
-
-                    // Draw histogram bars
-                    let baseline =
-                        map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area).1;
-
-                    for (i, &count) in hist_data.counts.iter().enumerate() {
-                        if count > 0.0 && count.is_finite() {
-                            // Use bin center for x position
-                            let bin_center =
-                                (hist_data.bin_edges[i] + hist_data.bin_edges[i + 1]) / 2.0;
-                            let (px, py) = map_data_to_pixels(
-                                bin_center, count, x_min, x_max, y_min, y_max, plot_area,
-                            );
-                            let bar_height = (baseline - py).abs();
-                            let bar_x = px - bar_width_px * 0.5;
-
-                            renderer.draw_rectangle_clipped(
-                                bar_x,
-                                py,
-                                bar_width_px,
-                                bar_height,
-                                color,
-                                true,
-                                clip_rect,
-                            )?;
-                        }
-                    }
-                }
-                _ => {
-                    // For unsupported plot types (error bars), render as scatter points for now
-                    // This is a placeholder - full implementation would handle error bars properly
-                    match &series.series_type {
-                        SeriesType::ErrorBars { x_data, y_data, .. }
-                        | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                            let x_data = x_data.resolve(0.0);
-                            let y_data = y_data.resolve(0.0);
-                            let marker_size_px =
-                                self.line_width_px(series.marker_size.unwrap_or(8.0));
-                            for i in 0..x_data.len() {
-                                let x_val = x_data[i];
-                                let y_val = y_data[i];
-                                if x_val.is_finite() && y_val.is_finite() {
-                                    let (px, py) = map_data_to_pixels(
-                                        x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
-                                    );
-                                    renderer.draw_marker_clipped(
-                                        px,
-                                        py,
-                                        marker_size_px,
-                                        MarkerStyle::Circle,
-                                        color,
-                                        clip_rect,
-                                    )?;
-                                }
-                            }
-                        }
-                        _ => {} // Already handled above
-                    }
-                }
-            }
-        }
+        self.render_series_collection_normal(
+            &snapshot_series,
+            &mut renderer,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            render_scale,
+        )?;
 
         // Convert renderer output to Image
         Ok(renderer.into_image())
@@ -6812,7 +6650,7 @@ impl Plot {
         Self::validate_series_list(&snapshot_series)?;
 
         let (x_min, x_max, y_min, y_max) =
-            self.effective_data_bounds_for_series(&snapshot_series)?;
+            self.effective_main_panel_bounds_for_series(&snapshot_series)?;
 
         // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
@@ -6941,7 +6779,8 @@ impl Plot {
 
         // Draw grid if enabled - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
+        if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             let grid_width_px = pt_to_px(self.layout.grid_style.line_width, dpi);
             renderer.draw_grid(
@@ -6962,7 +6801,6 @@ impl Plot {
             &violin_positions,
         );
 
-        let draw_axes = self.needs_cartesian_axes();
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
         if draw_ticks {
             let x_axis_ticks = categorical_x_tick_pixels
@@ -7065,184 +6903,16 @@ impl Plot {
             }
         }
 
-        // Render each data series
-        for (color_index, series) in snapshot_series.iter().enumerate() {
-            // Get series styling with defaults
-            let color = series.color.unwrap_or_else(|| {
-                let palette = Color::default_palette();
-                palette[color_index % palette.len()]
-            });
-            // Use config data line width, or series override if specified
-            let line_width_pt = series
-                .line_width
-                .unwrap_or(self.display.config.lines.data_width);
-            let line_width = pt_to_px(line_width_pt, dpi);
-            let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
-            let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
-                    // Convert data to pixel coordinates
-                    let mut points = Vec::new();
-                    for i in 0..x_data.len() {
-                        let x_val = x_data[i];
-                        let y_val = y_data[i];
-                        if x_val.is_finite() && y_val.is_finite() {
-                            let (px, py) = map_data_to_pixels(
-                                x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
-                            );
-                            points.push((px, py));
-                        }
-                    }
-
-                    if points.len() >= 2 {
-                        renderer.draw_polyline_clipped(
-                            &points, color, line_width, line_style, clip_rect,
-                        )?;
-                    }
-                    if let Some(marker_style) = series.marker_style {
-                        let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
-                        for &(px, py) in &points {
-                            renderer.draw_marker_clipped(
-                                px,
-                                py,
-                                marker_size_px,
-                                marker_style,
-                                color,
-                                clip_rect,
-                            )?;
-                        }
-                    }
-
-                    // Draw attached error bars if present
-                    if series.y_errors.is_some() || series.x_errors.is_some() {
-                        Self::render_attached_error_bars(
-                            renderer,
-                            &x_data,
-                            &y_data,
-                            series.y_errors.as_ref(),
-                            series.x_errors.as_ref(),
-                            series.error_config.as_ref(),
-                            color,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            plot_area,
-                            line_width,
-                            self.render_scale(),
-                        )?;
-                    }
-                }
-                SeriesType::Scatter { x_data, y_data } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
-                    // Draw individual markers
-                    let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
-                    for i in 0..x_data.len() {
-                        let x_val = x_data[i];
-                        let y_val = y_data[i];
-                        if x_val.is_finite() && y_val.is_finite() {
-                            let (px, py) = map_data_to_pixels(
-                                x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
-                            );
-                            renderer.draw_marker_clipped(
-                                px,
-                                py,
-                                marker_size_px,
-                                marker_style,
-                                color,
-                                clip_rect,
-                            )?;
-                        }
-                    }
-
-                    // Draw attached error bars if present
-                    if series.y_errors.is_some() || series.x_errors.is_some() {
-                        Self::render_attached_error_bars(
-                            renderer,
-                            &x_data,
-                            &y_data,
-                            series.y_errors.as_ref(),
-                            series.x_errors.as_ref(),
-                            series.error_config.as_ref(),
-                            color,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            plot_area,
-                            line_width,
-                            self.render_scale(),
-                        )?;
-                    }
-                }
-                SeriesType::Bar { categories, values } => {
-                    let values = values.resolve(0.0);
-                    // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
-                    let bar_width_fraction = 0.8;
-                    let data_range = (x_max - x_min) as f32;
-                    let pixels_per_unit = plot_area.width() / data_range;
-                    let bar_width = bar_width_fraction * pixels_per_unit;
-
-                    // Draw bars from baseline to data value
-                    let baseline =
-                        map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area).1;
-
-                    for (i, &value) in values.iter().enumerate() {
-                        if value.is_finite() {
-                            let x_val = i as f64;
-                            let (px, py) = map_data_to_pixels(
-                                x_val, value, x_min, x_max, y_min, y_max, plot_area,
-                            );
-                            let bar_height = (baseline - py).abs();
-                            let bar_x = px - bar_width * 0.5;
-
-                            if value >= 0.0 {
-                                renderer.draw_rectangle_clipped(
-                                    bar_x, py, bar_width, bar_height, color, true, clip_rect,
-                                )?;
-                            } else {
-                                renderer.draw_rectangle_clipped(
-                                    bar_x, baseline, bar_width, bar_height, color, true, clip_rect,
-                                )?;
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    // For unsupported plot types (error bars), render as scatter points
-                    match &series.series_type {
-                        SeriesType::ErrorBars { x_data, y_data, .. }
-                        | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                            let x_data = x_data.resolve(0.0);
-                            let y_data = y_data.resolve(0.0);
-                            let marker_size_px = pt_to_px(series.marker_size.unwrap_or(8.0), dpi);
-                            for i in 0..x_data.len() {
-                                let x_val = x_data[i];
-                                let y_val = y_data[i];
-                                if x_val.is_finite() && y_val.is_finite() {
-                                    let (px, py) = map_data_to_pixels(
-                                        x_val, y_val, x_min, x_max, y_min, y_max, plot_area,
-                                    );
-                                    renderer.draw_marker_clipped(
-                                        px,
-                                        py,
-                                        marker_size_px,
-                                        MarkerStyle::Circle,
-                                        color,
-                                        clip_rect,
-                                    )?;
-                                }
-                            }
-                        }
-                        _ => {} // Already handled above
-                    }
-                }
-            }
-        }
+        self.render_series_collection_normal(
+            &snapshot_series,
+            renderer,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            RenderScale::new(dpi),
+        )?;
 
         // Draw annotations after data series but before legend
         if !self.annotations.is_empty() {
@@ -7362,21 +7032,638 @@ impl Plot {
         )
     }
 
+    fn is_non_cartesian_series(series: &PlotSeries) -> bool {
+        matches!(
+            series.series_type,
+            SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. }
+        )
+    }
+
+    fn is_cartesian_series(series: &PlotSeries) -> bool {
+        !Self::is_non_cartesian_series(series)
+    }
+
+    fn has_cartesian_series(series_list: &[PlotSeries]) -> bool {
+        series_list.iter().any(Self::is_cartesian_series)
+    }
+
+    fn has_non_cartesian_series(series_list: &[PlotSeries]) -> bool {
+        series_list.iter().any(Self::is_non_cartesian_series)
+    }
+
+    fn has_mixed_coordinate_series(series_list: &[PlotSeries]) -> bool {
+        Self::has_cartesian_series(series_list) && Self::has_non_cartesian_series(series_list)
+    }
+
+    fn needs_cartesian_axes_for_series(series_list: &[PlotSeries]) -> bool {
+        Self::has_cartesian_series(series_list)
+    }
+
+    fn effective_main_panel_bounds_for_series(
+        &self,
+        series_list: &[PlotSeries],
+    ) -> Result<(f64, f64, f64, f64)> {
+        if Self::has_mixed_coordinate_series(series_list) {
+            let cartesian_series: Vec<PlotSeries> = series_list
+                .iter()
+                .filter(|series| Self::is_cartesian_series(series))
+                .cloned()
+                .collect();
+            self.effective_data_bounds_for_series(&cartesian_series)
+        } else {
+            self.effective_data_bounds_for_series(series_list)
+        }
+    }
+
+    fn raw_bounds_for_single_series(&self, series: &PlotSeries) -> Result<(f64, f64, f64, f64)> {
+        self.calculate_data_bounds_for_series(std::slice::from_ref(series))
+    }
+
+    fn clamp_inset_rect(
+        plot_area: tiny_skia::Rect,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Result<tiny_skia::Rect> {
+        let clamped_width = width.max(1.0).min(plot_area.width());
+        let clamped_height = height.max(1.0).min(plot_area.height());
+        let max_x = (plot_area.x() + plot_area.width() - clamped_width).max(plot_area.x());
+        let max_y = (plot_area.y() + plot_area.height() - clamped_height).max(plot_area.y());
+        let clamped_x = x.clamp(plot_area.x(), max_x);
+        let clamped_y = y.clamp(plot_area.y(), max_y);
+
+        tiny_skia::Rect::from_ltrb(
+            clamped_x,
+            clamped_y,
+            clamped_x + clamped_width,
+            clamped_y + clamped_height,
+        )
+        .ok_or(PlottingError::InvalidData {
+            message: "Invalid inset plot area".to_string(),
+            position: None,
+        })
+    }
+
+    fn explicit_inset_rect(
+        plot_area: tiny_skia::Rect,
+        layout: InsetLayout,
+        render_scale: RenderScale,
+    ) -> Result<tiny_skia::Rect> {
+        let layout = layout.normalized();
+        let margin_px = render_scale.points_to_pixels(layout.margin_pt);
+        let width_px = plot_area.width() * layout.width_frac;
+        let height_px = plot_area.height() * layout.height_frac;
+        let left = plot_area.x();
+        let top = plot_area.y();
+        let right = plot_area.x() + plot_area.width();
+        let bottom = plot_area.y() + plot_area.height();
+
+        let (x, y) = match layout.anchor {
+            InsetAnchor::Auto => (right - width_px - margin_px, top + margin_px),
+            InsetAnchor::TopLeft => (left + margin_px, top + margin_px),
+            InsetAnchor::TopRight => (right - width_px - margin_px, top + margin_px),
+            InsetAnchor::BottomLeft => (left + margin_px, bottom - height_px - margin_px),
+            InsetAnchor::BottomRight => {
+                (right - width_px - margin_px, bottom - height_px - margin_px)
+            }
+            InsetAnchor::TopCenter => {
+                (left + (plot_area.width() - width_px) * 0.5, top + margin_px)
+            }
+            InsetAnchor::BottomCenter => (
+                left + (plot_area.width() - width_px) * 0.5,
+                bottom - height_px - margin_px,
+            ),
+            InsetAnchor::CenterLeft => (
+                left + margin_px,
+                top + (plot_area.height() - height_px) * 0.5,
+            ),
+            InsetAnchor::CenterRight => (
+                right - width_px - margin_px,
+                top + (plot_area.height() - height_px) * 0.5,
+            ),
+            InsetAnchor::Center => (
+                left + (plot_area.width() - width_px) * 0.5,
+                top + (plot_area.height() - height_px) * 0.5,
+            ),
+            InsetAnchor::Custom { x_frac, y_frac } => (
+                left + x_frac.clamp(0.0, 1.0) * plot_area.width() - width_px * 0.5,
+                top + y_frac.clamp(0.0, 1.0) * plot_area.height() - height_px * 0.5,
+            ),
+        };
+
+        Self::clamp_inset_rect(plot_area, x, y, width_px, height_px)
+    }
+
+    fn inset_rects_for_series(
+        &self,
+        series_list: &[PlotSeries],
+        plot_area: tiny_skia::Rect,
+        render_scale: RenderScale,
+    ) -> Result<Vec<Option<tiny_skia::Rect>>> {
+        let mut rects = vec![None; series_list.len()];
+        if !Self::has_mixed_coordinate_series(series_list) {
+            return Ok(rects);
+        }
+
+        let mut auto_series = Vec::new();
+        let mut auto_cell_height = 0.0_f32;
+        let mut auto_gap = 0.0_f32;
+
+        for (idx, series) in series_list.iter().enumerate() {
+            if !Self::is_non_cartesian_series(series) {
+                continue;
+            }
+
+            let layout = series.inset_layout.unwrap_or_default().normalized();
+            if matches!(layout.anchor, InsetAnchor::Auto) {
+                let width_px = plot_area.width() * layout.width_frac;
+                let height_px = plot_area.height() * layout.height_frac;
+                auto_cell_height = auto_cell_height.max(height_px);
+                auto_gap = auto_gap.max(render_scale.points_to_pixels(layout.margin_pt));
+                auto_series.push((idx, layout, width_px, height_px));
+            } else {
+                rects[idx] = Some(Self::explicit_inset_rect(plot_area, layout, render_scale)?);
+            }
+        }
+
+        if auto_series.is_empty() {
+            return Ok(rects);
+        }
+
+        let cols = if auto_series.len() <= 1 { 1 } else { 2 };
+        let gap = auto_gap.max(4.0);
+
+        for (row, row_series) in auto_series.chunks(cols).enumerate() {
+            let x = plot_area.x() + plot_area.width() - gap;
+            let y = plot_area.y() + gap + row as f32 * (auto_cell_height + gap);
+            let mut right_edge = x;
+
+            for (idx, _layout, width_px, height_px) in row_series.iter().copied() {
+                let inset_x = right_edge - width_px;
+                rects[idx] = Some(Self::clamp_inset_rect(
+                    plot_area, inset_x, y, width_px, height_px,
+                )?);
+                right_edge = inset_x - gap;
+            }
+        }
+
+        Ok(rects)
+    }
+
+    fn radar_plot_area(
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> crate::plots::PlotArea {
+        let size = plot_area.width().min(plot_area.height());
+        let x_offset = (plot_area.width() - size) * 0.5;
+        let y_offset = (plot_area.height() - size) * 0.5;
+        // Leave headroom for the top axis label while keeping portrait insets centered.
+        let title_clearance = size * 0.20;
+        let adjusted_size = (size - title_clearance).max(1.0);
+
+        crate::plots::PlotArea::new(
+            plot_area.x() + x_offset,
+            plot_area.y() + y_offset + title_clearance,
+            adjusted_size,
+            adjusted_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
+    }
+
+    fn render_series_collection_normal(
+        &self,
+        series_list: &[PlotSeries],
+        renderer: &mut SkiaRenderer,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        render_scale: RenderScale,
+    ) -> Result<()> {
+        let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
+
+        for (idx, series) in series_list.iter().enumerate() {
+            let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
+                (inset_rect, self.raw_bounds_for_single_series(series)?)
+            } else {
+                (plot_area, (x_min, x_max, y_min, y_max))
+            };
+
+            self.render_series_normal(
+                series,
+                renderer,
+                series_area,
+                series_bounds.0,
+                series_bounds.1,
+                series_bounds.2,
+                series_bounds.3,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn render_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        series: &PlotSeries,
+        default_color: Color,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        let color = series.color.unwrap_or(default_color);
+        let render_scale = self.render_scale();
+        let line_width = render_scale
+            .points_to_pixels(series.line_width.unwrap_or(self.display.theme.line_width));
+        let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+
+        match &series.series_type {
+            SeriesType::Line { x_data, y_data } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+                let points: Vec<(f32, f32)> = x_data
+                    .iter()
+                    .zip(y_data.iter())
+                    .map(|(&x, &y)| {
+                        crate::render::skia::map_data_to_pixels(
+                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                        )
+                    })
+                    .collect();
+
+                svg.draw_polyline(&points, color, line_width, line_style);
+                if let Some(marker_style) = series.marker_style {
+                    let marker_size =
+                        render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
+                    for &(px, py) in &points {
+                        svg.draw_marker(px, py, marker_size, marker_style, color);
+                    }
+                }
+            }
+            SeriesType::Scatter { x_data, y_data } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
+                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
+                    let (px, py) = crate::render::skia::map_data_to_pixels(
+                        x, y, x_min, x_max, y_min, y_max, plot_area,
+                    );
+                    svg.draw_marker(px, py, marker_size, marker_style, color);
+                }
+            }
+            SeriesType::Bar { categories, values } => {
+                let values = values.resolve(0.0);
+                let num_bars = categories.len();
+                let bar_width = plot_area.width() / num_bars as f32 * 0.7;
+
+                for (i, &value) in values.iter().enumerate() {
+                    let bar_x = plot_area.x()
+                        + (i as f32 + 0.5) * (plot_area.width() / num_bars as f32)
+                        - bar_width / 2.0;
+                    let (_, py) = crate::render::skia::map_data_to_pixels(
+                        0.0, value, x_min, x_max, y_min, y_max, plot_area,
+                    );
+                    let (_, py_zero) = crate::render::skia::map_data_to_pixels(
+                        0.0, 0.0, x_min, x_max, y_min, y_max, plot_area,
+                    );
+                    let bar_height = (py - py_zero).abs();
+                    let bar_y = py.min(py_zero);
+
+                    svg.draw_rectangle(bar_x, bar_y, bar_width, bar_height, color, true);
+                }
+            }
+            SeriesType::Pie { data } => {
+                self.render_pie_series_svg(svg, data, plot_area)?;
+            }
+            SeriesType::Radar { data } => {
+                self.render_radar_series_svg(svg, data, plot_area)?;
+            }
+            SeriesType::Polar { data } => {
+                self.render_polar_series_svg(
+                    svg, data, plot_area, x_min, x_max, y_min, y_max, color,
+                )?;
+            }
+            SeriesType::Histogram { .. } => {}
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn render_pie_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        data: &crate::plots::composition::pie::PieData,
+        plot_area: tiny_skia::Rect,
+    ) -> Result<()> {
+        if data.wedges.is_empty() {
+            return Ok(());
+        }
+
+        let size = plot_area.width().min(plot_area.height());
+        let cx = plot_area.x() + plot_area.width() * 0.5;
+        let cy = plot_area.y() + plot_area.height() * 0.5;
+        let radius = size * 0.45;
+        let screen_data = crate::plots::composition::pie::PieData::from_values(
+            &data.values,
+            cx as f64,
+            cy as f64,
+            radius as f64,
+            &data.config,
+        );
+        let colors = if let Some(ref colors) = data.config.colors {
+            colors.clone()
+        } else {
+            let palette = self.display.theme.color_palette.clone();
+            (0..screen_data.wedges.len())
+                .map(|i| palette[i % palette.len()])
+                .collect()
+        };
+        let segments = 64;
+
+        if data.config.shadow > 0.0 {
+            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
+            let offset = data.config.shadow;
+            for wedge in &screen_data.wedges {
+                let polygon: Vec<(f32, f32)> = wedge
+                    .as_polygon(segments)
+                    .iter()
+                    .map(|(x, y)| ((x + offset) as f32, (y + offset) as f32))
+                    .collect();
+                svg.draw_filled_polygon(&polygon, shadow_color);
+            }
+        }
+
+        for (idx, wedge) in screen_data.wedges.iter().enumerate() {
+            let polygon: Vec<(f32, f32)> = wedge
+                .as_polygon(segments)
+                .iter()
+                .map(|(x, y)| (*x as f32, *y as f32))
+                .collect();
+            svg.draw_filled_polygon(&polygon, colors[idx % colors.len()]);
+            if let Some(edge_color) = data.config.edge_color {
+                let scaled_edge_width = svg.render_scale().points_to_pixels(data.config.edge_width);
+                svg.draw_polygon_outline(&polygon, edge_color, scaled_edge_width);
+            }
+        }
+
+        if data.config.show_labels || data.config.show_percentages || data.config.show_values {
+            for (idx, wedge) in screen_data.wedges.iter().enumerate() {
+                let label_parts: Vec<String> = [
+                    if data.config.show_labels && idx < data.config.labels.len() {
+                        Some(data.config.labels[idx].clone())
+                    } else {
+                        None
+                    },
+                    if data.config.show_percentages {
+                        Some(format!("{:.1}%", screen_data.percentages[idx]))
+                    } else {
+                        None
+                    },
+                    if data.config.show_values {
+                        Some(format!("{:.1}", screen_data.values[idx]))
+                    } else {
+                        None
+                    },
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+
+                if !label_parts.is_empty() {
+                    let label = label_parts.join("\n");
+                    let label_r = if data.config.inner_radius > 0.0 {
+                        radius as f64 * (1.0 + data.config.inner_radius) / 2.0
+                            * data.config.label_distance
+                    } else {
+                        radius as f64 * data.config.label_distance
+                    };
+                    let mid_angle = (wedge.start_angle + wedge.end_angle) / 2.0;
+                    let label_x = cx as f64 + label_r * mid_angle.cos();
+                    let label_y = cy as f64 + label_r * mid_angle.sin();
+                    svg.draw_text_centered(
+                        &label,
+                        label_x as f32,
+                        label_y as f32,
+                        data.config.label_font_size,
+                        data.config.text_color,
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_radar_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        data: &crate::plots::polar::radar::RadarPlotData,
+        plot_area: tiny_skia::Rect,
+    ) -> Result<()> {
+        if data.series.is_empty() {
+            return Ok(());
+        }
+
+        let area = Self::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
+
+        if data.config.show_grid {
+            let grid_color = self.display.theme.grid_color;
+            let grid_line_width = svg.render_scale().logical_pixels_to_pixels(0.5);
+            for ring in &data.grid_rings {
+                if ring.len() < 2 {
+                    continue;
+                }
+                for idx in 0..ring.len() {
+                    let (x1, y1) = ring[idx];
+                    let (x2, y2) = ring[(idx + 1) % ring.len()];
+                    let (sx1, sy1) = area.data_to_screen(x1, y1);
+                    let (sx2, sy2) = area.data_to_screen(x2, y2);
+                    svg.draw_line(
+                        sx1,
+                        sy1,
+                        sx2,
+                        sy2,
+                        grid_color,
+                        grid_line_width,
+                        LineStyle::Solid,
+                    );
+                }
+            }
+
+            for &((x1, y1), (x2, y2)) in &data.axes {
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                svg.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    grid_color,
+                    grid_line_width,
+                    LineStyle::Solid,
+                );
+            }
+        }
+
+        if data.config.show_axis_labels {
+            for (label, x, y) in &data.axis_labels {
+                let (sx, sy) = area.data_to_screen(*x, *y);
+                svg.draw_text_centered(
+                    label,
+                    sx,
+                    sy,
+                    data.config.label_font_size,
+                    self.display.theme.foreground,
+                )?;
+            }
+        }
+
+        let scaled_line_width = svg.render_scale().points_to_pixels(data.config.line_width);
+        let scaled_marker_size = svg.render_scale().points_to_pixels(data.config.marker_size);
+        for (series_idx, series_data) in data.series.iter().enumerate() {
+            let series_color = data
+                .config
+                .colors
+                .as_ref()
+                .and_then(|colors| colors.get(series_idx).copied())
+                .unwrap_or_else(|| self.display.theme.get_color(series_idx));
+
+            if data.config.fill && !series_data.polygon.is_empty() {
+                let polygon: Vec<(f32, f32)> = series_data
+                    .polygon
+                    .iter()
+                    .map(|(x, y)| area.data_to_screen(*x, *y))
+                    .collect();
+                svg.draw_filled_polygon(&polygon, series_color.with_alpha(data.config.fill_alpha));
+            }
+
+            if series_data.polygon.len() > 1 {
+                let polygon: Vec<(f32, f32)> = series_data
+                    .polygon
+                    .iter()
+                    .map(|(x, y)| area.data_to_screen(*x, *y))
+                    .collect();
+                svg.draw_polygon_outline(&polygon, series_color, scaled_line_width);
+            }
+
+            if data.config.marker_size > 0.0 {
+                for (x, y) in &series_data.markers {
+                    let (sx, sy) = area.data_to_screen(*x, *y);
+                    svg.draw_marker(
+                        sx,
+                        sy,
+                        scaled_marker_size,
+                        MarkerStyle::Circle,
+                        series_color,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_polar_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        data: &crate::plots::polar::polar_plot::PolarPlotData,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        default_color: Color,
+    ) -> Result<()> {
+        if data.points.is_empty() {
+            return Ok(());
+        }
+
+        let size = plot_area.width().min(plot_area.height());
+        let x_offset = (plot_area.width() - size) * 0.5;
+        let y_offset = (plot_area.height() - size) * 0.5;
+        let area = crate::plots::PlotArea::new(
+            plot_area.x() + x_offset,
+            plot_area.y() + y_offset,
+            size,
+            size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        );
+        let line_color = data.config.color.unwrap_or(default_color);
+
+        if data.config.fill && !data.fill_polygon.is_empty() {
+            let polygon: Vec<(f32, f32)> = data
+                .fill_polygon
+                .iter()
+                .map(|(x, y)| area.data_to_screen(*x, *y))
+                .collect();
+            svg.draw_filled_polygon(&polygon, line_color.with_alpha(data.config.fill_alpha));
+        }
+
+        if data.points.len() > 1 {
+            let points: Vec<(f32, f32)> = data
+                .points
+                .iter()
+                .map(|point| area.data_to_screen(point.x, point.y))
+                .collect();
+            let scaled_line_width = svg.render_scale().points_to_pixels(data.config.line_width);
+            svg.draw_polyline(&points, line_color, scaled_line_width, LineStyle::Solid);
+        }
+
+        if data.config.marker_size > 0.0 {
+            let scaled_marker_size = svg.render_scale().points_to_pixels(data.config.marker_size);
+            for point in &data.points {
+                let (sx, sy) = area.data_to_screen(point.x, point.y);
+                svg.draw_marker(sx, sy, scaled_marker_size, MarkerStyle::Circle, line_color);
+            }
+        }
+
+        for label in &data.theta_labels {
+            let (sx, sy) = area.data_to_screen(label.x, label.y);
+            svg.draw_text_centered(
+                &label.text,
+                sx,
+                sy,
+                data.config.label_font_size,
+                self.display.theme.foreground,
+            )?;
+        }
+
+        for label in &data.r_labels {
+            let (sx, sy) = area.data_to_screen(label.x, label.y);
+            svg.draw_text_centered(
+                &label.text,
+                sx,
+                sy,
+                data.config.label_font_size,
+                self.display.theme.foreground,
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Check if the plot needs standard Cartesian axes
     ///
     /// Some plot types (Pie, Radar, Polar) have their own coordinate system
     /// and don't use standard X/Y axes with tick labels.
     fn needs_cartesian_axes(&self) -> bool {
-        // If any series is a non-Cartesian type, skip standard axes
-        for series in &self.series_mgr.series {
-            match &series.series_type {
-                SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. } => {
-                    return false;
-                }
-                _ => {}
-            }
-        }
-        true
+        Self::needs_cartesian_axes_for_series(&self.series_mgr.series)
     }
 
     fn apply_manual_axis_limits(&self, bounds: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
@@ -9521,28 +9808,29 @@ impl Plot {
         let total_points = series_points + extra_points;
 
         // Select backend based on data size
-        let selected_backend = if total_points < 1000 {
-            BackendType::Skia
-        } else if total_points < 100_000 {
-            #[cfg(feature = "parallel")]
-            {
-                BackendType::Parallel
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
+        let selected_backend =
+            if Self::has_mixed_coordinate_series(&self.series_mgr.series) || total_points < 1000 {
                 BackendType::Skia
-            }
-        } else {
-            // For very large datasets, prefer GPU if available, else DataShader
-            #[cfg(feature = "gpu")]
-            {
-                BackendType::GPU
-            }
-            #[cfg(not(feature = "gpu"))]
-            {
-                BackendType::DataShader
-            }
-        };
+            } else if total_points < 100_000 {
+                #[cfg(feature = "parallel")]
+                {
+                    BackendType::Parallel
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    BackendType::Skia
+                }
+            } else {
+                // For very large datasets, prefer GPU if available, else DataShader
+                #[cfg(feature = "gpu")]
+                {
+                    BackendType::GPU
+                }
+                #[cfg(not(feature = "gpu"))]
+                {
+                    BackendType::DataShader
+                }
+            };
 
         self.render.backend = Some(selected_backend);
         self.render.auto_optimized = true;
@@ -9646,7 +9934,7 @@ impl Plot {
         renderer.clear();
 
         let (x_min, x_max, y_min, y_max) = self.apply_auto_padding_to_bounds(
-            self.effective_data_bounds_for_series(&snapshot_series)?,
+            self.effective_main_panel_bounds_for_series(&snapshot_series)?,
             0.05,
         );
 
@@ -9855,7 +10143,8 @@ impl Plot {
 
         // Render grid if enabled - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
+        if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             renderer.draw_grid(
                 &x_tick_pixels,
@@ -9955,7 +10244,6 @@ impl Plot {
         };
 
         // Only draw axes for Cartesian plots (skip for Pie, Radar, etc.)
-        let draw_axes = self.needs_cartesian_axes();
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
 
         if draw_ticks {
@@ -10066,10 +10354,13 @@ impl Plot {
 
         // Check if we should use DataShader for large datasets
         let total_points = Self::calculate_total_points_for_series(&snapshot_series);
+        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
         #[cfg(feature = "gpu")]
         const GPU_THRESHOLD: usize = 5_000; // Activate GPU for >5K points
 
-        if Self::should_auto_use_datashader(&snapshot_series, total_points) {
+        if !has_mixed_coordinates
+            && Self::should_auto_use_datashader(&snapshot_series, total_points)
+        {
             // Use DataShader for massive datasets - simplified version
             use crate::data::DataShader;
 
@@ -10138,7 +10429,8 @@ impl Plot {
         } else {
             // Check if GPU rendering should be used for medium datasets
             #[cfg(feature = "gpu")]
-            let use_gpu_rendering = self.render.enable_gpu && total_points >= GPU_THRESHOLD;
+            let use_gpu_rendering =
+                self.render.enable_gpu && total_points >= GPU_THRESHOLD && !has_mixed_coordinates;
 
             #[cfg(feature = "gpu")]
             if use_gpu_rendering {
@@ -10166,48 +10458,45 @@ impl Plot {
                     Err(e) => {
                         log::warn!("GPU initialization failed, falling back to CPU: {}", e);
                         // Fall back to normal rendering
-                        for series in &snapshot_series {
-                            self.render_series_normal(
-                                series,
-                                &mut renderer,
-                                plot_area,
-                                x_min,
-                                x_max,
-                                y_min,
-                                y_max,
-                            )?;
-                        }
+                        self.render_series_collection_normal(
+                            &snapshot_series,
+                            &mut renderer,
+                            plot_area,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            render_scale,
+                        )?;
                     }
                 }
             } else {
                 // Use normal rendering for smaller datasets
-                for series in &snapshot_series {
-                    self.render_series_normal(
-                        series,
-                        &mut renderer,
-                        plot_area,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                    )?;
-                }
+                self.render_series_collection_normal(
+                    &snapshot_series,
+                    &mut renderer,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    render_scale,
+                )?;
             }
 
             #[cfg(not(feature = "gpu"))]
             {
                 // Use normal rendering for smaller datasets (no GPU feature)
-                for series in &snapshot_series {
-                    self.render_series_normal(
-                        series,
-                        &mut renderer,
-                        plot_area,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                    )?;
-                }
+                self.render_series_collection_normal(
+                    &snapshot_series,
+                    &mut renderer,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    render_scale,
+                )?;
             }
         }
 
@@ -10329,7 +10618,6 @@ impl Plot {
 
         use crate::axes::TickLayout;
         use crate::export::SvgRenderer;
-        use crate::render::skia::map_data_to_pixels;
 
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
@@ -10345,7 +10633,7 @@ impl Plot {
         svg.set_text_engine_mode(self.display.text_engine);
 
         let (x_min, x_max, y_min, y_max) =
-            self.effective_data_bounds_for_series(&snapshot_series)?;
+            self.effective_main_panel_bounds_for_series(&snapshot_series)?;
 
         // Use the same content-driven layout path as PNG rendering.
         let content = self.create_plot_content(y_min, y_max);
@@ -10418,7 +10706,8 @@ impl Plot {
 
         // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        if self.layout.grid_style.visible && self.needs_cartesian_axes() {
+        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
+        if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
             if bar_categories.is_some() {
@@ -10458,7 +10747,7 @@ impl Plot {
             }
         }
 
-        if !self.layout.tick_config.enabled {
+        if draw_axes && !self.layout.tick_config.enabled {
             // Keep frame stroke width consistent with the tick-enabled path.
             svg.draw_axes(
                 plot_left,
@@ -10479,89 +10768,97 @@ impl Plot {
         );
 
         // Draw axes and tick labels
-        if let Some(categories) = bar_categories {
-            let x_range = x_max - x_min;
-            let category_x_tick_positions: Vec<f32> = (0..categories.len())
-                .map(|index| {
-                    if x_range.abs() < f64::EPSILON {
-                        plot_left + plot_width * 0.5
-                    } else {
-                        plot_left + (((index as f64) - x_min) / x_range) as f32 * plot_width
-                    }
-                })
-                .collect();
+        if draw_axes {
+            if let Some(categories) = bar_categories {
+                let x_range = x_max - x_min;
+                let category_x_tick_positions: Vec<f32> = (0..categories.len())
+                    .map(|index| {
+                        if x_range.abs() < f64::EPSILON {
+                            plot_left + plot_width * 0.5
+                        } else {
+                            plot_left + (((index as f64) - x_min) / x_range) as f32 * plot_width
+                        }
+                    })
+                    .collect();
 
-            // Bar chart: draw axes with category labels
-            if self.layout.tick_config.enabled {
-                svg.draw_axes(
-                    plot_left,
-                    plot_right,
-                    plot_top,
-                    plot_bottom,
-                    &category_x_tick_positions,
-                    &y_tick_layout.pixel_positions,
-                    &self.layout.tick_config.direction,
-                    &self.layout.tick_config.sides,
-                    self.display.theme.foreground,
-                );
-
-                // Draw Y-axis tick labels
-                svg.draw_tick_labels(
-                    &[],
-                    &[],
-                    &y_tick_layout.pixel_positions,
-                    &y_tick_layout.labels,
-                    plot_left,
-                    plot_right,
-                    plot_top,
-                    plot_bottom,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    self.display.theme.foreground,
-                    tick_size_px,
-                )?;
-
-                // Draw category labels on X-axis
-                for (category, &x) in categories.iter().zip(category_x_tick_positions.iter()) {
-                    svg.draw_text_centered(
-                        category,
-                        x,
-                        layout.xtick_baseline_y,
-                        tick_size_px,
+                // Bar chart: draw axes with category labels
+                if self.layout.tick_config.enabled {
+                    svg.draw_axes(
+                        plot_left,
+                        plot_right,
+                        plot_top,
+                        plot_bottom,
+                        &category_x_tick_positions,
+                        &y_tick_layout.pixel_positions,
+                        &self.layout.tick_config.direction,
+                        &self.layout.tick_config.sides,
                         self.display.theme.foreground,
+                    );
+
+                    // Draw Y-axis tick labels
+                    svg.draw_tick_labels(
+                        &[],
+                        &[],
+                        &y_tick_layout.pixel_positions,
+                        &y_tick_layout.labels,
+                        plot_left,
+                        plot_right,
+                        plot_top,
+                        plot_bottom,
+                        layout.xtick_baseline_y,
+                        layout.ytick_right_x,
+                        self.display.theme.foreground,
+                        tick_size_px,
+                    )?;
+
+                    // Draw category labels on X-axis
+                    for (category, &x) in categories.iter().zip(category_x_tick_positions.iter()) {
+                        svg.draw_text_centered(
+                            category,
+                            x,
+                            layout.xtick_baseline_y,
+                            tick_size_px,
+                            self.display.theme.foreground,
+                        )?;
+                    }
+                }
+            } else {
+                // Normal chart: draw axes with numeric labels
+                let x_tick_layout = TickLayout::compute(
+                    x_min,
+                    x_max,
+                    plot_left,
+                    plot_right,
+                    &self.layout.x_scale,
+                    7,
+                );
+                if self.layout.tick_config.enabled {
+                    svg.draw_axes(
+                        plot_left,
+                        plot_right,
+                        plot_top,
+                        plot_bottom,
+                        &x_tick_layout.pixel_positions,
+                        &y_tick_layout.pixel_positions,
+                        &self.layout.tick_config.direction,
+                        &self.layout.tick_config.sides,
+                        self.display.theme.foreground,
+                    );
+                    svg.draw_tick_labels(
+                        &x_tick_layout.pixel_positions,
+                        &x_tick_layout.labels,
+                        &y_tick_layout.pixel_positions,
+                        &y_tick_layout.labels,
+                        plot_left,
+                        plot_right,
+                        plot_top,
+                        plot_bottom,
+                        layout.xtick_baseline_y,
+                        layout.ytick_right_x,
+                        self.display.theme.foreground,
+                        tick_size_px,
                     )?;
                 }
-            }
-        } else {
-            // Normal chart: draw axes with numeric labels
-            let x_tick_layout =
-                TickLayout::compute(x_min, x_max, plot_left, plot_right, &self.layout.x_scale, 7);
-            if self.layout.tick_config.enabled {
-                svg.draw_axes(
-                    plot_left,
-                    plot_right,
-                    plot_top,
-                    plot_bottom,
-                    &x_tick_layout.pixel_positions,
-                    &y_tick_layout.pixel_positions,
-                    &self.layout.tick_config.direction,
-                    &self.layout.tick_config.sides,
-                    self.display.theme.foreground,
-                );
-                svg.draw_tick_labels(
-                    &x_tick_layout.pixel_positions,
-                    &x_tick_layout.labels,
-                    &y_tick_layout.pixel_positions,
-                    &y_tick_layout.labels,
-                    plot_left,
-                    plot_right,
-                    plot_top,
-                    plot_bottom,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    self.display.theme.foreground,
-                    tick_size_px,
-                )?;
             }
         }
 
@@ -10573,73 +10870,48 @@ impl Plot {
         let legend_items = self.collect_legend_items();
         let render_scale = self.render_scale();
 
+        let inset_rects = self.inset_rects_for_series(&snapshot_series, plot_area, render_scale)?;
+
         // Render each series
         for (idx, series) in snapshot_series.iter().enumerate() {
             let default_color = self.display.theme.get_color(idx);
-            let color = series.color.unwrap_or(default_color);
-            let line_width = render_scale
-                .points_to_pixels(series.line_width.unwrap_or(self.display.theme.line_width));
-            let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+            let inset_rect = inset_rects[idx];
+            let (series_area, series_bounds) = if let Some(inset_rect) = inset_rect {
+                (inset_rect, self.raw_bounds_for_single_series(series)?)
+            } else {
+                (plot_area, (x_min, x_max, y_min, y_max))
+            };
 
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
-                    let points: Vec<(f32, f32)> = x_data
-                        .iter()
-                        .zip(y_data.iter())
-                        .map(|(&x, &y)| {
-                            map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area)
-                        })
-                        .collect();
-
-                    svg.draw_polyline(&points, color, line_width, line_style);
-                    if let Some(marker_style) = series.marker_style {
-                        let marker_size =
-                            render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
-                        for &(px, py) in &points {
-                            svg.draw_marker(px, py, marker_size, marker_style, color);
-                        }
-                    }
-                }
-                SeriesType::Scatter { x_data, y_data } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
-                    let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-                    let marker_size =
-                        render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
-                    for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                        let (px, py) =
-                            map_data_to_pixels(x, y, x_min, x_max, y_min, y_max, plot_area);
-                        svg.draw_marker(px, py, marker_size, marker_style, color);
-                    }
-                }
-                SeriesType::Bar { categories, values } => {
-                    let values = values.resolve(0.0);
-                    let num_bars = categories.len();
-                    let bar_width = plot_width / num_bars as f32 * 0.7;
-                    let bar_gap = plot_width / num_bars as f32 * 0.15;
-
-                    for (i, &value) in values.iter().enumerate() {
-                        let bar_x = plot_left + (i as f32 + 0.5) * (plot_width / num_bars as f32)
-                            - bar_width / 2.0;
-                        let (_, py) =
-                            map_data_to_pixels(0.0, value, x_min, x_max, y_min, y_max, plot_area);
-                        let (_, py_zero) =
-                            map_data_to_pixels(0.0, 0.0, x_min, x_max, y_min, y_max, plot_area);
-                        let bar_height = (py - py_zero).abs();
-                        let bar_y = py.min(py_zero);
-
-                        svg.draw_rectangle(bar_x, bar_y, bar_width, bar_height, color, true);
-                    }
-                }
-                SeriesType::Histogram { data: _, config: _ } => {
-                    // Histogram rendering would need pre-computed bins/values
-                    // For now, skip in SVG output - histograms are complex
-                }
-                _ => {
-                    // Other series types rendered as scatter for now
-                }
+            if let Some(inset_rect) = inset_rect {
+                let inset_clip_id = svg.add_clip_rect(
+                    inset_rect.x(),
+                    inset_rect.y(),
+                    inset_rect.width(),
+                    inset_rect.height(),
+                );
+                svg.start_clip_group(&inset_clip_id);
+                self.render_series_svg(
+                    &mut svg,
+                    series,
+                    default_color,
+                    series_area,
+                    series_bounds.0,
+                    series_bounds.1,
+                    series_bounds.2,
+                    series_bounds.3,
+                )?;
+                svg.end_group();
+            } else {
+                self.render_series_svg(
+                    &mut svg,
+                    series,
+                    default_color,
+                    series_area,
+                    series_bounds.0,
+                    series_bounds.1,
+                    series_bounds.2,
+                    series_bounds.3,
+                )?;
             }
         }
 
@@ -11528,6 +11800,8 @@ impl PlotSeriesBuilder {
     ///
     /// **Deprecated**: Series finalize automatically via `Into<Plot>`.
     /// Use `.save()` directly or `.into()` for explicit conversion.
+    /// Mixed Cartesian/non-Cartesian plots also work through normal fluent
+    /// chaining, so `end_series()` is not required as a workaround.
     ///
     /// # Example
     ///
@@ -12101,6 +12375,7 @@ mod tests {
             y_errors: None,
             x_errors: None,
             error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -12168,6 +12443,14 @@ mod tests {
             .lines()
             .find(|line| line.contains("<line"))
             .unwrap_or_else(|| panic!("missing line element"));
+        parse_svg_attr(line, "stroke-width")
+    }
+
+    fn extract_first_stroked_svg_polygon_stroke_width(svg: &str) -> f32 {
+        let line = svg
+            .lines()
+            .find(|line| line.contains("<polygon") && line.contains("stroke-width"))
+            .unwrap_or_else(|| panic!("missing stroked polygon element"));
         parse_svg_attr(line, "stroke-width")
     }
 
@@ -14054,6 +14337,245 @@ mod tests {
             plot.series_mgr.series[1].series_type,
             SeriesType::BoxPlot { .. }
         ));
+    }
+
+    #[test]
+    fn test_mixed_coordinate_plots_keep_cartesian_axes() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .polar_line(&r, &theta)
+            .into();
+
+        assert!(plot.needs_cartesian_axes());
+        assert!(plot.series_mgr.series[1].inset_layout.is_some());
+    }
+
+    #[test]
+    fn test_non_cartesian_builder_inset_layout_is_stored() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .polar_line(&r, &theta)
+            .inset_anchor(InsetAnchor::BottomLeft)
+            .inset_size_frac(0.4, 0.25)
+            .inset_margin_pt(18.0)
+            .into();
+
+        let layout = plot.series_mgr.series[1]
+            .inset_layout
+            .expect("polar series should store inset metadata");
+        assert_eq!(layout.anchor, InsetAnchor::BottomLeft);
+        assert!((layout.width_frac - 0.4).abs() < f32::EPSILON);
+        assert!((layout.height_frac - 0.25).abs() < f32::EPSILON);
+        assert!((layout.margin_pt - 18.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_mixed_cartesian_polar_raster_render_succeeds() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+
+        let image = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .polar_line(&r, &theta)
+            .render()
+            .expect("mixed polar raster render should succeed");
+
+        assert!(!image.pixels.is_empty());
+    }
+
+    #[test]
+    fn test_mixed_cartesian_polar_renders_svg_with_inset_geometry() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+
+        let svg = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .polar_line(&r, &theta)
+            .render_to_svg()
+            .expect("mixed polar SVG render should succeed");
+
+        assert!(
+            svg.matches("<polyline").count() >= 2,
+            "expected both Cartesian and polar polylines in SVG: {svg}"
+        );
+        assert!(
+            svg.contains("0°"),
+            "expected polar theta labels in SVG: {svg}"
+        );
+    }
+
+    #[test]
+    fn test_polar_svg_scales_line_width_and_markers_with_dpi() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+
+        let plot: Plot = Plot::new()
+            .dpi(200)
+            .polar_line(&r, &theta)
+            .marker_size(13.0)
+            .into();
+        let (expected_stroke_width, expected_marker_radius) =
+            match &plot.series_mgr.series[0].series_type {
+                SeriesType::Polar { data } => (
+                    plot.render_scale().points_to_pixels(data.config.line_width),
+                    plot.render_scale()
+                        .points_to_pixels(data.config.marker_size)
+                        / 2.0,
+                ),
+                other => panic!("expected polar series, got {other:?}"),
+            };
+        let svg = plot
+            .render_to_svg()
+            .expect("polar SVG render should succeed");
+
+        assert!(
+            svg.contains(&format!(r#"stroke-width="{expected_stroke_width:.2}""#)),
+            "expected polar line width to scale with DPI: {svg}"
+        );
+        assert!(
+            svg.contains(&format!(r#"r="{expected_marker_radius:.2}" fill=""#)),
+            "expected polar marker radius to scale with DPI: {svg}"
+        );
+    }
+
+    #[test]
+    fn test_pie_svg_scales_edge_width_with_dpi() {
+        let mut plot_100: Plot = Plot::new().dpi(100).pie(&[2.0, 3.0, 4.0]).into();
+        let mut plot_200: Plot = Plot::new().dpi(200).pie(&[2.0, 3.0, 4.0]).into();
+
+        for plot in [&mut plot_100, &mut plot_200] {
+            let SeriesType::Pie { data } = &mut plot.series_mgr.series[0].series_type else {
+                panic!("expected pie series");
+            };
+            data.config.edge_color = Some(Color::BLACK);
+            data.config.edge_width = 2.5;
+        }
+
+        let svg_100 = plot_100.render_to_svg().expect("100 DPI pie SVG render");
+        let svg_200 = plot_200.render_to_svg().expect("200 DPI pie SVG render");
+
+        let width_100 = extract_svg_root_attr(&svg_100, "width");
+        let width_200 = extract_svg_root_attr(&svg_200, "width");
+        let stroke_100 = extract_first_stroked_svg_polygon_stroke_width(&svg_100);
+        let stroke_200 = extract_first_stroked_svg_polygon_stroke_width(&svg_200);
+
+        let ratio_100 = stroke_100 / width_100;
+        let ratio_200 = stroke_200 / width_200;
+
+        assert!(
+            (ratio_100 - ratio_200).abs() < 0.0005,
+            "pie edge stroke-to-canvas ratio should remain stable across DPI: {} vs {}",
+            ratio_100,
+            ratio_200
+        );
+    }
+
+    #[test]
+    fn test_auto_placed_insets_preserve_gap_with_mixed_sizes() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .pie(&[2.0, 3.0, 4.0])
+            .inset_size_frac(0.18, 0.18)
+            .polar_line(&r, &theta)
+            .inset_size_frac(0.35, 0.35)
+            .into();
+
+        let plot_area =
+            tiny_skia::Rect::from_ltrb(0.0, 0.0, 1000.0, 800.0).expect("valid test plot area");
+        let rects = plot
+            .inset_rects_for_series(&plot.series_mgr.series, plot_area, plot.render_scale())
+            .expect("auto inset rects should be computed");
+
+        let right_inset = rects[1].expect("pie inset rect");
+        let left_inset = rects[2].expect("polar inset rect");
+        let actual_gap = right_inset.x() - (left_inset.x() + left_inset.width());
+        let expected_gap = plot
+            .render_scale()
+            .points_to_pixels(InsetLayout::DEFAULT_MARGIN_PT)
+            .max(4.0);
+
+        assert!(
+            (actual_gap - expected_gap).abs() < 0.01,
+            "auto insets should keep a constant inter-column gap: {} vs {}",
+            actual_gap,
+            expected_gap
+        );
+    }
+
+    #[test]
+    fn test_radar_plot_area_centers_portrait_insets_before_title_clearance() {
+        let plot_area =
+            tiny_skia::Rect::from_ltrb(100.0, 200.0, 300.0, 600.0).expect("valid test rect");
+        let area = Plot::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
+
+        assert!(
+            (area.x - 100.0).abs() < 0.01,
+            "unexpected radar inset x: {}",
+            area.x
+        );
+        assert!(
+            (area.y - 340.0).abs() < 0.01,
+            "unexpected radar inset y: {}",
+            area.y
+        );
+        assert!(
+            (area.width - 160.0).abs() < 0.01,
+            "unexpected radar inset width: {}",
+            area.width
+        );
+        assert!(
+            (area.height - 160.0).abs() < 0.01,
+            "unexpected radar inset height: {}",
+            area.height
+        );
+    }
+
+    #[test]
+    fn test_mixed_cartesian_pie_renders_svg_with_inset_polygons() {
+        let svg = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[1.0, 3.0, 2.0])
+            .pie(&[2.0, 3.0, 4.0])
+            .labels(&["A", "B", "C"])
+            .render_to_svg()
+            .expect("mixed pie SVG render should succeed");
+
+        assert!(
+            svg.matches("<polygon").count() >= 3,
+            "expected pie wedge polygons in SVG: {svg}"
+        );
+        assert!(
+            svg.contains("22.2%"),
+            "expected pie percentage labels in SVG: {svg}"
+        );
+        assert!(
+            svg.matches("<clipPath").count() >= 2,
+            "expected a nested inset clip path in addition to the main plot clip: {svg}"
+        );
+    }
+
+    #[test]
+    fn test_mixed_cartesian_radar_renders_svg_with_inset_geometry() {
+        let svg = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[1.0, 3.0, 2.0])
+            .radar(&["Speed", "Power", "Skill"])
+            .add_series("Alpha", &[1.0, 2.0, 3.0])
+            .render_to_svg()
+            .expect("mixed radar SVG render should succeed");
+
+        assert!(
+            svg.matches("<polygon").count() >= 1,
+            "expected radar polygon geometry in SVG: {svg}"
+        );
+        assert!(
+            svg.contains(">Speed<"),
+            "expected radar axis labels in SVG: {svg}"
+        );
     }
 
     // ========== IntoPlot Trait Tests ==========
