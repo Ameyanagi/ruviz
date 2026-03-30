@@ -14001,6 +14001,24 @@ mod tests {
     }
 
     #[test]
+    fn test_plot_builder_can_chain_histogram_without_end_series() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .histogram(&[1.0, 2.0, 3.0, 4.0], None)
+            .into();
+
+        assert_eq!(plot.series_mgr.series.len(), 2);
+        assert!(matches!(
+            plot.series_mgr.series[0].series_type,
+            SeriesType::Line { .. }
+        ));
+        assert!(matches!(
+            plot.series_mgr.series[1].series_type,
+            SeriesType::Histogram { .. }
+        ));
+    }
+
+    #[test]
     fn test_plot_builder_can_add_styled_vline_without_end_series() {
         let plot: Plot = Plot::new()
             .line(&[0.0, 10.0], &[0.0, 1.0])
@@ -14012,6 +14030,24 @@ mod tests {
         assert!(matches!(
             plot.annotations[0],
             Annotation::VLine { x, .. } if (x - 5.0).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn test_plot_series_builder_can_chain_boxplot_without_end_series() {
+        let plot: Plot = Plot::new()
+            .histogram(&[1.0, 2.0, 3.0, 4.0], None)
+            .boxplot(&[2.0, 3.0, 5.0, 8.0], None)
+            .into();
+
+        assert_eq!(plot.series_mgr.series.len(), 2);
+        assert!(matches!(
+            plot.series_mgr.series[0].series_type,
+            SeriesType::Histogram { .. }
+        ));
+        assert!(matches!(
+            plot.series_mgr.series[1].series_type,
+            SeriesType::BoxPlot { .. }
         ));
     }
 
