@@ -9830,30 +9830,29 @@ impl Plot {
         let total_points = series_points + extra_points;
 
         // Select backend based on data size
-        let selected_backend = if Self::has_mixed_coordinate_series(&self.series_mgr.series) {
-            BackendType::Skia
-        } else if total_points < 1000 {
-            BackendType::Skia
-        } else if total_points < 100_000 {
-            #[cfg(feature = "parallel")]
-            {
-                BackendType::Parallel
-            }
-            #[cfg(not(feature = "parallel"))]
-            {
+        let selected_backend =
+            if Self::has_mixed_coordinate_series(&self.series_mgr.series) || total_points < 1000 {
                 BackendType::Skia
-            }
-        } else {
-            // For very large datasets, prefer GPU if available, else DataShader
-            #[cfg(feature = "gpu")]
-            {
-                BackendType::GPU
-            }
-            #[cfg(not(feature = "gpu"))]
-            {
-                BackendType::DataShader
-            }
-        };
+            } else if total_points < 100_000 {
+                #[cfg(feature = "parallel")]
+                {
+                    BackendType::Parallel
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    BackendType::Skia
+                }
+            } else {
+                // For very large datasets, prefer GPU if available, else DataShader
+                #[cfg(feature = "gpu")]
+                {
+                    BackendType::GPU
+                }
+                #[cfg(not(feature = "gpu"))]
+                {
+                    BackendType::DataShader
+                }
+            };
 
         self.render.backend = Some(selected_backend);
         self.render.auto_optimized = true;
