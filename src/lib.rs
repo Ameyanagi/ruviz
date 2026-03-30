@@ -10,6 +10,7 @@
 #![allow(unused_mut)]
 #![allow(unreachable_code)]
 #![allow(unreachable_patterns)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # Ruviz - High-Performance Rust Plotting Library
 //!
@@ -48,6 +49,48 @@
 //! bar(&cats, &vals).title("Sales").save("bar.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! ## Typst Text Mode
+//!
+//! Enable Typst-backed labels and titles by turning on the `typst-math` feature:
+//!
+//! ```toml
+//! [dependencies]
+//! ruviz = { version = "0.1.5", features = ["typst-math"] }
+//! ```
+//!
+//! Then opt into Typst text rendering per plot with `.typst(true)`:
+//!
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+//! let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
+//!
+//! let mut plot = Plot::new()
+//!     .line(&x, &y)
+//!     .title("$f(x) = e^(-x)$")
+//!     .xlabel("$x$")
+//!     .ylabel("$f(x)$");
+//!
+//! #[cfg(feature = "typst-math")]
+//! {
+//!     plot = plot.typst(true);
+//! }
+//!
+//! plot.save("typst_plot.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! If `typst-math` is not enabled, `.typst(true)` is unavailable and the compiler reports:
+//!
+//! ```text
+//! error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in the current scope
+//! ```
+//!
+//! If Typst is optional in your own crate, guard the call with `#[cfg(feature = "typst-math")]`.
+//! Selecting the text engine directly follows the same rule: `TextEngineMode::Typst` is only
+//! available when `typst-math` is enabled.
 //!
 //! ## Animation APIs
 //!

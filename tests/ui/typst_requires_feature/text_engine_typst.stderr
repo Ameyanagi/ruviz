@@ -1,0 +1,5 @@
+error[E0599]: no variant or associated item named `Typst` found for enum `TextEngineMode` in the current scope
+ --> tests/ui/typst_requires_feature/text_engine_typst.rs:4:29
+  |
+4 |     let _ = TextEngineMode::Typst;
+  |                             ^^^^^ variant or associated item not found in `TextEngineMode`

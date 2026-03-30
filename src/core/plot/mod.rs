@@ -4256,6 +4256,12 @@ impl Plot {
     ///
     /// When enabled, all static text surfaces (title, axis labels, tick labels,
     /// legend labels, category labels, and annotations) are rendered through Typst.
+    ///
+    /// Requires the `typst-math` feature.
+    /// If your crate makes Typst optional, guard this call with
+    /// `#[cfg(feature = "typst-math")]`.
+    #[cfg(feature = "typst-math")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typst-math")))]
     pub fn typst(mut self, enabled: bool) -> Self {
         self.display.text_engine = if enabled {
             TextEngineMode::Typst
@@ -11604,6 +11610,12 @@ impl PlotSeriesBuilder {
     }
 
     /// Enable or disable Typst text rendering mode.
+    ///
+    /// Requires the `typst-math` feature.
+    /// If your crate makes Typst optional, guard this call with
+    /// `#[cfg(feature = "typst-math")]`.
+    #[cfg(feature = "typst-math")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typst-math")))]
     pub fn typst(mut self, enabled: bool) -> Self {
         self.plot = self.plot.typst(enabled);
         self
@@ -14012,6 +14024,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "typst-math")]
     #[test]
     fn test_typst_toggle_mode_switch() {
         let plot = Plot::new().typst(true);
@@ -14021,6 +14034,7 @@ mod tests {
         assert_eq!(plot.display.text_engine, TextEngineMode::Plain);
     }
 
+    #[cfg(feature = "typst-math")]
     #[test]
     fn test_plot_builder_typst_forwarding() {
         let x = vec![0.0, 1.0, 2.0];
@@ -14030,6 +14044,7 @@ mod tests {
         assert_eq!(plot.display.text_engine, TextEngineMode::Typst);
     }
 
+    #[cfg(feature = "typst-math")]
     #[test]
     fn test_plot_series_builder_typst_forwarding() {
         let x = vec![0.0, 1.0, 2.0];
@@ -14041,20 +14056,6 @@ mod tests {
             .typst(true)
             .end_series();
         assert_eq!(plot.display.text_engine, TextEngineMode::Typst);
-    }
-
-    #[cfg(not(feature = "typst-math"))]
-    #[test]
-    fn test_typst_feature_gate_error() {
-        let x = vec![0.0, 1.0, 2.0];
-        let y = vec![1.0, 2.0, 3.0];
-
-        let result = Plot::new().line(&x, &y).title("Title").typst(true).render();
-
-        assert!(matches!(
-            result,
-            Err(PlottingError::FeatureNotEnabled { ref feature, .. }) if feature == "typst-math"
-        ));
     }
 
     #[cfg(feature = "typst-math")]

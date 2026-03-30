@@ -936,6 +936,12 @@ where
     /// Enable or disable Typst text rendering mode.
     ///
     /// This method forwards to the inner Plot.
+    ///
+    /// Requires the `typst-math` feature.
+    /// If your crate makes Typst optional, guard this call with
+    /// `#[cfg(feature = "typst-math")]`.
+    #[cfg(feature = "typst-math")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typst-math")))]
     pub fn typst(mut self, enabled: bool) -> Self {
         self.plot = self.plot.typst(enabled);
         self

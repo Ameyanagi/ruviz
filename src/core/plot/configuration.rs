@@ -12,8 +12,27 @@ use crate::render::Theme;
 pub enum TextEngineMode {
     /// Existing cosmic-text based renderer.
     Plain,
-    /// Typst-based renderer (requires `typst-math` feature at render/export time).
+    /// Typst-based renderer.
+    ///
+    /// Requires the `typst-math` feature.
+    /// Without it, `TextEngineMode::Typst` is unavailable.
+    #[cfg(feature = "typst-math")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typst-math")))]
     Typst,
+}
+
+impl TextEngineMode {
+    pub(crate) const fn uses_typst(self) -> bool {
+        #[cfg(feature = "typst-math")]
+        {
+            matches!(self, Self::Typst)
+        }
+
+        #[cfg(not(feature = "typst-math"))]
+        {
+            false
+        }
+    }
 }
 
 /// Configuration for plot display settings
@@ -332,13 +351,21 @@ mod tests {
         config.set_ylabel("New Y");
         config.set_dimensions(1024, 768);
         config.set_dpi(150);
-        config.set_text_engine(TextEngineMode::Typst);
 
         assert_eq!(config.title(), Some("New Title"));
         assert_eq!(config.xlabel(), Some("New X"));
         assert_eq!(config.ylabel(), Some("New Y"));
         assert_eq!(config.dimensions(), (1024, 768));
         assert_eq!(config.dpi(), 150);
+        assert_eq!(config.text_engine(), TextEngineMode::Plain);
+    }
+
+    #[cfg(feature = "typst-math")]
+    #[test]
+    fn test_mutable_typst_setter() {
+        let mut config = PlotConfiguration::new();
+        config.set_text_engine(TextEngineMode::Typst);
+
         assert_eq!(config.text_engine(), TextEngineMode::Typst);
     }
 
