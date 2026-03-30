@@ -149,8 +149,7 @@ Plot::new()
 
 Notes:
 - Invalid Typst snippets fail render/export with a `TypstError`.
-- `.typst(true)` is only available when `typst-math` is enabled at compile time. If you make
-  Typst optional in your crate, guard the call with `#[cfg(feature = "typst-math")]`.
+- `.typst(true)` is only available when `typst-math` is enabled at compile time.
 - Without `typst-math`, the compiler reports:
 
 ```text
@@ -164,7 +163,18 @@ error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in th
 error[E0599]: no variant or associated item named `Typst` found for enum `TextEngineMode` in the current scope
 ```
 
-- A typical optional-feature pattern looks like this:
+- If Typst is optional in your own crate, define and forward a local feature first:
+
+```toml
+[dependencies]
+ruviz = { version = "0.1.5", default-features = false }
+
+[features]
+default = []
+typst-math = ["ruviz/typst-math"]
+```
+
+- Then guard the call with your crate feature:
 
 ```rust
 use ruviz::prelude::*;

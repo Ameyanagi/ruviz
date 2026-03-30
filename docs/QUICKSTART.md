@@ -94,7 +94,18 @@ ruviz = { version = "0.1.5", features = ["typst-math"] }
 error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in the current scope
 ```
 
-If you want Typst to stay optional in your own crate, guard the call:
+If you want Typst to stay optional in your own crate, forward a local feature first:
+
+```toml
+[dependencies]
+ruviz = { version = "0.1.5", default-features = false }
+
+[features]
+default = []
+typst-math = ["ruviz/typst-math"]
+```
+
+Then guard the call:
 
 ```rust
 use ruviz::prelude::*;

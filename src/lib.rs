@@ -88,9 +88,21 @@
 //! error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in the current scope
 //! ```
 //!
-//! If Typst is optional in your own crate, guard the call with `#[cfg(feature = "typst-math")]`.
-//! Selecting the text engine directly follows the same rule: `TextEngineMode::Typst` is only
-//! available when `typst-math` is enabled.
+//! If Typst is optional in your own crate, define a local feature and forward it to
+//! `ruviz/typst-math`:
+//!
+//! ```toml
+//! [dependencies]
+//! ruviz = { version = "0.1.5", default-features = false }
+//!
+//! [features]
+//! default = []
+//! typst-math = ["ruviz/typst-math"]
+//! ```
+//!
+//! Then guard the call with `#[cfg(feature = "typst-math")]` in your crate. Selecting the text
+//! engine directly follows the same rule: `TextEngineMode::Typst` is only available when
+//! `typst-math` is enabled.
 //!
 //! ## Animation APIs
 //!
