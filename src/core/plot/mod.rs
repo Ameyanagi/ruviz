@@ -7415,7 +7415,8 @@ impl Plot {
                 .collect();
             svg.draw_filled_polygon(&polygon, colors[idx % colors.len()]);
             if let Some(edge_color) = data.config.edge_color {
-                svg.draw_polygon_outline(&polygon, edge_color, data.config.edge_width);
+                let scaled_edge_width = svg.render_scale().points_to_pixels(data.config.edge_width);
+                svg.draw_polygon_outline(&polygon, edge_color, scaled_edge_width);
             }
         }
 
@@ -12437,6 +12438,14 @@ mod tests {
         parse_svg_attr(line, "stroke-width")
     }
 
+    fn extract_first_stroked_svg_polygon_stroke_width(svg: &str) -> f32 {
+        let line = svg
+            .lines()
+            .find(|line| line.contains("<polygon") && line.contains("stroke-width"))
+            .unwrap_or_else(|| panic!("missing stroked polygon element"));
+        parse_svg_attr(line, "stroke-width")
+    }
+
     fn image_pixel_is_dark(image: &Image, x: u32, y: u32) -> bool {
         let idx = ((y * image.width + x) * 4) as usize;
         image.pixels[idx..idx + 3]
@@ -14422,6 +14431,38 @@ mod tests {
         assert!(
             svg.contains(&format!(r#"r="{expected_marker_radius:.2}" fill=""#)),
             "expected polar marker radius to scale with DPI: {svg}"
+        );
+    }
+
+    #[test]
+    fn test_pie_svg_scales_edge_width_with_dpi() {
+        let mut plot_100: Plot = Plot::new().dpi(100).pie(&[2.0, 3.0, 4.0]).into();
+        let mut plot_200: Plot = Plot::new().dpi(200).pie(&[2.0, 3.0, 4.0]).into();
+
+        for plot in [&mut plot_100, &mut plot_200] {
+            let SeriesType::Pie { data } = &mut plot.series_mgr.series[0].series_type else {
+                panic!("expected pie series");
+            };
+            data.config.edge_color = Some(Color::BLACK);
+            data.config.edge_width = 2.5;
+        }
+
+        let svg_100 = plot_100.render_to_svg().expect("100 DPI pie SVG render");
+        let svg_200 = plot_200.render_to_svg().expect("200 DPI pie SVG render");
+
+        let width_100 = extract_svg_root_attr(&svg_100, "width");
+        let width_200 = extract_svg_root_attr(&svg_200, "width");
+        let stroke_100 = extract_first_stroked_svg_polygon_stroke_width(&svg_100);
+        let stroke_200 = extract_first_stroked_svg_polygon_stroke_width(&svg_200);
+
+        let ratio_100 = stroke_100 / width_100;
+        let ratio_200 = stroke_200 / width_200;
+
+        assert!(
+            (ratio_100 - ratio_200).abs() < 0.0005,
+            "pie edge stroke-to-canvas ratio should remain stable across DPI: {} vs {}",
+            ratio_100,
+            ratio_200
         );
     }
 

@@ -6,7 +6,7 @@ use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
 use ruviz::prelude::*;
 
-const PROPTEST_CASES: u32 = 4;
+const PROPTEST_CASES: u32 = 32;
 
 fn ensure_output_dir() {
     std::fs::create_dir_all("tests/output").expect("failed to create tests/output");
