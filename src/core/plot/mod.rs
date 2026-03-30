@@ -44,6 +44,295 @@
 //!
 //! See [`PlotBuilder`] for details on the generic builder implementation.
 
+macro_rules! impl_series_continuation_methods {
+    ($self_:ident.$finalize:ident()) => {
+        /// Continue with a new line series.
+        pub fn line<X, Y>(
+            $self_,
+            x_data: &X,
+            y_data: &Y,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::LineConfig>
+        where
+            X: $crate::data::NumericData1D,
+            Y: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().line(x_data, y_data)
+        }
+
+        /// Continue with a new line series from source-backed data.
+        pub fn line_source<X, Y>(
+            $self_,
+            x_data: X,
+            y_data: Y,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::LineConfig>
+        where
+            X: $crate::core::plot::IntoPlotData,
+            Y: $crate::core::plot::IntoPlotData,
+        {
+            $self_.$finalize().line_source(x_data, y_data)
+        }
+
+        /// Continue with a new scatter series.
+        pub fn scatter<X, Y>(
+            $self_,
+            x_data: &X,
+            y_data: &Y,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::ScatterConfig>
+        where
+            X: $crate::data::NumericData1D,
+            Y: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().scatter(x_data, y_data)
+        }
+
+        /// Continue with a new scatter series from source-backed data.
+        pub fn scatter_source<X, Y>(
+            $self_,
+            x_data: X,
+            y_data: Y,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::ScatterConfig>
+        where
+            X: $crate::core::plot::IntoPlotData,
+            Y: $crate::core::plot::IntoPlotData,
+        {
+            $self_.$finalize().scatter_source(x_data, y_data)
+        }
+
+        /// Continue with a new bar series.
+        pub fn bar<S, V>(
+            $self_,
+            categories: &[S],
+            values: &V,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::BarConfig>
+        where
+            S: ToString,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().bar(categories, values)
+        }
+
+        /// Continue with a new bar series from source-backed values.
+        pub fn bar_source<S, V>(
+            $self_,
+            categories: &[S],
+            values: V,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::BarConfig>
+        where
+            S: ToString,
+            V: $crate::core::plot::IntoPlotData,
+        {
+            $self_.$finalize().bar_source(categories, values)
+        }
+
+        /// Continue with a grouped-series scope after finalizing the current series.
+        pub fn group<F>($self_, f: F) -> $crate::core::plot::Plot
+        where
+            F: FnOnce(
+                $crate::core::plot::SeriesGroupBuilder,
+            ) -> $crate::core::plot::SeriesGroupBuilder,
+        {
+            $self_.$finalize().group(f)
+        }
+
+        /// Continue with a histogram series.
+        pub fn histogram<D: $crate::data::NumericData1D>(
+            $self_,
+            data: &D,
+            config: Option<$crate::plots::HistogramConfig>,
+        ) -> $crate::core::plot::PlotSeriesBuilder {
+            $self_.$finalize().histogram(data, config)
+        }
+
+        /// Continue with a histogram series from source-backed values.
+        pub fn histogram_source<D: $crate::core::plot::IntoPlotData>(
+            $self_,
+            data: D,
+            config: Option<$crate::plots::HistogramConfig>,
+        ) -> $crate::core::plot::PlotSeriesBuilder {
+            $self_.$finalize().histogram_source(data, config)
+        }
+
+        /// Continue with a box plot series.
+        pub fn boxplot<D: $crate::data::NumericData1D>(
+            $self_,
+            data: &D,
+            config: Option<$crate::plots::BoxPlotConfig>,
+        ) -> $crate::core::plot::PlotSeriesBuilder {
+            $self_.$finalize().boxplot(data, config)
+        }
+
+        /// Continue with a box plot series from source-backed values.
+        pub fn boxplot_source<D: $crate::core::plot::IntoPlotData>(
+            $self_,
+            data: D,
+            config: Option<$crate::plots::BoxPlotConfig>,
+        ) -> $crate::core::plot::PlotSeriesBuilder {
+            $self_.$finalize().boxplot_source(data, config)
+        }
+
+        /// Continue with a heatmap series.
+        pub fn heatmap<D>(
+            $self_,
+            data: &D,
+            config: Option<$crate::plots::heatmap::HeatmapConfig>,
+        ) -> $crate::core::plot::PlotSeriesBuilder
+        where
+            D: $crate::data::NumericData2D + ?Sized,
+        {
+            $self_.$finalize().heatmap(data, config)
+        }
+
+        /// Continue with a KDE series.
+        pub fn kde<T, D: $crate::data::Data1D<T>>(
+            $self_,
+            data: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::KdeConfig>
+        where
+            T: Into<f64> + Copy,
+        {
+            $self_.$finalize().kde(data)
+        }
+
+        /// Continue with an ECDF series.
+        pub fn ecdf<T, D: $crate::data::Data1D<T>>(
+            $self_,
+            data: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::EcdfConfig>
+        where
+            T: Into<f64> + Copy,
+        {
+            $self_.$finalize().ecdf(data)
+        }
+
+        /// Continue with a contour series.
+        pub fn contour<X, Y, Z>(
+            $self_,
+            x: &X,
+            y: &Y,
+            z: &Z,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::ContourConfig>
+        where
+            X: $crate::data::Data1D<f64>,
+            Y: $crate::data::Data1D<f64>,
+            Z: $crate::data::Data1D<f64>,
+        {
+            $self_.$finalize().contour(x, y, z)
+        }
+
+        /// Continue with a pie series.
+        pub fn pie<V>(
+            $self_,
+            values: &V,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::PieConfig>
+        where
+            V: $crate::data::Data1D<f64>,
+        {
+            $self_.$finalize().pie(values)
+        }
+
+        /// Continue with a radar series.
+        pub fn radar<S: AsRef<str>>(
+            $self_,
+            labels: &[S],
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::RadarConfig> {
+            $self_.$finalize().radar(labels)
+        }
+
+        /// Continue with a violin series.
+        pub fn violin<T, D: $crate::data::Data1D<T>>(
+            $self_,
+            data: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::ViolinConfig>
+        where
+            T: Into<f64> + Copy,
+        {
+            $self_.$finalize().violin(data)
+        }
+
+        /// Continue with a new streaming line series.
+        pub fn line_streaming(
+            $self_,
+            stream: &$crate::data::StreamingXY,
+        ) -> $crate::core::plot::PlotSeriesBuilder {
+            $self_.$finalize().line_streaming(stream)
+        }
+
+        /// Continue with a new streaming scatter series.
+        pub fn scatter_streaming(
+            $self_,
+            stream: &$crate::data::StreamingXY,
+        ) -> $crate::core::plot::PlotSeriesBuilder {
+            $self_.$finalize().scatter_streaming(stream)
+        }
+
+        /// Continue with a new error bar series (Y errors only).
+        pub fn error_bars<X, Y, E>(
+            $self_,
+            x_data: &X,
+            y_data: &Y,
+            y_errors: &E,
+        ) -> $crate::core::plot::PlotSeriesBuilder
+        where
+            X: $crate::data::NumericData1D,
+            Y: $crate::data::NumericData1D,
+            E: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().error_bars(x_data, y_data, y_errors)
+        }
+
+        /// Continue with a new Y-error-bar series from source-backed data.
+        pub fn error_bars_source<X, Y, E>(
+            $self_,
+            x_data: X,
+            y_data: Y,
+            y_errors: E,
+        ) -> $crate::core::plot::PlotSeriesBuilder
+        where
+            X: $crate::core::plot::IntoPlotData,
+            Y: $crate::core::plot::IntoPlotData,
+            E: $crate::core::plot::IntoPlotData,
+        {
+            $self_.$finalize().error_bars_source(x_data, y_data, y_errors)
+        }
+
+        /// Continue with a new error bar series (both X and Y errors).
+        pub fn error_bars_xy<X, Y, EX, EY>(
+            $self_,
+            x_data: &X,
+            y_data: &Y,
+            x_errors: &EX,
+            y_errors: &EY,
+        ) -> $crate::core::plot::PlotSeriesBuilder
+        where
+            X: $crate::data::NumericData1D,
+            Y: $crate::data::NumericData1D,
+            EX: $crate::data::NumericData1D,
+            EY: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().error_bars_xy(x_data, y_data, x_errors, y_errors)
+        }
+
+        /// Continue with a new X/Y error-bar series from source-backed data.
+        pub fn error_bars_xy_source<X, Y, EX, EY>(
+            $self_,
+            x_data: X,
+            y_data: Y,
+            x_errors: EX,
+            y_errors: EY,
+        ) -> $crate::core::plot::PlotSeriesBuilder
+        where
+            X: $crate::core::plot::IntoPlotData,
+            Y: $crate::core::plot::IntoPlotData,
+            EX: $crate::core::plot::IntoPlotData,
+            EY: $crate::core::plot::IntoPlotData,
+        {
+            $self_
+                .$finalize()
+                .error_bars_xy_source(x_data, y_data, x_errors, y_errors)
+        }
+    };
+}
+
 mod builder;
 mod config;
 mod configuration;
@@ -11331,291 +11620,7 @@ impl builder::IntoPlot for PlotSeriesBuilder {
 // Implement most Plot methods for PlotSeriesBuilder to allow chaining
 #[allow(deprecated)]
 impl PlotSeriesBuilder {
-    /// Continue with a new line series
-    pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
-    where
-        X: NumericData1D,
-        Y: NumericData1D,
-    {
-        self.end_series().line(x_data, y_data)
-    }
-
-    /// Continue with a new line series from source-backed data.
-    pub fn line_source<X, Y>(
-        self,
-        x_data: X,
-        y_data: Y,
-    ) -> PlotBuilder<crate::plots::basic::LineConfig>
-    where
-        X: IntoPlotData,
-        Y: IntoPlotData,
-    {
-        self.end_series().line_source(x_data, y_data)
-    }
-
-    /// Continue with a new scatter series
-    pub fn scatter<X, Y>(
-        self,
-        x_data: &X,
-        y_data: &Y,
-    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
-    where
-        X: NumericData1D,
-        Y: NumericData1D,
-    {
-        self.end_series().scatter(x_data, y_data)
-    }
-
-    /// Continue with a new scatter series from source-backed data.
-    pub fn scatter_source<X, Y>(
-        self,
-        x_data: X,
-        y_data: Y,
-    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
-    where
-        X: IntoPlotData,
-        Y: IntoPlotData,
-    {
-        self.end_series().scatter_source(x_data, y_data)
-    }
-
-    /// Continue with a new bar series
-    pub fn bar<S, V>(
-        self,
-        categories: &[S],
-        values: &V,
-    ) -> PlotBuilder<crate::plots::basic::BarConfig>
-    where
-        S: ToString,
-        V: NumericData1D,
-    {
-        self.end_series().bar(categories, values)
-    }
-
-    /// Continue with a new bar series from source-backed values.
-    pub fn bar_source<S, V>(
-        self,
-        categories: &[S],
-        values: V,
-    ) -> PlotBuilder<crate::plots::basic::BarConfig>
-    where
-        S: ToString,
-        V: IntoPlotData,
-    {
-        self.end_series().bar_source(categories, values)
-    }
-
-    /// Continue with a grouped-series scope after finalizing the current series.
-    pub fn group<F>(self, f: F) -> Plot
-    where
-        F: FnOnce(SeriesGroupBuilder) -> SeriesGroupBuilder,
-    {
-        self.end_series().group(f)
-    }
-
-    /// Continue with a histogram series.
-    pub fn histogram<D: NumericData1D>(
-        self,
-        data: &D,
-        config: Option<crate::plots::HistogramConfig>,
-    ) -> PlotSeriesBuilder {
-        self.end_series().histogram(data, config)
-    }
-
-    /// Continue with a histogram series from source-backed values.
-    pub fn histogram_source<D: IntoPlotData>(
-        self,
-        data: D,
-        config: Option<crate::plots::HistogramConfig>,
-    ) -> PlotSeriesBuilder {
-        self.end_series().histogram_source(data, config)
-    }
-
-    /// Continue with a box plot series.
-    pub fn boxplot<D: NumericData1D>(
-        self,
-        data: &D,
-        config: Option<crate::plots::BoxPlotConfig>,
-    ) -> PlotSeriesBuilder {
-        self.end_series().boxplot(data, config)
-    }
-
-    /// Continue with a box plot series from source-backed values.
-    pub fn boxplot_source<D: IntoPlotData>(
-        self,
-        data: D,
-        config: Option<crate::plots::BoxPlotConfig>,
-    ) -> PlotSeriesBuilder {
-        self.end_series().boxplot_source(data, config)
-    }
-
-    /// Continue with a heatmap series.
-    pub fn heatmap<D>(
-        self,
-        data: &D,
-        config: Option<crate::plots::heatmap::HeatmapConfig>,
-    ) -> PlotSeriesBuilder
-    where
-        D: NumericData2D + ?Sized,
-    {
-        self.end_series().heatmap(data, config)
-    }
-
-    /// Continue with a KDE series.
-    pub fn kde<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::KdeConfig>
-    where
-        T: Into<f64> + Copy,
-    {
-        self.end_series().kde(data)
-    }
-
-    /// Continue with an ECDF series.
-    pub fn ecdf<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::EcdfConfig>
-    where
-        T: Into<f64> + Copy,
-    {
-        self.end_series().ecdf(data)
-    }
-
-    /// Continue with a contour series.
-    pub fn contour<X, Y, Z>(self, x: &X, y: &Y, z: &Z) -> PlotBuilder<crate::plots::ContourConfig>
-    where
-        X: Data1D<f64>,
-        Y: Data1D<f64>,
-        Z: Data1D<f64>,
-    {
-        self.end_series().contour(x, y, z)
-    }
-
-    /// Continue with a pie series.
-    pub fn pie<V>(self, values: &V) -> PlotBuilder<crate::plots::PieConfig>
-    where
-        V: Data1D<f64>,
-    {
-        self.end_series().pie(values)
-    }
-
-    /// Continue with a radar series.
-    pub fn radar<S: AsRef<str>>(self, labels: &[S]) -> PlotBuilder<crate::plots::RadarConfig> {
-        self.end_series().radar(labels)
-    }
-
-    /// Continue with a violin series.
-    pub fn violin<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::ViolinConfig>
-    where
-        T: Into<f64> + Copy,
-    {
-        self.end_series().violin(data)
-    }
-
-    /// Continue with a new streaming line series
-    pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        self.end_series().line_streaming(stream)
-    }
-
-    /// Continue with a new streaming scatter series
-    pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        self.end_series().scatter_streaming(stream)
-    }
-
-    /// Continue with a new error bar series (Y errors only)
-    ///
-    /// This enables chaining multiple error bar series without ownership issues.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use ruviz::prelude::*;
-    ///
-    /// let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-    /// let y1 = vec![2.3, 3.5, 4.1, 5.8, 6.2];
-    /// let yerr1 = vec![0.3, 0.4, 0.25, 0.5, 0.35];
-    /// let y2 = vec![1.8, 2.9, 3.5, 4.2, 5.5];
-    /// let yerr2 = vec![0.3, 0.4, 0.3, 0.5, 0.4];
-    ///
-    /// Plot::new()
-    ///     .error_bars(&x, &y1, &yerr1)
-    ///     .label("Dataset 1")
-    ///     .error_bars(&x, &y2, &yerr2)  // Continuation - chains correctly
-    ///     .label("Dataset 2")
-    ///     .end_series()
-    ///     .legend_best()
-    ///     .save("multiple_errorbars.png")?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn error_bars<X, Y, E>(self, x_data: &X, y_data: &Y, y_errors: &E) -> PlotSeriesBuilder
-    where
-        X: NumericData1D,
-        Y: NumericData1D,
-        E: NumericData1D,
-    {
-        self.end_series().error_bars(x_data, y_data, y_errors)
-    }
-
-    /// Continue with a new Y-error-bar series from source-backed data.
-    pub fn error_bars_source<X, Y, E>(self, x_data: X, y_data: Y, y_errors: E) -> PlotSeriesBuilder
-    where
-        X: IntoPlotData,
-        Y: IntoPlotData,
-        E: IntoPlotData,
-    {
-        self.end_series()
-            .error_bars_source(x_data, y_data, y_errors)
-    }
-
-    /// Continue with a new error bar series (both X and Y errors)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use ruviz::prelude::*;
-    ///
-    /// let x = vec![1.0, 2.0, 3.0];
-    /// let y = vec![2.0, 4.0, 3.0];
-    /// let xerr = vec![0.1, 0.15, 0.1];
-    /// let yerr = vec![0.3, 0.4, 0.35];
-    ///
-    /// Plot::new()
-    ///     .error_bars_xy(&x, &y, &xerr, &yerr)
-    ///     .label("Full Uncertainty")
-    ///     .end_series()
-    ///     .save("xy_errors.png")?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn error_bars_xy<X, Y, EX, EY>(
-        self,
-        x_data: &X,
-        y_data: &Y,
-        x_errors: &EX,
-        y_errors: &EY,
-    ) -> PlotSeriesBuilder
-    where
-        X: NumericData1D,
-        Y: NumericData1D,
-        EX: NumericData1D,
-        EY: NumericData1D,
-    {
-        self.end_series()
-            .error_bars_xy(x_data, y_data, x_errors, y_errors)
-    }
-
-    /// Continue with a new X/Y error-bar series from source-backed data.
-    pub fn error_bars_xy_source<X, Y, EX, EY>(
-        self,
-        x_data: X,
-        y_data: Y,
-        x_errors: EX,
-        y_errors: EY,
-    ) -> PlotSeriesBuilder
-    where
-        X: IntoPlotData,
-        Y: IntoPlotData,
-        EX: IntoPlotData,
-        EY: IntoPlotData,
-    {
-        self.end_series()
-            .error_bars_xy_source(x_data, y_data, x_errors, y_errors)
-    }
+    impl_series_continuation_methods!(self.end_series());
 
     /// Set plot title
     pub fn title(mut self, title: impl Into<data::PlotText>) -> Self {
