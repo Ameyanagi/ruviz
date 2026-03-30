@@ -355,7 +355,7 @@ impl SvgRenderer {
 
     /// Draw a polygon outline.
     pub fn draw_polygon_outline(&mut self, points: &[(f32, f32)], color: Color, width: f32) {
-        if points.len() < 2 {
+        if points.len() < 3 {
             return;
         }
 
@@ -1587,6 +1587,18 @@ mod tests {
         assert!(svg.contains("svg"));
         assert!(svg.contains("rect"));
         assert!(svg.contains("line"));
+    }
+
+    #[test]
+    fn test_polygon_outline_requires_three_points() {
+        let mut renderer = SvgRenderer::new(200.0, 150.0);
+        renderer.draw_polygon_outline(&[(10.0, 10.0), (20.0, 20.0)], Color::BLACK, 2.0);
+
+        let svg = renderer.to_svg_string();
+        assert!(
+            !svg.contains("<polygon"),
+            "two-point polygon outlines should be ignored to match raster rendering"
+        );
     }
 
     #[test]
