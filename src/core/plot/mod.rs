@@ -139,7 +139,8 @@ use crate::render::gpu::GpuRenderer;
 ///
 /// Series methods (`.line()`, `.scatter()`, `.bar()`) return a [`PlotBuilder<C>`]
 /// that auto-finalizes when terminal methods (`.save()`, `.render()`) are called.
-/// No explicit `.end_series()` is needed.
+/// No explicit `.end_series()` is needed for fluent chaining, including transitions
+/// into compatible series builders and styled annotation methods.
 #[derive(Clone, Debug)]
 pub struct Plot {
     /// Display configuration (title, labels, dimensions, theme)
@@ -11412,6 +11413,101 @@ impl PlotSeriesBuilder {
         self.end_series().group(f)
     }
 
+    /// Continue with a histogram series.
+    pub fn histogram<D: NumericData1D>(
+        self,
+        data: &D,
+        config: Option<crate::plots::HistogramConfig>,
+    ) -> PlotSeriesBuilder {
+        self.end_series().histogram(data, config)
+    }
+
+    /// Continue with a histogram series from source-backed values.
+    pub fn histogram_source<D: IntoPlotData>(
+        self,
+        data: D,
+        config: Option<crate::plots::HistogramConfig>,
+    ) -> PlotSeriesBuilder {
+        self.end_series().histogram_source(data, config)
+    }
+
+    /// Continue with a box plot series.
+    pub fn boxplot<D: NumericData1D>(
+        self,
+        data: &D,
+        config: Option<crate::plots::BoxPlotConfig>,
+    ) -> PlotSeriesBuilder {
+        self.end_series().boxplot(data, config)
+    }
+
+    /// Continue with a box plot series from source-backed values.
+    pub fn boxplot_source<D: IntoPlotData>(
+        self,
+        data: D,
+        config: Option<crate::plots::BoxPlotConfig>,
+    ) -> PlotSeriesBuilder {
+        self.end_series().boxplot_source(data, config)
+    }
+
+    /// Continue with a heatmap series.
+    pub fn heatmap<D>(
+        self,
+        data: &D,
+        config: Option<crate::plots::heatmap::HeatmapConfig>,
+    ) -> PlotSeriesBuilder
+    where
+        D: NumericData2D + ?Sized,
+    {
+        self.end_series().heatmap(data, config)
+    }
+
+    /// Continue with a KDE series.
+    pub fn kde<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::KdeConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        self.end_series().kde(data)
+    }
+
+    /// Continue with an ECDF series.
+    pub fn ecdf<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::EcdfConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        self.end_series().ecdf(data)
+    }
+
+    /// Continue with a contour series.
+    pub fn contour<X, Y, Z>(self, x: &X, y: &Y, z: &Z) -> PlotBuilder<crate::plots::ContourConfig>
+    where
+        X: Data1D<f64>,
+        Y: Data1D<f64>,
+        Z: Data1D<f64>,
+    {
+        self.end_series().contour(x, y, z)
+    }
+
+    /// Continue with a pie series.
+    pub fn pie<V>(self, values: &V) -> PlotBuilder<crate::plots::PieConfig>
+    where
+        V: Data1D<f64>,
+    {
+        self.end_series().pie(values)
+    }
+
+    /// Continue with a radar series.
+    pub fn radar<S: AsRef<str>>(self, labels: &[S]) -> PlotBuilder<crate::plots::RadarConfig> {
+        self.end_series().radar(labels)
+    }
+
+    /// Continue with a violin series.
+    pub fn violin<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::ViolinConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        self.end_series().violin(data)
+    }
+
     /// Continue with a new streaming line series
     pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
         self.end_series().line_streaming(stream)
@@ -11794,6 +11890,21 @@ impl PlotSeriesBuilder {
         self
     }
 
+    /// Add a rectangle annotation with custom styling.
+    pub fn rect_styled(
+        mut self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        style: ShapeStyle,
+    ) -> Self {
+        self.plot
+            .annotations
+            .push(Annotation::rectangle_styled(x, y, width, height, style));
+        self
+    }
+
     /// Add a fill between two curves
     pub fn fill_between(mut self, x: &[f64], y1: &[f64], y2: &[f64]) -> Self {
         self.plot.annotations.push(Annotation::fill_between(
@@ -11810,6 +11921,25 @@ impl PlotSeriesBuilder {
             x.to_vec(),
             y.to_vec(),
             baseline,
+        ));
+        self
+    }
+
+    /// Add a fill between two curves with custom styling.
+    pub fn fill_between_styled(
+        mut self,
+        x: &[f64],
+        y1: &[f64],
+        y2: &[f64],
+        style: FillStyle,
+        where_positive: bool,
+    ) -> Self {
+        self.plot.annotations.push(Annotation::fill_between_styled(
+            x.to_vec(),
+            y1.to_vec(),
+            y2.to_vec(),
+            style,
+            where_positive,
         ));
         self
     }
@@ -13867,6 +13997,21 @@ mod tests {
                 width: 0,
                 height: 480
             }
+        ));
+    }
+
+    #[test]
+    fn test_plot_builder_can_add_styled_vline_without_end_series() {
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .vline_styled(5.0, Color::RED, 2.0, LineStyle::Dashed)
+            .into();
+
+        assert_eq!(plot.series_mgr.series.len(), 1);
+        assert_eq!(plot.annotations.len(), 1);
+        assert!(matches!(
+            plot.annotations[0],
+            Annotation::VLine { x, .. } if (x - 5.0).abs() < f64::EPSILON
         ));
     }
 

@@ -21,6 +21,22 @@
 //!     .save("kde.png")?;    // auto-finalize and save
 //! ```
 //!
+//! Mixed series and styled annotations can also continue without `.end_series()`:
+//!
+//! ```rust,no_run
+//! use ruviz::prelude::*;
+//!
+//! let x = vec![0.0, 1.0, 2.0];
+//! let y = vec![0.0, 1.0, 0.5];
+//!
+//! Plot::new()
+//!     .line(&x, &y)
+//!     .vline_styled(1.0, Color::RED, 2.0, LineStyle::Dashed)
+//!     .scatter(&x, &y)
+//!     .save("chained.png")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! # IntoPlot Trait
 //!
 //! The [`IntoPlot`] trait provides a unified interface for all builder types,
@@ -193,6 +209,32 @@ macro_rules! impl_terminal_methods {
                 self.finalize().scatter(x, y)
             }
 
+            /// Add a line series from source-backed data after finalizing the current series.
+            pub fn line_source<X, Y>(
+                self,
+                x: X,
+                y: Y,
+            ) -> PlotBuilder<crate::plots::basic::LineConfig>
+            where
+                X: super::IntoPlotData,
+                Y: super::IntoPlotData,
+            {
+                self.finalize().line_source(x, y)
+            }
+
+            /// Add a scatter series from source-backed data after finalizing the current series.
+            pub fn scatter_source<X, Y>(
+                self,
+                x: X,
+                y: Y,
+            ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
+            where
+                X: super::IntoPlotData,
+                Y: super::IntoPlotData,
+            {
+                self.finalize().scatter_source(x, y)
+            }
+
             /// Set legend position
             ///
             /// Finalizes the series and sets legend position on the resulting Plot.
@@ -215,12 +257,153 @@ macro_rules! impl_terminal_methods {
                 self.finalize().bar(categories, values)
             }
 
+            /// Add a bar series from source-backed values after finalizing the current series.
+            pub fn bar_source<S, V>(
+                self,
+                categories: &[S],
+                values: V,
+            ) -> PlotBuilder<crate::plots::basic::BarConfig>
+            where
+                S: ToString,
+                V: super::IntoPlotData,
+            {
+                self.finalize().bar_source(categories, values)
+            }
+
             /// Add a grouped-series scope after finalizing the current series.
             pub fn group<F>(self, f: F) -> super::Plot
             where
                 F: FnOnce(super::SeriesGroupBuilder) -> super::SeriesGroupBuilder,
             {
                 self.finalize().group(f)
+            }
+
+            /// Add a histogram series after finalizing the current series.
+            pub fn histogram<D: crate::data::NumericData1D>(
+                self,
+                data: &D,
+                config: Option<crate::plots::HistogramConfig>,
+            ) -> super::PlotSeriesBuilder {
+                self.finalize().histogram(data, config)
+            }
+
+            /// Add a histogram series from source-backed values after finalizing the current series.
+            pub fn histogram_source<D: super::IntoPlotData>(
+                self,
+                data: D,
+                config: Option<crate::plots::HistogramConfig>,
+            ) -> super::PlotSeriesBuilder {
+                self.finalize().histogram_source(data, config)
+            }
+
+            /// Add a box plot series after finalizing the current series.
+            pub fn boxplot<D: crate::data::NumericData1D>(
+                self,
+                data: &D,
+                config: Option<crate::plots::BoxPlotConfig>,
+            ) -> super::PlotSeriesBuilder {
+                self.finalize().boxplot(data, config)
+            }
+
+            /// Add a box plot series from source-backed values after finalizing the current series.
+            pub fn boxplot_source<D: super::IntoPlotData>(
+                self,
+                data: D,
+                config: Option<crate::plots::BoxPlotConfig>,
+            ) -> super::PlotSeriesBuilder {
+                self.finalize().boxplot_source(data, config)
+            }
+
+            /// Add a heatmap series after finalizing the current series.
+            pub fn heatmap<D>(
+                self,
+                data: &D,
+                config: Option<crate::plots::heatmap::HeatmapConfig>,
+            ) -> super::PlotSeriesBuilder
+            where
+                D: crate::data::NumericData2D + ?Sized,
+            {
+                self.finalize().heatmap(data, config)
+            }
+
+            /// Add a KDE series after finalizing the current series.
+            pub fn kde<T, D: crate::data::Data1D<T>>(
+                self,
+                data: &D,
+            ) -> PlotBuilder<crate::plots::KdeConfig>
+            where
+                T: Into<f64> + Copy,
+            {
+                self.finalize().kde(data)
+            }
+
+            /// Add an ECDF series after finalizing the current series.
+            pub fn ecdf<T, D: crate::data::Data1D<T>>(
+                self,
+                data: &D,
+            ) -> PlotBuilder<crate::plots::EcdfConfig>
+            where
+                T: Into<f64> + Copy,
+            {
+                self.finalize().ecdf(data)
+            }
+
+            /// Add a contour series after finalizing the current series.
+            pub fn contour<X, Y, Z>(
+                self,
+                x: &X,
+                y: &Y,
+                z: &Z,
+            ) -> PlotBuilder<crate::plots::ContourConfig>
+            where
+                X: crate::data::Data1D<f64>,
+                Y: crate::data::Data1D<f64>,
+                Z: crate::data::Data1D<f64>,
+            {
+                self.finalize().contour(x, y, z)
+            }
+
+            /// Add a pie series after finalizing the current series.
+            pub fn pie<V>(self, values: &V) -> PlotBuilder<crate::plots::PieConfig>
+            where
+                V: crate::data::Data1D<f64>,
+            {
+                self.finalize().pie(values)
+            }
+
+            /// Add a radar series after finalizing the current series.
+            pub fn radar<S: AsRef<str>>(
+                self,
+                labels: &[S],
+            ) -> PlotBuilder<crate::plots::RadarConfig> {
+                self.finalize().radar(labels)
+            }
+
+            /// Add a violin series after finalizing the current series.
+            pub fn violin<T, D: crate::data::Data1D<T>>(
+                self,
+                data: &D,
+            ) -> PlotBuilder<crate::plots::ViolinConfig>
+            where
+                T: Into<f64> + Copy,
+            {
+                self.finalize().violin(data)
+            }
+
+            /// Add a streaming line series after finalizing the current series.
+            pub fn line_streaming(
+                self,
+                stream: &crate::data::StreamingXY,
+            ) -> super::PlotSeriesBuilder {
+                self.finalize().line_streaming(stream)
+            }
+
+            /// Add a streaming scatter series after finalizing the current series.
+            pub fn scatter_streaming(
+                self,
+                stream: &crate::data::StreamingXY,
+            ) -> super::PlotSeriesBuilder {
+                self.finalize().scatter_streaming(stream)
             }
 
             /// Add an error bars series after finalizing the current series
@@ -252,6 +435,39 @@ macro_rules! impl_terminal_methods {
                 EY: crate::data::NumericData1D,
             {
                 self.finalize().error_bars_xy(x, y, x_errors, y_errors)
+            }
+
+            /// Add an error bars series from source-backed data after finalizing the current series.
+            pub fn error_bars_source<X, Y, E>(
+                self,
+                x: X,
+                y: Y,
+                y_errors: E,
+            ) -> super::PlotSeriesBuilder
+            where
+                X: super::IntoPlotData,
+                Y: super::IntoPlotData,
+                E: super::IntoPlotData,
+            {
+                self.finalize().error_bars_source(x, y, y_errors)
+            }
+
+            /// Add an X/Y error bars series from source-backed data after finalizing the current series.
+            pub fn error_bars_xy_source<X, Y, EX, EY>(
+                self,
+                x: X,
+                y: Y,
+                x_errors: EX,
+                y_errors: EY,
+            ) -> super::PlotSeriesBuilder
+            where
+                X: super::IntoPlotData,
+                Y: super::IntoPlotData,
+                EX: super::IntoPlotData,
+                EY: super::IntoPlotData,
+            {
+                self.finalize()
+                    .error_bars_xy_source(x, y, x_errors, y_errors)
             }
 
             /// Finish configuring this series and return to the main Plot
@@ -1038,11 +1254,56 @@ where
         self
     }
 
+    /// Add an arrow annotation with custom styling
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn arrow_styled(
+        mut self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        style: crate::core::ArrowStyle,
+    ) -> Self {
+        self.plot = self.plot.arrow_styled(x1, y1, x2, y2, style);
+        self
+    }
+
+    /// Add a text annotation
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn text<S: Into<String>>(mut self, x: f64, y: f64, text: S) -> Self {
+        self.plot = self.plot.text(x, y, text);
+        self
+    }
+
+    /// Add a text annotation with custom styling
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn text_styled<S: Into<String>>(
+        mut self,
+        x: f64,
+        y: f64,
+        text: S,
+        style: crate::core::TextStyle,
+    ) -> Self {
+        self.plot = self.plot.text_styled(x, y, text, style);
+        self
+    }
+
     /// Add a horizontal reference line
     ///
     /// This method forwards to the inner Plot.
     pub fn hline(mut self, y: f64) -> Self {
         self.plot = self.plot.hline(y);
+        self
+    }
+
+    /// Add a horizontal reference line with custom styling
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn hline_styled(mut self, y: f64, color: Color, width: f32, style: LineStyle) -> Self {
+        self.plot = self.plot.hline_styled(y, color, width, style);
         self
     }
 
@@ -1054,11 +1315,67 @@ where
         self
     }
 
+    /// Add a vertical reference line with custom styling
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn vline_styled(mut self, x: f64, color: Color, width: f32, style: LineStyle) -> Self {
+        self.plot = self.plot.vline_styled(x, color, width, style);
+        self
+    }
+
+    /// Add a rectangle annotation
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn rect(mut self, x: f64, y: f64, width: f64, height: f64) -> Self {
+        self.plot = self.plot.rect(x, y, width, height);
+        self
+    }
+
+    /// Add a rectangle annotation with custom styling
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn rect_styled(
+        mut self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        style: crate::core::ShapeStyle,
+    ) -> Self {
+        self.plot = self.plot.rect_styled(x, y, width, height, style);
+        self
+    }
+
     /// Add a fill between two curves
     ///
     /// This method forwards to the inner Plot.
     pub fn fill_between(mut self, x: &[f64], y1: &[f64], y2: &[f64]) -> Self {
         self.plot = self.plot.fill_between(x, y1, y2);
+        self
+    }
+
+    /// Add a fill between a curve and a baseline
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn fill_to_baseline(mut self, x: &[f64], y: &[f64], baseline: f64) -> Self {
+        self.plot = self.plot.fill_to_baseline(x, y, baseline);
+        self
+    }
+
+    /// Add a styled fill between two curves
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn fill_between_styled(
+        mut self,
+        x: &[f64],
+        y1: &[f64],
+        y2: &[f64],
+        style: crate::core::FillStyle,
+        where_positive: bool,
+    ) -> Self {
+        self.plot = self
+            .plot
+            .fill_between_styled(x, y1, y2, style, where_positive);
         self
     }
 
