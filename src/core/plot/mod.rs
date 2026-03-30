@@ -7634,24 +7634,15 @@ impl Plot {
                 .iter()
                 .map(|point| area.data_to_screen(point.x, point.y))
                 .collect();
-            svg.draw_polyline(
-                &points,
-                line_color,
-                data.config.line_width,
-                LineStyle::Solid,
-            );
+            let scaled_line_width = svg.render_scale().points_to_pixels(data.config.line_width);
+            svg.draw_polyline(&points, line_color, scaled_line_width, LineStyle::Solid);
         }
 
         if data.config.marker_size > 0.0 {
+            let scaled_marker_size = svg.render_scale().points_to_pixels(data.config.marker_size);
             for point in &data.points {
                 let (sx, sy) = area.data_to_screen(point.x, point.y);
-                svg.draw_marker(
-                    sx,
-                    sy,
-                    data.config.marker_size,
-                    MarkerStyle::Circle,
-                    line_color,
-                );
+                svg.draw_marker(sx, sy, scaled_marker_size, MarkerStyle::Circle, line_color);
             }
         }
 
@@ -14397,6 +14388,40 @@ mod tests {
         assert!(
             svg.contains("0°"),
             "expected polar theta labels in SVG: {svg}"
+        );
+    }
+
+    #[test]
+    fn test_polar_svg_scales_line_width_and_markers_with_dpi() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+
+        let plot: Plot = Plot::new()
+            .dpi(200)
+            .polar_line(&r, &theta)
+            .marker_size(13.0)
+            .into();
+        let (expected_stroke_width, expected_marker_radius) =
+            match &plot.series_mgr.series[0].series_type {
+                SeriesType::Polar { data } => (
+                    plot.render_scale().points_to_pixels(data.config.line_width),
+                    plot.render_scale()
+                        .points_to_pixels(data.config.marker_size)
+                        / 2.0,
+                ),
+                other => panic!("expected polar series, got {other:?}"),
+            };
+        let svg = plot
+            .render_to_svg()
+            .expect("polar SVG render should succeed");
+
+        assert!(
+            svg.contains(&format!(r#"stroke-width="{expected_stroke_width:.2}""#)),
+            "expected polar line width to scale with DPI: {svg}"
+        );
+        assert!(
+            svg.contains(&format!(r#"r="{expected_marker_radius:.2}" fill=""#)),
+            "expected polar marker radius to scale with DPI: {svg}"
         );
     }
 
