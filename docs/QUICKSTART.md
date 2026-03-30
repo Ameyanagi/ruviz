@@ -2,14 +2,15 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.1.5
+## What's New in v0.2.0
 
-- New `ruviz-gpui` crate: GPUI component adapter for interactive and reactive plotting.
-- GPUI interactive session support and reactive plotting hooks for embedded and streaming use cases.
-- Default tick marks now render on all four sides of the plot frame (`.ticks_bottom_left()` restores the old layout).
+- Experimental browser and wasm support via `ruviz-web` and the npm `ruviz` SDK.
+- Mixed-coordinate inset rendering for pie, radar, and polar content inside Cartesian plots.
+- Typst APIs are now compile-time gated behind the `typst-math` feature.
+- Builder chaining parity fixes remove the need for explicit `end_series()` workarounds in common flows.
 
 See full details:
-- [Release notes for v0.1.5](releases/v0.1.5.md)
+- [Release notes for v0.2.0](releases/v0.2.0.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -23,7 +24,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.1.5"
+ruviz = "0.2.0"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -62,8 +63,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.1.5"
-ruviz-gpui = "0.1.0"
+ruviz = "0.2.0"
+ruviz-gpui = "0.2.0"
 ```
 
 The embedded GPUI plot now supports the same core workflow as the standalone
@@ -85,7 +86,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", features = ["typst-math"] }
+ruviz = { version = "0.2.0", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
@@ -98,7 +99,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", default-features = false }
+ruviz = { version = "0.2.0", default-features = false }
 
 [features]
 default = []
@@ -349,7 +350,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", features = ["polars_support"] }
+ruviz = { version = "0.2.0", features = ["polars_support"] }
 polars = "0.35"
 ```
 
@@ -376,14 +377,14 @@ Plot::new()
 Enable parallel rendering:
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", features = ["parallel"] }
+ruviz = { version = "0.2.0", features = ["parallel"] }
 ```
 
 ### For Very Large Datasets (>100K points)
 Enable SIMD optimization:
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", features = ["parallel", "simd"] }
+ruviz = { version = "0.2.0", features = ["parallel", "simd"] }
 ```
 
 ### Large Dataset Export

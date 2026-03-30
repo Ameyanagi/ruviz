@@ -11,7 +11,7 @@ gpui = { git = "https://github.com/Ameyanagi/zed", rev = "6e43ecd17f28afe6f55df3
 
 [package]
 name = "ruviz"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.87"
 authors = ["Ruviz Contributors"]

@@ -11,7 +11,7 @@
 
 - [Changelog](CHANGELOG.md)
 - [Release Notes Index](docs/releases/README.md)
-- [Latest Release Notes (v0.1.5)](docs/releases/v0.1.5.md)
+- [Latest Release Notes (v0.2.0)](docs/releases/v0.2.0.md)
 
 ## Quick Start
 
@@ -61,6 +61,7 @@ Need typeset math labels? See [Typst Text Mode](#typst-text-mode) below.
 - **Parallel rendering**: Multi-threaded for large datasets (rayon)
 - **GPU acceleration**: Optional wgpu backend (experimental)
 - **Interactive plots**: Optional winit window integration
+- **Mixed-coordinate insets**: Embed polar, pie, and radar plots inside Cartesian figures
 - **Browser runtime**: Experimental `ruviz-web` adapter and `ruviz` npm SDK for `wasm32` canvas rendering
 - **Animation**: GIF export with `record!` macro and easing functions
 - **Cross-platform**: Linux, macOS, Windows, and experimental browser/wasm targets
@@ -71,7 +72,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruviz = "0.1.5"
+ruviz = "0.2.0"
 ```
 
 ### Feature Flags
@@ -80,7 +81,7 @@ Choose features based on your needs:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", features = ["parallel", "simd"] }
+ruviz = { version = "0.2.0", features = ["parallel", "simd"] }
 ```
 
 | Feature | Description | Use When |
@@ -126,7 +127,7 @@ Enable Typst text rendering:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", features = ["typst-math"] }
+ruviz = { version = "0.2.0", features = ["typst-math"] }
 ```
 
 Use `.typst(true)` on a plot to render all static text surfaces (titles, axis labels, ticks,
@@ -167,7 +168,7 @@ error[E0599]: no variant or associated item named `Typst` found for enum `TextEn
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", default-features = false }
+ruviz = { version = "0.2.0", default-features = false }
 
 [features]
 default = []
@@ -322,7 +323,7 @@ Enable the `animation` feature for this example:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.1.5", features = ["animation"] }
+ruviz = { version = "0.2.0", features = ["animation"] }
 ```
 
 ```rust
@@ -506,6 +507,6 @@ at your option.
 
 ---
 
-**Status**: v0.1.5 - Early development, API may change. Production use at your own risk.
+**Status**: v0.2.0 - Early development, API may change. Production use at your own risk.
 
 **Support**: [Open an issue](https://github.com/Ameyanagi/ruviz/issues) or [start a discussion](https://github.com/Ameyanagi/ruviz/discussions)

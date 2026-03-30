@@ -4,9 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- _None yet._
+
+## [0.2.0] - 2026-03-31
+
 ### Breaking Changes
 
 - Typst selection is now compile-time gated behind `typst-math`. `Plot::typst(true)`, builder forwarding to `.typst(true)`, and `TextEngineMode::Typst` are unavailable unless the feature is enabled. If your crate makes Typst optional, guard those calls with `#[cfg(feature = "typst-math")]` instead of expecting a runtime `FeatureNotEnabled` error. Without the feature, `.typst(true)` now fails with a compile error such as `no method named 'typst' found`.
+
+### Added
+
+- Added experimental browser and `wasm32` support via the `ruviz-web` crate and the public npm `ruviz` SDK.
+- Added mixed-coordinate inset rendering so Cartesian plots can embed polar, pie, and radar series with configurable inset layout.
+- Added builder chaining parity for common continuation flows and styled annotations, removing explicit `end_series()` workarounds in the supported cases.
+
+### Changed
+
+- Unified browser package naming on `ruviz` and made the JS workspace Bun-first for build, lint, and packaging flows.
+- Aligned raster and SVG mixed-inset rendering behavior, including clipping, DPI-scaled strokes, and auto-placement spacing.
+- Restored and committed golden-image visual fixtures so release validation has stable baseline artifacts again.
+
+### Fixed
+
+- Stabilized interactive zoom/pan, wheel direction, context menu, and save/copy shortcuts across the interactive and GPUI paths.
+- Fixed ndarray view recursion and several export-path DPI, validation, and overwrite edge cases in PNG/SVG rendering.
+- Fixed browser session timing and destroy races, and kept wasm/browser builds continuously checked in CI.
 
 ## [0.1.5] - 2026-03-23
 
@@ -93,7 +115,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Ameyanagi/ruviz/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/Ameyanagi/ruviz/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Ameyanagi/ruviz/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Ameyanagi/ruviz/compare/v0.1.2...v0.1.3

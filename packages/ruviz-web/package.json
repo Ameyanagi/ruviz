@@ -1,6 +1,6 @@
 {
   "name": "ruviz",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Browser-first JS/TS SDK for ruviz WebAssembly rendering",
   "type": "module",
   "license": "MIT OR Apache-2.0",
