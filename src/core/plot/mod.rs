@@ -5829,32 +5829,7 @@ impl Plot {
             SeriesType::Radar { data } => {
                 // Use PlotRender trait to render Radar with 1:1 aspect ratio
                 // and extra top padding for title clearance
-                let (square_area, adjusted_y, adjusted_height) = {
-                    let size = plot_area.width().min(plot_area.height());
-                    let x_offset = (plot_area.width() - size) / 2.0;
-                    // Add extra top margin to avoid title overlap with top axis labels
-                    // Radar axis labels are positioned at r=1.15 (15% outside the chart)
-                    // Plus we need space for the label text itself (~10% more)
-                    // Total: 25% clearance for proper separation
-                    let title_clearance = size * 0.20;
-                    let y_offset = (plot_area.height() - size) / 2.0 + title_clearance;
-                    let adjusted_size = size - title_clearance;
-                    (
-                        plot_area.x() + x_offset,
-                        plot_area.y() + y_offset,
-                        adjusted_size,
-                    )
-                };
-                let radar_plot_area = crate::plots::PlotArea::new(
-                    square_area,
-                    adjusted_y,
-                    adjusted_height, // square
-                    adjusted_height, // square
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                );
+                let radar_plot_area = Self::radar_plot_area(plot_area, x_min, x_max, y_min, y_max);
                 data.render(renderer, &radar_plot_area, &self.display.theme, color)?;
             }
             SeriesType::Polar { data } => {
@@ -7192,7 +7167,6 @@ impl Plot {
         }
 
         let mut auto_series = Vec::new();
-        let mut auto_cell_width = 0.0_f32;
         let mut auto_cell_height = 0.0_f32;
         let mut auto_gap = 0.0_f32;
 
@@ -7205,7 +7179,6 @@ impl Plot {
             if matches!(layout.anchor, InsetAnchor::Auto) {
                 let width_px = plot_area.width() * layout.width_frac;
                 let height_px = plot_area.height() * layout.height_frac;
-                auto_cell_width = auto_cell_width.max(width_px);
                 auto_cell_height = auto_cell_height.max(height_px);
                 auto_gap = auto_gap.max(render_scale.points_to_pixels(layout.margin_pt));
                 auto_series.push((idx, layout, width_px, height_px));
@@ -7221,21 +7194,47 @@ impl Plot {
         let cols = if auto_series.len() <= 1 { 1 } else { 2 };
         let gap = auto_gap.max(4.0);
 
-        for (slot, (idx, _layout, width_px, height_px)) in auto_series.into_iter().enumerate() {
-            let col = slot % cols;
-            let row = slot / cols;
-            let x = plot_area.x() + plot_area.width()
-                - gap
-                - width_px
-                - col as f32 * (auto_cell_width + gap);
+        for (row, row_series) in auto_series.chunks(cols).enumerate() {
+            let x = plot_area.x() + plot_area.width() - gap;
             let y = plot_area.y() + gap + row as f32 * (auto_cell_height + gap);
+            let mut right_edge = x;
 
-            rects[idx] = Some(Self::clamp_inset_rect(
-                plot_area, x, y, width_px, height_px,
-            )?);
+            for (idx, _layout, width_px, height_px) in row_series.iter().copied() {
+                let inset_x = right_edge - width_px;
+                rects[idx] = Some(Self::clamp_inset_rect(
+                    plot_area, inset_x, y, width_px, height_px,
+                )?);
+                right_edge = inset_x - gap;
+            }
         }
 
         Ok(rects)
+    }
+
+    fn radar_plot_area(
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> crate::plots::PlotArea {
+        let size = plot_area.width().min(plot_area.height());
+        let x_offset = (plot_area.width() - size) * 0.5;
+        let y_offset = (plot_area.height() - size) * 0.5;
+        // Leave headroom for the top axis label while keeping portrait insets centered.
+        let title_clearance = size * 0.20;
+        let adjusted_size = (size - title_clearance).max(1.0);
+
+        crate::plots::PlotArea::new(
+            plot_area.x() + x_offset,
+            plot_area.y() + y_offset + title_clearance,
+            adjusted_size,
+            adjusted_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
     }
 
     fn render_series_collection_normal(
@@ -7478,20 +7477,7 @@ impl Plot {
             return Ok(());
         }
 
-        let size = plot_area.width().min(plot_area.height());
-        let x_offset = (plot_area.width() - size) * 0.5;
-        let title_clearance = size * 0.20;
-        let adjusted_size = (size - title_clearance).max(1.0);
-        let area = crate::plots::PlotArea::new(
-            plot_area.x() + x_offset,
-            plot_area.y() + title_clearance,
-            adjusted_size,
-            adjusted_size,
-            -1.25,
-            1.25,
-            -1.25,
-            1.25,
-        );
+        let area = Self::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
 
         if data.config.show_grid {
             let grid_color = self.display.theme.grid_color;
@@ -10889,22 +10875,44 @@ impl Plot {
         // Render each series
         for (idx, series) in snapshot_series.iter().enumerate() {
             let default_color = self.display.theme.get_color(idx);
-            let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
+            let inset_rect = inset_rects[idx];
+            let (series_area, series_bounds) = if let Some(inset_rect) = inset_rect {
                 (inset_rect, self.raw_bounds_for_single_series(series)?)
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
 
-            self.render_series_svg(
-                &mut svg,
-                series,
-                default_color,
-                series_area,
-                series_bounds.0,
-                series_bounds.1,
-                series_bounds.2,
-                series_bounds.3,
-            )?;
+            if let Some(inset_rect) = inset_rect {
+                let inset_clip_id = svg.add_clip_rect(
+                    inset_rect.x(),
+                    inset_rect.y(),
+                    inset_rect.width(),
+                    inset_rect.height(),
+                );
+                svg.start_clip_group(&inset_clip_id);
+                self.render_series_svg(
+                    &mut svg,
+                    series,
+                    default_color,
+                    series_area,
+                    series_bounds.0,
+                    series_bounds.1,
+                    series_bounds.2,
+                    series_bounds.3,
+                )?;
+                svg.end_group();
+            } else {
+                self.render_series_svg(
+                    &mut svg,
+                    series,
+                    default_color,
+                    series_area,
+                    series_bounds.0,
+                    series_bounds.1,
+                    series_bounds.2,
+                    series_bounds.3,
+                )?;
+            }
         }
 
         svg.end_group(); // End clip group
@@ -14467,6 +14475,68 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_placed_insets_preserve_gap_with_mixed_sizes() {
+        let theta = vec![0.0, std::f64::consts::PI * 0.5, std::f64::consts::PI];
+        let r = vec![1.0, 2.0, 1.5];
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 10.0], &[0.0, 1.0])
+            .pie(&[2.0, 3.0, 4.0])
+            .inset_size_frac(0.18, 0.18)
+            .polar_line(&r, &theta)
+            .inset_size_frac(0.35, 0.35)
+            .into();
+
+        let plot_area =
+            tiny_skia::Rect::from_ltrb(0.0, 0.0, 1000.0, 800.0).expect("valid test plot area");
+        let rects = plot
+            .inset_rects_for_series(&plot.series_mgr.series, plot_area, plot.render_scale())
+            .expect("auto inset rects should be computed");
+
+        let right_inset = rects[1].expect("pie inset rect");
+        let left_inset = rects[2].expect("polar inset rect");
+        let actual_gap = right_inset.x() - (left_inset.x() + left_inset.width());
+        let expected_gap = plot
+            .render_scale()
+            .points_to_pixels(InsetLayout::DEFAULT_MARGIN_PT)
+            .max(4.0);
+
+        assert!(
+            (actual_gap - expected_gap).abs() < 0.01,
+            "auto insets should keep a constant inter-column gap: {} vs {}",
+            actual_gap,
+            expected_gap
+        );
+    }
+
+    #[test]
+    fn test_radar_plot_area_centers_portrait_insets_before_title_clearance() {
+        let plot_area =
+            tiny_skia::Rect::from_ltrb(100.0, 200.0, 300.0, 600.0).expect("valid test rect");
+        let area = Plot::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
+
+        assert!(
+            (area.x - 100.0).abs() < 0.01,
+            "unexpected radar inset x: {}",
+            area.x
+        );
+        assert!(
+            (area.y - 340.0).abs() < 0.01,
+            "unexpected radar inset y: {}",
+            area.y
+        );
+        assert!(
+            (area.width - 160.0).abs() < 0.01,
+            "unexpected radar inset width: {}",
+            area.width
+        );
+        assert!(
+            (area.height - 160.0).abs() < 0.01,
+            "unexpected radar inset height: {}",
+            area.height
+        );
+    }
+
+    #[test]
     fn test_mixed_cartesian_pie_renders_svg_with_inset_polygons() {
         let svg = Plot::new()
             .line(&[0.0, 1.0, 2.0], &[1.0, 3.0, 2.0])
@@ -14482,6 +14552,10 @@ mod tests {
         assert!(
             svg.contains("22.2%"),
             "expected pie percentage labels in SVG: {svg}"
+        );
+        assert!(
+            svg.matches("<clipPath").count() >= 2,
+            "expected a nested inset clip path in addition to the main plot clip: {svg}"
         );
     }
 
