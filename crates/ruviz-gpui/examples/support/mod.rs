@@ -10,7 +10,7 @@ pub fn application() -> gpui::Application {
 
 #[cfg(not(target_os = "macos"))]
 pub fn application() -> gpui::Application {
-    gpui::Application::new()
+    panic!("construct a native GPUI application in the host app on this platform")
 }
 
 #[allow(dead_code)]

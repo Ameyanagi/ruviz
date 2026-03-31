@@ -504,8 +504,8 @@ impl RealTimeRenderer {
         height: u32,
         session_managed_overlay: bool,
     ) -> Result<Option<Vec<u8>>> {
-        let render_annotations = !state.annotations.is_empty()
-            && !(session_managed_overlay && self.should_defer_nonessential_overlays(state));
+        let render_annotations = !(state.annotations.is_empty()
+            || (session_managed_overlay && self.should_defer_nonessential_overlays(state)));
         let render_brush = state.brushed_region.is_some();
 
         if !render_annotations && !render_brush {

@@ -190,6 +190,30 @@ jobs:
             target
           key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install GPUI Linux build dependencies
+        if: matrix.platform.name == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            cmake \
+            libasound2-dev \
+            libfontconfig-dev \
+            libglib2.0-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libva-dev \
+            libvulkan1 \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libzstd-dev \
+            musl-dev \
+            musl-tools \
+            pkg-config
+
       - name: Install cross
         if: matrix.platform.cross
         run: cargo install cross --version 0.2.5 --locked
@@ -201,6 +225,14 @@ jobs:
       - name: Build (native)
         if: ${{ !matrix.platform.cross }}
         run: cargo check --target ${{ matrix.platform.target }}
+
+      - name: Check interactive desktop build
+        if: ${{ !matrix.platform.cross }}
+        run: cargo check --target ${{ matrix.platform.target }} --features interactive
+
+      - name: Check ruviz-gpui desktop build
+        if: ${{ !matrix.platform.cross }}
+        run: cargo check --target ${{ matrix.platform.target }} -p ruviz-gpui
 
   wasm-web:
     name: WASM + Web

@@ -438,7 +438,15 @@ Current caveats:
 
 **Q: Does ruviz support interactive plots?**
 
-A: Yes, experimentally. Enable the `interactive` feature and start from `examples/basic_interaction.rs`, `examples/interactive_multi_series.rs`, `examples/interactive_scatter_clusters.rs`, or `examples/interactive_heatmap.rs`. The current window controls are mouse-wheel zoom, left-drag pan, right-click context menu, right-drag box zoom, `Escape` reset, plus `Cmd/Ctrl+S` for PNG export and `Cmd/Ctrl+C` for image copy. For GIF export examples instead of live windows, enable `animation` and run `examples/animation_basic.rs` or `examples/animation_wave.rs`.
+A: Yes, experimentally. The standalone interactive window and `ruviz-gpui`
+desktop adapter are supported on Linux, macOS, and Windows. Enable the
+`interactive` feature and start from `examples/basic_interaction.rs`,
+`examples/interactive_multi_series.rs`, `examples/interactive_scatter_clusters.rs`,
+or `examples/interactive_heatmap.rs`. The current window controls are
+mouse-wheel zoom, left-drag pan, right-click context menu, right-drag box zoom,
+`Escape` reset, plus `Cmd/Ctrl+S` for PNG export and `Cmd/Ctrl+C` for image
+copy. For GIF export examples instead of live windows, enable `animation` and
+run `examples/animation_basic.rs` or `examples/animation_wave.rs`.
 
 If the interactive window does not appear on macOS, keep `show_interactive(...)`
 on a main/current-thread Tokio runtime and run it from a local GUI session rather

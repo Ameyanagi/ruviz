@@ -356,6 +356,9 @@ Plot::new()
 
 ### Linux
 
+**Desktop interactive backends**: `interactive` and `ruviz-gpui` are supported
+on Linux.
+
 **Font rendering**: System fonts automatically detected from:
 - `/usr/share/fonts/`
 - `~/.local/share/fonts/`
@@ -374,14 +377,18 @@ Plot::new()
 
 ### Windows
 
+**Desktop interactive backends**: `interactive` and `ruviz-gpui` are supported
+on the recommended `x86_64-pc-windows-msvc` target.
+
 **Font rendering**: Fonts loaded from Windows registry
 
-**MSVC vs GNU**: Both toolchains supported:
+**MSVC vs GNU**: The core `ruviz` crate supports both toolchains, but the
+desktop interactive verification path uses MSVC:
 ```bash
 # MSVC (default)
 rustup default stable-msvc
 
-# GNU (MinGW)
+# GNU (MinGW) for core-only workflows
 rustup default stable-gnu
 ```
 
