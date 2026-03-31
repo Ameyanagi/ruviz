@@ -101,28 +101,7 @@ jobs:
         run: bun run check:web
 
       - name: Install GPUI Linux build dependencies
-        run: |
-          # Mirror the Ubuntu dependency subset required by upstream GPUI/Zed
-          # so Linux compile verification does not depend on the runner image.
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            cmake \
-            libasound2-dev \
-            libfontconfig-dev \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libsqlite3-dev \
-            libssl-dev \
-            libva-dev \
-            libvulkan1 \
-            libwayland-dev \
-            libx11-xcb-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libzstd-dev \
-            pkg-config
+        uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Build release
         run: cargo build --release --all-features
@@ -266,27 +245,7 @@ jobs:
 
       - name: Install GPUI Linux build dependencies
         if: steps.gpui-version.outputs.published != 'true'
-        run: |
-          # cargo publish verifies the package by building it first.
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            cmake \
-            libasound2-dev \
-            libfontconfig-dev \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libsqlite3-dev \
-            libssl-dev \
-            libva-dev \
-            libvulkan1 \
-            libwayland-dev \
-            libx11-xcb-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            libzstd-dev \
-            pkg-config
+        uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Wait for ruviz-gpui packaging to resolve against crates.io
         if: steps.gpui-version.outputs.published != 'true'
