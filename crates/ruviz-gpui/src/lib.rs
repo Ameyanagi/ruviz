@@ -25,9 +25,9 @@ mod platform_impl {
     };
     use gpui::{
         AnyElement, App, Bounds, Context, Corners, Entity, FocusHandle, Focusable,
-        InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-        MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point, Render, RenderImage, ScrollDelta,
-        ScrollWheelEvent, Task, Window, canvas, div, point, prelude::*, px, rgb, rgba, size,
+        InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+        MouseUpEvent, ObjectFit, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent,
+        Task, Window, canvas, div, point, prelude::*, px, rgb, rgba, size,
     };
     use image::{Frame, ImageBuffer, Rgba};
     use ruviz::{
