@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn pixel_is_dark(image: &Image, x: u32, y: u32) -> bool {

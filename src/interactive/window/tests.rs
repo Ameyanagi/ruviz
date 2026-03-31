@@ -1,4 +1,3 @@
-
 use super::*;
 use std::sync::{Arc, Mutex};
 use winit::keyboard::ModifiersState;

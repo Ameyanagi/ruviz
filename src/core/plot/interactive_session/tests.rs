@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::data::{Observable, StreamingXY, signal};
 use crate::prelude::Plot;

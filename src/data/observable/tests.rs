@@ -1,4 +1,3 @@
-
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::thread;

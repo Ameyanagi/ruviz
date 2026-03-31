@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn parse_svg_attr(line: &str, attr: &str) -> f32 {
