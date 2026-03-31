@@ -4,8 +4,9 @@ members = ["crates/ruviz-gpui", "crates/ruviz-web"]
 default-members = ["."]
 resolver = "2"
 
-# Temporary GPUI override for macOS right-drag delivery.
-# Remove this patch once crates.io ships a gpui release with the fix from
+# Temporary workspace-wide GPUI override while crates.io still ships gpui 0.2.2.
+# This applies on every target because `[patch.crates-io]` cannot be target-gated;
+# the specific fix we need is the macOS right-drag delivery change from
 # https://github.com/zed-industries/zed/pull/49637.
 [patch.crates-io]
 gpui = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea5ef0e6886b9ac1853aaead9ddd59f" }
