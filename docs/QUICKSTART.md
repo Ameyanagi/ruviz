@@ -69,6 +69,9 @@ ruviz-gpui = "0.2.0"
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
 MSVC toolchain (`x86_64-pc-windows-msvc`) for the recommended CI/native path.
+On Linux, `ruviz-gpui` uses GTK-backed native file dialogs, so install GTK3
+development headers before building it, for example `sudo apt-get install
+libgtk-3-dev` on Ubuntu/Debian.
 
 The embedded GPUI plot now supports the same core workflow as the standalone
 interactive window:
@@ -81,9 +84,7 @@ interactive window:
 - `Cmd/Ctrl+C` to copy the current plot image
 
 See [`crates/ruviz-gpui/examples/static_embed.rs`](../crates/ruviz-gpui/examples/static_embed.rs)
-for a minimal component-wiring example. On Linux and Windows, embed the plot in
-your existing GPUI application bootstrap rather than relying on the example
-launcher helper.
+for a minimal component-wiring example.
 
 ## Optional: Math Labels with Typst
 

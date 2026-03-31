@@ -6,7 +6,7 @@ use gpui::{
 use ruviz::{data::Observable, prelude::*};
 use ruviz_gpui::{InteractionOptions, PerformancePreset, RuvizPlot, plot_builder};
 use std::time::Duration;
-use support::{application, sleep};
+use support::{application, exit_on_window_open_failure, sleep};
 
 const WINDOW_SECONDS: f64 = 12.0;
 const SAMPLE_COUNT: usize = 480;
@@ -119,14 +119,16 @@ impl Render for FixedBoundsDashboardDemo {
 fn main() {
     application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1080.0), px(720.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| FixedBoundsDashboardDemo::new(window, cx)),
-        )
-        .expect("fixed-bounds dashboard window should open");
+        exit_on_window_open_failure(
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| cx.new(|cx| FixedBoundsDashboardDemo::new(window, cx)),
+            ),
+            "fixed-bounds dashboard",
+        );
         cx.activate(true);
     });
 }

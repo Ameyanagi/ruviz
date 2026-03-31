@@ -2,7 +2,7 @@
 name = "ruviz-web"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 description = "Browser runtime adapter for ruviz"
 repository = "https://github.com/Ameyanagi/ruviz"

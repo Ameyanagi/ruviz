@@ -59,10 +59,6 @@ The built-in GPUI context menu includes:
 - `Copy Cursor Coordinates`
 - `Copy Visible Bounds`
 
-The repository examples demonstrate the component wiring, but on Linux and
-Windows the host application should provide the native GPUI application
-bootstrap.
-
 Host applications can also trigger the same built-in actions directly from the
 `RuvizPlot` runtime methods, so they are not limited to the right-click menu.
 

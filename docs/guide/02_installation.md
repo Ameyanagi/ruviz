@@ -6,7 +6,7 @@ Complete guide to setting up ruviz in your Rust project.
 
 ### Rust Installation
 
-ruviz requires **Rust 1.87 or later**. Check your version:
+ruviz requires **Rust 1.92 or later**. Check your version:
 
 ```bash
 rustc --version
@@ -273,12 +273,12 @@ rustup update
 
 ### Feature Conflicts
 
-**Problem**: `error: package ruviz v0.2.0 cannot be built because it requires rustc 1.87 or newer`
+**Problem**: `error: package ruviz v0.2.0 cannot be built because it requires rustc 1.92 or newer`
 
 **Solution**: Update Rust:
 ```bash
 rustup update stable
-rustc --version  # Verify ≥ 1.87
+rustc --version  # Verify ≥ 1.92
 ```
 
 ### GPU Feature Issues
@@ -358,6 +358,13 @@ Plot::new()
 
 **Desktop interactive backends**: `interactive` and `ruviz-gpui` are supported
 on Linux.
+
+**Linux desktop build prerequisite**: install GTK3 development headers before
+building `interactive` or `ruviz-gpui` because native save dialogs use
+GTK-backed `rfd` on Linux:
+```bash
+sudo apt-get install libgtk-3-dev
+```
 
 **Font rendering**: System fonts automatically detected from:
 - `/usr/share/fonts/`

@@ -452,6 +452,17 @@ If the interactive window does not appear on macOS, keep `show_interactive(...)`
 on a main/current-thread Tokio runtime and run it from a local GUI session rather
 than a remote or headless shell.
 
+If `interactive` or `ruviz-gpui` fails to build on Linux with missing GTK
+symbols or `pkg-config` errors, install GTK3 development headers first:
+
+```bash
+sudo apt-get install libgtk-3-dev
+```
+
+If a GPUI example exits with `neither DISPLAY nor WAYLAND_DISPLAY is set`, the
+binary was launched from a headless shell. Run it from a local Linux desktop
+session with X11 or Wayland available.
+
 **Q: How does ruviz compare to matplotlib/plotly?**
 
 A: ruviz is **pure Rust**, with 2.9-5.7x faster rendering for large datasets. It prioritizes performance and type safety over extensive features.

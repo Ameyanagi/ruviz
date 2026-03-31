@@ -128,16 +128,16 @@ jobs:
         run: cargo test --test performance_validation --verbose
 
   msrv:
-    name: MSRV (1.87)
+    name: MSRV (1.92)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.87
+      - name: Install Rust 1.92
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.87.0
+          toolchain: 1.92.0
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -201,6 +201,7 @@ jobs:
             libasound2-dev \
             libfontconfig-dev \
             libglib2.0-dev \
+            libgtk-3-dev \
             libsqlite3-dev \
             libssl-dev \
             libva-dev \

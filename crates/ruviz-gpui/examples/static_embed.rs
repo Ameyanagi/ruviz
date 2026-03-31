@@ -6,7 +6,7 @@ use gpui::{
 };
 use ruviz::prelude::*;
 use ruviz_gpui::{GpuiContextMenuConfig, GpuiContextMenuItem, RuvizPlot, plot_builder};
-use support::application;
+use support::{application, exit_on_window_open_failure};
 
 struct StaticEmbedDemo {
     plot: gpui::Entity<RuvizPlot>,
@@ -61,14 +61,16 @@ impl Render for StaticEmbedDemo {
 fn main() {
     application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| StaticEmbedDemo::new(window, cx)),
-        )
-        .expect("static embed window should open");
+        exit_on_window_open_failure(
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| cx.new(|cx| StaticEmbedDemo::new(window, cx)),
+            ),
+            "static embed",
+        );
         cx.activate(true);
     });
 }
