@@ -32,6 +32,11 @@ where
                 );
             }
 
+            #[cfg(target_os = "windows")]
+            eprintln!(
+                "Hint: run this example from a local desktop session, not a headless or remote shell."
+            );
+
             std::process::exit(1);
         }
     }

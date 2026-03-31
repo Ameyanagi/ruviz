@@ -122,8 +122,6 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libzstd-dev \
-            musl-dev \
-            musl-tools \
             pkg-config
 
       - name: Build release
@@ -136,6 +134,9 @@ jobs:
 
       - name: Verify ruviz-gpui compiles
         run: cargo check -p ruviz-gpui
+
+      - name: Verify ruviz-gpui examples compile
+        run: cargo check -p ruviz-gpui --examples
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -285,8 +286,6 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libzstd-dev \
-            musl-dev \
-            musl-tools \
             pkg-config
 
       - name: Wait for ruviz-gpui packaging to resolve against crates.io

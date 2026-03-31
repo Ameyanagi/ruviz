@@ -169,8 +169,6 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libzstd-dev \
-            musl-dev \
-            musl-tools \
             pkg-config
 
       - name: Check MSRV
@@ -236,8 +234,6 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libzstd-dev \
-            musl-dev \
-            musl-tools \
             pkg-config
 
       - name: Install cross
@@ -259,6 +255,10 @@ jobs:
       - name: Check ruviz-gpui desktop build
         if: ${{ !matrix.platform.cross }}
         run: cargo check --target ${{ matrix.platform.target }} -p ruviz-gpui
+
+      - name: Check ruviz-gpui desktop examples
+        if: ${{ !matrix.platform.cross }}
+        run: cargo check --target ${{ matrix.platform.target }} -p ruviz-gpui --examples
 
   wasm-web:
     name: WASM + Web
@@ -362,8 +362,6 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libzstd-dev \
-            musl-dev \
-            musl-tools \
             pkg-config
 
       - name: Build documentation

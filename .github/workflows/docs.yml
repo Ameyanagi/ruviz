@@ -62,8 +62,6 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libzstd-dev \
-            musl-dev \
-            musl-tools \
             pkg-config
 
       - name: Build documentation
