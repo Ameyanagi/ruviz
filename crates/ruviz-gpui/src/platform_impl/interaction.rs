@@ -492,7 +492,7 @@ impl RuvizPlot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        window.focus(&self.focus_handle, cx);
+        cx.focus_self(window);
 
         if self.interaction_state.context_menu.is_some() {
             return self.handle_context_menu_left_click(event.position, window, cx);
@@ -539,7 +539,7 @@ impl RuvizPlot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        window.focus(&self.focus_handle, cx);
+        cx.focus_self(window);
         if self.interaction_state.context_menu.is_some() {
             self.close_context_menu(cx);
         }

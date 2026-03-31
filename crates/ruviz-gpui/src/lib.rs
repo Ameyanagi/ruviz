@@ -24,10 +24,10 @@ mod platform_impl {
         executor::block_on,
     };
     use gpui::{
-        AnyElement, App, Bounds, Context, Corners, Entity, FocusHandle, InteractiveElement,
-        IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-        ObjectFit, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent, Task, Window,
-        canvas, div, point, prelude::*, px, rgb, rgba, size,
+        AnyElement, App, Bounds, Context, Corners, Entity, FocusHandle, Focusable,
+        InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
+        MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point, Render, RenderImage, ScrollDelta,
+        ScrollWheelEvent, Task, Window, canvas, div, point, prelude::*, px, rgb, rgba, size,
     };
     use image::{Frame, ImageBuffer, Rgba};
     use ruviz::{
@@ -1136,6 +1136,12 @@ mod platform_impl {
             }
 
             root
+        }
+    }
+
+    impl Focusable for RuvizPlot {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
         }
     }
 
