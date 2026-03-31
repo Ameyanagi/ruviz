@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.3.0] - 2026-04-01
+
+### Breaking Changes
+
+- Raised the repository MSRV to Rust `1.92`. Builds on older toolchains now fail earlier instead of drifting behind CI and release validation.
+
+### Added
+
+- Added Linux and Windows desktop bootstrap support for `ruviz-gpui` examples and integrations, alongside the existing macOS path.
+- Added explicit `ruviz-gpui` example compilation checks to CI and release validation so desktop integration regressions surface before publishing.
+
+### Changed
+
+- Switched the workspace GPUI patching flow to an upstream `zed-industries/zed` revision while keeping the required macOS right-drag fix pinned consistently across the workspace.
+- Split oversized plotting, rendering, and observable modules into focused internal submodules while preserving the public module paths and re-exports.
+- Defaulted contributor toolchains to the latest stable Rust via `rust-toolchain.toml`, while retaining a dedicated CI lane that enforces the `1.92` MSRV floor.
+
+### Fixed
+
+- Made GPUI examples fail cleanly in headless desktop environments, with session-specific hints for Linux (`DISPLAY` / `WAYLAND_DISPLAY`) and Windows desktop sessions.
+- Refreshed the committed README quickstart image so the top-level documentation matches current rendering output again.
+
 ## [0.2.0] - 2026-03-31
 
 ### Breaking Changes
@@ -115,7 +137,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Ameyanagi/ruviz/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ameyanagi/ruviz/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/Ameyanagi/ruviz/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Ameyanagi/ruviz/compare/v0.1.3...v0.1.4
