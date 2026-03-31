@@ -112,6 +112,7 @@ jobs:
             libasound2-dev \
             libfontconfig-dev \
             libglib2.0-dev \
+            libgtk-3-dev \
             libsqlite3-dev \
             libssl-dev \
             libva-dev \
@@ -274,6 +275,7 @@ jobs:
             libasound2-dev \
             libfontconfig-dev \
             libglib2.0-dev \
+            libgtk-3-dev \
             libsqlite3-dev \
             libssl-dev \
             libva-dev \
