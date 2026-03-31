@@ -2,7 +2,7 @@
 name = "ruviz-gpui"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 license = "MIT OR Apache-2.0"
 description = "GPUI component adapter for ruviz"
 repository = "https://github.com/Ameyanagi/ruviz"
@@ -17,15 +17,20 @@ image = "0.25"
 smallvec = "1.15"
 futures = "0.3"
 arboard = "3.6.1"
-rfd = "=0.15.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 gpui = "0.2.2"
 core-foundation = "0.10"
 core-video = "0.4"
+rfd = { version = "=0.15.4", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = "0.2.2"
+rfd = { version = "=0.15.4", default-features = false, features = ["gtk3"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gpui = "0.2.2"
+rfd = { version = "=0.15.4", default-features = false }
 
 [dev-dependencies]
 smol = "2"
@@ -38,3 +43,8 @@ gpui_macos = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea5ef0e6886b9ac1853aaead9ddd59f", features = ["wayland", "x11"] }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea5ef0e6886b9ac1853aaead9ddd59f" }

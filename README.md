@@ -60,7 +60,7 @@ Need typeset math labels? See [Typst Text Mode](#typst-text-mode) below.
 - **Simple API**: One-liner functions for quick plotting
 - **Parallel rendering**: Multi-threaded for large datasets (rayon)
 - **GPU acceleration**: Optional wgpu backend (experimental)
-- **Interactive plots**: Optional winit window integration
+- **Interactive plots**: Optional desktop window integration on Linux, macOS, and Windows
 - **Mixed-coordinate insets**: Embed polar, pie, and radar plots inside Cartesian figures
 - **Browser runtime**: Experimental `ruviz-web` adapter and `ruviz` npm SDK for `wasm32` canvas rendering
 - **Animation**: GIF export with `record!` macro and easing functions
@@ -374,6 +374,10 @@ Default interactive window controls:
 - `Escape`: close the menu or reset the view
 - `Cmd/Ctrl+S`: save the current view as PNG
 - `Cmd/Ctrl+C`: copy the current view as an image
+
+The standalone interactive window and the `ruviz-gpui` adapter are supported on
+Linux, macOS, and Windows. On Windows, the recommended CI/native target is
+`x86_64-pc-windows-msvc`.
 
 The built-in context menu includes `Reset View`, `Set Current View As Home`,
 `Go To Home View`, `Save PNG...`, `Copy Image`, `Copy Cursor Coordinates`, and

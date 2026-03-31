@@ -1,7 +1,7 @@
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-compile_error!("ruviz-gpui currently supports macOS and Linux only.");
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+compile_error!("ruviz-gpui currently supports macOS, Linux, and Windows only.");
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 mod platform_impl {
     mod interaction;
     mod presentation;
@@ -1681,8 +1681,8 @@ mod platform_impl {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub use gpui;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub use platform_impl::*;

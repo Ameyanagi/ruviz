@@ -39,6 +39,9 @@ not directly dispatch on `self.render.backend`.
 the same shared `InteractivePlotSession` core as the standalone winit window,
 so the main interaction behaviors now line up closely:
 
+The desktop-supported targets for this adapter are Linux, macOS, and Windows.
+The recommended Windows target is `x86_64-pc-windows-msvc`.
+
 - left drag pans
 - right drag performs box zoom
 - right click opens a built-in context menu
@@ -258,6 +261,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 On macOS, keep `show_interactive(...)` on the main/current-thread runtime. `winit`
 window creation can stall if the interactive event loop is started from a worker
 thread.
+
+Linux and Windows use the standard current-thread runtime path; no additional
+main-thread restriction is required beyond a local GUI session.
 
 For GPU-backed interactive work, switch the feature flag to `interactive-gpu`
 and enable `.gpu(true)` on the plot before `end_series()`.

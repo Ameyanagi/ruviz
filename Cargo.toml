@@ -15,7 +15,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea5ef0e6
 name = "ruviz"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.92"
 authors = ["Ruviz Contributors"]
 description = "High-performance 2D plotting library for Rust"
 license = "MIT OR Apache-2.0"
@@ -92,7 +92,6 @@ wide = { version = "0.7", optional = true }
 winit = { version = "0.30", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 softbuffer = { version = "0.4", optional = true }
-rfd = { version = "=0.15.4", optional = true } # pinned for Rust 1.87 MSRV compatibility
 arboard = { version = "3.6.1", optional = true }
 
 # Animation export
@@ -110,9 +109,17 @@ av1-grain = { version = "0.4", optional = true }
 # FreeBSD support
 [target.'cfg(target_os = "freebsd")'.dependencies]
 ctor = "0.8"
+rfd = { version = "=0.15.4", optional = true, default-features = false, features = ["gtk3"] } # pinned while keeping Linux dialogs on the repo MSRV
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rfd = { version = "=0.15.4", optional = true, default-features = false, features = ["gtk3"] } # pinned while keeping Linux dialogs on the repo MSRV
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rfd = { version = "=0.15.4", optional = true, default-features = false } # pinned while keeping desktop dialogs on the repo MSRV
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+rfd = { version = "=0.15.4", optional = true, default-features = false } # pinned while keeping desktop dialogs on the repo MSRV
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

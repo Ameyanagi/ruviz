@@ -6,7 +6,7 @@ use gpui::{
 use ruviz::{data::StreamingXY, prelude::*};
 use ruviz_gpui::{PerformancePreset, RuvizPlot, plot_builder};
 use std::{env, time::Duration};
-use support::{application, sleep};
+use support::{application, exit_on_window_open_failure, sleep};
 
 struct StreamingEmbedDemo {
     plot: gpui::Entity<RuvizPlot>,
@@ -93,14 +93,16 @@ impl Render for StreamingEmbedDemo {
 fn main() {
     application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(960.0), px(640.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| StreamingEmbedDemo::new(window, cx)),
-        )
-        .expect("streaming embed window should open");
+        exit_on_window_open_failure(
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| cx.new(|cx| StreamingEmbedDemo::new(window, cx)),
+            ),
+            "streaming embed",
+        );
         cx.activate(true);
     });
 }
