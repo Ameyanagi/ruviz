@@ -3,10 +3,12 @@
 Versioned release notes are stored in this directory using the tag name format:
 
 - `vX.Y.Z.md`
+- `vX.Y.Z-rcN.md`
 
 Examples:
 
 - `v0.3.0.md`
+- `v0.4.0-rc1.md`
 
 ## Workflow Integration
 

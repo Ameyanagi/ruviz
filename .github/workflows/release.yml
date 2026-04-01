@@ -255,6 +255,8 @@ jobs:
           maturin-version: v1.11.5
           rust-toolchain: stable
           working-directory: python
+          # The Python package keeps interactive desktop support enabled, so we
+          # build on the host instead of forcing a manylinux container image.
           container: off
           args: --release --compatibility linux --out dist
 
@@ -679,7 +681,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [build-release, publish-ruviz, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web, publish-python]
-    if: ${{ always() && needs.build-release.result == 'success' && (needs.publish-ruviz.result == 'success' || needs.publish-ruviz.result == 'skipped') && (needs.publish-ruviz-web.result == 'success' || needs.publish-ruviz-web.result == 'skipped') && (needs.publish-ruviz-gpui.result == 'success' || needs.publish-ruviz-gpui.result == 'skipped') && (needs.publish-npm-web.result == 'success' || needs.publish-npm-web.result == 'skipped') && (needs.publish-python.result == 'success' || needs.publish-python.result == 'skipped') }}
+    if: ${{ always() && needs.build-release.result == 'success' && (needs.publish-ruviz.result == 'success' || needs.publish-ruviz.result == 'skipped') && (needs.publish-ruviz-web.result == 'success' || needs.publish-ruviz-web.result == 'skipped') && (needs.publish-ruviz-gpui.result == 'success' || needs.publish-ruviz-gpui.result == 'skipped') && (needs.publish-npm-web.result == 'success' || needs.publish-npm-web.result == 'skipped') && needs.publish-python.result == 'success' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
