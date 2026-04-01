@@ -154,6 +154,43 @@ jobs:
       - name: Check MSRV
         run: cargo check --all-features
 
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+          working-directory: python
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Sync Python dependencies
+        run: cd python && uv sync
+
+      - name: Run Python extension tests
+        run: cd python && uv run cargo test
+
+      - name: Run Python package tests
+        run: cd python && uv run pytest
+
+      - name: Run Python lint
+        run: cd python && uv run ruff check
+
   platform-build:
     name: Build (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}
