@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import weakref
+from pathlib import Path
 
 import ruviz
 
@@ -23,6 +24,14 @@ def test_observable_updates_widget_snapshot() -> None:
     source.replace([4.0, 5.0, 6.0])
 
     assert widget.snapshot["series"][0]["y"]["values"] == [4.0, 5.0, 6.0]
+
+
+def test_widget_esm_uses_generated_bundle() -> None:
+    expected_path = Path(ruviz.__file__).with_name("widget.js")
+    esm_bundle = ruviz.RuvizWidget._esm
+
+    assert getattr(esm_bundle, "_path") == expected_path
+    assert expected_path.is_file()
 
 
 def test_observable_detaches_discarded_plot_listeners() -> None:

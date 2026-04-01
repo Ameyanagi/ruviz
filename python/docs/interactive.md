@@ -5,6 +5,8 @@
 ## Jupyter
 
 In notebooks, `plot.show()` returns and displays a `RuvizWidget` backed by the WASM frontend.
+The notebook frontend is bundled with Bun from `python/python/ruviz/widget.entry.js` and uses the
+main-thread canvas runtime for compatibility with `anywidget`'s blob-based module loader.
 
 ```python
 import ruviz
@@ -17,6 +19,13 @@ source.replace([0.3, 1.1, 0.7, 1.0, 0.6])
 ```
 
 The widget UI includes PNG and SVG export actions for the current interactive view.
+
+After changing the notebook frontend or the web SDK, regenerate the checked-in widget bundle from
+the repository root:
+
+```sh
+bun run build:python-widget
+```
 
 ## Console
 

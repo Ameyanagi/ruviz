@@ -10,7 +10,12 @@ uv sync
 uv run maturin develop
 ```
 
-The notebook widget reuses the browser runtime assets vendored under `python/ruviz/web/`.
+Rebuild the notebook widget bundle from the repository root after changing
+`python/python/ruviz/widget.entry.js` or the web SDK:
+
+```sh
+bun run build:python-widget
+```
 
 ## Examples
 
