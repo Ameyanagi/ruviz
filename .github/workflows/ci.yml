@@ -26,6 +26,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          targets: wasm32-unknown-unknown
+        with:
           components: rustfmt
 
       - name: Check formatting
@@ -186,6 +188,15 @@ jobs:
 
       - name: Sync Python dependencies
         run: cd python && uv sync
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build web SDK for widget bundle verification
+        run: bun run build:web-sdk
 
       - name: Verify notebook widget bundle is up to date
         run: |

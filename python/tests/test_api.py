@@ -30,7 +30,12 @@ def test_widget_esm_uses_generated_bundle() -> None:
     expected_path = Path(ruviz.__file__).with_name("widget.js")
     esm_bundle = ruviz.RuvizWidget._esm
 
-    assert getattr(esm_bundle, "_path") == expected_path
+    if hasattr(esm_bundle, "_path"):
+        bundle_path = Path(getattr(esm_bundle, "_path"))
+    else:
+        bundle_path = Path(esm_bundle)
+
+    assert bundle_path == expected_path
     assert expected_path.is_file()
 
 

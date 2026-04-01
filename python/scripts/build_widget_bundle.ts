@@ -41,8 +41,12 @@ function validateBundledSource(source: string) {
     { pattern: /import\.meta\.url/, message: "widget bundle must not rely on import.meta.url" },
     { pattern: /session-worker/, message: "widget bundle must not reference session-worker" },
     {
-      pattern: /^\s*import\s/m,
+      pattern: /^\s*import\b/m,
       message: "widget bundle must be self-contained with no remaining static imports",
+    },
+    {
+      pattern: /^\s*export\b.*\bfrom\b/m,
+      message: "widget bundle must be self-contained with no remaining re-exports",
     },
   ];
 
@@ -86,7 +90,17 @@ if (!result.success) {
   process.exit(1);
 }
 
-const bundledArtifact = result.outputs.find((output) => output.path === outPath) ?? result.outputs[0];
+const bundledArtifacts = result.outputs.filter((output) => output.kind === "entry-point");
+if (bundledArtifacts.length !== 1) {
+  console.error(
+    `build succeeded but expected exactly one entry-point output for ${outPath}; got: ${result.outputs
+      .map((output) => output.path)
+      .join(", ")}`,
+  );
+  process.exit(1);
+}
+
+const [bundledArtifact] = bundledArtifacts;
 const bundledSource = await bundledArtifact.text();
 validateBundledSource(bundledSource);
 const banner = [

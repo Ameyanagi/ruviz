@@ -56,9 +56,13 @@ function render({ model, el }) {
   const sessionPromise = createNotebookCanvasSession(canvas);
 
   const syncPlot = async () => {
-    const session = await sessionPromise;
-    await session.setPlot(model.get("snapshot"));
-    session.render();
+    try {
+      const session = await sessionPromise;
+      await session.setPlot(model.get("snapshot"));
+      session.render();
+    } catch (error) {
+      console.error("Failed to sync plot from ruviz widget snapshot.", error);
+    }
   };
 
   void syncPlot();
@@ -69,16 +73,28 @@ function render({ model, el }) {
 
   model.on("change:snapshot", onSnapshotChange);
 
-  pngButton.addEventListener("click", async () => {
-    const session = await sessionPromise;
-    const png = await session.exportPng();
-    triggerDownload(png, "ruviz.png", "image/png");
+  pngButton.addEventListener("click", () => {
+    void (async () => {
+      try {
+        const session = await sessionPromise;
+        const png = await session.exportPng();
+        triggerDownload(png, "ruviz.png", "image/png");
+      } catch (error) {
+        console.error("Failed to export PNG from the ruviz widget.", error);
+      }
+    })();
   });
 
-  svgButton.addEventListener("click", async () => {
-    const session = await sessionPromise;
-    const svg = await session.exportSvg();
-    triggerDownload(svg, "ruviz.svg", "image/svg+xml");
+  svgButton.addEventListener("click", () => {
+    void (async () => {
+      try {
+        const session = await sessionPromise;
+        const svg = await session.exportSvg();
+        triggerDownload(svg, "ruviz.svg", "image/svg+xml");
+      } catch (error) {
+        console.error("Failed to export SVG from the ruviz widget.", error);
+      }
+    })();
   });
 
   return () => {
