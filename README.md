@@ -11,7 +11,7 @@
 
 - [Changelog](CHANGELOG.md)
 - [Release Notes Index](docs/releases/README.md)
-- [Latest Release Notes (v0.3.1)](docs/releases/v0.3.1.md)
+- [Latest Release Notes (v0.3.2)](docs/releases/v0.3.2.md)
 
 ## Quick Start
 
@@ -72,7 +72,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruviz = "0.3.1"
+ruviz = "0.3.2"
 ```
 
 ### Feature Flags
@@ -81,7 +81,7 @@ Choose features based on your needs:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.1", features = ["parallel", "simd"] }
+ruviz = { version = "0.3.2", features = ["parallel", "simd"] }
 ```
 
 | Feature | Description | Use When |
@@ -149,7 +149,7 @@ Enable Typst text rendering:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.1", features = ["typst-math"] }
+ruviz = { version = "0.3.2", features = ["typst-math"] }
 ```
 
 Use `.typst(true)` on a plot to render all static text surfaces (titles, axis labels, ticks,
@@ -190,7 +190,7 @@ error[E0599]: no variant or associated item named `Typst` found for enum `TextEn
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.1", default-features = false }
+ruviz = { version = "0.3.2", default-features = false }
 
 [features]
 default = []
@@ -345,7 +345,7 @@ Enable the `animation` feature for this example:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.1", features = ["animation"] }
+ruviz = { version = "0.3.2", features = ["animation"] }
 ```
 
 ```rust
@@ -533,6 +533,6 @@ at your option.
 
 ---
 
-**Status**: v0.3.1 - Early development, API may change. Production use at your own risk.
+**Status**: v0.3.2 - Early development, API may change. Production use at your own risk.
 
 **Support**: [Open an issue](https://github.com/Ameyanagi/ruviz/issues) or [start a discussion](https://github.com/Ameyanagi/ruviz/discussions)

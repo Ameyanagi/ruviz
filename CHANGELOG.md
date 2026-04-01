@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.3.2] - 2026-04-01
+
+### Fixed
+
+- Updated the Python release packaging lane to use `maturin` `1.12.6`, fixing the duplicate-README source distribution failure seen in the `0.3.1` CI/CD release.
+- Switched the macOS Intel Python wheel lane to the supported `macos-15-intel` GitHub-hosted runner so the unified release workflow can produce Intel macOS wheels again.
+
 ## [0.3.1] - 2026-04-01
 
 ### Added
@@ -154,7 +161,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/Ameyanagi/ruviz/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Ameyanagi/ruviz/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Ameyanagi/ruviz/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ameyanagi/ruviz/compare/v0.1.5...v0.2.0

@@ -206,7 +206,7 @@ jobs:
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
-          maturin-version: v1.11.5
+          maturin-version: v1.12.6
           command: sdist
           args: --out dist
           working-directory: python
@@ -238,7 +238,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          maturin-version: v1.11.5
+          maturin-version: v1.12.6
           rust-toolchain: stable
           working-directory: python
           # The Python package keeps interactive desktop support enabled, so we
@@ -255,7 +255,7 @@ jobs:
 
   build-python-wheel-macos-intel:
     name: Build Python wheel (macOS Intel)
-    runs-on: macos-13
+    runs-on: macos-15-intel
     needs: build-release
     steps:
       - name: Checkout code
@@ -270,7 +270,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          maturin-version: v1.11.5
+          maturin-version: v1.12.6
           rust-toolchain: stable
           working-directory: python
           args: --release --out dist
@@ -299,7 +299,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          maturin-version: v1.11.5
+          maturin-version: v1.12.6
           rust-toolchain: stable
           working-directory: python
           args: --release --out dist
@@ -328,7 +328,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          maturin-version: v1.11.5
+          maturin-version: v1.12.6
           rust-toolchain: stable
           working-directory: python
           args: --release --out dist
