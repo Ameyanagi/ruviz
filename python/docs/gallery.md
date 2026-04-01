@@ -242,7 +242,7 @@ if __name__ == "__main__":
 
 ### Notebook export flow
 
-Render a widget in Jupyter and save a static image alongside it.
+Show a static PNG in Jupyter by default and save a static image alongside it.
 
 `examples/notebook_export.py`
 
@@ -256,7 +256,7 @@ from _shared import ExampleMeta, base_plot, save_example, wave_series
 META = ExampleMeta(
     slug="notebook-export",
     title="Notebook export flow",
-    summary="Render a widget in Jupyter and save a static image alongside it.",
+    summary="Show a static PNG in Jupyter by default and save a static image alongside it.",
     section="Interactive workflows",
     gallery=False,
 )
@@ -272,6 +272,10 @@ def build_plot():
     )
 
 
+def show_static():
+    return build_plot().show()
+
+
 def export_static(path: str | Path = "notebook-export.png") -> Path:
     return build_plot().save(path)
 
@@ -282,7 +286,7 @@ if __name__ == "__main__":
 
 ### Notebook observables
 
-Observable series driving a widget-backed plot in Jupyter.
+Observable series driving an explicit widget view in Jupyter.
 
 `examples/notebook_observable.py`
 
@@ -296,7 +300,7 @@ from _shared import ExampleMeta, base_plot, save_example
 META = ExampleMeta(
     slug="notebook-observable",
     title="Notebook observables",
-    summary="Observable series driving a widget-backed plot in Jupyter.",
+    summary="Observable series driving an explicit widget view in Jupyter.",
     section="Interactive workflows",
     gallery=False,
 )

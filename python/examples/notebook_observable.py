@@ -7,7 +7,7 @@ from _shared import ExampleMeta, base_plot, save_example
 META = ExampleMeta(
     slug="notebook-observable",
     title="Notebook observables",
-    summary="Observable series driving a widget-backed plot in Jupyter.",
+    summary="Observable series driving an explicit widget view in Jupyter.",
     section="Interactive workflows",
     gallery=False,
 )
