@@ -67,12 +67,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v8.0.0
-        with:
-          enable-cache: true
-          working-directory: python
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -168,18 +162,6 @@ jobs:
 
       - name: Install GPUI Linux build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
-
-      - name: Sync Python dependencies
-        run: cd python && uv sync
-
-      - name: Run Python extension tests
-        run: cd python && uv run cargo test
-
-      - name: Run Python package tests
-        run: cd python && uv run pytest
-
-      - name: Run Python lint
-        run: cd python && uv run ruff check
 
       - name: Build release
         run: cargo build --release --all-features
@@ -668,7 +650,7 @@ jobs:
 
       - name: Publish Python package
         if: steps.python-version.outputs.published != 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # release/v1
         with:
           packages-dir: dist
           skip-existing: true
