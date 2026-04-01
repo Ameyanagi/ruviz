@@ -78,7 +78,6 @@ jobs:
           import json
           import os
           import re
-          import subprocess
           import sys
           import tomllib
           from pathlib import Path
@@ -98,12 +97,17 @@ jobs:
           cargo_expected = base if label is None else f"{base}-{label}{number}"
           python_expected = base if label is None else f"{base}{label}{number}"
 
-          def cargo_version(package: str) -> str:
-              output = subprocess.check_output(["cargo", "pkgid", "-p", package], text=True).strip()
-              return re.split(r"[#@]", output)[-1]
-
           with Path("packages/ruviz-web/package.json").open(encoding="utf-8") as fh:
               npm_web_version = json.load(fh)["version"]
+
+          with Path("Cargo.toml").open("rb") as fh:
+              ruviz_version = tomllib.load(fh)["package"]["version"]
+
+          with Path("crates/ruviz-web/Cargo.toml").open("rb") as fh:
+              rust_web_version = tomllib.load(fh)["package"]["version"]
+
+          with Path("crates/ruviz-gpui/Cargo.toml").open("rb") as fh:
+              gpui_version = tomllib.load(fh)["package"]["version"]
 
           with Path("python/pyproject.toml").open("rb") as fh:
               python_package_version = tomllib.load(fh)["project"]["version"]
@@ -112,9 +116,9 @@ jobs:
               python_crate_version = tomllib.load(fh)["package"]["version"]
 
           versions = {
-              "ruviz crate": cargo_version("ruviz"),
-              "ruviz-web crate": cargo_version("ruviz-web"),
-              "ruviz-gpui crate": cargo_version("ruviz-gpui"),
+              "ruviz crate": ruviz_version,
+              "ruviz-web crate": rust_web_version,
+              "ruviz-gpui crate": gpui_version,
               "ruviz npm package": npm_web_version,
               "ruviz-py crate": python_crate_version,
           }
