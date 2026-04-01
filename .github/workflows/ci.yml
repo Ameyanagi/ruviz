@@ -198,8 +198,12 @@ jobs:
 
       - name: Verify notebook widget bundle is up to date
         run: |
+          cp packages/ruviz-web/generated/raw/ruviz_web_raw_bg.wasm \
+            python/python/ruviz/web/generated/raw/ruviz_web_raw_bg.wasm
           bun run build:python-widget
-          git diff --exit-code -- python/python/ruviz/widget.js
+          git diff --exit-code -- \
+            python/python/ruviz/web/generated/raw/ruviz_web_raw_bg.wasm \
+            python/python/ruviz/widget.js
 
       - name: Run Python extension tests
         run: cd python && uv run cargo test
