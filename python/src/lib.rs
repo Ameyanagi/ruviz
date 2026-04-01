@@ -218,13 +218,19 @@ fn apply_series(plot: Plot, series: SeriesSnapshot) -> Result<Plot, String> {
         SeriesSnapshot::Line { x, y } => {
             let x = x.into_values();
             let y = y.into_values();
-            ensure_same_len(&[x.len(), y.len()], "line x and y must have the same length")?;
+            ensure_same_len(
+                &[x.len(), y.len()],
+                "line x and y must have the same length",
+            )?;
             Ok(plot.line(&x, &y).into_plot())
         }
         SeriesSnapshot::Scatter { x, y } => {
             let x = x.into_values();
             let y = y.into_values();
-            ensure_same_len(&[x.len(), y.len()], "scatter x and y must have the same length")?;
+            ensure_same_len(
+                &[x.len(), y.len()],
+                "scatter x and y must have the same length",
+            )?;
             Ok(plot.scatter(&x, &y).into_plot())
         }
         SeriesSnapshot::Bar { categories, values } => {
@@ -235,7 +241,9 @@ fn apply_series(plot: Plot, series: SeriesSnapshot) -> Result<Plot, String> {
             )?;
             Ok(plot.bar(&categories, &values).into_plot())
         }
-        SeriesSnapshot::Histogram { data } => Ok(plot.histogram(&data.into_values(), None).into_plot()),
+        SeriesSnapshot::Histogram { data } => {
+            Ok(plot.histogram(&data.into_values(), None).into_plot())
+        }
         SeriesSnapshot::Boxplot { data } => Ok(plot.boxplot(&data.into_values(), None).into_plot()),
         SeriesSnapshot::Heatmap { values, rows, cols } => {
             if rows == 0 || cols == 0 || values.len() != rows.saturating_mul(cols) {
@@ -311,19 +319,20 @@ fn apply_series(plot: Plot, series: SeriesSnapshot) -> Result<Plot, String> {
         }
         SeriesSnapshot::Violin { data } => Ok(plot.violin(&data).into_plot()),
         SeriesSnapshot::PolarLine { r, theta } => {
-            ensure_same_len(&[r.len(), theta.len()], "polar r and theta must have the same length")?;
+            ensure_same_len(
+                &[r.len(), theta.len()],
+                "polar r and theta must have the same length",
+            )?;
             Ok(plot.polar_line(&r, &theta).into_plot())
         }
     }
 }
 
 fn parse_plot(snapshot_json: &str) -> PyResult<Plot> {
-    let snapshot: PlotSnapshot =
-        serde_json::from_str(snapshot_json).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let snapshot: PlotSnapshot = serde_json::from_str(snapshot_json)
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
 
-    snapshot
-        .into_plot()
-        .map_err(PyValueError::new_err)
+    snapshot.into_plot().map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
@@ -505,7 +514,12 @@ mod tests {
         let expected = base_plot("Histogram parity")
             .xlabel("value")
             .ylabel("count")
-            .histogram(&[-2.3, -1.9, -1.1, -0.4, 0.2, 0.8, 1.0, 1.4, 1.7, 2.1, 2.5, 2.9], None)
+            .histogram(
+                &[
+                    -2.3, -1.9, -1.1, -0.4, 0.2, 0.8, 1.0, 1.4, 1.7, 2.1, 2.5, 2.9,
+                ],
+                None,
+            )
             .into_plot();
 
         let actual_png = render_snapshot_png(snapshot);

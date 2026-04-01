@@ -302,9 +302,15 @@ mod wasm {
             }
         }
 
-        fn flatten_grid(values: Vec<f64>, rows: usize, cols: usize) -> Result<Vec<Vec<f64>>, JsValue> {
+        fn flatten_grid(
+            values: Vec<f64>,
+            rows: usize,
+            cols: usize,
+        ) -> Result<Vec<Vec<f64>>, JsValue> {
             if rows == 0 || cols == 0 {
-                return Err(JsValue::from_str("heatmap rows and cols must be greater than zero"));
+                return Err(JsValue::from_str(
+                    "heatmap rows and cols must be greater than zero",
+                ));
             }
 
             if values.len() != rows.saturating_mul(cols) {
