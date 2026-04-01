@@ -1,0 +1,39 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ruviz"
+version = "0.3.0"
+description = "Python bindings and notebook widget support for ruviz"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "Ruviz Contributors" }]
+dependencies = [
+  "anywidget>=0.9",
+  "numpy>=2.0",
+  "pandas>=2.2",
+  "polars>=1.0",
+  "traitlets>=5.14",
+]
+
+[dependency-groups]
+dev = [
+  "ipykernel>=6.0",
+  "maturin>=1.8,<2.0",
+  "mkdocs-material>=9.6",
+  "mkdocs>=1.6",
+  "mkdocstrings[python]>=0.30",
+  "pytest>=8.0",
+  "ruff>=0.12",
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "ruviz._native"
+features = ["pyo3/extension-module"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

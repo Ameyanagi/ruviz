@@ -17,6 +17,9 @@
     "dist/index.d.ts",
     "dist/index.js",
     "dist/index.js.map",
+    "dist/plot-runtime.d.ts",
+    "dist/plot-runtime.js",
+    "dist/plot-runtime.js.map",
     "dist/session-worker.d.ts",
     "dist/session-worker.js",
     "dist/session-worker.js.map",
@@ -51,9 +54,16 @@
     "build:wasm": "PATH=\"$HOME/.cargo/bin:$PATH\" wasm-pack build ../../crates/ruviz-web --target web --out-dir \"$PWD/generated/raw\" --out-name ruviz_web_raw",
     "build:js": "tsc -p tsconfig.json",
     "build": "bun run build:wasm && bun run build:js",
+    "docs:api": "typedoc",
+    "docs:dev": "bun run build:wasm && bun run docs:api && vitepress dev docs",
+    "docs:build": "bun run build:wasm && bun run docs:api && vitepress build docs",
+    "docs:preview": "vitepress preview docs",
     "pack:dry": "bun pm pack --dry-run"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "typedoc": "^0.28.14",
+    "typedoc-plugin-markdown": "^4.9.0",
+    "typescript": "^5.9.2",
+    "vitepress": "^2.0.0-alpha.12"
   }
 }

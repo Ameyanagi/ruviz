@@ -1,0 +1,23 @@
+.plot-gallery {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.plot-card {
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.plot-card canvas {
+  width: 100%;
+  height: 260px;
+  display: block;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(10, 20, 30, 0.05), rgba(10, 20, 30, 0.01));
+}
+
+.plot-card pre {
+  overflow-x: auto;
+  white-space: pre-wrap;
+}

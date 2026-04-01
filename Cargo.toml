@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ruviz-gpui", "crates/ruviz-web"]
+members = ["crates/ruviz-gpui", "crates/ruviz-web", "python"]
 # Keep plain root cargo commands focused on the cross-platform core crate.
 default-members = ["."]
 resolver = "2"

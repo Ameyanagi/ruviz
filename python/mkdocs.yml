@@ -1,0 +1,34 @@
+site_name: ruviz for Python
+site_description: Python bindings, widgets, examples, and API reference for ruviz.
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+nav:
+  - Overview: index.md
+  - Getting Started: getting-started.md
+  - Interactivity: interactive.md
+  - Gallery: gallery.md
+  - API Reference: api.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - python
+          options:
+            heading_level: 2
+            show_root_heading: true
+            show_source: false
+            separate_signature: true
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+extra_css:
+  - stylesheets/extra.css
