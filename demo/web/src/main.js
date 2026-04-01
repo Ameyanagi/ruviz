@@ -2,6 +2,7 @@ import {
   createCanvasSession,
   createObservable,
   createPlot,
+  createPlotFromSnapshot,
   createSineSignal,
   createWorkerSession,
   getRuntimeCapabilities,
@@ -507,6 +508,7 @@ async function main() {
     sdk: {
       createCanvasSession,
       createPlot,
+      createPlotFromSnapshot,
       createSineSignal,
     },
     mainSession,

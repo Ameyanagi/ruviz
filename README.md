@@ -121,6 +121,28 @@ Note:
 - The JS workspace is Bun-first. Use `bun install`, `bun run build:web`, and `bun run test:web`
   from the repo root for browser package and demo work.
 
+### Python Bindings
+
+The repo now includes a mixed Python package in [`python`](python) built with `uv`, `maturin`,
+and `pyO3`.
+
+```sh
+cd python
+uv sync
+uv run maturin develop
+```
+
+The Python package exposes a fluent `ruviz.plot()` builder for static export and uses the browser
+runtime for notebook widgets. Outside Jupyter, `plot.show()` uses the native interactive window.
+Standalone MkDocs docs and runnable examples live under [`python/docs`](python/docs) and
+[`python/examples`](python/examples).
+
+### Web SDK Docs
+
+The browser-first JS/TS SDK in [`packages/ruviz-web`](packages/ruviz-web) now ships with
+runtime examples under [`packages/ruviz-web/examples`](packages/ruviz-web/examples) and a
+standalone VitePress docs site under [`packages/ruviz-web/docs`](packages/ruviz-web/docs).
+
 ### Typst Text Mode
 
 Enable Typst text rendering:

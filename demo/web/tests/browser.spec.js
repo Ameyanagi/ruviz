@@ -218,3 +218,119 @@ test("png and svg exports work for the demo panels", async ({ page }) => {
   await page.locator("#export-direct-svg").click();
   expect((await directSvgDownload).suggestedFilename()).toBe("ruviz-direct-export.svg");
 });
+
+test("direct exports match snapshot and canvas-session exports", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const result = await page.evaluate(async () => {
+    const demo = window.__ruvizDemo;
+    if (!demo?.sdk) {
+      throw new Error("SDK test hooks are unavailable");
+    }
+
+    const { createCanvasSession, createPlot, createPlotFromSnapshot } = demo.sdk;
+
+    const sameBytes = (left, right) => {
+      if (left.length !== right.length) {
+        return {
+          equal: false,
+          reason: `length mismatch (${left.length} !== ${right.length})`,
+        };
+      }
+
+      for (let index = 0; index < left.length; index += 1) {
+        if (left[index] !== right[index]) {
+          return {
+            equal: false,
+            reason: `first diff at byte ${index} (${left[index]} !== ${right[index]})`,
+          };
+        }
+      }
+
+      return { equal: true };
+    };
+
+    const createHiddenCanvas = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 640;
+      canvas.height = 320;
+      canvas.style.cssText = [
+        "position: fixed",
+        "left: -10000px",
+        "top: -10000px",
+        "width: 640px",
+        "height: 320px",
+      ].join(";");
+      document.body.appendChild(canvas);
+      return canvas;
+    };
+
+    const cases = [
+      {
+        slug: "line-scatter",
+        plot: createPlot()
+          .sizePx(640, 320)
+          .title("Parity Line + Scatter")
+          .xlabel("x")
+          .ylabel("y")
+          .line({ x: [0, 1, 2, 3], y: [0.2, 1.0, 0.7, 1.5] })
+          .scatter({ x: [0, 1, 2, 3], y: [0.3, 0.9, 0.8, 1.3] }),
+      },
+      {
+        slug: "bar",
+        plot: createPlot()
+          .sizePx(640, 320)
+          .title("Parity Bar")
+          .ylabel("score")
+          .bar({
+            categories: ["CPU", "SVG", "GPU", "WASM"],
+            values: [3.8, 2.6, 4.4, 4.9],
+          }),
+      },
+      {
+        slug: "heatmap",
+        plot: createPlot()
+          .sizePx(640, 320)
+          .theme("dark")
+          .title("Parity Heatmap")
+          .heatmap([
+            [0.1, 0.4, 0.8],
+            [0.3, 0.5, 0.7],
+            [0.2, 0.6, 0.9],
+          ]),
+      },
+    ];
+
+    const comparisons = [];
+
+    for (const entry of cases) {
+      const direct = await entry.plot.renderPng();
+      const fromSnapshot = await createPlotFromSnapshot(entry.plot.toSnapshot()).renderPng();
+
+      const canvas = createHiddenCanvas();
+      const session = await createCanvasSession(canvas, {
+        autoResize: false,
+        bindInput: false,
+      });
+      await session.setPlot(entry.plot.clone());
+      session.resize(640, 320, 1);
+      session.render();
+      const fromSession = await session.exportPng();
+      session.dispose();
+      canvas.remove();
+
+      comparisons.push({
+        slug: entry.slug,
+        directVsSnapshot: sameBytes(direct, fromSnapshot),
+        directVsSession: sameBytes(direct, fromSession),
+      });
+    }
+
+    return comparisons;
+  });
+
+  for (const entry of result) {
+    expect(entry.directVsSnapshot.equal, `${entry.slug}: ${entry.directVsSnapshot.reason || "snapshot mismatch"}`).toBeTruthy();
+    expect(entry.directVsSession.equal, `${entry.slug}: ${entry.directVsSession.reason || "session mismatch"}`).toBeTruthy();
+  }
+});

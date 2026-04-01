@@ -1,0 +1,21 @@
+[**ruviz**](../../README.md)
+
+***
+
+[ruviz](../../README.md) / [shared](../README.md) / clonePlotSnapshot
+
+# Function: clonePlotSnapshot()
+
+> **clonePlotSnapshot**(`snapshot`): [`PlotSnapshot`](../interfaces/PlotSnapshot.md)
+
+Defined in: [shared.ts:323](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L323)
+
+## Parameters
+
+### snapshot
+
+[`PlotSnapshot`](../interfaces/PlotSnapshot.md)
+
+## Returns
+
+[`PlotSnapshot`](../interfaces/PlotSnapshot.md)

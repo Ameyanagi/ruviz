@@ -1,0 +1,10 @@
+.md-grid {
+  max-width: 76rem;
+}
+
+.md-content img {
+  border: 1px solid rgba(128, 128, 128, 0.2);
+  border-radius: 12px;
+  display: block;
+  margin: 1rem 0;
+}

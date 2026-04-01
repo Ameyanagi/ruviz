@@ -10,51 +10,193 @@ import {
   normalizeSineSignalOptions,
   toNumberArray,
   type BackendPreference,
+  type BarSeriesSnapshot,
   type CanvasSessionOptions,
+  type BoxplotSeriesSnapshot,
+  type ContourSeriesSnapshot,
+  type EcdfSeriesSnapshot,
+  type ErrorBarsSeriesSnapshot,
+  type ErrorBarsXYSeriesSnapshot,
+  type HeatmapSeriesSnapshot,
+  type HistogramSeriesSnapshot,
+  type KdeSeriesSnapshot,
+  type NumericReactiveSourceSnapshot,
   type NormalizedSineSignalOptions,
   type NumericArray,
+  type PieSeriesSnapshot,
   type PlotSnapshot,
+  type PlotSaveOptions,
+  type PlotSeriesSnapshot,
   type PlotTheme,
+  type PolarLineSeriesSnapshot,
+  type RadarSeriesSnapshot,
   type RuntimeCapabilities,
   type SessionMode,
   type SineSignalOptions,
+  type StaticSourceSnapshot,
+  type ViolinSeriesSnapshot,
   type WorkerSessionOptions,
   type XSourceSnapshot,
   type YSourceSnapshot,
 } from "./shared.js";
+import {
+  normalizeBackendPreference,
+  toRawBackendPreference,
+} from "./plot-runtime.js";
 
 export type {
   BackendPreference,
+  BarSeriesSnapshot,
   CanvasSessionOptions,
+  BoxplotSeriesSnapshot,
+  ContourSeriesSnapshot,
+  EcdfSeriesSnapshot,
+  ErrorBarsSeriesSnapshot,
+  ErrorBarsXYSeriesSnapshot,
+  HeatmapSeriesSnapshot,
+  HistogramSeriesSnapshot,
+  KdeSeriesSnapshot,
   NumericArray,
+  PieSeriesSnapshot,
   PlotTheme,
+  PlotSaveOptions,
+  PlotSnapshot,
+  PlotSeriesSnapshot,
+  PolarLineSeriesSnapshot,
+  RadarSeriesSnapshot,
   RuntimeCapabilities,
   SessionMode,
   SineSignalOptions,
+  StaticSourceSnapshot,
+  ViolinSeriesSnapshot,
   WorkerSessionOptions,
 } from "./shared.js";
 
 type RawModule = typeof import("../generated/raw/ruviz_web_raw.js");
 
-type XSourceDefinition =
-  | { kind: "static"; values: number[] }
-  | { kind: "observable"; source: ObservableSeries };
+type StaticSourceDefinition = { kind: "static"; values: number[] };
+type ObservableSourceDefinition = { kind: "observable"; source: ObservableSeries };
+type SignalSourceDefinition = { kind: "sine-signal"; source: SineSignal };
+type NumericReactiveSourceDefinition = StaticSourceDefinition | ObservableSourceDefinition;
+type XSourceDefinition = NumericReactiveSourceDefinition;
+type YSourceDefinition = NumericReactiveSourceDefinition | SignalSourceDefinition;
 
-type YSourceDefinition =
-  | { kind: "static"; values: number[] }
-  | { kind: "observable"; source: ObservableSeries }
-  | { kind: "sine-signal"; source: SineSignal };
+interface XYSeriesInput {
+  x: NumericArray | ObservableSeries;
+  y: NumericArray | ObservableSeries | SineSignal;
+}
 
-interface PlotSeriesDefinition {
-  kind: "line" | "scatter";
+interface NumericReactiveSeriesInput {
+  values: NumericArray | ObservableSeries;
+}
+
+interface BarSeriesInput {
+  categories: readonly string[] | ArrayLike<string>;
+  values: NumericArray | ObservableSeries;
+}
+
+interface ErrorBarsInput {
+  x: NumericArray | ObservableSeries;
+  y: NumericArray | ObservableSeries;
+  yErrors: NumericArray | ObservableSeries;
+}
+
+interface ErrorBarsXYInput {
+  x: NumericArray | ObservableSeries;
+  y: NumericArray | ObservableSeries;
+  xErrors: NumericArray | ObservableSeries;
+  yErrors: NumericArray | ObservableSeries;
+}
+
+interface HeatmapInput {
+  values: ReadonlyArray<NumericArray>;
+}
+
+interface PieInput {
+  values: NumericArray;
+  labels?: readonly string[] | ArrayLike<string>;
+}
+
+interface RadarSeriesInput {
+  name?: string;
+  values: NumericArray;
+}
+
+interface RadarInput {
+  labels: readonly string[] | ArrayLike<string>;
+  series: readonly RadarSeriesInput[];
+}
+
+interface ContourInput {
+  x: NumericArray;
+  y: NumericArray;
+  z: NumericArray;
+}
+
+interface PolarLineInput {
+  r: NumericArray;
+  theta: NumericArray;
+}
+
+interface LineSeriesDefinition {
+  kind: "line";
   x: XSourceDefinition;
   y: YSourceDefinition;
 }
 
-interface PlotSeriesInput {
-  x: NumericArray | ObservableSeries;
-  y: NumericArray | ObservableSeries | SineSignal;
+interface ScatterSeriesDefinition {
+  kind: "scatter";
+  x: XSourceDefinition;
+  y: YSourceDefinition;
 }
+
+interface BarSeriesDefinition {
+  kind: "bar";
+  categories: string[];
+  values: NumericReactiveSourceDefinition;
+}
+
+interface HistogramSeriesDefinition {
+  kind: "histogram";
+  data: NumericReactiveSourceDefinition;
+}
+
+interface BoxplotSeriesDefinition {
+  kind: "boxplot";
+  data: NumericReactiveSourceDefinition;
+}
+
+interface ErrorBarsSeriesDefinition {
+  kind: "error-bars";
+  x: NumericReactiveSourceDefinition;
+  y: NumericReactiveSourceDefinition;
+  yErrors: NumericReactiveSourceDefinition;
+}
+
+interface ErrorBarsXYSeriesDefinition {
+  kind: "error-bars-xy";
+  x: NumericReactiveSourceDefinition;
+  y: NumericReactiveSourceDefinition;
+  xErrors: NumericReactiveSourceDefinition;
+  yErrors: NumericReactiveSourceDefinition;
+}
+
+type PlotSeriesDefinition =
+  | LineSeriesDefinition
+  | ScatterSeriesDefinition
+  | BarSeriesDefinition
+  | HistogramSeriesDefinition
+  | BoxplotSeriesDefinition
+  | HeatmapSeriesSnapshot
+  | ErrorBarsSeriesDefinition
+  | ErrorBarsXYSeriesDefinition
+  | KdeSeriesSnapshot
+  | EcdfSeriesSnapshot
+  | ContourSeriesSnapshot
+  | PieSeriesSnapshot
+  | RadarSeriesSnapshot
+  | ViolinSeriesSnapshot
+  | PolarLineSeriesSnapshot;
 
 interface PlotState {
   sizePx?: [number, number];
@@ -119,32 +261,6 @@ async function ensureRawModule(): Promise<RawModule> {
   }
 
   return rawModulePromise;
-}
-
-function normalizeBackendPreference(
-  backendPreference: BackendPreference | undefined,
-): BackendPreference {
-  switch (backendPreference) {
-    case "cpu":
-    case "svg":
-    case "gpu":
-      return backendPreference;
-    default:
-      return "auto";
-  }
-}
-
-function toRawBackendPreference(module: RawModule, backendPreference: BackendPreference): number {
-  switch (backendPreference) {
-    case "cpu":
-      return module.WebBackendPreference.Cpu;
-    case "svg":
-      return module.WebBackendPreference.Svg;
-    case "gpu":
-      return module.WebBackendPreference.Gpu;
-    default:
-      return module.WebBackendPreference.Auto;
-  }
 }
 
 function normalizeCanvasSessionOptions(
@@ -312,15 +428,13 @@ function workerCanvasSupported(canvas: HTMLCanvasElement): boolean {
   );
 }
 
-function staticValuesFromXSource(source: XSourceDefinition): number[] {
-  return source.kind === "observable" ? source.source.snapshotValues() : [...source.values];
+function toStringArray(values: readonly string[] | ArrayLike<string>): string[] {
+  return Array.from(values, (value) => String(value));
 }
 
-function xSourceLength(source: XSourceDefinition): number {
-  return source.kind === "observable" ? source.source.length : source.values.length;
-}
-
-function ySourceLength(source: YSourceDefinition): number {
+function sourceLength(
+  source: XSourceDefinition | YSourceDefinition | NumericReactiveSourceDefinition,
+): number {
   switch (source.kind) {
     case "observable":
       return source.source.length;
@@ -332,6 +446,16 @@ function ySourceLength(source: YSourceDefinition): number {
 }
 
 function normalizeXSource(source: NumericArray | ObservableSeries): XSourceDefinition {
+  if (source instanceof ObservableSeries) {
+    return { kind: "observable", source };
+  }
+
+  return { kind: "static", values: toNumberArray(source) };
+}
+
+function normalizeReactiveSource(
+  source: NumericArray | ObservableSeries,
+): NumericReactiveSourceDefinition {
   if (source instanceof ObservableSeries) {
     return { kind: "observable", source };
   }
@@ -353,7 +477,7 @@ function normalizeYSource(source: NumericArray | ObservableSeries | SineSignal):
 
 async function ephemeralObservable(
   module: RawModule,
-  source: XSourceDefinition | Exclude<YSourceDefinition, { kind: "sine-signal" }>,
+  source: NumericReactiveSourceDefinition,
 ): Promise<RawObservableVecF64> {
   if (source.kind === "observable") {
     return source.source._toRawObservable(module);
@@ -395,43 +519,164 @@ async function buildRawPlotFromState(state: PlotState, module: RawModule): Promi
   applyPlotMetadata(rawPlot, state);
 
   for (const series of state.series) {
-    if (series.y.kind === "sine-signal") {
-      const signal = await series.y.source._toRawSignal(module);
-      const xValues = Float64Array.from(staticValuesFromXSource(series.x));
+    switch (series.kind) {
+      case "line":
+      case "scatter": {
+        if (series.y.kind === "sine-signal") {
+          const signal = await series.y.source._toRawSignal(module);
+          const xValues =
+            series.x.kind === "observable"
+              ? Float64Array.from(series.x.source.snapshotValues())
+              : Float64Array.from(series.x.values);
 
-      if (series.kind === "line") {
-        rawPlot.line_signal(xValues, signal);
-      } else {
-        rawPlot.scatter_signal(xValues, signal);
+          if (series.kind === "line") {
+            rawPlot.line_signal(xValues, signal);
+          } else {
+            rawPlot.scatter_signal(xValues, signal);
+          }
+          break;
+        }
+
+        if (series.x.kind === "observable" || series.y.kind === "observable") {
+          const xObservable = await ephemeralObservable(module, series.x);
+          const yObservable = await ephemeralObservable(module, series.y);
+
+          if (series.kind === "line") {
+            rawPlot.line_observable(xObservable, yObservable);
+          } else {
+            rawPlot.scatter_observable(xObservable, yObservable);
+          }
+          break;
+        }
+
+        const xValues = Float64Array.from(series.x.values);
+        const yValues = Float64Array.from(series.y.values);
+
+        if (series.kind === "line") {
+          rawPlot.line(xValues, yValues);
+        } else {
+          rawPlot.scatter(xValues, yValues);
+        }
+        break;
       }
-      continue;
-    }
-
-    if (series.x.kind === "observable" || series.y.kind === "observable") {
-      const xObservable = await ephemeralObservable(module, series.x);
-      const yObservable = await ephemeralObservable(module, series.y);
-
-      if (series.kind === "line") {
-        rawPlot.line_observable(xObservable, yObservable);
-      } else {
-        rawPlot.scatter_observable(xObservable, yObservable);
+      case "bar": {
+        if (series.values.kind === "observable") {
+          rawPlot.bar_observable(
+            series.categories,
+            await ephemeralObservable(module, series.values),
+          );
+        } else {
+          rawPlot.bar(series.categories, Float64Array.from(series.values.values));
+        }
+        break;
       }
-      continue;
-    }
-
-    const xValues = Float64Array.from(series.x.values);
-    const yValues = Float64Array.from(series.y.values);
-
-    if (series.kind === "line") {
-      rawPlot.line(xValues, yValues);
-    } else {
-      rawPlot.scatter(xValues, yValues);
+      case "histogram": {
+        if (series.data.kind === "observable") {
+          rawPlot.histogram_observable(await ephemeralObservable(module, series.data));
+        } else {
+          rawPlot.histogram(Float64Array.from(series.data.values));
+        }
+        break;
+      }
+      case "boxplot": {
+        if (series.data.kind === "observable") {
+          rawPlot.boxplot_observable(await ephemeralObservable(module, series.data));
+        } else {
+          rawPlot.boxplot(Float64Array.from(series.data.values));
+        }
+        break;
+      }
+      case "heatmap":
+        rawPlot.heatmap(Float64Array.from(series.values), series.rows, series.cols);
+        break;
+      case "error-bars": {
+        if (
+          series.x.kind === "observable" ||
+          series.y.kind === "observable" ||
+          series.yErrors.kind === "observable"
+        ) {
+          rawPlot.error_bars_observable(
+            await ephemeralObservable(module, series.x),
+            await ephemeralObservable(module, series.y),
+            await ephemeralObservable(module, series.yErrors),
+          );
+        } else {
+          rawPlot.error_bars(
+            Float64Array.from(series.x.values),
+            Float64Array.from(series.y.values),
+            Float64Array.from(series.yErrors.values),
+          );
+        }
+        break;
+      }
+      case "error-bars-xy": {
+        if (
+          series.x.kind === "observable" ||
+          series.y.kind === "observable" ||
+          series.xErrors.kind === "observable" ||
+          series.yErrors.kind === "observable"
+        ) {
+          rawPlot.error_bars_xy_observable(
+            await ephemeralObservable(module, series.x),
+            await ephemeralObservable(module, series.y),
+            await ephemeralObservable(module, series.xErrors),
+            await ephemeralObservable(module, series.yErrors),
+          );
+        } else {
+          rawPlot.error_bars_xy(
+            Float64Array.from(series.x.values),
+            Float64Array.from(series.y.values),
+            Float64Array.from(series.xErrors.values),
+            Float64Array.from(series.yErrors.values),
+          );
+        }
+        break;
+      }
+      case "kde":
+        rawPlot.kde(Float64Array.from(series.data));
+        break;
+      case "ecdf":
+        rawPlot.ecdf(Float64Array.from(series.data));
+        break;
+      case "contour":
+        rawPlot.contour(
+          Float64Array.from(series.x),
+          Float64Array.from(series.y),
+          Float64Array.from(series.z),
+        );
+        break;
+      case "pie":
+        if (series.labels && series.labels.length > 0) {
+          rawPlot.pie_with_labels(Float64Array.from(series.values), series.labels);
+        } else {
+          rawPlot.pie(Float64Array.from(series.values));
+        }
+        break;
+      case "radar": {
+        const flattened: number[] = [];
+        const names: string[] = [];
+        for (const item of series.series) {
+          flattened.push(...item.values);
+          if (item.name) {
+            names.push(item.name);
+          }
+        }
+        rawPlot.radar(series.labels, names, Float64Array.from(flattened));
+        break;
+      }
+      case "violin":
+        rawPlot.violin(Float64Array.from(series.data));
+        break;
+      case "polar-line":
+        rawPlot.polar_line(Float64Array.from(series.r), Float64Array.from(series.theta));
+        break;
     }
   }
 
   return rawPlot;
 }
 
+/** Mutable numeric data source for reactive plot updates. */
 export class ObservableSeries {
   #values: number[];
   #rawHandle: RawObservableVecF64 | null;
@@ -482,6 +727,7 @@ export class ObservableSeries {
   }
 }
 
+/** Procedural sine-wave signal for temporal playback in interactive sessions. */
 export class SineSignal {
   readonly options: NormalizedSineSignalOptions;
   #rawHandle: RawSignalVecF64 | null;
@@ -547,27 +793,223 @@ export class SineSignal {
   }
 }
 
+function flattenHeatmapValues(input: ReadonlyArray<NumericArray>): {
+  values: number[];
+  rows: number;
+  cols: number;
+} {
+  const rows = input.length;
+  if (rows === 0) {
+    throw new Error("heatmap input must contain at least one row");
+  }
+
+  const normalizedRows = input.map((row) => toNumberArray(row));
+  const cols = normalizedRows[0]?.length ?? 0;
+  if (cols === 0) {
+    throw new Error("heatmap rows must contain at least one value");
+  }
+
+  if (normalizedRows.some((row) => row.length !== cols)) {
+    throw new Error("heatmap rows must all have the same length");
+  }
+
+  return {
+    values: normalizedRows.flat(),
+    rows,
+    cols,
+  };
+}
+
+function defaultSaveFileName(format: "png" | "svg"): string {
+  return format === "svg" ? "ruviz.svg" : "ruviz.png";
+}
+
+function downloadBlob(blob: Blob, fileName: string): void {
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(href);
+}
+
+/** Fluent plot builder for static export and interactive canvas mounting. */
 export class PlotBuilder {
   #state: PlotState;
 
   constructor(state?: PlotState) {
     this.#state = state
       ? {
-          ...state,
           sizePx: state.sizePx ? ([...state.sizePx] as [number, number]) : undefined,
-          series: state.series.map((series) => ({
-            kind: series.kind,
-            x:
-              series.x.kind === "static"
-                ? { kind: "static", values: [...series.x.values] }
-                : series.x,
-            y:
-              series.y.kind === "static"
-                ? { kind: "static", values: [...series.y.values] }
-                : series.y,
-          })),
+          theme: state.theme,
+          ticks: state.ticks,
+          title: state.title,
+          xLabel: state.xLabel,
+          yLabel: state.yLabel,
+          series: state.series.map((series) => PlotBuilder.#cloneSeries(series)),
         }
       : { series: [] };
+  }
+
+  static fromSnapshot(snapshot: PlotSnapshot): PlotBuilder {
+    return new PlotBuilder(PlotBuilder.#stateFromSnapshot(snapshot));
+  }
+
+  static #stateFromSnapshot(snapshot: PlotSnapshot): PlotState {
+    return {
+      sizePx: snapshot.sizePx ? ([...snapshot.sizePx] as [number, number]) : undefined,
+      theme: snapshot.theme,
+      ticks: snapshot.ticks,
+      title: snapshot.title,
+      xLabel: snapshot.xLabel,
+      yLabel: snapshot.yLabel,
+      series: snapshot.series.map((series) => {
+        switch (series.kind) {
+          case "line":
+          case "scatter":
+            return {
+              kind: series.kind,
+              x: PlotBuilder.#sourceFromSnapshot(series.x),
+              y: PlotBuilder.#ySourceFromSnapshot(series.y),
+            };
+          case "bar":
+            return {
+              kind: "bar",
+              categories: [...series.categories],
+              values: PlotBuilder.#sourceFromSnapshot(series.values),
+            };
+          case "histogram":
+            return {
+              kind: "histogram",
+              data: PlotBuilder.#sourceFromSnapshot(series.data),
+            };
+          case "boxplot":
+            return {
+              kind: "boxplot",
+              data: PlotBuilder.#sourceFromSnapshot(series.data),
+            };
+          case "error-bars":
+            return {
+              kind: "error-bars",
+              x: PlotBuilder.#sourceFromSnapshot(series.x),
+              y: PlotBuilder.#sourceFromSnapshot(series.y),
+              yErrors: PlotBuilder.#sourceFromSnapshot(series.yErrors),
+            };
+          case "error-bars-xy":
+            return {
+              kind: "error-bars-xy",
+              x: PlotBuilder.#sourceFromSnapshot(series.x),
+              y: PlotBuilder.#sourceFromSnapshot(series.y),
+              xErrors: PlotBuilder.#sourceFromSnapshot(series.xErrors),
+              yErrors: PlotBuilder.#sourceFromSnapshot(series.yErrors),
+            };
+          default:
+            return clonePlotSnapshot({ series: [series] }).series[0] as PlotSeriesDefinition;
+        }
+      }),
+    };
+  }
+
+  static #sourceFromSnapshot(
+    source: NumericReactiveSourceSnapshot | XSourceSnapshot,
+  ): NumericReactiveSourceDefinition {
+    if (source.kind === "observable") {
+      return { kind: "observable", source: new ObservableSeries(source.values) };
+    }
+
+    return { kind: "static", values: [...source.values] };
+  }
+
+  static #ySourceFromSnapshot(source: YSourceSnapshot): YSourceDefinition {
+    if (source.kind === "sine-signal") {
+      return {
+        kind: "sine-signal",
+        source: new SineSignal({
+          points: source.options.points,
+          domain: [source.options.domainStart, source.options.domainEnd],
+          amplitude: source.options.amplitude,
+          cycles: source.options.cycles,
+          phaseVelocity: source.options.phaseVelocity,
+          phaseOffset: source.options.phaseOffset,
+          verticalOffset: source.options.verticalOffset,
+        }),
+      };
+    }
+
+    return PlotBuilder.#sourceFromSnapshot(source);
+  }
+
+  static #cloneSeries(series: PlotSeriesDefinition): PlotSeriesDefinition {
+    switch (series.kind) {
+      case "line":
+      case "scatter":
+        return {
+          kind: series.kind,
+          x:
+            series.x.kind === "observable"
+              ? series.x
+              : { kind: "static", values: [...series.x.values] },
+          y:
+            series.y.kind === "static"
+              ? { kind: "static", values: [...series.y.values] }
+              : series.y,
+        };
+      case "bar":
+        return {
+          kind: "bar",
+          categories: [...series.categories],
+          values:
+            series.values.kind === "observable"
+              ? series.values
+              : { kind: "static", values: [...series.values.values] },
+        };
+      case "histogram":
+        return {
+          kind: "histogram",
+          data:
+            series.data.kind === "observable"
+              ? series.data
+              : { kind: "static", values: [...series.data.values] },
+        };
+      case "boxplot":
+        return {
+          kind: "boxplot",
+          data:
+            series.data.kind === "observable"
+              ? series.data
+              : { kind: "static", values: [...series.data.values] },
+        };
+      case "error-bars":
+        return {
+          kind: "error-bars",
+          x: series.x.kind === "observable" ? series.x : { kind: "static", values: [...series.x.values] },
+          y: series.y.kind === "observable" ? series.y : { kind: "static", values: [...series.y.values] },
+          yErrors:
+            series.yErrors.kind === "observable"
+              ? series.yErrors
+              : { kind: "static", values: [...series.yErrors.values] },
+        };
+      case "error-bars-xy":
+        return {
+          kind: "error-bars-xy",
+          x: series.x.kind === "observable" ? series.x : { kind: "static", values: [...series.x.values] },
+          y: series.y.kind === "observable" ? series.y : { kind: "static", values: [...series.y.values] },
+          xErrors:
+            series.xErrors.kind === "observable"
+              ? series.xErrors
+              : { kind: "static", values: [...series.xErrors.values] },
+          yErrors:
+            series.yErrors.kind === "observable"
+              ? series.yErrors
+              : { kind: "static", values: [...series.yErrors.values] },
+        };
+      default:
+        return clonePlotSnapshot({ series: [series] }).series[0] as PlotSeriesDefinition;
+    }
+  }
+
+  sizePx(width: number, height: number): this {
+    return this.setSizePx(width, height);
   }
 
   setSizePx(width: number, height: number): this {
@@ -575,9 +1017,17 @@ export class PlotBuilder {
     return this;
   }
 
+  theme(theme: PlotTheme): this {
+    return this.setTheme(theme);
+  }
+
   setTheme(theme: PlotTheme): this {
     this.#state.theme = theme;
     return this;
+  }
+
+  ticks(enabled: boolean): this {
+    return this.setTicks(enabled);
   }
 
   setTicks(enabled: boolean): this {
@@ -585,9 +1035,17 @@ export class PlotBuilder {
     return this;
   }
 
+  title(title: string): this {
+    return this.setTitle(title);
+  }
+
   setTitle(title: string): this {
     this.#state.title = title;
     return this;
+  }
+
+  xlabel(label: string): this {
+    return this.setXLabel(label);
   }
 
   setXLabel(label: string): this {
@@ -595,21 +1053,160 @@ export class PlotBuilder {
     return this;
   }
 
+  ylabel(label: string): this {
+    return this.setYLabel(label);
+  }
+
   setYLabel(label: string): this {
     this.#state.yLabel = label;
     return this;
   }
 
-  addLine(input: PlotSeriesInput): this {
-    return this.#addSeries("line", input);
+  line(input: XYSeriesInput): this {
+    return this.#addXYSeries("line", input);
   }
 
-  addScatter(input: PlotSeriesInput): this {
-    return this.#addSeries("scatter", input);
+  addLine(input: XYSeriesInput): this {
+    return this.line(input);
+  }
+
+  scatter(input: XYSeriesInput): this {
+    return this.#addXYSeries("scatter", input);
+  }
+
+  addScatter(input: XYSeriesInput): this {
+    return this.scatter(input);
+  }
+
+  bar(input: BarSeriesInput): this {
+    const categories = toStringArray(input.categories);
+    const values = normalizeReactiveSource(input.values);
+    if (categories.length !== sourceLength(values)) {
+      throw new Error("bar categories and values must have the same length");
+    }
+    this.#state.series.push({ kind: "bar", categories, values });
+    return this;
+  }
+
+  histogram(input: NumericArray | ObservableSeries): this {
+    const values = normalizeReactiveSource(input);
+    this.#state.series.push({ kind: "histogram", data: values });
+    return this;
+  }
+
+  boxplot(input: NumericArray | ObservableSeries): this {
+    const values = normalizeReactiveSource(input);
+    this.#state.series.push({ kind: "boxplot", data: values });
+    return this;
+  }
+
+  heatmap(input: ReadonlyArray<NumericArray>): this {
+    const { values, rows, cols } = flattenHeatmapValues(input);
+    this.#state.series.push({ kind: "heatmap", values, rows, cols });
+    return this;
+  }
+
+  errorBars(input: ErrorBarsInput): this {
+    const x = normalizeReactiveSource(input.x);
+    const y = normalizeReactiveSource(input.y);
+    const yErrors = normalizeReactiveSource(input.yErrors);
+    if (
+      sourceLength(x) !== sourceLength(y) ||
+      sourceLength(x) !== sourceLength(yErrors)
+    ) {
+      throw new Error("x, y, and yErrors must have the same length");
+    }
+    this.#state.series.push({ kind: "error-bars", x, y, yErrors });
+    return this;
+  }
+
+  errorBarsXY(input: ErrorBarsXYInput): this {
+    const x = normalizeReactiveSource(input.x);
+    const y = normalizeReactiveSource(input.y);
+    const xErrors = normalizeReactiveSource(input.xErrors);
+    const yErrors = normalizeReactiveSource(input.yErrors);
+    const expected = sourceLength(x);
+    if (
+      expected !== sourceLength(y) ||
+      expected !== sourceLength(xErrors) ||
+      expected !== sourceLength(yErrors)
+    ) {
+      throw new Error("x, y, xErrors, and yErrors must have the same length");
+    }
+    this.#state.series.push({ kind: "error-bars-xy", x, y, xErrors, yErrors });
+    return this;
+  }
+
+  kde(input: NumericArray): this {
+    this.#state.series.push({ kind: "kde", data: toNumberArray(input) });
+    return this;
+  }
+
+  ecdf(input: NumericArray): this {
+    this.#state.series.push({ kind: "ecdf", data: toNumberArray(input) });
+    return this;
+  }
+
+  contour(input: ContourInput): this {
+    const x = toNumberArray(input.x);
+    const y = toNumberArray(input.y);
+    const z = toNumberArray(input.z);
+    if (x.length === 0 || y.length === 0 || z.length !== x.length * y.length) {
+      throw new Error("contour z must contain x.length * y.length values");
+    }
+    this.#state.series.push({ kind: "contour", x, y, z });
+    return this;
+  }
+
+  pie(values: NumericArray, labelsInput?: readonly string[] | ArrayLike<string>): this {
+    const normalizedValues = toNumberArray(values);
+    const labels = labelsInput ? toStringArray(labelsInput) : undefined;
+    if (labels && labels.length !== normalizedValues.length) {
+      throw new Error("pie values and labels must have the same length");
+    }
+    this.#state.series.push({ kind: "pie", values: normalizedValues, labels });
+    return this;
+  }
+
+  radar(input: RadarInput): this {
+    const labels = toStringArray(input.labels);
+    if (labels.length === 0) {
+      throw new Error("radar labels must not be empty");
+    }
+
+    const series = input.series.map((item) => {
+      const values = toNumberArray(item.values);
+      if (values.length !== labels.length) {
+        throw new Error("each radar series must match the labels length");
+      }
+      return { name: item.name, values };
+    });
+
+    if (series.length === 0) {
+      throw new Error("radar input must contain at least one series");
+    }
+
+    this.#state.series.push({ kind: "radar", labels, series });
+    return this;
+  }
+
+  violin(input: NumericArray): this {
+    this.#state.series.push({ kind: "violin", data: toNumberArray(input) });
+    return this;
+  }
+
+  polarLine(input: PolarLineInput): this {
+    const r = toNumberArray(input.r);
+    const theta = toNumberArray(input.theta);
+    if (r.length !== theta.length) {
+      throw new Error("polar r and theta must have the same length");
+    }
+    this.#state.series.push({ kind: "polar-line", r, theta });
+    return this;
   }
 
   clone(): PlotBuilder {
-    return new PlotBuilder(this.#state);
+    return PlotBuilder.fromSnapshot(this.toSnapshot());
   }
 
   toSnapshot(): PlotSnapshot {
@@ -620,11 +1217,7 @@ export class PlotBuilder {
       title: this.#state.title,
       xLabel: this.#state.xLabel,
       yLabel: this.#state.yLabel,
-      series: this.#state.series.map((series) => ({
-        kind: series.kind,
-        x: this.#serializeXSource(series.x),
-        y: this.#serializeYSource(series.y),
-      })),
+      series: this.#state.series.map((series) => this.#serializeSeries(series)),
     };
 
     return clonePlotSnapshot(snapshot);
@@ -642,58 +1235,121 @@ export class PlotBuilder {
     return rawPlot.render_svg();
   }
 
+  async save(options?: PlotSaveOptions): Promise<void> {
+    const format = options?.format ?? "png";
+    const fileName = options?.fileName ?? defaultSaveFileName(format);
+    if (format === "svg") {
+      const svg = await this.renderSvg();
+      downloadBlob(new Blob([svg], { type: "image/svg+xml" }), fileName);
+      return;
+    }
+
+    const png = await this.renderPng();
+    const blobBytes = new Uint8Array(png);
+    downloadBlob(new Blob([blobBytes.buffer as ArrayBuffer], { type: "image/png" }), fileName);
+  }
+
+  async mount(
+    canvas: HTMLCanvasElement,
+    options?: CanvasSessionOptions,
+  ): Promise<CanvasSession> {
+    const session = await createCanvasSession(canvas, options);
+    await session.setPlot(this);
+    session.render();
+    return session;
+  }
+
+  async mountWorker(
+    canvas: HTMLCanvasElement,
+    options?: WorkerSessionOptions,
+  ): Promise<WorkerSession> {
+    const session = await createWorkerSession(canvas, options);
+    await session.setPlot(this);
+    session.render();
+    return session;
+  }
+
   async _toRawPlot(module?: RawModule): Promise<RawJsPlot> {
     const currentModule = module ?? (await ensureRawModule());
     return buildRawPlotFromState(this.#state, currentModule);
   }
 
-  #addSeries(kind: PlotSeriesDefinition["kind"], input: PlotSeriesInput): this {
+  #addXYSeries(kind: "line" | "scatter", input: XYSeriesInput): this {
     const x = normalizeXSource(input.x);
     const y = normalizeYSource(input.y);
-
-    if (xSourceLength(x) !== ySourceLength(y)) {
+    if (sourceLength(x) !== sourceLength(y)) {
       throw new Error("x and y must have the same length");
     }
-
-    this.#state.series.push({ kind, x, y });
+    this.#state.series.push({ kind, x, y } as LineSeriesDefinition | ScatterSeriesDefinition);
     return this;
   }
 
-  #serializeXSource(source: XSourceDefinition): XSourceSnapshot {
-    if (source.kind === "observable") {
-      return {
-        kind: "observable",
-        values: source.source.snapshotValues(),
-      };
+  #serializeSeries(series: PlotSeriesDefinition): PlotSeriesSnapshot {
+    switch (series.kind) {
+      case "line":
+      case "scatter":
+        return {
+          kind: series.kind,
+          x: this.#serializeXSource(series.x),
+          y: this.#serializeYSource(series.y),
+        };
+      case "bar":
+        return {
+          kind: "bar",
+          categories: [...series.categories],
+          values: this.#serializeReactiveSource(series.values),
+        };
+      case "histogram":
+        return {
+          kind: "histogram",
+          data: this.#serializeReactiveSource(series.data),
+        };
+      case "boxplot":
+        return {
+          kind: "boxplot",
+          data: this.#serializeReactiveSource(series.data),
+        };
+      case "error-bars":
+        return {
+          kind: "error-bars",
+          x: this.#serializeReactiveSource(series.x),
+          y: this.#serializeReactiveSource(series.y),
+          yErrors: this.#serializeReactiveSource(series.yErrors),
+        };
+      case "error-bars-xy":
+        return {
+          kind: "error-bars-xy",
+          x: this.#serializeReactiveSource(series.x),
+          y: this.#serializeReactiveSource(series.y),
+          xErrors: this.#serializeReactiveSource(series.xErrors),
+          yErrors: this.#serializeReactiveSource(series.yErrors),
+        };
+      default:
+        return clonePlotSnapshot({ series: [series] }).series[0];
     }
+  }
 
-    return {
-      kind: "static",
-      values: [...source.values],
-    };
+  #serializeXSource(source: XSourceDefinition): XSourceSnapshot {
+    return this.#serializeReactiveSource(source);
+  }
+
+  #serializeReactiveSource(source: NumericReactiveSourceDefinition): NumericReactiveSourceSnapshot {
+    if (source.kind === "observable") {
+      return { kind: "observable", values: source.source.snapshotValues() };
+    }
+    return { kind: "static", values: [...source.values] };
   }
 
   #serializeYSource(source: YSourceDefinition): YSourceSnapshot {
-    switch (source.kind) {
-      case "observable":
-        return {
-          kind: "observable",
-          values: source.source.snapshotValues(),
-        };
-      case "sine-signal":
-        return {
-          kind: "sine-signal",
-          options: { ...source.source.options },
-        };
-      case "static":
-        return {
-          kind: "static",
-          values: [...source.values],
-        };
+    if (source.kind === "sine-signal") {
+      return { kind: "sine-signal", options: { ...source.source.options } };
     }
+
+    return this.#serializeReactiveSource(source);
   }
 }
 
+/** Main-thread interactive canvas session. */
 export class CanvasSession {
   readonly mode: SessionMode = "main-thread";
 
@@ -827,6 +1483,7 @@ export class CanvasSession {
   }
 }
 
+/** Worker-backed interactive canvas session with main-thread fallback support. */
 export class WorkerSession {
   readonly mode: SessionMode;
 
@@ -1171,14 +1828,22 @@ export class WorkerSession {
   }
 }
 
+/** Create a new fluent plot builder. */
 export function createPlot(): PlotBuilder {
   return new PlotBuilder();
 }
 
+/** Rehydrate a plot builder from a serialized snapshot. */
+export function createPlotFromSnapshot(snapshot: PlotSnapshot): PlotBuilder {
+  return PlotBuilder.fromSnapshot(snapshot);
+}
+
+/** Create a mutable observable numeric series. */
 export function createObservable(values: NumericArray): ObservableSeries {
   return new ObservableSeries(values);
 }
 
+/** Create a time-varying sine signal. */
 export function createSineSignal(options: SineSignalOptions): SineSignal {
   return new SineSignal(options);
 }
@@ -1188,6 +1853,7 @@ export async function registerFont(bytes: Uint8Array | ArrayLike<number>): Promi
   module.register_font_bytes_js(Uint8Array.from(bytes));
 }
 
+/** Inspect browser runtime capabilities used by the interactive renderer. */
 export async function getRuntimeCapabilities(): Promise<RuntimeCapabilities> {
   const module = await ensureRawModule();
   const capabilities = module.web_runtime_capabilities();

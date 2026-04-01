@@ -57,5 +57,17 @@ const session = new WebCanvasSession(canvas);
 session.set_plot(plot);
 ```
 
+## Plot Surface Coverage
+
+The higher-level SDK and the Python binding both route through this bridge for browser rendering.
+The raw `JsPlot` surface now includes:
+
+- line and scatter
+- bar, histogram, and boxplot
+- heatmap and contour
+- vertical and XY error bars
+- KDE, ECDF, violin, pie, radar, and polar line
+- observables and time-varying sine signals for interactive demos
+
 For the higher-level JS/TS API with camelCase methods, worker fallback, auto-resize, and Bun
 workspace packaging, see [`packages/ruviz-web`](../../packages/ruviz-web).

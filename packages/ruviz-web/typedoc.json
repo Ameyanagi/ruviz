@@ -1,0 +1,24 @@
+{
+  "entryPoints": [
+    "src/index.ts",
+    "src/shared.ts"
+  ],
+  "out": "docs/api/reference",
+  "plugin": [
+    "typedoc-plugin-markdown"
+  ],
+  "readme": "none",
+  "hideGenerator": true,
+  "intentionallyNotExported": [
+    "PlotState",
+    "XYSeriesInput",
+    "BarSeriesInput",
+    "ContourInput",
+    "ErrorBarsInput",
+    "ErrorBarsXYInput",
+    "PolarLineInput",
+    "RadarInput"
+  ],
+  "excludePrivate": true,
+  "excludeInternal": true
+}

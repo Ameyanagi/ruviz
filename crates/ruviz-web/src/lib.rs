@@ -286,6 +286,38 @@ mod wasm {
             let plot = mem::replace(&mut self.inner, Plot::new());
             self.inner = f(plot);
         }
+
+        fn validate_equal_lengths(
+            lengths: &[usize],
+            message: &'static str,
+        ) -> std::result::Result<(), JsValue> {
+            let Some((&first, rest)) = lengths.split_first() else {
+                return Ok(());
+            };
+
+            if rest.iter().all(|len| *len == first) {
+                Ok(())
+            } else {
+                Err(JsValue::from_str(message))
+            }
+        }
+
+        fn flatten_grid(values: Vec<f64>, rows: usize, cols: usize) -> Result<Vec<Vec<f64>>, JsValue> {
+            if rows == 0 || cols == 0 {
+                return Err(JsValue::from_str("heatmap rows and cols must be greater than zero"));
+            }
+
+            if values.len() != rows.saturating_mul(cols) {
+                return Err(JsValue::from_str(
+                    "heatmap values length must match rows * cols",
+                ));
+            }
+
+            Ok(values
+                .chunks(cols)
+                .map(|chunk| chunk.to_vec())
+                .collect::<Vec<_>>())
+        }
     }
 
     #[wasm_bindgen]
@@ -310,6 +342,231 @@ mod wasm {
             }
 
             self.replace_with_series(|plot| plot.scatter(&x, &y).into_plot());
+            Ok(())
+        }
+
+        pub fn bar(&mut self, categories: Vec<String>, values: Vec<f64>) -> Result<(), JsValue> {
+            if categories.len() != values.len() {
+                return Err(JsValue::from_str(
+                    "bar categories and values must have the same length",
+                ));
+            }
+
+            self.replace_with_series(|plot| plot.bar(&categories, &values).into_plot());
+            Ok(())
+        }
+
+        pub fn bar_observable(
+            &mut self,
+            categories: Vec<String>,
+            values: &ObservableVecF64,
+        ) -> Result<(), JsValue> {
+            if categories.len() != values.len() {
+                return Err(JsValue::from_str(
+                    "bar categories and observable values must have the same length",
+                ));
+            }
+
+            let value_source = values.inner.clone();
+            self.replace_with_series(|plot| plot.bar_source(&categories, value_source).into_plot());
+            Ok(())
+        }
+
+        pub fn histogram(&mut self, data: Vec<f64>) {
+            self.replace_with_series(|plot| plot.histogram(&data, None).into_plot());
+        }
+
+        pub fn histogram_observable(&mut self, data: &ObservableVecF64) {
+            let data_source = data.inner.clone();
+            self.replace_with_series(|plot| plot.histogram_source(data_source, None).into_plot());
+        }
+
+        pub fn boxplot(&mut self, data: Vec<f64>) {
+            self.replace_with_series(|plot| plot.boxplot(&data, None).into_plot());
+        }
+
+        pub fn boxplot_observable(&mut self, data: &ObservableVecF64) {
+            let data_source = data.inner.clone();
+            self.replace_with_series(|plot| plot.boxplot_source(data_source, None).into_plot());
+        }
+
+        pub fn heatmap(
+            &mut self,
+            values: Vec<f64>,
+            rows: usize,
+            cols: usize,
+        ) -> Result<(), JsValue> {
+            let matrix = Self::flatten_grid(values, rows, cols)?;
+            self.replace_with_series(|plot| plot.heatmap(&matrix, None).into_plot());
+            Ok(())
+        }
+
+        pub fn error_bars(
+            &mut self,
+            x: Vec<f64>,
+            y: Vec<f64>,
+            y_errors: Vec<f64>,
+        ) -> Result<(), JsValue> {
+            Self::validate_equal_lengths(
+                &[x.len(), y.len(), y_errors.len()],
+                "x, y, and y_errors must have the same length",
+            )?;
+
+            self.replace_with_series(|plot| plot.error_bars(&x, &y, &y_errors).into_plot());
+            Ok(())
+        }
+
+        pub fn error_bars_observable(
+            &mut self,
+            x: &ObservableVecF64,
+            y: &ObservableVecF64,
+            y_errors: &ObservableVecF64,
+        ) -> Result<(), JsValue> {
+            Self::validate_equal_lengths(
+                &[x.len(), y.len(), y_errors.len()],
+                "observable x, y, and y_errors must have the same length",
+            )?;
+
+            self.replace_with_series(|plot| {
+                plot.error_bars_source(x.inner.clone(), y.inner.clone(), y_errors.inner.clone())
+                    .into_plot()
+            });
+            Ok(())
+        }
+
+        pub fn error_bars_xy(
+            &mut self,
+            x: Vec<f64>,
+            y: Vec<f64>,
+            x_errors: Vec<f64>,
+            y_errors: Vec<f64>,
+        ) -> Result<(), JsValue> {
+            Self::validate_equal_lengths(
+                &[x.len(), y.len(), x_errors.len(), y_errors.len()],
+                "x, y, x_errors, and y_errors must have the same length",
+            )?;
+
+            self.replace_with_series(|plot| {
+                plot.error_bars_xy(&x, &y, &x_errors, &y_errors).into_plot()
+            });
+            Ok(())
+        }
+
+        pub fn error_bars_xy_observable(
+            &mut self,
+            x: &ObservableVecF64,
+            y: &ObservableVecF64,
+            x_errors: &ObservableVecF64,
+            y_errors: &ObservableVecF64,
+        ) -> Result<(), JsValue> {
+            Self::validate_equal_lengths(
+                &[x.len(), y.len(), x_errors.len(), y_errors.len()],
+                "observable x, y, x_errors, and y_errors must have the same length",
+            )?;
+
+            self.replace_with_series(|plot| {
+                plot.error_bars_xy_source(
+                    x.inner.clone(),
+                    y.inner.clone(),
+                    x_errors.inner.clone(),
+                    y_errors.inner.clone(),
+                )
+                .into_plot()
+            });
+            Ok(())
+        }
+
+        pub fn kde(&mut self, data: Vec<f64>) {
+            self.replace_with_series(|plot| plot.kde(&data).into_plot());
+        }
+
+        pub fn ecdf(&mut self, data: Vec<f64>) {
+            self.replace_with_series(|plot| plot.ecdf(&data).into_plot());
+        }
+
+        pub fn contour(&mut self, x: Vec<f64>, y: Vec<f64>, z: Vec<f64>) -> Result<(), JsValue> {
+            if x.is_empty() || y.is_empty() {
+                return Err(JsValue::from_str("contour x and y must not be empty"));
+            }
+
+            if z.len() != x.len().saturating_mul(y.len()) {
+                return Err(JsValue::from_str(
+                    "contour z length must equal x.len() * y.len()",
+                ));
+            }
+
+            self.replace_with_series(|plot| plot.contour(&x, &y, &z).into_plot());
+            Ok(())
+        }
+
+        pub fn pie(&mut self, values: Vec<f64>) {
+            self.replace_with_series(|plot| plot.pie(&values).into_plot());
+        }
+
+        pub fn pie_with_labels(
+            &mut self,
+            values: Vec<f64>,
+            labels: Vec<String>,
+        ) -> Result<(), JsValue> {
+            if values.len() != labels.len() {
+                return Err(JsValue::from_str(
+                    "pie values and labels must have the same length",
+                ));
+            }
+
+            self.replace_with_series(|plot| plot.pie(&values).labels(&labels).into_plot());
+            Ok(())
+        }
+
+        pub fn radar(
+            &mut self,
+            labels: Vec<String>,
+            series_names: Vec<String>,
+            series_values: Vec<f64>,
+        ) -> Result<(), JsValue> {
+            if labels.is_empty() {
+                return Err(JsValue::from_str("radar labels must not be empty"));
+            }
+
+            let points_per_series = labels.len();
+            if series_values.is_empty() || series_values.len() % points_per_series != 0 {
+                return Err(JsValue::from_str(
+                    "radar series values length must be a multiple of labels length",
+                ));
+            }
+
+            let series_count = series_values.len() / points_per_series;
+            if !series_names.is_empty() && series_names.len() != series_count {
+                return Err(JsValue::from_str(
+                    "radar series_names length must match the number of series",
+                ));
+            }
+
+            self.replace_with_series(|plot| {
+                let mut builder = plot.radar(&labels);
+                for (index, chunk) in series_values.chunks(points_per_series).enumerate() {
+                    if let Some(name) = series_names.get(index) {
+                        builder = builder.add_series(name.clone(), &chunk);
+                    } else {
+                        builder = builder.series(&chunk);
+                    }
+                }
+                builder.into_plot()
+            });
+            Ok(())
+        }
+
+        pub fn violin(&mut self, data: Vec<f64>) {
+            self.replace_with_series(|plot| plot.violin(&data).into_plot());
+        }
+
+        pub fn polar_line(&mut self, r: Vec<f64>, theta: Vec<f64>) -> Result<(), JsValue> {
+            Self::validate_equal_lengths(
+                &[r.len(), theta.len()],
+                "polar r and theta must have the same length",
+            )?;
+
+            self.replace_with_series(|plot| plot.polar_line(&r, &theta).into_plot());
             Ok(())
         }
 

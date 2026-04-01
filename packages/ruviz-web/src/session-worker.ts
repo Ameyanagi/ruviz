@@ -1,11 +1,13 @@
 import initRaw, * as raw from "../generated/raw/ruviz_web_raw.js";
-import type { JsPlot as RawJsPlot } from "../generated/raw/ruviz_web_raw.js";
 import {
   type BackendPreference,
   type PlotSnapshot,
-  type XSourceSnapshot,
-  type YSourceSnapshot,
 } from "./shared.js";
+import {
+  buildRawPlotFromSnapshot,
+  normalizeBackendPreference,
+  toRawBackendPreference,
+} from "./plot-runtime.js";
 
 type RawModule = typeof import("../generated/raw/ruviz_web_raw.js");
 
@@ -33,117 +35,6 @@ async function ensureRawModule(): Promise<RawModule> {
   }
 
   return rawModulePromise;
-}
-
-function normalizeBackendPreference(
-  backendPreference: BackendPreference | undefined,
-): BackendPreference {
-  switch (backendPreference) {
-    case "cpu":
-    case "svg":
-    case "gpu":
-      return backendPreference;
-    default:
-      return "auto";
-  }
-}
-
-function toRawBackendPreference(module: RawModule, backendPreference: BackendPreference): number {
-  switch (backendPreference) {
-    case "cpu":
-      return module.WebBackendPreference.Cpu;
-    case "svg":
-      return module.WebBackendPreference.Svg;
-    case "gpu":
-      return module.WebBackendPreference.Gpu;
-    default:
-      return module.WebBackendPreference.Auto;
-  }
-}
-
-function sourceValues(
-  source: XSourceSnapshot | Exclude<YSourceSnapshot, { kind: "sine-signal" }>,
-): number[] {
-  return [...source.values];
-}
-
-function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot): void {
-  if (snapshot.sizePx) {
-    rawPlot.size_px(snapshot.sizePx[0], snapshot.sizePx[1]);
-  }
-
-  if (snapshot.theme === "dark") {
-    rawPlot.theme_dark();
-  } else if (snapshot.theme === "light") {
-    rawPlot.theme_light();
-  }
-
-  if (typeof snapshot.ticks === "boolean") {
-    rawPlot.ticks(snapshot.ticks);
-  }
-
-  if (snapshot.title) {
-    rawPlot.title(snapshot.title);
-  }
-
-  if (snapshot.xLabel) {
-    rawPlot.xlabel(snapshot.xLabel);
-  }
-
-  if (snapshot.yLabel) {
-    rawPlot.ylabel(snapshot.yLabel);
-  }
-}
-
-function buildRawPlot(module: RawModule, snapshot: PlotSnapshot): RawJsPlot {
-  const rawPlot = new module.JsPlot();
-  applySnapshotMetadata(rawPlot, snapshot);
-
-  for (const series of snapshot.series) {
-    if (series.y.kind === "sine-signal") {
-      const signal = module.SignalVecF64.sineWave(
-        series.y.options.points,
-        series.y.options.domainStart,
-        series.y.options.domainEnd,
-        series.y.options.amplitude,
-        series.y.options.cycles,
-        series.y.options.phaseVelocity,
-        series.y.options.phaseOffset,
-        series.y.options.verticalOffset,
-      );
-      const xValues = Float64Array.from(sourceValues(series.x));
-
-      if (series.kind === "line") {
-        rawPlot.line_signal(xValues, signal);
-      } else {
-        rawPlot.scatter_signal(xValues, signal);
-      }
-      continue;
-    }
-
-    if (series.x.kind === "observable" || series.y.kind === "observable") {
-      const xObservable = new module.ObservableVecF64(Float64Array.from(sourceValues(series.x)));
-      const yObservable = new module.ObservableVecF64(Float64Array.from(sourceValues(series.y)));
-
-      if (series.kind === "line") {
-        rawPlot.line_observable(xObservable, yObservable);
-      } else {
-        rawPlot.scatter_observable(xObservable, yObservable);
-      }
-      continue;
-    }
-
-    const xValues = Float64Array.from(sourceValues(series.x));
-    const yValues = Float64Array.from(sourceValues(series.y));
-
-    if (series.kind === "line") {
-      rawPlot.line(xValues, yValues);
-    } else {
-      rawPlot.scatter(xValues, yValues);
-    }
-  }
-
-  return rawPlot;
 }
 
 function postReady(): void {
@@ -204,7 +95,7 @@ self.onmessage = async (event: MessageEvent<WorkerEnvelope>) => {
       case "setPlot": {
         const currentSession = getSession();
         const snapshot = (payload as { snapshot: PlotSnapshot }).snapshot;
-        currentSession.set_plot(buildRawPlot(module, snapshot));
+        currentSession.set_plot(buildRawPlotFromSnapshot(snapshot, module));
         postResponse("ack", requestId);
         return;
       }
