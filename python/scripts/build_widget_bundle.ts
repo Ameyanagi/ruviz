@@ -6,10 +6,8 @@ const entryPath = resolve(repoRoot, "python", "python", "ruviz", "widget.entry.j
 const outPath = resolve(repoRoot, "python", "python", "ruviz", "widget.js");
 const wasmPath = resolve(
   repoRoot,
-  "python",
-  "python",
-  "ruviz",
-  "web",
+  "packages",
+  "ruviz-web",
   "generated",
   "raw",
   "ruviz_web_raw_bg.wasm",
