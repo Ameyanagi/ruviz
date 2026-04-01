@@ -42,10 +42,7 @@ export function toRawBackendPreference(
 }
 
 function sourceValues(
-  source:
-    | XSourceSnapshot
-    | YSourceSnapshot
-    | NumericReactiveSourceSnapshot,
+  source: XSourceSnapshot | YSourceSnapshot | NumericReactiveSourceSnapshot,
 ): number[] {
   if (source.kind === "sine-signal") {
     throw new Error("sine-signal sources do not expose direct values");
@@ -89,10 +86,7 @@ export function applySnapshotMetadata(rawPlot: RawJsPlot, snapshot: PlotSnapshot
   }
 }
 
-export function buildRawPlotFromSnapshot(
-  snapshot: PlotSnapshot,
-  module: RawModule,
-): RawJsPlot {
+export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModule): RawJsPlot {
   const rawPlot = new module.JsPlot();
   applySnapshotMetadata(rawPlot, snapshot);
 

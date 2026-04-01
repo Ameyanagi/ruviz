@@ -67,9 +67,7 @@ export interface SignalSourceSnapshot {
 
 export type NumericReactiveSourceSnapshot = StaticSourceSnapshot | ObservableSourceSnapshot;
 export type XSourceSnapshot = NumericReactiveSourceSnapshot;
-export type YSourceSnapshot =
-  | NumericReactiveSourceSnapshot
-  | SignalSourceSnapshot;
+export type YSourceSnapshot = NumericReactiveSourceSnapshot | SignalSourceSnapshot;
 
 export interface LineSeriesSnapshot {
   kind: "line";

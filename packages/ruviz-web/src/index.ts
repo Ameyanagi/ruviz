@@ -39,10 +39,7 @@ import {
   type XSourceSnapshot,
   type YSourceSnapshot,
 } from "./shared.js";
-import {
-  normalizeBackendPreference,
-  toRawBackendPreference,
-} from "./plot-runtime.js";
+import { normalizeBackendPreference, toRawBackendPreference } from "./plot-runtime.js";
 
 export type {
   BackendPreference,
@@ -86,10 +83,6 @@ interface XYSeriesInput {
   y: NumericArray | ObservableSeries | SineSignal;
 }
 
-interface NumericReactiveSeriesInput {
-  values: NumericArray | ObservableSeries;
-}
-
 interface BarSeriesInput {
   categories: readonly string[] | ArrayLike<string>;
   values: NumericArray | ObservableSeries;
@@ -106,15 +99,6 @@ interface ErrorBarsXYInput {
   y: NumericArray | ObservableSeries;
   xErrors: NumericArray | ObservableSeries;
   yErrors: NumericArray | ObservableSeries;
-}
-
-interface HeatmapInput {
-  values: ReadonlyArray<NumericArray>;
-}
-
-interface PieInput {
-  values: NumericArray;
-  labels?: readonly string[] | ArrayLike<string>;
 }
 
 interface RadarSeriesInput {
@@ -982,8 +966,14 @@ export class PlotBuilder {
       case "error-bars":
         return {
           kind: "error-bars",
-          x: series.x.kind === "observable" ? series.x : { kind: "static", values: [...series.x.values] },
-          y: series.y.kind === "observable" ? series.y : { kind: "static", values: [...series.y.values] },
+          x:
+            series.x.kind === "observable"
+              ? series.x
+              : { kind: "static", values: [...series.x.values] },
+          y:
+            series.y.kind === "observable"
+              ? series.y
+              : { kind: "static", values: [...series.y.values] },
           yErrors:
             series.yErrors.kind === "observable"
               ? series.yErrors
@@ -992,8 +982,14 @@ export class PlotBuilder {
       case "error-bars-xy":
         return {
           kind: "error-bars-xy",
-          x: series.x.kind === "observable" ? series.x : { kind: "static", values: [...series.x.values] },
-          y: series.y.kind === "observable" ? series.y : { kind: "static", values: [...series.y.values] },
+          x:
+            series.x.kind === "observable"
+              ? series.x
+              : { kind: "static", values: [...series.x.values] },
+          y:
+            series.y.kind === "observable"
+              ? series.y
+              : { kind: "static", values: [...series.y.values] },
           xErrors:
             series.xErrors.kind === "observable"
               ? series.xErrors
@@ -1110,10 +1106,7 @@ export class PlotBuilder {
     const x = normalizeReactiveSource(input.x);
     const y = normalizeReactiveSource(input.y);
     const yErrors = normalizeReactiveSource(input.yErrors);
-    if (
-      sourceLength(x) !== sourceLength(y) ||
-      sourceLength(x) !== sourceLength(yErrors)
-    ) {
+    if (sourceLength(x) !== sourceLength(y) || sourceLength(x) !== sourceLength(yErrors)) {
       throw new Error("x, y, and yErrors must have the same length");
     }
     this.#state.series.push({ kind: "error-bars", x, y, yErrors });
@@ -1249,10 +1242,7 @@ export class PlotBuilder {
     downloadBlob(new Blob([blobBytes.buffer as ArrayBuffer], { type: "image/png" }), fileName);
   }
 
-  async mount(
-    canvas: HTMLCanvasElement,
-    options?: CanvasSessionOptions,
-  ): Promise<CanvasSession> {
+  async mount(canvas: HTMLCanvasElement, options?: CanvasSessionOptions): Promise<CanvasSession> {
     const session = await createCanvasSession(canvas, options);
     await session.setPlot(this);
     session.render();

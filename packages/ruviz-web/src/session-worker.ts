@@ -1,8 +1,5 @@
 import initRaw, * as raw from "../generated/raw/ruviz_web_raw.js";
-import {
-  type BackendPreference,
-  type PlotSnapshot,
-} from "./shared.js";
+import { type BackendPreference, type PlotSnapshot } from "./shared.js";
 import {
   buildRawPlotFromSnapshot,
   normalizeBackendPreference,

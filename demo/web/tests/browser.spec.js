@@ -330,7 +330,13 @@ test("direct exports match snapshot and canvas-session exports", async ({ page }
   });
 
   for (const entry of result) {
-    expect(entry.directVsSnapshot.equal, `${entry.slug}: ${entry.directVsSnapshot.reason || "snapshot mismatch"}`).toBeTruthy();
-    expect(entry.directVsSession.equal, `${entry.slug}: ${entry.directVsSession.reason || "session mismatch"}`).toBeTruthy();
+    expect(
+      entry.directVsSnapshot.equal,
+      `${entry.slug}: ${entry.directVsSnapshot.reason || "snapshot mismatch"}`,
+    ).toBeTruthy();
+    expect(
+      entry.directVsSession.equal,
+      `${entry.slug}: ${entry.directVsSession.reason || "session mismatch"}`,
+    ).toBeTruthy();
   }
 });
