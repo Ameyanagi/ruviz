@@ -236,7 +236,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: stable
+          rust-toolchain: 1.94.1
           working-directory: python
           args: --release --out dist
 
@@ -265,7 +265,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: stable
+          rust-toolchain: 1.94.1
           working-directory: python
           args: --release --out dist
 
@@ -294,7 +294,7 @@ jobs:
         with:
           command: build
           maturin-version: v1.12.6
-          rust-toolchain: stable
+          rust-toolchain: 1.94.1
           working-directory: python
           args: --release --out dist
 
