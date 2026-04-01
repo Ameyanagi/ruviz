@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.3.3] - 2026-04-01
+
+### Fixed
+
+- Stopped publishing the plain `linux_x86_64` Python wheel to PyPI, since PyPI rejects that host-native Linux platform tag for public uploads.
+- Kept the Python release path on PyPI by publishing the source distribution plus macOS Intel, macOS Apple Silicon, and Windows wheels while Linux falls back to source installs for now.
+
 ## [0.3.2] - 2026-04-01
 
 ### Fixed
@@ -161,7 +168,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/Ameyanagi/ruviz/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/Ameyanagi/ruviz/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Ameyanagi/ruviz/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Ameyanagi/ruviz/compare/v0.2.0...v0.3.0

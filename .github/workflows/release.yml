@@ -218,41 +218,6 @@ jobs:
           path: python/dist/*.tar.gz
           if-no-files-found: error
 
-  build-python-wheel-linux:
-    name: Build Python wheel (Linux)
-    runs-on: ubuntu-latest
-    needs: build-release
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Linux desktop build dependencies
-        uses: ./.github/actions/install-linux-desktop-build-deps
-
-      - name: Build Linux wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          maturin-version: v1.12.6
-          rust-toolchain: stable
-          working-directory: python
-          # The Python package keeps interactive desktop support enabled, so we
-          # build on the host instead of forcing a manylinux container image.
-          container: off
-          args: --release --compatibility linux --out dist
-
-      - name: Upload Linux wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-dist-linux
-          path: python/dist/*.whl
-          if-no-files-found: error
-
   build-python-wheel-macos-intel:
     name: Build Python wheel (macOS Intel)
     runs-on: macos-15-intel
@@ -590,7 +555,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-python-sdist
-      - build-python-wheel-linux
       - build-python-wheel-macos-intel
       - build-python-wheel-macos-arm
       - build-python-wheel-windows

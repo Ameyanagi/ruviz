@@ -7,14 +7,14 @@ Versioned release notes are stored in this directory using the tag name format:
 
 Examples:
 
-- `v0.3.2.md`
+- `v0.3.3.md`
 - `v0.4.0-rc1.md`
 
 ## Workflow Integration
 
 The release workflow (`.github/workflows/release.yml`) automatically:
 
-1. Resolves the pushed tag name (for example, `v0.3.2`)
+1. Resolves the pushed tag name (for example, `v0.3.3`)
 2. Validates that the Rust crates, npm package, and Python package versions all match the tag
 3. Publishes Rust crates to crates.io and the JS SDK to npm for final releases
 4. Publishes the Python package to PyPI for both final and prerelease tags
