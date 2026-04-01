@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ruviz"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python bindings and notebook widget support for ruviz"
 readme = "README.md"
 requires-python = ">=3.10"

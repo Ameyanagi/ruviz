@@ -64,7 +64,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.0", features = ["ndarray_support"] }
+ruviz = { version = "0.3.1", features = ["ndarray_support"] }
 ndarray = "0.15"
 ```
 
@@ -183,7 +183,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.0", features = ["nalgebra_support"] }
+ruviz = { version = "0.3.1", features = ["nalgebra_support"] }
 nalgebra = "0.32"
 ```
 
@@ -216,7 +216,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.0", features = ["polars_support"] }
+ruviz = { version = "0.3.1", features = ["polars_support"] }
 polars = "0.35"
 ```
 

@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.3.1] - 2026-04-01
+
+### Added
+
+- Added the first tag-driven PyPI publishing path for the `ruviz` Python package, including trusted publishing from GitHub Actions and multi-platform wheel builds.
+- Added dedicated Python CI coverage so `uv sync`, the native extension tests, package tests, and Ruff linting run on every PR and release tag.
+- Added published Python examples, docs, and notebook widget support alongside the browser runtime bridge bundled into the Python package.
+
+### Changed
+
+- Aligned the unified release workflow across crates.io, npm, and PyPI with shared version validation and release-note handling.
+
+### Fixed
+
+- Fixed mixed named and unnamed radar-series handling in the browser/web bridge so partial labels no longer fail render or mount.
+- Fixed Python observable listener cleanup so discarded plots do not stay strongly referenced by long-lived observables.
+
 ## [0.3.0] - 2026-04-01
 
 ### Breaking Changes
@@ -137,7 +154,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Ameyanagi/ruviz/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Ameyanagi/ruviz/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ameyanagi/ruviz/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/Ameyanagi/ruviz/compare/v0.1.4...v0.1.5
