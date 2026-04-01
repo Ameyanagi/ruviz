@@ -231,9 +231,7 @@ export function buildRawPlotFromSnapshot(snapshot: PlotSnapshot, module: RawModu
         const names: string[] = [];
         for (const item of series.series) {
           flattened.push(...item.values);
-          if (item.name) {
-            names.push(item.name);
-          }
+          names.push(item.name ?? "");
         }
         rawPlot.radar(series.labels, names, Float64Array.from(flattened));
         break;

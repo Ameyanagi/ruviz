@@ -299,6 +299,19 @@ test("direct exports match snapshot and canvas-session exports", async ({ page }
             [0.2, 0.6, 0.9],
           ]),
       },
+      {
+        slug: "radar-mixed-names",
+        plot: createPlot()
+          .sizePx(640, 320)
+          .title("Parity Radar")
+          .radar({
+            labels: ["Speed", "Power", "Defense", "Magic"],
+            series: [
+              { name: "Named", values: [0.9, 0.7, 0.8, 0.6] },
+              { values: [0.4, 0.6, 0.5, 0.7] },
+            ],
+          }),
+      },
     ];
 
     const comparisons = [];

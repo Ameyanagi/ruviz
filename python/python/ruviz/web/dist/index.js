@@ -1,6 +1,6 @@
 import initRaw, * as raw from "../generated/raw/ruviz_web_raw.js";
 import { clonePlotSnapshot, normalizeSineSignalOptions, toNumberArray, } from "./shared.js";
-import { normalizeBackendPreference, toRawBackendPreference, } from "./plot-runtime.js";
+import { normalizeBackendPreference, toRawBackendPreference } from "./plot-runtime.js";
 let rawModulePromise = null;
 function readBooleanProperty(record, snakeName, camelName) {
     if (!record || typeof record !== "object") {
@@ -314,9 +314,7 @@ async function buildRawPlotFromState(state, module) {
                 const names = [];
                 for (const item of series.series) {
                     flattened.push(...item.values);
-                    if (item.name) {
-                        names.push(item.name);
-                    }
+                    names.push(item.name ?? "");
                 }
                 rawPlot.radar(series.labels, names, Float64Array.from(flattened));
                 break;
@@ -331,6 +329,7 @@ async function buildRawPlotFromState(state, module) {
     }
     return rawPlot;
 }
+/** Mutable numeric data source for reactive plot updates. */
 export class ObservableSeries {
     #values;
     #rawHandle;
@@ -369,6 +368,7 @@ export class ObservableSeries {
         return this.#rawHandle;
     }
 }
+/** Procedural sine-wave signal for temporal playback in interactive sessions. */
 export class SineSignal {
     options;
     #rawHandle;
@@ -429,6 +429,7 @@ function downloadBlob(blob, fileName) {
     anchor.click();
     URL.revokeObjectURL(href);
 }
+/** Fluent plot builder for static export and interactive canvas mounting. */
 export class PlotBuilder {
     #state;
     constructor(state) {
@@ -562,8 +563,12 @@ export class PlotBuilder {
             case "error-bars":
                 return {
                     kind: "error-bars",
-                    x: series.x.kind === "observable" ? series.x : { kind: "static", values: [...series.x.values] },
-                    y: series.y.kind === "observable" ? series.y : { kind: "static", values: [...series.y.values] },
+                    x: series.x.kind === "observable"
+                        ? series.x
+                        : { kind: "static", values: [...series.x.values] },
+                    y: series.y.kind === "observable"
+                        ? series.y
+                        : { kind: "static", values: [...series.y.values] },
                     yErrors: series.yErrors.kind === "observable"
                         ? series.yErrors
                         : { kind: "static", values: [...series.yErrors.values] },
@@ -571,8 +576,12 @@ export class PlotBuilder {
             case "error-bars-xy":
                 return {
                     kind: "error-bars-xy",
-                    x: series.x.kind === "observable" ? series.x : { kind: "static", values: [...series.x.values] },
-                    y: series.y.kind === "observable" ? series.y : { kind: "static", values: [...series.y.values] },
+                    x: series.x.kind === "observable"
+                        ? series.x
+                        : { kind: "static", values: [...series.x.values] },
+                    y: series.y.kind === "observable"
+                        ? series.y
+                        : { kind: "static", values: [...series.y.values] },
                     xErrors: series.xErrors.kind === "observable"
                         ? series.xErrors
                         : { kind: "static", values: [...series.xErrors.values] },
@@ -666,8 +675,7 @@ export class PlotBuilder {
         const x = normalizeReactiveSource(input.x);
         const y = normalizeReactiveSource(input.y);
         const yErrors = normalizeReactiveSource(input.yErrors);
-        if (sourceLength(x) !== sourceLength(y) ||
-            sourceLength(x) !== sourceLength(yErrors)) {
+        if (sourceLength(x) !== sourceLength(y) || sourceLength(x) !== sourceLength(yErrors)) {
             throw new Error("x, y, and yErrors must have the same length");
         }
         this.#state.series.push({ kind: "error-bars", x, y, yErrors });
@@ -867,6 +875,7 @@ export class PlotBuilder {
         return this.#serializeReactiveSource(source);
     }
 }
+/** Main-thread interactive canvas session. */
 export class CanvasSession {
     mode = "main-thread";
     #module;
@@ -972,6 +981,7 @@ export class CanvasSession {
         this.#cleanup.push(dispose);
     }
 }
+/** Worker-backed interactive canvas session with main-thread fallback support. */
 export class WorkerSession {
     mode;
     #canvas;
@@ -1253,15 +1263,19 @@ export class WorkerSession {
         }
     }
 }
+/** Create a new fluent plot builder. */
 export function createPlot() {
     return new PlotBuilder();
 }
+/** Rehydrate a plot builder from a serialized snapshot. */
 export function createPlotFromSnapshot(snapshot) {
     return PlotBuilder.fromSnapshot(snapshot);
 }
+/** Create a mutable observable numeric series. */
 export function createObservable(values) {
     return new ObservableSeries(values);
 }
+/** Create a time-varying sine signal. */
 export function createSineSignal(options) {
     return new SineSignal(options);
 }
@@ -1269,6 +1283,7 @@ export async function registerFont(bytes) {
     const module = await ensureRawModule();
     module.register_font_bytes_js(Uint8Array.from(bytes));
 }
+/** Inspect browser runtime capabilities used by the interactive renderer. */
 export async function getRuntimeCapabilities() {
     const module = await ensureRawModule();
     const capabilities = module.web_runtime_capabilities();

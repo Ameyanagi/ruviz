@@ -551,7 +551,7 @@ mod wasm {
             self.replace_with_series(|plot| {
                 let mut builder = plot.radar(&labels);
                 for (index, chunk) in series_values.chunks(points_per_series).enumerate() {
-                    if let Some(name) = series_names.get(index) {
+                    if let Some(name) = series_names.get(index).filter(|name| !name.is_empty()) {
                         builder = builder.add_series(name.clone(), &chunk);
                     } else {
                         builder = builder.series(&chunk);

@@ -85,7 +85,8 @@ class ObservableSeries:
     def __init__(self, values: Any) -> None:
         """Create an observable numeric series from array-like values."""
         self._values = _to_numeric_list(values)
-        self._listeners: list[Any] = []
+        self._listeners: dict[int, weakref.ReferenceType[Any] | weakref.WeakMethod[Any]] = {}
+        self._next_listener_token = 0
 
     def replace(self, values: Any) -> None:
         """Replace the entire series and notify attached widgets."""
@@ -110,11 +111,25 @@ class ObservableSeries:
     def _snapshot(self) -> dict[str, Any]:
         return {"kind": "observable", "values": self.snapshot_values()}
 
-    def _attach(self, listener: Any) -> None:
-        self._listeners.append(listener)
+    def _attach(self, listener: Any) -> int:
+        token = self._next_listener_token
+        self._next_listener_token += 1
+        if hasattr(listener, "__self__") and getattr(listener, "__self__", None) is not None:
+            listener_ref = weakref.WeakMethod(listener)
+        else:
+            listener_ref = weakref.ref(listener)
+        self._listeners[token] = listener_ref
+        return token
+
+    def _detach(self, token: int) -> None:
+        self._listeners.pop(token, None)
 
     def _notify(self) -> None:
-        for listener in list(self._listeners):
+        for token, listener_ref in list(self._listeners.items()):
+            listener = listener_ref()
+            if listener is None:
+                self._listeners.pop(token, None)
+                continue
             listener()
 
 
@@ -125,6 +140,7 @@ class Plot:
         self._state: dict[str, Any] = {"series": []}
         self._widgets: "weakref.WeakSet[Any]" = weakref.WeakSet()
         self._observables: list[ObservableSeries] = []
+        self._observable_listener_tokens: dict[ObservableSeries, int] = {}
         self._observable_bindings: list[tuple[ObservableSeries, dict[str, Any]]] = []
 
     def clone(self) -> "Plot":
@@ -376,7 +392,9 @@ class Plot:
         if observable in self._observables:
             return
         self._observables.append(observable)
-        observable._attach(self._notify_widgets)
+        token = observable._attach(self._notify_widgets)
+        self._observable_listener_tokens[observable] = token
+        weakref.finalize(self, observable._detach, token)
 
     def _sync_observables(self) -> None:
         for observable, snapshot in self._observable_bindings:

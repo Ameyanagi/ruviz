@@ -99,6 +99,7 @@ interface PlotState {
     yLabel?: string;
     series: PlotSeriesDefinition[];
 }
+/** Mutable numeric data source for reactive plot updates. */
 export declare class ObservableSeries {
     #private;
     constructor(values: NumericArray);
@@ -109,6 +110,7 @@ export declare class ObservableSeries {
     snapshotValues(): number[];
     _toRawObservable(module?: RawModule): Promise<RawObservableVecF64>;
 }
+/** Procedural sine-wave signal for temporal playback in interactive sessions. */
 export declare class SineSignal {
     #private;
     readonly options: NormalizedSineSignalOptions;
@@ -117,6 +119,7 @@ export declare class SineSignal {
     valuesAt(timeSeconds: number): Float64Array;
     _toRawSignal(module?: RawModule): Promise<RawSignalVecF64>;
 }
+/** Fluent plot builder for static export and interactive canvas mounting. */
 export declare class PlotBuilder {
     #private;
     constructor(state?: PlotState);
@@ -159,6 +162,7 @@ export declare class PlotBuilder {
     mountWorker(canvas: HTMLCanvasElement, options?: WorkerSessionOptions): Promise<WorkerSession>;
     _toRawPlot(module?: RawModule): Promise<RawJsPlot>;
 }
+/** Main-thread interactive canvas session. */
 export declare class CanvasSession {
     #private;
     readonly mode: SessionMode;
@@ -181,6 +185,7 @@ export declare class CanvasSession {
     dispose(): void;
     _pushCleanup(dispose: () => void): void;
 }
+/** Worker-backed interactive canvas session with main-thread fallback support. */
 export declare class WorkerSession {
     #private;
     readonly mode: SessionMode;
@@ -206,11 +211,16 @@ export declare class WorkerSession {
     dispose(): void;
     _pushCleanup(dispose: () => void): void;
 }
+/** Create a new fluent plot builder. */
 export declare function createPlot(): PlotBuilder;
+/** Rehydrate a plot builder from a serialized snapshot. */
 export declare function createPlotFromSnapshot(snapshot: PlotSnapshot): PlotBuilder;
+/** Create a mutable observable numeric series. */
 export declare function createObservable(values: NumericArray): ObservableSeries;
+/** Create a time-varying sine signal. */
 export declare function createSineSignal(options: SineSignalOptions): SineSignal;
 export declare function registerFont(bytes: Uint8Array | ArrayLike<number>): Promise<void>;
+/** Inspect browser runtime capabilities used by the interactive renderer. */
 export declare function getRuntimeCapabilities(): Promise<RuntimeCapabilities>;
 export declare function createCanvasSession(canvas: HTMLCanvasElement, options?: CanvasSessionOptions): Promise<CanvasSession>;
 export declare function createWorkerSession(canvas: HTMLCanvasElement, options?: WorkerSessionOptions): Promise<WorkerSession>;
