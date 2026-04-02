@@ -193,10 +193,14 @@ jobs:
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify notebook widget bundle is up to date
+      - name: Verify notebook widget bundle is reproducible
         run: |
           bun run build:python-widget
-          git diff --exit-code -- python/python/ruviz/widget.js
+          first_widget="$(mktemp)"
+          cp python/python/ruviz/widget.js "${first_widget}"
+          bun run build:python-widget
+          sha256sum "${first_widget}" python/python/ruviz/widget.js
+          cmp --silent "${first_widget}" python/python/ruviz/widget.js
 
       - name: Run Python extension tests
         run: cd python && uv run cargo test
