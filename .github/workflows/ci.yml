@@ -187,9 +187,6 @@ jobs:
       - name: Sync Python dependencies
         run: cd python && uv sync
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown
 
@@ -311,9 +308,6 @@ jobs:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install wasm target
         run: rustup target add wasm32-unknown-unknown

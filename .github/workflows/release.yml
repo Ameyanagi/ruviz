@@ -181,9 +181,6 @@ jobs:
       - name: Verify ruviz-gpui examples compile
         run: cargo check -p ruviz-gpui --examples
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
       - name: Build JS/TS web package
         run: bun run --cwd packages/ruviz-web build
 
@@ -506,9 +503,6 @@ jobs:
 
       - name: Check JS/TS formatting and lint
         run: bun run check:web
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Validate npm package version matches release tag
         run: |

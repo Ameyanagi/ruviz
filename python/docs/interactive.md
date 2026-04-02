@@ -27,7 +27,8 @@ snapshot.
 The widget UI includes PNG and SVG export actions for the current interactive view.
 
 After changing the notebook frontend or the web SDK, regenerate the checked-in widget bundle from
-the repository root:
+the repository root. The build bootstraps the repo-pinned `wasm-pack` tool
+automatically:
 
 ```sh
 bun run build:python-widget
