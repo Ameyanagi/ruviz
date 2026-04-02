@@ -12,7 +12,8 @@ uv run maturin develop
 
 Rebuild the notebook widget bundle from the repository root after changing
 `python/python/ruviz/widget.entry.js` or the web SDK. The build bootstraps the
-repo-pinned `wasm-pack` tool automatically:
+repo-pinned `wasm-pack` tool automatically and uses a reproducible wasm build
+for the checked-in notebook bundle:
 
 ```sh
 bun run build:python-widget

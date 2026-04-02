@@ -12,4 +12,21 @@ export RUSTFLAGS="${RUSTFLAGS_PREFIX}${RUSTFLAGS:+ ${RUSTFLAGS}}"
 export PATH="${CARGO_HOME_DIR}/bin:${PATH}"
 
 cd "${PACKAGE_DIR}"
-"${WASM_PACK_BIN}" build ../../crates/ruviz-web --target web --out-dir "${PACKAGE_DIR}/generated/raw" --out-name ruviz_web_raw
+WASM_PACK_ARGS=(
+  build
+  ../../crates/ruviz-web
+  --target
+  web
+  --out-dir
+  "${PACKAGE_DIR}/generated/raw"
+  --out-name
+  ruviz_web_raw
+)
+
+# The notebook widget bundle is checked into the repo, so it needs a
+# platform-independent wasm artifact. `wasm-opt` output can vary by host.
+if [[ "${RUVIZ_WASM_PACK_NO_OPT:-0}" == "1" ]]; then
+  WASM_PACK_ARGS+=(--no-opt)
+fi
+
+"${WASM_PACK_BIN}" "${WASM_PACK_ARGS[@]}"
