@@ -10,7 +10,15 @@ uv sync
 uv run maturin develop
 ```
 
-The notebook widget reuses the browser runtime assets vendored under `python/ruviz/web/`.
+Rebuild the notebook widget bundle from the repository root after changing
+`python/python/ruviz/widget.entry.js` or the web SDK. The build bootstraps the
+repo-pinned `wasm-pack` tool automatically and uses a reproducible wasm build
+for the notebook bundle. CI and release rebuild the canonical Linux bundle
+automatically:
+
+```sh
+bun run build:python-widget
+```
 
 ## Examples
 

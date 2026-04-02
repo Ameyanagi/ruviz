@@ -51,7 +51,7 @@
     "access": "public"
   },
   "scripts": {
-    "build:wasm": "PATH=\"$HOME/.cargo/bin:$PATH\" wasm-pack build ../../crates/ruviz-web --target web --out-dir \"$PWD/generated/raw\" --out-name ruviz_web_raw",
+    "build:wasm": "bash ./scripts/build-wasm.sh",
     "build:js": "tsc -p tsconfig.json",
     "build": "bun run build:wasm && bun run build:js",
     "docs:api": "typedoc",

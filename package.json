@@ -14,6 +14,7 @@
     "build:web-sdk": "bun run --cwd packages/ruviz-web build",
     "build:web-demo": "bun run --cwd demo/web build",
     "build:web": "bun run build:web-sdk && bun run build:web-demo",
+    "build:python-widget": "bun python/scripts/build_widget.ts",
     "sync:python": "cd python && uv sync",
     "build:python": "cd python && uv run maturin develop",
     "lint:python": "cd python && uv run ruff check",

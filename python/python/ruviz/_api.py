@@ -1,7 +1,8 @@
 """Public Python API for ruviz.
 
 The Python package exposes a fluent :class:`Plot` builder for static export,
-Jupyter widgets, and native interactive display outside notebooks.
+static notebook display, explicit Jupyter widgets, and native interactive
+display outside notebooks.
 """
 
 from __future__ import annotations
@@ -343,24 +344,26 @@ class Plot:
         return output
 
     def widget(self) -> "RuvizWidget":
-        """Create a synced Jupyter widget for this plot."""
+        """Create an explicit synced Jupyter widget for this plot."""
         from ._widget import RuvizWidget
 
         widget = RuvizWidget(self)
         self._widgets.add(widget)
         return widget
 
-    def show(self) -> Any:
-        """Display the plot in Jupyter or open a native interactive window."""
-        if _is_notebook():
-            widget = self.widget()
-            try:
-                from IPython.display import display
+    def _notebook_image(self) -> Any:
+        from IPython.display import Image
 
-                display(widget)
-            except ImportError:
-                pass
-            return widget
+        return Image(data=self.render_png(), format="png")
+
+    def show(self) -> Any:
+        """Display a static image in Jupyter or open a native interactive window."""
+        if _is_notebook():
+            from IPython.display import display
+
+            image = self._notebook_image()
+            display(image)
+            return None
 
         _native.show_native(self._snapshot_json())
         return None
@@ -410,8 +413,9 @@ class Plot:
         if len(set(lengths)) != 1:
             raise ValueError(f"{name} inputs must have the same length")
 
-    def _ipython_display_(self) -> None:
-        self.show()
+    def _repr_png_(self) -> bytes:
+        """Return PNG bytes for notebook rich display."""
+        return self.render_png()
 
 
 def plot() -> Plot:

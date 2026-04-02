@@ -1,13 +1,14 @@
 # ruviz for Python
 
-`ruviz` exposes a fluent plotting builder for static exports, notebook widgets, and native
-interactive windows.
+`ruviz` exposes a fluent plotting builder for static exports, static notebook rendering, explicit
+notebook widgets, and native interactive windows.
 
 ## Highlights
 
 - Fluent builder API with chained plot methods such as `plot().line(...).title(...)`
 - Static PNG, SVG, and PDF export via the native `pyO3` binding
-- Notebook interactivity through a WASM-backed `anywidget`
+- Static notebook PNG display by default, with explicit `.widget()` interactivity through a
+  WASM-backed `anywidget`
 - Native console interactivity through the existing `winit` runtime
 - Dataframe-friendly `data=` inputs for pandas, Polars, and dict-backed column data
 
