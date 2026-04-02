@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.3.4] - 2026-04-03
+
+### Added
+
+- Added a notebook-safe `ruviz-web` runtime entrypoint plus a self-contained `anywidget` frontend bundle for the Python package, so Jupyter widgets no longer depend on worker loading or `import.meta.url`.
+- Added browser regression coverage for blob-backed widget loading, widget export behavior, and single-point sine-signal snapshots in the notebook runtime path.
+
+### Changed
+
+- Bare `Plot` output and `plot.show()` now render a static PNG by default in Jupyter notebooks, while interactive notebook rendering is explicitly opt-in via `plot.widget()`.
+- Python CI now verifies the notebook widget bundle is reproducible on the Linux runner, and the release workflow rebuilds one canonical Linux widget bundle before packaging Python artifacts.
+
+### Fixed
+
+- Fixed Jupyter/VS Code widget loading by bundling the notebook frontend as a single Bun-built module with inline WASM bytes instead of runtime-relative imports.
+- Fixed notebook widget edge cases around single-point sine signals, export download URL lifetime, and duplicate image rendering from `plot.show()` in notebook cells.
+- Fixed release determinism for widget builds by pinning the Rust and `wasm-pack` toolchains used to generate the Python notebook bundle.
+
 ## [0.3.3] - 2026-04-01
 
 ### Fixed
@@ -168,7 +186,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/Ameyanagi/ruviz/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Ameyanagi/ruviz/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/Ameyanagi/ruviz/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Ameyanagi/ruviz/compare/v0.3.0...v0.3.1
