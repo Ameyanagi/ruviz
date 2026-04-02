@@ -73,7 +73,7 @@ function sineSignalValues(source: Extract<YSourceSnapshot, { kind: "sine-signal"
   const { amplitude, cycles, domainEnd, domainStart, phaseOffset, points, verticalOffset } =
     source.options;
   const span = domainEnd - domainStart;
-  const denominator = points - 1;
+  const denominator = points <= 1 ? 1 : points - 1;
 
   return Float64Array.from(
     Array.from({ length: points }, (_, index) => {

@@ -21,8 +21,10 @@ function triggerDownload(content, fileName, type) {
   const link = document.createElement("a");
   link.href = href;
   link.download = fileName;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(href);
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(href), 0);
 }
 
 /** @param {{ model: import("@jupyter-widgets/base").DOMWidgetModel, el: HTMLElement }} context */

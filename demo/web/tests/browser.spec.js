@@ -313,6 +313,107 @@ test("python widget bundle renders when loaded from a blob-backed module", async
   expect(result.initialImage).not.toEqual(result.updatedImage);
 });
 
+test("python widget bundle handles a single-point sine signal snapshot", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error));
+  });
+
+  const result = await page.evaluate(async (widgetSource) => {
+    const model = {
+      snapshot: {
+        sizePx: [480, 320],
+        title: "single-point sine signal",
+        xLabel: "x",
+        yLabel: "y",
+        series: [
+          {
+            kind: "line",
+            x: { kind: "static", values: [0] },
+            y: {
+              kind: "sine-signal",
+              options: {
+                points: 1,
+                domainStart: 0,
+                domainEnd: 0,
+                amplitude: 1,
+                cycles: 1,
+                phaseVelocity: 0,
+                phaseOffset: 0,
+                verticalOffset: 0,
+              },
+            },
+          },
+        ],
+      },
+      get(name) {
+        return name === "snapshot" ? this.snapshot : undefined;
+      },
+      on() {},
+      off() {},
+    };
+
+    const waitForNextPaint = () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      });
+
+    const waitForCanvasChange = async (canvas) => {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await waitForNextPaint();
+        const currentData = canvas.toDataURL("image/png");
+        const blankCanvas = document.createElement("canvas");
+        blankCanvas.width = canvas.width;
+        blankCanvas.height = canvas.height;
+        if (currentData !== blankCanvas.toDataURL("image/png")) {
+          return currentData;
+        }
+      }
+
+      throw new Error("widget canvas did not render");
+    };
+
+    const mount = document.createElement("div");
+    document.body.appendChild(mount);
+
+    const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
+
+    try {
+      const mod = await import(moduleUrl);
+      const cleanup = mod.default.render({ model, el: mount });
+      const canvas = mount.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("widget bundle did not create a canvas");
+      }
+
+      const image = await waitForCanvasChange(canvas);
+
+      if (typeof cleanup === "function") {
+        cleanup();
+      }
+
+      mount.remove();
+      return { imageLength: image.length };
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  }, PYTHON_WIDGET_BUNDLE);
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(result.imageLength).toBeGreaterThan(0);
+});
+
 test("png and svg exports work for the demo panels", async ({ page }) => {
   await waitForDemoReady(page);
 
