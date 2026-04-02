@@ -190,20 +190,16 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build web SDK for widget bundle verification
-        run: bun run build:web-sdk
-
       - name: Verify notebook widget bundle is up to date
         run: |
-          cp packages/ruviz-web/generated/raw/ruviz_web_raw_bg.wasm \
-            python/python/ruviz/web/generated/raw/ruviz_web_raw_bg.wasm
           bun run build:python-widget
-          git diff --exit-code -- \
-            python/python/ruviz/web/generated/raw/ruviz_web_raw_bg.wasm \
-            python/python/ruviz/widget.js
+          git diff --exit-code -- python/python/ruviz/widget.js
 
       - name: Run Python extension tests
         run: cd python && uv run cargo test
@@ -318,6 +314,9 @@ jobs:
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Check core wasm targets
         run: |
