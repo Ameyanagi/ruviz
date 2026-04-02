@@ -32,10 +32,12 @@ def test_show_uses_static_image_in_notebooks() -> None:
         patch("ruviz._api._is_notebook", return_value=True),
         patch("IPython.display.display") as display,
     ):
-        image = plot.show()
+        result = plot.show()
 
+    assert result is None
+    display.assert_called_once()
+    image = display.call_args.args[0]
     assert image.data.startswith(b"\x89PNG\r\n\x1a\n")
-    display.assert_called_once_with(image)
     assert len(plot._widgets) == 0
 
 

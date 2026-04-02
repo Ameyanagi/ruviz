@@ -363,7 +363,7 @@ class Plot:
 
             image = self._notebook_image()
             display(image)
-            return image
+            return None
 
         _native.show_native(self._snapshot_json())
         return None

@@ -15,7 +15,7 @@ import ruviz
 
 source = ruviz.observable([0.2, 0.9, 0.5, 1.3, 0.8])
 plot = ruviz.plot().line([0, 1, 2, 3, 4], source)
-image = plot.show()
+plot.show()
 widget = plot.widget()
 
 source.replace([0.3, 1.1, 0.7, 1.0, 0.6])

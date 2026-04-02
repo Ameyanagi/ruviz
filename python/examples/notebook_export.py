@@ -24,7 +24,7 @@ def build_plot():
 
 
 def show_static():
-    return build_plot().show()
+    build_plot().show()
 
 
 def export_static(path: str | Path = "notebook-export.png") -> Path:
