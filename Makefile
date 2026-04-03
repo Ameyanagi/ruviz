@@ -166,16 +166,16 @@ check-web:
 bench-plotting:
 	@echo "Running full large-dataset plotting benchmarks..."
 	bun install --frozen-lockfile
-	cd python && uv sync --group bench && uv run maturin develop
+	cd python && uv sync --group bench && uv run maturin develop --release
 	cd python && uv run python ../benchmarks/plotting/run.py --mode full
 	@echo "✓ Benchmark results written to benchmarks/plotting/results/reference/"
 
 bench-plotting-smoke:
 	@echo "Running smoke large-dataset plotting benchmarks..."
 	bun install --frozen-lockfile
-	cd python && uv sync --group bench && uv run maturin develop
-	cd python && uv run python ../benchmarks/plotting/run.py --mode smoke
-	@echo "✓ Smoke benchmark results written to benchmarks/plotting/results/reference/"
+	cd python && uv sync --group bench && uv run maturin develop --release
+	cd python && uv run python ../benchmarks/plotting/run.py --mode smoke --output-dir ../benchmarks/plotting/results/smoke --docs-output ../benchmarks/plotting/results/smoke/report.md
+	@echo "✓ Smoke benchmark results written to benchmarks/plotting/results/smoke/"
 
 # Generate documentation images at 300 DPI
 doc-images:

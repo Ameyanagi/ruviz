@@ -128,7 +128,7 @@ def benchmark_ruviz(
     render_only_ms, render_only_bytes, render_only_warmup, render_only_measured = measure(
         warmup_iterations=run["warmupIterations"],
         measured_iterations=run["measuredIterations"],
-        fn=prepared_plot.render_png,
+        fn=prepared_plot._render_png_uncached,
         adaptive_budget_seconds=adaptive_budget_seconds,
     )
 

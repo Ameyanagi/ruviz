@@ -49,12 +49,12 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=ROOT / "benchmarks" / "plotting" / "results" / "reference",
+        default=None,
     )
     parser.add_argument(
         "--docs-output",
         type=Path,
-        default=ROOT / "docs" / "benchmarks" / "large-dataset-plotting.md",
+        default=None,
     )
     parser.add_argument(
         "--reuse-existing",
@@ -64,8 +64,25 @@ def main() -> None:
     args = parser.parse_args()
 
     manifest_path = args.manifest.resolve()
-    output_dir = args.output_dir.resolve()
-    docs_output = args.docs_output.resolve()
+    if args.output_dir is None:
+        default_output_dir = (
+            ROOT / "benchmarks" / "plotting" / "results" / "reference"
+            if args.mode == "full"
+            else ROOT / "benchmarks" / "plotting" / "results" / "smoke"
+        )
+        output_dir = default_output_dir.resolve()
+    else:
+        output_dir = args.output_dir.resolve()
+
+    if args.docs_output is None:
+        default_docs_output = (
+            ROOT / "docs" / "benchmarks" / "large-dataset-plotting.md"
+            if args.mode == "full"
+            else output_dir / "report.md"
+        )
+        docs_output = default_docs_output.resolve()
+    else:
+        docs_output = args.docs_output.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rust_output = output_dir / "rust.json"
@@ -138,19 +155,19 @@ def main() -> None:
         else ".",
         report_title="Large Dataset Plotting Benchmarks",
     )
-    docs_output.parent.mkdir(parents=True, exist_ok=True)
-    docs_output.write_text(docs_markdown, encoding="utf-8")
-
     output_report = output_dir / "report.md"
-    output_report.write_text(
-        generate_markdown_report(
-            environment=environment,
-            runtime_payloads=runtime_payloads,
-            raw_link_base=".",
-            report_title="Large Dataset Plotting Benchmarks",
-        ),
-        encoding="utf-8",
+    output_report_markdown = generate_markdown_report(
+        environment=environment,
+        runtime_payloads=runtime_payloads,
+        raw_link_base=".",
+        report_title="Large Dataset Plotting Benchmarks",
     )
+
+    output_report.write_text(output_report_markdown, encoding="utf-8")
+
+    if docs_output != output_report:
+        docs_output.parent.mkdir(parents=True, exist_ok=True)
+        docs_output.write_text(docs_markdown, encoding="utf-8")
 
     print(f"Wrote benchmark artifacts to {output_dir}")
     print(f"Wrote benchmark report to {docs_output}")

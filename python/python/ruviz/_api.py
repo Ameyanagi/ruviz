@@ -511,6 +511,10 @@ class Plot:
         """Render the current plot to PNG bytes."""
         return bytes(self._native_plot.render_png_bytes())
 
+    def _render_png_uncached(self) -> bytes:
+        """Render PNG bytes without reusing the prepared frame cache."""
+        return bytes(self._native_plot.render_png_bytes_uncached())
+
     def render_svg(self) -> str:
         """Render the current plot to an SVG document string."""
         return self._native_plot.render_svg()

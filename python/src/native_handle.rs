@@ -592,6 +592,14 @@ impl NativePlotHandle {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    fn render_png_bytes_uncached<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = self
+            .plot
+            .render_png_bytes()
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
     fn render_svg(&self) -> PyResult<String> {
         self.plot
             .render_to_svg()
