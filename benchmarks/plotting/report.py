@@ -58,7 +58,7 @@ def write_consolidated_csv(path: Path, runtime_payloads: list[dict[str, Any]]) -
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow(
@@ -166,6 +166,8 @@ def generate_markdown_report(
         "  - large monotonic solid lines without markers/error bars are reduced to a per-column envelope before stroking",
         "  - static histograms reuse prepared bins instead of re-binning on every render-only export",
         "  - nearest, non-annotated heatmaps rasterize directly to the output surface before PNG encoding",
+        "- Python host-side `ruviz` rendering now uses a persistent native plot handle and prepared plot instead of rebuilding a Rust plot from JSON on every render",
+        "- Notebook widgets still ship JSON-friendly snapshots to the browser, but that snapshot path is no longer the default host render/export path",
         "- Python full-mode runs cap very slow cases to a 60s per-case budget; the recorded warmup/measured counts reflect the effective counts used",
         "- Rust `plotters` histogram timings reuse pre-binned bars, and the `plotters` heatmap path rasterizes the shared matrix to the fixed output canvas before PNG encoding",
         "- wasm target: Chromium-only browser benchmark via Playwright",
@@ -181,14 +183,16 @@ def generate_markdown_report(
         "- Static histograms now cache computed `HistogramData`, so `render_only` exports reuse prepared bins instead of re-running histogram binning on every frame.",
         "- Nearest-neighbor, non-annotated heatmaps now render the final output surface directly and blit that image, instead of drawing one anti-aliased rectangle per source cell.",
         "- The parallel line backend now emits a single polyline draw instead of thousands of two-point draw calls.",
+        "- Python host rendering now keeps a native Rust plot/prepared-plot handle alive across calls, so `render_png()`, `render_svg()`, `save()`, and `show()` no longer pay a Python JSON serialization + Rust JSON parse + plot reconstruction round-trip on every call.",
         "",
         "Why those changes matter:",
         "",
         "- The old line path scaled with source vertex count even when many samples collapsed onto the same output column.",
         "- The old histogram path repeated statistical preprocessing inside hot render loops.",
         "- The old heatmap path scaled with source cell count rather than output pixel count for raster exports.",
+        "- The old Python binding path spent a large share of its time turning Python state into JSON and then rebuilding a fresh Rust `Plot` before rendering anything.",
         "",
-        "The result is that current Rust PNG export timings mostly reflect output-resolution work for eligible raster cases, which is why line, histogram, and heatmap medians dropped sharply in this report.",
+        "The result is that current Rust PNG export timings mostly reflect output-resolution work for eligible raster cases, and current Python host-side timings reflect the renderer instead of the snapshot bridge much more closely than before.",
         "",
         "## Scenario Matrix",
         "",

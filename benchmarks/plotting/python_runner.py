@@ -16,7 +16,6 @@ import numpy as np
 import ruviz
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from ruviz import _native
 
 from common import ROOT, build_dataset, load_manifest, scenario_runs, summarize_iterations
 
@@ -125,12 +124,11 @@ def benchmark_ruviz(
     adaptive_budget_seconds: float | None,
 ) -> list[dict[str, Any]]:
     prepared_plot = build_ruviz_plot(run, dataset)
-    snapshot_json = json.dumps(prepared_plot.to_snapshot())
 
     render_only_ms, render_only_bytes, render_only_warmup, render_only_measured = measure(
         warmup_iterations=run["warmupIterations"],
         measured_iterations=run["measuredIterations"],
-        fn=lambda: bytes(_native.render_png_bytes(snapshot_json)),
+        fn=prepared_plot.render_png,
         adaptive_budget_seconds=adaptive_budget_seconds,
     )
 

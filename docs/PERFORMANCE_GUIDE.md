@@ -29,7 +29,7 @@ In the current reference run this is why Rust `render_only` medians moved to rou
 - histogram `5m`: `5.57 ms`
 - heatmap `2048x2048`: `7.71 ms`
 
-These improvements are specific to eligible raster PNG exports. SVG/vector output still uses the exact path, and Python `ruviz` is still slower overall because its current path includes snapshot JSON parsing and native reconstruction.
+These improvements are specific to eligible raster PNG exports. SVG/vector output still uses the exact path. Python host-side rendering now also avoids the old snapshot JSON round-trip by keeping a native plot/prepared-plot handle alive across renders, while notebook widgets still use snapshots for browser transport.
 
 ## Verified Performance Metrics
 
