@@ -200,9 +200,12 @@ fn apply_series(plot: Plot, series: NativeSeriesState) -> Result<Plot, String> {
                 .bar_source(&categories, values.into_plot_data())
                 .into_plot())
         }
-        NativeSeriesState::Histogram { data } => Ok(plot
-            .histogram_source(data.into_plot_data(), None)
-            .into_plot()),
+        NativeSeriesState::Histogram { data } => match data {
+            NumericSourceState::Static(values) => Ok(plot.histogram(&values, None).into_plot()),
+            NumericSourceState::Observable(values) => {
+                Ok(plot.histogram_source(values, None).into_plot())
+            }
+        },
         NativeSeriesState::Boxplot { data } => {
             Ok(plot.boxplot_source(data.into_plot_data(), None).into_plot())
         }

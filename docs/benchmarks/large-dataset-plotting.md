@@ -58,8 +58,8 @@ The result is that current Rust PNG export timings mostly reflect output-resolut
 
 ## Environment
 
-- Captured at: `2026-04-03T18:24:45Z`
-- Git commit: `68cb540c238d33042323622d0d4f1fb36083d3dc`
+- Captured at: `2026-04-03T21:07:57Z`
+- Git commit: `6c1bc466393e3f64b90ef8afd1fc4b1490167ac7`
 - Git branch: `bench/large-dataset-plotting`
 - Host OS: `macOS-26.2-arm64-arm-64bit-Mach-O`
 - Host machine: `arm64`
@@ -81,69 +81,69 @@ Raw artifacts:
 
 | Plot | Size | ruviz median | matplotlib median | Speedup |
 | --- | --- | --- | --- | --- |
-| heatmap | 1024x1024 | 5.86 | 29.19 | 4.98x |
-| heatmap | 2048x2048 | 8.38 | 61.67 | 7.36x |
-| heatmap | 512x512 | 5.29 | 23.20 | 4.39x |
-| histogram | 100k | 2.90 | 7.13 | 2.46x |
-| histogram | 1m | 17.57 | 10.23 | 0.58x |
-| histogram | 5m | 119.16 | 14.27 | 0.12x |
-| line | 100k | 12.00 | 21.39 | 1.78x |
-| line | 1m | 34.53 | 72.41 | 2.10x |
-| line | 500k | 25.86 | 41.29 | 1.60x |
-| scatter | 100k | 2.13 | 15.60 | 7.31x |
-| scatter | 250k | 3.12 | 29.34 | 9.42x |
-| scatter | 500k | 4.83 | 50.66 | 10.49x |
+| heatmap | 1024x1024 | 5.82 | 29.97 | 5.15x |
+| heatmap | 2048x2048 | 7.46 | 61.86 | 8.30x |
+| heatmap | 512x512 | 5.25 | 23.65 | 4.51x |
+| histogram | 100k | 1.45 | 7.06 | 4.86x |
+| histogram | 1m | 2.10 | 10.22 | 4.86x |
+| histogram | 5m | 5.19 | 14.25 | 2.74x |
+| line | 100k | 12.17 | 20.55 | 1.69x |
+| line | 1m | 32.45 | 72.65 | 2.24x |
+| line | 500k | 26.74 | 41.33 | 1.55x |
+| scatter | 100k | 2.29 | 16.04 | 7.02x |
+| scatter | 250k | 3.12 | 28.85 | 9.26x |
+| scatter | 500k | 4.56 | 51.11 | 11.21x |
 
 ## Python: ruviz vs matplotlib (`public_api_render`)
 
 | Plot | Size | ruviz median | matplotlib median | Speedup |
 | --- | --- | --- | --- | --- |
-| heatmap | 1024x1024 | 33.07 | 37.85 | 1.14x |
-| heatmap | 2048x2048 | 122.15 | 72.41 | 0.59x |
-| heatmap | 512x512 | 12.36 | 30.57 | 2.47x |
-| histogram | 100k | 4.36 | 25.48 | 5.85x |
-| histogram | 1m | 34.13 | 53.07 | 1.55x |
-| histogram | 5m | 202.86 | 131.39 | 0.65x |
-| line | 100k | 15.49 | 29.66 | 1.92x |
-| line | 1m | 67.92 | 95.67 | 1.41x |
-| line | 500k | 43.99 | 57.44 | 1.31x |
-| scatter | 100k | 5.09 | 24.03 | 4.72x |
-| scatter | 250k | 10.57 | 38.61 | 3.65x |
-| scatter | 500k | 21.51 | 63.65 | 2.96x |
+| heatmap | 1024x1024 | 33.34 | 37.28 | 1.12x |
+| heatmap | 2048x2048 | 121.21 | 72.52 | 0.60x |
+| heatmap | 512x512 | 12.79 | 30.34 | 2.37x |
+| histogram | 100k | 4.35 | 25.56 | 5.87x |
+| histogram | 1m | 34.07 | 53.39 | 1.57x |
+| histogram | 5m | 210.11 | 132.21 | 0.63x |
+| line | 100k | 15.48 | 29.61 | 1.91x |
+| line | 1m | 68.04 | 95.77 | 1.41x |
+| line | 500k | 42.77 | 56.88 | 1.33x |
+| scatter | 100k | 5.05 | 24.17 | 4.78x |
+| scatter | 250k | 10.63 | 38.50 | 3.62x |
+| scatter | 500k | 21.21 | 64.09 | 3.02x |
 
 ## ruviz cross-runtime medians (`render_only`)
 
 | Plot | Size | Python | Rust | Wasm | Dataset hash |
 | --- | --- | --- | --- | --- | --- |
-| heatmap | 1024x1024 | 5.86 | 6.26 | 17.30 | b300137331a8 |
-| heatmap | 2048x2048 | 8.38 | 7.71 | 18.90 | 2c5b8bacf8c3 |
-| heatmap | 512x512 | 5.29 | 5.36 | 16.80 | d6e83388d86d |
-| histogram | 100k | 2.90 | 1.52 | 5.40 | 52c1b6c47f7a |
-| histogram | 1m | 17.57 | 2.25 | 6.50 | 4411c1d13a7c |
-| histogram | 5m | 119.16 | 5.57 | 9.30 | 88dd6f1a74af |
-| line | 100k | 12.00 | 13.74 | 22.15 | b011dead6d08 |
-| line | 1m | 34.53 | 30.30 | 42.20 | a99f5c6c0498 |
-| line | 500k | 25.86 | 25.48 | 34.75 | bb2c854f3c82 |
-| scatter | 100k | 2.13 | 2.28 | 6.95 | a46d0038919e |
+| heatmap | 1024x1024 | 5.82 | 6.26 | 17.30 | b300137331a8 |
+| heatmap | 2048x2048 | 7.46 | 7.71 | 18.90 | 2c5b8bacf8c3 |
+| heatmap | 512x512 | 5.25 | 5.36 | 16.80 | d6e83388d86d |
+| histogram | 100k | 1.45 | 1.52 | 5.40 | 52c1b6c47f7a |
+| histogram | 1m | 2.10 | 2.25 | 6.50 | 4411c1d13a7c |
+| histogram | 5m | 5.19 | 5.57 | 9.30 | 88dd6f1a74af |
+| line | 100k | 12.17 | 13.74 | 22.15 | b011dead6d08 |
+| line | 1m | 32.45 | 30.30 | 42.20 | a99f5c6c0498 |
+| line | 500k | 26.74 | 25.48 | 34.75 | bb2c854f3c82 |
+| scatter | 100k | 2.29 | 2.28 | 6.95 | a46d0038919e |
 | scatter | 250k | 3.12 | 3.39 | 8.35 | 13bf7083712a |
-| scatter | 500k | 4.83 | 4.87 | 10.60 | 6151ba3542b2 |
+| scatter | 500k | 4.56 | 4.87 | 10.60 | 6151ba3542b2 |
 
 ## ruviz cross-runtime medians (`public_api_render`)
 
 | Plot | Size | Python | Rust | Wasm | Dataset hash |
 | --- | --- | --- | --- | --- | --- |
-| heatmap | 1024x1024 | 33.07 | 10.15 | 46.75 | b300137331a8 |
-| heatmap | 2048x2048 | 122.15 | 22.42 | 214.20 | 2c5b8bacf8c3 |
-| heatmap | 512x512 | 12.36 | 6.32 | 23.40 | d6e83388d86d |
-| histogram | 100k | 4.36 | 3.20 | 8.40 | 52c1b6c47f7a |
-| histogram | 1m | 34.13 | 20.72 | 40.15 | 4411c1d13a7c |
-| histogram | 5m | 202.86 | 124.21 | 214.60 | 88dd6f1a74af |
-| line | 100k | 15.49 | 13.91 | 25.05 | b011dead6d08 |
-| line | 1m | 67.92 | 35.92 | 74.80 | a99f5c6c0498 |
-| line | 500k | 43.99 | 27.44 | 51.20 | bb2c854f3c82 |
-| scatter | 100k | 5.09 | 2.66 | 9.80 | a46d0038919e |
-| scatter | 250k | 10.57 | 4.88 | 16.00 | 13bf7083712a |
-| scatter | 500k | 21.51 | 7.18 | 26.40 | 6151ba3542b2 |
+| heatmap | 1024x1024 | 33.34 | 10.15 | 46.75 | b300137331a8 |
+| heatmap | 2048x2048 | 121.21 | 22.42 | 214.20 | 2c5b8bacf8c3 |
+| heatmap | 512x512 | 12.79 | 6.32 | 23.40 | d6e83388d86d |
+| histogram | 100k | 4.35 | 3.20 | 8.40 | 52c1b6c47f7a |
+| histogram | 1m | 34.07 | 20.72 | 40.15 | 4411c1d13a7c |
+| histogram | 5m | 210.11 | 124.21 | 214.60 | 88dd6f1a74af |
+| line | 100k | 15.48 | 13.91 | 25.05 | b011dead6d08 |
+| line | 1m | 68.04 | 35.92 | 74.80 | a99f5c6c0498 |
+| line | 500k | 42.77 | 27.44 | 51.20 | bb2c854f3c82 |
+| scatter | 100k | 5.05 | 2.66 | 9.80 | a46d0038919e |
+| scatter | 250k | 10.63 | 4.88 | 16.00 | 13bf7083712a |
+| scatter | 500k | 21.21 | 7.18 | 26.40 | 6151ba3542b2 |
 
 ## Rust: ruviz vs plotters (`public_api_render`)
 
