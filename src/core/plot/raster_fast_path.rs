@@ -114,11 +114,14 @@ pub(super) fn rasterize_heatmap_surface(
     let mut pixels = vec![0_u8; width as usize * height as usize * 4];
 
     for pixel_y in 0..height as usize {
-        let source_row = (height as usize - 1 - pixel_y) * data.n_rows / height as usize;
+        let source_row = (((height as usize - 1 - pixel_y) * 2 + 1) * data.n_rows
+            / (height as usize * 2))
+            .min(data.n_rows.saturating_sub(1));
         let row = &data.values[source_row.min(data.n_rows.saturating_sub(1))];
         for pixel_x in 0..width as usize {
-            let source_col = pixel_x * data.n_cols / width as usize;
-            let mut color = data.get_color(row[source_col.min(data.n_cols.saturating_sub(1))]);
+            let source_col = (((pixel_x * 2 + 1) * data.n_cols) / (width as usize * 2))
+                .min(data.n_cols.saturating_sub(1));
+            let mut color = data.get_color(row[source_col]);
             if data.config.alpha < 1.0 {
                 color =
                     Color::new_rgba(color.r, color.g, color.b, (data.config.alpha * 255.0) as u8);
@@ -275,5 +278,28 @@ mod tests {
         assert_eq!(image.width, 8);
         assert_eq!(image.height, 6);
         assert_eq!(image.pixels.len(), 8 * 6 * 4);
+    }
+
+    #[test]
+    fn test_rasterize_heatmap_surface_reaches_last_source_row_and_column() {
+        let heatmap = crate::plots::heatmap::process_heatmap(
+            &[
+                vec![0.0, 1.0, 2.0, 3.0],
+                vec![4.0, 5.0, 6.0, 7.0],
+                vec![8.0, 9.0, 10.0, 11.0],
+                vec![12.0, 13.0, 14.0, 15.0],
+            ],
+            HeatmapConfig {
+                colorbar: false,
+                ..HeatmapConfig::default()
+            },
+        )
+        .expect("heatmap data");
+
+        let image = rasterize_heatmap_surface(&heatmap, 2, 2);
+        let expected = heatmap.get_color(15.0);
+        let top_right = &image.pixels[4..8];
+
+        assert_eq!(top_right, &[expected.r, expected.g, expected.b, expected.a]);
     }
 }

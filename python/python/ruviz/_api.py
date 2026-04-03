@@ -233,6 +233,12 @@ class Plot:
         self._invalidate_snapshot_cache()
 
     def _rebuild_native_plot(self, snapshot: dict[str, Any]) -> None:
+        """Rebuild the native handle from a static snapshot copy.
+
+        Any observable-backed series in the original plot are rebuilt from the
+        snapshot's current numeric values, so the rebuilt native plot is a
+        static copy and does not retain live observable links.
+        """
         native_plot = _native.NativePlotHandle()
 
         size = snapshot.get("sizePx")
@@ -260,7 +266,11 @@ class Plot:
         self._native_plot = native_plot
 
     def clone(self) -> "Plot":
-        """Return a deep copy of the plot state."""
+        """Return a deep copy of the current snapshot state.
+
+        Observable-backed series are copied by value, so the clone renders the
+        same current data but does not stay linked to later observable updates.
+        """
         clone = Plot()
         clone._state = self.to_snapshot()
         clone._rebuild_native_plot(clone._state)
