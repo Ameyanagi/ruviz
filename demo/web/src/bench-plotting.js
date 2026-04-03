@@ -90,9 +90,7 @@ async function lineWave(points) {
   for (let index = 0; index < points; index += 1) {
     x[index] = index * (200 / divisor);
     y[index] =
-      triangleWave(index, 1024) +
-      0.35 * triangleWave(index, 257) +
-      0.1 * triangleWave(index, 61);
+      triangleWave(index, 1024) + 0.35 * triangleWave(index, 257) + 0.1 * triangleWave(index, 61);
   }
 
   return {
@@ -152,8 +150,7 @@ async function heatmapField(rows, cols) {
     const rowValues = new Float64Array(cols);
     for (let col = 0; col < cols; col += 1) {
       const value =
-        triangleWave(row, 79) * triangleWave(col, 113) +
-        0.2 * triangleWave(row * 3 + col * 5, 47);
+        triangleWave(row, 79) * triangleWave(col, 113) + 0.2 * triangleWave(row * 3 + col * 5, 47);
       rowValues[col] = value;
       flat[row * cols + col] = value;
     }
