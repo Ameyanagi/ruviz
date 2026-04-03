@@ -146,6 +146,10 @@ fn is_finite_point(point: &Point2f) -> bool {
     point.x.is_finite() && point.y.is_finite()
 }
 
+// Points are expected to be in pixel-space after coordinate projection.
+// f32::EPSILON is appropriate here; do not reuse this monotonicity check on
+// data-space coordinates where adjacent x-values may legitimately differ by
+// less than 1e-7.
 fn is_monotonic_x(points: &[Point2f]) -> bool {
     if points.len() < 2 {
         return true;

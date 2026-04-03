@@ -43,7 +43,8 @@ function summarizeIterations(iterationsMs, elements) {
   const sortedValues = [...iterationsMs].sort((a, b) => a - b);
   const mean = iterationsMs.reduce((sum, value) => sum + value, 0) / iterationsMs.length;
   const variance =
-    iterationsMs.reduce((sum, value) => sum + (value - mean) ** 2, 0) / iterationsMs.length;
+    iterationsMs.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+    Math.max(iterationsMs.length - 1, 1);
   const median = percentile(sortedValues, 0.5);
   const p95 = percentile(sortedValues, 0.95);
   return {
@@ -252,8 +253,8 @@ async function measure(warmupIterations, measuredIterations, fn) {
 async function benchmarkRun(run) {
   const module = await ensureRawModule();
   const dataset = await buildDataset(run);
-  const preparedPlot = buildPlot(run, dataset);
-  const snapshot = preparedPlot.toSnapshot();
+  const builtPlot = buildPlot(run, dataset);
+  const snapshot = builtPlot.toSnapshot();
   const rawPlot = buildRawPlotFromSnapshot(snapshot, module);
 
   try {

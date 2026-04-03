@@ -56,6 +56,15 @@ def test_observable_render_updates_native_plot_without_snapshot_roundtrip() -> N
     assert first_png != second_png
 
 
+def test_clone_rebuilds_native_plot_from_mixed_series_shapes() -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).kde([1, 2, 2, 3]).title("clone")
+
+    clone = plot.clone()
+
+    assert clone.render_png().startswith(b"\x89PNG\r\n\x1a\n")
+    assert clone.to_snapshot() == plot.to_snapshot()
+
+
 def test_show_uses_static_image_in_notebooks() -> None:
     plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("demo")
 

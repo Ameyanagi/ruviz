@@ -169,7 +169,7 @@ def summarize_iterations(iterations_ms: list[float], elements: int) -> dict[str,
     values = [float(value) for value in iterations_ms]
     sorted_values = sorted(values)
     mean = sum(values) / len(values)
-    variance = sum((value - mean) ** 2 for value in values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / max(len(values) - 1, 1)
     median = percentile(sorted_values, 0.5)
     p95 = percentile(sorted_values, 0.95)
     throughput = 0.0 if median <= 0 else elements / (median / 1000.0)

@@ -123,12 +123,16 @@ def benchmark_ruviz(
     *,
     adaptive_budget_seconds: float | None,
 ) -> list[dict[str, Any]]:
-    prepared_plot = build_ruviz_plot(run, dataset)
+    built_plot = build_ruviz_plot(run, dataset)
 
+    # `render_only` is the suite's historical label for "reuse a built plot
+    # object and render/export it without public-API reconstruction". We still
+    # bypass the prepared-frame cache here so the timings include rasterization
+    # work rather than only cached PNG encoding.
     render_only_ms, render_only_bytes, render_only_warmup, render_only_measured = measure(
         warmup_iterations=run["warmupIterations"],
         measured_iterations=run["measuredIterations"],
-        fn=prepared_plot._render_png_uncached,
+        fn=built_plot._render_png_uncached,
         adaptive_budget_seconds=adaptive_budget_seconds,
     )
 

@@ -281,11 +281,11 @@ fn element_count(size: &SizeSpec) -> usize {
 
 fn benchmark_run(run: &ScenarioRun) -> Result<Vec<BenchmarkResult>> {
     let dataset = build_dataset(run)?;
-    let prepared_plot = build_plot(run, &dataset);
+    let built_plot = build_plot(run, &dataset);
 
     let (render_only_ms, render_only_bytes) =
         measure(run.warmup_iterations, run.measured_iterations, || {
-            Ok(prepared_plot.render_png_bytes()?)
+            Ok(built_plot.render_png_bytes()?)
         })?;
 
     let (public_ms, public_bytes) =
@@ -789,7 +789,7 @@ fn summarize_iterations(values: &[f64], elements: usize) -> Summary {
         .iter()
         .map(|value| (*value - mean).powi(2))
         .sum::<f64>()
-        / values.len() as f64;
+        / (values.len().saturating_sub(1).max(1) as f64);
     let median = percentile(&sorted, 0.5);
     let p95 = percentile(&sorted, 0.95);
     Summary {

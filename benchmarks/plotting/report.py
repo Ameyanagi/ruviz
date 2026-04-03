@@ -157,7 +157,7 @@ def generate_markdown_report(
         "- Dataset generation is excluded from all measured timings",
         "- File I/O is excluded from all measured timings",
         "- Boundaries:",
-        "  - `render_only`: reuse prepared plot state and measure the uncached render/export call without plot reconstruction",
+        "  - `render_only`: reuse a built plot object and measure an uncached render/export call without public-API reconstruction or prepared-frame image reuse",
         "  - `public_api_render`: reuse the input data, rebuild through the normal public API, then render/export",
         "- Plot matrix: `line`, `scatter`, `histogram`, `heatmap`",
         "- Python comparison target: `matplotlib` with the `Agg` backend",
@@ -331,7 +331,7 @@ def generate_markdown_report(
             "",
             "- These numbers are a reference snapshot from one machine and should be treated as comparative, not universal.",
             "- Browser wasm timings include browser-side PNG generation, but not any disk writes or download flows.",
-            "- Python `render_only` for `ruviz` uses the internal `_native.render_png_bytes(snapshot_json)` path, so JSON parsing is included there even though plot construction is excluded.",
+            "- `render_only` is a reused-built-object benchmark, not a cached-frame benchmark: it avoids public-API reconstruction but still bypasses prepared-frame image reuse for `ruviz`.",
             "- The remaining `plotters` gap on histogram and heatmap is partly semantic: `plotters` benchmarks pre-binned histogram bars and output-raster heatmap generation, while `ruviz` still includes its own plot-model setup and colorbar semantics on the public API path.",
         ]
     )

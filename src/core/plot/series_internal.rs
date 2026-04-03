@@ -551,39 +551,34 @@ impl Plot {
             SeriesType::Line { x_data, y_data } => {
                 let x_data = x_data.resolve(0.0);
                 let y_data = y_data.resolve(0.0);
-                let mut points: Vec<(f32, f32)> = x_data
+                let mut points: Vec<Point2f> = x_data
                     .iter()
                     .zip(y_data.iter())
                     .map(|(&x, &y)| {
-                        crate::render::skia::map_data_to_pixels(
+                        let (px, py) = crate::render::skia::map_data_to_pixels(
                             x, y, x_min, x_max, y_min, y_max, plot_area,
-                        )
+                        );
+                        Point2f::new(px, py)
                     })
                     .collect();
 
                 if should_reduce_line_series(series, points.len(), plot_area.width()) {
-                    let point_buffer: Vec<Point2f> =
-                        points.iter().map(|&(x, y)| Point2f::new(x, y)).collect();
-                    if let Some(reduced) = reduce_line_points_for_raster(
-                        &point_buffer,
-                        plot_area.left(),
-                        plot_area.width(),
-                    ) {
-                        points = reduced
-                            .into_iter()
-                            .map(|point| (point.x, point.y))
-                            .collect();
+                    if let Some(reduced) =
+                        reduce_line_points_for_raster(&points, plot_area.left(), plot_area.width())
+                    {
+                        points = reduced;
                     }
                 }
 
-                renderer
-                    .draw_polyline_clipped(&points, color, line_width, line_style, clip_rect)?;
+                renderer.draw_polyline_points_clipped(
+                    &points, color, line_width, line_style, clip_rect,
+                )?;
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                    for &(px, py) in &points {
+                    for point in &points {
                         renderer.draw_marker_clipped(
-                            px,
-                            py,
+                            point.x,
+                            point.y,
                             marker_size,
                             marker_style,
                             color,

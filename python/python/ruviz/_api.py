@@ -165,6 +165,73 @@ class Plot:
         values = _to_numeric_list(value)
         return {"kind": "static", "values": values}, values, None
 
+    @staticmethod
+    def _apply_native_series(
+        native_plot: Any,
+        series: dict[str, Any],
+        *,
+        native_sources: dict[str, Any] | None = None,
+    ) -> None:
+        native_sources = native_sources or {}
+        kind = series["kind"]
+        if kind == "line":
+            native_plot.line(
+                native_sources.get("x", series["x"]["values"]),
+                native_sources.get("y", series["y"]["values"]),
+            )
+        elif kind == "scatter":
+            native_plot.scatter(
+                native_sources.get("x", series["x"]["values"]),
+                native_sources.get("y", series["y"]["values"]),
+            )
+        elif kind == "bar":
+            native_plot.bar(
+                series["categories"],
+                native_sources.get("values", series["values"]["values"]),
+            )
+        elif kind == "histogram":
+            native_plot.histogram(native_sources.get("data", series["data"]["values"]))
+        elif kind == "boxplot":
+            native_plot.boxplot(native_sources.get("data", series["data"]["values"]))
+        elif kind == "heatmap":
+            native_plot.heatmap(series["values"], int(series["rows"]), int(series["cols"]))
+        elif kind == "error-bars":
+            native_plot.error_bars(
+                native_sources.get("x", series["x"]["values"]),
+                native_sources.get("y", series["y"]["values"]),
+                native_sources.get("yErrors", series["yErrors"]["values"]),
+            )
+        elif kind == "error-bars-xy":
+            native_plot.error_bars_xy(
+                native_sources.get("x", series["x"]["values"]),
+                native_sources.get("y", series["y"]["values"]),
+                native_sources.get("xErrors", series["xErrors"]["values"]),
+                native_sources.get("yErrors", series["yErrors"]["values"]),
+            )
+        elif kind == "kde":
+            native_plot.kde(series["data"])
+        elif kind == "ecdf":
+            native_plot.ecdf(series["data"])
+        elif kind == "contour":
+            native_plot.contour(series["x"], series["y"], series["z"])
+        elif kind == "pie":
+            native_plot.pie(series["values"], series.get("labels"))
+        elif kind == "radar":
+            native_plot.radar(
+                series["labels"],
+                [(item.get("name"), item["values"]) for item in series["series"]],
+            )
+        elif kind == "violin":
+            native_plot.violin(series["data"])
+        elif kind == "polar-line":
+            native_plot.polar_line(series["r"], series["theta"])
+        else:
+            raise ValueError(f"unsupported plot snapshot kind: {kind}")
+
+    def _append_series_snapshot(self, series: dict[str, Any]) -> None:
+        self._state["series"].append(series)
+        self._invalidate_snapshot_cache()
+
     def _rebuild_native_plot(self, snapshot: dict[str, Any]) -> None:
         native_plot = _native.NativePlotHandle()
 
@@ -188,49 +255,7 @@ class Plot:
             native_plot.ylabel(str(y_label))
 
         for series in snapshot["series"]:
-            kind = series["kind"]
-            if kind == "line":
-                native_plot.line(series["x"]["values"], series["y"]["values"])
-            elif kind == "scatter":
-                native_plot.scatter(series["x"]["values"], series["y"]["values"])
-            elif kind == "bar":
-                native_plot.bar(series["categories"], series["values"]["values"])
-            elif kind == "histogram":
-                native_plot.histogram(series["data"]["values"])
-            elif kind == "boxplot":
-                native_plot.boxplot(series["data"]["values"])
-            elif kind == "heatmap":
-                native_plot.heatmap(series["values"], int(series["rows"]), int(series["cols"]))
-            elif kind == "error-bars":
-                native_plot.error_bars(
-                    series["x"]["values"], series["y"]["values"], series["yErrors"]["values"]
-                )
-            elif kind == "error-bars-xy":
-                native_plot.error_bars_xy(
-                    series["x"]["values"],
-                    series["y"]["values"],
-                    series["xErrors"]["values"],
-                    series["yErrors"]["values"],
-                )
-            elif kind == "kde":
-                native_plot.kde(series["data"])
-            elif kind == "ecdf":
-                native_plot.ecdf(series["data"])
-            elif kind == "contour":
-                native_plot.contour(series["x"], series["y"], series["z"])
-            elif kind == "pie":
-                native_plot.pie(series["values"], series.get("labels"))
-            elif kind == "radar":
-                native_plot.radar(
-                    series["labels"],
-                    [(item.get("name"), item["values"]) for item in series["series"]],
-                )
-            elif kind == "violin":
-                native_plot.violin(series["data"])
-            elif kind == "polar-line":
-                native_plot.polar_line(series["r"], series["theta"])
-            else:
-                raise ValueError(f"unsupported plot snapshot kind: {kind}")
+            self._apply_native_series(native_plot, series)
 
         self._native_plot = native_plot
 
@@ -298,13 +323,13 @@ class Plot:
         x_values, native_x, x_observable = self._build_native_numeric_source(_column_values(data, x))
         y_values, native_y, y_observable = self._build_native_numeric_source(_column_values(data, y))
         self._ensure_equal_length("line", x_values, y_values)
-        self._native_plot.line(native_x, native_y)
+        series = {"kind": "line", "x": x_values, "y": y_values}
+        self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
         if x_observable is not None:
             self._track_observable(x_observable, x_values)
         if y_observable is not None:
             self._track_observable(y_observable, y_values)
-        self._state["series"].append({"kind": "line", "x": x_values, "y": y_values})
-        self._invalidate_snapshot_cache()
+        self._append_series_snapshot(series)
         return self
 
     def scatter(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
@@ -312,13 +337,13 @@ class Plot:
         x_values, native_x, x_observable = self._build_native_numeric_source(_column_values(data, x))
         y_values, native_y, y_observable = self._build_native_numeric_source(_column_values(data, y))
         self._ensure_equal_length("scatter", x_values, y_values)
-        self._native_plot.scatter(native_x, native_y)
+        series = {"kind": "scatter", "x": x_values, "y": y_values}
+        self._apply_native_series(self._native_plot, series, native_sources={"x": native_x, "y": native_y})
         if x_observable is not None:
             self._track_observable(x_observable, x_values)
         if y_observable is not None:
             self._track_observable(y_observable, y_values)
-        self._state["series"].append({"kind": "scatter", "x": x_values, "y": y_values})
-        self._invalidate_snapshot_cache()
+        self._append_series_snapshot(series)
         return self
 
     def bar(self, x: Any, y: Any, *, data: Any = None) -> "Plot":
@@ -327,31 +352,31 @@ class Plot:
         values, native_values, observable = self._build_native_numeric_source(_column_values(data, y))
         if len(categories) != len(values["values"]):
             raise ValueError("bar categories and values must have the same length")
-        self._native_plot.bar(categories, native_values)
+        series = {"kind": "bar", "categories": categories, "values": values}
+        self._apply_native_series(self._native_plot, series, native_sources={"values": native_values})
         if observable is not None:
             self._track_observable(observable, values)
-        self._state["series"].append({"kind": "bar", "categories": categories, "values": values})
-        self._invalidate_snapshot_cache()
+        self._append_series_snapshot(series)
         return self
 
     def histogram(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a histogram from one numeric sample vector."""
         series_data, native_data, observable = self._build_native_numeric_source(_column_values(data, x))
-        self._native_plot.histogram(native_data)
+        series = {"kind": "histogram", "data": series_data}
+        self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
             self._track_observable(observable, series_data)
-        self._state["series"].append({"kind": "histogram", "data": series_data})
-        self._invalidate_snapshot_cache()
+        self._append_series_snapshot(series)
         return self
 
     def boxplot(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a boxplot from one numeric sample vector."""
         series_data, native_data, observable = self._build_native_numeric_source(_column_values(data, x))
-        self._native_plot.boxplot(native_data)
+        series = {"kind": "boxplot", "data": series_data}
+        self._apply_native_series(self._native_plot, series, native_sources={"data": native_data})
         if observable is not None:
             self._track_observable(observable, series_data)
-        self._state["series"].append({"kind": "boxplot", "data": series_data})
-        self._invalidate_snapshot_cache()
+        self._append_series_snapshot(series)
         return self
 
     def heatmap(self, values: Any) -> "Plot":
@@ -363,9 +388,9 @@ class Plot:
         if any(len(row) != cols for row in rows):
             raise ValueError("heatmap rows must all have the same length")
         values = [value for row in rows for value in row]
-        self._native_plot.heatmap(values, len(rows), cols)
-        self._state["series"].append({"kind": "heatmap", "values": values, "rows": len(rows), "cols": cols})
-        self._invalidate_snapshot_cache()
+        series = {"kind": "heatmap", "values": values, "rows": len(rows), "cols": cols}
+        self._apply_native_series(self._native_plot, series)
+        self._append_series_snapshot(series)
         return self
 
     def error_bars(self, x: Any, y: Any, y_errors: Any, *, data: Any = None) -> "Plot":
@@ -376,17 +401,19 @@ class Plot:
             _column_values(data, y_errors)
         )
         self._ensure_equal_length("error-bars", x_values, y_values, error_values)
-        self._native_plot.error_bars(native_x, native_y, native_errors)
+        series = {"kind": "error-bars", "x": x_values, "y": y_values, "yErrors": error_values}
+        self._apply_native_series(
+            self._native_plot,
+            series,
+            native_sources={"x": native_x, "y": native_y, "yErrors": native_errors},
+        )
         if x_observable is not None:
             self._track_observable(x_observable, x_values)
         if y_observable is not None:
             self._track_observable(y_observable, y_values)
         if error_observable is not None:
             self._track_observable(error_observable, error_values)
-        self._state["series"].append(
-            {"kind": "error-bars", "x": x_values, "y": y_values, "yErrors": error_values}
-        )
-        self._invalidate_snapshot_cache()
+        self._append_series_snapshot(series)
         return self
 
     def error_bars_xy(
@@ -408,7 +435,23 @@ class Plot:
             _column_values(data, y_errors)
         )
         self._ensure_equal_length("error-bars-xy", x_values, y_values, x_error_values, y_error_values)
-        self._native_plot.error_bars_xy(native_x, native_y, native_x_errors, native_y_errors)
+        series = {
+            "kind": "error-bars-xy",
+            "x": x_values,
+            "y": y_values,
+            "xErrors": x_error_values,
+            "yErrors": y_error_values,
+        }
+        self._apply_native_series(
+            self._native_plot,
+            series,
+            native_sources={
+                "x": native_x,
+                "y": native_y,
+                "xErrors": native_x_errors,
+                "yErrors": native_y_errors,
+            },
+        )
         if x_observable is not None:
             self._track_observable(x_observable, x_values)
         if y_observable is not None:
@@ -417,32 +460,23 @@ class Plot:
             self._track_observable(x_error_observable, x_error_values)
         if y_error_observable is not None:
             self._track_observable(y_error_observable, y_error_values)
-        self._state["series"].append(
-            {
-                "kind": "error-bars-xy",
-                "x": x_values,
-                "y": y_values,
-                "xErrors": x_error_values,
-                "yErrors": y_error_values,
-            }
-        )
-        self._invalidate_snapshot_cache()
+        self._append_series_snapshot(series)
         return self
 
     def kde(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a kernel density estimate for a numeric sample vector."""
         values = _to_numeric_list(_column_values(data, x))
-        self._native_plot.kde(values)
-        self._state["series"].append({"kind": "kde", "data": values})
-        self._invalidate_snapshot_cache()
+        series = {"kind": "kde", "data": values}
+        self._apply_native_series(self._native_plot, series)
+        self._append_series_snapshot(series)
         return self
 
     def ecdf(self, x: Any, *, data: Any = None) -> "Plot":
         """Add an empirical cumulative distribution plot."""
         values = _to_numeric_list(_column_values(data, x))
-        self._native_plot.ecdf(values)
-        self._state["series"].append({"kind": "ecdf", "data": values})
-        self._invalidate_snapshot_cache()
+        series = {"kind": "ecdf", "data": values}
+        self._apply_native_series(self._native_plot, series)
+        self._append_series_snapshot(series)
         return self
 
     def contour(self, x: Any, y: Any, z: Any, *, data: Any = None) -> "Plot":
@@ -452,9 +486,9 @@ class Plot:
         z_values = _to_numeric_list(_column_values(data, z))
         if len(z_values) != len(x_values) * len(y_values):
             raise ValueError("contour z must contain x.length * y.length values")
-        self._native_plot.contour(x_values, y_values, z_values)
-        self._state["series"].append({"kind": "contour", "x": x_values, "y": y_values, "z": z_values})
-        self._invalidate_snapshot_cache()
+        series = {"kind": "contour", "x": x_values, "y": y_values, "z": z_values}
+        self._apply_native_series(self._native_plot, series)
+        self._append_series_snapshot(series)
         return self
 
     def pie(self, values: Any, labels: Any = None, *, data: Any = None) -> "Plot":
@@ -463,12 +497,11 @@ class Plot:
         label_values = None if labels is None else _to_string_list(_column_values(data, labels))
         if label_values is not None and len(label_values) != len(numeric):
             raise ValueError("pie values and labels must have the same length")
-        self._native_plot.pie(numeric, label_values)
         series = {"kind": "pie", "values": numeric}
         if label_values is not None:
             series["labels"] = label_values
-        self._state["series"].append(series)
-        self._invalidate_snapshot_cache()
+        self._apply_native_series(self._native_plot, series)
+        self._append_series_snapshot(series)
         return self
 
     def radar(self, labels: Any, series: list[dict[str, Any]]) -> "Plot":
@@ -480,20 +513,17 @@ class Plot:
             if len(values) != len(label_values):
                 raise ValueError("each radar series must match the labels length")
             normalized.append({"name": item.get("name"), "values": values})
-        self._native_plot.radar(
-            label_values,
-            [(item.get("name"), item["values"]) for item in normalized],
-        )
-        self._state["series"].append({"kind": "radar", "labels": label_values, "series": normalized})
-        self._invalidate_snapshot_cache()
+        plot_series = {"kind": "radar", "labels": label_values, "series": normalized}
+        self._apply_native_series(self._native_plot, plot_series)
+        self._append_series_snapshot(plot_series)
         return self
 
     def violin(self, x: Any, *, data: Any = None) -> "Plot":
         """Add a violin plot from one numeric sample vector."""
         values = _to_numeric_list(_column_values(data, x))
-        self._native_plot.violin(values)
-        self._state["series"].append({"kind": "violin", "data": values})
-        self._invalidate_snapshot_cache()
+        series = {"kind": "violin", "data": values}
+        self._apply_native_series(self._native_plot, series)
+        self._append_series_snapshot(series)
         return self
 
     def polar_line(self, r: Any, theta: Any, *, data: Any = None) -> "Plot":
@@ -502,9 +532,9 @@ class Plot:
         theta_values = _to_numeric_list(_column_values(data, theta))
         if len(r_values) != len(theta_values):
             raise ValueError("polar r and theta must have the same length")
-        self._native_plot.polar_line(r_values, theta_values)
-        self._state["series"].append({"kind": "polar-line", "r": r_values, "theta": theta_values})
-        self._invalidate_snapshot_cache()
+        series = {"kind": "polar-line", "r": r_values, "theta": theta_values}
+        self._apply_native_series(self._native_plot, series)
+        self._append_series_snapshot(series)
         return self
 
     def render_png(self) -> bytes:
