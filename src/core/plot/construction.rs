@@ -907,7 +907,7 @@ impl Plot {
         }
     }
 
-    pub(super) fn resolved_series(&self, time: f64) -> Vec<ResolvedSeries<'_>> {
+    pub(super) fn resolved_series(&self, time: f64) -> Result<Vec<ResolvedSeries<'_>>> {
         self.series_mgr
             .series
             .iter()

@@ -414,11 +414,17 @@ impl Plot {
             }
         };
         let hist_config = config.unwrap_or_default();
+        let prepared = crate::plots::histogram::calculate_histogram(&data_vec, &hist_config)
+            .map_err(|err| {
+                plot.set_pending_ingestion_error(PlottingError::RenderError(err.to_string()))
+            })
+            .ok();
 
         let series = PlotSeries {
             series_type: SeriesType::Histogram {
                 data: PlotData::Static(data_vec),
                 config: hist_config,
+                prepared,
             },
             streaming_source: None,
             label: None,
@@ -454,6 +460,7 @@ impl Plot {
             series_type: SeriesType::Histogram {
                 data: data.into_plot_data(),
                 config: config.unwrap_or_default(),
+                prepared: None,
             },
             streaming_source: None,
             label: None,

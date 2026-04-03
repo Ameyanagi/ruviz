@@ -2,6 +2,35 @@
 
 Comprehensive guide to ruviz performance characteristics, optimization strategies, and best practices based on verified benchmarking results.
 
+For the current cross-runtime large-dataset reference numbers, including Python `ruviz` vs
+`matplotlib` and matching Rust/wasm runs, see
+[docs/benchmarks/large-dataset-plotting.md](benchmarks/large-dataset-plotting.md).
+
+## Why Large PNG Exports Are Faster Now
+
+The current large-dataset benchmark page reflects a renderer change, not just a new benchmark.
+
+For raster PNG export, `ruviz` now applies a few automatic fast paths when the output is visually equivalent at the target canvas size:
+
+- Large monotonic solid line series without markers or error bars are reduced to a per-column envelope before stroking.
+- Static histograms cache prepared `HistogramData` and reuse those bins for repeated exports.
+- Nearest, non-annotated heatmaps render the final output surface directly and blit that image instead of drawing one rectangle per source cell.
+- The parallel line backend now draws one polyline instead of thousands of two-point segments.
+
+That changes the cost model:
+
+- line export is closer to output-column work than raw point-count work
+- histogram `render_only` avoids repeated binning
+- heatmap export is closer to output-pixel work than source-cell work
+
+In the current reference run this is why Rust `render_only` medians moved to roughly:
+
+- line `1m`: `30.30 ms`
+- histogram `5m`: `5.57 ms`
+- heatmap `2048x2048`: `7.71 ms`
+
+These improvements are specific to eligible raster PNG exports. SVG/vector output still uses the exact path, and Python `ruviz` is still slower overall because its current path includes snapshot JSON parsing and native reconstruction.
+
 ## Verified Performance Metrics
 
 **Based on Week 6 comprehensive benchmarking** (2025-10-07)

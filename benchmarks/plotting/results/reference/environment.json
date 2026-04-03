@@ -1,0 +1,145 @@
+{
+  "capturedAt": "2026-04-03T10:45:37Z",
+  "os": "macOS-26.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "processor": "arm",
+  "cpuCount": 10,
+  "pythonVersion": "3.14.2",
+  "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+  "bunVersion": "1.3.5",
+  "gitCommit": "36b49c46ce45223d3df3086976f485c0edfe1d0f",
+  "gitBranch": "bench/large-dataset-plotting",
+  "manifest": {
+    "version": 1,
+    "outputTarget": "png_bytes",
+    "defaults": {
+      "warmupIterations": 5,
+      "measuredIterations": 20,
+      "smokeWarmupIterations": 1,
+      "smokeMeasuredIterations": 3
+    },
+    "scenarios": [
+      {
+        "id": "line",
+        "plotKind": "line",
+        "datasetKind": "line_wave",
+        "canvas": {
+          "width": 640,
+          "height": 480,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "points": 100000
+          },
+          {
+            "label": "500k",
+            "points": 500000
+          },
+          {
+            "label": "1m",
+            "points": 1000000
+          }
+        ]
+      },
+      {
+        "id": "scatter",
+        "plotKind": "scatter",
+        "datasetKind": "scatter_cloud",
+        "canvas": {
+          "width": 640,
+          "height": 480,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "points": 100000
+          },
+          {
+            "label": "250k",
+            "points": 250000
+          },
+          {
+            "label": "500k",
+            "points": 500000
+          }
+        ]
+      },
+      {
+        "id": "histogram",
+        "plotKind": "histogram",
+        "datasetKind": "histogram_signal",
+        "canvas": {
+          "width": 640,
+          "height": 480,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "samples": 100000
+          },
+          {
+            "label": "1m",
+            "samples": 1000000
+          },
+          {
+            "label": "5m",
+            "samples": 5000000
+          }
+        ]
+      },
+      {
+        "id": "heatmap",
+        "plotKind": "heatmap",
+        "datasetKind": "heatmap_field",
+        "canvas": {
+          "width": 640,
+          "height": 640,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "512x512",
+            "rows": 512,
+            "cols": 512
+          },
+          {
+            "label": "1024x1024",
+            "rows": 1024,
+            "cols": 1024
+          },
+          {
+            "label": "2048x2048",
+            "rows": 2048,
+            "cols": 2048
+          }
+        ]
+      }
+    ]
+  },
+  "runtimes": {
+    "rust": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.3.4",
+      "buildProfile": "release"
+    },
+    "python": {
+      "pythonVersion": "3.14.2",
+      "numpyVersion": "2.4.4",
+      "matplotlibVersion": "3.10.8",
+      "ruvizVersion": "workspace",
+      "matplotlibBackend": "Agg"
+    },
+    "wasm": {
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36",
+      "platform": "MacIntel",
+      "hardwareConcurrency": 10,
+      "deviceMemory": 8,
+      "browserVersion": "145.0.7632.6",
+      "baseUrl": "http://127.0.0.1:4173"
+    }
+  }
+}

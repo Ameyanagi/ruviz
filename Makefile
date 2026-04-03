@@ -3,7 +3,7 @@
 # This Makefile generates all example outputs to a single organized folder,
 # demonstrating both static and interactive plotting capabilities.
 
-.PHONY: all examples static-examples interactive-examples performance-examples web-examples clean help setup-hooks check fmt clippy check-web doc-images
+.PHONY: all examples static-examples interactive-examples performance-examples web-examples clean help setup-hooks check fmt clippy check-web doc-images bench-plotting bench-plotting-smoke
 
 # Default target - generate all examples
 all: examples
@@ -162,6 +162,21 @@ check-web:
 	@echo "Running JS/TS checks..."
 	bun run check:web
 
+# Cross-runtime large-dataset plotting benchmark suite
+bench-plotting:
+	@echo "Running full large-dataset plotting benchmarks..."
+	bun install --frozen-lockfile
+	cd python && uv sync --group bench && uv run maturin develop
+	cd python && uv run python ../benchmarks/plotting/run.py --mode full
+	@echo "✓ Benchmark results written to benchmarks/plotting/results/reference/"
+
+bench-plotting-smoke:
+	@echo "Running smoke large-dataset plotting benchmarks..."
+	bun install --frozen-lockfile
+	cd python && uv sync --group bench && uv run maturin develop
+	cd python && uv run python ../benchmarks/plotting/run.py --mode smoke
+	@echo "✓ Smoke benchmark results written to benchmarks/plotting/results/reference/"
+
 # Generate documentation images at 300 DPI
 doc-images:
 	@echo "📸 Generating documentation images at 300 DPI..."
@@ -186,6 +201,8 @@ help:
 	@echo "  clippy              - Run clippy linter"
 	@echo "  check-web           - Run JS/TS oxfmt + oxlint checks"
 	@echo "  doc-images          - Generate documentation images"
+	@echo "  bench-plotting      - Run the full cross-runtime plotting benchmark suite"
+	@echo "  bench-plotting-smoke - Run the smoke cross-runtime plotting benchmark suite"
 	@echo ""
 	@echo "Examples:"
 	@echo "  all                 - Generate all examples (default)"

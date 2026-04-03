@@ -2029,6 +2029,32 @@ fn test_plot_builder_can_chain_histogram_without_end_series() {
 }
 
 #[test]
+fn test_static_histogram_prepares_histogram_data() {
+    let plot: Plot = Plot::new().histogram(&[1.0, 2.0, 3.0, 4.0], None).into();
+
+    match &plot.series_mgr.series[0].series_type {
+        SeriesType::Histogram { prepared, .. } => {
+            let prepared = prepared.as_ref().expect("expected prepared histogram data");
+            assert!(!prepared.counts.is_empty());
+            assert_eq!(prepared.bin_edges.len(), prepared.counts.len() + 1);
+        }
+        other => panic!("expected histogram series, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_histogram_source_keeps_prepared_histogram_lazy() {
+    let plot: Plot = Plot::new()
+        .histogram_source(vec![1.0, 2.0, 3.0, 4.0], None)
+        .into();
+
+    match &plot.series_mgr.series[0].series_type {
+        SeriesType::Histogram { prepared, .. } => assert!(prepared.is_none()),
+        other => panic!("expected histogram series, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_plot_builder_can_add_styled_vline_without_end_series() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 10.0], &[0.0, 1.0])

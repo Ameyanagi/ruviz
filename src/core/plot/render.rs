@@ -46,10 +46,18 @@ impl Plot {
         #[cfg(feature = "parallel")]
         {
             let series_count = snapshot_series.len();
-            let parallel_safe_for_markers = snapshot_series.iter().all(|series| {
-                !matches!(series.series_type, SeriesType::Line { .. })
-                    || series.marker_style.is_none()
-            });
+            let parallel_safe_for_markers =
+                snapshot_series
+                    .iter()
+                    .all(|series| match &series.series_type {
+                        SeriesType::Line { .. } => {
+                            series.marker_style.is_none()
+                                && series.x_errors.is_none()
+                                && series.y_errors.is_none()
+                        }
+                        SeriesType::Heatmap { .. } => false,
+                        _ => true,
+                    });
             if !has_mixed_coordinates
                 && parallel_safe_for_markers
                 && self
@@ -897,12 +905,8 @@ impl Plot {
                         }
                     }
                 }
-                SeriesType::Histogram { data, config } => {
-                    let data = data.resolve(0.0);
-                    // Calculate histogram and add bin center points
-                    if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(&data, config)
-                    {
+                SeriesType::Histogram { .. } => {
+                    if let Ok(hist_data) = series.series_type.histogram_data_at(0.0) {
                         for (i, &count) in hist_data.counts.iter().enumerate() {
                             if count > 0.0 {
                                 let x_center =
@@ -1651,16 +1655,8 @@ impl Plot {
                         // Draw the DataShader result
                         renderer.draw_datashader_image(&image, plot_area)?;
                     }
-                    SeriesType::Histogram { data, config } => {
-                        let data = data.resolve(0.0);
-                        // For histograms, calculate bins and use DataShader for high density
-                        let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
-                            .map_err(|e| {
-                                PlottingError::RenderError(format!(
-                                    "Histogram calculation failed: {}",
-                                    e
-                                ))
-                            })?;
+                    SeriesType::Histogram { .. } => {
+                        let hist_data = series.series_type.histogram_data_at(0.0)?;
 
                         // Convert histogram to x,y data for DataShader
                         let x_data: Vec<f64> = hist_data

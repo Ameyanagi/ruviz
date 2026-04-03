@@ -438,6 +438,7 @@ cargo run --example doc_typst_text --features typst-math
 - **[Migration from matplotlib](docs/migration/matplotlib.md)** - For Python users
 - **[Migration from seaborn](docs/migration/seaborn.md)** - Statistical plots
 - **[Performance Guide](docs/PERFORMANCE_GUIDE.md)** - Optimization techniques
+- **[Large Dataset Benchmarks](docs/benchmarks/large-dataset-plotting.md)** - Cross-runtime PNG rendering results for Rust, Python, wasm, and matplotlib
 
 ## Why ruviz?
 

@@ -764,6 +764,7 @@ pub(crate) enum SeriesType {
     Histogram {
         data: PlotData,
         config: crate::plots::histogram::HistogramConfig,
+        prepared: Option<crate::plots::histogram::HistogramData>,
     },
     BoxPlot {
         data: PlotData,
@@ -1027,10 +1028,21 @@ impl SeriesType {
                 x_errors: PlotData::Static(x_errors.resolve(time)),
                 y_errors: PlotData::Static(y_errors.resolve(time)),
             },
-            SeriesType::Histogram { data, config } => SeriesType::Histogram {
-                data: PlotData::Static(data.resolve(time)),
-                config: config.clone(),
-            },
+            SeriesType::Histogram {
+                data,
+                config,
+                prepared,
+            } => {
+                let resolved_data = data.resolve(time);
+                let prepared = prepared.clone().or_else(|| {
+                    crate::plots::histogram::calculate_histogram(&resolved_data, config).ok()
+                });
+                SeriesType::Histogram {
+                    data: PlotData::Static(resolved_data),
+                    config: config.clone(),
+                    prepared,
+                }
+            }
             SeriesType::BoxPlot { data, config } => SeriesType::BoxPlot {
                 data: PlotData::Static(data.resolve(time)),
                 config: config.clone(),
@@ -1079,6 +1091,31 @@ impl SeriesType {
         self.try_y_data_resolved(time)
             .expect("y_data not available for this series type")
     }
+
+    pub(super) fn histogram_data_at(
+        &self,
+        time: f64,
+    ) -> Result<crate::plots::histogram::HistogramData> {
+        match self {
+            SeriesType::Histogram {
+                data,
+                config,
+                prepared,
+            } => {
+                if let Some(prepared) = prepared {
+                    return Ok(prepared.clone());
+                }
+
+                let resolved = data.resolve(time);
+                crate::plots::histogram::calculate_histogram(&resolved, config).map_err(|error| {
+                    PlottingError::RenderError(format!("Histogram calculation failed: {error}"))
+                })
+            }
+            _ => Err(PlottingError::RenderError(
+                "histogram_data_at called for non-histogram series".to_string(),
+            )),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1107,8 +1144,7 @@ pub(crate) enum ResolvedSeries<'a> {
         y_errors: Cow<'a, [f64]>,
     },
     Histogram {
-        data: Vec<f64>,
-        config: HistogramConfig,
+        data: crate::plots::histogram::HistogramData,
     },
     BoxPlot {
         data: Cow<'a, [f64]>,
@@ -1118,8 +1154,8 @@ pub(crate) enum ResolvedSeries<'a> {
 }
 
 impl SeriesType {
-    pub(super) fn resolve_for_render(&self, time: f64) -> ResolvedSeries<'_> {
-        match self {
+    pub(super) fn resolve_for_render(&self, time: f64) -> Result<ResolvedSeries<'_>> {
+        Ok(match self {
             SeriesType::Line { x_data, y_data } => ResolvedSeries::Line {
                 x: x_data.resolve_cow(time),
                 y: y_data.resolve_cow(time),
@@ -1152,16 +1188,15 @@ impl SeriesType {
                 x_errors: x_errors.resolve_cow(time),
                 y_errors: y_errors.resolve_cow(time),
             },
-            SeriesType::Histogram { data, config } => ResolvedSeries::Histogram {
-                data: data.resolve(time),
-                config: config.clone(),
+            SeriesType::Histogram { .. } => ResolvedSeries::Histogram {
+                data: self.histogram_data_at(time)?,
             },
             SeriesType::BoxPlot { data, config } => ResolvedSeries::BoxPlot {
                 data: data.resolve_cow(time),
                 config: config.clone(),
             },
             other => ResolvedSeries::Other(other),
-        }
+        })
     }
 }
 
