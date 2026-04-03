@@ -129,7 +129,6 @@ def generate_markdown_report(
     raw_link_base: str,
     report_title: str,
 ) -> str:
-    python_ruviz_index = _result_index(runtime_payloads, implementation="ruviz")
     python_matplotlib_index = _result_index(runtime_payloads, implementation="matplotlib")
     ruviz_index = _result_index(runtime_payloads, implementation="ruviz")
     plotters_index = _result_index(runtime_payloads, implementation="plotters")
@@ -145,6 +144,7 @@ def generate_markdown_report(
         ]
         for scenario in manifest["scenarios"]
     ]
+    wasm_environment = environment["runtimes"].get("wasm", {})
 
     sections: list[str] = [
         f"# {report_title}",
@@ -212,7 +212,7 @@ def generate_markdown_report(
         f"- Python: `{environment['pythonVersion']}`",
         f"- Rust: `{environment['rustVersion']}`",
         f"- Bun: `{environment['bunVersion']}`",
-        f"- Chromium: `{environment['runtimes']['wasm'].get('browserVersion', 'unknown')}`",
+        f"- Chromium: `{wasm_environment.get('browserVersion', 'unknown')}`",
         "",
         "Raw artifacts:",
         f"- [environment.json]({raw_link_base}/environment.json)",
@@ -226,8 +226,12 @@ def generate_markdown_report(
     for boundary in ("render_only", "public_api_render"):
         rows: list[list[str]] = []
         for scenario_id, size_label in cases:
-            ruviz = python_ruviz_index[("python", scenario_id, size_label, boundary)]
-            matplotlib = python_matplotlib_index[("python", scenario_id, size_label, boundary)]
+            ruviz_key = ("python", scenario_id, size_label, boundary)
+            matplotlib_key = ("python", scenario_id, size_label, boundary)
+            if ruviz_key not in ruviz_index or matplotlib_key not in python_matplotlib_index:
+                continue
+            ruviz = ruviz_index[ruviz_key]
+            matplotlib = python_matplotlib_index[matplotlib_key]
             speedup = matplotlib["summary"]["medianMs"] / ruviz["summary"]["medianMs"]
             rows.append(
                 [
@@ -254,9 +258,14 @@ def generate_markdown_report(
     for boundary in ("render_only", "public_api_render"):
         rows = []
         for scenario_id, size_label in cases:
-            python_row = ruviz_index[("python", scenario_id, size_label, boundary)]
-            rust_row = ruviz_index[("rust", scenario_id, size_label, boundary)]
-            wasm_row = ruviz_index[("wasm", scenario_id, size_label, boundary)]
+            python_key = ("python", scenario_id, size_label, boundary)
+            rust_key = ("rust", scenario_id, size_label, boundary)
+            wasm_key = ("wasm", scenario_id, size_label, boundary)
+            if any(key not in ruviz_index for key in (python_key, rust_key, wasm_key)):
+                continue
+            python_row = ruviz_index[python_key]
+            rust_row = ruviz_index[rust_key]
+            wasm_row = ruviz_index[wasm_key]
             rows.append(
                 [
                     scenario_id,

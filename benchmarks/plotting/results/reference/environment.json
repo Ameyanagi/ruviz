@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-04-03T22:07:24Z",
+  "capturedAt": "2026-04-03T22:29:02Z",
   "os": "macOS-26.2-arm64-arm-64bit-Mach-O",
   "machine": "arm64",
   "processor": "arm",
@@ -7,7 +7,7 @@
   "pythonVersion": "3.14.2",
   "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
   "bunVersion": "1.3.5",
-  "gitCommit": "8311adb5d312ecbb7ab9f22c914f526eb0583cca",
+  "gitCommit": "ada0957cdceb3e71bdddf080492cd17e5881c98a",
   "gitBranch": "bench/large-dataset-plotting",
   "manifest": {
     "version": 1,

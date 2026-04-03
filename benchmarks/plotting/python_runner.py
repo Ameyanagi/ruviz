@@ -17,7 +17,7 @@ import ruviz
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-from common import ROOT, build_dataset, load_manifest, scenario_runs, summarize_iterations
+from common import build_dataset, load_manifest, scenario_runs, summarize_iterations
 
 PYTHON_CASE_BUDGET_SECONDS = 60.0
 
@@ -40,15 +40,22 @@ def measure(
         probe_ms = (time.perf_counter_ns() - probe_start) / 1_000_000.0
         probe_seconds = max(probe_ms / 1000.0, 1e-9)
         max_total_iterations = max(1, int(adaptive_budget_seconds / probe_seconds))
-        if max_total_iterations < warmup_iterations + measured_iterations:
-            effective_warmup = min(warmup_iterations, max(0, max_total_iterations - 1))
-            effective_measured = max(1, min(measured_iterations, max_total_iterations - effective_warmup))
+        available_after_probe = max_total_iterations - 1
+        if available_after_probe < warmup_iterations + measured_iterations:
+            if available_after_probe <= 0:
+                effective_warmup = 0
+                effective_measured = 1
+            else:
+                effective_warmup = min(warmup_iterations, max(0, available_after_probe - 1))
+                effective_measured = max(
+                    1,
+                    min(measured_iterations, available_after_probe - effective_warmup),
+                )
 
         last_length = len(probe_payload)
         if effective_warmup > 0:
             remaining_warmups = effective_warmup - 1
         else:
-            iterations_ms.append(probe_ms)
             remaining_warmups = 0
     else:
         remaining_warmups = warmup_iterations
