@@ -1,4 +1,7 @@
 use super::*;
+use crate::core::plot::raster_fast_path::{
+    reduce_line_points_for_raster, should_reduce_line_series,
+};
 
 impl Plot {
     /// Render plot using parallel processing for multiple series
@@ -18,7 +21,7 @@ impl Plot {
         let render_scale = self.render_scale();
         renderer.set_render_scale(render_scale);
 
-        let resolved_series = self.resolved_series(0.0);
+        let resolved_series = self.resolved_series(0.0)?;
         let bounds = if resolved_series
             .iter()
             .all(|series| !matches!(series, ResolvedSeries::Other(_)))
@@ -162,14 +165,27 @@ impl Plot {
                             )?;
 
                         // Process line segments in parallel
-                        let segments = self.render.parallel_renderer.process_polyline_parallel(
-                            &points,
-                            series.line_style.clone().unwrap_or(LineStyle::Solid),
-                            color,
-                            line_width,
-                        )?;
+                        let mut points = points;
+                        if should_reduce_line_series(
+                            series,
+                            points.len(),
+                            parallel_plot_area.width(),
+                        ) {
+                            if let Some(reduced) = reduce_line_points_for_raster(
+                                &points,
+                                parallel_plot_area.left,
+                                parallel_plot_area.width(),
+                            ) {
+                                points = reduced;
+                            }
+                        }
 
-                        RenderSeriesType::Line { segments }
+                        RenderSeriesType::Polyline {
+                            points,
+                            style: series.line_style.clone().unwrap_or(LineStyle::Solid),
+                            color,
+                            width: line_width,
+                        }
                     }
                     SeriesType::Scatter { x_data, y_data } => {
                         let x_storage;
@@ -292,23 +308,11 @@ impl Plot {
 
                         RenderSeriesType::Scatter { markers }
                     }
-                    SeriesType::Histogram { data, config } => {
-                        let data_storage;
-                        let data = match resolved {
-                            ResolvedSeries::Histogram { data, .. } => data.as_ref(),
-                            _ => {
-                                data_storage = data.resolve(0.0);
-                                data_storage.as_slice()
-                            }
+                    SeriesType::Histogram { .. } => {
+                        let hist_data = match resolved {
+                            ResolvedSeries::Histogram { data } => data.clone(),
+                            _ => series.series_type.histogram_data_at(0.0)?,
                         };
-                        // Calculate histogram data
-                        let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
-                            .map_err(|e| {
-                                PlottingError::RenderError(format!(
-                                    "Histogram calculation failed: {}",
-                                    e
-                                ))
-                            })?;
 
                         // Convert histogram to bar format for parallel rendering
                         let x_data: Vec<f64> = hist_data
@@ -729,6 +733,16 @@ impl Plot {
         // Render processed series (sequential - final drawing)
         for processed in processed_series {
             match processed.series_type {
+                RenderSeriesType::Polyline {
+                    points,
+                    style,
+                    color,
+                    width,
+                } => {
+                    let points: Vec<(f32, f32)> =
+                        points.into_iter().map(|point| (point.x, point.y)).collect();
+                    renderer.draw_polyline_clipped(&points, color, width, style, clip_rect)?;
+                }
                 RenderSeriesType::Line { segments } => {
                     // Draw all line segments
                     for segment in segments {
@@ -1022,12 +1036,8 @@ impl Plot {
                         }
                     }
                 }
-                SeriesType::Histogram { data, config } => {
-                    let data = data.resolve(0.0);
-                    // Calculate histogram to get data bounds
-                    if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(&data, config)
-                    {
+                SeriesType::Histogram { .. } => {
+                    if let Ok(hist_data) = series.series_type.histogram_data_at(0.0) {
                         // X bounds from bin edges
                         if !hist_data.bin_edges.is_empty() {
                             x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
@@ -1273,20 +1283,15 @@ impl Plot {
                         }
                     }
                 }
-                ResolvedSeries::Histogram { data, config } => {
-                    let data: &[f64] = data.as_ref();
-                    if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(&data, config)
-                    {
-                        if !hist_data.bin_edges.is_empty() {
-                            x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
-                            x_max = x_max.max(*hist_data.bin_edges.last().unwrap());
-                        }
-                        y_min = y_min.min(0.0);
-                        for &count in &hist_data.counts {
-                            if count.is_finite() && count > 0.0 {
-                                y_max = y_max.max(count);
-                            }
+                ResolvedSeries::Histogram { data } => {
+                    if !data.bin_edges.is_empty() {
+                        x_min = x_min.min(*data.bin_edges.first().unwrap());
+                        x_max = x_max.max(*data.bin_edges.last().unwrap());
+                    }
+                    y_min = y_min.min(0.0);
+                    for &count in &data.counts {
+                        if count.is_finite() && count > 0.0 {
+                            y_max = y_max.max(count);
                         }
                     }
                 }
@@ -1406,11 +1411,8 @@ impl Plot {
                         }
                     }
                 }
-                SeriesType::Histogram { data, config } => {
-                    let data = data.resolve(0.0);
-                    if let Ok(hist_data) =
-                        crate::plots::histogram::calculate_histogram(&data, config)
-                    {
+                SeriesType::Histogram { .. } => {
+                    if let Ok(hist_data) = series.series_type.histogram_data_at(0.0) {
                         if !hist_data.bin_edges.is_empty() {
                             x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
                             x_max = x_max.max(*hist_data.bin_edges.last().unwrap());

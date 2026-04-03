@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "outputTarget": "png_bytes",
+  "defaults": {
+    "warmupIterations": 5,
+    "measuredIterations": 20,
+    "smokeWarmupIterations": 1,
+    "smokeMeasuredIterations": 3
+  },
+  "scenarios": [
+    {
+      "id": "line",
+      "plotKind": "line",
+      "datasetKind": "line_wave",
+      "canvas": {
+        "width": 640,
+        "height": 480,
+        "dpi": 100
+      },
+      "sizes": [
+        {
+          "label": "100k",
+          "points": 100000
+        },
+        {
+          "label": "500k",
+          "points": 500000
+        },
+        {
+          "label": "1m",
+          "points": 1000000
+        }
+      ]
+    },
+    {
+      "id": "scatter",
+      "plotKind": "scatter",
+      "datasetKind": "scatter_cloud",
+      "canvas": {
+        "width": 640,
+        "height": 480,
+        "dpi": 100
+      },
+      "sizes": [
+        {
+          "label": "100k",
+          "points": 100000
+        },
+        {
+          "label": "250k",
+          "points": 250000
+        },
+        {
+          "label": "500k",
+          "points": 500000
+        }
+      ]
+    },
+    {
+      "id": "histogram",
+      "plotKind": "histogram",
+      "datasetKind": "histogram_signal",
+      "canvas": {
+        "width": 640,
+        "height": 480,
+        "dpi": 100
+      },
+      "sizes": [
+        {
+          "label": "100k",
+          "samples": 100000
+        },
+        {
+          "label": "1m",
+          "samples": 1000000
+        },
+        {
+          "label": "5m",
+          "samples": 5000000
+        }
+      ]
+    },
+    {
+      "id": "heatmap",
+      "plotKind": "heatmap",
+      "datasetKind": "heatmap_field",
+      "canvas": {
+        "width": 640,
+        "height": 640,
+        "dpi": 100
+      },
+      "sizes": [
+        {
+          "label": "512x512",
+          "rows": 512,
+          "cols": 512
+        },
+        {
+          "label": "1024x1024",
+          "rows": 1024,
+          "cols": 1024
+        },
+        {
+          "label": "2048x2048",
+          "rows": 2048,
+          "cols": 2048
+        }
+      ]
+    }
+  ]
+}

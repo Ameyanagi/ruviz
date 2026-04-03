@@ -444,6 +444,12 @@ pub struct SeriesRenderData {
 /// Series types optimized for parallel rendering
 #[derive(Debug, Clone)]
 pub enum RenderSeriesType {
+    Polyline {
+        points: Vec<Point2f>,
+        style: LineStyle,
+        color: Color,
+        width: f32,
+    },
     Line {
         segments: Vec<LineSegment>,
     },

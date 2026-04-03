@@ -358,6 +358,7 @@ mod layout_manager;
 mod mixed_render;
 mod parallel_render;
 mod prepared;
+mod raster_fast_path;
 mod render;
 mod render_pipeline;
 mod series_api;

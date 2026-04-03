@@ -131,6 +131,8 @@ env_logger = "0.11"
 regex = "1"
 proptest = "1.11"
 trybuild = "1.0"
+sha2 = "0.10"
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series"] }
 
 [features]
 default = ["ndarray", "parallel"]
@@ -242,6 +244,11 @@ path = "examples/performance/streaming_demo.rs"
 [[example]]
 name = "scaling_benchmark"
 path = "examples/performance/scaling_benchmark.rs"
+
+[[example]]
+name = "plotting_benchmark_runner"
+path = "examples/performance/plotting_benchmark_runner.rs"
+required-features = ["serde"]
 
 # GPU examples (require gpu feature)
 [[example]]

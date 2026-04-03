@@ -1,4 +1,9 @@
 use super::*;
+use crate::core::plot::raster_fast_path::{
+    plot_area_surface_size, rasterize_heatmap_surface, reduce_line_points_for_raster,
+    should_rasterize_heatmap, should_reduce_line_series,
+};
+use crate::core::types::Point2f;
 
 impl Plot {
     /// Add a new line to existing plot (for incremental updates)
@@ -546,24 +551,34 @@ impl Plot {
             SeriesType::Line { x_data, y_data } => {
                 let x_data = x_data.resolve(0.0);
                 let y_data = y_data.resolve(0.0);
-                let points: Vec<(f32, f32)> = x_data
+                let mut points: Vec<Point2f> = x_data
                     .iter()
                     .zip(y_data.iter())
                     .map(|(&x, &y)| {
-                        crate::render::skia::map_data_to_pixels(
+                        let (px, py) = crate::render::skia::map_data_to_pixels(
                             x, y, x_min, x_max, y_min, y_max, plot_area,
-                        )
+                        );
+                        Point2f::new(px, py)
                     })
                     .collect();
 
-                renderer
-                    .draw_polyline_clipped(&points, color, line_width, line_style, clip_rect)?;
+                if should_reduce_line_series(series, points.len(), plot_area.width()) {
+                    if let Some(reduced) =
+                        reduce_line_points_for_raster(&points, plot_area.left(), plot_area.width())
+                    {
+                        points = reduced;
+                    }
+                }
+
+                renderer.draw_polyline_points_clipped(
+                    &points, color, line_width, line_style, clip_rect,
+                )?;
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                    for &(px, py) in &points {
+                    for point in &points {
                         renderer.draw_marker_clipped(
-                            px,
-                            py,
+                            point.x,
+                            point.y,
                             marker_size,
                             marker_style,
                             color,
@@ -659,13 +674,8 @@ impl Plot {
                     )?;
                 }
             }
-            SeriesType::Histogram { data, config } => {
-                let data = data.resolve(0.0);
-                // Calculate histogram data
-                let hist_data = crate::plots::histogram::calculate_histogram(&data, config)
-                    .map_err(|e| {
-                        PlottingError::RenderError(format!("Histogram calculation failed: {}", e))
-                    })?;
+            SeriesType::Histogram { .. } => {
+                let hist_data = series.series_type.histogram_data_at(0.0)?;
 
                 // Render histogram bars
                 for (i, &count) in hist_data.counts.iter().enumerate() {
@@ -874,6 +884,36 @@ impl Plot {
                 }
             }
             SeriesType::Heatmap { data } => {
+                if should_rasterize_heatmap(data) {
+                    let (surface_width, surface_height) = plot_area_surface_size(plot_area);
+                    let image = rasterize_heatmap_surface(data, surface_width, surface_height);
+                    renderer.draw_datashader_image(&image, plot_area)?;
+
+                    if data.config.colorbar {
+                        let colorbar_width = 20.0;
+                        let colorbar_margin = 10.0;
+                        let colorbar_x = plot_area.right() + colorbar_margin;
+                        let colorbar_y = plot_area.y();
+                        let colorbar_height = plot_area.height();
+
+                        renderer.draw_colorbar(
+                            &data.config.colormap,
+                            data.vmin,
+                            data.vmax,
+                            colorbar_x,
+                            colorbar_y,
+                            colorbar_width,
+                            colorbar_height,
+                            data.config.colorbar_label.as_deref(),
+                            self.display.theme.foreground,
+                            data.config.colorbar_tick_font_size,
+                            Some(data.config.colorbar_label_font_size),
+                        )?;
+                    }
+
+                    return Ok(());
+                }
+
                 // Calculate cell dimensions in pixel space
                 let cell_width = plot_area.width() / data.n_cols as f32;
                 let cell_height = plot_area.height() / data.n_rows as f32;

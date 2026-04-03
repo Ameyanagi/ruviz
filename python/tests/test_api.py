@@ -25,6 +25,46 @@ def test_repr_png_smoke() -> None:
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_render_png_uses_native_handle_not_snapshot_json() -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("demo")
+
+    with patch.object(plot, "_snapshot_json", side_effect=AssertionError("snapshot path should not run")):
+        png = plot.render_png()
+
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_render_svg_uses_native_handle_not_snapshot_json() -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("demo")
+
+    with patch.object(plot, "_snapshot_json", side_effect=AssertionError("snapshot path should not run")):
+        svg = plot.render_svg()
+
+    assert svg.startswith("<?xml")
+
+
+def test_observable_render_updates_native_plot_without_snapshot_roundtrip() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
+
+    first_png = plot.render_png()
+    source.replace([3.0, 2.0, 1.0])
+
+    with patch.object(plot, "_snapshot_json", side_effect=AssertionError("snapshot path should not run")):
+        second_png = plot.render_png()
+
+    assert first_png != second_png
+
+
+def test_clone_rebuilds_native_plot_from_mixed_series_shapes() -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).kde([1, 2, 2, 3]).title("clone")
+
+    clone = plot.clone()
+
+    assert clone.render_png().startswith(b"\x89PNG\r\n\x1a\n")
+    assert clone.to_snapshot() == plot.to_snapshot()
+
+
 def test_show_uses_static_image_in_notebooks() -> None:
     plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("demo")
 
@@ -46,7 +86,7 @@ def test_show_uses_native_window_outside_notebooks() -> None:
 
     with (
         patch("ruviz._api._is_notebook", return_value=False),
-        patch("ruviz._api._native.show_native") as show_native,
+        patch.object(type(plot._native_plot), "show_native") as show_native,
     ):
         result = plot.show()
 

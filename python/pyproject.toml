@@ -28,6 +28,9 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.12",
 ]
+bench = [
+  "matplotlib>=3.10",
+]
 
 [tool.maturin]
 python-source = "python"

@@ -1,5 +1,14 @@
 # Ruviz Performance Benchmark Results
 
+For the current cross-runtime large-dataset reference suite, including Python `ruviz` vs
+`matplotlib` and matching Rust/wasm runs, see
+[docs/benchmarks/large-dataset-plotting.md](benchmarks/large-dataset-plotting.md).
+
+That benchmark page also documents the renderer changes behind the new large-dataset numbers:
+- line envelope reduction for oversized raster line exports
+- cached histogram bins for static series
+- output-surface rasterization for eligible heatmaps
+
 **Date**: 2025-10-07
 **Rust Version**: 2024 Edition
 **Hardware**: 16-core system

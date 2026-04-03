@@ -12,6 +12,10 @@ use ruviz::{
 };
 use serde::Deserialize;
 
+mod native_handle;
+
+use native_handle::{NativeObservable1D, NativePlotHandle};
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PlotSnapshot {
@@ -387,6 +391,8 @@ fn version() -> &'static str {
 
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<NativeObservable1D>()?;
+    module.add_class::<NativePlotHandle>()?;
     module.add_function(wrap_pyfunction!(render_png_bytes, module)?)?;
     module.add_function(wrap_pyfunction!(render_svg, module)?)?;
     module.add_function(wrap_pyfunction!(save, module)?)?;

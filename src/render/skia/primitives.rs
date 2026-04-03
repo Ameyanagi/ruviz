@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::types::Point2f;
 
 impl SkiaRenderer {
     /// Map renderer font size to Typst size units.
@@ -182,6 +183,53 @@ impl SkiaRenderer {
     ) -> Result<()> {
         let mask = self.get_clip_mask(clip_rect)?;
         self.draw_polyline_with_mask(points, color, width, style, Some(mask.as_ref()))
+    }
+
+    /// Draw a projected polyline clipped to a rectangular region.
+    pub fn draw_polyline_points_clipped(
+        &mut self,
+        points: &[Point2f],
+        color: Color,
+        width: f32,
+        style: LineStyle,
+        clip_rect: (f32, f32, f32, f32), // (x, y, width, height)
+    ) -> Result<()> {
+        if points.len() < 2 {
+            return Ok(());
+        }
+
+        let mask = self.get_clip_mask(clip_rect)?;
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+
+        let mut stroke = Stroke {
+            width,
+            ..Stroke::default()
+        };
+
+        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
+            stroke.dash = StrokeDash::new(dash_pattern, 0.0);
+        }
+
+        let mut path = PathBuilder::new();
+        path.move_to(points[0].x, points[0].y);
+
+        for point in &points[1..] {
+            path.line_to(point.x, point.y);
+        }
+
+        let path = path.finish().ok_or(PlottingError::RenderError(
+            "Failed to create polyline path".to_string(),
+        ))?;
+
+        self.stroke_path_masked(
+            &path,
+            &paint,
+            &stroke,
+            Transform::identity(),
+            Some(mask.as_ref()),
+        )
     }
 
     fn get_clip_mask(&mut self, clip_rect: (f32, f32, f32, f32)) -> Result<Arc<Mask>> {
