@@ -292,7 +292,7 @@ def generate_markdown_report(
     plotters_rows = []
     for scenario_id, size_label in cases:
         key = ("rust", scenario_id, size_label, "public_api_render")
-        if key not in plotters_index:
+        if key not in plotters_index or key not in ruviz_index:
             continue
         ruviz_row = ruviz_index[key]
         plotters_row = plotters_index[key]
@@ -321,7 +321,10 @@ def generate_markdown_report(
 
     throughput_rows = []
     for scenario_id, size_label in cases:
-        rust_row = ruviz_index[("rust", scenario_id, size_label, "render_only")]
+        key = ("rust", scenario_id, size_label, "render_only")
+        if key not in ruviz_index:
+            continue
+        rust_row = ruviz_index[key]
         throughput_rows.append(
             [
                 scenario_id,
