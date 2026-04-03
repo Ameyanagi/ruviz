@@ -6,6 +6,25 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.3.5] - 2026-04-04
+
+### Added
+
+- Added a cross-runtime large-dataset benchmark suite covering Rust, Python, and wasm `ruviz`, plus Python `matplotlib` and Rust `plotters` comparison baselines.
+- Added committed benchmark reference artifacts and documentation for the large-dataset plotting suite, including methodology, environment metadata, and report generation.
+
+### Changed
+
+- Accelerated raster PNG export for large datasets with automatic line envelope reduction, cached static histogram bins, and output-surface heatmap rasterization fast paths.
+- Reworked the Python binding to keep native plot handles and prepared render state alive across renders, removing the old JSON snapshot round-trip from the hot render/export path.
+- Extended the Python benchmark path and benchmark reporting so `render_only` measures real uncached rendering from a reused built plot, with smoke outputs separated from the published reference artifacts.
+
+### Fixed
+
+- Fixed Python static histograms to use Rust's cached static histogram path instead of the slower source-backed reactive path.
+- Fixed nearest-neighbor heatmap fast-path sampling so the last source row and column are included in downsampled raster exports.
+- Hardened the benchmark report generator against partial runtime result sets and corrected the benchmark statistics and probe-timing methodology used in the published report.
+
 ## [0.3.4] - 2026-04-03
 
 ### Added
@@ -186,7 +205,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/Ameyanagi/ruviz/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/Ameyanagi/ruviz/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Ameyanagi/ruviz/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/Ameyanagi/ruviz/compare/v0.3.1...v0.3.2

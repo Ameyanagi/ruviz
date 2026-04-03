@@ -2,15 +2,14 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.3.3
+## What's New in v0.3.5
 
-- `ruviz-gpui` desktop support now covers Linux and Windows in addition to macOS.
-- The repository MSRV is now Rust `1.92`, with CI explicitly enforcing that floor.
-- GPUI example builds are now part of CI and release validation, improving desktop integration coverage.
-- Linux desktop dependency installation is shared across CI and release workflows to keep packaging checks aligned.
+- Large-dataset benchmark coverage now spans Rust, Python, and wasm `ruviz`, with `matplotlib` and `plotters` comparison baselines documented in the repo.
+- Raster PNG export is much faster on large monotonic lines, static histograms, and nearest-neighbor heatmaps thanks to new automatic fast paths.
+- Python host-side rendering now reuses a live native plot handle instead of rebuilding from JSON snapshots on every render or export.
 
 See full details:
-- [Release notes for v0.3.3](releases/v0.3.3.md)
+- [Release notes for v0.3.5](releases/v0.3.5.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -24,7 +23,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.3.3"
+ruviz = "0.3.5"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -63,8 +62,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.3.3"
-ruviz-gpui = "0.3.3"
+ruviz = "0.3.5"
+ruviz-gpui = "0.3.5"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -92,7 +91,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.3", features = ["typst-math"] }
+ruviz = { version = "0.3.5", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
@@ -105,7 +104,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.3", default-features = false }
+ruviz = { version = "0.3.5", default-features = false }
 
 [features]
 default = []
@@ -356,7 +355,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.3.3", features = ["polars_support"] }
+ruviz = { version = "0.3.5", features = ["polars_support"] }
 polars = "0.35"
 ```
 
@@ -383,14 +382,14 @@ Plot::new()
 Enable parallel rendering:
 ```toml
 [dependencies]
-ruviz = { version = "0.3.3", features = ["parallel"] }
+ruviz = { version = "0.3.5", features = ["parallel"] }
 ```
 
 ### For Very Large Datasets (>100K points)
 Enable SIMD optimization:
 ```toml
 [dependencies]
-ruviz = { version = "0.3.3", features = ["parallel", "simd"] }
+ruviz = { version = "0.3.5", features = ["parallel", "simd"] }
 ```
 
 ### Large Dataset Export
