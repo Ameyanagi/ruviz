@@ -673,9 +673,9 @@ fn test_render_to_renderer_empty_series() {
     let plot = Plot::new().title("Empty Plot");
     let mut renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
 
-    // Should fail with no data series
+    // Empty plots should render as a valid cartesian chart.
     let result = plot.render_to_renderer(&mut renderer, 96.0);
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]
@@ -725,6 +725,19 @@ fn test_render_to_renderer_dpi_scaling() {
 
     let result_300 = plot.render_to_renderer(&mut renderer, 300.0);
     assert!(result_300.is_ok());
+}
+
+#[test]
+fn test_render_to_svg_empty_plot_succeeds() {
+    let svg = Plot::new()
+        .title("Empty Plot")
+        .xlabel("X")
+        .ylabel("Y")
+        .render_to_svg()
+        .expect("empty SVG render should succeed");
+
+    assert!(svg.starts_with("<?xml"));
+    assert!(svg.contains("Empty Plot"));
 }
 
 #[test]
@@ -2213,6 +2226,29 @@ fn test_mixed_coordinate_plots_keep_cartesian_axes() {
 
     assert!(plot.needs_cartesian_axes());
     assert!(plot.series_mgr.series[1].inset_layout.is_some());
+}
+
+#[test]
+fn test_empty_plot_uses_cartesian_axes_and_default_bounds() {
+    let plot = Plot::new().title("Empty Plot");
+
+    assert!(plot.needs_cartesian_axes());
+    assert_eq!(
+        plot.effective_main_panel_bounds_for_series(&[])
+            .expect("empty plot bounds should resolve"),
+        (0.0, 1.0, 0.0, 1.0)
+    );
+}
+
+#[test]
+fn test_empty_plot_honors_manual_axis_limits() {
+    let plot = Plot::new().xlim(2.0, 4.0).ylim(-3.0, 5.0);
+
+    assert_eq!(
+        plot.effective_main_panel_bounds_for_series(&[])
+            .expect("manual limits should override empty bounds"),
+        (2.0, 4.0, -3.0, 5.0)
+    );
 }
 
 #[test]

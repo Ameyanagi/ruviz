@@ -233,6 +233,23 @@ fn test_session_invalidate_forces_base_rerender() {
 }
 
 #[test]
+fn test_empty_plot_surface_uses_default_cartesian_bounds() {
+    let plot: Plot = Plot::new().title("Empty Plot").into();
+    let session = plot.prepare_interactive();
+
+    let frame = session
+        .render_to_surface(render_target())
+        .expect("empty surface frame should render");
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available after empty render");
+
+    assert!(!frame.layers.base.pixels.is_empty());
+    assert_eq!(geometry.x_bounds, (0.0, 1.0));
+    assert_eq!(geometry.y_bounds, (0.0, 1.0));
+}
+
+#[test]
 fn test_compose_images_alpha_blends_overlay() {
     let base = Image::new(1, 1, vec![0, 0, 255, 255]);
     let overlay = Image::new(1, 1, vec![255, 0, 0, 128]);
