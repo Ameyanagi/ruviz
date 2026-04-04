@@ -102,7 +102,8 @@ pub struct PlotContent {
     pub show_tick_labels: bool,
     /// Maximum number of characters in y-tick labels (for width estimation)
     pub max_ytick_chars: usize,
-    /// Maximum number of characters in x-tick labels (for height is same)
+    /// Compatibility-only x-tick estimate. Current layout ignores character
+    /// count here because x-tick spacing is driven by measured/estimated height.
     pub max_xtick_chars: usize,
 }
 
@@ -139,9 +140,17 @@ impl PlotContent {
         self
     }
 
-    pub fn with_tick_chars(mut self, max_ytick: usize, max_xtick: usize) -> Self {
+    #[deprecated(
+        since = "0.3.6",
+        note = "x-tick character counts are currently ignored; use with_ytick_chars() instead"
+    )]
+    pub fn with_tick_chars(self, max_ytick: usize, _max_xtick: usize) -> Self {
+        self.with_ytick_chars(max_ytick)
+    }
+
+    /// Set the y-tick label width estimate used when actual measurements are unavailable.
+    pub fn with_ytick_chars(mut self, max_ytick: usize) -> Self {
         self.max_ytick_chars = max_ytick;
-        self.max_xtick_chars = max_xtick;
         self
     }
 
@@ -411,6 +420,44 @@ mod tests {
     }
 
     #[test]
+    fn test_with_ytick_chars_sets_only_ytick_estimate() {
+        let content = PlotContent::new().with_ytick_chars(7);
+
+        assert_eq!(content.max_ytick_chars, 7);
+        assert_eq!(content.max_xtick_chars, 0);
+    }
+
+    #[test]
+    fn test_with_tick_chars_compatibility_matches_ytick_only_layout() {
+        let calculator = LayoutCalculator::default();
+        #[allow(deprecated)]
+        let compatibility_content = PlotContent::new().with_tick_chars(6, 42);
+        let ytick_only_content = PlotContent::new().with_ytick_chars(6);
+
+        assert_eq!(compatibility_content.max_ytick_chars, 6);
+        assert_eq!(compatibility_content.max_xtick_chars, 0);
+
+        let compatibility_layout = calculator.compute(
+            (640, 480),
+            &compatibility_content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+        let ytick_only_layout = calculator.compute(
+            (640, 480),
+            &ytick_only_content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        assert_eq!(compatibility_layout, ytick_only_layout);
+    }
+
+    #[test]
     fn test_estimate_text_width() {
         let width = estimate_text_width("Hello", 12.0);
         // 5 chars * 12 * 0.6 = 36
@@ -431,7 +478,7 @@ mod tests {
             .with_title("Test Title")
             .with_xlabel("X Values")
             .with_ylabel("Y Values")
-            .with_tick_chars(5, 3);
+            .with_ytick_chars(5);
 
         let layout = calculator.compute(
             (640, 480),
@@ -571,7 +618,7 @@ mod tests {
     #[test]
     fn test_layout_no_labels() {
         let calculator = LayoutCalculator::default();
-        let content = PlotContent::new().with_tick_chars(5, 3);
+        let content = PlotContent::new().with_ytick_chars(5);
 
         let layout = calculator.compute(
             (640, 480),
@@ -598,7 +645,7 @@ mod tests {
         let with_ticks = PlotContent::new()
             .with_xlabel("X Axis")
             .with_ylabel("Y Axis")
-            .with_tick_chars(6, 4);
+            .with_ytick_chars(6);
         let without_ticks = with_ticks.clone().with_tick_labels(false);
 
         let layout_with_ticks = calculator.compute(
@@ -654,7 +701,7 @@ mod tests {
         });
         let content = PlotContent::new()
             .with_ylabel("Y Label")
-            .with_tick_chars(5, 3);
+            .with_ytick_chars(5);
 
         let layout = calculator.compute(
             (640, 480),
@@ -692,7 +739,7 @@ mod tests {
         });
         let content = PlotContent::new()
             .with_ylabel("Y Label")
-            .with_tick_chars(5, 3);
+            .with_ytick_chars(5);
 
         let layout = calculator.compute(
             (640, 480),
@@ -722,7 +769,7 @@ mod tests {
     #[test]
     fn test_layout_uses_measured_tick_dimensions_when_provided() {
         let calculator = LayoutCalculator::default();
-        let content = PlotContent::new().with_tick_chars(5, 3);
+        let content = PlotContent::new().with_ytick_chars(5);
 
         let estimated = calculator.compute(
             (640, 480),
@@ -809,7 +856,7 @@ mod tests {
             .with_title("数据分析 - データ分析")
             .with_xlabel("時間 (μs)")
             .with_ylabel("Amplitude (±σ)")
-            .with_tick_chars(6, 4);
+            .with_ytick_chars(6);
 
         let layout = calculator.compute(
             (640, 480),

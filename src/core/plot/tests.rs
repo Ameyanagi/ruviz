@@ -253,6 +253,20 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
     (top_probe, right_probe)
 }
 
+fn compute_layout_without_tick_measurements(plot: &Plot) -> PlotLayout {
+    let (x_min, x_max, y_min, y_max) = plot
+        .calculate_data_bounds()
+        .expect("data bounds should be available");
+    let content = plot.create_plot_content(y_min, y_max);
+
+    plot.compute_layout_from_measurements(
+        plot.display.dimensions,
+        &content,
+        plot.display.config.figure.dpi,
+        None,
+    )
+}
+
 fn parse_svg_attr_pt(line: &str, attr: &str) -> f32 {
     let marker = format!(r#"{}=""#, attr);
     let start = line
@@ -711,6 +725,69 @@ fn test_render_to_renderer_dpi_scaling() {
 
     let result_300 = plot.render_to_renderer(&mut renderer, 300.0);
     assert!(result_300.is_ok());
+}
+
+#[test]
+fn test_tight_layout_pad_changes_computed_layout_margins() {
+    let base_plot = Plot::new()
+        .size_px(800, 600)
+        .line(&[0.0, 1.0, 2.0], &[1.0, 4.0, 9.0])
+        .title("Tight Layout")
+        .xlabel("X Axis")
+        .ylabel("Y Axis")
+        .end_series();
+    let small_pad = base_plot.clone().tight_layout_pad(1.0);
+    let large_pad = base_plot.tight_layout_pad(12.0);
+
+    let small_layout = compute_layout_without_tick_measurements(&small_pad);
+    let large_layout = compute_layout_without_tick_measurements(&large_pad);
+
+    assert!(large_layout.margins.top > small_layout.margins.top);
+    assert!(large_layout.margins.bottom > small_layout.margins.bottom);
+    assert!(large_layout.margins.left > small_layout.margins.left);
+    assert!(large_layout.plot_area.width() < small_layout.plot_area.width());
+    assert!(large_layout.plot_area.height() < small_layout.plot_area.height());
+}
+
+#[test]
+fn test_compute_layout_honors_fixed_margins() {
+    let mut plot = Plot::new()
+        .size_px(800, 600)
+        .line(&[0.0, 1.0], &[1.0, 3.0])
+        .title("Fixed Margins")
+        .xlabel("X")
+        .ylabel("Y")
+        .end_series();
+    plot.display.config.margins = MarginConfig::fixed(1.1, 0.4, 0.7, 0.9);
+
+    let layout = compute_layout_without_tick_measurements(&plot);
+
+    assert!((layout.margins.left - 110.0).abs() < 0.1);
+    assert!((layout.margins.right - 40.0).abs() < 0.1);
+    assert!((layout.margins.top - 70.0).abs() < 0.1);
+    assert!((layout.margins.bottom - 90.0).abs() < 0.1);
+    assert!((layout.plot_area.left - 110.0).abs() < 0.1);
+    assert!((layout.plot_area.right - 760.0).abs() < 0.1);
+    assert!((layout.plot_area.top - 70.0).abs() < 0.1);
+    assert!((layout.plot_area.bottom - 510.0).abs() < 0.1);
+}
+
+#[test]
+fn test_compute_layout_honors_proportional_margins() {
+    let mut plot = Plot::new()
+        .size_px(800, 600)
+        .line(&[0.0, 1.0], &[1.0, 3.0])
+        .end_series();
+    plot.display.config.margins = MarginConfig::proportional_custom(0.2, 0.15, 0.1, 0.25);
+
+    let layout = compute_layout_without_tick_measurements(&plot);
+
+    assert!((layout.margins.left - 160.0).abs() < 0.1);
+    assert!((layout.margins.right - 120.0).abs() < 0.1);
+    assert!((layout.margins.top - 60.0).abs() < 0.1);
+    assert!((layout.margins.bottom - 150.0).abs() < 0.1);
+    assert!((layout.plot_area.width() - 520.0).abs() < 0.1);
+    assert!((layout.plot_area.height() - 390.0).abs() < 0.1);
 }
 
 #[test]

@@ -698,7 +698,7 @@ impl Plot {
             ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(time)),
             show_tick_labels: self.layout.tick_config.enabled && self.needs_cartesian_axes(),
             max_ytick_chars,
-            max_xtick_chars: 5, // Reasonable default
+            max_xtick_chars: 0, // Compatibility-only field; current layout ignores it.
         }
     }
 
@@ -766,27 +766,164 @@ impl Plot {
         dpi: f32,
         measurements: Option<&MeasuredDimensions>,
     ) -> PlotLayout {
-        LayoutCalculator::new(self.layout_config()).compute(
-            canvas_size,
-            content,
-            &self.display.config.typography,
-            &self.display.config.spacing,
-            dpi,
-            measurements,
-        )
-    }
-
-    pub(super) fn layout_config(&self) -> LayoutConfig {
         match &self.display.config.margins {
             MarginConfig::ContentDriven {
                 edge_buffer,
                 center_plot,
-            } => LayoutConfig {
+            } => LayoutCalculator::new(LayoutConfig {
                 edge_buffer_pt: *edge_buffer,
                 center_plot: *center_plot,
                 ..Default::default()
-            },
-            _ => LayoutConfig::default(),
+            })
+            .compute(
+                canvas_size,
+                content,
+                &self.display.config.typography,
+                &self.display.config.spacing,
+                dpi,
+                measurements,
+            ),
+            MarginConfig::Fixed { .. }
+            | MarginConfig::Auto { .. }
+            | MarginConfig::Proportional { .. } => {
+                self.compute_layout_with_explicit_margins(canvas_size, content, dpi, measurements)
+            }
+        }
+    }
+
+    fn compute_layout_with_explicit_margins(
+        &self,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        measurements: Option<&MeasuredDimensions>,
+    ) -> PlotLayout {
+        let render_scale = RenderScale::from_canvas_size(canvas_size.0, canvas_size.1, dpi);
+        let typography = &self.display.config.typography;
+        let spacing = &self.display.config.spacing;
+        let title_pad = render_scale.points_to_pixels(spacing.title_pad);
+        let label_pad = render_scale.points_to_pixels(spacing.label_pad);
+        let tick_pad_px = render_scale.points_to_pixels(spacing.tick_pad);
+        let title_size_px = render_scale.points_to_pixels(typography.title_size());
+        let label_size_px = render_scale.points_to_pixels(typography.label_size());
+        let tick_size_px = render_scale.points_to_pixels(typography.tick_size());
+        let measured_title = measurements.and_then(|m| m.title);
+        let measured_xlabel = measurements.and_then(|m| m.xlabel);
+        let measured_ylabel = measurements.and_then(|m| m.ylabel);
+        let measured_xtick = measurements.and_then(|m| m.xtick);
+        let measured_ytick = measurements.and_then(|m| m.ytick);
+
+        let title_height = if content.title.is_some() {
+            measured_title
+                .map(|(_, height)| height)
+                .unwrap_or_else(|| crate::core::layout::estimate_text_height(title_size_px))
+        } else {
+            0.0
+        };
+        let xlabel_height = if content.xlabel.is_some() {
+            measured_xlabel
+                .map(|(_, height)| height)
+                .unwrap_or_else(|| crate::core::layout::estimate_text_height(label_size_px))
+        } else {
+            0.0
+        };
+        let ylabel_width = if content.ylabel.is_some() {
+            measured_ylabel
+                .map(|(_, height)| height)
+                .unwrap_or_else(|| crate::core::layout::estimate_text_height(label_size_px))
+        } else {
+            0.0
+        };
+        let (xtick_height, ytick_width, tick_pad) = if content.show_tick_labels {
+            (
+                measured_xtick
+                    .map(|(_, height)| height)
+                    .unwrap_or_else(|| crate::core::layout::estimate_text_height(tick_size_px)),
+                measured_ytick.map(|(width, _)| width).unwrap_or_else(|| {
+                    crate::core::layout::estimate_tick_label_width(
+                        content.max_ytick_chars.max(5),
+                        tick_size_px,
+                    )
+                }),
+                tick_pad_px,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+
+        let computed_margins = self.display.config.compute_margins(
+            content.title.is_some(),
+            content.xlabel.is_some(),
+            content.ylabel.is_some(),
+        );
+        let plot_area_rect =
+            calculate_plot_area_config(canvas_size.0, canvas_size.1, &computed_margins, dpi);
+        let canvas_width = canvas_size.0 as f32;
+        let canvas_height = canvas_size.1 as f32;
+        let margins = crate::core::layout::ComputedMarginsPixels {
+            left: plot_area_rect.left(),
+            right: canvas_width - plot_area_rect.right(),
+            top: plot_area_rect.top(),
+            bottom: canvas_height - plot_area_rect.bottom(),
+        };
+        let plot_area = crate::core::layout::LayoutRect {
+            left: plot_area_rect.left(),
+            top: plot_area_rect.top(),
+            right: plot_area_rect.right(),
+            bottom: plot_area_rect.bottom(),
+        };
+
+        let top_outer_gap = if content.title.is_some() {
+            (margins.top - title_height - title_pad).max(0.0)
+        } else {
+            0.0
+        };
+        let bottom_content_height = tick_pad
+            + xtick_height
+            + if content.xlabel.is_some() {
+                label_pad + xlabel_height
+            } else {
+                0.0
+            };
+        let bottom_outer_gap = (margins.bottom - bottom_content_height).max(0.0);
+        let left_content_width = ytick_width
+            + tick_pad
+            + if content.ylabel.is_some() {
+                label_pad + ylabel_width
+            } else {
+                0.0
+            };
+        let left_outer_gap = (margins.left - left_content_width).max(0.0);
+
+        PlotLayout {
+            plot_area,
+            title_pos: content
+                .title
+                .as_ref()
+                .map(|_| crate::core::layout::TextPosition {
+                    x: plot_area.center_x(),
+                    y: top_outer_gap,
+                    size: title_size_px,
+                }),
+            xlabel_pos: content
+                .xlabel
+                .as_ref()
+                .map(|_| crate::core::layout::TextPosition {
+                    x: plot_area.center_x(),
+                    y: canvas_height - bottom_outer_gap - xlabel_height,
+                    size: label_size_px,
+                }),
+            ylabel_pos: content
+                .ylabel
+                .as_ref()
+                .map(|_| crate::core::layout::TextPosition {
+                    x: left_outer_gap + ylabel_width / 2.0,
+                    y: plot_area.center_y(),
+                    size: label_size_px,
+                }),
+            xtick_baseline_y: plot_area.bottom + tick_pad,
+            ytick_right_x: plot_area.left - tick_pad,
+            margins,
         }
     }
 
@@ -893,11 +1030,10 @@ impl Plot {
             );
         }
 
-        if x_ticks.is_empty() && y_ticks.is_empty() {
-            let plot_area = Self::plot_area_from_layout(&layout)?;
-            (x_ticks, y_ticks) =
-                Self::dynamic_tick_values_for_plot_area(plot_area, x_min, x_max, y_min, y_max);
-        }
+        debug_assert!(
+            !x_ticks.is_empty() && !y_ticks.is_empty(),
+            "dynamic tick layout should produce tick vectors when labels are enabled"
+        );
 
         Ok((layout, x_ticks, y_ticks))
     }
