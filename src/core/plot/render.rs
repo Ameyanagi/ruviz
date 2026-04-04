@@ -17,7 +17,9 @@ impl Plot {
 
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
-        Self::validate_series_list(&snapshot_series)?;
+        if !snapshot_series.is_empty() {
+            Self::validate_series_list(&snapshot_series)?;
+        }
 
         // Check if DataShader optimization should be used
         let total_points = Self::calculate_total_points_for_series(&snapshot_series);
@@ -383,13 +385,9 @@ impl Plot {
         renderer.set_text_engine_mode(self.display.text_engine);
 
         let snapshot_series = self.snapshot_series(0.0);
-
-        // Validate we have at least one series
-        if snapshot_series.is_empty() {
-            return Err(PlottingError::NoDataSeries);
+        if !snapshot_series.is_empty() {
+            Self::validate_series_list(&snapshot_series)?;
         }
-
-        Self::validate_series_list(&snapshot_series)?;
 
         let (x_min, x_max, y_min, y_max) =
             self.effective_main_panel_bounds_for_series(&snapshot_series)?;
@@ -1380,8 +1378,9 @@ impl Plot {
 
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
-
-        Self::validate_series_list(&snapshot_series)?;
+        if !snapshot_series.is_empty() {
+            Self::validate_series_list(&snapshot_series)?;
+        }
 
         // Create renderer and render the plot with DPI scaling
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
@@ -1392,10 +1391,12 @@ impl Plot {
         // Clear background
         renderer.clear();
 
-        let (x_min, x_max, y_min, y_max) = self.apply_auto_padding_to_bounds(
-            self.effective_main_panel_bounds_for_series(&snapshot_series)?,
-            0.05,
-        );
+        let base_bounds = self.effective_main_panel_bounds_for_series(&snapshot_series)?;
+        let (x_min, x_max, y_min, y_max) = if snapshot_series.is_empty() {
+            base_bounds
+        } else {
+            self.apply_auto_padding_to_bounds(base_bounds, 0.05)
+        };
 
         // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
@@ -2030,7 +2031,9 @@ impl Plot {
 
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
-        Self::validate_series_list(&snapshot_series)?;
+        if !snapshot_series.is_empty() {
+            Self::validate_series_list(&snapshot_series)?;
+        }
 
         let (width_px, height_px) = self.config_canvas_size();
         let width = width_px as f32;

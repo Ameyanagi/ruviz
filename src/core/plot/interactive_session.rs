@@ -590,8 +590,15 @@ impl InteractiveFrameKey {
 
 impl InteractivePlotSession {
     pub(crate) fn new(prepared: PreparedPlot) -> Self {
-        let initial_data_bounds = compute_data_bounds(prepared.plot(), 0.0)
-            .unwrap_or_else(|_| DataBounds::from_limits(0.0, 1.0, 0.0, 1.0));
+        let empty_bounds = prepared.plot().empty_cartesian_bounds();
+        let initial_data_bounds = compute_data_bounds(prepared.plot(), 0.0).unwrap_or_else(|_| {
+            DataBounds::from_limits(
+                empty_bounds.0,
+                empty_bounds.1,
+                empty_bounds.2,
+                empty_bounds.3,
+            )
+        });
         let initial_bounds = AxisConstraints::from_plot(prepared.plot()).apply(initial_data_bounds);
         let dirty = Arc::new(Mutex::new(DirtyDomains::with_all()));
         let dirty_epoch = Arc::new(AtomicU64::new(0));
@@ -1766,6 +1773,13 @@ impl InteractivePlotSession {
 
 fn compute_data_bounds(plot: &Plot, time: f64) -> Result<DataBounds> {
     let snapshot = plot.snapshot_series(time);
+    if snapshot.is_empty() {
+        let bounds = plot.empty_cartesian_bounds();
+        return Ok(DataBounds::from_limits(
+            bounds.0, bounds.1, bounds.2, bounds.3,
+        ));
+    }
+
     let (mut x_min, mut x_max, mut y_min, mut y_max) =
         plot.calculate_data_bounds_for_series(&snapshot)?;
 

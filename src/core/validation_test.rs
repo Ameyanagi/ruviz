@@ -1,6 +1,5 @@
 //! Validation tests for core Plot functionality
 
-use crate::core::PlottingError;
 use crate::prelude::*;
 
 #[cfg(test)]
@@ -10,7 +9,10 @@ mod tests {
     #[test]
     fn test_plot_creation() {
         let plot = Plot::new();
-        assert!(matches!(plot.render(), Err(PlottingError::NoDataSeries)));
+        let image = plot.render().expect("empty plot should render");
+        assert_eq!(image.width, 640);
+        assert_eq!(image.height, 480);
+        assert_eq!(image.pixels.len(), 640 * 480 * 4);
     }
 
     #[test]
@@ -46,13 +48,9 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_data_error() {
-        let result = Plot::new().render();
-        assert!(result.is_err());
-
-        if let Err(e) = result {
-            matches!(e, crate::core::PlottingError::NoDataSeries);
-        }
+    fn test_empty_plot_render_succeeds() {
+        let image = Plot::new().render().expect("empty plot should render");
+        assert!(!image.pixels.is_empty());
     }
 
     #[test]

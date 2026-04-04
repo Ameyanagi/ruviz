@@ -25,6 +25,31 @@ def test_repr_png_smoke() -> None:
     assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_empty_plot_render_svg_succeeds() -> None:
+    plot = ruviz.plot().title("Empty Plot").xlabel("X").ylabel("Y")
+
+    svg = plot.render_svg()
+
+    assert svg.startswith("<?xml")
+    assert "Empty Plot" in svg
+
+
+def test_empty_plot_render_png_succeeds() -> None:
+    plot = ruviz.plot().title("Empty Plot")
+
+    png = plot.render_png()
+
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_empty_plot_repr_png_succeeds() -> None:
+    plot = ruviz.plot().title("Empty Plot")
+
+    png = plot._repr_png_()
+
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_render_png_uses_native_handle_not_snapshot_json() -> None:
     plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("demo")
 
@@ -79,6 +104,21 @@ def test_show_uses_static_image_in_notebooks() -> None:
     image = display.call_args.args[0]
     assert image.data.startswith(b"\x89PNG\r\n\x1a\n")
     assert len(plot._widgets) == 0
+
+
+def test_empty_plot_show_uses_static_image_in_notebooks() -> None:
+    plot = ruviz.plot().title("Empty Plot")
+
+    with (
+        patch("ruviz._api._is_notebook", return_value=True),
+        patch("IPython.display.display") as display,
+    ):
+        result = plot.show()
+
+    assert result is None
+    display.assert_called_once()
+    image = display.call_args.args[0]
+    assert image.data.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_show_uses_native_window_outside_notebooks() -> None:

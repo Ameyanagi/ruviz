@@ -72,13 +72,21 @@ impl Plot {
     }
 
     pub(super) fn needs_cartesian_axes_for_series(series_list: &[PlotSeries]) -> bool {
-        Self::has_cartesian_series(series_list)
+        series_list.is_empty() || Self::has_cartesian_series(series_list)
+    }
+
+    pub(super) fn empty_cartesian_bounds(&self) -> (f64, f64, f64, f64) {
+        self.apply_manual_axis_limits((0.0, 1.0, 0.0, 1.0))
     }
 
     pub(super) fn effective_main_panel_bounds_for_series(
         &self,
         series_list: &[PlotSeries],
     ) -> Result<(f64, f64, f64, f64)> {
+        if series_list.is_empty() {
+            return Ok(self.empty_cartesian_bounds());
+        }
+
         if Self::has_mixed_coordinate_series(series_list) {
             let cartesian_series: Vec<PlotSeries> = series_list
                 .iter()
@@ -714,6 +722,10 @@ impl Plot {
     }
 
     pub(super) fn effective_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
+        if self.series_mgr.series.is_empty() {
+            return Ok(self.empty_cartesian_bounds());
+        }
+
         self.calculate_data_bounds()
             .map(|bounds| self.apply_manual_axis_limits(bounds))
     }
@@ -722,6 +734,10 @@ impl Plot {
         &self,
         series_list: &[PlotSeries],
     ) -> Result<(f64, f64, f64, f64)> {
+        if series_list.is_empty() {
+            return Ok(self.empty_cartesian_bounds());
+        }
+
         self.calculate_data_bounds_for_series(series_list)
             .map(|bounds| self.apply_manual_axis_limits(bounds))
     }
@@ -730,6 +746,10 @@ impl Plot {
         &self,
         resolved_series: &[ResolvedSeries<'_>],
     ) -> Result<(f64, f64, f64, f64)> {
+        if resolved_series.is_empty() {
+            return Ok(self.empty_cartesian_bounds());
+        }
+
         self.calculate_data_bounds_from_resolved(resolved_series)
             .map(|bounds| self.apply_manual_axis_limits(bounds))
     }
