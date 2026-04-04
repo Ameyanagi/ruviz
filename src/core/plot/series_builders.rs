@@ -1196,16 +1196,20 @@ impl PlotSeriesBuilder {
     }
 
     /// Set X-axis limits
+    ///
+    /// Descending bounds preserve a reversed axis direction.
     pub fn xlim(mut self, min: f64, max: f64) -> Self {
-        if min < max && min.is_finite() && max.is_finite() {
+        if min != max && min.is_finite() && max.is_finite() {
             self.plot.layout.x_limits = Some((min, max));
         }
         self
     }
 
     /// Set Y-axis limits
+    ///
+    /// Descending bounds preserve a reversed axis direction.
     pub fn ylim(mut self, min: f64, max: f64) -> Self {
-        if min < max && min.is_finite() && max.is_finite() {
+        if min != max && min.is_finite() && max.is_finite() {
             self.plot.layout.y_limits = Some((min, max));
         }
         self

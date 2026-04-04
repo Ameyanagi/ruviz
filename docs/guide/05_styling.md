@@ -530,6 +530,8 @@ Plot::new()
     .save("custom_limits.png")?;
 ```
 
+Use descending bounds like `.xlim(10.0, 0.0)` or `.ylim(5.0, -5.0)` to invert an axis.
+
 ### Axis Labels
 
 ```rust

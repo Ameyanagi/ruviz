@@ -7,14 +7,18 @@
 //! Heatmaps support configurable colorbar labels and font sizes:
 //!
 //! ```rust,ignore
-//! use ruviz::plots::HeatmapConfig;
+//! use ruviz::prelude::{AxisScale, HeatmapConfig};
 //!
 //! let config = HeatmapConfig::default()
+//!     .value_scale(AxisScale::Log)
 //!     .colorbar(true)
 //!     .colorbar_label("Temperature (°C)")
 //!     .colorbar_tick_font_size(10.0)    // Tick label size
 //!     .colorbar_label_font_size(11.0);  // Axis label size
 //! ```
+//!
+//! When using `AxisScale::Log`, the effective `vmin`/`vmax` range must remain
+//! strictly positive.
 //!
 //! # Trait-Based API
 //!
@@ -23,6 +27,7 @@
 //! - [`PlotData`] for `HeatmapData`
 //! - [`PlotRender`] for `HeatmapData`
 
+use crate::axes::AxisScale;
 use crate::core::Result as PlotResult;
 use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
@@ -48,6 +53,8 @@ pub struct HeatmapConfig {
     pub vmin: Option<f64>,
     /// Maximum value for color mapping (None = auto from data)
     pub vmax: Option<f64>,
+    /// Value scale for color mapping and colorbar ticks
+    pub value_scale: AxisScale,
     /// Whether to show a colorbar
     pub colorbar: bool,
     /// Label for the colorbar
@@ -78,6 +85,7 @@ impl Default for HeatmapConfig {
             colormap: ColorMap::viridis(),
             vmin: None,
             vmax: None,
+            value_scale: AxisScale::Linear,
             colorbar: true,
             colorbar_label: None,
             colorbar_tick_font_size: 12.0, // Readable colorbar tick labels
@@ -114,6 +122,15 @@ impl HeatmapConfig {
     /// Set the maximum value for color mapping
     pub fn vmax(mut self, vmax: f64) -> Self {
         self.vmax = Some(vmax);
+        self
+    }
+
+    /// Set the value scale used for color normalization and colorbar ticks.
+    ///
+    /// `AxisScale::Log` requires the effective `vmin` and `vmax` range to be
+    /// strictly positive.
+    pub fn value_scale(mut self, scale: AxisScale) -> Self {
+        self.value_scale = scale;
         self
     }
 
@@ -213,13 +230,15 @@ pub struct HeatmapData {
 }
 
 impl HeatmapData {
+    fn normalized_value(&self, value: f64) -> f64 {
+        self.config
+            .value_scale
+            .normalized_position(value, self.vmin, self.vmax)
+    }
+
     /// Get color for a specific cell value
     pub fn get_color(&self, value: f64) -> Color {
-        let range = self.vmax - self.vmin;
-        if range.abs() < f64::EPSILON {
-            return self.config.colormap.sample(0.5);
-        }
-        let normalized = ((value - self.vmin) / range).clamp(0.0, 1.0);
+        let normalized = self.normalized_value(value).clamp(0.0, 1.0);
         self.config.colormap.sample(normalized)
     }
 
@@ -278,6 +297,7 @@ pub fn process_heatmap(data: &[Vec<f64>], config: HeatmapConfig) -> Result<Heatm
     // Use config overrides or data range
     let vmin = config.vmin.unwrap_or(data_min);
     let vmax = config.vmax.unwrap_or(data_max);
+    config.value_scale.validate_range(vmin, vmax)?;
 
     Ok(HeatmapData {
         values: data.to_vec(),
@@ -438,6 +458,7 @@ mod tests {
         assert_eq!(config.interpolation, Interpolation::Nearest);
         assert!(config.vmin.is_none());
         assert!(config.vmax.is_none());
+        assert_eq!(config.value_scale, AxisScale::Linear);
     }
 
     #[test]
@@ -446,12 +467,14 @@ mod tests {
             .colormap(ColorMap::plasma())
             .vmin(0.0)
             .vmax(100.0)
+            .value_scale(AxisScale::Log)
             .colorbar(true)
             .colorbar_label("Temperature")
             .annotate(true);
 
         assert_eq!(config.vmin, Some(0.0));
         assert_eq!(config.vmax, Some(100.0));
+        assert_eq!(config.value_scale, AxisScale::Log);
         assert!(config.colorbar);
         assert_eq!(config.colorbar_label, Some("Temperature".to_string()));
         assert!(config.annotate);
@@ -506,6 +529,27 @@ mod tests {
 
         // Colors should be different
         assert!(color_min != color_max);
+    }
+
+    #[test]
+    fn test_heatmap_get_color_uses_log_value_scale() {
+        let data = vec![vec![1.0, 10.0, 100.0]];
+        let config = HeatmapConfig::new()
+            .vmin(1.0)
+            .vmax(100.0)
+            .value_scale(AxisScale::Log);
+        let heatmap = process_heatmap(&data, config).unwrap();
+
+        let log_mid = heatmap.get_color(10.0);
+        let expected_mid = heatmap.config.colormap.sample(0.5);
+        assert_eq!(log_mid, expected_mid);
+    }
+
+    #[test]
+    fn test_process_heatmap_rejects_invalid_log_value_scale() {
+        let data = vec![vec![0.0, 1.0], vec![10.0, 100.0]];
+        let config = HeatmapConfig::new().value_scale(AxisScale::Log);
+        assert!(process_heatmap(&data, config).is_err());
     }
 
     #[test]

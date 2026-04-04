@@ -765,6 +765,80 @@ fn test_zoom_rect_maps_screen_region_to_visible_bounds() {
 }
 
 #[test]
+fn test_reversed_manual_limits_survive_zoom_and_zoom_rect() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 4.0], &[0.0, 4.0])
+        .xlim(4.0, 0.0)
+        .ylim(4.0, 0.0)
+        .into();
+    let session = plot.prepare_interactive();
+
+    session
+        .render_to_surface(render_target())
+        .expect("initial reversed surface frame should render");
+
+    let initial_geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available for reversed limits");
+    assert_eq!(initial_geometry.x_bounds, (4.0, 0.0));
+    assert_eq!(initial_geometry.y_bounds, (4.0, 0.0));
+
+    let anchor_px = ViewportPoint::new(
+        initial_geometry.plot_area.left() as f64
+            + f64::from(initial_geometry.plot_area.width()) * 0.5,
+        initial_geometry.plot_area.top() as f64
+            + f64::from(initial_geometry.plot_area.height()) * 0.5,
+    );
+    session.apply_input(PlotInputEvent::Zoom {
+        factor: 2.0,
+        center_px: anchor_px,
+    });
+
+    let after_zoom_state = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .clone();
+    let after_zoom_visible = visible_bounds(&after_zoom_state);
+    assert!(after_zoom_visible.width() < 0.0);
+    assert!(after_zoom_visible.height() < 0.0);
+
+    let zoom_geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available after reversed zoom");
+    let start_px = ViewportPoint::new(
+        zoom_geometry.plot_area.left() as f64 + 32.0,
+        zoom_geometry.plot_area.top() as f64 + 28.0,
+    );
+    let end_px = ViewportPoint::new(
+        zoom_geometry.plot_area.left() as f64 + 180.0,
+        zoom_geometry.plot_area.top() as f64 + 144.0,
+    );
+    let start_data = screen_to_data(after_zoom_visible, zoom_geometry.plot_area, start_px);
+    let end_data = screen_to_data(after_zoom_visible, zoom_geometry.plot_area, end_px);
+
+    session.apply_input(PlotInputEvent::ZoomRect {
+        region_px: ViewportRect::from_points(start_px, end_px),
+    });
+
+    let after_zoom_rect_state = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .clone();
+    let after_zoom_rect_visible = visible_bounds(&after_zoom_rect_state);
+
+    assert!((after_zoom_rect_visible.x_min - start_data.x).abs() < 1e-9);
+    assert!((after_zoom_rect_visible.x_max - end_data.x).abs() < 1e-9);
+    assert!((after_zoom_rect_visible.y_min - end_data.y).abs() < 1e-9);
+    assert!((after_zoom_rect_visible.y_max - start_data.y).abs() < 1e-9);
+    assert!(after_zoom_rect_visible.width() < 0.0);
+    assert!(after_zoom_rect_visible.height() < 0.0);
+}
+
+#[test]
 fn test_pan_uses_plot_area_dimensions() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 10.0], &[0.0, 10.0])

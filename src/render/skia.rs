@@ -2128,6 +2128,7 @@ impl SkiaRenderer {
     /// * `y` - Y position of colorbar (top edge)
     /// * `width` - Width of the colorbar
     /// * `height` - Height of the colorbar
+    /// * `value_scale` - Scale used to normalize values along the colorbar
     /// * `label` - Optional label to display (rotated 90°)
     /// * `foreground_color` - Color for ticks, text, and border
     /// * `tick_font_size` - Font size for tick labels (in points)
@@ -2141,6 +2142,7 @@ impl SkiaRenderer {
         y: f32,
         width: f32,
         height: f32,
+        value_scale: &crate::axes::AxisScale,
         label: Option<&str>,
         foreground_color: Color,
         tick_font_size: f32,
@@ -2170,13 +2172,16 @@ impl SkiaRenderer {
         self.draw_rectangle(x, y, width, height, foreground_color, false)?;
 
         // Generate nice tick values using tick formatter
-        let ticks = generate_ticks(vmin, vmax, 6);
+        let ticks = crate::axes::generate_ticks_for_scale(vmin, vmax, 6, value_scale);
+        let tick_labels = format_tick_labels(&ticks);
         let tick_width = width * 0.3;
         let text_offset = width + tick_font_size * 0.5;
 
-        for &value in &ticks {
+        for (value, label_text) in ticks.iter().zip(tick_labels.iter()) {
             // Map value to Y position (top = vmax, bottom = vmin)
-            let t = (value - vmin) / (vmax - vmin);
+            let t = value_scale
+                .normalized_position(*value, vmin, vmax)
+                .clamp(0.0, 1.0);
             let tick_y = y + height * (1.0 - t as f32);
 
             // Draw tick mark
@@ -2191,10 +2196,8 @@ impl SkiaRenderer {
             )?;
 
             // Draw value label using unified TickFormatter
-            let label_text = format_tick_label(value);
-
             self.draw_text(
-                &label_text,
+                label_text,
                 x + text_offset,
                 tick_y + tick_font_size * 0.3,
                 tick_font_size,

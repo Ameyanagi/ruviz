@@ -372,18 +372,22 @@
 //! ```rust,no_run
 //! use ruviz::prelude::*;
 //!
-//! // Create 2D data (distance from center)
+//! // Create 2D data (distance from center, shifted positive for log scaling)
 //! let data: Vec<Vec<f64>> = (0..10).map(|i| {
 //!     (0..10).map(|j| {
-//!         ((i as f64 - 5.0).powi(2) + (j as f64 - 5.0).powi(2)).sqrt()
+//!         ((i as f64 - 5.0).powi(2) + (j as f64 - 5.0).powi(2)).sqrt() + 1.0
 //!     }).collect()
 //! }).collect();
 //!
+//! let config = HeatmapConfig::new()
+//!     .value_scale(AxisScale::Log)
+//!     .colorbar_label("Distance");
+//!
 //! Plot::new()
-//!     .title("Heatmap")
+//!     .title("Log-Scaled Heatmap")
 //!     .xlabel("X")
 //!     .ylabel("Y")
-//!     .heatmap(&data, None)
+//!     .heatmap(&data, Some(config))
 //!     .end_series()
 //!     .save("heatmap.png")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())

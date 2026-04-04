@@ -16,9 +16,11 @@ use super::AxisScale;
 /// # Returns
 /// Vector of tick positions
 pub fn generate_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
-    if min >= max || target_count == 0 {
+    if target_count == 0 || (max - min).abs() < f64::EPSILON {
         return vec![min, max];
     }
+
+    let (min, max) = if min <= max { (min, max) } else { (max, min) };
 
     let max_ticks = target_count.clamp(3, 10);
     generate_nice_ticks(min, max, max_ticks)
@@ -80,7 +82,13 @@ pub fn generate_ticks_for_scale(
 /// # Returns
 /// Vector of tick positions at powers of 10 (1, 10, 100, 1000, ...)
 pub fn generate_log_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
-    if min <= 0.0 || max <= 0.0 || min >= max {
+    if target_count == 0 || (max - min).abs() < f64::EPSILON {
+        return vec![min.max(f64::EPSILON), max.max(f64::EPSILON)];
+    }
+
+    let (min, max) = if min <= max { (min, max) } else { (max, min) };
+
+    if min <= 0.0 || max <= 0.0 {
         return vec![min.max(f64::EPSILON), max.max(f64::EPSILON)];
     }
 
@@ -141,9 +149,11 @@ pub fn generate_log_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
 /// * `linthresh` - Linear threshold
 /// * `target_count` - Target number of ticks
 pub fn generate_symlog_ticks(min: f64, max: f64, linthresh: f64, target_count: usize) -> Vec<f64> {
-    if min >= max {
+    if target_count == 0 || (max - min).abs() < f64::EPSILON {
         return vec![min, max];
     }
+
+    let (min, max) = if min <= max { (min, max) } else { (max, min) };
 
     let mut ticks = Vec::new();
 
@@ -313,7 +323,10 @@ mod tests {
     #[test]
     fn test_invalid_range() {
         let ticks = generate_ticks(10.0, 5.0, 5);
-        assert_eq!(ticks, vec![10.0, 5.0]);
+        assert!(!ticks.is_empty());
+        assert!(ticks.windows(2).all(|window| window[0] <= window[1]));
+        assert!(ticks[0] >= 5.0);
+        assert!(*ticks.last().unwrap() <= 10.0);
     }
 
     #[test]
@@ -377,10 +390,18 @@ mod tests {
         let linear_ticks = generate_ticks_for_scale(0.0, 100.0, 5, &AxisScale::Linear);
         assert!(!linear_ticks.is_empty());
 
+        let reversed_linear_ticks = generate_ticks_for_scale(4.0, 0.0, 5, &AxisScale::Linear);
+        assert_eq!(reversed_linear_ticks.first().copied(), Some(0.0));
+        assert_eq!(reversed_linear_ticks.last().copied(), Some(4.0));
+
         // Log
         let log_ticks = generate_ticks_for_scale(1.0, 1000.0, 5, &AxisScale::Log);
         assert!(log_ticks.contains(&10.0));
         assert!(log_ticks.contains(&100.0));
+
+        let reversed_log_ticks = generate_ticks_for_scale(1000.0, 1.0, 5, &AxisScale::Log);
+        assert_eq!(reversed_log_ticks.first().copied(), Some(1.0));
+        assert_eq!(reversed_log_ticks.last().copied(), Some(1000.0));
 
         // SymLog
         let symlog_ticks = generate_ticks_for_scale(-100.0, 100.0, 10, &AxisScale::symlog(1.0));

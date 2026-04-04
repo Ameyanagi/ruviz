@@ -363,6 +363,14 @@ impl DataBounds {
         self.y_max - self.y_min
     }
 
+    fn width_abs(&self) -> f64 {
+        self.width().abs()
+    }
+
+    fn height_abs(&self) -> f64 {
+        self.height().abs()
+    }
+
     fn center(&self) -> ViewportPoint {
         ViewportPoint::new(
             (self.x_min + self.x_max) * 0.5,
@@ -372,6 +380,14 @@ impl DataBounds {
 
     fn from_points(a: ViewportPoint, b: ViewportPoint) -> Self {
         Self::from_limits(a.x.min(b.x), a.x.max(b.x), a.y.min(b.y), a.y.max(b.y))
+    }
+
+    fn from_screen_corners(top_left: ViewportPoint, bottom_right: ViewportPoint) -> Self {
+        Self::from_limits(top_left.x, bottom_right.x, bottom_right.y, top_left.y)
+    }
+
+    fn from_viewport_rect(bounds: ViewportRect) -> Self {
+        Self::from_limits(bounds.min.x, bounds.max.x, bounds.min.y, bounds.max.y)
     }
 
     fn with_center_size(center: ViewportPoint, width: f64, height: f64) -> Self {
@@ -820,9 +836,9 @@ impl InteractivePlotSession {
                     current_geometry.plot_area,
                     region_px.max,
                 );
-                let next_visible = DataBounds::from_points(data_min, data_max);
-                if next_visible.width() <= VIEWPORT_EPSILON
-                    || next_visible.height() <= VIEWPORT_EPSILON
+                let next_visible = DataBounds::from_screen_corners(data_min, data_max);
+                if next_visible.width_abs() <= VIEWPORT_EPSILON
+                    || next_visible.height_abs() <= VIEWPORT_EPSILON
                 {
                     if had_brush {
                         self.mark_dirty(DirtyDomain::Overlay);
@@ -852,8 +868,14 @@ impl InteractivePlotSession {
                     Ok(geometry) => geometry,
                     Err(_) => return,
                 };
-                let width = state_snapshot.visible_bounds.width().max(f64::EPSILON);
-                let height = state_snapshot.visible_bounds.height().max(f64::EPSILON);
+                let width = signed_span_with_min_magnitude(
+                    state_snapshot.visible_bounds.width(),
+                    f64::EPSILON,
+                );
+                let height = signed_span_with_min_magnitude(
+                    state_snapshot.visible_bounds.height(),
+                    f64::EPSILON,
+                );
                 let size_x = f64::from(current_geometry.plot_area.width()).max(1.0);
                 let size_y = f64::from(current_geometry.plot_area.height()).max(1.0);
                 let next_visible = state_snapshot.visible_bounds.translated(
@@ -1134,8 +1156,10 @@ impl InteractivePlotSession {
 
     /// Restores the visible bounds for the interactive viewport.
     pub fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
-        let next_visible = DataBounds::from_points(bounds.min, bounds.max);
-        if next_visible.width() <= VIEWPORT_EPSILON || next_visible.height() <= VIEWPORT_EPSILON {
+        let next_visible = DataBounds::from_viewport_rect(bounds);
+        if next_visible.width_abs() <= VIEWPORT_EPSILON
+            || next_visible.height_abs() <= VIEWPORT_EPSILON
+        {
             return false;
         }
 
@@ -1778,23 +1802,33 @@ fn bounds_close(a: DataBounds, b: DataBounds) -> bool {
 }
 
 fn clamp_visible_width(width: f64, base_bounds: DataBounds) -> f64 {
-    width.clamp(
-        base_bounds.width() / MAX_ZOOM_LEVEL,
-        base_bounds.width() / MIN_ZOOM_LEVEL,
-    )
+    let direction = direction_for_span(width, base_bounds.width());
+    let base_width = base_bounds.width_abs().max(VIEWPORT_EPSILON);
+    width
+        .abs()
+        .clamp(base_width / MAX_ZOOM_LEVEL, base_width / MIN_ZOOM_LEVEL)
+        * direction
 }
 
 fn clamp_visible_height(height: f64, base_bounds: DataBounds) -> f64 {
-    height.clamp(
-        base_bounds.height() / MAX_ZOOM_LEVEL,
-        base_bounds.height() / MIN_ZOOM_LEVEL,
-    )
+    let direction = direction_for_span(height, base_bounds.height());
+    let base_height = base_bounds.height_abs().max(VIEWPORT_EPSILON);
+    height
+        .abs()
+        .clamp(base_height / MAX_ZOOM_LEVEL, base_height / MIN_ZOOM_LEVEL)
+        * direction
 }
 
 fn normalize_visible_bounds(bounds: DataBounds, base_bounds: DataBounds) -> DataBounds {
     let center = bounds.center();
-    let width = clamp_visible_width(bounds.width().abs().max(VIEWPORT_EPSILON), base_bounds);
-    let height = clamp_visible_height(bounds.height().abs().max(VIEWPORT_EPSILON), base_bounds);
+    let width = clamp_visible_width(
+        signed_span_with_min_magnitude(bounds.width(), VIEWPORT_EPSILON),
+        base_bounds,
+    );
+    let height = clamp_visible_height(
+        signed_span_with_min_magnitude(bounds.height(), VIEWPORT_EPSILON),
+        base_bounds,
+    );
     DataBounds::with_center_size(center, width, height)
 }
 
@@ -1802,8 +1836,8 @@ fn legacy_viewport_metrics(
     base_bounds: DataBounds,
     visible_bounds: DataBounds,
 ) -> (f64, ViewportPoint) {
-    let zoom_x = base_bounds.width() / visible_bounds.width().max(VIEWPORT_EPSILON);
-    let zoom_y = base_bounds.height() / visible_bounds.height().max(VIEWPORT_EPSILON);
+    let zoom_x = base_bounds.width_abs() / visible_bounds.width_abs().max(VIEWPORT_EPSILON);
+    let zoom_y = base_bounds.height_abs() / visible_bounds.height_abs().max(VIEWPORT_EPSILON);
     let zoom_level = (zoom_x * zoom_y)
         .abs()
         .sqrt()
@@ -1826,6 +1860,19 @@ fn sync_legacy_viewport_fields(state: &mut SessionState) {
 fn set_visible_bounds(state: &mut SessionState, bounds: DataBounds) {
     state.visible_bounds = normalize_visible_bounds(bounds, state.base_bounds);
     sync_legacy_viewport_fields(state);
+}
+
+fn direction_for_span(span: f64, fallback: f64) -> f64 {
+    if span < 0.0 || (span == 0.0 && fallback < 0.0) {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+fn signed_span_with_min_magnitude(span: f64, min_magnitude: f64) -> f64 {
+    let direction = if span < 0.0 { -1.0 } else { 1.0 };
+    span.abs().max(min_magnitude) * direction
 }
 
 fn data_bounds_to_viewport_rect(bounds: DataBounds) -> ViewportRect {
