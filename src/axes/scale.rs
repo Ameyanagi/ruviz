@@ -209,6 +209,58 @@ impl AxisScale {
         AxisScale::SymLog { linthresh }
     }
 
+    /// Normalize a value into `[0, 1]` for the provided range.
+    ///
+    /// This preserves range direction, so reversed ranges produce inverted
+    /// normalized coordinates.
+    pub fn normalized_position(&self, value: f64, min: f64, max: f64) -> f64 {
+        match self {
+            AxisScale::Linear => {
+                let range = max - min;
+                if range.abs() < f64::EPSILON {
+                    0.5
+                } else {
+                    (value - min) / range
+                }
+            }
+            AxisScale::Log => {
+                let min = min.max(f64::EPSILON);
+                let max = max.max(f64::EPSILON);
+                if value <= 0.0 {
+                    return 0.0;
+                }
+
+                let log_min = min.log10();
+                let log_max = max.log10();
+                let log_range = log_max - log_min;
+                if log_range.abs() < f64::EPSILON {
+                    0.5
+                } else {
+                    (value.log10() - log_min) / log_range
+                }
+            }
+            AxisScale::SymLog { linthresh } => {
+                let symlog = |input: f64| {
+                    if input.abs() <= *linthresh {
+                        input / *linthresh
+                    } else {
+                        input.signum() * (1.0 + (input.abs() / *linthresh).log10())
+                    }
+                };
+
+                let transformed_min = symlog(min);
+                let transformed_max = symlog(max);
+                let transformed_value = symlog(value);
+                let range = transformed_max - transformed_min;
+                if range.abs() < f64::EPSILON {
+                    0.5
+                } else {
+                    (transformed_value - transformed_min) / range
+                }
+            }
+        }
+    }
+
     /// Create a scale instance for the given data range
     pub fn create_scale(&self, min: f64, max: f64) -> Box<dyn Scale> {
         match self {
@@ -360,5 +412,14 @@ mod tests {
 
         let symlog = AxisScale::symlog(1.0).create_scale(-100.0, 100.0);
         assert!((symlog.transform(0.0) - 0.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_axis_scale_normalized_position_preserves_reversed_ranges() {
+        assert!((AxisScale::Linear.normalized_position(4.0, 4.0, 0.0) - 0.0).abs() < 1e-10);
+        assert!((AxisScale::Linear.normalized_position(0.0, 4.0, 0.0) - 1.0).abs() < 1e-10);
+
+        let log_mid = AxisScale::Log.normalized_position(10.0, 100.0, 1.0);
+        assert!((log_mid - 0.5).abs() < 1e-10);
     }
 }

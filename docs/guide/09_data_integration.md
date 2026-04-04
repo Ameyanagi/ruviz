@@ -201,9 +201,13 @@ Plot::new()
     .title("nalgebra DVector")
     .save("nalgebra_line.png")?;
 
-let z = DMatrix::from_row_slice(2, 3, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+let z = DMatrix::from_row_slice(2, 3, &[1.0, 2.0, 4.0, 8.0, 16.0, 32.0]);
+let heatmap_config = HeatmapConfig::new()
+    .value_scale(AxisScale::Log)
+    .colorbar_label("Intensity");
+
 Plot::new()
-    .heatmap(&z, None)
+    .heatmap(&z, Some(heatmap_config))
     .title("nalgebra DMatrix Heatmap")
     .save("nalgebra_heatmap.png")?;
 ```

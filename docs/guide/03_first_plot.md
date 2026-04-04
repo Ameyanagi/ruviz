@@ -351,6 +351,8 @@ Plot::new()
     .save("custom_limits.png")?;
 ```
 
+Passing descending bounds, such as `.xlim(10.0, 0.0)`, preserves a reversed axis.
+
 ### Themes
 
 ```rust
@@ -497,8 +499,8 @@ Plot::new()
 .marker_size(size)             // Marker size
 .line_style(LineStyle::Dashed) // Line pattern
 .grid(true)                    // Show grid
-.xlim(min, max)                // X axis range
-.ylim(min, max)                // Y axis range
+.xlim(min, max)                // X axis range (descending values reverse it)
+.ylim(min, max)                // Y axis range (descending values reverse it)
 .legend(Position::TopRight)    // Show legend
 .theme(Theme::dark())          // Apply theme
 ```

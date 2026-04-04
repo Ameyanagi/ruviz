@@ -401,6 +401,18 @@ fn test_snapshot_bounds_cover_heatmap_and_pie_series() {
 }
 
 #[test]
+fn test_plot_preserves_reversed_manual_limits() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 4.0], &[0.0, 4.0])
+        .xlim(4.0, 0.0)
+        .ylim(4.0, 0.0)
+        .into();
+
+    assert_eq!(plot.layout.x_limits, Some((4.0, 0.0)));
+    assert_eq!(plot.layout.y_limits, Some((4.0, 0.0)));
+}
+
+#[test]
 fn test_auto_datashader_policy_excludes_large_line_series() {
     let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|x| x.sin()).collect();

@@ -808,7 +808,8 @@ where
 
     /// Set X-axis limits
     ///
-    /// This method forwards to the inner Plot.
+    /// This method forwards to the inner Plot. Descending bounds preserve a
+    /// reversed axis direction.
     pub fn xlim(mut self, min: f64, max: f64) -> Self {
         self.plot = self.plot.xlim(min, max);
         self
@@ -816,7 +817,8 @@ where
 
     /// Set Y-axis limits
     ///
-    /// This method forwards to the inner Plot.
+    /// This method forwards to the inner Plot. Descending bounds preserve a
+    /// reversed axis direction.
     pub fn ylim(mut self, min: f64, max: f64) -> Self {
         self.plot = self.plot.ylim(min, max);
         self

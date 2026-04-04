@@ -425,6 +425,9 @@ impl Plot {
 
     /// Set X-axis limits (min, max)
     ///
+    /// Passing descending bounds, such as `xlim(10.0, 0.0)`, preserves a
+    /// reversed X axis.
+    ///
     /// # Example
     ///
     /// ```rust,no_run
@@ -439,13 +442,16 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn xlim(mut self, min: f64, max: f64) -> Self {
-        if min < max && min.is_finite() && max.is_finite() {
+        if min != max && min.is_finite() && max.is_finite() {
             self.layout.x_limits = Some((min, max));
         }
         self
     }
 
     /// Set Y-axis limits (min, max)
+    ///
+    /// Passing descending bounds, such as `ylim(10.0, 0.0)`, preserves a
+    /// reversed Y axis.
     ///
     /// # Example
     ///
@@ -460,7 +466,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn ylim(mut self, min: f64, max: f64) -> Self {
-        if min < max && min.is_finite() && max.is_finite() {
+        if min != max && min.is_finite() && max.is_finite() {
             self.layout.y_limits = Some((min, max));
         }
         self

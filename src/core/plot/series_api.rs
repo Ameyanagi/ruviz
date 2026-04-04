@@ -597,11 +597,15 @@ impl Plot {
     /// use ruviz::prelude::*;
     ///
     /// let data: Vec<Vec<f64>> = (0..10)
-    ///     .map(|i| (0..10).map(|j| (i + j) as f64).collect())
+    ///     .map(|i| (0..10).map(|j| (i + j + 1) as f64).collect())
     ///     .collect();
     ///
+    /// let config = HeatmapConfig::new()
+    ///     .value_scale(AxisScale::Log)
+    ///     .colorbar_label("Intensity");
+    ///
     /// Plot::new()
-    ///     .heatmap(&data, None)
+    ///     .heatmap(&data, Some(config))
     ///     .end_series()
     ///     .save("heatmap.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
