@@ -51,6 +51,7 @@
     "access": "public"
   },
   "scripts": {
+    "build:raw": "bash ./scripts/build-raw.sh",
     "build:wasm": "bash ./scripts/build-wasm.sh",
     "build:js": "tsc -p tsconfig.json",
     "build": "bun run build:wasm && bun run build:js",
