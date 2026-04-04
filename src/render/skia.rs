@@ -2227,12 +2227,17 @@ impl SkiaRenderer {
 
     /// Save the current pixmap as a PNG with straight-alpha RGBA encoding.
     pub fn save_png<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        crate::export::write_bytes_atomic(path, &self.encode_png_bytes()?)
+    }
+
+    /// Encode the current pixmap as PNG bytes with straight-alpha RGBA encoding.
+    pub fn encode_png_bytes(&self) -> Result<Vec<u8>> {
         let image = Image {
             width: self.width,
             height: self.height,
             pixels: self.pixmap.clone().take_demultiplied(),
         };
-        crate::export::write_rgba_png_atomic(path, &image)
+        crate::export::encode_rgba_png(&image)
     }
 
     /// Export as SVG (simplified - tiny-skia doesn't directly support SVG export)

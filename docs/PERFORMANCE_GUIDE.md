@@ -5,6 +5,8 @@ Comprehensive guide to ruviz performance characteristics, optimization strategie
 For the current cross-runtime large-dataset reference numbers, including Python `ruviz` vs
 `matplotlib` and matching Rust/wasm runs, see
 [docs/benchmarks/large-dataset-plotting.md](benchmarks/large-dataset-plotting.md).
+For Rust-only feature-flag tradeoffs, see
+[docs/benchmarks/rust-feature-impact.md](benchmarks/rust-feature-impact.md).
 
 ## Why Large PNG Exports Are Faster Now
 

@@ -1,0 +1,267 @@
+{
+  "capturedAt": "2026-04-04T01:13:56Z",
+  "os": "macOS-26.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "processor": "arm",
+  "cpuCount": 10,
+  "pythonVersion": "3.14.2",
+  "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+  "bunVersion": "1.3.5",
+  "gitCommit": "4b6e60b2ec72ce10ca862473387536cde6a26182",
+  "gitBranch": "bench/rust-feature-impact",
+  "gitDirty": true,
+  "manifest": {
+    "version": 1,
+    "outputTarget": "png_bytes",
+    "defaults": {
+      "warmupIterations": 5,
+      "measuredIterations": 20,
+      "smokeWarmupIterations": 1,
+      "smokeMeasuredIterations": 3
+    },
+    "scenarios": [
+      {
+        "id": "line",
+        "plotKind": "line",
+        "datasetKind": "line_wave",
+        "canvas": {
+          "width": 640,
+          "height": 480,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "points": 100000
+          },
+          {
+            "label": "500k",
+            "points": 500000
+          },
+          {
+            "label": "1m",
+            "points": 1000000
+          }
+        ]
+      },
+      {
+        "id": "scatter",
+        "plotKind": "scatter",
+        "datasetKind": "scatter_cloud",
+        "canvas": {
+          "width": 640,
+          "height": 480,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "points": 100000
+          },
+          {
+            "label": "250k",
+            "points": 250000
+          },
+          {
+            "label": "500k",
+            "points": 500000
+          }
+        ]
+      },
+      {
+        "id": "histogram",
+        "plotKind": "histogram",
+        "datasetKind": "histogram_signal",
+        "canvas": {
+          "width": 640,
+          "height": 480,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "samples": 100000
+          },
+          {
+            "label": "1m",
+            "samples": 1000000
+          },
+          {
+            "label": "5m",
+            "samples": 5000000
+          }
+        ]
+      },
+      {
+        "id": "heatmap",
+        "plotKind": "heatmap",
+        "datasetKind": "heatmap_field",
+        "canvas": {
+          "width": 640,
+          "height": 640,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "512x512",
+            "rows": 512,
+            "cols": 512
+          },
+          {
+            "label": "1024x1024",
+            "rows": 1024,
+            "cols": 1024
+          },
+          {
+            "label": "2048x2048",
+            "rows": 2048,
+            "cols": 2048
+          }
+        ]
+      }
+    ]
+  },
+  "featureMatrix": [
+    {
+      "label": "baseline_cpu",
+      "cargoFeatures": [
+        "serde"
+      ],
+      "cargoArgs": [
+        "--no-default-features",
+        "--features",
+        "serde"
+      ],
+      "requestGpu": false
+    },
+    {
+      "label": "default",
+      "cargoFeatures": [
+        "ndarray",
+        "parallel",
+        "serde"
+      ],
+      "cargoArgs": [
+        "--features",
+        "serde"
+      ],
+      "requestGpu": false
+    },
+    {
+      "label": "parallel_only",
+      "cargoFeatures": [
+        "parallel",
+        "serde"
+      ],
+      "cargoArgs": [
+        "--no-default-features",
+        "--features",
+        "serde,parallel"
+      ],
+      "requestGpu": false
+    },
+    {
+      "label": "parallel_simd",
+      "cargoFeatures": [
+        "parallel",
+        "simd",
+        "serde"
+      ],
+      "cargoArgs": [
+        "--no-default-features",
+        "--features",
+        "serde,parallel,simd"
+      ],
+      "requestGpu": false
+    },
+    {
+      "label": "performance_alias",
+      "cargoFeatures": [
+        "performance",
+        "serde"
+      ],
+      "cargoArgs": [
+        "--no-default-features",
+        "--features",
+        "serde,performance"
+      ],
+      "requestGpu": false
+    },
+    {
+      "label": "gpu_only",
+      "cargoFeatures": [
+        "gpu",
+        "serde"
+      ],
+      "cargoArgs": [
+        "--no-default-features",
+        "--features",
+        "serde,gpu"
+      ],
+      "requestGpu": true
+    }
+  ],
+  "runtimes": {
+    "baseline_cpu": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.3.5",
+      "buildProfile": "release",
+      "featureLabel": "baseline_cpu",
+      "cargoFeatures": [
+        "serde"
+      ]
+    },
+    "default": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.3.5",
+      "buildProfile": "release",
+      "featureLabel": "default",
+      "cargoFeatures": [
+        "ndarray",
+        "parallel",
+        "serde"
+      ]
+    },
+    "parallel_only": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.3.5",
+      "buildProfile": "release",
+      "featureLabel": "parallel_only",
+      "cargoFeatures": [
+        "parallel",
+        "serde"
+      ]
+    },
+    "parallel_simd": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.3.5",
+      "buildProfile": "release",
+      "featureLabel": "parallel_simd",
+      "cargoFeatures": [
+        "parallel",
+        "simd",
+        "serde"
+      ]
+    },
+    "performance_alias": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.3.5",
+      "buildProfile": "release",
+      "featureLabel": "performance_alias",
+      "cargoFeatures": [
+        "performance",
+        "serde"
+      ]
+    },
+    "gpu_only": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.3.5",
+      "buildProfile": "release",
+      "featureLabel": "gpu_only",
+      "cargoFeatures": [
+        "gpu",
+        "serde"
+      ]
+    }
+  }
+}

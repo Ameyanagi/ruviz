@@ -204,6 +204,14 @@ def git_branch() -> str:
     ).strip()
 
 
+def git_dirty() -> bool:
+    return bool(
+        subprocess.check_output(
+            ["git", "status", "--short"], cwd=ROOT, text=True
+        ).strip()
+    )
+
+
 def host_environment() -> dict[str, Any]:
     return {
         "capturedAt": utc_timestamp(),
@@ -216,4 +224,5 @@ def host_environment() -> dict[str, Any]:
         "bunVersion": bun_version(),
         "gitCommit": git_commit(),
         "gitBranch": git_branch(),
+        "gitDirty": git_dirty(),
     }

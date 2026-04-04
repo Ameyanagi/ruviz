@@ -2,3 +2,7 @@
 !.gitignore
 !reference/
 !reference/**
+!rust-features/
+!rust-features/.gitignore
+!rust-features/reference/
+!rust-features/reference/**
