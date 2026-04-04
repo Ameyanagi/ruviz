@@ -767,6 +767,11 @@ impl SkiaRenderer {
         }
     }
 
+    pub(crate) fn measure_label_text(&self, text: &str, size: f32) -> Result<(f32, f32)> {
+        let label_snippet = self.generated_label(text);
+        self.measure_text(&label_snippet, size)
+    }
+
     fn generated_label<'a>(&self, text: &'a str) -> Cow<'a, str> {
         #[cfg(feature = "typst-math")]
         if self.text_engine_mode.uses_typst() {
@@ -1247,9 +1252,7 @@ impl SkiaRenderer {
 
                 let label_snippet = self.generated_label(label_text);
                 let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let gap = tick_size * 0.5;
-                let min_x = tick_size * 0.5;
-                let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                let label_x = (ytick_right_x - text_width).max(0.0);
                 let centered_y = y_pixel - text_height / 2.0;
                 self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
             }
@@ -1322,9 +1325,7 @@ impl SkiaRenderer {
 
                 let label_snippet = self.generated_label(label_text);
                 let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let gap = tick_size * 0.5;
-                let min_x = tick_size * 0.5;
-                let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                let label_x = (ytick_right_x - text_width).max(0.0);
                 let centered_y = y_pixel - text_height / 2.0;
                 self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
             }
@@ -1404,9 +1405,7 @@ impl SkiaRenderer {
 
                 let label_snippet = self.generated_label(label_text);
                 let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let gap = tick_size * 0.5;
-                let min_x = tick_size * 0.5;
-                let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                let label_x = (ytick_right_x - text_width).max(0.0);
                 let centered_y = y_pixel - text_height / 2.0;
                 self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
             }

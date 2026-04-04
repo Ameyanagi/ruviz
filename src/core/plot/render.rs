@@ -122,81 +122,23 @@ impl Plot {
             }
         });
         let content = self.create_plot_content(y_min, y_max);
-        let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
-        let measurements = measured_dimensions.as_ref();
-
-        // Choose layout method based on MarginConfig
-        let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
-            match &self.display.config.margins {
-                MarginConfig::ContentDriven {
-                    edge_buffer,
-                    center_plot,
-                } => {
-                    // Use content-driven layout calculator
-                    let layout_config = LayoutConfig {
-                        edge_buffer_pt: *edge_buffer,
-                        center_plot: *center_plot,
-                        ..Default::default()
-                    };
-                    let calculator = LayoutCalculator::new(layout_config);
-                    let layout = calculator.compute(
-                        (scaled_width, scaled_height),
-                        &content,
-                        &self.display.config.typography,
-                        &self.display.config.spacing,
-                        dpi,
-                        measurements,
-                    );
-                    let skia_rect = tiny_skia::Rect::from_ltrb(
-                        layout.plot_area.left,
-                        layout.plot_area.top,
-                        layout.plot_area.right,
-                        layout.plot_area.bottom,
-                    )
-                    .ok_or(PlottingError::InvalidData {
-                        message: "Invalid plot area from layout".to_string(),
-                        position: None,
-                    })?;
-                    (skia_rect, Some(layout))
-                }
-                _ => {
-                    // Always use LayoutCalculator for consistent plot area and title/label positioning
-                    let layout_config = LayoutConfig::default();
-                    let calculator = LayoutCalculator::new(layout_config);
-                    let layout = calculator.compute(
-                        (scaled_width, scaled_height),
-                        &content,
-                        &self.display.config.typography,
-                        &self.display.config.spacing,
-                        dpi,
-                        measurements,
-                    );
-                    let skia_rect = tiny_skia::Rect::from_ltrb(
-                        layout.plot_area.left,
-                        layout.plot_area.top,
-                        layout.plot_area.right,
-                        layout.plot_area.bottom,
-                    )
-                    .ok_or(PlottingError::InvalidData {
-                        message: "Invalid plot area from layout".to_string(),
-                        position: None,
-                    })?;
-                    (skia_rect, Some(layout))
-                }
-            };
+        let (layout, x_ticks, y_ticks) = self.compute_layout_with_dynamic_ticks(
+            &renderer,
+            (scaled_width, scaled_height),
+            &content,
+            dpi,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
+        let plot_area = Self::plot_area_from_layout(&layout)?;
         let clip_rect = (
             plot_area.x(),
             plot_area.y(),
             plot_area.width(),
             plot_area.height(),
         );
-
-        // Generate nice tick values - adapt count to available space
-        // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
-        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
-        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
-        let x_ticks = generate_ticks(x_min, x_max, x_tick_count);
-        let y_ticks = generate_ticks(y_min, y_max, y_tick_count);
 
         // Convert ticks to pixel coordinates
         let x_tick_pixels: Vec<f32> = x_ticks
@@ -248,8 +190,6 @@ impl Plot {
         }
 
         // Draw axes and labels using computed layout positions
-        // Note: layout_opt is always Some since all render paths now compute layout
-        let layout = layout_opt.expect("layout should always be computed");
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
         // Draw tick labels using layout positions
@@ -493,81 +433,23 @@ impl Plot {
             }
         });
         let content = self.create_plot_content(y_min, y_max);
-        let measured_dimensions = self.measure_layout_text(renderer, &content, dpi)?;
-        let measurements = measured_dimensions.as_ref();
-
-        // Choose layout method based on MarginConfig
-        let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
-            match &self.display.config.margins {
-                MarginConfig::ContentDriven {
-                    edge_buffer,
-                    center_plot,
-                } => {
-                    // Use content-driven layout calculator
-                    let layout_config = LayoutConfig {
-                        edge_buffer_pt: *edge_buffer,
-                        center_plot: *center_plot,
-                        ..Default::default()
-                    };
-                    let calculator = LayoutCalculator::new(layout_config);
-                    let layout = calculator.compute(
-                        (renderer.width(), renderer.height()),
-                        &content,
-                        &self.display.config.typography,
-                        &self.display.config.spacing,
-                        dpi,
-                        measurements,
-                    );
-                    let skia_rect = tiny_skia::Rect::from_ltrb(
-                        layout.plot_area.left,
-                        layout.plot_area.top,
-                        layout.plot_area.right,
-                        layout.plot_area.bottom,
-                    )
-                    .ok_or(PlottingError::InvalidData {
-                        message: "Invalid plot area from layout".to_string(),
-                        position: None,
-                    })?;
-                    (skia_rect, Some(layout))
-                }
-                _ => {
-                    // Always use LayoutCalculator for consistent plot area and title/label positioning
-                    let layout_config = LayoutConfig::default();
-                    let calculator = LayoutCalculator::new(layout_config);
-                    let layout = calculator.compute(
-                        (renderer.width(), renderer.height()),
-                        &content,
-                        &self.display.config.typography,
-                        &self.display.config.spacing,
-                        dpi,
-                        measurements,
-                    );
-                    let skia_rect = tiny_skia::Rect::from_ltrb(
-                        layout.plot_area.left,
-                        layout.plot_area.top,
-                        layout.plot_area.right,
-                        layout.plot_area.bottom,
-                    )
-                    .ok_or(PlottingError::InvalidData {
-                        message: "Invalid plot area from layout".to_string(),
-                        position: None,
-                    })?;
-                    (skia_rect, Some(layout))
-                }
-            };
+        let (layout, x_ticks, y_ticks) = self.compute_layout_with_dynamic_ticks(
+            renderer,
+            (renderer.width(), renderer.height()),
+            &content,
+            dpi,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
+        let plot_area = Self::plot_area_from_layout(&layout)?;
         let clip_rect = (
             plot_area.x(),
             plot_area.y(),
             plot_area.width(),
             plot_area.height(),
         );
-
-        // Generate nice tick values - adapt count to available space
-        // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
-        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
-        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
-        let x_ticks = generate_ticks(x_min, x_max, x_tick_count);
-        let y_ticks = generate_ticks(y_min, y_max, y_tick_count);
 
         // Convert ticks to pixel coordinates
         let x_tick_pixels: Vec<f32> = x_ticks
@@ -619,8 +501,6 @@ impl Plot {
         }
 
         // Draw axes and labels using computed layout positions
-        // Note: layout_opt is always Some since all render paths now compute layout
-        let layout = layout_opt.expect("layout should always be computed");
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
         // Draw tick labels using layout positions
@@ -853,6 +733,194 @@ impl Plot {
         }
 
         Ok(Some(measurements))
+    }
+
+    pub(super) fn measure_layout_text_with_ticks(
+        &self,
+        renderer: &SkiaRenderer,
+        content: &PlotContent,
+        dpi: f32,
+        x_tick_labels: &[String],
+        y_tick_labels: &[String],
+    ) -> Result<Option<MeasuredDimensions>> {
+        let tick_size_px =
+            RenderScale::new(dpi).points_to_pixels(self.display.config.typography.tick_size());
+        let mut measurements = self
+            .measure_layout_text(renderer, content, dpi)?
+            .unwrap_or_default();
+
+        if content.show_tick_labels {
+            measurements.xtick =
+                Self::measure_tick_label_extent(renderer, x_tick_labels, tick_size_px)?;
+            measurements.ytick =
+                Self::measure_tick_label_extent(renderer, y_tick_labels, tick_size_px)?;
+        }
+
+        Ok(Some(measurements))
+    }
+
+    pub(super) fn compute_layout_from_measurements(
+        &self,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        measurements: Option<&MeasuredDimensions>,
+    ) -> PlotLayout {
+        LayoutCalculator::new(self.layout_config()).compute(
+            canvas_size,
+            content,
+            &self.display.config.typography,
+            &self.display.config.spacing,
+            dpi,
+            measurements,
+        )
+    }
+
+    pub(super) fn layout_config(&self) -> LayoutConfig {
+        match &self.display.config.margins {
+            MarginConfig::ContentDriven {
+                edge_buffer,
+                center_plot,
+            } => LayoutConfig {
+                edge_buffer_pt: *edge_buffer,
+                center_plot: *center_plot,
+                ..Default::default()
+            },
+            _ => LayoutConfig::default(),
+        }
+    }
+
+    pub(super) fn plot_area_from_layout(layout: &PlotLayout) -> Result<tiny_skia::Rect> {
+        tiny_skia::Rect::from_ltrb(
+            layout.plot_area.left,
+            layout.plot_area.top,
+            layout.plot_area.right,
+            layout.plot_area.bottom,
+        )
+        .ok_or(PlottingError::InvalidData {
+            message: "Invalid plot area from layout".to_string(),
+            position: None,
+        })
+    }
+
+    pub(super) fn dynamic_tick_values_for_plot_area(
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> (Vec<f64>, Vec<f64>) {
+        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
+        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
+        (
+            generate_ticks(x_min, x_max, x_tick_count),
+            generate_ticks(y_min, y_max, y_tick_count),
+        )
+    }
+
+    pub(super) fn configured_major_ticks(
+        &self,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> (Vec<f64>, Vec<f64>) {
+        (
+            crate::axes::generate_ticks_for_scale(
+                x_min,
+                x_max,
+                self.layout.tick_config.major_ticks_x,
+                &self.layout.x_scale,
+            ),
+            crate::axes::generate_ticks_for_scale(
+                y_min,
+                y_max,
+                self.layout.tick_config.major_ticks_y,
+                &self.layout.y_scale,
+            ),
+        )
+    }
+
+    pub(super) fn compute_layout_with_dynamic_ticks(
+        &self,
+        renderer: &SkiaRenderer,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<(PlotLayout, Vec<f64>, Vec<f64>)> {
+        let mut measurements =
+            self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
+        let mut layout =
+            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
+
+        if !content.show_tick_labels {
+            return Ok((layout, Vec::new(), Vec::new()));
+        }
+
+        let mut x_ticks = Vec::new();
+        let mut y_ticks = Vec::new();
+        let mut x_labels = Vec::new();
+        let mut y_labels = Vec::new();
+
+        for _ in 0..3 {
+            let plot_area = Self::plot_area_from_layout(&layout)?;
+            let (next_x_ticks, next_y_ticks) =
+                Self::dynamic_tick_values_for_plot_area(plot_area, x_min, x_max, y_min, y_max);
+            let next_x_labels = crate::render::skia::format_tick_labels(&next_x_ticks);
+            let next_y_labels = crate::render::skia::format_tick_labels(&next_y_ticks);
+
+            if next_x_labels == x_labels && next_y_labels == y_labels {
+                x_ticks = next_x_ticks;
+                y_ticks = next_y_ticks;
+                break;
+            }
+
+            x_ticks = next_x_ticks;
+            y_ticks = next_y_ticks;
+            x_labels = next_x_labels;
+            y_labels = next_y_labels;
+            measurements =
+                self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
+            layout = self.compute_layout_from_measurements(
+                canvas_size,
+                content,
+                dpi,
+                measurements.as_ref(),
+            );
+        }
+
+        if x_ticks.is_empty() && y_ticks.is_empty() {
+            let plot_area = Self::plot_area_from_layout(&layout)?;
+            (x_ticks, y_ticks) =
+                Self::dynamic_tick_values_for_plot_area(plot_area, x_min, x_max, y_min, y_max);
+        }
+
+        Ok((layout, x_ticks, y_ticks))
+    }
+
+    fn measure_tick_label_extent(
+        renderer: &SkiaRenderer,
+        labels: &[String],
+        tick_size_px: f32,
+    ) -> Result<Option<(f32, f32)>> {
+        let mut max_width: f32 = 0.0;
+        let mut max_height: f32 = 0.0;
+
+        for label in labels {
+            let (width, height) = renderer.measure_label_text(label, tick_size_px)?;
+            max_width = max_width.max(width);
+            max_height = max_height.max(height);
+        }
+
+        if labels.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((max_width, max_height)))
+        }
     }
 
     /// Render plot using DataShader optimization for large datasets
@@ -1276,78 +1344,26 @@ impl Plot {
         let render_scale = self.render_scale();
         renderer.set_render_scale(render_scale);
         let content = self.create_plot_content(y_min, y_max);
-        let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
-        let measurements = measured_dimensions.as_ref();
-
-        let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
-            match &self.display.config.margins {
-                MarginConfig::ContentDriven {
-                    edge_buffer,
-                    center_plot,
-                } => {
-                    let layout_config = LayoutConfig {
-                        edge_buffer_pt: *edge_buffer,
-                        center_plot: *center_plot,
-                        ..Default::default()
-                    };
-                    let calculator = LayoutCalculator::new(layout_config);
-                    let layout = calculator.compute(
-                        (scaled_width, scaled_height),
-                        &content,
-                        &self.display.config.typography,
-                        &self.display.config.spacing,
-                        dpi,
-                        measurements,
-                    );
-                    let skia_rect = tiny_skia::Rect::from_ltrb(
-                        layout.plot_area.left,
-                        layout.plot_area.top,
-                        layout.plot_area.right,
-                        layout.plot_area.bottom,
-                    )
-                    .ok_or(PlottingError::InvalidData {
-                        message: "Invalid plot area from layout".to_string(),
-                        position: None,
-                    })?;
-                    (skia_rect, Some(layout))
-                }
-                _ => {
-                    let layout_config = LayoutConfig::default();
-                    let calculator = LayoutCalculator::new(layout_config);
-                    let layout = calculator.compute(
-                        (scaled_width, scaled_height),
-                        &content,
-                        &self.display.config.typography,
-                        &self.display.config.spacing,
-                        dpi,
-                        measurements,
-                    );
-                    let skia_rect = tiny_skia::Rect::from_ltrb(
-                        layout.plot_area.left,
-                        layout.plot_area.top,
-                        layout.plot_area.right,
-                        layout.plot_area.bottom,
-                    )
-                    .ok_or(PlottingError::InvalidData {
-                        message: "Invalid plot area from layout".to_string(),
-                        position: None,
-                    })?;
-                    (skia_rect, Some(layout))
-                }
-            };
-
-        let x_major_ticks = crate::axes::generate_ticks_for_scale(
-            x_min,
-            x_max,
-            self.layout.tick_config.major_ticks_x,
-            &self.layout.x_scale,
+        let (x_major_ticks, y_major_ticks) =
+            self.configured_major_ticks(x_min, x_max, y_min, y_max);
+        let (x_major_labels, y_major_labels) = (
+            crate::render::skia::format_tick_labels(&x_major_ticks),
+            crate::render::skia::format_tick_labels(&y_major_ticks),
         );
-        let y_major_ticks = crate::axes::generate_ticks_for_scale(
-            y_min,
-            y_max,
-            self.layout.tick_config.major_ticks_y,
-            &self.layout.y_scale,
+        let measured_dimensions = self.measure_layout_text_with_ticks(
+            &renderer,
+            &content,
+            dpi,
+            &x_major_labels,
+            &y_major_labels,
+        )?;
+        let layout = self.compute_layout_from_measurements(
+            (scaled_width, scaled_height),
+            &content,
+            dpi,
+            measured_dimensions.as_ref(),
         );
+        let plot_area = Self::plot_area_from_layout(&layout)?;
 
         let x_minor_ticks = if self.layout.tick_config.minor_ticks_x > 0 {
             match &self.layout.x_scale {
@@ -1543,7 +1559,6 @@ impl Plot {
             )?;
         }
 
-        let layout = layout_opt.expect("layout should always be computed");
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
         if draw_axes {
@@ -1940,32 +1955,34 @@ impl Plot {
             SkiaRenderer::new(width_px, height_px, self.display.theme.clone())?;
         measurement_renderer.set_text_engine_mode(self.display.text_engine);
         measurement_renderer.set_render_scale(render_scale);
-        let measured_dimensions = self.measure_layout_text(
+        let x_major_measurement_layout = TickLayout::compute(
+            x_min,
+            x_max,
+            0.0,
+            1.0,
+            &self.layout.x_scale,
+            self.layout.tick_config.major_ticks_x,
+        );
+        let y_major_measurement_layout = TickLayout::compute_y_axis(
+            y_min,
+            y_max,
+            0.0,
+            1.0,
+            &self.layout.y_scale,
+            self.layout.tick_config.major_ticks_y,
+        );
+        let measured_dimensions = self.measure_layout_text_with_ticks(
             &measurement_renderer,
             &content,
             self.display.config.figure.dpi,
+            &x_major_measurement_layout.labels,
+            &y_major_measurement_layout.labels,
         )?;
-        let measurements = measured_dimensions.as_ref();
-
-        let layout_config = match &self.display.config.margins {
-            MarginConfig::ContentDriven {
-                edge_buffer,
-                center_plot,
-            } => LayoutConfig {
-                edge_buffer_pt: *edge_buffer,
-                center_plot: *center_plot,
-                ..Default::default()
-            },
-            _ => LayoutConfig::default(),
-        };
-        let calculator = LayoutCalculator::new(layout_config);
-        let layout = calculator.compute(
+        let layout = self.compute_layout_from_measurements(
             (width_px, height_px),
             &content,
-            &self.display.config.typography,
-            &self.display.config.spacing,
             self.display.config.figure.dpi,
-            measurements,
+            measured_dimensions.as_ref(),
         );
         let plot_left = layout.plot_area.left;
         let plot_right = layout.plot_area.right;
@@ -2000,7 +2017,7 @@ impl Plot {
             plot_top,
             plot_bottom,
             &self.layout.y_scale,
-            6,
+            self.layout.tick_config.major_ticks_y,
         );
 
         // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
@@ -2030,7 +2047,7 @@ impl Plot {
                     plot_left,
                     plot_right,
                     &self.layout.x_scale,
-                    7,
+                    self.layout.tick_config.major_ticks_x,
                 );
                 svg.draw_grid(
                     &x_tick_layout.pixel_positions,
@@ -2129,7 +2146,7 @@ impl Plot {
                     plot_left,
                     plot_right,
                     &self.layout.x_scale,
-                    7,
+                    self.layout.tick_config.major_ticks_x,
                 );
                 if self.layout.tick_config.enabled {
                     svg.draw_axes(

@@ -293,11 +293,11 @@ impl Default for LineConfig {
 /// All spacing values are in typographic points.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpacingConfig {
-    /// Space below title in points (default: 12.0)
+    /// Space below title in points (default: 6.0)
     pub title_pad: f32,
-    /// Space between axis and label in points (default: 6.0)
+    /// Space between axis labels and tick labels in points (default: 4.0)
     pub label_pad: f32,
-    /// Space between axis and tick labels in points (default: 4.0)
+    /// Space between axes and tick labels in points (default: 3.5)
     pub tick_pad: f32,
     /// Padding inside legend box in points (default: 8.0)
     pub legend_pad: f32,
@@ -328,9 +328,9 @@ impl SpacingConfig {
 impl Default for SpacingConfig {
     fn default() -> Self {
         Self {
-            title_pad: 12.0, // ~0.75x title font size - professional spacing below title
-            label_pad: 14.0, // ~1x label font size - space between ylabel and tick labels
-            tick_pad: 6.0,   // ~0.5x tick font size - space between tick labels and axis
+            title_pad: 6.0, // Matplotlib-style title spacing
+            label_pad: 4.0, // Matplotlib-style axis label spacing
+            tick_pad: 3.5,  // Matplotlib-style tick label spacing
             legend_pad: 8.0,
         }
     }
@@ -505,7 +505,7 @@ impl Default for MarginConfig {
         // Default to content-driven margins - computes margins from actual content
         // This provides the best layout by measuring text elements first
         MarginConfig::ContentDriven {
-            edge_buffer: 8.0,  // 8pt buffer from canvas edges - professional margin
+            edge_buffer: 5.0,  // Tight default buffer near Matplotlib's spacing
             center_plot: true, // Center the chart area horizontally
         }
     }

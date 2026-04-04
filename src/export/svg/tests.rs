@@ -268,7 +268,7 @@ fn test_tick_labels_use_layout_positions() {
     let expected_x_tick_y = top_anchor_to_baseline(x_top, x_metrics);
 
     let y_top = 75.0 - y_metrics.height / 2.0;
-    let expected_y_tick_x = (35.0 - y_metrics.width - 5.0).max(5.0);
+    let expected_y_tick_x = (35.0 - y_metrics.width).max(0.0);
     let expected_y_tick_y = top_anchor_to_baseline(y_top, y_metrics);
 
     assert!(
@@ -384,7 +384,7 @@ fn test_typst_tick_labels_follow_plain_anchor_math() {
     .unwrap();
 
     let expected_x = (100.0 - x_w / 2.0).max(0.0).min(renderer.width - x_w);
-    let expected_y = (35.0 - y_w - 5.0).max(5.0);
+    let expected_y = (35.0 - y_w).max(0.0);
     let expected_y_top = 75.0 - y_h / 2.0;
 
     assert!((translates[0].0 - expected_x).abs() <= 0.6 && (translates[0].1 - 120.0).abs() <= 0.6);

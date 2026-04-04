@@ -160,6 +160,8 @@ pub struct MeasuredDimensions {
     pub title: Option<(f32, f32)>,
     pub xlabel: Option<(f32, f32)>,
     pub ylabel: Option<(f32, f32)>,
+    pub xtick: Option<(f32, f32)>,
+    pub ytick: Option<(f32, f32)>,
 }
 
 // =============================================================================
@@ -208,7 +210,7 @@ pub struct LayoutConfig {
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
-            edge_buffer_pt: 8.0, // Professional edge buffer from canvas edges
+            edge_buffer_pt: 5.0, // Tight default edge buffer
             center_plot: true,
             max_margin_fraction: 0.4, // Max 40% of dimension for any margin
         }
@@ -262,6 +264,8 @@ impl LayoutCalculator {
         let measured_title = measurements.and_then(|m| m.title);
         let measured_xlabel = measurements.and_then(|m| m.xlabel);
         let measured_ylabel = measurements.and_then(|m| m.ylabel);
+        let measured_xtick = measurements.and_then(|m| m.xtick);
+        let measured_ytick = measurements.and_then(|m| m.ytick);
 
         let title_height = if content.title.is_some() {
             measured_title
@@ -290,11 +294,15 @@ impl LayoutCalculator {
 
         let (xtick_height, ytick_width, tick_pad) = if content.show_tick_labels {
             (
-                estimate_text_height(tick_size_px),
-                estimate_tick_label_width(
-                    content.max_ytick_chars.max(5), // Default to 5 chars if not specified
-                    tick_size_px,
-                ),
+                measured_xtick
+                    .map(|(_, h)| h)
+                    .unwrap_or_else(|| estimate_text_height(tick_size_px)),
+                measured_ytick.map(|(w, _)| w).unwrap_or_else(|| {
+                    estimate_tick_label_width(
+                        content.max_ytick_chars.max(5), // Default to 5 chars if not specified
+                        tick_size_px,
+                    )
+                }),
                 tick_pad,
             )
         } else {
@@ -326,15 +334,7 @@ impl LayoutCalculator {
         let final_top = min_top.min(max_v_margin);
         let final_bottom = min_bottom.min(max_v_margin);
         let final_left = min_left.min(max_h_margin);
-        let mut final_right = min_right.min(max_h_margin);
-
-        // Step 3: Center the chart area in the canvas
-        // Add extra right margin to balance the left margin (ylabel + ticks)
-        // This centers the actual plotting area, not the whole composition
-        if self.config.center_plot {
-            let extra_right = (final_left - final_right).max(0.0);
-            final_right += extra_right;
-        }
+        let final_right = min_right.min(max_h_margin);
 
         // Step 4: Compute plot area
         let plot_area = LayoutRect {
@@ -493,6 +493,8 @@ mod tests {
             title: Some((180.0, 42.0)),
             xlabel: Some((120.0, 34.0)),
             ylabel: Some((140.0, 50.0)),
+            xtick: None,
+            ytick: None,
         };
         let measured = calculator.compute(
             (640, 480),
@@ -637,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_centering() {
+    fn test_layout_does_not_mirror_left_margin_to_right_when_centering_enabled() {
         let calculator = LayoutCalculator::new(LayoutConfig {
             center_plot: true,
             ..Default::default()
@@ -655,26 +657,52 @@ mod tests {
             None,
         );
 
-        // With centering enabled, right margin should equal left margin
-        // This centers the chart area itself in the canvas
-        let margin_diff = (layout.margins.right - layout.margins.left).abs();
         assert!(
-            margin_diff < 1.0,
-            "Margins should be equal: left={}, right={}",
-            layout.margins.left,
-            layout.margins.right
+            layout.margins.left > layout.margins.right,
+            "left margin should grow for ylabel/ticks without mirroring to the right"
         );
 
-        // Plot center should be at canvas center
         let plot_center = layout.plot_area.center_x();
         let canvas_center = 640.0 / 2.0;
-        let center_diff = (plot_center - canvas_center).abs();
+        let center_diff = plot_center - canvas_center;
         assert!(
-            center_diff < 1.0,
-            "Plot should be centered: plot_center={}, canvas_center={}",
+            center_diff > 0.0,
+            "plot area center should move right when the left margin grows without right mirroring: plot_center={}, canvas_center={}",
             plot_center,
             canvas_center
         );
+    }
+
+    #[test]
+    fn test_layout_uses_measured_tick_dimensions_when_provided() {
+        let calculator = LayoutCalculator::default();
+        let content = PlotContent::new().with_tick_chars(5, 3);
+
+        let estimated = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        let measured_dims = MeasuredDimensions {
+            xtick: Some((40.0, 28.0)),
+            ytick: Some((72.0, 20.0)),
+            ..MeasuredDimensions::default()
+        };
+        let measured = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            Some(&measured_dims),
+        );
+
+        assert!(measured.margins.bottom > estimated.margins.bottom);
+        assert!(measured.margins.left > estimated.margins.left);
     }
 
     #[test]
