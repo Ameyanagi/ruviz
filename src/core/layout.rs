@@ -102,7 +102,8 @@ pub struct PlotContent {
     pub show_tick_labels: bool,
     /// Maximum number of characters in y-tick labels (for width estimation)
     pub max_ytick_chars: usize,
-    /// Maximum number of characters in x-tick labels (for height is same)
+    /// Compatibility-only x-tick estimate. Current layout ignores character
+    /// count here because x-tick spacing is driven by measured/estimated height.
     pub max_xtick_chars: usize,
 }
 
@@ -139,9 +140,17 @@ impl PlotContent {
         self
     }
 
-    pub fn with_tick_chars(mut self, max_ytick: usize, max_xtick: usize) -> Self {
+    #[deprecated(
+        since = "0.3.6",
+        note = "x-tick character counts are currently ignored; use with_ytick_chars() instead"
+    )]
+    pub fn with_tick_chars(self, max_ytick: usize, _max_xtick: usize) -> Self {
+        self.with_ytick_chars(max_ytick)
+    }
+
+    /// Set the y-tick label width estimate used when actual measurements are unavailable.
+    pub fn with_ytick_chars(mut self, max_ytick: usize) -> Self {
         self.max_ytick_chars = max_ytick;
-        self.max_xtick_chars = max_xtick;
         self
     }
 
@@ -160,6 +169,8 @@ pub struct MeasuredDimensions {
     pub title: Option<(f32, f32)>,
     pub xlabel: Option<(f32, f32)>,
     pub ylabel: Option<(f32, f32)>,
+    pub xtick: Option<(f32, f32)>,
+    pub ytick: Option<(f32, f32)>,
 }
 
 // =============================================================================
@@ -208,7 +219,7 @@ pub struct LayoutConfig {
 impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
-            edge_buffer_pt: 8.0, // Professional edge buffer from canvas edges
+            edge_buffer_pt: 5.0, // Tight default edge buffer
             center_plot: true,
             max_margin_fraction: 0.4, // Max 40% of dimension for any margin
         }
@@ -262,6 +273,8 @@ impl LayoutCalculator {
         let measured_title = measurements.and_then(|m| m.title);
         let measured_xlabel = measurements.and_then(|m| m.xlabel);
         let measured_ylabel = measurements.and_then(|m| m.ylabel);
+        let measured_xtick = measurements.and_then(|m| m.xtick);
+        let measured_ytick = measurements.and_then(|m| m.ytick);
 
         let title_height = if content.title.is_some() {
             measured_title
@@ -290,11 +303,15 @@ impl LayoutCalculator {
 
         let (xtick_height, ytick_width, tick_pad) = if content.show_tick_labels {
             (
-                estimate_text_height(tick_size_px),
-                estimate_tick_label_width(
-                    content.max_ytick_chars.max(5), // Default to 5 chars if not specified
-                    tick_size_px,
-                ),
+                measured_xtick
+                    .map(|(_, h)| h)
+                    .unwrap_or_else(|| estimate_text_height(tick_size_px)),
+                measured_ytick.map(|(w, _)| w).unwrap_or_else(|| {
+                    estimate_tick_label_width(
+                        content.max_ytick_chars.max(5), // Default to 5 chars if not specified
+                        tick_size_px,
+                    )
+                }),
                 tick_pad,
             )
         } else {
@@ -328,9 +345,9 @@ impl LayoutCalculator {
         let final_left = min_left.min(max_h_margin);
         let mut final_right = min_right.min(max_h_margin);
 
-        // Step 3: Center the chart area in the canvas
-        // Add extra right margin to balance the left margin (ylabel + ticks)
-        // This centers the actual plotting area, not the whole composition
+        // Step 3: Center the chart area in the canvas when requested.
+        // Add extra right margin to balance the left margin (ylabel + ticks),
+        // which keeps the plotting area itself centered on the canvas.
         if self.config.center_plot {
             let extra_right = (final_left - final_right).max(0.0);
             final_right += extra_right;
@@ -403,6 +420,44 @@ mod tests {
     }
 
     #[test]
+    fn test_with_ytick_chars_sets_only_ytick_estimate() {
+        let content = PlotContent::new().with_ytick_chars(7);
+
+        assert_eq!(content.max_ytick_chars, 7);
+        assert_eq!(content.max_xtick_chars, 0);
+    }
+
+    #[test]
+    fn test_with_tick_chars_compatibility_matches_ytick_only_layout() {
+        let calculator = LayoutCalculator::default();
+        #[allow(deprecated)]
+        let compatibility_content = PlotContent::new().with_tick_chars(6, 42);
+        let ytick_only_content = PlotContent::new().with_ytick_chars(6);
+
+        assert_eq!(compatibility_content.max_ytick_chars, 6);
+        assert_eq!(compatibility_content.max_xtick_chars, 0);
+
+        let compatibility_layout = calculator.compute(
+            (640, 480),
+            &compatibility_content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+        let ytick_only_layout = calculator.compute(
+            (640, 480),
+            &ytick_only_content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        assert_eq!(compatibility_layout, ytick_only_layout);
+    }
+
+    #[test]
     fn test_estimate_text_width() {
         let width = estimate_text_width("Hello", 12.0);
         // 5 chars * 12 * 0.6 = 36
@@ -423,7 +478,7 @@ mod tests {
             .with_title("Test Title")
             .with_xlabel("X Values")
             .with_ylabel("Y Values")
-            .with_tick_chars(5, 3);
+            .with_ytick_chars(5);
 
         let layout = calculator.compute(
             (640, 480),
@@ -493,6 +548,8 @@ mod tests {
             title: Some((180.0, 42.0)),
             xlabel: Some((120.0, 34.0)),
             ylabel: Some((140.0, 50.0)),
+            xtick: None,
+            ytick: None,
         };
         let measured = calculator.compute(
             (640, 480),
@@ -561,7 +618,7 @@ mod tests {
     #[test]
     fn test_layout_no_labels() {
         let calculator = LayoutCalculator::default();
-        let content = PlotContent::new().with_tick_chars(5, 3);
+        let content = PlotContent::new().with_ytick_chars(5);
 
         let layout = calculator.compute(
             (640, 480),
@@ -588,7 +645,7 @@ mod tests {
         let with_ticks = PlotContent::new()
             .with_xlabel("X Axis")
             .with_ylabel("Y Axis")
-            .with_tick_chars(6, 4);
+            .with_ytick_chars(6);
         let without_ticks = with_ticks.clone().with_tick_labels(false);
 
         let layout_with_ticks = calculator.compute(
@@ -644,7 +701,7 @@ mod tests {
         });
         let content = PlotContent::new()
             .with_ylabel("Y Label")
-            .with_tick_chars(5, 3);
+            .with_ytick_chars(5);
 
         let layout = calculator.compute(
             (640, 480),
@@ -655,8 +712,6 @@ mod tests {
             None,
         );
 
-        // With centering enabled, right margin should equal left margin
-        // This centers the chart area itself in the canvas
         let margin_diff = (layout.margins.right - layout.margins.left).abs();
         assert!(
             margin_diff < 1.0,
@@ -665,7 +720,6 @@ mod tests {
             layout.margins.right
         );
 
-        // Plot center should be at canvas center
         let plot_center = layout.plot_area.center_x();
         let canvas_center = 640.0 / 2.0;
         let center_diff = (plot_center - canvas_center).abs();
@@ -675,6 +729,73 @@ mod tests {
             plot_center,
             canvas_center
         );
+    }
+
+    #[test]
+    fn test_layout_keeps_asymmetric_margins_when_centering_disabled() {
+        let calculator = LayoutCalculator::new(LayoutConfig {
+            center_plot: false,
+            ..Default::default()
+        });
+        let content = PlotContent::new()
+            .with_ylabel("Y Label")
+            .with_ytick_chars(5);
+
+        let layout = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        assert!(
+            layout.margins.left > layout.margins.right,
+            "left margin should grow for ylabel/ticks without mirroring to the right"
+        );
+
+        let plot_center = layout.plot_area.center_x();
+        let canvas_center = 640.0 / 2.0;
+        let center_diff = plot_center - canvas_center;
+        assert!(
+            center_diff > 0.0,
+            "plot area center should move right when the left margin grows without right mirroring: plot_center={}, canvas_center={}",
+            plot_center,
+            canvas_center
+        );
+    }
+
+    #[test]
+    fn test_layout_uses_measured_tick_dimensions_when_provided() {
+        let calculator = LayoutCalculator::default();
+        let content = PlotContent::new().with_ytick_chars(5);
+
+        let estimated = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        let measured_dims = MeasuredDimensions {
+            xtick: Some((40.0, 28.0)),
+            ytick: Some((72.0, 20.0)),
+            ..MeasuredDimensions::default()
+        };
+        let measured = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            Some(&measured_dims),
+        );
+
+        assert!(measured.margins.bottom > estimated.margins.bottom);
+        assert!(measured.margins.left > estimated.margins.left);
     }
 
     #[test]
@@ -735,7 +856,7 @@ mod tests {
             .with_title("数据分析 - データ分析")
             .with_xlabel("時間 (μs)")
             .with_ylabel("Amplitude (±σ)")
-            .with_tick_chars(6, 4);
+            .with_ytick_chars(6);
 
         let layout = calculator.compute(
             (640, 480),

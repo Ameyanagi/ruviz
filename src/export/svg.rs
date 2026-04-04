@@ -928,9 +928,7 @@ impl SvgRenderer {
                     let label_snippet = self.generated_label(label);
                     let (text_width, text_height) =
                         self.measure_text_for_layout(&label_snippet, font_size)?;
-                    let gap = font_size * 0.5;
-                    let min_x = font_size * 0.5;
-                    let label_x = (ytick_right_x - text_width - gap).max(min_x);
+                    let label_x = (ytick_right_x - text_width).max(0.0);
                     let centered_y = y - text_height / 2.0;
                     self.draw_text(&label_snippet, label_x, centered_y, font_size, color)?;
                 }

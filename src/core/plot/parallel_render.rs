@@ -33,30 +33,19 @@ impl Plot {
 
         // Compute content-driven layout FIRST for consistent positioning
         let content = self.create_plot_content(bounds.2, bounds.3);
-        let layout_config = LayoutConfig {
-            edge_buffer_pt: 8.0,
-            center_plot: true,
-            max_margin_fraction: 0.4,
-        };
-        let layout_calculator = LayoutCalculator::new(layout_config);
-        let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
-        let layout = layout_calculator.compute(
+        let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
+            &renderer,
             (scaled_width, scaled_height),
             &content,
-            &self.display.config.typography,
-            &self.display.config.spacing,
             dpi,
-            measured_dimensions.as_ref(),
-        );
+            bounds.0,
+            bounds.1,
+            bounds.2,
+            bounds.3,
+        )?;
 
         // Convert layout plot_area to tiny_skia::Rect for series rendering
-        let plot_area = tiny_skia::Rect::from_ltrb(
-            layout.plot_area.left,
-            layout.plot_area.top,
-            layout.plot_area.right,
-            layout.plot_area.bottom,
-        )
-        .unwrap_or_else(|| {
+        let plot_area = Self::plot_area_from_layout(&layout).unwrap_or_else(|_| {
             // Fallback to simple calculation if layout rect is invalid
             calculate_plot_area_dpi(
                 scaled_width,
@@ -78,13 +67,6 @@ impl Plot {
             y_min: bounds.2,
             y_max: bounds.3,
         };
-
-        // Generate nice tick values - adapt count to available space
-        // Use ~100px per x-tick and ~60px per y-tick as minimum spacing for readability
-        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
-        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
-        let x_ticks = generate_ticks(bounds.0, bounds.1, x_tick_count);
-        let y_ticks = generate_ticks(bounds.2, bounds.3, y_tick_count);
 
         // Convert ticks to pixel coordinates
         let x_tick_pixels: Vec<f32> = x_ticks

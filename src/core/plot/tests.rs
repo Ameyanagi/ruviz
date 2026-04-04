@@ -206,18 +206,6 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
         .calculate_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
-    let layout_config = match &plot.display.config.margins {
-        MarginConfig::ContentDriven {
-            edge_buffer,
-            center_plot,
-        } => LayoutConfig {
-            edge_buffer_pt: *edge_buffer,
-            center_plot: *center_plot,
-            ..Default::default()
-        },
-        _ => LayoutConfig::default(),
-    };
-    let calculator = LayoutCalculator::new(layout_config);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
         plot.display.dimensions.0,
         plot.display.dimensions.1,
@@ -226,33 +214,19 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
     .expect("measurement renderer");
     measurement_renderer.set_render_scale(plot.render_scale());
     measurement_renderer.set_text_engine_mode(plot.display.text_engine);
-    let measured_dimensions = plot
-        .measure_layout_text(
+    let (layout, x_ticks, y_ticks) = plot
+        .compute_layout_with_configured_ticks(
             &measurement_renderer,
+            plot.display.dimensions,
             &content,
             plot.display.config.figure.dpi,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
         )
-        .expect("layout text measurements");
-    let layout = calculator.compute(
-        plot.display.dimensions,
-        &content,
-        &plot.display.config.typography,
-        &plot.display.config.spacing,
-        plot.display.config.figure.dpi,
-        measured_dimensions.as_ref(),
-    );
-    let plot_area = tiny_skia::Rect::from_ltrb(
-        layout.plot_area.left,
-        layout.plot_area.top,
-        layout.plot_area.right,
-        layout.plot_area.bottom,
-    )
-    .expect("valid plot area");
-
-    let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
-    let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
-    let x_ticks = generate_ticks(x_min, x_max, x_tick_count);
-    let y_ticks = generate_ticks(y_min, y_max, y_tick_count);
+        .expect("configured layout with tick measurements");
+    let plot_area = Plot::plot_area_from_layout(&layout).expect("valid plot area");
     let x_tick_pixels: Vec<f32> = x_ticks
         .iter()
         .map(|&tick| {
@@ -277,6 +251,20 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
     let top_probe = (x_probe, (plot_area.top() + 2.0).round() as u32);
     let right_probe = ((plot_area.right() - 2.0).round() as u32, y_probe);
     (top_probe, right_probe)
+}
+
+fn compute_layout_without_tick_measurements(plot: &Plot) -> PlotLayout {
+    let (x_min, x_max, y_min, y_max) = plot
+        .calculate_data_bounds()
+        .expect("data bounds should be available");
+    let content = plot.create_plot_content(y_min, y_max);
+
+    plot.compute_layout_from_measurements(
+        plot.display.dimensions,
+        &content,
+        plot.display.config.figure.dpi,
+        None,
+    )
 }
 
 fn parse_svg_attr_pt(line: &str, attr: &str) -> f32 {
@@ -740,6 +728,109 @@ fn test_render_to_renderer_dpi_scaling() {
 }
 
 #[test]
+fn test_tight_layout_pad_changes_computed_layout_margins() {
+    let base_plot = Plot::new()
+        .size_px(800, 600)
+        .line(&[0.0, 1.0, 2.0], &[1.0, 4.0, 9.0])
+        .title("Tight Layout")
+        .xlabel("X Axis")
+        .ylabel("Y Axis")
+        .end_series();
+    let small_pad = base_plot.clone().tight_layout_pad(1.0);
+    let large_pad = base_plot.tight_layout_pad(12.0);
+
+    let small_layout = compute_layout_without_tick_measurements(&small_pad);
+    let large_layout = compute_layout_without_tick_measurements(&large_pad);
+
+    assert!(large_layout.margins.top > small_layout.margins.top);
+    assert!(large_layout.margins.bottom > small_layout.margins.bottom);
+    assert!(large_layout.margins.left > small_layout.margins.left);
+    assert!(large_layout.plot_area.width() < small_layout.plot_area.width());
+    assert!(large_layout.plot_area.height() < small_layout.plot_area.height());
+}
+
+#[test]
+fn test_compute_layout_honors_fixed_margins() {
+    let mut plot = Plot::new()
+        .size_px(800, 600)
+        .line(&[0.0, 1.0], &[1.0, 3.0])
+        .title("Fixed Margins")
+        .xlabel("X")
+        .ylabel("Y")
+        .end_series();
+    plot.display.config.margins = MarginConfig::fixed(1.1, 0.4, 0.7, 0.9);
+
+    let layout = compute_layout_without_tick_measurements(&plot);
+
+    assert!((layout.margins.left - 110.0).abs() < 0.1);
+    assert!((layout.margins.right - 40.0).abs() < 0.1);
+    assert!((layout.margins.top - 70.0).abs() < 0.1);
+    assert!((layout.margins.bottom - 90.0).abs() < 0.1);
+    assert!((layout.plot_area.left - 110.0).abs() < 0.1);
+    assert!((layout.plot_area.right - 760.0).abs() < 0.1);
+    assert!((layout.plot_area.top - 70.0).abs() < 0.1);
+    assert!((layout.plot_area.bottom - 510.0).abs() < 0.1);
+}
+
+#[test]
+fn test_compute_layout_honors_proportional_margins() {
+    let mut plot = Plot::new()
+        .size_px(800, 600)
+        .line(&[0.0, 1.0], &[1.0, 3.0])
+        .end_series();
+    plot.display.config.margins = MarginConfig::proportional_custom(0.2, 0.15, 0.1, 0.25);
+
+    let layout = compute_layout_without_tick_measurements(&plot);
+
+    assert!((layout.margins.left - 160.0).abs() < 0.1);
+    assert!((layout.margins.right - 120.0).abs() < 0.1);
+    assert!((layout.margins.top - 60.0).abs() < 0.1);
+    assert!((layout.margins.bottom - 150.0).abs() < 0.1);
+    assert!((layout.plot_area.width() - 520.0).abs() < 0.1);
+    assert!((layout.plot_area.height() - 390.0).abs() < 0.1);
+}
+
+#[test]
+fn test_render_layout_uses_configured_major_ticks() {
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .major_ticks_x(4)
+        .major_ticks_y(3)
+        .line(&[0.0, 1.0, 2.0, 3.0], &[1.0, 4.0, 9.0, 16.0])
+        .end_series();
+    let (x_min, x_max, y_min, y_max) = plot
+        .calculate_data_bounds()
+        .expect("data bounds should be available");
+    let content = plot.create_plot_content(y_min, y_max);
+    let mut measurement_renderer = crate::render::SkiaRenderer::new(
+        plot.display.dimensions.0,
+        plot.display.dimensions.1,
+        plot.display.theme.clone(),
+    )
+    .expect("measurement renderer");
+    measurement_renderer.set_render_scale(plot.render_scale());
+    measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+
+    let (_layout, x_ticks, y_ticks) = plot
+        .compute_layout_with_configured_ticks(
+            &measurement_renderer,
+            plot.display.dimensions,
+            &content,
+            plot.display.config.figure.dpi,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
+        .expect("configured layout with tick measurements");
+    let (expected_x_ticks, expected_y_ticks) =
+        plot.configured_major_ticks(x_min, x_max, y_min, y_max);
+
+    assert_eq!(x_ticks, expected_x_ticks);
+    assert_eq!(y_ticks, expected_y_ticks);
+}
+
+#[test]
 fn test_render_honors_top_and_right_tick_sides() {
     let base_plot = Plot::new()
         .size_px(400, 300)
@@ -781,18 +872,6 @@ fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
         .calculate_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
-    let layout_config = match &plot.display.config.margins {
-        MarginConfig::ContentDriven {
-            edge_buffer,
-            center_plot,
-        } => LayoutConfig {
-            edge_buffer_pt: *edge_buffer,
-            center_plot: *center_plot,
-            ..Default::default()
-        },
-        _ => LayoutConfig::default(),
-    };
-    let calculator = LayoutCalculator::new(layout_config);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
         plot.display.dimensions.0,
         plot.display.dimensions.1,
@@ -801,28 +880,19 @@ fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
     .expect("measurement renderer");
     measurement_renderer.set_render_scale(plot.render_scale());
     measurement_renderer.set_text_engine_mode(plot.display.text_engine);
-    let measured_dimensions = plot
-        .measure_layout_text(
+    let (layout, _x_ticks, _y_ticks) = plot
+        .compute_layout_with_configured_ticks(
             &measurement_renderer,
+            plot.display.dimensions,
             &content,
             plot.display.config.figure.dpi,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
         )
-        .expect("layout text measurements");
-    let layout = calculator.compute(
-        plot.display.dimensions,
-        &content,
-        &plot.display.config.typography,
-        &plot.display.config.spacing,
-        plot.display.config.figure.dpi,
-        measured_dimensions.as_ref(),
-    );
-    let plot_area = tiny_skia::Rect::from_ltrb(
-        layout.plot_area.left,
-        layout.plot_area.top,
-        layout.plot_area.right,
-        layout.plot_area.bottom,
-    )
-    .expect("valid plot area");
+        .expect("configured layout with tick measurements");
+    let plot_area = Plot::plot_area_from_layout(&layout).expect("valid plot area");
     let categories = plot
         .series_mgr
         .series
@@ -930,22 +1000,10 @@ fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
 
     let svg = plot.render_to_svg().expect("SVG render should succeed");
 
-    let (_x_min, _x_max, y_min, y_max) = plot
+    let (x_min, x_max, y_min, y_max) = plot
         .calculate_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
-    let layout_config = match &plot.display.config.margins {
-        MarginConfig::ContentDriven {
-            edge_buffer,
-            center_plot,
-        } => LayoutConfig {
-            edge_buffer_pt: *edge_buffer,
-            center_plot: *center_plot,
-            ..Default::default()
-        },
-        _ => LayoutConfig::default(),
-    };
-    let calculator = LayoutCalculator::new(layout_config);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
         plot.display.dimensions.0,
         plot.display.dimensions.1,
@@ -955,18 +1013,34 @@ fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
     let render_scale = plot.render_scale();
     measurement_renderer.set_render_scale(render_scale);
     measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+    let x_measurement_layout = crate::axes::TickLayout::compute(
+        x_min,
+        x_max,
+        0.0,
+        1.0,
+        &plot.layout.x_scale,
+        plot.layout.tick_config.major_ticks_x,
+    );
+    let y_measurement_layout = crate::axes::TickLayout::compute_y_axis(
+        y_min,
+        y_max,
+        0.0,
+        1.0,
+        &plot.layout.y_scale,
+        plot.layout.tick_config.major_ticks_y,
+    );
     let measured_dimensions = plot
-        .measure_layout_text(
+        .measure_layout_text_with_ticks(
             &measurement_renderer,
             &content,
             plot.display.config.figure.dpi,
+            &x_measurement_layout.labels,
+            &y_measurement_layout.labels,
         )
         .expect("layout text measurements");
-    let layout = calculator.compute(
+    let layout = plot.compute_layout_from_measurements(
         plot.display.dimensions,
         &content,
-        &plot.display.config.typography,
-        &plot.display.config.spacing,
         plot.display.config.figure.dpi,
         measured_dimensions.as_ref(),
     );
@@ -1113,22 +1187,10 @@ fn test_render_to_svg_typst_uses_layout_anchor_contract() {
 
     let svg = plot.render_to_svg().expect("SVG render should succeed");
 
-    let (_x_min, _x_max, y_min, y_max) = plot
+    let (x_min, x_max, y_min, y_max) = plot
         .calculate_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
-    let layout_config = match &plot.display.config.margins {
-        MarginConfig::ContentDriven {
-            edge_buffer,
-            center_plot,
-        } => LayoutConfig {
-            edge_buffer_pt: *edge_buffer,
-            center_plot: *center_plot,
-            ..Default::default()
-        },
-        _ => LayoutConfig::default(),
-    };
-    let calculator = LayoutCalculator::new(layout_config);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
         plot.display.dimensions.0,
         plot.display.dimensions.1,
@@ -1138,18 +1200,34 @@ fn test_render_to_svg_typst_uses_layout_anchor_contract() {
     let render_scale = plot.render_scale();
     measurement_renderer.set_render_scale(render_scale);
     measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+    let x_measurement_layout = crate::axes::TickLayout::compute(
+        x_min,
+        x_max,
+        0.0,
+        1.0,
+        &plot.layout.x_scale,
+        plot.layout.tick_config.major_ticks_x,
+    );
+    let y_measurement_layout = crate::axes::TickLayout::compute_y_axis(
+        y_min,
+        y_max,
+        0.0,
+        1.0,
+        &plot.layout.y_scale,
+        plot.layout.tick_config.major_ticks_y,
+    );
     let measured_dimensions = plot
-        .measure_layout_text(
+        .measure_layout_text_with_ticks(
             &measurement_renderer,
             &content,
             plot.display.config.figure.dpi,
+            &x_measurement_layout.labels,
+            &y_measurement_layout.labels,
         )
         .expect("layout text measurements");
-    let layout = calculator.compute(
+    let layout = plot.compute_layout_from_measurements(
         plot.display.dimensions,
         &content,
-        &plot.display.config.typography,
-        &plot.display.config.spacing,
         plot.display.config.figure.dpi,
         measured_dimensions.as_ref(),
     );

@@ -2064,37 +2064,25 @@ fn compute_plot_layout(
     renderer.set_render_scale(layout_plot.render_scale());
 
     let content = layout_plot.create_plot_content(visible.y_min, visible.y_max);
-    let measured_dimensions = layout_plot.measure_layout_text(&renderer, &content, dpi)?;
-    let measurements = measured_dimensions.as_ref();
-
-    let layout = match &layout_plot.display.config.margins {
-        MarginConfig::ContentDriven {
-            edge_buffer,
-            center_plot,
-        } => {
-            let layout_config = LayoutConfig {
-                edge_buffer_pt: *edge_buffer,
-                center_plot: *center_plot,
-                ..Default::default()
-            };
-            LayoutCalculator::new(layout_config).compute(
-                size_px,
-                &content,
-                &layout_plot.display.config.typography,
-                &layout_plot.display.config.spacing,
-                dpi,
-                measurements,
-            )
-        }
-        _ => LayoutCalculator::new(LayoutConfig::default()).compute(
-            size_px,
-            &content,
-            &layout_plot.display.config.typography,
-            &layout_plot.display.config.spacing,
-            dpi,
-            measurements,
-        ),
-    };
+    let (x_ticks, y_ticks) = layout_plot.configured_major_ticks(
+        visible.x_min,
+        visible.x_max,
+        visible.y_min,
+        visible.y_max,
+    );
+    let measured_dimensions = layout_plot.measure_layout_text_with_ticks(
+        &renderer,
+        &content,
+        dpi,
+        &crate::render::skia::format_tick_labels(&x_ticks),
+        &crate::render::skia::format_tick_labels(&y_ticks),
+    )?;
+    let layout = layout_plot.compute_layout_from_measurements(
+        size_px,
+        &content,
+        dpi,
+        measured_dimensions.as_ref(),
+    );
 
     let plot_area_rect = tiny_skia::Rect::from_ltrb(
         layout.plot_area.left,
