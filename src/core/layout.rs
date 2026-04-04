@@ -334,7 +334,15 @@ impl LayoutCalculator {
         let final_top = min_top.min(max_v_margin);
         let final_bottom = min_bottom.min(max_v_margin);
         let final_left = min_left.min(max_h_margin);
-        let final_right = min_right.min(max_h_margin);
+        let mut final_right = min_right.min(max_h_margin);
+
+        // Step 3: Center the chart area in the canvas when requested.
+        // Add extra right margin to balance the left margin (ylabel + ticks),
+        // which keeps the plotting area itself centered on the canvas.
+        if self.config.center_plot {
+            let extra_right = (final_left - final_right).max(0.0);
+            final_right += extra_right;
+        }
 
         // Step 4: Compute plot area
         let plot_area = LayoutRect {
@@ -639,9 +647,47 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_does_not_mirror_left_margin_to_right_when_centering_enabled() {
+    fn test_layout_centering() {
         let calculator = LayoutCalculator::new(LayoutConfig {
             center_plot: true,
+            ..Default::default()
+        });
+        let content = PlotContent::new()
+            .with_ylabel("Y Label")
+            .with_tick_chars(5, 3);
+
+        let layout = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            None,
+        );
+
+        let margin_diff = (layout.margins.right - layout.margins.left).abs();
+        assert!(
+            margin_diff < 1.0,
+            "Margins should be equal: left={}, right={}",
+            layout.margins.left,
+            layout.margins.right
+        );
+
+        let plot_center = layout.plot_area.center_x();
+        let canvas_center = 640.0 / 2.0;
+        let center_diff = (plot_center - canvas_center).abs();
+        assert!(
+            center_diff < 1.0,
+            "Plot should be centered: plot_center={}, canvas_center={}",
+            plot_center,
+            canvas_center
+        );
+    }
+
+    #[test]
+    fn test_layout_keeps_asymmetric_margins_when_centering_disabled() {
+        let calculator = LayoutCalculator::new(LayoutConfig {
+            center_plot: false,
             ..Default::default()
         });
         let content = PlotContent::new()
