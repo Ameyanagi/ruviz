@@ -122,7 +122,7 @@ impl Plot {
             }
         });
         let content = self.create_plot_content(y_min, y_max);
-        let (layout, x_ticks, y_ticks) = self.compute_layout_with_dynamic_ticks(
+        let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
             &renderer,
             (scaled_width, scaled_height),
             &content,
@@ -433,7 +433,7 @@ impl Plot {
             }
         });
         let content = self.create_plot_content(y_min, y_max);
-        let (layout, x_ticks, y_ticks) = self.compute_layout_with_dynamic_ticks(
+        let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
             renderer,
             (renderer.width(), renderer.height()),
             &content,
@@ -940,21 +940,6 @@ impl Plot {
         })
     }
 
-    pub(super) fn dynamic_tick_values_for_plot_area(
-        plot_area: tiny_skia::Rect,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-    ) -> (Vec<f64>, Vec<f64>) {
-        let x_tick_count = ((plot_area.width() / 100.0) as usize).clamp(2, 10);
-        let y_tick_count = ((plot_area.height() / 60.0) as usize).clamp(2, 8);
-        (
-            generate_ticks(x_min, x_max, x_tick_count),
-            generate_ticks(y_min, y_max, y_tick_count),
-        )
-    }
-
     pub(super) fn configured_major_ticks(
         &self,
         x_min: f64,
@@ -978,7 +963,7 @@ impl Plot {
         )
     }
 
-    pub(super) fn compute_layout_with_dynamic_ticks(
+    pub(super) fn compute_layout_with_configured_ticks(
         &self,
         renderer: &SkiaRenderer,
         canvas_size: (u32, u32),
@@ -989,51 +974,25 @@ impl Plot {
         y_min: f64,
         y_max: f64,
     ) -> Result<(PlotLayout, Vec<f64>, Vec<f64>)> {
-        let mut measurements =
-            self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
-        let mut layout =
-            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
-
         if !content.show_tick_labels {
-            return Ok((layout, Vec::new(), Vec::new()));
-        }
-
-        let mut x_ticks = Vec::new();
-        let mut y_ticks = Vec::new();
-        let mut x_labels = Vec::new();
-        let mut y_labels = Vec::new();
-
-        for _ in 0..3 {
-            let plot_area = Self::plot_area_from_layout(&layout)?;
-            let (next_x_ticks, next_y_ticks) =
-                Self::dynamic_tick_values_for_plot_area(plot_area, x_min, x_max, y_min, y_max);
-            let next_x_labels = crate::render::skia::format_tick_labels(&next_x_ticks);
-            let next_y_labels = crate::render::skia::format_tick_labels(&next_y_ticks);
-
-            if next_x_labels == x_labels && next_y_labels == y_labels {
-                x_ticks = next_x_ticks;
-                y_ticks = next_y_ticks;
-                break;
-            }
-
-            x_ticks = next_x_ticks;
-            y_ticks = next_y_ticks;
-            x_labels = next_x_labels;
-            y_labels = next_y_labels;
-            measurements =
-                self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
-            layout = self.compute_layout_from_measurements(
+            let measurements =
+                self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
+            let layout = self.compute_layout_from_measurements(
                 canvas_size,
                 content,
                 dpi,
                 measurements.as_ref(),
             );
+            return Ok((layout, Vec::new(), Vec::new()));
         }
 
-        debug_assert!(
-            !x_ticks.is_empty() && !y_ticks.is_empty(),
-            "dynamic tick layout should produce tick vectors when labels are enabled"
-        );
+        let (x_ticks, y_ticks) = self.configured_major_ticks(x_min, x_max, y_min, y_max);
+        let x_labels = crate::render::skia::format_tick_labels(&x_ticks);
+        let y_labels = crate::render::skia::format_tick_labels(&y_ticks);
+        let measurements =
+            self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
+        let layout =
+            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
 
         Ok((layout, x_ticks, y_ticks))
     }

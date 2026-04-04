@@ -215,7 +215,7 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
     measurement_renderer.set_render_scale(plot.render_scale());
     measurement_renderer.set_text_engine_mode(plot.display.text_engine);
     let (layout, x_ticks, y_ticks) = plot
-        .compute_layout_with_dynamic_ticks(
+        .compute_layout_with_configured_ticks(
             &measurement_renderer,
             plot.display.dimensions,
             &content,
@@ -225,7 +225,7 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
             y_min,
             y_max,
         )
-        .expect("dynamic layout with tick measurements");
+        .expect("configured layout with tick measurements");
     let plot_area = Plot::plot_area_from_layout(&layout).expect("valid plot area");
     let x_tick_pixels: Vec<f32> = x_ticks
         .iter()
@@ -791,6 +791,46 @@ fn test_compute_layout_honors_proportional_margins() {
 }
 
 #[test]
+fn test_render_layout_uses_configured_major_ticks() {
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .major_ticks_x(4)
+        .major_ticks_y(3)
+        .line(&[0.0, 1.0, 2.0, 3.0], &[1.0, 4.0, 9.0, 16.0])
+        .end_series();
+    let (x_min, x_max, y_min, y_max) = plot
+        .calculate_data_bounds()
+        .expect("data bounds should be available");
+    let content = plot.create_plot_content(y_min, y_max);
+    let mut measurement_renderer = crate::render::SkiaRenderer::new(
+        plot.display.dimensions.0,
+        plot.display.dimensions.1,
+        plot.display.theme.clone(),
+    )
+    .expect("measurement renderer");
+    measurement_renderer.set_render_scale(plot.render_scale());
+    measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+
+    let (_layout, x_ticks, y_ticks) = plot
+        .compute_layout_with_configured_ticks(
+            &measurement_renderer,
+            plot.display.dimensions,
+            &content,
+            plot.display.config.figure.dpi,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
+        .expect("configured layout with tick measurements");
+    let (expected_x_ticks, expected_y_ticks) =
+        plot.configured_major_ticks(x_min, x_max, y_min, y_max);
+
+    assert_eq!(x_ticks, expected_x_ticks);
+    assert_eq!(y_ticks, expected_y_ticks);
+}
+
+#[test]
 fn test_render_honors_top_and_right_tick_sides() {
     let base_plot = Plot::new()
         .size_px(400, 300)
@@ -841,7 +881,7 @@ fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
     measurement_renderer.set_render_scale(plot.render_scale());
     measurement_renderer.set_text_engine_mode(plot.display.text_engine);
     let (layout, _x_ticks, _y_ticks) = plot
-        .compute_layout_with_dynamic_ticks(
+        .compute_layout_with_configured_ticks(
             &measurement_renderer,
             plot.display.dimensions,
             &content,
@@ -851,7 +891,7 @@ fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
             y_min,
             y_max,
         )
-        .expect("dynamic layout with tick measurements");
+        .expect("configured layout with tick measurements");
     let plot_area = Plot::plot_area_from_layout(&layout).expect("valid plot area");
     let categories = plot
         .series_mgr

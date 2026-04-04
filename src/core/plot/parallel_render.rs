@@ -33,7 +33,7 @@ impl Plot {
 
         // Compute content-driven layout FIRST for consistent positioning
         let content = self.create_plot_content(bounds.2, bounds.3);
-        let (layout, x_ticks, y_ticks) = self.compute_layout_with_dynamic_ticks(
+        let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
             &renderer,
             (scaled_width, scaled_height),
             &content,
