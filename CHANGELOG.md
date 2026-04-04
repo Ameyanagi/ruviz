@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.3.6] - 2026-04-04
+
+### Added
+
+- Added a Rust-only feature-impact benchmark suite for plotting render/save paths, covering `baseline_cpu`, `default`, `parallel_only`, `parallel_simd`, `performance_alias`, and `gpu_only`, with committed reference artifacts and documentation.
+- Added heatmap value scaling through `HeatmapConfig::value_scale(AxisScale)`, including log-aware color normalization, colorbar ticks, and a dedicated `examples/heatmap_scale_reversed_axes.rs` example.
+
+### Changed
+
+- Descending manual axis limits such as `.xlim(4.0, 0.0)` and `.ylim(16.0, 0.0)` are now preserved across static rendering and interactive viewport updates instead of being normalized away.
+- Updated the README, quickstart, and guide snippets to point at the `0.3.6` release and document reversed manual limits plus log-scaled heatmaps.
+
+### Fixed
+
+- Fixed `Plot::xlim()` and `Plot::ylim()` dropping inverted manual bounds when `min > max`, including interactive zoom, pan, and zoom-rect flows.
+- Fixed heatmap colorbar placement so non-linear heatmap value scales render ticks and labels in the correct transformed positions.
+
 ## [0.3.5] - 2026-04-04
 
 ### Added
@@ -205,7 +222,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/Ameyanagi/ruviz/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/Ameyanagi/ruviz/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/Ameyanagi/ruviz/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/Ameyanagi/ruviz/compare/v0.3.2...v0.3.3

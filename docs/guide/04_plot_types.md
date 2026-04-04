@@ -621,7 +621,7 @@ use the same path as static data.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.5", features = ["parallel"] }
+ruviz = { version = "0.3.6", features = ["parallel"] }
 ```
 
 ### Large Datasets (20K - 100K points)
@@ -630,7 +630,7 @@ consider downsampling where visual density is already saturated.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.5", features = ["parallel", "simd"] }
+ruviz = { version = "0.3.6", features = ["parallel", "simd"] }
 ```
 
 ### Very Large Datasets (> 100K points)
