@@ -4,7 +4,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing Plotters-style FontFamily system...");
     
     // Create test output directory if it doesn't exist
-    std::fs::create_dir_all("test_output")?;
+    std::fs::create_dir_all("generated/bench")?;
     
     // Generate simple test data
     let x_data: Vec<f64> = (0..20).map(|i| i as f64).collect();
@@ -19,7 +19,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .theme(Theme::publication())
         .line(&x_data, &y_data)
         .label("Sans-serif line")
-        .save_with_size("test_output/plotters_sans_serif.png", 800, 600)?;
+        .save_with_size("generated/bench/plotters_sans_serif.png", 800, 600)?;
     
     println!("2. Testing FontFamily from string");
     let custom_font = FontFamily::from("sans-serif");
@@ -49,7 +49,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
     
     println!("✅ Plotters-style FontFamily system working perfectly!");
-    println!("✅ Generated test_output/plotters_sans_serif.png");
+    println!("✅ Generated generated/bench/plotters_sans_serif.png");
     
     Ok(())
 }

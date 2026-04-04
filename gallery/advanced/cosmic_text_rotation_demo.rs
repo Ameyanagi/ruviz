@@ -5,7 +5,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Creating cosmic-text rotation demonstration...");
     
     // Ensure test output directory exists
-    fs::create_dir_all("test_output")?;
+    fs::create_dir_all("generated/bench")?;
     
     // Simple test data
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
@@ -17,7 +17,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("English + 中文 + العربية + Русский")
         .ylabel("Français + Deutsch + 日本語 + हिन्दी")
         .line(&x_data, &y_data)
-        .save("test_output/cosmic_text_international_demo.png")?;
+        .save("generated/bench/cosmic_text_international_demo.png")?;
     
     println!("✅ Created cosmic-text international character demo");
     
@@ -31,7 +31,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ylabel("Amplitude (mV) ↑ Professional Rendering")
         .theme(Theme::publication())
         .line(&scientific_x, &scientific_y)
-        .save("test_output/cosmic_text_scientific_notation.png")?;
+        .save("generated/bench/cosmic_text_scientific_notation.png")?;
     
     println!("✅ Created cosmic-text scientific notation demo");
     println!("🎯 Both plots showcase cosmic-text's professional typography:");

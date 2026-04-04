@@ -1,6 +1,6 @@
 //! Documentation example: Scatter plot
 //!
-//! Generates docs/images/scatter_plot.png for rustdoc
+//! Generates docs/assets/rustdoc/scatter_plot.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -19,8 +19,8 @@ fn main() -> Result<()> {
         .ylabel("y")
         .max_resolution(1920, 1440)
         .scatter(&x, &y)
-        .save("docs/images/scatter_plot.png")?;
+        .save("docs/assets/rustdoc/scatter_plot.png")?;
 
-    println!("✓ Generated docs/images/scatter_plot.png");
+    println!("✓ Generated docs/assets/rustdoc/scatter_plot.png");
     Ok(())
 }

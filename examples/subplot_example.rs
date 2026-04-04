@@ -9,7 +9,7 @@ use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Creating subplot figure with 2x2 grid...");
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     // Data for different plots
     let x1 = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -63,8 +63,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .subplot(1, 0, plot3)?
         .subplot(1, 1, plot4)?;
 
-    figure.save("examples/output/subplot_example.png")?;
-    println!("Subplot figure saved to: examples/output/subplot_example.png");
+    figure.save("generated/examples/subplot_example.png")?;
+    println!("Subplot figure saved to: generated/examples/subplot_example.png");
 
     Ok(())
 }

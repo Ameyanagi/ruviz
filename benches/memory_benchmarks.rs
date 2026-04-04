@@ -65,7 +65,7 @@ fn bench_memory_line_plot_100k(c: &mut Criterion) {
             Plot::new()
                 .line(black_box(&x), black_box(&y))
                 .auto_optimize()
-                .save("test_output/bench_mem_line_100k.png")
+                .save("generated/bench/bench_mem_line_100k.png")
                 .expect("Failed to save plot");
 
             let peak = get_peak_memory();
@@ -101,7 +101,7 @@ fn bench_memory_multi_series(c: &mut Criterion) {
 
             builder
                 .auto_optimize()
-                .save("test_output/bench_mem_multi_series.png")
+                .save("generated/bench/bench_mem_multi_series.png")
                 .expect("Failed to save plot");
 
             let peak = get_peak_memory();
@@ -132,7 +132,7 @@ fn bench_memory_no_leaks(c: &mut Criterion) {
 
                 Plot::new()
                     .line(black_box(&x), black_box(&y))
-                    .save("test_output/bench_mem_leaks.png")
+                    .save("generated/bench/bench_mem_leaks.png")
                     .expect("Failed to save plot");
             }
 
@@ -162,7 +162,7 @@ fn bench_memory_large_dataset(c: &mut Criterion) {
             Plot::new()
                 .histogram(black_box(&data), None)
                 .auto_optimize()
-                .save("test_output/bench_mem_large.png")
+                .save("generated/bench/bench_mem_large.png")
                 .expect("Failed to save plot");
 
             let peak = get_peak_memory();
@@ -192,7 +192,7 @@ fn bench_memory_pool_reuse(c: &mut Criterion) {
             for _ in 0..3 {
                 Plot::new()
                     .line(&x, &y)
-                    .save("test_output/bench_mem_pool_warmup.png")
+                    .save("generated/bench/bench_mem_pool_warmup.png")
                     .expect("Failed to save plot");
             }
 
@@ -203,7 +203,7 @@ fn bench_memory_pool_reuse(c: &mut Criterion) {
             for _ in 0..10 {
                 Plot::new()
                     .line(black_box(&x), black_box(&y))
-                    .save("test_output/bench_mem_pool_reuse.png")
+                    .save("generated/bench/bench_mem_pool_reuse.png")
                     .expect("Failed to save plot");
             }
 

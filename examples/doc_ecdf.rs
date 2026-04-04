@@ -1,6 +1,6 @@
 //! Documentation example: ECDF Plot
 //!
-//! Generates docs/images/ecdf_plot.png for rustdoc
+//! Generates docs/assets/rustdoc/ecdf_plot.png for rustdoc
 //!
 //! This example demonstrates the high-level ECDF (Empirical Cumulative Distribution Function) API.
 
@@ -27,8 +27,8 @@ fn main() -> Result<()> {
         .label("Sample Distribution")
         .color(Color::from_palette(0))
         .legend_best()
-        .save("docs/images/ecdf_plot.png")?;
+        .save("docs/assets/rustdoc/ecdf_plot.png")?;
 
-    println!("Generated docs/images/ecdf_plot.png");
+    println!("Generated docs/assets/rustdoc/ecdf_plot.png");
     Ok(())
 }

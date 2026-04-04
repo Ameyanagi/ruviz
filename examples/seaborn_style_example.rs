@@ -2,7 +2,7 @@ use ruviz::plots::boxplot::BoxPlotConfig;
 use ruviz::prelude::*;
 
 fn main() -> ruviz::core::Result<()> {
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     // Generate sample data with outliers
     let data = vec![
@@ -18,7 +18,7 @@ fn main() -> ruviz::core::Result<()> {
         .size_px(800, 600)
         .theme(Theme::seaborn())
         .boxplot(&data, Some(BoxPlotConfig::new()))
-        .save("examples/output/seaborn_boxplot_example.png")?;
+        .save("generated/examples/seaborn_boxplot_example.png")?;
 
     println!("Seaborn-style boxplot saved");
 
@@ -36,7 +36,7 @@ fn main() -> ruviz::core::Result<()> {
         .size_px(800, 600)
         .theme(Theme::seaborn())
         .histogram(&hist_data, None)
-        .save("examples/output/seaborn_histogram_example.png")?;
+        .save("generated/examples/seaborn_histogram_example.png")?;
 
     println!("Seaborn-style histogram saved");
     Ok(())

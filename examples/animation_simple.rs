@@ -13,7 +13,7 @@ use ruviz::record;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
-    std::fs::create_dir_all("export_output/gif").ok();
+    std::fs::create_dir_all("generated/examples/export/gif").ok();
 
     // ==========================================================
     // Example 1: Simple bounce animation
@@ -23,7 +23,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
     record!(
-        "export_output/gif/simple_bounce.gif",
+        "generated/examples/export/gif/simple_bounce.gif",
         60, // 2 seconds at 30 FPS
         config: config.clone(),
         |t| {
@@ -39,7 +39,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("  Saved: export_output/gif/simple_bounce.gif");
+    println!("  Saved: generated/examples/export/gif/simple_bounce.gif");
 
     // ==========================================================
     // Example 2: Wave with duration syntax
@@ -49,7 +49,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 
     record!(
-        "export_output/gif/simple_wave.gif",
+        "generated/examples/export/gif/simple_wave.gif",
         60, // 2 seconds at 30 FPS
         config: config.clone(),
         |t| {
@@ -64,7 +64,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("  Saved: export_output/gif/simple_wave.gif");
+    println!("  Saved: generated/examples/export/gif/simple_wave.gif");
 
     // ==========================================================
     // Example 3: Comparing easing functions
@@ -74,7 +74,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let wide_config = RecordConfig::new().max_resolution(1000, 400).framerate(30);
 
     record!(
-        "export_output/gif/simple_easing.gif",
+        "generated/examples/export/gif/simple_easing.gif",
         90, // 3 seconds at 30 FPS
         config: wide_config,
         |t| {
@@ -112,7 +112,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("  Saved: export_output/gif/simple_easing.gif");
+    println!("  Saved: generated/examples/export/gif/simple_easing.gif");
 
     println!("\nAll examples complete!");
     Ok(())

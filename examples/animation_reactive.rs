@@ -12,7 +12,7 @@ use ruviz::record;
 use ruviz::render::Color;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    std::fs::create_dir_all("export_output/gif").ok();
+    std::fs::create_dir_all("generated/examples/export/gif").ok();
 
     // Use max_resolution for matplotlib-style visual weight
     let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
@@ -49,7 +49,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let max_frames = 120;
 
     record!(
-        "export_output/gif/reactive_observable.gif",
+        "generated/examples/export/gif/reactive_observable.gif",
         max_frames,
         config: config.clone(),
         |tick| {
@@ -64,7 +64,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("  Saved: export_output/gif/reactive_observable.gif");
+    println!("  Saved: generated/examples/export/gif/reactive_observable.gif");
 
     // ==========================================================
     // APPROACH 2: Animation::build() (simplified, declarative)
@@ -85,17 +85,20 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .ease(easing::ease_out_bounce)
         .duration_secs(1.0)
         .config(config)
-        .record("export_output/gif/reactive_builder.gif", |values, tick| {
-            create_circle_plot(
-                values["x"],
-                values["y"],
-                values["r"],
-                tick.time,
-                "Builder Pattern",
-            )
-        })?;
+        .record(
+            "generated/examples/export/gif/reactive_builder.gif",
+            |values, tick| {
+                create_circle_plot(
+                    values["x"],
+                    values["y"],
+                    values["r"],
+                    tick.time,
+                    "Builder Pattern",
+                )
+            },
+        )?;
 
-    println!("  Saved: export_output/gif/reactive_builder.gif");
+    println!("  Saved: generated/examples/export/gif/reactive_builder.gif");
 
     // ==========================================================
     // Summary

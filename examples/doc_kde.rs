@@ -1,6 +1,6 @@
 //! Documentation example: KDE Plot
 //!
-//! Generates docs/images/kde_plot.png for rustdoc
+//! Generates docs/assets/rustdoc/kde_plot.png for rustdoc
 //!
 //! This example demonstrates the high-level KDE (Kernel Density Estimation) API.
 
@@ -37,8 +37,8 @@ fn main() -> Result<()> {
         .label("Distribution")
         .color(Color::from_palette(0))
         .legend_best()
-        .save("docs/images/kde_plot.png")?;
+        .save("docs/assets/rustdoc/kde_plot.png")?;
 
-    println!("Generated docs/images/kde_plot.png");
+    println!("Generated docs/assets/rustdoc/kde_plot.png");
     Ok(())
 }

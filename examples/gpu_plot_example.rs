@@ -8,7 +8,7 @@ use ruviz::prelude::*;
 
 fn main() -> Result<()> {
     println!("=== GPU Plot Example ===\n");
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     // Generate large dataset (GPU threshold is typically 5K+ points)
     let point_count = 10_000;
@@ -32,10 +32,10 @@ fn main() -> Result<()> {
             .gpu(true)
             .line(&x, &y)
             .color(Color::new(31, 119, 180))
-            .save("examples/output/gpu_plot_explicit.png");
+            .save("generated/examples/gpu_plot_explicit.png");
 
         match result {
-            Ok(_) => println!("Saved: examples/output/gpu_plot_explicit.png (GPU enabled)"),
+            Ok(_) => println!("Saved: generated/examples/gpu_plot_explicit.png (GPU enabled)"),
             Err(e) => println!("GPU render failed (expected if no GPU): {}", e),
         }
     }
@@ -49,8 +49,8 @@ fn main() -> Result<()> {
             .ylabel("Y")
             .line(&x, &y)
             .color(Color::new(31, 119, 180))
-            .save("examples/output/gpu_plot_explicit.png")?;
-        println!("Saved: examples/output/gpu_plot_explicit.png (CPU fallback)");
+            .save("generated/examples/gpu_plot_explicit.png")?;
+        println!("Saved: generated/examples/gpu_plot_explicit.png (CPU fallback)");
     }
 
     // Example 2: Auto-optimized rendering
@@ -66,8 +66,8 @@ fn main() -> Result<()> {
 
     let plot = plot.auto_optimize();
     println!("Selected backend: {}", plot.get_backend_name());
-    plot.save("examples/output/gpu_plot_auto.png")?;
-    println!("Saved: examples/output/gpu_plot_auto.png");
+    plot.save("generated/examples/gpu_plot_auto.png")?;
+    println!("Saved: generated/examples/gpu_plot_auto.png");
 
     // Example 3: Very large dataset (100K points)
     println!("\n--- Example 3: Very Large Dataset (100K points) ---");
@@ -89,8 +89,8 @@ fn main() -> Result<()> {
 
     let large_plot = large_plot.auto_optimize();
     println!("Selected backend: {}", large_plot.get_backend_name());
-    large_plot.save("examples/output/gpu_plot_large.png")?;
-    println!("Saved: examples/output/gpu_plot_large.png");
+    large_plot.save("generated/examples/gpu_plot_large.png")?;
+    println!("Saved: generated/examples/gpu_plot_large.png");
 
     // Example 4: GPU vs CPU comparison
     println!("\n--- Example 4: GPU vs CPU Comparison ---");
@@ -111,7 +111,7 @@ fn compare_gpu_cpu(x: &[f64], y: &[f64]) -> Result<()> {
         .backend(ruviz::core::plot::BackendType::Skia)
         .line(&x_vec, &y_vec)
         .color(Color::new(214, 39, 40))
-        .save("examples/output/gpu_comparison_cpu.png")?;
+        .save("generated/examples/gpu_comparison_cpu.png")?;
     let cpu_time = cpu_start.elapsed();
     println!("CPU render time: {:?}", cpu_time);
 
@@ -123,7 +123,7 @@ fn compare_gpu_cpu(x: &[f64], y: &[f64]) -> Result<()> {
             .gpu(true)
             .line(&x_vec, &y_vec)
             .color(Color::new(44, 160, 44))
-            .save("examples/output/gpu_comparison_gpu.png");
+            .save("generated/examples/gpu_comparison_gpu.png");
 
         match result {
             Ok(_) => {

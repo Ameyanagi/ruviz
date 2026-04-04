@@ -1,6 +1,6 @@
 //! Documentation example: Marker styles
 //!
-//! Generates docs/images/marker_styles.png for rustdoc
+//! Generates docs/assets/rustdoc/marker_styles.png for rustdoc
 
 use ruviz::prelude::*;
 use ruviz::render::MarkerStyle;
@@ -71,8 +71,8 @@ fn main() -> Result<()> {
         .label("DiamondOpen")
         .marker(MarkerStyle::DiamondOpen)
         .marker_size(10.0)
-        .save("docs/images/marker_styles.png")?;
+        .save("docs/assets/rustdoc/marker_styles.png")?;
 
-    println!("✓ Generated docs/images/marker_styles.png");
+    println!("✓ Generated docs/assets/rustdoc/marker_styles.png");
     Ok(())
 }

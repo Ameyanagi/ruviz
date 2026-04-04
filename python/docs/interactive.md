@@ -1,43 +1,44 @@
 # Interactivity
 
-`ruviz` chooses the interactive runtime based on where it is running.
+`ruviz` uses different interactive paths depending on where the plot is shown.
 
-## Jupyter
+## Jupyter Default Behavior
 
-In notebooks, a bare `plot` result and `plot.show()` both render a static PNG snapshot by default.
-Use `plot.widget()` when you explicitly want the interactive `RuvizWidget` backed by the WASM
-frontend. The notebook frontend is bundled with Bun from `python/python/ruviz/widget.entry.js`
-and uses the main-thread canvas runtime for compatibility with `anywidget`'s blob-based module
-loader.
+In notebooks, a bare plot result and `plot.show()` both render a static PNG
+snapshot. This keeps notebook output predictable and avoids starting a widget
+frontend unless you ask for one explicitly.
 
 ```python
 import ruviz
 
-source = ruviz.observable([0.2, 0.9, 0.5, 1.3, 0.8])
-plot = ruviz.plot().line([0, 1, 2, 3, 4], source)
+plot = ruviz.plot().line([0, 1, 2], [0, 1, 0]).title("Notebook Snapshot")
 plot.show()
+```
+
+## Explicit Widgets
+
+Use `plot.widget()` when you want the synced browser/WASM widget:
+
+```python
+import numpy as np
+import ruviz
+
+x = np.linspace(0.0, 6.0, 200)
+y = ruviz.observable(np.sin(x))
+
+plot = ruviz.plot().line(x, y).title("Live Sine Wave")
 widget = plot.widget()
-
-source.replace([0.3, 1.1, 0.7, 1.0, 0.6])
 ```
 
-Observable updates stay live only in the widget view. Static notebook output is a one-time PNG
-snapshot.
+Observable updates stay live in the widget:
 
-The widget UI includes PNG and SVG export actions for the current interactive view.
-
-After changing the notebook frontend or the web SDK, regenerate the widget bundle from the
-repository root. The build bootstraps the repo-pinned `wasm-pack` tool automatically and uses a
-reproducible wasm build for the notebook bundle. CI and release rebuild the canonical Linux bundle
-automatically:
-
-```sh
-bun run build:python-widget
+```python
+y.replace(np.cos(x))
 ```
 
-## Console
+## Desktop Windows
 
-Outside notebooks, `plot.show()` opens the native `winit` interactive window:
+Outside notebooks, `plot.show()` opens the native interactive window:
 
 ```python
 import ruviz
@@ -45,8 +46,13 @@ import ruviz
 ruviz.plot().scatter([0, 1, 2], [1.2, 0.4, 1.7]).show()
 ```
 
-## Examples
+## Widget Bundles
 
-- `examples/notebook_observable.py`
-- `examples/notebook_export.py`
-- `examples/console_interactive.py`
+The widget frontend is bundled from `python/python/ruviz/widget.entry.js` and
+the web SDK. Rebuild it from the repository root after frontend changes:
+
+```sh
+bun run build:python-widget
+```
+
+The release workflow rebuilds the canonical bundled widget before packaging.

@@ -21,7 +21,7 @@ struct BenchmarkResult {
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     println!("GPU vs CPU Scaling Analysis");
     println!("===========================\n");
@@ -188,7 +188,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    println!("\nScaling analysis complete! Check examples/output/ for plots");
+    println!("\nScaling analysis complete! Check generated/examples/ for plots");
     Ok(())
 }
 
@@ -220,7 +220,7 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         .label("CPU")
         .line(&point_counts, &gpu_throughput)
         .label("GPU")
-        .save("examples/output/gpu_throughput_scaling.png")?;
+        .save("generated/examples/gpu_throughput_scaling.png")?;
 
     let valid_speedups: Vec<_> = results.iter().filter(|r| r.gpu_success).collect();
 
@@ -238,12 +238,12 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
             .size(12.0, 6.0)
             .dpi(150)
             .scatter(&speedup_points, &speedup_values)
-            .save("examples/output/gpu_speedup_scaling.png")?;
+            .save("generated/examples/gpu_speedup_scaling.png")?;
     }
 
     println!("\nPerformance plots saved:");
-    println!("  examples/output/gpu_throughput_scaling.png");
-    println!("  examples/output/gpu_speedup_scaling.png");
+    println!("  generated/examples/gpu_throughput_scaling.png");
+    println!("  generated/examples/gpu_speedup_scaling.png");
 
     Ok(())
 }

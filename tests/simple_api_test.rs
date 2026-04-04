@@ -11,7 +11,7 @@ fn test_line_plot_one_liner() {
     let y = vec![0.0, 1.0, 4.0, 9.0];
 
     // WHEN: Using simple API
-    let result = line_plot(&x, &y, "tests/output/simple_line.png");
+    let result = line_plot(&x, &y, "generated/tests/render/simple_line.png");
 
     // THEN: Should succeed and create file
     assert!(
@@ -19,7 +19,7 @@ fn test_line_plot_one_liner() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert!(Path::new("tests/output/simple_line.png").exists());
+    assert!(Path::new("generated/tests/render/simple_line.png").exists());
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn test_scatter_plot_one_liner() {
     let y = vec![1.0, 4.0, 9.0, 16.0];
 
     // WHEN: Using simple API
-    let result = scatter_plot(&x, &y, "tests/output/simple_scatter.png");
+    let result = scatter_plot(&x, &y, "generated/tests/render/simple_scatter.png");
 
     // THEN: Should succeed
     assert!(
@@ -37,7 +37,7 @@ fn test_scatter_plot_one_liner() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert!(Path::new("tests/output/simple_scatter.png").exists());
+    assert!(Path::new("generated/tests/render/simple_scatter.png").exists());
 }
 
 #[test]
@@ -47,7 +47,11 @@ fn test_bar_chart_one_liner() {
     let values = vec![10.0, 20.0, 15.0, 25.0];
 
     // WHEN: Using simple API
-    let result = bar_chart(&categories, &values, "tests/output/simple_bar.png");
+    let result = bar_chart(
+        &categories,
+        &values,
+        "generated/tests/render/simple_bar.png",
+    );
 
     // THEN: Should succeed
     assert!(
@@ -55,7 +59,7 @@ fn test_bar_chart_one_liner() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert!(Path::new("tests/output/simple_bar.png").exists());
+    assert!(Path::new("generated/tests/render/simple_bar.png").exists());
 }
 
 #[test]
@@ -64,7 +68,7 @@ fn test_histogram_one_liner() {
     let data = vec![1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0];
 
     // WHEN: Using simple API
-    let result = histogram(&data, "tests/output/simple_histogram.png");
+    let result = histogram(&data, "generated/tests/render/simple_histogram.png");
 
     // THEN: Should succeed
     assert!(
@@ -72,7 +76,7 @@ fn test_histogram_one_liner() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert!(Path::new("tests/output/simple_histogram.png").exists());
+    assert!(Path::new("generated/tests/render/simple_histogram.png").exists());
 }
 
 #[test]
@@ -86,7 +90,7 @@ fn test_line_plot_with_title() {
         &x,
         &y,
         "Test Line Plot",
-        "tests/output/simple_line_titled.png",
+        "generated/tests/render/simple_line_titled.png",
     );
 
     // THEN: Should succeed
@@ -95,7 +99,7 @@ fn test_line_plot_with_title() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert!(Path::new("tests/output/simple_line_titled.png").exists());
+    assert!(Path::new("generated/tests/render/simple_line_titled.png").exists());
 }
 
 #[test]
@@ -109,7 +113,7 @@ fn test_scatter_plot_with_title() {
         &x,
         &y,
         "Test Scatter",
-        "tests/output/simple_scatter_titled.png",
+        "generated/tests/render/simple_scatter_titled.png",
     );
 
     // THEN: Should succeed
@@ -131,7 +135,7 @@ fn test_bar_chart_with_title() {
         &categories,
         &values,
         "Test Bar Chart",
-        "tests/output/simple_bar_titled.png",
+        "generated/tests/render/simple_bar_titled.png",
     );
 
     // THEN: Should succeed
@@ -151,7 +155,7 @@ fn test_histogram_with_title() {
     let result = histogram_with_title(
         &data,
         "Test Histogram",
-        "tests/output/simple_histogram_titled.png",
+        "generated/tests/render/simple_histogram_titled.png",
     );
 
     // THEN: Should succeed
@@ -169,7 +173,7 @@ fn test_simple_api_auto_optimizes() {
     let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
 
     // WHEN: Using simple API (should auto-optimize)
-    let result = line_plot(&x, &y, "tests/output/simple_optimized.png");
+    let result = line_plot(&x, &y, "generated/tests/render/simple_optimized.png");
 
     // THEN: Should succeed (optimization happens internally)
     assert!(

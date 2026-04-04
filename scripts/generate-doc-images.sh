@@ -5,15 +5,15 @@
 #
 # This script runs all `doc_*.rs` examples plus the animation gallery generator
 # so the static images and GIFs cited by rustdoc/README stay in sync with
-# `docs/images/`.
+# `docs/assets/rustdoc/`.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-IMAGES_DIR="$PROJECT_ROOT/docs/images"
+IMAGES_DIR="$PROJECT_ROOT/docs/assets/rustdoc"
 
-# Ensure the images directory exists
+# Ensure the asset directory exists
 mkdir -p "$IMAGES_DIR"
 
 echo "Generating documentation images..."

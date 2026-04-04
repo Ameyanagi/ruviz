@@ -1,6 +1,6 @@
 //! Documentation example: Heatmap
 //!
-//! Generates docs/images/heatmap.png for rustdoc
+//! Generates docs/assets/rustdoc/heatmap.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -20,8 +20,8 @@ fn main() -> Result<()> {
         .ylabel("Y")
         .max_resolution(1920, 1440)
         .heatmap(&data, None)
-        .save("docs/images/heatmap.png")?;
+        .save("docs/assets/rustdoc/heatmap.png")?;
 
-    println!("✓ Generated docs/images/heatmap.png");
+    println!("✓ Generated docs/assets/rustdoc/heatmap.png");
     Ok(())
 }

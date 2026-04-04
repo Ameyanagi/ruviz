@@ -8,7 +8,7 @@
 
 > **createPlotFromSnapshot**(`snapshot`): [`PlotBuilder`](../classes/PlotBuilder.md)
 
-Defined in: [index.ts:1837](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L1837)
+Defined in: [index.ts:1825](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1825)
 
 Rehydrate a plot builder from a serialized snapshot.
 

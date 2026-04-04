@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
     }
 
     // Save CSV data alongside the other generated performance artifacts.
-    let csv_path = std::path::Path::new("examples/output/performance/performance_data.csv");
+    let csv_path = std::path::Path::new("generated/examples/performance/performance_data.csv");
     if let Some(parent) = csv_path.parent() {
         std::fs::create_dir_all(parent)?;
     }

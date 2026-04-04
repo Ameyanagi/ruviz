@@ -1,6 +1,7 @@
 # Rust
 target/
 Cargo.lock
+generated/
 
 # IDE
 .vscode/
@@ -11,28 +12,6 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
-
-# Test outputs
-test_output/*
-export_test_output/*
-tests/output/*.png
-tests/output/*.pdf
-tests/output/*.svg
-tests/output/**/*.png
-tests/output/**/*.pdf
-tests/output/**/*.svg
-!tests/output/.gitkeep
-
-# Example outputs
-examples/output/*.png
-examples/output/*.pdf
-examples/output/*.svg
-examples/output/**/*.png
-examples/output/**/*.pdf
-examples/output/**/*.svg
-examples/output/performance/*.txt
-examples/output/performance/*.csv
-!examples/output/.gitkeep
 
 # Scattered outputs in root (legacy - to be removed)
 /*.png
@@ -68,10 +47,6 @@ python/**/*.pyc
 python/**/*.pyo
 python/python/ruviz/_native*.so
 python/python/ruviz/*.dSYM/
-python/examples/output/*.png
-python/examples/output/*.pdf
-python/examples/output/*.svg
-!python/examples/output/.gitkeep
 
 # AI/Assistant artifacts
 .serena/
@@ -83,7 +58,6 @@ plans/
 claudedocs/
 AGENTS.md
 CLAUDE.md
-export_output/
 .playwright-mcp
 .playwright-mcp/
 review/

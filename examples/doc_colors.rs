@@ -1,6 +1,6 @@
 //! Documentation example: Color palette
 //!
-//! Generates docs/images/colors.png for rustdoc
+//! Generates docs/assets/rustdoc/colors.png for rustdoc
 
 use ruviz::prelude::*;
 use ruviz::render::Color;
@@ -49,8 +49,8 @@ fn main() -> Result<()> {
         .line(&x, &y8)
         .label("Color 8")
         .color(palette[7])
-        .save("docs/images/colors.png")?;
+        .save("docs/assets/rustdoc/colors.png")?;
 
-    println!("✓ Generated docs/images/colors.png");
+    println!("✓ Generated docs/assets/rustdoc/colors.png");
     Ok(())
 }

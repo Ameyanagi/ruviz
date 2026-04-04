@@ -25,10 +25,10 @@ cargo test --doc
 Use this lane for output-generating and heavier suites.
 
 ```bash
-# Visual output suite (writes PNGs to tests/output)
+# Visual output suite (writes PNGs to generated/tests/render)
 cargo test --test visual_output_tests_fixed
 
-# Export format suite (writes artifacts under export_test_output)
+# Export format suite (writes artifacts under generated/tests/export)
 cargo test --test export_format_tests
 
 # Heavier validation/property suites
@@ -45,11 +45,14 @@ Legacy duplicate variants were retired to keep one canonical file per concern.
 
 ## Output Directories
 
-- `tests/output/`: visual plot outputs and related artifacts
-- `export_test_output/png/`: PNG export artifacts
-- `export_test_output/svg/`: SVG export artifacts
-- `export_test_output/raw/`: raw RGBA export artifacts and metadata
-- `export_test_output/direct/`: direct `SkiaRenderer` export artifacts
+- `generated/tests/render/`: visual plot outputs and related artifacts
+- `generated/tests/export/png/`: PNG export artifacts
+- `generated/tests/export/svg/`: SVG export artifacts
+- `generated/tests/export/raw/`: raw RGBA export artifacts and metadata
+- `generated/tests/export/direct/`: direct `SkiaRenderer` export artifacts
+
+See [docs/BUILD_OUTPUTS.md](docs/BUILD_OUTPUTS.md) for the full repository-wide
+artifact layout.
 
 ## Notes
 

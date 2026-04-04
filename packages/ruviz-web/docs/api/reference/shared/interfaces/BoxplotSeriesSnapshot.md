@@ -6,7 +6,7 @@
 
 # Interface: BoxplotSeriesSnapshot
 
-Defined in: [shared.ts:97](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L97)
+Defined in: [shared.ts:95](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L95)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:97](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **data**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:99](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L99)
+Defined in: [shared.ts:97](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L97)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:99](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **kind**: `"boxplot"`
 
-Defined in: [shared.ts:98](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L98)
+Defined in: [shared.ts:96](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L96)

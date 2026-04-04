@@ -17,6 +17,9 @@ cargo test --doc
 ```
 
 Run the relevant examples or targeted tests when you touch rendering, export, or interactive behavior.
+For release-facing docs and media refreshes, use `make release-docs` on the
+dedicated release docs branch. See [docs/BUILD_OUTPUTS.md](docs/BUILD_OUTPUTS.md)
+for the current artifact layout and regeneration workflow.
 
 ## Pull Requests
 
@@ -28,3 +31,5 @@ Run the relevant examples or targeted tests when you touch rendering, export, or
 
 - Keep [README.md](README.md) and the files under [docs](docs) consistent with the current API.
 - Prefer examples that compile against the current public surface.
+- Keep generated assets in their canonical committed paths and keep transient
+  artifacts under `generated/`.

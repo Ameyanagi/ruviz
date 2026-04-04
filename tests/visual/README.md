@@ -23,7 +23,7 @@ tests/visual/
         ├── violin.png
         └── ...
 
-tests/output/
+generated/tests/render/
 ├── visual/             # Generated test images
 │   ├── kde.png
 │   └── ...
@@ -55,8 +55,8 @@ cargo test --test visual_traits_test test_kde_visual -- --ignored
 
 ### 3. Review Results
 
-- Generated images: `tests/output/visual/`
-- Diff images (failures): `tests/output/visual_diff/`
+- Generated images: `generated/tests/render/visual/`
+- Diff images (failures): `generated/tests/visual-diff/`
 - Compare visually against references
 - These output directories are local debug artifacts and are gitignored; only `tests/visual/reference/` is versioned
 

@@ -1836,6 +1836,7 @@ export function createSineSignal(options: SineSignalOptions): SineSignal {
   return new SineSignal(options);
 }
 
+/** Register custom font bytes for browser-hosted text rendering. */
 export async function registerFont(bytes: Uint8Array | ArrayLike<number>): Promise<void> {
   const module = await ensureRawModule();
   module.register_font_bytes_js(Uint8Array.from(bytes));
@@ -1872,6 +1873,12 @@ export async function getRuntimeCapabilities(): Promise<RuntimeCapabilities> {
   };
 }
 
+/**
+ * Create an interactive main-thread canvas session.
+ *
+ * Use this when you want explicit control over session setup rather than
+ * calling `plot.mount(canvas)`.
+ */
 export async function createCanvasSession(
   canvas: HTMLCanvasElement,
   options?: CanvasSessionOptions,
@@ -1911,6 +1918,12 @@ export async function createCanvasSession(
   return session;
 }
 
+/**
+ * Create a worker-backed canvas session with optional main-thread fallback.
+ *
+ * This is the preferred path for heavier interactive views when the browser
+ * supports `Worker` plus `OffscreenCanvas`.
+ */
 export async function createWorkerSession(
   canvas: HTMLCanvasElement,
   options?: WorkerSessionOptions,

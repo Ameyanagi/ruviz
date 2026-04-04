@@ -1,6 +1,6 @@
 //! Documentation example: Polar Plot
 //!
-//! Generates docs/images/polar_plot.png and docs/images/polar_cardioid.png for rustdoc.
+//! Generates docs/assets/rustdoc/polar_plot.png and docs/assets/rustdoc/polar_cardioid.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating polar plots.
 
@@ -21,9 +21,9 @@ fn main() -> Result<()> {
         .polar_line(&r, &theta)
         .fill(true)
         .fill_alpha(0.3)
-        .save("docs/images/polar_plot.png")?;
+        .save("docs/assets/rustdoc/polar_plot.png")?;
 
-    println!("Generated docs/images/polar_plot.png (high-level API)");
+    println!("Generated docs/assets/rustdoc/polar_plot.png (high-level API)");
 
     // Cardioid curve
     let theta: Vec<f64> = (0..n_points)
@@ -37,9 +37,9 @@ fn main() -> Result<()> {
         .fill(true)
         .fill_alpha(0.4)
         .color(Color::from_hex("#e74c3c").unwrap())
-        .save("docs/images/polar_cardioid.png")?;
+        .save("docs/assets/rustdoc/polar_cardioid.png")?;
 
-    println!("Generated docs/images/polar_cardioid.png");
+    println!("Generated docs/assets/rustdoc/polar_cardioid.png");
 
     Ok(())
 }

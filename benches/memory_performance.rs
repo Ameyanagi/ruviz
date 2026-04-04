@@ -43,7 +43,7 @@ fn bench_plot_rendering(c: &mut Criterion) {
     let mut group = c.benchmark_group("plot_rendering");
 
     // Create test output directory
-    std::fs::create_dir_all("test_output").ok();
+    std::fs::create_dir_all("generated/bench").ok();
 
     for &points in [100, 1000, 10000].iter() {
         group.throughput(Throughput::Elements(points as u64));
@@ -60,7 +60,7 @@ fn bench_plot_rendering(c: &mut Criterion) {
                     let _result = Plot::new()
                         .line(x, y)
                         .title("Performance Test")
-                        .save(format!("test_output/bench_{}.png", points));
+                        .save(format!("generated/bench/bench_{}.png", points));
                 });
             },
         );
@@ -82,7 +82,7 @@ fn bench_steady_state_rendering(c: &mut Criterion) {
                 let _result = Plot::new()
                     .line(&x_data, &y_data)
                     .title(format!("Plot {}", i))
-                    .save(format!("test_output/steady_state_{}.png", i));
+                    .save(format!("generated/bench/steady_state_{}.png", i));
             }
         });
     });
@@ -112,7 +112,7 @@ fn bench_concurrent_rendering(c: &mut Criterion) {
                                         .line(&x, &y)
                                         .title(format!("Thread {} Plot {}", thread_id, i))
                                         .save(format!(
-                                            "test_output/concurrent_{}_{}.png",
+                                            "generated/bench/concurrent_{}_{}.png",
                                             thread_id, i
                                         ));
                                 }

@@ -6,7 +6,7 @@
 
 # Interface: PlotSaveOptions
 
-Defined in: [shared.ts:27](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L27)
+Defined in: [shared.ts:27](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L27)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:27](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > `optional` **fileName?**: `string`
 
-Defined in: [shared.ts:28](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L28)
+Defined in: [shared.ts:28](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L28)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:28](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > `optional` **format?**: [`PlotSaveFormat`](../type-aliases/PlotSaveFormat.md)
 
-Defined in: [shared.ts:29](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L29)
+Defined in: [shared.ts:29](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L29)

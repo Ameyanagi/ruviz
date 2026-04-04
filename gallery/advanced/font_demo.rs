@@ -5,7 +5,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Creating cosmic-text font rendering demo...");
 
     // Ensure test output directory exists
-    fs::create_dir_all("test_output")?;
+    fs::create_dir_all("generated/bench")?;
 
     // Sample data for demonstration
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0];

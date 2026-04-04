@@ -1,6 +1,6 @@
 //! Documentation example: Histogram
 //!
-//! Generates docs/images/histogram.png for rustdoc
+//! Generates docs/assets/rustdoc/histogram.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -21,8 +21,8 @@ fn main() -> Result<()> {
         .ylabel("Frequency")
         .max_resolution(1920, 1440)
         .histogram(&data, None)
-        .save("docs/images/histogram.png")?;
+        .save("docs/assets/rustdoc/histogram.png")?;
 
-    println!("✓ Generated docs/images/histogram.png");
+    println!("✓ Generated docs/assets/rustdoc/histogram.png");
     Ok(())
 }

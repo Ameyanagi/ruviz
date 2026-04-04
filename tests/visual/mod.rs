@@ -19,7 +19,7 @@
 //!    cargo test --test visual_traits -- --ignored
 //!    ```
 //!
-//! 3. Review any differences in `tests/output/visual_diff/`
+//! 3. Review any differences in `generated/tests/visual-diff/`
 //!
 //! # Note
 //!
@@ -51,9 +51,9 @@ impl Default for VisualTestConfig {
     fn default() -> Self {
         let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         Self {
-            output_dir: base.join("tests/output/visual"),
+            output_dir: base.join("generated/tests/render/visual"),
             reference_dir: base.join("tests/visual/reference/matplotlib"),
-            diff_dir: base.join("tests/output/visual_diff"),
+            diff_dir: base.join("generated/tests/visual-diff"),
             figure_size: (640, 480),
             dpi: 100,
             tolerance: 0.05, // 5% pixel difference tolerance

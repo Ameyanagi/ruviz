@@ -1,8 +1,8 @@
 //! Documentation example: Error Bars
 //!
-//! Generates docs/images/errorbar_plot.png, docs/images/errorbar_standalone.png,
-//! docs/images/errorbar_asymmetric.png, and
-//! docs/images/errorbar_continuation.png for rustdoc.
+//! Generates docs/assets/rustdoc/errorbar_plot.png, docs/assets/rustdoc/errorbar_standalone.png,
+//! docs/assets/rustdoc/errorbar_asymmetric.png, and
+//! docs/assets/rustdoc/errorbar_continuation.png for rustdoc.
 //!
 //! This example demonstrates both error bar API patterns:
 //! 1. **Modifier Pattern**: Attach error bars to existing Line/Scatter series
@@ -43,9 +43,9 @@ fn main() -> Result<()> {
         .label("Scatter + XY Errors")
         .color(Color::from_palette(1))
         .legend_best()
-        .save("docs/images/errorbar_plot.png")?;
+        .save("docs/assets/rustdoc/errorbar_plot.png")?;
 
-    println!("Generated docs/images/errorbar_plot.png");
+    println!("Generated docs/assets/rustdoc/errorbar_plot.png");
 
     // === PATTERN 2: Standalone Error Bars (existing API) ===
     // Use error_bars() for dedicated error bar series
@@ -62,9 +62,9 @@ fn main() -> Result<()> {
         .label("Standalone")
         .color(Color::from_palette(2))
         .marker(MarkerStyle::Triangle)
-        .save("docs/images/errorbar_standalone.png")?;
+        .save("docs/assets/rustdoc/errorbar_standalone.png")?;
 
-    println!("Generated docs/images/errorbar_standalone.png");
+    println!("Generated docs/assets/rustdoc/errorbar_standalone.png");
 
     // === PATTERN 3: Asymmetric Error Bars ===
     // Use .with_yerr_asymmetric() for different upper/lower bounds
@@ -83,9 +83,9 @@ fn main() -> Result<()> {
         .label("Asymmetric Errors")
         .color(Color::from_palette(3))
         .marker(MarkerStyle::Diamond)
-        .save("docs/images/errorbar_asymmetric.png")?;
+        .save("docs/assets/rustdoc/errorbar_asymmetric.png")?;
 
-    println!("Generated docs/images/errorbar_asymmetric.png");
+    println!("Generated docs/assets/rustdoc/errorbar_asymmetric.png");
 
     // === PATTERN 4: Continuation Method (chaining error bar series) ===
     // Use .error_bars() as continuation method
@@ -107,9 +107,9 @@ fn main() -> Result<()> {
         .error_bars(&x, &y_b, &y_b_err)
         .label("Dataset B")
         .color(Color::from_palette(1))
-        .save("docs/images/errorbar_continuation.png")?;
+        .save("docs/assets/rustdoc/errorbar_continuation.png")?;
 
-    println!("Generated docs/images/errorbar_continuation.png");
+    println!("Generated docs/assets/rustdoc/errorbar_continuation.png");
 
     Ok(())
 }

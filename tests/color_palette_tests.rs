@@ -22,7 +22,7 @@ fn test_default_color_palette() {
         .line(&x_data, &vec![5.0, 6.0, 7.0, 8.0, 9.0])
         .label("Series 5")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/default_palette.png");
+        .save("generated/tests/render/default_palette.png");
 
     assert!(result.is_ok(), "Default palette should work");
 }
@@ -46,7 +46,7 @@ fn test_custom_color_sequence() {
         .color(Color::from_hex("#0080FF").unwrap()) // Blue
         .label("Blue Line")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/custom_colors.png");
+        .save("generated/tests/render/custom_colors.png");
 
     assert!(result.is_ok(), "Custom colors should work");
 }
@@ -73,7 +73,7 @@ fn test_scatter_with_different_colors() {
         .marker_size(12.0)
         .label("Group B")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/scatter_colors.png");
+        .save("generated/tests/render/scatter_colors.png");
 
     assert!(result.is_ok(), "Scatter with colors should work");
 }
@@ -103,7 +103,7 @@ fn test_transparency_effects() {
         .line_width(3.0)
         .label("40% Green")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/transparency.png");
+        .save("generated/tests/render/transparency.png");
 
     assert!(result.is_ok(), "Transparency effects should work");
 }
@@ -156,7 +156,7 @@ fn test_colormap_visualization() {
         .line_width(3.0)
         .label("Line 5 (t=1.0)")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/colormap_viridis.png");
+        .save("generated/tests/render/colormap_viridis.png");
 
     assert!(result.is_ok(), "Colormap visualization should work");
 }
@@ -214,7 +214,7 @@ fn test_different_colormaps() {
             .line_width(2.0)
             .label("t=1.00")
             .legend(ruviz::core::position::Position::TopRight)
-            .save(format!("tests/output/colormap_{}.png", name));
+            .save(format!("generated/tests/render/colormap_{}.png", name));
 
         assert!(result.is_ok(), "{} colormap should work", name);
     }
@@ -266,7 +266,7 @@ fn test_hex_color_parsing() {
         .line_width(2.0)
         .label("#8040ff")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/hex_colors.png");
+        .save("generated/tests/render/hex_colors.png");
 
     assert!(result.is_ok(), "Hex color parsing should work");
 }
@@ -367,7 +367,7 @@ fn test_color_palette_cycling() {
         .line_width(1.5)
         .label("Series 12")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/palette_cycling.png");
+        .save("generated/tests/render/palette_cycling.png");
 
     assert!(result.is_ok(), "Palette cycling should work");
 }
@@ -462,7 +462,7 @@ fn test_scientific_colormaps() {
             .line_width(3.0)
             .label("1.0")
             .legend(ruviz::core::position::Position::TopRight)
-            .save(format!("tests/output/scientific_{}.png", name));
+            .save(format!("generated/tests/render/scientific_{}.png", name));
 
         assert!(result.is_ok(), "Scientific colormap {} should work", name);
     }
@@ -487,7 +487,7 @@ fn test_grouped_fixed_color_behavior() {
                 .line(&x_data, &y2)
         })
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/grouped_fixed_color.png");
+        .save("generated/tests/render/grouped_fixed_color.png");
 
     assert!(result.is_ok(), "Grouped fixed color should work");
 }
@@ -512,7 +512,7 @@ fn test_grouped_auto_palette_color_behavior() {
         .line(&x_data, &y3)
         .label("Outside Group")
         .legend(ruviz::core::position::Position::TopRight)
-        .save("tests/output/grouped_auto_palette_color.png");
+        .save("generated/tests/render/grouped_auto_palette_color.png");
 
     assert!(result.is_ok(), "Grouped auto palette color should work");
 }

@@ -2,7 +2,7 @@ use ruviz::plots::histogram::HistogramConfig;
 use ruviz::prelude::*;
 
 fn main() -> ruviz::core::Result<()> {
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     // Generate sample data - normal distribution-like
     let data = vec![
@@ -18,8 +18,8 @@ fn main() -> ruviz::core::Result<()> {
         .size_px(800, 600)
         .theme(Theme::publication())
         .histogram(&data, Some(HistogramConfig::new()))
-        .save("examples/output/histogram_example.png")?;
+        .save("generated/examples/histogram_example.png")?;
 
-    println!("Professional histogram saved as examples/output/histogram_example.png");
+    println!("Professional histogram saved as generated/examples/histogram_example.png");
     Ok(())
 }

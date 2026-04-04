@@ -104,7 +104,7 @@ fn test_gallery_category_indexes_exist() {
 
 #[test]
 fn test_gallery_has_images() {
-    // GIVEN: Gallery categories should contain PNG images
+    // GIVEN: Gallery categories should have committed asset images
     let categories = vec![
         "basic",
         "statistical",
@@ -117,12 +117,13 @@ fn test_gallery_has_images() {
     let mut total_images = 0;
 
     for category in categories {
-        let category_path = Path::new("docs/gallery").join(category);
+        let category_path = Path::new("docs/assets/gallery/rust").join(category);
 
         if let Ok(entries) = std::fs::read_dir(&category_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("png") {
+                let extension = path.extension().and_then(|s| s.to_str());
+                if extension == Some("png") || extension == Some("gif") {
                     total_images += 1;
                 }
             }
@@ -137,7 +138,7 @@ fn test_gallery_has_images() {
 
 #[test]
 fn test_thumbnails_directory_structure() {
-    // GIVEN: Categories with images should have thumbnails subdirectory
+    // GIVEN: Gallery asset categories should exist under docs/assets/gallery/rust
     let categories = vec![
         "basic",
         "statistical",
@@ -146,21 +147,14 @@ fn test_thumbnails_directory_structure() {
         "advanced",
     ];
 
-    // THEN: Check for thumbnails subdirectories where needed
+    // THEN: Each category has a committed asset directory
     for category in categories {
-        let category_path = Path::new("docs/gallery").join(category);
-        let thumbnails_path = category_path.join("thumbnails");
-
-        // If category has images, it should have thumbnails directory
-        if let Ok(entries) = std::fs::read_dir(&category_path) {
-            let has_images = entries
-                .filter_map(|e| e.ok())
-                .any(|e| e.path().extension().and_then(|s| s.to_str()) == Some("png"));
-
-            if has_images {
-                let _ = thumbnails_path.exists();
-            }
-        }
+        let category_path = Path::new("docs/assets/gallery/rust").join(category);
+        assert!(
+            category_path.exists(),
+            "Gallery asset category '{}' should exist",
+            category
+        );
     }
 }
 
@@ -195,7 +189,7 @@ fn test_gallery_index_links_are_valid() {
 #[test]
 fn test_basic_category_has_expected_examples() {
     // GIVEN: Basic category should have fundamental plot types
-    let basic_path = Path::new("docs/gallery/basic");
+    let basic_path = Path::new("docs/assets/gallery/rust/basic");
 
     // THEN: Check for expected basic plot types
     let expected_patterns = vec!["line", "scatter", "bar"];

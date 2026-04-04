@@ -63,7 +63,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// ![Line plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)
+    /// ![Line plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_plot.png)
     pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
     where
         X: NumericData1D,
@@ -202,7 +202,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// ![Scatter plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png)
+    /// ![Scatter plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/scatter_plot.png)
     pub fn scatter<X, Y>(
         self,
         x_data: &X,
@@ -331,7 +331,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// ![Bar chart example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png)
+    /// ![Bar chart example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/bar_chart.png)
     pub fn bar<S, V>(
         self,
         categories: &[S],
@@ -399,7 +399,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// ![Histogram example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png)
+    /// ![Histogram example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/histogram.png)
     pub fn histogram<D: NumericData1D>(
         self,
         data: &D,
@@ -507,7 +507,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// ![Box plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png)
+    /// ![Box plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/boxplot.png)
     pub fn boxplot<D: NumericData1D>(
         self,
         data: &D,
@@ -611,7 +611,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// ![Heatmap example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png)
+    /// ![Heatmap example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/heatmap.png)
     pub fn heatmap<D>(
         mut self,
         data: &D,

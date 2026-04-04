@@ -27,7 +27,7 @@
 //! | [`bar_chart`] | Create a bar chart |
 //! | [`histogram`] | Create a histogram |
 //!
-//! ![Line plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png)
+//! ![Line plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_plot.png)
 
 use crate::prelude::*;
 use std::path::Path;

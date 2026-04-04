@@ -1,6 +1,6 @@
 {
   "name": "ruviz",
-  "version": "0.3.6",
+  "version": "0.4.0",
   "description": "Browser-first JS/TS SDK for ruviz WebAssembly rendering",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -57,7 +57,7 @@
     "build": "bun run build:wasm && bun run build:js",
     "docs:api": "typedoc",
     "docs:dev": "bun run build:wasm && bun run docs:api && vitepress dev docs",
-    "docs:build": "bun run build:wasm && bun run docs:api && vitepress build docs",
+    "docs:build": "bun run build:wasm && bun run docs:api && vitepress build docs --outDir ../../generated/web/docs",
     "docs:preview": "vitepress preview docs",
     "pack:dry": "bun pm pack --dry-run"
   },

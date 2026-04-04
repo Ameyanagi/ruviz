@@ -15,8 +15,8 @@ fn main() -> Result<()> {
         .title("Linear Scale (Default)")
         .xlabel("X")
         .ylabel("Y")
-        .save("examples/output/scale_linear.png")?;
-    println!("Linear scale plot saved to examples/output/scale_linear.png");
+        .save("generated/examples/scale_linear.png")?;
+    println!("Linear scale plot saved to generated/examples/scale_linear.png");
 
     // Log-log scale
     Plot::new()
@@ -26,8 +26,8 @@ fn main() -> Result<()> {
         .title("Log-Log Scale")
         .xlabel("X (log scale)")
         .ylabel("Y (log scale)")
-        .save("examples/output/scale_loglog.png")?;
-    println!("Log-log scale plot saved to examples/output/scale_loglog.png");
+        .save("generated/examples/scale_loglog.png")?;
+    println!("Log-log scale plot saved to generated/examples/scale_loglog.png");
 
     // Semi-log plot (log Y axis only)
     let x_semilog: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
@@ -39,8 +39,8 @@ fn main() -> Result<()> {
         .title("Semi-Log Plot (Exponential Growth)")
         .xlabel("Time")
         .ylabel("Value (log scale)")
-        .save("examples/output/scale_semilog.png")?;
-    println!("Semi-log scale plot saved to examples/output/scale_semilog.png");
+        .save("generated/examples/scale_semilog.png")?;
+    println!("Semi-log scale plot saved to generated/examples/scale_semilog.png");
 
     // Symmetric log scale for data with both positive and negative values
     let x_symlog: Vec<f64> = (-50..=50).map(|i| i as f64).collect();
@@ -52,8 +52,8 @@ fn main() -> Result<()> {
         .title("Symmetric Log Scale")
         .xlabel("X")
         .ylabel("Y (symlog scale, linthresh=1.0)")
-        .save("examples/output/scale_symlog.png")?;
-    println!("Symlog scale plot saved to examples/output/scale_symlog.png");
+        .save("generated/examples/scale_symlog.png")?;
+    println!("Symlog scale plot saved to generated/examples/scale_symlog.png");
 
     // Power law data showing utility of log scales
     let x_power: Vec<f64> = (1..100).map(|i| i as f64).collect();
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
         .title("Power Law - Linear Scale")
         .xlabel("X")
         .ylabel("Y = X^2.5")
-        .save("examples/output/scale_power_linear.png")?;
+        .save("generated/examples/scale_power_linear.png")?;
 
     Plot::new()
         .line(&x_power, &y_power)
@@ -73,8 +73,8 @@ fn main() -> Result<()> {
         .title("Power Law - Log-Log Scale")
         .xlabel("X (log)")
         .ylabel("Y = X^2.5 (log)")
-        .save("examples/output/scale_power_loglog.png")?;
-    println!("Power law plots saved to examples/output/");
+        .save("generated/examples/scale_power_loglog.png")?;
+    println!("Power law plots saved to generated/examples/");
 
     Ok(())
 }

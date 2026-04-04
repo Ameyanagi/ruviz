@@ -165,7 +165,7 @@ impl GridSpec {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// ![Subplot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png)
+/// ![Subplot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/subplots.png)
 #[derive(Debug, Clone)]
 pub struct SubplotFigure {
     /// Grid specification for layout

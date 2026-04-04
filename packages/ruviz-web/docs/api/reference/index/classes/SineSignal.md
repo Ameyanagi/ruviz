@@ -6,7 +6,7 @@
 
 # Class: SineSignal
 
-Defined in: [index.ts:731](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L731)
+Defined in: [index.ts:713](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L713)
 
 Procedural sine-wave signal for temporal playback in interactive sessions.
 
@@ -16,7 +16,7 @@ Procedural sine-wave signal for temporal playback in interactive sessions.
 
 > **new SineSignal**(`options`): `SineSignal`
 
-Defined in: [index.ts:735](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L735)
+Defined in: [index.ts:717](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L717)
 
 #### Parameters
 
@@ -34,7 +34,7 @@ Defined in: [index.ts:735](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > `readonly` **options**: [`NormalizedSineSignalOptions`](../../shared/interfaces/NormalizedSineSignalOptions.md)
 
-Defined in: [index.ts:732](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L732)
+Defined in: [index.ts:714](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L714)
 
 ## Accessors
 
@@ -44,7 +44,7 @@ Defined in: [index.ts:732](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **get** **length**(): `number`
 
-Defined in: [index.ts:740](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L740)
+Defined in: [index.ts:722](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L722)
 
 ##### Returns
 
@@ -56,7 +56,7 @@ Defined in: [index.ts:740](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **\_toRawSignal**(`module?`): `Promise`\<`SignalVecF64`\>
 
-Defined in: [index.ts:768](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L768)
+Defined in: [index.ts:750](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L750)
 
 #### Parameters
 
@@ -74,7 +74,7 @@ Defined in: [index.ts:768](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **valuesAt**(`timeSeconds`): `Float64Array`
 
-Defined in: [index.ts:744](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L744)
+Defined in: [index.ts:726](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L726)
 
 #### Parameters
 

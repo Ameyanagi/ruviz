@@ -1,7 +1,7 @@
 // Visual regression tests using perceptual diff against golden images
 // These tests ensure that rendering output remains pixel-perfect across changes
 // Run with: cargo test --test visual_regression_test -- --ignored
-// Note: Requires golden images in tests/golden_images/ directory
+// Note: Requires golden images in tests/fixtures/golden/ directory
 
 use image::{GenericImageView, Pixel};
 use std::{fs, path::Path};
@@ -65,7 +65,7 @@ fn test_against_golden(
     }
     if !Path::new(golden_path).exists() {
         return Err(format!(
-            "Missing golden image fixture: {}. Run `cargo run --example generate_golden_images` to create or refresh tests/golden_images.",
+            "Missing golden image fixture: {}. Run `cargo run --example generate_golden_images` to create or refresh tests/fixtures/golden.",
             golden_path
         )
         .into());
@@ -105,11 +105,11 @@ fn test_visual_regression_basic_line() -> std::result::Result<(), Box<dyn std::e
                 .title("Basic Line Plot")
                 .xlabel("X")
                 .ylabel("Y")
-                .save("tests/output/vr_basic_line.png")?;
+                .save("generated/tests/render/vr_basic_line.png")?;
             Ok(())
         },
-        "tests/output/vr_basic_line.png",
-        "tests/golden_images/01_basic_line.png",
+        "generated/tests/render/vr_basic_line.png",
+        "tests/fixtures/golden/01_basic_line.png",
         0.5, // 0.5% tolerance for minor rendering differences
     )?;
 
@@ -136,11 +136,11 @@ fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std:
                 .xlabel("X")
                 .ylabel("Y")
                 .legend(Position::TopLeft)
-                .save("tests/output/vr_multi_series.png")?;
+                .save("generated/tests/render/vr_multi_series.png")?;
             Ok(())
         },
-        "tests/output/vr_multi_series.png",
-        "tests/golden_images/02_multi_series.png",
+        "generated/tests/render/vr_multi_series.png",
+        "tests/fixtures/golden/02_multi_series.png",
         0.5,
     )?;
 
@@ -164,11 +164,11 @@ fn test_visual_regression_scatter() -> std::result::Result<(), Box<dyn std::erro
                 .title("Scatter Plot")
                 .xlabel("X")
                 .ylabel("Y")
-                .save("tests/output/vr_scatter.png")?;
+                .save("generated/tests/render/vr_scatter.png")?;
             Ok(())
         },
-        "tests/output/vr_scatter.png",
-        "tests/golden_images/03_scatter.png",
+        "generated/tests/render/vr_scatter.png",
+        "tests/fixtures/golden/03_scatter.png",
         0.5,
     )?;
 
@@ -189,11 +189,11 @@ fn test_visual_regression_bar_chart() -> std::result::Result<(), Box<dyn std::er
                 .bar(&categories, &values)
                 .title("Bar Chart")
                 .ylabel("Value")
-                .save("tests/output/vr_bar_chart.png")?;
+                .save("generated/tests/render/vr_bar_chart.png")?;
             Ok(())
         },
-        "tests/output/vr_bar_chart.png",
-        "tests/golden_images/04_bar_chart.png",
+        "generated/tests/render/vr_bar_chart.png",
+        "tests/fixtures/golden/04_bar_chart.png",
         0.5,
     )?;
 
@@ -217,11 +217,11 @@ fn test_visual_regression_histogram() -> std::result::Result<(), Box<dyn std::er
                 .title("Histogram")
                 .xlabel("Value")
                 .ylabel("Frequency")
-                .save("tests/output/vr_histogram.png")?;
+                .save("generated/tests/render/vr_histogram.png")?;
             Ok(())
         },
-        "tests/output/vr_histogram.png",
-        "tests/golden_images/05_histogram.png",
+        "generated/tests/render/vr_histogram.png",
+        "tests/fixtures/golden/05_histogram.png",
         0.5,
     )?;
 
@@ -241,11 +241,11 @@ fn test_visual_regression_boxplot() -> std::result::Result<(), Box<dyn std::erro
                 .boxplot(&data, None)
                 .title("Box Plot")
                 .ylabel("Value")
-                .save("tests/output/vr_boxplot.png")?;
+                .save("generated/tests/render/vr_boxplot.png")?;
             Ok(())
         },
-        "tests/output/vr_boxplot.png",
-        "tests/golden_images/06_boxplot.png",
+        "generated/tests/render/vr_boxplot.png",
+        "tests/fixtures/golden/06_boxplot.png",
         0.5,
     )?;
 
@@ -275,11 +275,11 @@ fn test_visual_regression_themes() -> std::result::Result<(), Box<dyn std::error
                     .title(format!("{} Theme", name.to_uppercase()))
                     .xlabel("X")
                     .ylabel("Y")
-                    .save(format!("tests/output/vr_theme_{}.png", name))?;
+                    .save(format!("generated/tests/render/vr_theme_{}.png", name))?;
                 Ok(())
             },
-            &format!("tests/output/vr_theme_{}.png", name),
-            &format!("tests/golden_images/0{}_theme_{}.png", idx, name),
+            &format!("generated/tests/render/vr_theme_{}.png", name),
+            &format!("tests/fixtures/golden/0{}_theme_{}.png", idx, name),
             0.5,
         )?;
     }
@@ -302,11 +302,11 @@ fn test_visual_regression_unicode() -> std::result::Result<(), Box<dyn std::erro
                 .title("Unicode: α β γ δ ε θ λ π σ ω")
                 .xlabel("Température (°C)")
                 .ylabel("Résultat")
-                .save("tests/output/vr_unicode.png")?;
+                .save("generated/tests/render/vr_unicode.png")?;
             Ok(())
         },
-        "tests/output/vr_unicode.png",
-        "tests/golden_images/24_unicode.png",
+        "generated/tests/render/vr_unicode.png",
+        "tests/fixtures/golden/24_unicode.png",
         0.5,
     )?;
 
@@ -327,11 +327,11 @@ fn test_visual_regression_dimensions() -> std::result::Result<(), Box<dyn std::e
                 .size_px(1200, 900)
                 .line(&x, &y)
                 .title("Custom Dimensions")
-                .save("tests/output/vr_custom_dimensions.png")?;
+                .save("generated/tests/render/vr_custom_dimensions.png")?;
             Ok(())
         },
-        "tests/output/vr_custom_dimensions.png",
-        "tests/golden_images/14_custom_dimensions.png",
+        "generated/tests/render/vr_custom_dimensions.png",
+        "tests/fixtures/golden/14_custom_dimensions.png",
         0.5,
     )?;
 

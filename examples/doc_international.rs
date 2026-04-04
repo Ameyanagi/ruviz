@@ -1,15 +1,17 @@
 //! Documentation example: International text support
 //!
-//! Generates docs/images/international_japanese.png,
-//! docs/images/international_chinese.png, docs/images/international_korean.png,
-//! and docs/images/international_comparison.png for rustdoc and gallery docs.
+//! Generates docs/assets/rustdoc/international_japanese.png,
+//! docs/assets/rustdoc/international_chinese.png, docs/assets/rustdoc/international_korean.png,
+//! and docs/assets/rustdoc/international_comparison.png for rustdoc and gallery docs.
 //! Demonstrates support for Japanese, Chinese, Korean, and mixed scripts.
+
+mod util;
 
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {
     // Ensure output directory exists
-    std::fs::create_dir_all("docs/images")?;
+    std::fs::create_dir_all(util::docs_assets_root().join("rustdoc"))?;
 
     // Example 1: Japanese plot
     generate_japanese_plot()?;
@@ -40,9 +42,9 @@ fn generate_japanese_plot() -> Result<()> {
         .line(&x, &y)
         .label("sin(x)")
         .legend_best()
-        .save("docs/images/international_japanese.png")?;
+        .save("docs/assets/rustdoc/international_japanese.png")?;
 
-    println!("  ✓ Generated docs/images/international_japanese.png");
+    println!("  ✓ Generated docs/assets/rustdoc/international_japanese.png");
     Ok(())
 }
 
@@ -59,9 +61,9 @@ fn generate_chinese_plot() -> Result<()> {
         .bar(&categories, &values)
         .label("2024年")
         .legend_best()
-        .save("docs/images/international_chinese.png")?;
+        .save("docs/assets/rustdoc/international_chinese.png")?;
 
-    println!("  ✓ Generated docs/images/international_chinese.png");
+    println!("  ✓ Generated docs/assets/rustdoc/international_chinese.png");
     Ok(())
 }
 
@@ -81,9 +83,9 @@ fn generate_korean_plot() -> Result<()> {
         .line(&x, &y2)
         .label("B 그룹")
         .legend_best()
-        .save("docs/images/international_korean.png")?;
+        .save("docs/assets/rustdoc/international_korean.png")?;
 
-    println!("  ✓ Generated docs/images/international_korean.png");
+    println!("  ✓ Generated docs/assets/rustdoc/international_korean.png");
     Ok(())
 }
 
@@ -142,8 +144,8 @@ fn generate_multilang_comparison() -> Result<()> {
         .subplot_at(1, plot_cn.into())?
         .subplot_at(2, plot_kr.into())?
         .subplot_at(3, plot_mixed.into())?
-        .save("docs/images/international_comparison.png")?;
+        .save("docs/assets/rustdoc/international_comparison.png")?;
 
-    println!("  ✓ Generated docs/images/international_comparison.png");
+    println!("  ✓ Generated docs/assets/rustdoc/international_comparison.png");
     Ok(())
 }

@@ -14,7 +14,7 @@
 //!    cargo test --test visual_traits_test -- --ignored
 //!    ```
 //!
-//! 3. Review any failures in `tests/output/visual_diff/`
+//! 3. Review any failures in `generated/tests/visual-diff/`
 //!
 //! # Note
 //!

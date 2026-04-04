@@ -1,34 +1,36 @@
 #!/bin/bash
 # Clean generated output artifacts from ruviz.
 #
-# This preserves checked-in `.gitkeep` placeholders while removing generated
-# files from the output roots used by tests, examples, and export demos.
+# Transient build outputs now live under `generated/`. This script also removes
+# a small set of retired legacy output roots if they still exist locally.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-clean_output_root() {
-    local dir="$1"
-    local label="$2"
-
-    if [ -d "$dir" ]; then
-        find "$dir" -type f ! -name ".gitkeep" -delete
-        find "$dir" -type l -delete
-        find "$dir" -depth -mindepth 1 -type d -empty -delete
-        echo "  Cleaned $label/"
-    fi
-}
-
 echo "Cleaning ruviz output files..."
 
-clean_output_root "$PROJECT_ROOT/tests/output" "tests/output"
-clean_output_root "$PROJECT_ROOT/examples/output" "examples/output"
-# Keep committed documentation images intact; refresh them with `make doc-images`.
-clean_output_root "$PROJECT_ROOT/test_output" "test_output"
-clean_output_root "$PROJECT_ROOT/export_test_output" "export_test_output"
-clean_output_root "$PROJECT_ROOT/export_output" "export_output"
+if [ -d "$PROJECT_ROOT/generated" ]; then
+    rm -rf "$PROJECT_ROOT/generated"
+    echo "  Removed generated/"
+fi
+
+for legacy_dir in \
+    "$PROJECT_ROOT/examples/output" \
+    "$PROJECT_ROOT/tests/output" \
+    "$PROJECT_ROOT/test_output" \
+    "$PROJECT_ROOT/export_output" \
+    "$PROJECT_ROOT/export_test_output" \
+    "$PROJECT_ROOT/python/site" \
+    "$PROJECT_ROOT/packages/ruviz-web/docs/.vitepress/dist"
+do
+    if [ -e "$legacy_dir" ]; then
+        rm -rf "$legacy_dir"
+        local_path="${legacy_dir#"$PROJECT_ROOT"/}"
+        echo "  Removed legacy output ${local_path:-$legacy_dir}"
+    fi
+done
 
 # Clean any scattered files in root (legacy)
 find "$PROJECT_ROOT" -maxdepth 1 -type f \

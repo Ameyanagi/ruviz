@@ -1,6 +1,6 @@
 //! Documentation example: Line plot
 //!
-//! Generates docs/images/line_plot.png for rustdoc
+//! Generates docs/assets/rustdoc/line_plot.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -14,8 +14,8 @@ fn main() -> Result<()> {
         .ylabel("sin(x)")
         .max_resolution(1920, 1440)
         .line(&x, &y)
-        .save("docs/images/line_plot.png")?;
+        .save("docs/assets/rustdoc/line_plot.png")?;
 
-    println!("✓ Generated docs/images/line_plot.png");
+    println!("✓ Generated docs/assets/rustdoc/line_plot.png");
     Ok(())
 }

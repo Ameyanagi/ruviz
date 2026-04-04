@@ -8,7 +8,12 @@
 
 > **createWorkerSession**(`canvas`, `options?`): `Promise`\<[`WorkerSession`](../classes/WorkerSession.md)\>
 
-Defined in: [index.ts:1926](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L1926)
+Defined in: [index.ts:1927](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1927)
+
+Create a worker-backed canvas session with optional main-thread fallback.
+
+This is the preferred path for heavier interactive views when the browser
+supports `Worker` plus `OffscreenCanvas`.
 
 ## Parameters
 

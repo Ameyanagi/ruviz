@@ -35,7 +35,7 @@ use crate::render::{Color, LineStyle};
 ///
 /// | Default | Dark | Seaborn | Publication |
 /// |---------|------|---------|-------------|
-/// | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png) |
+/// | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_publication.png) |
 #[derive(Debug, Clone)]
 pub struct Theme {
     /// Background color of the plot area

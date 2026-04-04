@@ -6,7 +6,7 @@
 
 # Interface: ViolinSeriesSnapshot
 
-Defined in: [shared.ts:158](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L158)
+Defined in: [shared.ts:156](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L156)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:158](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **data**: `number`[]
 
-Defined in: [shared.ts:160](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L160)
+Defined in: [shared.ts:158](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L158)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:160](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"violin"`
 
-Defined in: [shared.ts:159](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L159)
+Defined in: [shared.ts:157](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L157)

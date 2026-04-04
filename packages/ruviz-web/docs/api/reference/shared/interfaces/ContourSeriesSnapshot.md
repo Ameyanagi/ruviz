@@ -6,7 +6,7 @@
 
 # Interface: ContourSeriesSnapshot
 
-Defined in: [shared.ts:134](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L134)
+Defined in: [shared.ts:132](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L132)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:134](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"contour"`
 
-Defined in: [shared.ts:135](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L135)
+Defined in: [shared.ts:133](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L133)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:135](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **x**: `number`[]
 
-Defined in: [shared.ts:136](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L136)
+Defined in: [shared.ts:134](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L134)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:136](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **y**: `number`[]
 
-Defined in: [shared.ts:137](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L137)
+Defined in: [shared.ts:135](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L135)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [shared.ts:137](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **z**: `number`[]
 
-Defined in: [shared.ts:138](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L138)
+Defined in: [shared.ts:136](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L136)

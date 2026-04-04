@@ -1,6 +1,6 @@
 //! Documentation example: Legend positions
 //!
-//! Generates docs/images/legend_positions.png for rustdoc
+//! Generates docs/assets/rustdoc/legend_positions.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -57,8 +57,8 @@ fn main() -> Result<()> {
         .subplot_at(1, plot_ur.into())?
         .subplot_at(2, plot_ll.into())?
         .subplot_at(3, plot_lr.into())?
-        .save("docs/images/legend_positions.png")?;
+        .save("docs/assets/rustdoc/legend_positions.png")?;
 
-    println!("✓ Generated docs/images/legend_positions.png");
+    println!("✓ Generated docs/assets/rustdoc/legend_positions.png");
     Ok(())
 }

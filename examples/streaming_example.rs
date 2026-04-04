@@ -62,10 +62,10 @@ fn basic_streaming() {
     #[cfg(not(feature = "typst-math"))]
     let plot = plot.title("Streaming Line Plot (x^2)");
 
-    plot.save("examples/output/streaming_basic.png")
+    plot.save("generated/examples/streaming_basic.png")
         .expect("Failed to save plot");
 
-    println!("Saved: examples/output/streaming_basic.png\n");
+    println!("Saved: generated/examples/streaming_basic.png\n");
 }
 
 /// Demonstrate ring buffer wrap-around behavior
@@ -95,10 +95,10 @@ fn ring_buffer_demo() {
         .line_streaming(&stream)
         .color(Color::new(255, 127, 14))
         .title("Ring Buffer (last 5 points)")
-        .save("examples/output/streaming_ringbuffer.png")
+        .save("generated/examples/streaming_ringbuffer.png")
         .expect("Failed to save plot");
 
-    println!("Saved: examples/output/streaming_ringbuffer.png\n");
+    println!("Saved: generated/examples/streaming_ringbuffer.png\n");
 }
 
 /// Simulate real-time data updates
@@ -130,10 +130,10 @@ fn simulated_realtime() {
         .title("Simulated Real-time Sensor Data")
         .xlabel("Time (s)")
         .ylabel("Signal")
-        .save("examples/output/streaming_realtime.png")
+        .save("generated/examples/streaming_realtime.png")
         .expect("Failed to save plot");
 
-    println!("Saved: examples/output/streaming_realtime.png\n");
+    println!("Saved: generated/examples/streaming_realtime.png\n");
 }
 
 /// Demonstrate partial render tracking
@@ -152,7 +152,7 @@ fn partial_render_demo() {
     Plot::new()
         .line_streaming(&stream)
         .title("Initial Render")
-        .save("examples/output/streaming_partial_1.png")
+        .save("generated/examples/streaming_partial_1.png")
         .expect("Failed to save plot");
 
     println!(
@@ -176,10 +176,10 @@ fn partial_render_demo() {
     Plot::new()
         .line_streaming(&stream)
         .title("Updated Render")
-        .save("examples/output/streaming_partial_2.png")
+        .save("generated/examples/streaming_partial_2.png")
         .expect("Failed to save plot");
 
     println!(
-        "Saved: examples/output/streaming_partial_1.png and examples/output/streaming_partial_2.png\n"
+        "Saved: generated/examples/streaming_partial_1.png and generated/examples/streaming_partial_2.png\n"
     );
 }

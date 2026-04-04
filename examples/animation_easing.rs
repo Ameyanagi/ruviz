@@ -10,15 +10,15 @@ use ruviz::record;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
-    std::fs::create_dir_all("export_output/gif").ok();
+    std::fs::create_dir_all("generated/examples/export/gif").ok();
 
-    println!("Recording easing demo to export_output/gif/animation_easing.gif...");
+    println!("Recording easing demo to generated/examples/export/gif/animation_easing.gif...");
 
     // Use max_resolution for matplotlib-style visual weight
     let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
     record!(
-        "export_output/gif/animation_easing.gif",
+        "generated/examples/export/gif/animation_easing.gif",
         90, // 3 seconds at 30 FPS
         config: config,
         |tick| {
@@ -51,7 +51,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("Animation saved to export_output/gif/animation_easing.gif");
+    println!("Animation saved to generated/examples/export/gif/animation_easing.gif");
     println!("  - Shows 7 different easing functions");
     println!("  - Watch how each dot reaches the top at different speeds");
 

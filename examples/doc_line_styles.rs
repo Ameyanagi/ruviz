@@ -1,6 +1,6 @@
 //! Documentation example: Line styles
 //!
-//! Generates docs/images/line_styles.png for rustdoc
+//! Generates docs/assets/rustdoc/line_styles.png for rustdoc
 
 use ruviz::prelude::*;
 use ruviz::render::LineStyle;
@@ -36,8 +36,8 @@ fn main() -> Result<()> {
         .line(&x, &y_dashdotdot)
         .label("DashDotDot")
         .style(LineStyle::DashDotDot)
-        .save("docs/images/line_styles.png")?;
+        .save("docs/assets/rustdoc/line_styles.png")?;
 
-    println!("✓ Generated docs/images/line_styles.png");
+    println!("✓ Generated docs/assets/rustdoc/line_styles.png");
     Ok(())
 }

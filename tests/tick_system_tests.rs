@@ -12,7 +12,7 @@ fn test_default_tick_system() {
         .xlabel("X Axis")
         .ylabel("Y Axis")
         .line(&x_data, &y_data)
-        .save("tests/output/default_ticks.png");
+        .save("generated/tests/render/default_ticks.png");
 
     assert!(result.is_ok(), "Default tick system should work");
 }
@@ -29,7 +29,7 @@ fn test_ticks_inside_direction() {
         .ylabel("Value")
         .tick_direction_inside() // Default behavior, ticks point inward
         .line(&x_data, &y_data)
-        .save("tests/output/ticks_inside.png");
+        .save("generated/tests/render/ticks_inside.png");
 
     assert!(result.is_ok(), "Inside tick direction should work");
 }
@@ -46,7 +46,7 @@ fn test_ticks_outside_direction() {
         .ylabel("Value")
         .tick_direction_outside() // Ticks point outward
         .line(&x_data, &y_data)
-        .save("tests/output/ticks_outside.png");
+        .save("generated/tests/render/ticks_outside.png");
 
     assert!(result.is_ok(), "Outside tick direction should work");
 }
@@ -63,7 +63,7 @@ fn test_ticks_inout_direction() {
         .ylabel("Value")
         .tick_direction_inout()
         .line(&x_data, &y_data)
-        .save("tests/output/ticks_inout.png");
+        .save("generated/tests/render/ticks_inout.png");
 
     assert!(result.is_ok(), "InOut tick direction should work");
 }
@@ -82,7 +82,7 @@ fn test_tick_side_convenience_api() {
         .show_top_ticks(true)
         .show_right_ticks(true)
         .line(&x_data, &y_data)
-        .save("tests/output/ticks_all_sides.png");
+        .save("generated/tests/render/ticks_all_sides.png");
 
     assert!(result.is_ok(), "Tick side convenience API should work");
 }
@@ -99,7 +99,7 @@ fn test_ticks_can_be_disabled_from_builder_chain() {
         .title("Ticks Disabled")
         .xlabel("Time (seconds)")
         .ylabel("Value")
-        .save("tests/output/ticks_disabled.png");
+        .save("generated/tests/render/ticks_disabled.png");
 
     assert!(
         result.is_ok(),
@@ -120,7 +120,7 @@ fn test_major_minor_ticks() {
         .major_ticks(5) // 5 major ticks
         .minor_ticks(4) // 4 minor ticks between each major tick
         .line(&x_data, &y_data)
-        .save("tests/output/major_minor_ticks.png");
+        .save("generated/tests/render/major_minor_ticks.png");
 
     assert!(result.is_ok(), "Major and minor ticks should work");
 }
@@ -141,7 +141,7 @@ fn test_custom_tick_configuration() {
         .major_ticks_y(5) // 5 major ticks on Y axis
         .minor_ticks_y(3) // 3 minor ticks between major ticks on Y
         .line(&x_data, &y_data)
-        .save("tests/output/custom_tick_config.png");
+        .save("generated/tests/render/custom_tick_config.png");
 
     assert!(result.is_ok(), "Custom tick configuration should work");
 }
@@ -161,7 +161,7 @@ fn test_grid_with_major_ticks_only() {
         .major_ticks(6)
         .minor_ticks(4)
         .line(&x_data, &y_data)
-        .save("tests/output/grid_major_only.png");
+        .save("generated/tests/render/grid_major_only.png");
 
     assert!(result.is_ok(), "Grid with major ticks only should work");
 }
@@ -181,7 +181,7 @@ fn test_grid_with_minor_ticks_only() {
         .major_ticks(4)
         .minor_ticks(3)
         .line(&x_data, &y_data)
-        .save("tests/output/grid_minor_only.png");
+        .save("generated/tests/render/grid_minor_only.png");
 
     assert!(result.is_ok(), "Grid with minor ticks only should work");
 }
@@ -201,7 +201,7 @@ fn test_grid_with_both_major_and_minor() {
         .major_ticks(5)
         .minor_ticks(2)
         .line(&x_data, &y_data)
-        .save("tests/output/grid_both_ticks.png");
+        .save("generated/tests/render/grid_both_ticks.png");
 
     assert!(
         result.is_ok(),
@@ -223,7 +223,7 @@ fn test_tick_labels_positioning() {
         .major_ticks(6)
         .minor_ticks(4) // Should not have labels
         .line(&x_data, &y_data)
-        .save("tests/output/tick_labels_positioning.png");
+        .save("generated/tests/render/tick_labels_positioning.png");
 
     assert!(result.is_ok(), "Tick labels should be properly positioned");
 }
@@ -246,7 +246,7 @@ fn test_scatter_with_improved_ticks() {
         .scatter(&x_data, &y_data)
         .color(Color::new(255, 0, 0)) // Red dots
         .marker_size(8.0)
-        .save("tests/output/scatter_improved_ticks.png");
+        .save("generated/tests/render/scatter_improved_ticks.png");
 
     assert!(
         result.is_ok(),
@@ -271,7 +271,7 @@ fn test_tight_layout_like_matplotlib() {
         .grid(true)
         .grid_both()
         .line(&x_data, &y_data)
-        .save("tests/output/tight_layout_test.png");
+        .save("generated/tests/render/tight_layout_test.png");
 
     assert!(result.is_ok(), "Tight layout should work like matplotlib");
 }

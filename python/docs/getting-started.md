@@ -1,9 +1,14 @@
 # Getting Started
 
-The Python package is a mixed `uv` + `maturin` project. Build the extension first, then use the
-pure-Python surface from regular Python code.
+## Install
 
-## Development Setup
+For normal use:
+
+```sh
+pip install ruviz
+```
+
+For local contributor builds:
 
 ```sh
 cd python
@@ -27,19 +32,37 @@ plot = (
 
 plot.save("plot.png")
 svg = plot.render_svg()
+png_bytes = plot.render_png()
 ```
 
 ## DataFrame Inputs
 
-The fluent API accepts dataframe columns via `data=...`:
+The high-level API accepts named columns through `data=...`:
 
 ```python
 import pandas as pd
 import ruviz
 
 frame = pd.DataFrame({"time": [0, 1, 2], "value": [0.2, 0.8, 1.1]})
-
 plot = ruviz.plot().line("time", "value", data=frame)
 ```
 
-See `examples/dataframe_line.py` and the gallery page for the full example set.
+This works with:
+
+- pandas `DataFrame` and `Series`
+- Polars `DataFrame` and `Series`
+- `dict`-backed column data
+- plain NumPy arrays, lists, and other array-like inputs
+
+## Plot Lifecycle
+
+- `plot()` creates a fluent builder
+- plot methods append series and update presentation state
+- `save()` writes a file
+- `render_png()` and `render_svg()` return in-memory export data
+- `to_snapshot()` serializes the current state for widget sync and inspection
+
+## Examples
+
+Runnable examples live in `python/examples/`. The gallery page is generated from
+those source files.

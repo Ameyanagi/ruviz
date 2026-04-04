@@ -1,80 +1,79 @@
 # ruviz
 
-`ruviz` is the public browser-first JS/TS SDK for `ruviz`.
+`ruviz` is the published browser-first JS/TS SDK for the `ruviz` plotting
+runtime.
 
-It wraps the low-level wasm bridge in [`crates/ruviz-web`](../../crates/ruviz-web) with:
-
-- a fluent plot builder such as `createPlot().line(...).title(...).save()`
-- backwards-compatible camelCase factories and methods
-- auto-resize and pointer/wheel wiring for canvas sessions
-- worker-session fallback to the main thread when `OffscreenCanvas` is unavailable
-- direct PNG/SVG export from plot builders
-- Observable and signal helpers for reactive demos
-- snapshot rehydration with `createPlotFromSnapshot(...)`
-- a raw escape hatch at `ruviz/raw`
+It wraps the raw wasm-bindgen bridge in the Rust crate `ruviz-web` with a
+higher-level API for static export, interactive canvas sessions, worker-backed
+rendering, and reactive demos.
 
 ## Install
 
-This repo uses Bun as the JS package manager and task runner:
-
 ```sh
-bun install
-bun run build:web
+npm install ruviz
 ```
 
-## Examples and Docs
+The package ships as ESM and expects a bundler or runtime that can load Web
+Workers and WebAssembly from standard module URLs.
 
-The canonical TS examples live in [`examples/`](examples) and feed the VitePress gallery.
-
-Serve the package docs locally:
-
-```sh
-bun install
-bun run --cwd packages/ruviz-web docs:dev
-```
-
-## Public API
+## Quick Start
 
 ```ts
-import {
-  createCanvasSession,
-  createPlot,
-  createPlotFromSnapshot,
-  createWorkerSession,
-  getRuntimeCapabilities,
-} from "ruviz";
-```
+import { createPlot } from "ruviz";
 
-Main exports:
-
-- `createPlot()`
-- `createPlotFromSnapshot(snapshot)`
-- `createCanvasSession(canvas, options?)`
-- `createWorkerSession(canvas, options?)`
-- `getRuntimeCapabilities()`
-- `registerFont(bytes)`
-- `createObservable(values)`
-- `createSineSignal(options)`
-
-Example:
-
-```ts
 const plot = createPlot()
-  .line({ x: [0, 1, 2], y: [0, 1, 4] })
+  .line({ x: [0, 1, 2, 3], y: [0, 1, 4, 9] })
   .title("Quadratic")
-  .xlabel("x")
-  .ylabel("y");
+  .setXLabel("x")
+  .setYLabel("y = x^2");
 
 await plot.save({ format: "png", fileName: "quadratic.png" });
 ```
 
-## Raw Bindings
+## Interactive Canvas Sessions
 
-Advanced users can access the raw wasm-bindgen layer directly:
+Mount a plot into a normal HTML canvas:
 
 ```ts
-import initRaw, { JsPlot, WebCanvasSession } from "ruviz/raw";
+import { createCanvasSession, createPlot } from "ruviz";
+
+const canvas = document.querySelector("canvas")!;
+const session = await createCanvasSession(canvas);
+await session.setPlot(
+  createPlot().line({ x: [0, 1, 2], y: [0, 1, 0] }).title("Interactive Plot"),
+);
+session.render();
 ```
 
-That subpath is intentionally close to the Rust naming and runtime model. The package root is the
-stable JS/TS-facing API.
+Use `createWorkerSession(...)` when you want OffscreenCanvas worker rendering
+with main-thread fallback support.
+
+## Reactive Helpers
+
+The package also exports:
+
+- `createObservable(...)` for mutable numeric series
+- `createSineSignal(...)` for time-varying demo inputs
+- `getRuntimeCapabilities()` for browser capability checks
+- `registerFont(...)` for custom browser text faces
+
+## Which Package Should You Use?
+
+- Use npm `ruviz` for browser apps in JS/TS.
+- Use the Rust crate `ruviz-web` if you need the raw wasm bridge.
+- Use the root Rust crate `ruviz` for native Rust plotting.
+
+## Docs and Examples
+
+- VitePress docs source: `packages/ruviz-web/docs/`
+- TypeScript examples: `packages/ruviz-web/examples/`
+- Raw Rust bridge: <https://github.com/Ameyanagi/ruviz/tree/main/crates/ruviz-web>
+- Root project README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
+
+## Local Development
+
+```sh
+bun install
+bun run --cwd packages/ruviz-web build
+bun run --cwd packages/ruviz-web docs:dev
+```

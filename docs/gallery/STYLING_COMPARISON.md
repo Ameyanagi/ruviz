@@ -205,7 +205,7 @@ To verify styling parity:
    cargo test --test visual_traits_test -- --ignored
    ```
 
-3. Review any differences in `tests/output/visual_diff/`
+3. Review any differences in `generated/tests/visual-diff/`
 
 ## Notes
 

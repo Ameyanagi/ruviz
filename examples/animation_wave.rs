@@ -13,15 +13,15 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
 
     // Ensure output directory exists
-    std::fs::create_dir_all("export_output/gif").ok();
+    std::fs::create_dir_all("generated/examples/export/gif").ok();
 
-    println!("Recording wave animation to export_output/gif/animation_wave.gif...");
+    println!("Recording wave animation to generated/examples/export/gif/animation_wave.gif...");
 
     // Use max_resolution for matplotlib-style visual weight
     let config = RecordConfig::new().max_resolution(1000, 600).framerate(30);
 
     record!(
-        "export_output/gif/animation_wave.gif",
+        "generated/examples/export/gif/animation_wave.gif",
         90, // 3 seconds at 30 FPS
         config: config,
         |tick| {
@@ -67,7 +67,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("Animation saved to export_output/gif/animation_wave.gif");
+    println!("Animation saved to generated/examples/export/gif/animation_wave.gif");
     println!("  - 90 frames at 30 FPS = 3 seconds");
     println!("  - Resolution: 1000x750 (4:3 aspect from max_resolution)");
     println!("  - Shows traveling, standing, and damped waves");

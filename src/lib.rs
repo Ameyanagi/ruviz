@@ -56,7 +56,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = { version = "0.1.5", features = ["typst-math"] }
+//! ruviz = { version = "0.4.0", features = ["typst-math"] }
 //! ```
 //!
 //! Then opt into Typst text rendering per plot with `.typst(true)`:
@@ -93,7 +93,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = { version = "0.1.5", default-features = false }
+//! ruviz = { version = "0.4.0", default-features = false }
 //!
 //! [features]
 //! default = []
@@ -242,15 +242,15 @@
 //!
 //! | | | |
 //! |:---:|:---:|:---:|
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/scatter_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/bar_chart.png" width="250"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/scatter_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/scatter_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/bar_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/bar_chart.png" width="250"></a> |
 //! | Line Plot | Scatter Plot | Bar Chart |
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/histogram.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/boxplot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/heatmap.png" width="250"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/histogram.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/histogram.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/boxplot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/boxplot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/heatmap.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/heatmap.png" width="250"></a> |
 //! | Histogram | Box Plot | Heatmap |
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/kde_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/kde_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/ecdf_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/ecdf_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/pie_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/pie_chart.png" width="250"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/kde_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/kde_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/ecdf_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/ecdf_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/pie_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/pie_chart.png" width="250"></a> |
 //! | KDE Plot | ECDF Plot | Pie Chart |
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/errorbar_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/errorbar_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/violin_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/violin_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/contour_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/contour_plot.png" width="250"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/errorbar_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/errorbar_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/violin_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/violin_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/contour_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/contour_plot.png" width="250"></a> |
 //! | Error Bar | Violin Plot | Contour Plot |
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/polar_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/polar_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/radar_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/radar_chart.png" width="250"></a> | |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/polar_plot.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/polar_plot.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/radar_chart.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/radar_chart.png" width="250"></a> | |
 //! | Polar Plot | Radar Chart | |
 //!
 //! ### Additional Plot Types
@@ -399,7 +399,7 @@
 //!
 //! | | | |
 //! |:---:|:---:|:---:|
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png" width="250"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_styles.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_styles.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/marker_styles.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/marker_styles.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/colors.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/colors.png" width="250"></a> |
 //! | Line Styles | Marker Styles | Color Palette |
 //!
 //! <details>
@@ -475,7 +475,7 @@
 //!
 //! | | | | |
 //! |:---:|:---:|:---:|:---:|
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_default.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_dark.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_seaborn.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/theme_publication.png" width="200"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_default.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_default.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_dark.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_dark.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_seaborn.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_seaborn.png" width="200"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_publication.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_publication.png" width="200"></a> |
 //! | Default | Dark | Seaborn | Publication |
 //!
 //! <details>
@@ -550,7 +550,7 @@
 //!
 //! | | |
 //! |:---:|:---:|
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png" width="350"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/subplots.png" width="350"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/legend_positions.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/legend_positions.png" width="350"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/subplots.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/subplots.png" width="350"></a> |
 //! | Legend Positions | Subplots |
 //!
 //! <details>
@@ -648,9 +648,9 @@
 //!
 //! | | | |
 //! |:---:|:---:|:---:|
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_japanese.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_japanese.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_chinese.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_chinese.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_korean.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_korean.png" width="250"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_japanese.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_japanese.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_chinese.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_chinese.png" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_korean.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_korean.png" width="250"></a> |
 //! | 日本語 (Japanese) | 中文 (Chinese) | 한국어 (Korean) |
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_comparison.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/international_comparison.png" width="350"></a> | | |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_comparison.png"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/international_comparison.png" width="350"></a> | | |
 //! | Multi-language Comparison | | |
 //!
 //! <details>
@@ -698,9 +698,9 @@
 //!
 //! | | | |
 //! |:---:|:---:|:---:|
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_sine_wave.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_sine_wave.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_bars.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_bars.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_spiral.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_spiral.gif" width="250"></a> |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_sine_wave.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_sine_wave.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_bars.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_bars.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_spiral.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_spiral.gif" width="250"></a> |
 //! | Traveling Wave | Animated Bars | Spiral Growth |
-//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_easing.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_easing.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_interference.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/animation_interference.gif" width="250"></a> | |
+//! | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_easing.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_easing.gif" width="250"></a> | <a href="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_interference.gif"><img src="https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/animation_interference.gif" width="250"></a> | |
 //! | Easing Functions | Wave Interference | |
 //!
 //! See [Animation Gallery](https://github.com/Ameyanagi/ruviz/blob/main/docs/gallery/animation/README.md) for more examples.

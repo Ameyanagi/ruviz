@@ -5,7 +5,7 @@ use std::time::Instant;
 /// Scientific plotting showcase demonstrating publication-quality multi-panel figures
 fn main() -> Result<()> {
     println!("Scientific Plotting Showcase");
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     let start_time = Instant::now();
 
@@ -103,7 +103,7 @@ fn main() -> Result<()> {
         .subplot(1, 0, plot_c)?
         .subplot(1, 1, plot_d)?;
 
-    figure.save("examples/output/scientific_analysis_figure.png")?;
+    figure.save("generated/examples/scientific_analysis_figure.png")?;
 
     let subplot_time = subplot_start.elapsed();
     println!("Scientific figure completed in {:?}", subplot_time);
@@ -118,7 +118,7 @@ fn main() -> Result<()> {
         .size_px(1400, 800)
         .theme(Theme::seaborn())
         .line(&time, &signal)
-        .save("examples/output/detailed_timeseries.png")?;
+        .save("generated/examples/detailed_timeseries.png")?;
 
     Plot::new()
         .title("Correlation Analysis with Statistical Significance")
@@ -127,7 +127,7 @@ fn main() -> Result<()> {
         .size_px(1200, 1000)
         .theme(Theme::seaborn())
         .scatter(&x_values, &y_values)
-        .save("examples/output/detailed_correlation.png")?;
+        .save("generated/examples/detailed_correlation.png")?;
 
     Plot::new()
         .title("Statistical Distribution Analysis")
@@ -136,7 +136,7 @@ fn main() -> Result<()> {
         .size_px(1200, 800)
         .theme(Theme::seaborn())
         .histogram(&distribution, None)
-        .save("examples/output/detailed_distribution.png")?;
+        .save("generated/examples/detailed_distribution.png")?;
 
     let total_time = start_time.elapsed();
 

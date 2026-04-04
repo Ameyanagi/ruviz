@@ -1,6 +1,6 @@
 //! Documentation example: Box plot
 //!
-//! Generates docs/images/boxplot.png for rustdoc
+//! Generates docs/assets/rustdoc/boxplot.png for rustdoc
 
 use ruviz::plots::boxplot::BoxPlotConfig;
 use ruviz::prelude::*;
@@ -19,8 +19,8 @@ fn main() -> Result<()> {
         .ylabel("Values")
         .max_resolution(1920, 1440)
         .boxplot(&data, Some(BoxPlotConfig::new()))
-        .save("docs/images/boxplot.png")?;
+        .save("docs/assets/rustdoc/boxplot.png")?;
 
-    println!("✓ Generated docs/images/boxplot.png");
+    println!("✓ Generated docs/assets/rustdoc/boxplot.png");
     Ok(())
 }

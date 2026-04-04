@@ -91,18 +91,18 @@ fn test_optimization_consistent_output() {
     Plot::new()
         .line(&x, &y)
         .title("Output Test 1")
-        .save("tests/output/opt_consistency_1.png")
+        .save("generated/tests/render/opt_consistency_1.png")
         .expect("Failed first render");
 
     Plot::new()
         .line(&x, &y)
         .title("Output Test 2")
-        .save("tests/output/opt_consistency_2.png")
+        .save("generated/tests/render/opt_consistency_2.png")
         .expect("Failed second render");
 
     // THEN: Both files should exist (visual comparison would be manual)
-    assert!(std::path::Path::new("tests/output/opt_consistency_1.png").exists());
-    assert!(std::path::Path::new("tests/output/opt_consistency_2.png").exists());
+    assert!(std::path::Path::new("generated/tests/render/opt_consistency_1.png").exists());
+    assert!(std::path::Path::new("generated/tests/render/opt_consistency_2.png").exists());
 }
 
 #[test]

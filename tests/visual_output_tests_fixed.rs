@@ -1,7 +1,7 @@
 //! Visual output tests that save PNG images for manual inspection
 //!
 //! Run with: cargo test --test visual_output_tests_fixed
-//! Images will be saved to tests/output/ directory
+//! Images will be saved to generated/tests/render/ directory
 
 mod common;
 
@@ -11,7 +11,7 @@ use std::fs;
 
 /// Setup test output directory
 fn setup_output_dir() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("tests/output")?;
+    fs::create_dir_all("generated/tests/render")?;
     Ok(())
 }
 
@@ -91,10 +91,10 @@ fn test_basic_line_plot() -> std::result::Result<(), Box<dyn std::error::Error>>
         .xlabel("X Values".to_string())
         .ylabel("Y Values".to_string())
         .line(&x_data, &y_data)
-        .save("tests/output/01_basic_line_plot.png")?;
-    assert_default_output("tests/output/01_basic_line_plot.png");
+        .save("generated/tests/render/01_basic_line_plot.png")?;
+    assert_default_output("generated/tests/render/01_basic_line_plot.png");
 
-    println!("✓ Saved: tests/output/01_basic_line_plot.png");
+    println!("✓ Saved: generated/tests/render/01_basic_line_plot.png");
     Ok(())
 }
 
@@ -110,10 +110,10 @@ fn test_scatter_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X Coordinates".to_string())
         .ylabel("Y Coordinates".to_string())
         .scatter(&x_data, &y_data)
-        .save("tests/output/02_scatter_plot.png")?;
-    assert_default_output("tests/output/02_scatter_plot.png");
+        .save("generated/tests/render/02_scatter_plot.png")?;
+    assert_default_output("generated/tests/render/02_scatter_plot.png");
 
-    println!("✓ Saved: tests/output/02_scatter_plot.png");
+    println!("✓ Saved: generated/tests/render/02_scatter_plot.png");
     Ok(())
 }
 
@@ -129,10 +129,10 @@ fn test_bar_plot() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Fruits".to_string())
         .ylabel("Sales Count".to_string())
         .bar(&categories, &values)
-        .save("tests/output/03_bar_plot.png")?;
-    assert_default_output("tests/output/03_bar_plot.png");
+        .save("generated/tests/render/03_bar_plot.png")?;
+    assert_default_output("generated/tests/render/03_bar_plot.png");
 
-    println!("✓ Saved: tests/output/03_bar_plot.png");
+    println!("✓ Saved: generated/tests/render/03_bar_plot.png");
     Ok(())
 }
 
@@ -152,10 +152,10 @@ fn test_multiple_series() -> std::result::Result<(), Box<dyn std::error::Error>>
         .label("Series 1".to_string())
         .line(&x_data, &y2_data)
         .label("Series 2".to_string())
-        .save("tests/output/04_multiple_series.png")?;
-    assert_default_output("tests/output/04_multiple_series.png");
+        .save("generated/tests/render/04_multiple_series.png")?;
+    assert_default_output("generated/tests/render/04_multiple_series.png");
 
-    println!("✓ Saved: tests/output/04_multiple_series.png");
+    println!("✓ Saved: generated/tests/render/04_multiple_series.png");
     Ok(())
 }
 
@@ -172,8 +172,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y = X²".to_string())
         .line(&x_data, &y_data)
-        .save("tests/output/05_dark_theme.png")?;
-    assert_default_output("tests/output/05_dark_theme.png");
+        .save("generated/tests/render/05_dark_theme.png")?;
+    assert_default_output("generated/tests/render/05_dark_theme.png");
 
     // Light theme
     Plot::with_theme(Theme::light())
@@ -181,8 +181,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y = X²".to_string())
         .line(&x_data, &y_data)
-        .save("tests/output/06_light_theme.png")?;
-    assert_default_output("tests/output/06_light_theme.png");
+        .save("generated/tests/render/06_light_theme.png")?;
+    assert_default_output("generated/tests/render/06_light_theme.png");
 
     // Publication theme
     Plot::with_theme(Theme::publication())
@@ -190,8 +190,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Time (seconds)".to_string())
         .ylabel("Response (units)".to_string())
         .line(&x_data, &y_data)
-        .save("tests/output/07_publication_theme.png")?;
-    assert_default_output("tests/output/07_publication_theme.png");
+        .save("generated/tests/render/07_publication_theme.png")?;
+    assert_default_output("generated/tests/render/07_publication_theme.png");
 
     // Minimal theme
     Plot::with_theme(Theme::minimal())
@@ -199,8 +199,8 @@ fn test_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Input".to_string())
         .ylabel("Output".to_string())
         .scatter(&x_data, &y_data)
-        .save("tests/output/08_minimal_theme.png")?;
-    assert_default_output("tests/output/08_minimal_theme.png");
+        .save("generated/tests/render/08_minimal_theme.png")?;
+    assert_default_output("generated/tests/render/08_minimal_theme.png");
 
     println!("✓ Saved: All theme tests");
     Ok(())
@@ -219,10 +219,10 @@ fn test_large_dataset() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Time".to_string())
         .ylabel("Amplitude".to_string())
         .line(&x_data, &y_data)
-        .save("tests/output/09_large_dataset.png")?;
-    assert_default_output("tests/output/09_large_dataset.png");
+        .save("generated/tests/render/09_large_dataset.png")?;
+    assert_default_output("generated/tests/render/09_large_dataset.png");
 
-    println!("✓ Saved: tests/output/09_large_dataset.png");
+    println!("✓ Saved: generated/tests/render/09_large_dataset.png");
     Ok(())
 }
 
@@ -242,10 +242,10 @@ fn test_mathematical_functions() -> std::result::Result<(), Box<dyn std::error::
         .label("sin(x)".to_string())
         .line(&x_data, &cos_data)
         .label("cos(x)".to_string())
-        .save("tests/output/10_mathematical_functions.png")?;
-    assert_default_output("tests/output/10_mathematical_functions.png");
+        .save("generated/tests/render/10_mathematical_functions.png")?;
+    assert_default_output("generated/tests/render/10_mathematical_functions.png");
 
-    println!("✓ Saved: tests/output/10_mathematical_functions.png");
+    println!("✓ Saved: generated/tests/render/10_mathematical_functions.png");
     Ok(())
 }
 
@@ -262,8 +262,8 @@ fn test_grid_options() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X Axis".to_string())
         .ylabel("Y Axis".to_string())
         .line(&x_data, &y_data)
-        .save("tests/output/11_grid_enabled.png")?;
-    assert_default_output("tests/output/11_grid_enabled.png");
+        .save("generated/tests/render/11_grid_enabled.png")?;
+    assert_default_output("generated/tests/render/11_grid_enabled.png");
 
     println!("✓ Saved: Grid tests");
     Ok(())
@@ -282,10 +282,14 @@ fn test_custom_dimensions() -> std::result::Result<(), Box<dyn std::error::Error
         .xlabel("Quarters".to_string())
         .ylabel("Revenue".to_string())
         .bar(&categories, &values)
-        .save("tests/output/12_custom_dimensions.png")?;
-    assert_png_dimensions_with_tolerance("tests/output/12_custom_dimensions.png", (1200, 800), 1);
+        .save("generated/tests/render/12_custom_dimensions.png")?;
+    assert_png_dimensions_with_tolerance(
+        "generated/tests/render/12_custom_dimensions.png",
+        (1200, 800),
+        1,
+    );
 
-    println!("✓ Saved: tests/output/12_custom_dimensions.png");
+    println!("✓ Saved: generated/tests/render/12_custom_dimensions.png");
     Ok(())
 }
 
@@ -296,7 +300,7 @@ fn test_typst_text_rendering() -> std::result::Result<(), Box<dyn std::error::Er
 
     let x_data: Vec<f64> = (0..40).map(|i| i as f64 * 0.1).collect();
     let y_data: Vec<f64> = x_data.iter().map(|&x| (x * 1.5).sin()).collect();
-    let output_path = "tests/output/15_typst_text.png";
+    let output_path = "generated/tests/render/15_typst_text.png";
 
     let result = Plot::new()
         .title("$f(x) = sin(1.5x)$".to_string())
@@ -466,8 +470,8 @@ fn test_typst_png_output_scales_with_dpi() -> std::result::Result<(), Box<dyn st
     let x_data: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
     let y_data: Vec<f64> = x_data.iter().map(|&x| x.sin()).collect();
 
-    let path_100 = "tests/output/18_typst_dpi_100.png";
-    let path_300 = "tests/output/19_typst_dpi_300.png";
+    let path_100 = "generated/tests/render/18_typst_dpi_100.png";
+    let path_300 = "generated/tests/render/19_typst_dpi_300.png";
 
     Plot::new()
         .title("Typst DPI Test: $f(x)=sin(x)$".to_string())
@@ -531,11 +535,11 @@ fn test_typst_layout_parity_no_clipping() -> std::result::Result<(), Box<dyn std
 
     for (width, height, plain_id, typst_id) in sizes {
         let plain_path = format!(
-            "tests/output/{}_typst_parity_plain_{}x{}.png",
+            "generated/tests/render/{}_typst_parity_plain_{}x{}.png",
             plain_id, width, height
         );
         let typst_path = format!(
-            "tests/output/{}_typst_parity_typst_{}x{}.png",
+            "generated/tests/render/{}_typst_parity_typst_{}x{}.png",
             typst_id, width, height
         );
 
@@ -717,10 +721,10 @@ fn test_grouped_series_fixed_color_visual() -> std::result::Result<(), Box<dyn s
                 .line(&x, &y2)
         })
         .legend(Position::TopRight)
-        .save("tests/output/22_grouped_fixed_color_visual.png")?;
-    assert_default_output("tests/output/22_grouped_fixed_color_visual.png");
+        .save("generated/tests/render/22_grouped_fixed_color_visual.png")?;
+    assert_default_output("generated/tests/render/22_grouped_fixed_color_visual.png");
 
-    println!("✓ Saved: tests/output/22_grouped_fixed_color_visual.png");
+    println!("✓ Saved: generated/tests/render/22_grouped_fixed_color_visual.png");
     Ok(())
 }
 
@@ -746,10 +750,10 @@ fn test_grouped_series_auto_palette_color_visual()
         .line(&x, &outside)
         .label("Outside Group")
         .legend(Position::TopRight)
-        .save("tests/output/23_grouped_auto_palette_color_visual.png")?;
-    assert_default_output("tests/output/23_grouped_auto_palette_color_visual.png");
+        .save("generated/tests/render/23_grouped_auto_palette_color_visual.png")?;
+    assert_default_output("generated/tests/render/23_grouped_auto_palette_color_visual.png");
 
-    println!("✓ Saved: tests/output/23_grouped_auto_palette_color_visual.png");
+    println!("✓ Saved: generated/tests/render/23_grouped_auto_palette_color_visual.png");
     Ok(())
 }
 
@@ -767,8 +771,8 @@ fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y".to_string())
         .scatter(&single_x, &single_y)
-        .save("tests/output/13_single_point.png")?;
-    assert_default_output("tests/output/13_single_point.png");
+        .save("generated/tests/render/13_single_point.png")?;
+    assert_default_output("generated/tests/render/13_single_point.png");
 
     // Two points line
     let two_x = vec![1.0, 10.0];
@@ -779,8 +783,8 @@ fn test_edge_cases() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X".to_string())
         .ylabel("Y".to_string())
         .line(&two_x, &two_y)
-        .save("tests/output/14_two_points_line.png")?;
-    assert_default_output("tests/output/14_two_points_line.png");
+        .save("generated/tests/render/14_two_points_line.png")?;
+    assert_default_output("generated/tests/render/14_two_points_line.png");
 
     println!("✓ Saved: Edge case tests");
     Ok(())

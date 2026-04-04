@@ -32,9 +32,9 @@ fn main() -> Result<()> {
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
         .legend(Position::TopRight)
-        .save("examples/output/gpu_cpu_performance_comparison.png")?;
+        .save("generated/examples/gpu_cpu_performance_comparison.png")?;
 
-    println!("✅ Saved: examples/output/gpu_cpu_performance_comparison.png");
+    println!("✅ Saved: generated/examples/gpu_cpu_performance_comparison.png");
 
     // Create speedup plot
     println!("📈 Creating speedup analysis plot...");
@@ -46,9 +46,9 @@ fn main() -> Result<()> {
         .title("GPU Speedup vs Dataset Size")
         .xlabel("Dataset Size (points)")
         .ylabel("GPU Speedup Factor (x)")
-        .save("examples/output/gpu_speedup_scaling.png")?;
+        .save("generated/examples/gpu_speedup_scaling.png")?;
 
-    println!("✅ Saved: examples/output/gpu_speedup_scaling.png");
+    println!("✅ Saved: generated/examples/gpu_speedup_scaling.png");
 
     // Print summary
     println!("\n🔬 Performance Analysis Summary");

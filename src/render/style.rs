@@ -19,7 +19,7 @@
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// ![Line styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/line_styles.png)
+/// ![Line styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_styles.png)
 #[derive(Debug, Clone, PartialEq)]
 pub enum LineStyle {
     /// Solid continuous line (default)
@@ -205,7 +205,7 @@ impl std::fmt::Display for LineStyle {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// ![Marker styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/marker_styles.png)
+/// ![Marker styles](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/marker_styles.png)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MarkerStyle {
     /// Filled circle (default)

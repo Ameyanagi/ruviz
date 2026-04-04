@@ -228,7 +228,7 @@ mod memory_pool_tests {
             .title("Pool Integration Test")
             .xlabel("X Values")
             .ylabel("Y Values")
-            .save("tests/output/pool_integration_test.png");
+            .save("generated/tests/render/pool_integration_test.png");
 
         assert!(
             result.is_ok(),
@@ -319,7 +319,7 @@ mod performance_tests {
         let _result = plot
             .line(&x_data, &y_data)
             .title("Large Dataset Test")
-            .save("tests/output/large_plot_memory_test.png");
+            .save("generated/tests/render/large_plot_memory_test.png");
         let end_memory = get_memory_usage();
 
         let memory_growth = end_memory - start_memory;
@@ -345,7 +345,7 @@ mod performance_tests {
             let _result = Plot::new()
                 .line(&x_data, &y_data)
                 .title(format!("Plot {}", i))
-                .save(format!("tests/output/steady_state_{}.png", i));
+                .save(format!("generated/tests/render/steady_state_{}.png", i));
         }
 
         let end_memory = get_memory_usage();
