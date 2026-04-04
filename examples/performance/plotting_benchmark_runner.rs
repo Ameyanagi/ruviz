@@ -322,7 +322,6 @@ fn element_count(size: &SizeSpec) -> usize {
 fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>> {
     let dataset = build_dataset(run)?;
     let built_plot = build_plot(run, &dataset);
-    let built_save_plot = build_plot_with_options(run, &dataset, args.request_gpu);
 
     let (render_only_ms, render_only_bytes) =
         measure(run.warmup_iterations, run.measured_iterations, || {
@@ -356,6 +355,7 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
     ];
 
     if args.include_save_path {
+        let built_save_plot = build_plot_with_options(run, &dataset, args.request_gpu);
         let (save_only_ms, save_only_bytes, save_backend) =
             measure_with_backend(run.warmup_iterations, run.measured_iterations, || {
                 Ok(built_save_plot.benchmark_save_png_bytes()?)

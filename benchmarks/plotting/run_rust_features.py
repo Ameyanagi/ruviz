@@ -156,11 +156,14 @@ def main() -> None:
     csv_path = output_dir / "results.csv"
     write_feature_csv(csv_path, runtime_payloads)
 
+    using_default_reference_outputs = (
+        args.mode == "full" and args.output_dir is None and args.docs_output is None
+    )
     docs_markdown = generate_feature_report(
         environment=environment,
         runtime_payloads=runtime_payloads,
         raw_link_base="../../benchmarks/plotting/results/rust-features/reference"
-        if output_dir.name == "reference"
+        if using_default_reference_outputs
         else ".",
         report_title="Rust Feature Impact Plotting Benchmarks",
     )
