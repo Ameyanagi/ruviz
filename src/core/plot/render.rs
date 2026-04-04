@@ -1183,12 +1183,34 @@ impl Plot {
     /// ```
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
+        let reactive = self.is_reactive();
+        let (png_bytes, _) = self.save_png_bytes_with_backend()?;
+        let result = crate::export::write_bytes_atomic(path, &png_bytes);
+        if result.is_ok() && reactive {
+            self.mark_reactive_sources_rendered();
+        }
+        result
+    }
+
+    /// Render PNG bytes through the same backend-selection path used by `save()`.
+    ///
+    /// This exists for benchmark tooling so we can measure the `save()` backend
+    /// without file-system I/O.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[doc(hidden)]
+    pub fn benchmark_save_png_bytes(&self) -> Result<(Vec<u8>, &'static str)> {
+        let reactive = self.is_reactive();
+        let result = self.save_png_bytes_with_backend();
+        if result.is_ok() && reactive {
+            self.mark_reactive_sources_rendered();
+        }
+        result
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_png_bytes_with_backend(&self) -> Result<(Vec<u8>, &'static str)> {
         if self.is_reactive() {
-            let result = self.resolved_plot(0.0).save(path);
-            if result.is_ok() {
-                self.mark_reactive_sources_rendered();
-            }
-            return result;
+            return self.resolved_plot(0.0).save_png_bytes_with_backend();
         }
 
         use crate::render::skia::SkiaRenderer;
@@ -1241,10 +1263,7 @@ impl Plot {
         let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
             violin_data.into_iter().unzip();
 
-        // Check if this is a violin categorical plot (to use special rendering)
         let is_violin_categorical = !violin_categories.is_empty();
-
-        // Use violin categories if bar_categories is not present and violin categories exist
         let bar_categories = bar_categories.or_else(|| {
             if is_violin_categorical {
                 Some(violin_categories.clone())
@@ -1260,14 +1279,12 @@ impl Plot {
         let measured_dimensions = self.measure_layout_text(&renderer, &content, dpi)?;
         let measurements = measured_dimensions.as_ref();
 
-        // Calculate plot area based on MarginConfig
         let (plot_area, layout_opt): (tiny_skia::Rect, Option<PlotLayout>) =
             match &self.display.config.margins {
                 MarginConfig::ContentDriven {
                     edge_buffer,
                     center_plot,
                 } => {
-                    // Use content-driven layout calculator
                     let layout_config = LayoutConfig {
                         edge_buffer_pt: *edge_buffer,
                         center_plot: *center_plot,
@@ -1295,7 +1312,6 @@ impl Plot {
                     (skia_rect, Some(layout))
                 }
                 _ => {
-                    // Always use LayoutCalculator for consistent plot area and title/label positioning
                     let layout_config = LayoutConfig::default();
                     let calculator = LayoutCalculator::new(layout_config);
                     let layout = calculator.compute(
@@ -1320,7 +1336,6 @@ impl Plot {
                 }
             };
 
-        // Generate major and minor ticks for axes using scale-aware tick generation
         let x_major_ticks = crate::axes::generate_ticks_for_scale(
             x_min,
             x_max,
@@ -1334,7 +1349,6 @@ impl Plot {
             &self.layout.y_scale,
         );
 
-        // Generate minor ticks if configured (using log-aware minor ticks for log scales)
         let x_minor_ticks = if self.layout.tick_config.minor_ticks_x > 0 {
             match &self.layout.x_scale {
                 AxisScale::Log => crate::axes::generate_log_minor_ticks(&x_major_ticks),
@@ -1358,7 +1372,6 @@ impl Plot {
             Vec::new()
         };
 
-        // Combine ticks for rendering based on grid mode
         let x_ticks = match self.layout.tick_config.grid_mode {
             GridMode::MajorOnly => x_major_ticks.clone(),
             GridMode::MinorOnly => x_minor_ticks.clone(),
@@ -1415,8 +1428,6 @@ impl Plot {
             })
             .collect();
 
-        // Render grid if enabled - using unified GridStyle
-        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
         if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
@@ -1430,7 +1441,6 @@ impl Plot {
             )?;
         }
 
-        // Convert tick values to pixel positions for major and minor ticks (scale-aware)
         let x_major_tick_pixels: Vec<f32> = x_major_ticks
             .iter()
             .map(|&x| {
@@ -1517,12 +1527,9 @@ impl Plot {
             x_minor_tick_pixels.as_slice()
         };
 
-        // Only draw axes for Cartesian plots (skip for Pie, Radar, etc.)
         let draw_ticks = draw_axes && self.layout.tick_config.enabled;
 
         if draw_ticks {
-            let render_scale = self.render_scale();
-            // Always draw axes with enhanced tick system
             renderer.draw_axes_with_config(
                 plot_area,
                 x_major_axis_ticks,
@@ -1536,16 +1543,11 @@ impl Plot {
             )?;
         }
 
-        // Draw axis labels, tick values, and title using computed layout positions
-        // Note: layout_opt is always Some since all render paths now compute layout
         let layout = layout_opt.expect("layout should always be computed");
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
-        // Draw tick labels using layout positions (only for Cartesian plots)
         if draw_axes {
-            // Use categorical labels for bar/violin charts, numeric for others
             if is_violin_categorical {
-                // Violin plots use their own x-positions for category labels
                 renderer.draw_axis_labels_at_categorical_violin(
                     &layout.plot_area,
                     &violin_categories,
@@ -1600,7 +1602,6 @@ impl Plot {
             }
         }
 
-        // Draw title if present (resolve at t=0 for static render)
         if let Some(ref pos) = layout.title_pos {
             if let Some(ref title) = self.display.title {
                 let title_str = title.resolve(0.0);
@@ -1608,7 +1609,6 @@ impl Plot {
             }
         }
 
-        // Draw x-axis label if present (only for Cartesian plots)
         if draw_axes {
             if let Some(ref pos) = layout.xlabel_pos {
                 if let Some(ref xlabel) = self.display.xlabel {
@@ -1617,7 +1617,6 @@ impl Plot {
                 }
             }
 
-            // Draw y-axis label if present
             if let Some(ref pos) = layout.ylabel_pos {
                 if let Some(ref ylabel) = self.display.ylabel {
                     let ylabel_str = ylabel.resolve(0.0);
@@ -1626,16 +1625,15 @@ impl Plot {
             }
         }
 
-        // Check if we should use DataShader for large datasets
         let total_points = Self::calculate_total_points_for_series(&snapshot_series);
         let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
         #[cfg(feature = "gpu")]
-        const GPU_THRESHOLD: usize = 5_000; // Activate GPU for >5K points
+        const GPU_THRESHOLD: usize = 5_000;
 
-        if !has_mixed_coordinates
+        #[cfg(feature = "gpu")]
+        let backend_used = if !has_mixed_coordinates
             && Self::should_auto_use_datashader(&snapshot_series, total_points)
         {
-            // Use DataShader for massive datasets - simplified version
             use crate::data::DataShader;
 
             for series in &snapshot_series {
@@ -1651,14 +1649,10 @@ impl Plot {
                         datashader
                             .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
                         let image = datashader.render();
-
-                        // Draw the DataShader result
                         renderer.draw_datashader_image(&image, plot_area)?;
                     }
                     SeriesType::Histogram { .. } => {
                         let hist_data = series.series_type.histogram_data_at(0.0)?;
-
-                        // Convert histogram to x,y data for DataShader
                         let x_data: Vec<f64> = hist_data
                             .bin_edges
                             .windows(2)
@@ -1674,12 +1668,9 @@ impl Plot {
                         datashader
                             .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
                         let image = datashader.render();
-
-                        // Draw the DataShader result
                         renderer.draw_datashader_image(&image, plot_area)?;
                     }
                     _ => {
-                        // For other plot types, use normal rendering
                         self.render_series_normal(
                             series,
                             &mut renderer,
@@ -1692,15 +1683,13 @@ impl Plot {
                     }
                 }
             }
+
+            "datashader"
         } else {
-            // Check if GPU rendering should be used for medium datasets
-            #[cfg(feature = "gpu")]
             let use_gpu_rendering =
                 self.render.enable_gpu && total_points >= GPU_THRESHOLD && !has_mixed_coordinates;
 
-            #[cfg(feature = "gpu")]
             if use_gpu_rendering {
-                // Initialize GPU renderer
                 match pollster::block_on(GpuRenderer::new()) {
                     Ok(mut gpu_renderer) => {
                         log::info!(
@@ -1720,10 +1709,10 @@ impl Plot {
                                 y_max,
                             )?;
                         }
+                        "gpu"
                     }
                     Err(e) => {
                         log::warn!("GPU initialization failed, falling back to CPU: {}", e);
-                        // Fall back to normal rendering
                         self.render_series_collection_normal(
                             &snapshot_series,
                             &mut renderer,
@@ -1734,10 +1723,10 @@ impl Plot {
                             y_max,
                             render_scale,
                         )?;
+                        "gpu_fallback_skia"
                     }
                 }
             } else {
-                // Use normal rendering for smaller datasets
                 self.render_series_collection_normal(
                     &snapshot_series,
                     &mut renderer,
@@ -1748,25 +1737,79 @@ impl Plot {
                     y_max,
                     render_scale,
                 )?;
+                "skia"
+            }
+        };
+
+        #[cfg(not(feature = "gpu"))]
+        let backend_used = if !has_mixed_coordinates
+            && Self::should_auto_use_datashader(&snapshot_series, total_points)
+        {
+            use crate::data::DataShader;
+
+            for series in &snapshot_series {
+                match &series.series_type {
+                    SeriesType::Scatter { x_data, y_data } => {
+                        let x_data = x_data.resolve(0.0);
+                        let y_data = y_data.resolve(0.0);
+                        let mut datashader = DataShader::with_canvas_size(
+                            plot_area.width() as usize,
+                            plot_area.height() as usize,
+                        );
+
+                        datashader
+                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
+                        let image = datashader.render();
+                        renderer.draw_datashader_image(&image, plot_area)?;
+                    }
+                    SeriesType::Histogram { .. } => {
+                        let hist_data = series.series_type.histogram_data_at(0.0)?;
+                        let x_data: Vec<f64> = hist_data
+                            .bin_edges
+                            .windows(2)
+                            .map(|w| (w[0] + w[1]) / 2.0)
+                            .collect();
+                        let y_data: Vec<f64> = hist_data.counts;
+
+                        let mut datashader = DataShader::with_canvas_size(
+                            plot_area.width() as usize,
+                            plot_area.height() as usize,
+                        );
+
+                        datashader
+                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
+                        let image = datashader.render();
+                        renderer.draw_datashader_image(&image, plot_area)?;
+                    }
+                    _ => {
+                        self.render_series_normal(
+                            series,
+                            &mut renderer,
+                            plot_area,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                        )?;
+                    }
+                }
             }
 
-            #[cfg(not(feature = "gpu"))]
-            {
-                // Use normal rendering for smaller datasets (no GPU feature)
-                self.render_series_collection_normal(
-                    &snapshot_series,
-                    &mut renderer,
-                    plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    render_scale,
-                )?;
-            }
-        }
+            "datashader"
+        } else {
+            self.render_series_collection_normal(
+                &snapshot_series,
+                &mut renderer,
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                render_scale,
+            )?;
+            "skia"
+        };
 
-        // Draw annotations after data series but before legend
         if !self.annotations.is_empty() {
             renderer.draw_annotations(
                 &self.annotations,
@@ -1779,65 +1822,55 @@ impl Plot {
             )?;
         }
 
-        // Collect legend items, including grouped-series collapse behavior.
         let legend_items = self.collect_legend_items();
-
-        // Draw legend if there are labeled series and legend is enabled
         if !legend_items.is_empty() && self.layout.legend.enabled {
-            // Convert old LegendConfig to new Legend type with DPI scaling
             let mut legend = self.layout.legend.to_legend();
-            // Scale legend font size from points to pixels for proper DPI handling
             legend.font_size = pt_to_px(legend.font_size, self.display.config.figure.dpi);
 
-            // Collect data bounding boxes for best position algorithm
             let data_bboxes: Vec<(f32, f32, f32, f32)> =
                 if matches!(legend.position, LegendPosition::Best) {
-                    let marker_radius = 4.0_f32; // Approximate marker radius in pixels
+                    let marker_radius = 4.0_f32;
                     snapshot_series
                         .iter()
-                        .flat_map(|series| {
-                            match &series.series_type {
-                                SeriesType::Line { x_data, y_data }
-                                | SeriesType::Scatter { x_data, y_data }
-                                | SeriesType::ErrorBars { x_data, y_data, .. }
-                                | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                                    let x_data = x_data.resolve(0.0);
-                                    let y_data = y_data.resolve(0.0);
-                                    x_data
-                                        .iter()
-                                        .zip(y_data.iter())
-                                        .map(|(&x, &y)| {
-                                            let (px, py) =
-                                                crate::render::skia::map_data_to_pixels_scaled(
-                                                    x,
-                                                    y,
-                                                    x_min,
-                                                    x_max,
-                                                    y_min,
-                                                    y_max,
-                                                    plot_area,
-                                                    &self.layout.x_scale,
-                                                    &self.layout.y_scale,
-                                                );
-                                            // Create bounding box around each point
-                                            (
-                                                px - marker_radius,
-                                                py - marker_radius,
-                                                px + marker_radius,
-                                                py + marker_radius,
-                                            )
-                                        })
-                                        .collect::<Vec<_>>()
-                                }
-                                _ => vec![], // Skip bar charts, histograms, etc. for now
+                        .flat_map(|series| match &series.series_type {
+                            SeriesType::Line { x_data, y_data }
+                            | SeriesType::Scatter { x_data, y_data }
+                            | SeriesType::ErrorBars { x_data, y_data, .. }
+                            | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
+                                let x_data = x_data.resolve(0.0);
+                                let y_data = y_data.resolve(0.0);
+                                x_data
+                                    .iter()
+                                    .zip(y_data.iter())
+                                    .map(|(&x, &y)| {
+                                        let (px, py) =
+                                            crate::render::skia::map_data_to_pixels_scaled(
+                                                x,
+                                                y,
+                                                x_min,
+                                                x_max,
+                                                y_min,
+                                                y_max,
+                                                plot_area,
+                                                &self.layout.x_scale,
+                                                &self.layout.y_scale,
+                                            );
+                                        (
+                                            px - marker_radius,
+                                            py - marker_radius,
+                                            px + marker_radius,
+                                            py + marker_radius,
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
                             }
+                            _ => vec![],
                         })
                         .collect()
                 } else {
                     vec![]
                 };
 
-            // Use new legend rendering with proper handles
             let bbox_slice = if data_bboxes.is_empty() {
                 None
             } else {
@@ -1846,7 +1879,7 @@ impl Plot {
             renderer.draw_legend_full(&legend_items, &legend, plot_area, bbox_slice)?;
         }
 
-        renderer.save_png(path)
+        Ok((renderer.encode_png_bytes()?, backend_used))
     }
 
     /// Save the plot to a PNG file with custom dimensions

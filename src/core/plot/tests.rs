@@ -1372,6 +1372,31 @@ fn test_auto_backend_selection() {
     assert_eq!(backend_name, "skia");
 }
 
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_benchmark_save_png_bytes_uses_skia_backend() {
+    let x_data = [0.0, 1.0, 2.0];
+    let y_data = [0.0, 1.0, 4.0];
+
+    let plot = Plot::new().line(&x_data, &y_data).end_series();
+    let (png_bytes, backend) = plot.benchmark_save_png_bytes().unwrap();
+
+    assert_eq!(backend, "skia");
+    assert!(png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_benchmark_save_png_bytes_uses_datashader_for_large_scatter() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let plot = Plot::new().scatter(&x_data, &y_data).end_series();
+    let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
+
+    assert_eq!(backend, "datashader");
+}
+
 // ========================================================================
 // Streaming Data Tests
 // ========================================================================

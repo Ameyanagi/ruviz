@@ -3,7 +3,7 @@
 # This Makefile generates all example outputs to a single organized folder,
 # demonstrating both static and interactive plotting capabilities.
 
-.PHONY: all examples static-examples interactive-examples performance-examples web-examples clean help setup-hooks check fmt clippy check-web doc-images bench-plotting bench-plotting-smoke
+.PHONY: all examples static-examples interactive-examples performance-examples web-examples clean help setup-hooks check fmt clippy check-web doc-images bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 # Default target - generate all examples
 all: examples
@@ -177,6 +177,18 @@ bench-plotting-smoke:
 	cd python && uv run python ../benchmarks/plotting/run.py --mode smoke --output-dir ../benchmarks/plotting/results/smoke --docs-output ../benchmarks/plotting/results/smoke/report.md
 	@echo "✓ Smoke benchmark results written to benchmarks/plotting/results/smoke/"
 
+bench-rust-features:
+	@echo "Running full Rust feature-impact plotting benchmarks..."
+	cd python && uv sync --group bench
+	cd python && uv run python ../benchmarks/plotting/run_rust_features.py --mode full
+	@echo "✓ Rust feature benchmark results written to benchmarks/plotting/results/rust-features/reference/"
+
+bench-rust-features-smoke:
+	@echo "Running smoke Rust feature-impact plotting benchmarks..."
+	cd python && uv sync --group bench
+	cd python && uv run python ../benchmarks/plotting/run_rust_features.py --mode smoke --output-dir ../benchmarks/plotting/results/rust-features/smoke --docs-output ../benchmarks/plotting/results/rust-features/smoke/report.md
+	@echo "✓ Rust feature smoke results written to benchmarks/plotting/results/rust-features/smoke/"
+
 # Generate documentation images at 300 DPI
 doc-images:
 	@echo "📸 Generating documentation images at 300 DPI..."
@@ -203,6 +215,8 @@ help:
 	@echo "  doc-images          - Generate documentation images"
 	@echo "  bench-plotting      - Run the full cross-runtime plotting benchmark suite"
 	@echo "  bench-plotting-smoke - Run the smoke cross-runtime plotting benchmark suite"
+	@echo "  bench-rust-features - Run the full Rust feature-impact plotting benchmark suite"
+	@echo "  bench-rust-features-smoke - Run the smoke Rust feature-impact plotting benchmark suite"
 	@echo ""
 	@echo "Examples:"
 	@echo "  all                 - Generate all examples (default)"

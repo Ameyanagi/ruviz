@@ -4,6 +4,11 @@ For the current cross-runtime large-dataset reference suite, including Python `r
 `matplotlib` and matching Rust/wasm runs, see
 [docs/benchmarks/large-dataset-plotting.md](benchmarks/large-dataset-plotting.md).
 
+For the current Rust-only feature-flag study, including `baseline_cpu`, `default`,
+`parallel_only`, `parallel_simd`, `performance_alias`, and `gpu_only` across both render
+and save-style PNG export paths, see
+[docs/benchmarks/rust-feature-impact.md](benchmarks/rust-feature-impact.md).
+
 That benchmark page also documents the renderer changes behind the new large-dataset numbers:
 - line envelope reduction for oversized raster line exports
 - cached histogram bins for static series

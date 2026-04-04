@@ -101,6 +101,11 @@ ruviz = { version = "0.3.5", features = ["parallel", "simd"] }
 
 For minimal builds: `default-features = false`
 
+Benchmark note: the current Rust feature-impact study in
+[docs/benchmarks/rust-feature-impact.md](docs/benchmarks/rust-feature-impact.md) shows
+`parallel` is the main default performance feature to care about, `simd` is situational, and
+`gpu` should remain opt-in rather than a default build choice.
+
 ### Experimental WASM Support
 
 The core crate now compiles for `wasm32-unknown-unknown` with in-memory output helpers such as
@@ -439,6 +444,7 @@ cargo run --example doc_typst_text --features typst-math
 - **[Migration from seaborn](docs/migration/seaborn.md)** - Statistical plots
 - **[Performance Guide](docs/PERFORMANCE_GUIDE.md)** - Optimization techniques
 - **[Large Dataset Benchmarks](docs/benchmarks/large-dataset-plotting.md)** - Cross-runtime PNG rendering results for Rust, Python, wasm, and matplotlib
+- **[Rust Feature Impact Benchmarks](docs/benchmarks/rust-feature-impact.md)** - Rust-only feature-flag study for render and save backend performance
 
 ## Why ruviz?
 

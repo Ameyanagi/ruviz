@@ -126,6 +126,8 @@ struct RuntimeEnvironment {
     rust_version: String,
     ruviz_version: String,
     build_profile: String,
+    feature_label: String,
+    cargo_features: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,6 +145,8 @@ struct BenchmarkResult {
     warmup_iterations: usize,
     measured_iterations: usize,
     byte_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actual_backend: Option<String>,
     iterations_ms: Vec<f64>,
     summary: Summary,
 }
@@ -163,9 +167,9 @@ fn main() -> Result<()> {
     let args = Args::parse()?;
     let manifest: Manifest = serde_json::from_str(&fs::read_to_string(&args.manifest)?)?;
     let runs = scenario_runs(&manifest, &args.mode);
-    let mut results = Vec::with_capacity(runs.len() * 3);
+    let mut results = Vec::with_capacity(runs.len() * 5);
     for run in &runs {
-        results.extend(benchmark_run(run)?);
+        results.extend(benchmark_run(run, &args)?);
     }
 
     let payload = BenchmarkPayload {
@@ -179,6 +183,14 @@ fn main() -> Result<()> {
             } else {
                 "release".to_string()
             },
+            feature_label: args
+                .feature_label
+                .clone()
+                .unwrap_or_else(detect_feature_label),
+            cargo_features: args
+                .cargo_features
+                .clone()
+                .unwrap_or_else(detect_compiled_features),
         },
         results,
     };
@@ -195,6 +207,11 @@ struct Args {
     manifest: PathBuf,
     mode: String,
     output: PathBuf,
+    feature_label: Option<String>,
+    cargo_features: Option<Vec<String>>,
+    include_save_path: bool,
+    skip_plotters: bool,
+    request_gpu: bool,
 }
 
 impl Args {
@@ -202,6 +219,11 @@ impl Args {
         let mut manifest = None;
         let mut mode = Some("full".to_string());
         let mut output = None;
+        let mut feature_label = None;
+        let mut cargo_features = None;
+        let mut include_save_path = false;
+        let mut skip_plotters = false;
+        let mut request_gpu = false;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -209,9 +231,22 @@ impl Args {
                 "--manifest" => manifest = args.next().map(PathBuf::from),
                 "--mode" => mode = args.next(),
                 "--output" => output = args.next().map(PathBuf::from),
+                "--feature-label" => feature_label = args.next(),
+                "--cargo-features" => {
+                    cargo_features = args.next().map(|value| {
+                        value
+                            .split(',')
+                            .filter(|feature| !feature.is_empty())
+                            .map(ToString::to_string)
+                            .collect()
+                    })
+                }
+                "--include-save-path" => include_save_path = true,
+                "--skip-plotters" => skip_plotters = true,
+                "--request-gpu" => request_gpu = true,
                 other => {
                     return Err(anyhow!(
-                        "unexpected argument: {other}. expected --manifest, --mode, or --output"
+                        "unexpected argument: {other}. expected --manifest, --mode, --output, --feature-label, --cargo-features, --include-save-path, --skip-plotters, or --request-gpu"
                     ));
                 }
             }
@@ -221,6 +256,11 @@ impl Args {
             manifest: manifest.ok_or_else(|| anyhow!("missing --manifest"))?,
             mode: mode.ok_or_else(|| anyhow!("missing --mode"))?,
             output: output.ok_or_else(|| anyhow!("missing --output"))?,
+            feature_label,
+            cargo_features,
+            include_save_path,
+            skip_plotters,
+            request_gpu,
         })
     }
 }
@@ -279,9 +319,10 @@ fn element_count(size: &SizeSpec) -> usize {
     size.rows.unwrap_or(0) * size.cols.unwrap_or(0)
 }
 
-fn benchmark_run(run: &ScenarioRun) -> Result<Vec<BenchmarkResult>> {
+fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>> {
     let dataset = build_dataset(run)?;
     let built_plot = build_plot(run, &dataset);
+    let built_save_plot = build_plot_with_options(run, &dataset, args.request_gpu);
 
     let (render_only_ms, render_only_bytes) =
         measure(run.warmup_iterations, run.measured_iterations, || {
@@ -293,12 +334,7 @@ fn benchmark_run(run: &ScenarioRun) -> Result<Vec<BenchmarkResult>> {
             Ok(build_plot(run, &dataset).render_png_bytes()?)
         })?;
 
-    let (plotters_ms, plotters_bytes) =
-        measure(run.warmup_iterations, run.measured_iterations, || {
-            render_plotters_png(run, &dataset)
-        })?;
-
-    Ok(vec![
+    let mut results = vec![
         make_result(
             run,
             &dataset,
@@ -306,6 +342,7 @@ fn benchmark_run(run: &ScenarioRun) -> Result<Vec<BenchmarkResult>> {
             "render_only",
             render_only_bytes,
             render_only_ms,
+            None,
         ),
         make_result(
             run,
@@ -314,16 +351,58 @@ fn benchmark_run(run: &ScenarioRun) -> Result<Vec<BenchmarkResult>> {
             "public_api_render",
             public_bytes,
             public_ms,
+            None,
         ),
-        make_result(
+    ];
+
+    if args.include_save_path {
+        let (save_only_ms, save_only_bytes, save_backend) =
+            measure_with_backend(run.warmup_iterations, run.measured_iterations, || {
+                Ok(built_save_plot.benchmark_save_png_bytes()?)
+            })?;
+        let (public_save_ms, public_save_bytes, public_save_backend) =
+            measure_with_backend(run.warmup_iterations, run.measured_iterations, || {
+                Ok(build_plot_with_options(run, &dataset, args.request_gpu)
+                    .benchmark_save_png_bytes()?)
+            })?;
+
+        results.push(make_result(
+            run,
+            &dataset,
+            "ruviz",
+            "save_only",
+            save_only_bytes,
+            save_only_ms,
+            Some(save_backend),
+        ));
+        results.push(make_result(
+            run,
+            &dataset,
+            "ruviz",
+            "public_api_save",
+            public_save_bytes,
+            public_save_ms,
+            Some(public_save_backend),
+        ));
+    }
+
+    if !args.skip_plotters {
+        let (plotters_ms, plotters_bytes) =
+            measure(run.warmup_iterations, run.measured_iterations, || {
+                render_plotters_png(run, &dataset)
+            })?;
+        results.push(make_result(
             run,
             &dataset,
             "plotters",
             "public_api_render",
             plotters_bytes,
             plotters_ms,
-        ),
-    ])
+            None,
+        ));
+    }
+
+    Ok(results)
 }
 
 fn make_result(
@@ -333,6 +412,7 @@ fn make_result(
     boundary: &str,
     byte_count: usize,
     iterations_ms: Vec<f64>,
+    actual_backend: Option<String>,
 ) -> BenchmarkResult {
     BenchmarkResult {
         implementation: implementation.to_string(),
@@ -347,6 +427,7 @@ fn make_result(
         warmup_iterations: run.warmup_iterations,
         measured_iterations: run.measured_iterations,
         byte_count,
+        actual_backend,
         summary: summarize_iterations(&iterations_ms, run.elements),
         iterations_ms,
     }
@@ -375,16 +456,78 @@ where
     Ok((iterations_ms, last_len))
 }
 
+fn measure_with_backend<F>(
+    warmup_iterations: usize,
+    measured_iterations: usize,
+    mut f: F,
+) -> Result<(Vec<f64>, usize, String)>
+where
+    F: FnMut() -> Result<(Vec<u8>, &'static str)>,
+{
+    let mut backend = None;
+    for _ in 0..warmup_iterations {
+        let (_, current_backend) = f()?;
+        record_backend(&mut backend, current_backend)?;
+    }
+
+    let mut iterations_ms = Vec::with_capacity(measured_iterations);
+    let mut last_len = 0;
+    for _ in 0..measured_iterations {
+        let start = Instant::now();
+        let (bytes, current_backend) = f()?;
+        record_backend(&mut backend, current_backend)?;
+        iterations_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+        last_len = bytes.len();
+    }
+
+    Ok((
+        iterations_ms,
+        last_len,
+        backend.unwrap_or_else(|| "unknown".to_string()),
+    ))
+}
+
+fn record_backend(seen: &mut Option<String>, current: &str) -> Result<()> {
+    match seen {
+        Some(previous) if previous != current => Err(anyhow!(
+            "save backend changed within a single benchmark case: {previous} -> {current}"
+        )),
+        Some(_) => Ok(()),
+        None => {
+            *seen = Some(current.to_string());
+            Ok(())
+        }
+    }
+}
+
 fn build_plot(run: &ScenarioRun, dataset: &Dataset) -> Plot {
+    build_plot_with_options(run, dataset, false)
+}
+
+fn build_plot_with_options(run: &ScenarioRun, dataset: &Dataset, request_gpu: bool) -> Plot {
     let base = Plot::new()
         .size_px(run.canvas.width, run.canvas.height)
         .dpi(run.canvas.dpi);
+    let base = maybe_enable_gpu(base, request_gpu);
 
     match dataset {
         Dataset::Line { x, y, .. } => base.line(x, y).into_plot(),
         Dataset::Scatter { x, y, .. } => base.scatter(x, y).into_plot(),
         Dataset::Histogram { values, .. } => base.histogram(values, None).into_plot(),
         Dataset::Heatmap { matrix, .. } => base.heatmap(matrix, None).into_plot(),
+    }
+}
+
+fn maybe_enable_gpu(plot: Plot, request_gpu: bool) -> Plot {
+    #[cfg(feature = "gpu")]
+    {
+        if request_gpu { plot.gpu(true) } else { plot }
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = request_gpu;
+        plot
     }
 }
 
@@ -836,4 +979,36 @@ fn rust_version() -> String {
     .expect("rustc -V output should be valid utf-8")
     .trim()
     .to_string()
+}
+
+fn detect_feature_label() -> String {
+    let features = detect_compiled_features();
+    if features.is_empty() {
+        "baseline_cpu".to_string()
+    } else {
+        features.join("+")
+    }
+}
+
+fn detect_compiled_features() -> Vec<String> {
+    let mut features = Vec::new();
+    if cfg!(feature = "parallel") {
+        features.push("parallel".to_string());
+    }
+    if cfg!(feature = "simd") {
+        features.push("simd".to_string());
+    }
+    if cfg!(feature = "performance") {
+        features.push("performance".to_string());
+    }
+    if cfg!(feature = "gpu") {
+        features.push("gpu".to_string());
+    }
+    if cfg!(feature = "ndarray") {
+        features.push("ndarray".to_string());
+    }
+    if cfg!(feature = "serde") {
+        features.push("serde".to_string());
+    }
+    features
 }
