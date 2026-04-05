@@ -10,7 +10,7 @@ mod basic_line_integration_tests {
     use super::*;
 
     fn ensure_output_dir() {
-        std::fs::create_dir_all("tests/output").expect("Failed to create tests/output directory");
+        std::fs::create_dir_all("generated/tests/render").expect("Failed to create generated/tests/render directory");
     }
 
     /// Integration Test: Story 1 - Basic line plot with labels
@@ -29,22 +29,22 @@ mod basic_line_integration_tests {
             .title("Quadratic Function (Cosmic-Text)")
             .xlabel("x")
             .ylabel("y = x²")
-            .save("tests/output/test_basic_line_integration.png");
+            .save("generated/tests/render/test_basic_line_integration.png");
         
         // Then: The library generates a clear, properly labeled visualization with professional typography
         assert!(result.is_ok(), "Basic line plot creation failed: {:?}", result.err());
         
-        // Verify the file was created in tests/output
-        assert!(Path::new("tests/output/test_basic_line_integration.png").exists(),
-                "PNG file was not created in tests/output");
+        // Verify the file was created in generated/tests/render
+        assert!(Path::new("generated/tests/render/test_basic_line_integration.png").exists(),
+                "PNG file was not created in generated/tests/render");
         
         // Verify file is not empty (basic sanity check)
-        let metadata = std::fs::metadata("tests/output/test_basic_line_integration.png")
+        let metadata = std::fs::metadata("generated/tests/render/test_basic_line_integration.png")
             .expect("Could not read file metadata");
         assert!(metadata.len() > 0, "Generated PNG file is empty");
         
         // Clean up test file
-        std::fs::remove_file("tests/output/test_basic_line_integration.png").ok();
+        std::fs::remove_file("generated/tests/render/test_basic_line_integration.png").ok();
     }
 
     /// Integration Test: Different data types (Vec, array, slice) 
@@ -59,9 +59,9 @@ mod basic_line_integration_tests {
         let result1 = Plot::new()
             .line(&vec_x, &vec_y)
             .title("Vec Data")
-            .save("tests/output/test_vec_data.png");
+            .save("generated/tests/render/test_vec_data.png");
         assert!(result1.is_ok(), "Vec data failed: {:?}", result1.err());
-        std::fs::remove_file("tests/output/test_vec_data.png").ok();
+        std::fs::remove_file("generated/tests/render/test_vec_data.png").ok();
         
         // Test arrays
         let array_x = [1.0, 2.0, 3.0];
@@ -70,9 +70,9 @@ mod basic_line_integration_tests {
         let result2 = Plot::new()
             .line(&array_x, &array_y)
             .title("Array Data")
-            .save("tests/output/test_array_data.png");
+            .save("generated/tests/render/test_array_data.png");
         assert!(result2.is_ok(), "Array data failed: {:?}", result2.err());
-        std::fs::remove_file("tests/output/test_array_data.png").ok();
+        std::fs::remove_file("generated/tests/render/test_array_data.png").ok();
         
         // Test slices
         let slice_x: &[f64] = &[1.0, 2.0, 3.0];
@@ -81,9 +81,9 @@ mod basic_line_integration_tests {
         let result3 = Plot::new()
             .line(slice_x, slice_y)
             .title("Slice Data")
-            .save("tests/output/test_slice_data.png");
+            .save("generated/tests/render/test_slice_data.png");
         assert!(result3.is_ok(), "Slice data failed: {:?}", result3.err());
-        std::fs::remove_file("tests/output/test_slice_data.png").ok();
+        std::fs::remove_file("generated/tests/render/test_slice_data.png").ok();
     }
 
     /// Integration Test: Default dimensions validation
@@ -118,10 +118,10 @@ mod basic_line_integration_tests {
             .title("Sine Wave")
             .xlabel("x")
             .ylabel("sin(x)")
-            .save("tests/output/test_sine_wave.png");
+            .save("generated/tests/render/test_sine_wave.png");
         
         assert!(result1.is_ok(), "Sine wave plot failed: {:?}", result1.err());
-        std::fs::remove_file("tests/output/test_sine_wave.png").ok();
+        std::fs::remove_file("generated/tests/render/test_sine_wave.png").ok();
         
         // Generate exponential data
         let exp_x: Vec<f64> = (0..50).map(|i| (i as f64) * 0.1).collect();
@@ -132,10 +132,10 @@ mod basic_line_integration_tests {
             .title("Exponential Decay")
             .xlabel("x")
             .ylabel("e^(-x)")
-            .save("tests/output/test_exponential.png");
+            .save("generated/tests/render/test_exponential.png");
         
         assert!(result2.is_ok(), "Exponential plot failed: {:?}", result2.err());
-        std::fs::remove_file("tests/output/test_exponential.png").ok();
+        std::fs::remove_file("generated/tests/render/test_exponential.png").ok();
     }
 
     /// Integration Test: Edge cases that should work
@@ -150,9 +150,9 @@ mod basic_line_integration_tests {
         let result1 = Plot::new()
             .line(&single_x, &single_y)
             .title("Single Point")
-            .save("tests/output/test_single_point.png");
+            .save("generated/tests/render/test_single_point.png");
         assert!(result1.is_ok(), "Single point failed: {:?}", result1.err());
-        std::fs::remove_file("tests/output/test_single_point.png").ok();
+        std::fs::remove_file("generated/tests/render/test_single_point.png").ok();
         
         // Two points (minimum for a line)
         let two_x = vec![0.0, 1.0];
@@ -161,9 +161,9 @@ mod basic_line_integration_tests {
         let result2 = Plot::new()
             .line(&two_x, &two_y)
             .title("Two Points")
-            .save("tests/output/test_two_points.png");
+            .save("generated/tests/render/test_two_points.png");
         assert!(result2.is_ok(), "Two points failed: {:?}", result2.err());
-        std::fs::remove_file("tests/output/test_two_points.png").ok();
+        std::fs::remove_file("generated/tests/render/test_two_points.png").ok();
         
         // Flat line (all same Y values)
         let flat_x = vec![1.0, 2.0, 3.0, 4.0];
@@ -172,9 +172,9 @@ mod basic_line_integration_tests {
         let result3 = Plot::new()
             .line(&flat_x, &flat_y)
             .title("Flat Line")
-            .save("tests/output/test_flat_line.png");
+            .save("generated/tests/render/test_flat_line.png");
         assert!(result3.is_ok(), "Flat line failed: {:?}", result3.err());
-        std::fs::remove_file("tests/output/test_flat_line.png").ok();
+        std::fs::remove_file("generated/tests/render/test_flat_line.png").ok();
     }
 
     /// Integration Test: Error cases that should fail gracefully

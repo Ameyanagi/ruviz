@@ -6,7 +6,7 @@
 
 # Interface: PolarLineSeriesSnapshot
 
-Defined in: [shared.ts:163](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L163)
+Defined in: [shared.ts:161](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L161)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:163](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"polar-line"`
 
-Defined in: [shared.ts:164](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L164)
+Defined in: [shared.ts:162](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L162)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:164](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **r**: `number`[]
 
-Defined in: [shared.ts:165](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L165)
+Defined in: [shared.ts:163](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L163)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [shared.ts:165](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **theta**: `number`[]
 
-Defined in: [shared.ts:166](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L166)
+Defined in: [shared.ts:164](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L164)

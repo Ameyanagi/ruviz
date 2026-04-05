@@ -4,7 +4,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing different font families...");
     
     // Create test output directory if it doesn't exist
-    std::fs::create_dir_all("test_output")?;
+    std::fs::create_dir_all("generated/bench")?;
     
     // Generate simple test data
     let x_data: Vec<f64> = (0..20).map(|i| i as f64).collect();
@@ -28,9 +28,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .theme(Theme::publication())
             .line(&x_data, &y_data)
             .label(&format!("{} line", name))
-            .save_with_size(&format!("test_output/font_test_{}.png", name), 800, 600)?;
+            .save_with_size(&format!("generated/bench/font_test_{}.png", name), 800, 600)?;
 
-        println!("✅ Generated test_output/font_test_{}.png", name);
+        println!("✅ Generated generated/bench/font_test_{}.png", name);
     }
     
     Ok(())

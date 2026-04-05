@@ -1,73 +1,56 @@
 # ruviz-web
 
-`ruviz-web` is the low-level Rust wasm bridge behind the public `ruviz` JS/TS SDK.
+`ruviz-web` is the low-level Rust WebAssembly bridge for `ruviz`.
 
-If you are building a browser app in JavaScript or TypeScript, use the npm package in
-[`packages/ruviz-web`](../../packages/ruviz-web) instead of importing these raw wasm-bindgen
-bindings directly.
+Use this crate when you need the raw wasm-bindgen layer from Rust. If you are
+building a browser app in JavaScript or TypeScript, use the npm package
+`ruviz` instead. If you are building a native Rust application, use the root
+`ruviz` crate.
 
-It exposes:
+## What This Crate Provides
 
-- `WebCanvasSession` for main-thread HTML canvas rendering
-- `OffscreenCanvasSession` for worker-driven `OffscreenCanvas` rendering
-- `JsPlot::render_png_bytes()` and `JsPlot::render_svg()` for direct wasm export without a canvas session
-- `SignalVecF64` for time-varying `Signal<Vec<f64>>` demo and playback use cases
-- `ObservableVecF64` for narrow JS-side reactive numeric demos
-- `web_runtime_capabilities()` for browser feature diagnostics
-- `register_font_bytes_js()` and `register_default_browser_fonts_js()` for text setup
+- `JsPlot` for static PNG and SVG export from WebAssembly
+- `WebCanvasSession` for main-thread interactive canvas rendering
+- browser capability probing through `web_runtime_capabilities()`
+- numeric observable and sine-signal wrappers used by higher-level web runtimes
+- browser font registration helpers
 
-## Scope
+## Quick Start
 
-This crate focuses on browser canvas interactivity over the CPU image path and stays close to
-the Rust-side browser/runtime model. `WebBackendPreference::Gpu` is accepted as a preference
-flag, but there is not yet a dedicated WebGPU canvas fast path.
+Add the bridge crate to your Cargo manifest:
+
+```toml
+[dependencies]
+ruviz-web = "0.4.0"
+```
+
+Build for `wasm32-unknown-unknown` and generate bindings with your preferred
+wasm-bindgen or wasm-pack workflow.
+
+## When To Use This Crate
+
+Use `ruviz-web` if you are:
+
+- embedding the wasm bridge directly from Rust
+- working on the raw browser adapter
+- debugging behavior below the npm SDK layer
+
+Use the npm package `ruviz` if you want:
+
+- `createPlot()` and session builders
+- worker-session fallback logic
+- browser-friendly ESM packaging
+- published npm-facing docs and examples
 
 ## Browser Text
 
-The crate ships a built-in Noto Sans fallback for browser text rendering and registers it
-automatically when a canvas session is created. You can still register your own font bytes
-before rendering if you need a different face.
+The crate ships with a bundled Noto Sans fallback for browser-hosted text and
+registers it automatically for the browser runtime. You can still register your
+own font bytes before rendering when you need a different face.
 
-`web_runtime_capabilities()` also reports touch input, worker support, OffscreenCanvas support,
-and whether a dedicated GPU canvas path is currently available.
+## Related Docs
 
-The web demo covers direct export, main-thread sessions, worker sessions, temporal signal
-playback, and observable updates.
-
-Bundled font asset:
-
-- `assets/NotoSans-Regular.ttf`
-- License: `assets/NotoSans-LICENSE.txt`
-
-## Raw JS Example
-
-```js
-import init, { JsPlot, WebCanvasSession } from "./pkg/ruviz_web.js";
-
-await init();
-
-const plot = new JsPlot();
-plot.size_px(640, 360);
-plot.xlabel("x");
-plot.ylabel("y");
-plot.line([0, 1, 2], [0, 1, 0]);
-
-const canvas = document.querySelector("canvas");
-const session = new WebCanvasSession(canvas);
-session.set_plot(plot);
-```
-
-## Plot Surface Coverage
-
-The higher-level SDK and the Python binding both route through this bridge for browser rendering.
-The raw `JsPlot` surface now includes:
-
-- line and scatter
-- bar, histogram, and boxplot
-- heatmap and contour
-- vertical and XY error bars
-- KDE, ECDF, violin, pie, radar, and polar line
-- observables and time-varying sine signals for interactive demos
-
-For the higher-level JS/TS API with camelCase methods, worker fallback, auto-resize, and Bun
-workspace packaging, see [`packages/ruviz-web`](../../packages/ruviz-web).
+- Root crate docs: <https://docs.rs/ruviz>
+- Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
+- npm package docs: <https://github.com/Ameyanagi/ruviz/tree/main/packages/ruviz-web>
+- Release notes: <https://github.com/Ameyanagi/ruviz/tree/main/docs/releases>

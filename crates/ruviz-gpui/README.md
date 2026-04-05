@@ -1,20 +1,50 @@
 # ruviz-gpui
 
-`ruviz-gpui` contains the native `gpui` integration layer used for embedded interactive plots.
+`ruviz-gpui` is the native GPUI adapter for embedding `ruviz` plots inside a
+desktop GPUI application.
 
-## Example Programs
+It keeps `ruviz` plot construction and interaction behavior, while letting GPUI
+own the window, layout tree, and surrounding application shell.
 
-The crate already ships runnable examples in [`examples/`](examples):
+## Install
 
-- `static_embed.rs`
-- `observable_embed.rs`
-- `streaming_embed.rs`
-- `fixed_bounds_dashboard.rs`
+```toml
+[dependencies]
+ruviz = "0.4.0"
+ruviz-gpui = "0.4.0"
+```
 
-Run one locally with:
+## What This Crate Provides
+
+- an embeddable GPUI plot view for static and interactive plots
+- configurable image and hybrid presentation modes
+- pan, zoom, hover, selection, and context-menu integration
+- PNG save and clipboard-copy actions routed through the host platform
+
+## Platform Notes
+
+`ruviz-gpui` currently supports:
+
+- macOS
+- Linux
+- Windows
+
+On Linux the crate uses GTK-backed native dialogs. Install GTK3 development
+headers before building desktop examples.
+
+## Examples
+
+Runnable examples live in the crate:
 
 ```sh
 cargo run -p ruviz-gpui --example static_embed
+cargo run -p ruviz-gpui --example observable_embed
+cargo run -p ruviz-gpui --example streaming_embed
 ```
 
-Use this crate when you want an embedded native surface rather than the browser-first WASM stack.
+## Related Docs
+
+- Root crate docs: <https://docs.rs/ruviz>
+- Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
+- GPUI example directory: <https://github.com/Ameyanagi/ruviz/tree/main/crates/ruviz-gpui/examples>
+- Release notes: <https://github.com/Ameyanagi/ruviz/tree/main/docs/releases>

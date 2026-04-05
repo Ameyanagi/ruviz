@@ -6,7 +6,7 @@
 
 # Interface: PieSeriesSnapshot
 
-Defined in: [shared.ts:141](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L141)
+Defined in: [shared.ts:139](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L139)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:141](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"pie"`
 
-Defined in: [shared.ts:142](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L142)
+Defined in: [shared.ts:140](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L140)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:142](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > `optional` **labels?**: `string`[]
 
-Defined in: [shared.ts:144](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L144)
+Defined in: [shared.ts:142](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L142)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [shared.ts:144](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **values**: `number`[]
 
-Defined in: [shared.ts:143](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L143)
+Defined in: [shared.ts:141](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L141)

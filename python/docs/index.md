@@ -1,39 +1,47 @@
 # ruviz for Python
 
-`ruviz` exposes a fluent plotting builder for static exports, static notebook rendering, explicit
-notebook widgets, and native interactive windows.
+`ruviz` for Python exposes the Rust plotting runtime through a fluent Python
+API with three main workflows:
 
-## Highlights
+- static export with `save()`, `render_png()`, and `render_svg()`
+- explicit notebook widgets with `plot.widget()`
+- native interactive desktop windows with `plot.show()`
 
-- Fluent builder API with chained plot methods such as `plot().line(...).title(...)`
-- Static PNG, SVG, and PDF export via the native `pyO3` binding
-- Static notebook PNG display by default, with explicit `.widget()` interactivity through a
-  WASM-backed `anywidget`
-- Native console interactivity through the existing `winit` runtime
-- Dataframe-friendly `data=` inputs for pandas, Polars, and dict-backed column data
+## Why Use It
 
-## Install for Local Development
+- the same plot builder works across scripts, notebooks, and desktop sessions
+- pandas, Polars, dict, and array-like inputs work through the same API
+- notebook widgets reuse the browser runtime instead of a separate Python-only frontend
+- native static export stays in Rust for PNG, SVG, and PDF generation
+
+## Install
 
 ```sh
-cd python
-uv sync
-uv run maturin develop
+pip install ruviz
 ```
 
 ## First Plot
 
 ```python
+import numpy as np
 import ruviz
 
-plot = (
+x = np.linspace(0.0, 4.0, 50)
+y = x**2
+
+(
     ruviz.plot()
+    .line(x, y)
     .title("Quadratic")
     .xlabel("x")
-    .ylabel("y")
-    .line([0, 1, 2, 3], [0, 1, 4, 9])
+    .ylabel("y = x^2")
+    .save("quadratic.png")
 )
-
-plot.save("quadratic.png")
 ```
 
-Use the navigation for the full example gallery, interactive notebook guidance, and API reference.
+## Where To Go Next
+
+- Use **Getting Started** for installation, dataframe inputs, and export basics.
+- Use **Interactivity** for Jupyter widgets and native `show()` behavior.
+- Use **Gallery** for runnable example-backed screenshots.
+- Use **API Reference** for the full generated Python reference.

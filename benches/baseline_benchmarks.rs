@@ -14,7 +14,7 @@ fn bench_line_plot_1k(c: &mut Criterion) {
         b.iter(|| {
             Plot::new()
                 .line(black_box(&x), black_box(&y))
-                .save("test_output/bench_line_1k.png")
+                .save("generated/bench/bench_line_1k.png")
                 .expect("Failed to save plot");
         });
     });
@@ -31,7 +31,7 @@ fn bench_line_plot_100k(c: &mut Criterion) {
             Plot::new()
                 .line(black_box(&x), black_box(&y))
                 .auto_optimize()
-                .save("test_output/bench_line_100k.png")
+                .save("generated/bench/bench_line_100k.png")
                 .expect("Failed to save plot");
         });
     });
@@ -47,7 +47,7 @@ fn bench_scatter_plot_10k(c: &mut Criterion) {
         b.iter(|| {
             Plot::new()
                 .scatter(black_box(&x), black_box(&y))
-                .save("test_output/bench_scatter_10k.png")
+                .save("generated/bench/bench_scatter_10k.png")
                 .expect("Failed to save plot");
         });
     });
@@ -63,7 +63,7 @@ fn bench_histogram_1m(c: &mut Criterion) {
             Plot::new()
                 .histogram(black_box(&data), None)
                 .auto_optimize()
-                .save("test_output/bench_histogram_1m.png")
+                .save("generated/bench/bench_histogram_1m.png")
                 .expect("Failed to save plot");
         });
     });
@@ -78,7 +78,7 @@ fn bench_boxplot_100k(c: &mut Criterion) {
         b.iter(|| {
             Plot::new()
                 .boxplot(black_box(&data), None)
-                .save("test_output/bench_boxplot_100k.png")
+                .save("generated/bench/bench_boxplot_100k.png")
                 .expect("Failed to save plot");
         });
     });
@@ -100,7 +100,7 @@ fn bench_multi_series_50k(c: &mut Criterion) {
             }
             builder
                 .auto_optimize()
-                .save("test_output/bench_multi_series.png")
+                .save("generated/bench/bench_multi_series.png")
                 .expect("Failed to save plot");
         });
     });
@@ -140,7 +140,7 @@ fn bench_throughput_measurement(c: &mut Criterion) {
             Plot::new()
                 .line(black_box(&x), black_box(&y))
                 .auto_optimize()
-                .save("test_output/bench_throughput.png")
+                .save("generated/bench/bench_throughput.png")
                 .expect("Failed to save plot");
         });
     });

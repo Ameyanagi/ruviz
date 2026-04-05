@@ -6,7 +6,7 @@
 
 # Interface: KdeSeriesSnapshot
 
-Defined in: [shared.ts:124](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L124)
+Defined in: [shared.ts:122](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L122)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:124](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **data**: `number`[]
 
-Defined in: [shared.ts:126](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L126)
+Defined in: [shared.ts:124](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L124)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:126](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"kde"`
 
-Defined in: [shared.ts:125](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L125)
+Defined in: [shared.ts:123](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L123)

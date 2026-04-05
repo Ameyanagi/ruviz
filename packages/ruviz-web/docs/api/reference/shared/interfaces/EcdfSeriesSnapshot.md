@@ -6,7 +6,7 @@
 
 # Interface: EcdfSeriesSnapshot
 
-Defined in: [shared.ts:129](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L129)
+Defined in: [shared.ts:127](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L127)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:129](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **data**: `number`[]
 
-Defined in: [shared.ts:131](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L131)
+Defined in: [shared.ts:129](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L129)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:131](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"ecdf"`
 
-Defined in: [shared.ts:130](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L130)
+Defined in: [shared.ts:128](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L128)

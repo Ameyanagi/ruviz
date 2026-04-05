@@ -36,9 +36,9 @@ fn basic_heatmap() -> Result<()> {
     Plot::new()
         .heatmap(&data, Some(HeatmapConfig::default()))
         .title("Basic Heatmap")
-        .save("examples/output/heatmap_basic.png")?;
+        .save("generated/examples/heatmap_basic.png")?;
 
-    println!("Saved: examples/output/heatmap_basic.png");
+    println!("Saved: generated/examples/heatmap_basic.png");
     Ok(())
 }
 
@@ -64,9 +64,9 @@ fn correlation_matrix() -> Result<()> {
     Plot::new()
         .heatmap(&data, Some(config))
         .title("Correlation Matrix")
-        .save("examples/output/heatmap_correlation.png")?;
+        .save("generated/examples/heatmap_correlation.png")?;
 
-    println!("Saved: examples/output/heatmap_correlation.png");
+    println!("Saved: generated/examples/heatmap_correlation.png");
     Ok(())
 }
 
@@ -96,9 +96,9 @@ fn scientific_heatmap() -> Result<()> {
         .title("2D Sine Wave Surface")
         .xlabel("X")
         .ylabel("Y")
-        .save("examples/output/heatmap_scientific.png")?;
+        .save("generated/examples/heatmap_scientific.png")?;
 
-    println!("Saved: examples/output/heatmap_scientific.png");
+    println!("Saved: generated/examples/heatmap_scientific.png");
     Ok(())
 }
 
@@ -128,8 +128,8 @@ fn large_heatmap() -> Result<()> {
         .title("2D Gaussian Distribution")
         .xlabel("X")
         .ylabel("Y")
-        .save("examples/output/heatmap_large.png")?;
+        .save("generated/examples/heatmap_large.png")?;
 
-    println!("Saved: examples/output/heatmap_large.png");
+    println!("Saved: generated/examples/heatmap_large.png");
     Ok(())
 }

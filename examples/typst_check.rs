@@ -4,7 +4,7 @@ use std::fs;
 
 #[cfg(feature = "typst-math")]
 fn run() -> Result<()> {
-    let out_dir = "examples/output";
+    let out_dir = "generated/examples";
     fs::create_dir_all(out_dir).map_err(ruviz::core::PlottingError::IoError)?;
 
     let x: Vec<f64> = (0..80).map(|i| i as f64 * 0.05).collect();

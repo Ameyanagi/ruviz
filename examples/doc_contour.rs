@@ -1,7 +1,7 @@
 //! Documentation example: Contour Plot
 //!
-//! Generates docs/images/contour_plot.png and
-//! docs/images/contour_custom_levels.png for rustdoc.
+//! Generates docs/assets/rustdoc/contour_plot.png and
+//! docs/assets/rustdoc/contour_custom_levels.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating contour plots,
 //! including smoothing via interpolation.
@@ -38,9 +38,9 @@ fn main() -> Result<()> {
         .colorbar(true)
         .colorbar_label("Density")
         .colormap_name("viridis")
-        .save("docs/images/contour_plot.png")?;
+        .save("docs/assets/rustdoc/contour_plot.png")?;
 
-    println!("Generated docs/images/contour_plot.png (high-level API)");
+    println!("Generated docs/assets/rustdoc/contour_plot.png (high-level API)");
 
     // Contour with explicit level values and linear interpolation
     let levels: Vec<f64> = (0..10).map(|i| i as f64 / 10.0 + 0.05).collect();
@@ -54,9 +54,9 @@ fn main() -> Result<()> {
         .filled(true)
         .smooth(ContourInterpolation::Linear, 4)
         .colormap_name("plasma")
-        .save("docs/images/contour_custom_levels.png")?;
+        .save("docs/assets/rustdoc/contour_custom_levels.png")?;
 
-    println!("Generated docs/images/contour_custom_levels.png");
+    println!("Generated docs/assets/rustdoc/contour_custom_levels.png");
 
     Ok(())
 }

@@ -34,7 +34,7 @@ async fn async_main() -> Result<()> {
     println!("  - Cmd/Ctrl+S: Save PNG");
     println!("  - Cmd/Ctrl+C: Copy image");
     println!("  - Close window to exit");
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     // Generate large dataset
     let initial_size = 100_000;
@@ -65,8 +65,8 @@ async fn async_main() -> Result<()> {
         println!("Interactive features not enabled.");
         println!("To enable: cargo run --features interactive --example real_time_performance");
         run_static_performance_benchmark(&dataset)?;
-        plot.save("examples/output/real_time_performance_static.png")?;
-        println!("Saved: examples/output/real_time_performance_static.png");
+        plot.save("generated/examples/real_time_performance_static.png")?;
+        println!("Saved: generated/examples/real_time_performance_static.png");
     }
 
     Ok(())
@@ -123,7 +123,7 @@ fn run_static_performance_benchmark(dataset: &PerformanceDataset) -> Result<()> 
         .into();
 
     let render_start = Instant::now();
-    plot.save("examples/output/benchmark_output.png")?;
+    plot.save("generated/examples/benchmark_output.png")?;
     let render_time = render_start.elapsed();
 
     println!("Benchmark Results:");
@@ -144,7 +144,7 @@ fn run_static_performance_benchmark(dataset: &PerformanceDataset) -> Result<()> 
         performance_margin
     );
 
-    std::fs::remove_file("examples/output/benchmark_output.png").ok();
+    std::fs::remove_file("generated/examples/benchmark_output.png").ok();
     Ok(())
 }
 
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_static_benchmark() {
-        std::fs::create_dir_all("examples/output").ok();
+        std::fs::create_dir_all("generated/examples").ok();
         let dataset = generate_large_dataset(1000);
         let result = run_static_performance_benchmark(&dataset);
         assert!(result.is_ok());

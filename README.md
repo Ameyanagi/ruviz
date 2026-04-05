@@ -11,7 +11,19 @@
 
 - [Changelog](CHANGELOG.md)
 - [Release Notes Index](docs/releases/README.md)
-- [Latest Release Notes (v0.3.6)](docs/releases/v0.3.6.md)
+- [Latest Release Notes (v0.4.0)](docs/releases/v0.4.0.md)
+
+## Package Surfaces
+
+- Rust crate: `ruviz`
+- GPUI adapter crate: `ruviz-gpui`
+- Raw Rust wasm bridge: `ruviz-web`
+- Python package: `ruviz` in [`python/`](python)
+- npm package: `ruviz` in [`packages/ruviz-web/`](packages/ruviz-web)
+
+Release-facing media and generated docs now use the documented layout in
+[docs/BUILD_OUTPUTS.md](docs/BUILD_OUTPUTS.md). Regenerate the full release docs
+surface with `make release-docs` on the release docs branch.
 
 ## Quick Start
 
@@ -31,7 +43,7 @@ Plot::new()
 
 Need typeset math labels? See [Typst Text Mode](#typst-text-mode) below.
 
-![Example Plot](assets/readme_example.png)
+![Example Plot](docs/assets/readme/readme_example.png)
 
 ## Features
 
@@ -72,7 +84,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruviz = "0.3.6"
+ruviz = "0.4.0"
 ```
 
 ### Feature Flags
@@ -81,7 +93,7 @@ Choose features based on your needs:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.6", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.0", features = ["parallel", "simd"] }
 ```
 
 | Feature | Description | Use When |
@@ -154,7 +166,7 @@ Enable Typst text rendering:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.6", features = ["typst-math"] }
+ruviz = { version = "0.4.0", features = ["typst-math"] }
 ```
 
 Use `.typst(true)` on a plot to render all static text surfaces (titles, axis labels, ticks,
@@ -195,7 +207,7 @@ error[E0599]: no variant or associated item named `Typst` found for enum `TextEn
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.6", default-features = false }
+ruviz = { version = "0.4.0", default-features = false }
 
 [features]
 default = []
@@ -350,7 +362,7 @@ Enable the `animation` feature for this example:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.3.6", features = ["animation"] }
+ruviz = { version = "0.4.0", features = ["animation"] }
 ```
 
 ```rust
@@ -377,7 +389,7 @@ record!(
 )?;
 ```
 
-![Animation Example](docs/images/animation_sine_wave.gif)
+![Animation Example](docs/assets/rustdoc/animation_sine_wave.gif)
 
 ### Interactive And Animation Example Catalog
 
@@ -540,6 +552,6 @@ at your option.
 
 ---
 
-**Status**: v0.3.6 - Early development, API may change. Production use at your own risk.
+**Status**: v0.4.0 - Early development, API may change. Production use at your own risk.
 
 **Support**: [Open an issue](https://github.com/Ameyanagi/ruviz/issues) or [start a discussion](https://github.com/Ameyanagi/ruviz/discussions)

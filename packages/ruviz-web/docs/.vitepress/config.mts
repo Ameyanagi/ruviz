@@ -2,10 +2,12 @@ import { defineConfig } from "vitepress";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
+const base = process.env.RUVIZ_WEB_DOCS_BASE || "/";
 
 export default defineConfig({
   title: "ruviz",
   description: "Browser-first plotting SDK docs for ruviz.",
+  base,
   themeConfig: {
     nav: [
       { text: "Guide", link: "/guide/getting-started" },

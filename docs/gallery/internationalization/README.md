@@ -1,55 +1,39 @@
-# Internationalization Gallery
+# Internationalization
 
-Demonstration of ruviz's support for international text rendering including CJK (Chinese, Japanese, Korean) characters.
+Examples covering multilingual text layout and CJK rendering.
 
 ## Examples
 
 ### Japanese Labels
 
-![Japanese Plot](../../images/international_japanese.png)
+Japanese-language labels rendered with the default browser/document fonts.
 
-Sine wave plot with Japanese title, axis labels, and legend.
+![Japanese Labels](../../assets/gallery/rust/internationalization/international_japanese.png)
 
-[View source code](https://github.com/Ameyanagi/ruviz/blob/main/examples/doc_international.rs#L28-L44)
-
----
+Source: `examples/doc_international.rs`
 
 ### Chinese Labels
 
-![Chinese Plot](../../images/international_chinese.png)
+Chinese-language bar chart rendering example.
 
-Bar chart with simplified Chinese text for sales data visualization.
+![Chinese Labels](../../assets/gallery/rust/internationalization/international_chinese.png)
 
-[View source code](https://github.com/Ameyanagi/ruviz/blob/main/examples/doc_international.rs#L47-L63)
-
----
+Source: `examples/doc_international.rs`
 
 ### Korean Labels
 
-![Korean Plot](../../images/international_korean.png)
+Korean-language line chart rendering example.
 
-Line plot with Korean labels showing growth trend analysis.
+![Korean Labels](../../assets/gallery/rust/internationalization/international_korean.png)
 
-[View source code](https://github.com/Ameyanagi/ruviz/blob/main/examples/doc_international.rs#L66-L85)
-
----
+Source: `examples/doc_international.rs`
 
 ### Multi-Language Comparison
 
-![Multi-Language Comparison](../../images/international_comparison.png)
+A four-panel comparison of CJK and mixed-language labels.
 
-Subplot grid comparing the same visualization in Japanese, Chinese, Korean, and mixed script text.
+![Multi-Language Comparison](../../assets/gallery/rust/internationalization/international_comparison.png)
 
-[View source code](https://github.com/Ameyanagi/ruviz/blob/main/examples/doc_international.rs#L88-L146)
-
----
-
-## Running the Examples
-
-Generate all internationalization images:
-
-```bash
-cargo run --example doc_international
-```
+Source: `examples/doc_international.rs`
 
 [← Back to Gallery](../README.md)

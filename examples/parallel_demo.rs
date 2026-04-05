@@ -7,7 +7,7 @@ use std::time::Instant;
 fn main() -> Result<()> {
     println!("Parallel Rendering Demo");
     println!("=======================");
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     let cpu_count = thread::available_parallelism()
         .map(|p| p.get())
@@ -44,7 +44,7 @@ fn main() -> Result<()> {
             .theme(Theme::seaborn())
             .line(&x, &y)
             .save(format!(
-                "examples/output/parallel_demo_{}k.png",
+                "generated/examples/parallel_demo_{}k.png",
                 size / 1000
             ))?;
 
@@ -86,7 +86,7 @@ fn main() -> Result<()> {
         .label("Series 2")
         .line(&x, &y3)
         .label("Series 3")
-        .save("examples/output/parallel_multi_series.png")?;
+        .save("generated/examples/parallel_multi_series.png")?;
 
     let multi_time = multi_start.elapsed();
     println!("Multi-series plot completed in {:?}", multi_time);
@@ -117,7 +117,7 @@ fn main() -> Result<()> {
         .size_px(1400, 900)
         .theme(Theme::seaborn())
         .scatter(&x_scatter, &y_scatter)
-        .save("examples/output/parallel_scatter.png")?;
+        .save("generated/examples/parallel_scatter.png")?;
 
     let scatter_time = scatter_start.elapsed();
     println!("Scatter plot completed in {:?}", scatter_time);

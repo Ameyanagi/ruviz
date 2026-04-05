@@ -5,7 +5,7 @@ use ruviz::prelude::*;
 fn main() -> Result<()> {
     println!("Generating golden images for visual regression testing...\n");
 
-    std::fs::create_dir_all("tests/golden_images")?;
+    std::fs::create_dir_all("tests/fixtures/golden")?;
     let mut count = 0;
 
     // 1. Basic line plot
@@ -17,7 +17,7 @@ fn main() -> Result<()> {
         .xlabel("X")
         .ylabel("Y")
         .line(&x, &y)
-        .save("tests/golden_images/01_basic_line.png")?;
+        .save("tests/fixtures/golden/01_basic_line.png")?;
     count += 1;
 
     // 2. Multi-series line plot
@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         .label("Quadratic")
         .line(&x, &x.iter().map(|&v: &f64| v.powi(3)).collect::<Vec<_>>())
         .label("Cubic")
-        .save("tests/golden_images/02_multi_series.png")?;
+        .save("tests/fixtures/golden/02_multi_series.png")?;
     count += 1;
 
     // 3. Scatter plot
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
         .scatter(&x_s, &y_s)
         .marker(MarkerStyle::Circle)
         .marker_size(8.0)
-        .save("tests/golden_images/03_scatter.png")?;
+        .save("tests/fixtures/golden/03_scatter.png")?;
     count += 1;
 
     // 4. Bar chart
@@ -58,7 +58,7 @@ fn main() -> Result<()> {
         .title("Bar Chart")
         .ylabel("Value")
         .bar(&categories, &values)
-        .save("tests/golden_images/04_bar_chart.png")?;
+        .save("tests/fixtures/golden/04_bar_chart.png")?;
     count += 1;
 
     // 5. Histogram
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
         .xlabel("Value")
         .ylabel("Frequency")
         .histogram(&data, None)
-        .save("tests/golden_images/05_histogram.png")?;
+        .save("tests/fixtures/golden/05_histogram.png")?;
     count += 1;
 
     // 6. Box plot
@@ -81,7 +81,7 @@ fn main() -> Result<()> {
         .title("Box Plot")
         .ylabel("Value")
         .boxplot(&boxdata, None)
-        .save("tests/golden_images/06_boxplot.png")?;
+        .save("tests/fixtures/golden/06_boxplot.png")?;
     count += 1;
 
     // 7-10. Theme variations
@@ -99,7 +99,7 @@ fn main() -> Result<()> {
             .theme(theme)
             .line(&x, &y)
             .save(format!(
-                "tests/golden_images/0{}_theme_{}.png",
+                "tests/fixtures/golden/0{}_theme_{}.png",
                 count + 1,
                 name
             ))?;
@@ -113,7 +113,11 @@ fn main() -> Result<()> {
             .title(format!("{} DPI", dpi))
             .dpi(dpi)
             .line(&x, &y)
-            .save(format!("tests/golden_images/{}_dpi_{}.png", count + 1, dpi))?;
+            .save(format!(
+                "tests/fixtures/golden/{}_dpi_{}.png",
+                count + 1,
+                dpi
+            ))?;
         count += 1;
     }
 
@@ -123,7 +127,7 @@ fn main() -> Result<()> {
         .title("Custom Dimensions")
         .size_px(1200, 900)
         .line(&x, &y)
-        .save("tests/golden_images/14_custom_dimensions.png")?;
+        .save("tests/fixtures/golden/14_custom_dimensions.png")?;
     count += 1;
 
     // 15. Subplots
@@ -141,7 +145,7 @@ fn main() -> Result<()> {
         .subplot(1, 0, plot3)?
         .subplot(1, 1, plot4)?
         .suptitle("Subplot Grid")
-        .save("tests/golden_images/15_subplots.png")?;
+        .save("tests/fixtures/golden/15_subplots.png")?;
     count += 1;
 
     // 16. Large dataset
@@ -151,7 +155,7 @@ fn main() -> Result<()> {
     Plot::new()
         .title("1K Points")
         .line(&x_large, &y_large)
-        .save("tests/golden_images/16_large_1k.png")?;
+        .save("tests/fixtures/golden/16_large_1k.png")?;
     count += 1;
 
     // 17. Scientific notation
@@ -163,7 +167,7 @@ fn main() -> Result<()> {
         .xlabel("X (x100)")
         .ylabel("Y (x10000)")
         .line(&x_sci, &y_sci)
-        .save("tests/golden_images/17_scientific.png")?;
+        .save("tests/fixtures/golden/17_scientific.png")?;
     count += 1;
 
     // 18. Negative values
@@ -175,7 +179,7 @@ fn main() -> Result<()> {
         .xlabel("X")
         .ylabel("Y")
         .line(&x_neg, &y_neg)
-        .save("tests/golden_images/18_negative.png")?;
+        .save("tests/fixtures/golden/18_negative.png")?;
     count += 1;
 
     // 19. Zero-crossing
@@ -185,7 +189,7 @@ fn main() -> Result<()> {
     Plot::new()
         .title("Zero-Crossing")
         .line(&x_zero, &y_zero)
-        .save("tests/golden_images/19_zero_crossing.png")?;
+        .save("tests/fixtures/golden/19_zero_crossing.png")?;
     count += 1;
 
     // 20. Dense scatter
@@ -197,7 +201,7 @@ fn main() -> Result<()> {
         .scatter(&x_dense, &y_dense)
         .marker(MarkerStyle::Circle)
         .marker_size(2.0)
-        .save("tests/golden_images/20_dense_scatter.png")?;
+        .save("tests/fixtures/golden/20_dense_scatter.png")?;
     count += 1;
 
     // 21. Wide bar chart
@@ -210,7 +214,7 @@ fn main() -> Result<()> {
     Plot::new()
         .title("Wide Bar Chart")
         .bar(&cats_str, &vals)
-        .save("tests/golden_images/21_wide_bar.png")?;
+        .save("tests/fixtures/golden/21_wide_bar.png")?;
     count += 1;
 
     // 22. Minimal plot
@@ -219,7 +223,7 @@ fn main() -> Result<()> {
     let y_min = vec![0.0, 1.0];
     Plot::new()
         .line(&x_min, &y_min)
-        .save("tests/golden_images/22_minimal.png")?;
+        .save("tests/fixtures/golden/22_minimal.png")?;
     count += 1;
 
     // 23. Long title
@@ -229,7 +233,7 @@ fn main() -> Result<()> {
         .xlabel("X-axis with longer label")
         .ylabel("Y-axis with longer label")
         .line(&x, &y)
-        .save("tests/golden_images/23_long_title.png")?;
+        .save("tests/fixtures/golden/23_long_title.png")?;
     count += 1;
 
     // 24. Unicode text
@@ -239,7 +243,7 @@ fn main() -> Result<()> {
         .xlabel("Température (°C)")
         .ylabel("Résultat")
         .line(&x, &y)
-        .save("tests/golden_images/24_unicode.png")?;
+        .save("tests/fixtures/golden/24_unicode.png")?;
     count += 1;
 
     // 25. Complex multi-series
@@ -263,11 +267,11 @@ fn main() -> Result<()> {
             &x_comp.iter().map(|&t| (t * 0.5).sin()).collect::<Vec<_>>(),
         )
         .label("sin(x/2)")
-        .save("tests/golden_images/25_complex_multi.png")?;
+        .save("tests/fixtures/golden/25_complex_multi.png")?;
     count += 1;
 
     println!("\nGenerated {} golden images successfully!", count);
-    println!("Location: tests/golden_images/");
+    println!("Location: tests/fixtures/golden/");
 
     Ok(())
 }

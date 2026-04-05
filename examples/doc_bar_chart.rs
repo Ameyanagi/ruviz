@@ -1,6 +1,6 @@
 //! Documentation example: Bar chart
 //!
-//! Generates docs/images/bar_chart.png for rustdoc
+//! Generates docs/assets/rustdoc/bar_chart.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -14,8 +14,8 @@ fn main() -> Result<()> {
         .ylabel("Value")
         .max_resolution(1920, 1440)
         .bar(&categories, &values)
-        .save("docs/images/bar_chart.png")?;
+        .save("docs/assets/rustdoc/bar_chart.png")?;
 
-    println!("✓ Generated docs/images/bar_chart.png");
+    println!("✓ Generated docs/assets/rustdoc/bar_chart.png");
     Ok(())
 }

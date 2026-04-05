@@ -1,6 +1,6 @@
 //! Documentation example: Legend
 //!
-//! Generates docs/images/legend.png for rustdoc
+//! Generates docs/assets/rustdoc/legend.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -19,8 +19,8 @@ fn main() -> Result<()> {
         .line(&x, &cos_y)
         .label("cos(x)")
         .max_resolution(1920, 1440)
-        .save("docs/images/legend.png")?;
+        .save("docs/assets/rustdoc/legend.png")?;
 
-    println!("✓ Generated docs/images/legend.png");
+    println!("✓ Generated docs/assets/rustdoc/legend.png");
     Ok(())
 }

@@ -25,7 +25,7 @@ use std::fmt;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// ![Default color palette](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/colors.png)
+/// ![Default color palette](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/colors.png)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
     pub r: u8,

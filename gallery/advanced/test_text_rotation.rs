@@ -4,7 +4,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Testing text rotation and UTF-8 support...");
     
     // Create test output directory if it doesn't exist
-    std::fs::create_dir_all("test_output")?;
+    std::fs::create_dir_all("generated/bench")?;
     
     // Generate simple test data
     let x_data: Vec<f64> = (0..20).map(|i| i as f64).collect();
@@ -18,9 +18,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .theme(Theme::publication())
         .line(&x_data, &y_data)
         .label("テストライン (Test Line)")
-        .save_with_size("test_output/test_text_rotation.png", 1000, 700)?;
+        .save_with_size("generated/bench/test_text_rotation.png", 1000, 700)?;
     
-    println!("✅ Generated test_output/test_text_rotation.png with UTF-8 text and rotation");
+    println!("✅ Generated generated/bench/test_text_rotation.png with UTF-8 text and rotation");
     
     Ok(())
 }

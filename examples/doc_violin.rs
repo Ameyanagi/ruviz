@@ -1,6 +1,6 @@
 //! Documentation example: Violin Plot
 //!
-//! Generates docs/images/violin_plot.png and docs/images/violin_quartiles.png for rustdoc.
+//! Generates docs/assets/rustdoc/violin_plot.png and docs/assets/rustdoc/violin_quartiles.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating violin plots.
 
@@ -33,9 +33,9 @@ fn main() -> Result<()> {
         .fill_alpha(0.6)
         .label("Group A")
         .category("Group A")
-        .save("docs/images/violin_plot.png")?;
+        .save("docs/assets/rustdoc/violin_plot.png")?;
 
-    println!("Generated docs/images/violin_plot.png (high-level API)");
+    println!("Generated docs/assets/rustdoc/violin_plot.png (high-level API)");
 
     // Different distribution for comparison
     let data2: Vec<f64> = (0..200)
@@ -57,9 +57,9 @@ fn main() -> Result<()> {
         .show_median(true)
         .fill_alpha(0.7)
         .color(Color::from_hex("#27ae60").unwrap())
-        .save("docs/images/violin_quartiles.png")?;
+        .save("docs/assets/rustdoc/violin_quartiles.png")?;
 
-    println!("Generated docs/images/violin_quartiles.png");
+    println!("Generated docs/assets/rustdoc/violin_quartiles.png");
 
     Ok(())
 }

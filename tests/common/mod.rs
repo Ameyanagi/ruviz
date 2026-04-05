@@ -1,8 +1,43 @@
-//! Common test utilities for ruviz tests
+//! Common test utilities for ruviz tests.
 //!
-//! Provides helper functions for test output paths and output artifact validation.
+//! Transient test artifacts live under `generated/tests/`, while committed
+//! golden fixtures live under `tests/fixtures/golden/`.
 
 use std::path::{Path, PathBuf};
+
+fn ensure_dir(path: PathBuf, label: &str) -> PathBuf {
+    if !path.exists() {
+        std::fs::create_dir_all(&path).unwrap_or_else(|err| {
+            panic!(
+                "Failed to create {label} directory {}: {err}",
+                path.display()
+            )
+        });
+    }
+
+    path
+}
+
+fn project_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+#[allow(dead_code)]
+pub fn generated_tests_root() -> PathBuf {
+    ensure_dir(
+        project_root().join("generated").join("tests"),
+        "generated tests root",
+    )
+}
+
+#[allow(dead_code)]
+pub fn golden_fixture_path(filename: &str) -> PathBuf {
+    project_root()
+        .join("tests")
+        .join("fixtures")
+        .join("golden")
+        .join(filename)
+}
 
 /// Get the path for a test output file.
 ///
@@ -12,7 +47,7 @@ use std::path::{Path, PathBuf};
 /// * `filename` - The name of the output file (e.g., "line_plot.png")
 ///
 /// # Returns
-/// Full path to the output file in `tests/output/`
+/// Full path to the output file in `generated/tests/render/`
 ///
 /// # Example
 /// ```ignore
@@ -20,15 +55,10 @@ use std::path::{Path, PathBuf};
 /// plot.save(&path)?;
 /// ```
 pub fn test_output_path(filename: &str) -> PathBuf {
-    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("output");
-
-    // Create directory if it doesn't exist
-    if !output_dir.exists() {
-        std::fs::create_dir_all(&output_dir).expect("Failed to create tests/output directory");
-    }
-
+    let output_dir = ensure_dir(
+        generated_tests_root().join("render"),
+        "generated test render output",
+    );
     output_dir.join(filename)
 }
 
@@ -41,19 +71,40 @@ pub fn test_output_path(filename: &str) -> PathBuf {
 /// * `filename` - The name of the output file
 ///
 /// # Returns
-/// Full path to the output file in `tests/output/<subdir>/`
+/// Full path to the output file in `generated/tests/render/<subdir>/`
 pub fn test_output_path_in(subdir: &str, filename: &str) -> PathBuf {
-    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("output")
-        .join(subdir);
-
-    // Create directory if it doesn't exist
-    if !output_dir.exists() {
-        std::fs::create_dir_all(&output_dir).expect("Failed to create test output subdirectory");
-    }
-
+    let output_dir = ensure_dir(
+        generated_tests_root().join("render").join(subdir),
+        "generated test render output subdirectory",
+    );
     output_dir.join(filename)
+}
+
+#[allow(dead_code)]
+pub fn visual_output_path(filename: &str) -> PathBuf {
+    ensure_dir(
+        generated_tests_root().join("visual"),
+        "generated visual output",
+    )
+    .join(filename)
+}
+
+#[allow(dead_code)]
+pub fn visual_diff_output_path(filename: &str) -> PathBuf {
+    ensure_dir(
+        generated_tests_root().join("visual-diff"),
+        "generated visual diff output",
+    )
+    .join(filename)
+}
+
+#[allow(dead_code)]
+pub fn export_output_path(subdir: &str, filename: &str) -> PathBuf {
+    ensure_dir(
+        generated_tests_root().join("export").join(subdir),
+        "generated export output",
+    )
+    .join(filename)
 }
 
 /// Assert that a file exists and is non-empty.
@@ -158,13 +209,16 @@ mod tests {
     fn test_output_path_creates_directory() {
         let path = test_output_path("test_file.png");
         assert!(path.parent().unwrap().exists());
-        assert!(path.to_string_lossy().contains("tests/output"));
+        assert!(path.to_string_lossy().contains("generated/tests/render"));
     }
 
     #[test]
     fn test_output_path_in_subdir() {
         let path = test_output_path_in("visual", "test_file.png");
         assert!(path.parent().unwrap().exists());
-        assert!(path.to_string_lossy().contains("tests/output/visual"));
+        assert!(
+            path.to_string_lossy()
+                .contains("generated/tests/render/visual")
+        );
     }
 }

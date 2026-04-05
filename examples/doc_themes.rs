@@ -1,7 +1,7 @@
 //! Documentation example: Themes comparison
 //!
-//! Generates docs/images/theme_default.png, docs/images/theme_dark.png,
-//! docs/images/theme_seaborn.png, and docs/images/theme_publication.png for rustdoc.
+//! Generates docs/assets/rustdoc/theme_default.png, docs/assets/rustdoc/theme_dark.png,
+//! docs/assets/rustdoc/theme_seaborn.png, and docs/assets/rustdoc/theme_publication.png for rustdoc.
 
 use ruviz::prelude::*;
 
@@ -16,8 +16,8 @@ fn main() -> Result<()> {
         .ylabel("y")
         .max_resolution(1920, 1440)
         .line(&x, &y)
-        .save("docs/images/theme_default.png")?;
-    println!("✓ Generated docs/images/theme_default.png");
+        .save("docs/assets/rustdoc/theme_default.png")?;
+    println!("✓ Generated docs/assets/rustdoc/theme_default.png");
 
     // Dark theme
     Plot::new()
@@ -27,8 +27,8 @@ fn main() -> Result<()> {
         .max_resolution(1920, 1440)
         .theme(Theme::dark())
         .line(&x, &y)
-        .save("docs/images/theme_dark.png")?;
-    println!("✓ Generated docs/images/theme_dark.png");
+        .save("docs/assets/rustdoc/theme_dark.png")?;
+    println!("✓ Generated docs/assets/rustdoc/theme_dark.png");
 
     // Seaborn theme
     Plot::new()
@@ -38,8 +38,8 @@ fn main() -> Result<()> {
         .max_resolution(1920, 1440)
         .theme(Theme::seaborn())
         .line(&x, &y)
-        .save("docs/images/theme_seaborn.png")?;
-    println!("✓ Generated docs/images/theme_seaborn.png");
+        .save("docs/assets/rustdoc/theme_seaborn.png")?;
+    println!("✓ Generated docs/assets/rustdoc/theme_seaborn.png");
 
     // Publication theme
     Plot::new()
@@ -49,8 +49,8 @@ fn main() -> Result<()> {
         .max_resolution(1920, 1440)
         .theme(Theme::publication())
         .line(&x, &y)
-        .save("docs/images/theme_publication.png")?;
-    println!("✓ Generated docs/images/theme_publication.png");
+        .save("docs/assets/rustdoc/theme_publication.png")?;
+    println!("✓ Generated docs/assets/rustdoc/theme_publication.png");
 
     Ok(())
 }

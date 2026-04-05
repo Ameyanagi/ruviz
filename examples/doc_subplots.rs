@@ -1,6 +1,6 @@
 //! Documentation example: Subplots
 //!
-//! Generates docs/images/subplots.png for rustdoc
+//! Generates docs/assets/rustdoc/subplots.png for rustdoc
 
 use ruviz::prelude::*;
 
@@ -62,8 +62,8 @@ fn main() -> Result<()> {
         .subplot_at(1, plot_scatter.into())?
         .subplot_at(2, plot_bar.into())?
         .subplot_at(3, plot_multi.into())?
-        .save("docs/images/subplots.png")?;
+        .save("docs/assets/rustdoc/subplots.png")?;
 
-    println!("✓ Generated docs/images/subplots.png");
+    println!("✓ Generated docs/assets/rustdoc/subplots.png");
     Ok(())
 }

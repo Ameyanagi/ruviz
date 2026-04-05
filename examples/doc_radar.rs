@@ -1,6 +1,6 @@
 //! Documentation example: Radar Chart
 //!
-//! Generates docs/images/radar_chart.png and docs/images/radar_skills.png for rustdoc.
+//! Generates docs/assets/rustdoc/radar_chart.png and docs/assets/rustdoc/radar_skills.png for rustdoc.
 //!
 //! This example demonstrates the high-level API for creating radar charts,
 //! including the new `add_series()` API for explicit named series.
@@ -20,9 +20,9 @@ fn main() -> Result<()> {
         .with_color(Color::from_hex("#e74c3c").unwrap())
         .with_fill_alpha(0.3)
         .legend_best()
-        .save("docs/images/radar_chart.png")?;
+        .save("docs/assets/rustdoc/radar_chart.png")?;
 
-    println!("Generated docs/images/radar_chart.png (high-level API)");
+    println!("Generated docs/assets/rustdoc/radar_chart.png (high-level API)");
 
     // Skills comparison with add_series() API
     Plot::new()
@@ -39,9 +39,9 @@ fn main() -> Result<()> {
         .add_series("Designer B", &[70.0, 90.0, 85.0, 80.0, 70.0])
         .with_fill_alpha(0.4)
         .legend_best()
-        .save("docs/images/radar_skills.png")?;
+        .save("docs/assets/rustdoc/radar_skills.png")?;
 
-    println!("Generated docs/images/radar_skills.png");
+    println!("Generated docs/assets/rustdoc/radar_skills.png");
 
     Ok(())
 }

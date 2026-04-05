@@ -6,7 +6,7 @@
 
 # Interface: BarSeriesSnapshot
 
-Defined in: [shared.ts:86](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L86)
+Defined in: [shared.ts:84](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L84)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:86](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **categories**: `string`[]
 
-Defined in: [shared.ts:88](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L88)
+Defined in: [shared.ts:86](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L86)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:88](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **kind**: `"bar"`
 
-Defined in: [shared.ts:87](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L87)
+Defined in: [shared.ts:85](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L85)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [shared.ts:87](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **values**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:89](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L89)
+Defined in: [shared.ts:87](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L87)

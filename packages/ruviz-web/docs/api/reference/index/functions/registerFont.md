@@ -8,7 +8,9 @@
 
 > **registerFont**(`bytes`): `Promise`\<`void`\>
 
-Defined in: [index.ts:1851](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/index.ts#L1851)
+Defined in: [index.ts:1840](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1840)
+
+Register custom font bytes for browser-hosted text rendering.
 
 ## Parameters
 

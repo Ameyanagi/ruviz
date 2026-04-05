@@ -10,7 +10,7 @@ use ruviz::record;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Ensure output directory exists
-    std::fs::create_dir_all("export_output/gif").ok();
+    std::fs::create_dir_all("generated/examples/export/gif").ok();
 
     // Generate x data points
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
@@ -24,7 +24,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let config = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
     record!(
-        "export_output/gif/animation_basic.gif",
+        "generated/examples/export/gif/animation_basic.gif",
         60, // 60 frames = 2 seconds at 30 FPS
         config: config,
         |t| {
@@ -41,7 +41,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("  Saved: export_output/gif/animation_basic.gif");
+    println!("  Saved: generated/examples/export/gif/animation_basic.gif");
 
     // ==========================================================
     // Alternative: Duration-based recording with config
@@ -52,7 +52,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let config2 = RecordConfig::new().max_resolution(800, 600).framerate(30);
 
     record!(
-        "export_output/gif/animation_basic_duration.gif",
+        "generated/examples/export/gif/animation_basic_duration.gif",
         2 secs,
         config: config2,
         |t| {
@@ -69,7 +69,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     )?;
 
-    println!("  Saved: export_output/gif/animation_basic_duration.gif");
+    println!("  Saved: generated/examples/export/gif/animation_basic_duration.gif");
 
     // ==========================================================
     // Summary

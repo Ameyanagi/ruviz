@@ -71,10 +71,10 @@ async fn async_main() -> Result<()> {
         println!(
             "To enable: cargo run --features interactive --example interactive_scatter_clusters"
         );
-        std::fs::create_dir_all("examples/output").ok();
-        plot.save("examples/output/interactive_scatter_clusters_static.png")?;
+        std::fs::create_dir_all("generated/examples").ok();
+        plot.save("generated/examples/interactive_scatter_clusters_static.png")?;
         println!(
-            "Saved static version as: examples/output/interactive_scatter_clusters_static.png"
+            "Saved static version as: generated/examples/interactive_scatter_clusters_static.png"
         );
     }
 

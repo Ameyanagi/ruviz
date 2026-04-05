@@ -70,8 +70,8 @@ fn main() -> Result<()> {
         .subplot_at(0, reversed_x_plot.into())?
         .subplot_at(1, reversed_y_plot.into())?
         .subplot_at(2, heatmap_plot.into())?
-        .save("examples/output/heatmap_scale_reversed_axes.png")?;
+        .save("generated/examples/heatmap_scale_reversed_axes.png")?;
 
-    println!("Saved: examples/output/heatmap_scale_reversed_axes.png");
+    println!("Saved: generated/examples/heatmap_scale_reversed_axes.png");
     Ok(())
 }

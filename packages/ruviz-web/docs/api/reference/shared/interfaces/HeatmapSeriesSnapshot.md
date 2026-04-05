@@ -6,7 +6,7 @@
 
 # Interface: HeatmapSeriesSnapshot
 
-Defined in: [shared.ts:102](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L102)
+Defined in: [shared.ts:100](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L100)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:102](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **cols**: `number`
 
-Defined in: [shared.ts:106](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L106)
+Defined in: [shared.ts:104](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L104)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:106](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"heatmap"`
 
-Defined in: [shared.ts:103](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L103)
+Defined in: [shared.ts:101](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L101)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:103](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **rows**: `number`
 
-Defined in: [shared.ts:105](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L105)
+Defined in: [shared.ts:103](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L103)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [shared.ts:105](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **values**: `number`[]
 
-Defined in: [shared.ts:104](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L104)
+Defined in: [shared.ts:102](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L102)

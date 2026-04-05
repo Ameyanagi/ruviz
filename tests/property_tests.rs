@@ -9,7 +9,8 @@ use ruviz::prelude::*;
 const PROPTEST_CASES: u32 = 32;
 
 fn ensure_output_dir() {
-    std::fs::create_dir_all("tests/output").expect("failed to create tests/output");
+    std::fs::create_dir_all("generated/tests/render")
+        .expect("failed to create generated/tests/render");
 }
 
 // Property 1: Plot should handle any valid f64 data without panicking
@@ -81,12 +82,12 @@ proptest! {
         ensure_output_dir();
 
         // Render twice with same data
-        Plot::new().line(&x, &y).save("tests/output/prop_det_1.png")?;
-        Plot::new().line(&x, &y).save("tests/output/prop_det_2.png")?;
+        Plot::new().line(&x, &y).save("generated/tests/render/prop_det_1.png")?;
+        Plot::new().line(&x, &y).save("generated/tests/render/prop_det_2.png")?;
 
         // Should produce identical file sizes (deterministic)
-        let size1 = std::fs::metadata("tests/output/prop_det_1.png")?.len();
-        let size2 = std::fs::metadata("tests/output/prop_det_2.png")?.len();
+        let size1 = std::fs::metadata("generated/tests/render/prop_det_1.png")?.len();
+        let size2 = std::fs::metadata("generated/tests/render/prop_det_2.png")?.len();
 
         prop_assert_eq!(size1, size2, "Output not deterministic");
     }
@@ -140,22 +141,22 @@ proptest! {
         let simple_result = ruviz::simple::line_plot(
             &x,
             &y,
-            "tests/output/prop_simple.png"
+            "generated/tests/render/prop_simple.png"
         );
 
         // Full API with auto-optimize
         let full_result = Plot::new()
             .line(&x, &y)
             .auto_optimize()
-            .save("tests/output/prop_full.png");
+            .save("generated/tests/render/prop_full.png");
 
         // Both should succeed
         prop_assert!(simple_result.is_ok());
         prop_assert!(full_result.is_ok());
 
         // Should produce similar-sized outputs (within 10% due to compression variance)
-        let simple_size = std::fs::metadata("tests/output/prop_simple.png")?.len();
-        let full_size = std::fs::metadata("tests/output/prop_full.png")?.len();
+        let simple_size = std::fs::metadata("generated/tests/render/prop_simple.png")?.len();
+        let full_size = std::fs::metadata("generated/tests/render/prop_full.png")?.len();
 
         let ratio = simple_size as f64 / full_size as f64;
         prop_assert!(

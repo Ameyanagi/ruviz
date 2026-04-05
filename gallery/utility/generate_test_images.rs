@@ -4,10 +4,10 @@ use std::fs;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create output directories
-    fs::create_dir_all("test_output")?;
-    fs::create_dir_all("export_output/png")?;
-    fs::create_dir_all("export_output/svg")?;
-    fs::create_dir_all("export_output/raw")?;
+    fs::create_dir_all("generated/bench")?;
+    fs::create_dir_all("generated/examples/export/png")?;
+    fs::create_dir_all("generated/examples/export/svg")?;
+    fs::create_dir_all("generated/examples/export/raw")?;
     
     println!("Generating test images...");
     
@@ -22,7 +22,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .save("test_output/01_basic_line_plot.png")?;
+        .save("generated/bench/01_basic_line_plot.png")?;
 
     // 2. Scatter plot
     println!("Creating scatter plot...");
@@ -32,7 +32,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .title("Scatter Plot Example")
         .scatter(&scatter_x, &scatter_y)
-        .save("test_output/02_scatter_plot.png")?;
+        .save("generated/bench/02_scatter_plot.png")?;
 
     // 3. Multiple series
     println!("Creating multi-series plot...");
@@ -44,7 +44,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .color(Color::new(255, 0, 0))
         .line(&x_data, &y2_data)
         .color(Color::new(0, 0, 255))
-        .save("test_output/03_multi_series.png")?;
+        .save("generated/bench/03_multi_series.png")?;
 
     // 4. Test different themes (simplified - just use default for now)
     println!("Creating themed plots...");
@@ -53,13 +53,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .title("Light Theme")
         .line(&x_data, &y_data)
-        .save("export_output/png/light_theme.png")?;
+        .save("generated/examples/export/png/light_theme.png")?;
 
     // For now, just create multiple copies with different names
     Plot::new()
         .title("Dark Theme")
         .line(&x_data, &y_data)
-        .save("export_output/png/dark_theme.png")?;
+        .save("generated/examples/export/png/dark_theme.png")?;
 
     // 5. Test SVG export
     println!("Testing SVG export...");
@@ -70,12 +70,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     
     let image = plot.render()?;
     let renderer = SkiaRenderer::new(800, 600, Theme::light())?;
-    renderer.export_svg("export_output/svg/test_plot.svg", 800, 600)?;
+    renderer.export_svg("generated/examples/export/svg/test_plot.svg", 800, 600)?;
     
     // 6. Test raw data export
     println!("Testing raw data export...");
     let raw_data = image.pixels;
-    fs::write("export_output/raw/test_plot.bin", &raw_data)?;
+    fs::write("generated/examples/export/raw/test_plot.bin", &raw_data)?;
     println!("Raw data size: {} bytes", raw_data.len());
     
     // 7. Performance test with larger dataset
@@ -87,16 +87,16 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .title("Performance Test - 10K Points")
         .line(&large_x, &large_y)
-        .save("test_output/04_performance_test.png")?;
+        .save("generated/bench/04_performance_test.png")?;
     let duration = start.elapsed();
     println!("10K points rendered in: {:?}", duration);
     
     println!("\n✅ All test images generated successfully!");
     println!("📁 Check these directories:");
-    println!("  - test_output/           (4 PNG files)");
-    println!("  - export_output/png/     (2 theme PNG files)");
-    println!("  - export_output/svg/     (1 SVG file)");
-    println!("  - export_output/raw/     (1 binary file)");
+    println!("  - generated/bench/           (4 PNG files)");
+    println!("  - generated/examples/export/png/     (2 theme PNG files)");
+    println!("  - generated/examples/export/svg/     (1 SVG file)");
+    println!("  - generated/examples/export/raw/     (1 binary file)");
     
     Ok(())
 }

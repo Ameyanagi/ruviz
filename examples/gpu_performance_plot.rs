@@ -23,9 +23,9 @@ fn main() -> Result<()> {
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
         .legend(Position::TopLeft)
-        .save("examples/output/gpu_cpu_throughput.png")?;
+        .save("generated/examples/gpu_cpu_throughput.png")?;
 
-    println!("✅ Saved: examples/output/gpu_cpu_throughput.png");
+    println!("✅ Saved: generated/examples/gpu_cpu_throughput.png");
 
     // Create speedup plot
     let speedup: Vec<f64> = cpu_mpts
@@ -41,9 +41,9 @@ fn main() -> Result<()> {
         .title("GPU Speedup vs Dataset Size")
         .xlabel("Dataset Size (points)")
         .ylabel("GPU Speedup Factor (x)")
-        .save("examples/output/gpu_speedup.png")?;
+        .save("generated/examples/gpu_speedup.png")?;
 
-    println!("✅ Saved: examples/output/gpu_speedup.png");
+    println!("✅ Saved: generated/examples/gpu_speedup.png");
 
     // Print the data we're plotting
     println!("\n🔬 Performance Data Plotted:");
@@ -76,7 +76,9 @@ fn main() -> Result<()> {
     println!("  • GPU performance: 207-700 Mpts/sec range");
 
     println!("\n✅ Performance plots created successfully!");
-    println!("📁 Check examples/output/gpu_cpu_throughput.png and examples/output/gpu_speedup.png");
+    println!(
+        "📁 Check generated/examples/gpu_cpu_throughput.png and generated/examples/gpu_speedup.png"
+    );
 
     Ok(())
 }

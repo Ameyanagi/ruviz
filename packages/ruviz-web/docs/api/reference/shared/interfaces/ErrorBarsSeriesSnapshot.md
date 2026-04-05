@@ -6,7 +6,7 @@
 
 # Interface: ErrorBarsSeriesSnapshot
 
-Defined in: [shared.ts:109](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L109)
+Defined in: [shared.ts:107](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L107)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:109](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **kind**: `"error-bars"`
 
-Defined in: [shared.ts:110](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L110)
+Defined in: [shared.ts:108](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L108)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:110](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **x**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:111](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L111)
+Defined in: [shared.ts:109](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L109)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:111](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **y**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:112](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L112)
+Defined in: [shared.ts:110](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L110)
 
 ***
 
@@ -38,4 +38,4 @@ Defined in: [shared.ts:112](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952
 
 > **yErrors**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:113](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L113)
+Defined in: [shared.ts:111](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L111)

@@ -2,7 +2,7 @@ use ruviz::prelude::*;
 use std::fs;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all("test_output")?;
+    fs::create_dir_all("generated/bench")?;
 
     println!("Creating high-contrast visual test with cosmic-text...");
 

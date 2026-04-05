@@ -36,7 +36,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// ![Legend example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend.png)
+    /// ![Legend example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/legend.png)
     pub fn legend_position(mut self, position: LegendPosition) -> Self {
         self.layout.legend.enabled = true;
         // Convert LegendPosition to old Position for backward compatibility

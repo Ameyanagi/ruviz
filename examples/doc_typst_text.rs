@@ -1,6 +1,6 @@
 //! Documentation example: Typst text rendering
 //!
-//! Generates docs/images/typst_text.png for rustdoc.
+//! Generates docs/assets/rustdoc/typst_text.png for rustdoc.
 
 use ruviz::prelude::*;
 
@@ -17,9 +17,9 @@ fn run() -> Result<()> {
         .ylabel("Amplitude $A(t)$")
         .typst(true)
         .max_resolution(1920, 1440)
-        .save("docs/images/typst_text.png")?;
+        .save("docs/assets/rustdoc/typst_text.png")?;
 
-    println!("✓ Generated docs/images/typst_text.png");
+    println!("✓ Generated docs/assets/rustdoc/typst_text.png");
     Ok(())
 }
 

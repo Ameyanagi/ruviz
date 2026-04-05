@@ -1,3 +1,42 @@
+//! Browser runtime adapter for [`ruviz`](https://docs.rs/ruviz).
+//!
+//! `ruviz-web` is the Rust-side WebAssembly bridge that powers the browser and
+//! notebook runtimes in this repository. It exposes wasm-bindgen types that can
+//! render static plots, drive interactive canvas sessions, and surface browser
+//! capability checks to JavaScript or TypeScript hosts.
+//!
+//! This crate is intentionally lower level than the published npm package. Use:
+//!
+//! - the root [`ruviz`](https://docs.rs/ruviz) crate for native Rust plotting
+//! - the npm package `ruviz` for browser-first JS/TS usage
+//! - `ruviz-web` when you are embedding the wasm bridge directly from Rust or
+//!   working on the browser adapter itself
+//!
+//! # What This Crate Provides
+//!
+//! - `web_runtime_capabilities()` to probe worker, OffscreenCanvas, WebGPU, and
+//!   font-registration availability
+//! - `JsPlot` bindings for static PNG/SVG export
+//! - `WebCanvasSession` bindings for main-thread interactive canvas rendering
+//! - observable and signal wrappers used by the higher-level JS SDK
+//! - font registration helpers for browser-hosted text rendering
+//!
+//! # Typical Usage
+//!
+//! Most users should not talk to these bindings directly. The recommended
+//! browser-facing surface is the npm package documented in the repo at
+//! `packages/ruviz-web/README.md`, which wraps these bindings with a higher
+//! level `createPlot()` builder and session APIs.
+//!
+//! If you do need the raw bridge, compile the crate for `wasm32-unknown-unknown`
+//! and consume the generated bindings via wasm-bindgen or wasm-pack.
+//!
+//! # Documentation
+//!
+//! - Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
+//! - npm package docs: <https://github.com/Ameyanagi/ruviz/tree/main/packages/ruviz-web>
+//! - Release notes: <https://github.com/Ameyanagi/ruviz/tree/main/docs/releases>
+
 #![allow(clippy::needless_pass_by_value)]
 
 #[cfg(target_arch = "wasm32")]

@@ -6,7 +6,7 @@ use std::time::Instant;
 fn main() -> Result<()> {
     println!("Memory Optimization Demo");
     println!("========================");
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     // Generate large dataset to demonstrate memory efficiency
     let start_time = Instant::now();
@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         .size_px(1200, 800)
         .theme(Theme::seaborn())
         .line(&x, &y)
-        .save("examples/output/memory_optimization_demo.png")?;
+        .save("generated/examples/memory_optimization_demo.png")?;
 
     let plot_time = plot_start.elapsed();
     println!("Line plot rendered in {:?}", plot_time);
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
         .size_px(1200, 800)
         .theme(Theme::seaborn())
         .scatter(&x_scatter, &y_scatter)
-        .save("examples/output/memory_scatter_demo.png")?;
+        .save("generated/examples/memory_scatter_demo.png")?;
 
     let scatter_time = scatter_start.elapsed();
     let total_time = start_time.elapsed();

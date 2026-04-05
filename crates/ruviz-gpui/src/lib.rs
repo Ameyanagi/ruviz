@@ -1,3 +1,41 @@
+//! GPUI component adapter for [`ruviz`](https://docs.rs/ruviz).
+//!
+//! `ruviz-gpui` embeds a shared `ruviz` interactive plot session inside a GPUI
+//! application. It is intended for native desktop apps that want the plot
+//! interaction model from `ruviz` while keeping presentation and layout inside a
+//! GPUI view tree.
+//!
+//! # What This Crate Provides
+//!
+//! - `RuvizPlot` for embedding static or interactive plots in GPUI views
+//! - configurable presentation modes for image-backed and hybrid rendering
+//! - built-in pan, zoom, hover, selection, and context-menu behavior
+//! - clipboard and PNG save helpers routed through the host platform
+//!
+//! # Platform Support
+//!
+//! `ruviz-gpui` currently supports macOS, Linux, and Windows. Unsupported
+//! targets fail at compile time.
+//!
+//! # Recommended Usage
+//!
+//! Add both crates to your application:
+//!
+//! ```toml
+//! [dependencies]
+//! ruviz = "0.4.0"
+//! ruviz-gpui = "0.4.0"
+//! ```
+//!
+//! Then build a normal `ruviz::Plot` or `PreparedPlot` and hand it to the GPUI
+//! component. See the repository examples under
+//! `crates/ruviz-gpui/examples/` for end-to-end setups.
+//!
+//! # Documentation
+//!
+//! - Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
+//! - Adapter README: <https://github.com/Ameyanagi/ruviz/tree/main/crates/ruviz-gpui>
+
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 compile_error!("ruviz-gpui currently supports macOS, Linux, and Windows only.");
 

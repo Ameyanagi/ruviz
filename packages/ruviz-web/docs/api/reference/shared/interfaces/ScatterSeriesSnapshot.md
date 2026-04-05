@@ -6,7 +6,7 @@
 
 # Interface: ScatterSeriesSnapshot
 
-Defined in: [shared.ts:80](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L80)
+Defined in: [shared.ts:78](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L78)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:80](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **kind**: `"scatter"`
 
-Defined in: [shared.ts:81](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L81)
+Defined in: [shared.ts:79](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L79)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:81](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **x**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:82](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L82)
+Defined in: [shared.ts:80](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L80)
 
 ***
 
@@ -30,4 +30,4 @@ Defined in: [shared.ts:82](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **y**: [`YSourceSnapshot`](../type-aliases/YSourceSnapshot.md)
 
-Defined in: [shared.ts:83](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L83)
+Defined in: [shared.ts:81](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L81)

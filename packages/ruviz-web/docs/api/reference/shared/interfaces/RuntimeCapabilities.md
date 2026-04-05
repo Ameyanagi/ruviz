@@ -6,7 +6,7 @@
 
 # Interface: RuntimeCapabilities
 
-Defined in: [shared.ts:7](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L7)
+Defined in: [shared.ts:7](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L7)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:7](https://github.com/Ameyanagi/ruviz/blob/91f8e7b3695209
 
 > **defaultBrowserFontRegistered**: `boolean`
 
-Defined in: [shared.ts:12](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L12)
+Defined in: [shared.ts:12](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L12)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:12](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **gpuCanvasFastPathAvailable**: `boolean`
 
-Defined in: [shared.ts:13](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L13)
+Defined in: [shared.ts:13](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L13)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:13](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **offscreenCanvasSupported**: `boolean`
 
-Defined in: [shared.ts:8](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L8)
+Defined in: [shared.ts:8](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L8)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [shared.ts:8](https://github.com/Ameyanagi/ruviz/blob/91f8e7b3695209
 
 > **touchInputSupported**: `boolean`
 
-Defined in: [shared.ts:11](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L11)
+Defined in: [shared.ts:11](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L11)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [shared.ts:11](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **webgpuSupported**: `boolean`
 
-Defined in: [shared.ts:10](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L10)
+Defined in: [shared.ts:10](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L10)
 
 ***
 
@@ -54,4 +54,4 @@ Defined in: [shared.ts:10](https://github.com/Ameyanagi/ruviz/blob/91f8e7b369520
 
 > **workerSupported**: `boolean`
 
-Defined in: [shared.ts:9](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L9)
+Defined in: [shared.ts:9](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L9)

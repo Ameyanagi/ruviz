@@ -1,58 +1,57 @@
 # ruviz Gallery
 
-Comprehensive visual showcase of ruviz plotting capabilities.
+Curated visual showcase of the Rust examples and rustdoc media for `ruviz`.
 
-**Total Examples**: 32
+**Total Examples**: 23
 
 ## Gallery Categories
 
-### 📊 Basic Plots (1 examples)
+### 📊 Basic Plots (3 examples)
 
-Fundamental plot types for everyday visualization
+Fundamental plot types for everyday visualization and quick starts.
 
-[View Basic Plots Examples →](basic/README.md)
+[View Basic Plots →](basic/README.md)
 
 ### 📈 Statistical Plots (4 examples)
 
-Statistical analysis and distributions
+Distribution, density, and uncertainty-focused plot recipes.
 
-[View Statistical Plots Examples →](statistical/README.md)
+[View Statistical Plots →](statistical/README.md)
 
-### 📄 Publication Quality (2 examples)
+### 📄 Publication Quality (3 examples)
 
-Professional figures for journals
+Layouts and themes tuned for papers, reports, and slides.
 
-[View Publication Quality Examples →](publication/README.md)
+[View Publication Quality →](publication/README.md)
 
-### ⚡ Performance (10 examples)
+### ⚡ Performance (2 examples)
 
-Large dataset handling and optimization
+Large-dataset examples and optimization-oriented render outputs.
 
-[View Performance Examples →](performance/README.md)
+[View Performance →](performance/README.md)
 
 ### 🎨 Advanced Techniques (4 examples)
 
-Complex visualizations and customization
+Styling, polar/radar, and layout-heavy visualizations.
 
-[View Advanced Techniques Examples →](advanced/README.md)
+[View Advanced Techniques →](advanced/README.md)
 
-### 🎬 Animation (7 examples)
+### 🎬 Animation (3 examples)
 
-Animated visualizations with the `record!` macro
+GIF examples generated from the animation helpers and `record!` flows.
 
-[View Animation Examples →](animation/README.md)
+[View Animation →](animation/README.md)
 
 ### 🌍 Internationalization (4 examples)
 
-CJK (Chinese, Japanese, Korean) and multi-language text support
+Examples covering multilingual text layout and CJK rendering.
 
-[View Internationalization Examples →](internationalization/README.md)
+[View Internationalization →](internationalization/README.md)
 
 ---
 
-All examples are automatically generated from the `examples/` directory.
-
-To regenerate the gallery:
+Gallery assets are generated from `generated/examples/` and `docs/assets/rustdoc/`.
+Refresh them with:
 
 ```bash
 cargo run --bin generate_gallery

@@ -64,9 +64,9 @@ async fn async_main() -> Result<()> {
     {
         println!("Interactive features not enabled.");
         println!("To enable: cargo run --features interactive --example basic_interaction");
-        std::fs::create_dir_all("examples/output").ok();
-        plot.save("examples/output/basic_interaction_static.png")?;
-        println!("Saved static version as: examples/output/basic_interaction_static.png");
+        std::fs::create_dir_all("generated/examples").ok();
+        plot.save("generated/examples/basic_interaction_static.png")?;
+        println!("Saved static version as: generated/examples/basic_interaction_static.png");
     }
 
     println!("Example completed!");

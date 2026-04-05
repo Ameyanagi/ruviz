@@ -182,7 +182,7 @@ fn test_font_system_singleton() {
 #[test]
 fn test_international_plot_generation() {
     // Create output directory
-    let output_dir = Path::new("tests/output");
+    let output_dir = Path::new("generated/tests/render");
     std::fs::create_dir_all(output_dir).ok();
 
     let x_data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -194,13 +194,13 @@ fn test_international_plot_generation() {
         .xlabel("横軸 (X)".to_string())
         .ylabel("縦軸 (Y)".to_string())
         .line(&x_data, &y_data)
-        .save("tests/output/japanese_test.png");
+        .save("generated/tests/render/japanese_test.png");
 
     assert!(result.is_ok(), "Japanese plot generation should succeed");
 
     // Verify file was created
     assert!(
-        Path::new("tests/output/japanese_test.png").exists(),
+        Path::new("generated/tests/render/japanese_test.png").exists(),
         "Japanese output file should exist"
     );
 }

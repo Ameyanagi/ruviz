@@ -38,9 +38,9 @@ fn main() -> Result<()> {
         .axvspan(2.0, 4.0)
         // Add a shaded horizontal span
         .axhspan(6.0, 8.0)
-        .save("examples/output/annotations_demo.png")?;
+        .save("generated/examples/annotations_demo.png")?;
 
-    println!("Annotations demo saved to examples/output/annotations_demo.png");
+    println!("Annotations demo saved to generated/examples/annotations_demo.png");
 
     // Also create a simpler example with just text and arrow
     Plot::new()
@@ -50,9 +50,9 @@ fn main() -> Result<()> {
         .arrow(1.0, 0.5, 3.0, 0.9)
         .hline(4.0)
         .vline(7.0)
-        .save("examples/output/simple_annotations.png")?;
+        .save("generated/examples/simple_annotations.png")?;
 
-    println!("Simple annotations saved to examples/output/simple_annotations.png");
+    println!("Simple annotations saved to generated/examples/simple_annotations.png");
 
     Ok(())
 }

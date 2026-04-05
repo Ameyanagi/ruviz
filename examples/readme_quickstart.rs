@@ -1,3 +1,5 @@
+mod util;
+
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {
@@ -15,8 +17,9 @@ fn main() -> Result<()> {
     #[cfg(not(feature = "typst-math"))]
     let plot = plot.ylabel("y = x^2");
 
-    plot.save("assets/readme_example.png")?;
+    let output = util::readme_asset_path("readme_example.png");
+    plot.save(&output)?;
 
-    println!("✓ Generated assets/readme_example.png");
+    println!("✓ Generated {}", output.display());
     Ok(())
 }

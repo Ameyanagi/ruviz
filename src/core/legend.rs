@@ -36,7 +36,7 @@ use crate::render::{Color, LineStyle, MarkerStyle};
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// ![Legend positions](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/images/legend_positions.png)
+/// ![Legend positions](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/legend_positions.png)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum LegendPosition {
     /// Code 0: Automatic best position (minimizes data overlap)

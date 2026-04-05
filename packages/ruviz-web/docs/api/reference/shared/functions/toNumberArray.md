@@ -8,7 +8,7 @@
 
 > **toNumberArray**(`values`): `number`[]
 
-Defined in: [shared.ts:196](https://github.com/Ameyanagi/ruviz/blob/91f8e7b36952093ba0bf232fc1ad623212329596/packages/ruviz-web/src/shared.ts#L196)
+Defined in: [shared.ts:194](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L194)
 
 ## Parameters
 

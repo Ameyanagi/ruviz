@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.0] - 2026-04-05
+
+### Added
+
+- Added empty-plot rendering support across the Rust core renderers, the Python notebook path, and the Python widget/browser session path, so a plot with zero series now renders as a valid empty chart instead of failing.
+
+### Changed
+
+- Reworked tick-aware layout handling so shared layout respects explicit margin modes (`Fixed`, `Auto`, and `Proportional`) instead of collapsing them into the default content-driven layout path.
+- Aligned render-time tick layout with configured major-tick settings so `render()`, save/export flows, and interactive rendering use the same tick-count strategy.
+- Refreshed release-facing documentation, package READMEs, and generated media for the `0.4.0` release surface across Rust, Python, and npm/web.
+
+### Fixed
+
+- Restored the `center_plot` content-centering option in the layout path and added regression coverage for centered versus asymmetric layouts.
+- Fixed the Python widget build bootstrap so wasm-bindgen version lookup is deterministic and concurrent installs do not race on the cached CLI directory.
+- Stabilized notebook/widget media regeneration and golden-image refresh flows so release assets can be rebuilt consistently from one documented command.
+
 ## [0.3.6] - 2026-04-04
 
 ### Added
@@ -222,7 +240,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Ameyanagi/ruviz/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/Ameyanagi/ruviz/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/Ameyanagi/ruviz/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/Ameyanagi/ruviz/compare/v0.3.3...v0.3.4

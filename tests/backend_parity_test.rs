@@ -16,7 +16,7 @@ fn test_backend_parity_basic_line() {
     let result_default = Plot::new()
         .title("Backend Parity Test")
         .line(&x, &y)
-        .save("tests/output/backend_default_line.png");
+        .save("generated/tests/render/backend_default_line.png");
 
     // THEN: Should succeed
     assert!(
@@ -25,7 +25,10 @@ fn test_backend_parity_basic_line() {
         result_default
     );
 
-    assert_png_rendered("tests/output/backend_default_line.png", Some((640, 480)));
+    assert_png_rendered(
+        "generated/tests/render/backend_default_line.png",
+        Some((640, 480)),
+    );
 }
 
 #[test]
@@ -39,7 +42,7 @@ fn test_backend_parity_parallel() {
     let result_parallel = Plot::new()
         .title("Parallel Backend Test")
         .line(&x, &y)
-        .save("tests/output/backend_parallel_line.png");
+        .save("generated/tests/render/backend_parallel_line.png");
 
     // THEN: Should succeed
     assert!(
@@ -48,7 +51,10 @@ fn test_backend_parity_parallel() {
         result_parallel
     );
 
-    assert_png_rendered("tests/output/backend_parallel_line.png", Some((640, 480)));
+    assert_png_rendered(
+        "generated/tests/render/backend_parallel_line.png",
+        Some((640, 480)),
+    );
 }
 
 #[test]
@@ -63,7 +69,7 @@ fn test_backend_consistency_scatter() {
         .scatter(&x, &y)
         .marker(MarkerStyle::Circle)
         .marker_size(8.0)
-        .save("tests/output/backend_scatter.png");
+        .save("generated/tests/render/backend_scatter.png");
 
     // THEN: Should produce consistent output
     assert!(
@@ -71,7 +77,10 @@ fn test_backend_consistency_scatter() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert_png_rendered("tests/output/backend_scatter.png", Some((640, 480)));
+    assert_png_rendered(
+        "generated/tests/render/backend_scatter.png",
+        Some((640, 480)),
+    );
 }
 
 #[test]
@@ -84,7 +93,7 @@ fn test_backend_consistency_bar() {
     let result = Plot::new()
         .title("Backend Consistency - Bar")
         .bar(&categories, &values)
-        .save("tests/output/backend_bar.png");
+        .save("generated/tests/render/backend_bar.png");
 
     // THEN: Should produce consistent output
     assert!(
@@ -92,7 +101,7 @@ fn test_backend_consistency_bar() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert_png_rendered("tests/output/backend_bar.png", Some((640, 480)));
+    assert_png_rendered("generated/tests/render/backend_bar.png", Some((640, 480)));
 }
 
 #[test]
@@ -106,7 +115,7 @@ fn test_backend_consistency_histogram() {
     let result = Plot::new()
         .title("Backend Consistency - Histogram")
         .histogram(&data, None)
-        .save("tests/output/backend_histogram.png");
+        .save("generated/tests/render/backend_histogram.png");
 
     // THEN: Should produce consistent output
     assert!(
@@ -114,7 +123,10 @@ fn test_backend_consistency_histogram() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert_png_rendered("tests/output/backend_histogram.png", Some((640, 480)));
+    assert_png_rendered(
+        "generated/tests/render/backend_histogram.png",
+        Some((640, 480)),
+    );
 }
 
 #[test]
@@ -126,7 +138,7 @@ fn test_backend_consistency_boxplot() {
     let result = Plot::new()
         .title("Backend Consistency - Boxplot")
         .boxplot(&data, None)
-        .save("tests/output/backend_boxplot.png");
+        .save("generated/tests/render/backend_boxplot.png");
 
     // THEN: Should produce consistent output
     assert!(
@@ -134,7 +146,10 @@ fn test_backend_consistency_boxplot() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert_png_rendered("tests/output/backend_boxplot.png", Some((640, 480)));
+    assert_png_rendered(
+        "generated/tests/render/backend_boxplot.png",
+        Some((640, 480)),
+    );
 }
 
 #[test]
@@ -152,7 +167,7 @@ fn test_backend_consistency_multi_series() {
         .label("Quadratic")
         .line(&x, &x.iter().map(|&v| v.powi(3)).collect::<Vec<_>>())
         .label("Cubic")
-        .save("tests/output/backend_multi_series.png");
+        .save("generated/tests/render/backend_multi_series.png");
 
     // THEN: Should produce consistent output
     assert!(
@@ -160,7 +175,10 @@ fn test_backend_consistency_multi_series() {
         "expected operation to succeed: {:?}",
         result
     );
-    assert_png_rendered("tests/output/backend_multi_series.png", Some((640, 480)));
+    assert_png_rendered(
+        "generated/tests/render/backend_multi_series.png",
+        Some((640, 480)),
+    );
 }
 
 #[test]
@@ -180,12 +198,12 @@ fn test_backend_consistency_themes() {
             .theme(theme)
             .title(format!("Backend - {} Theme", name))
             .line(&x, &y)
-            .save(format!("tests/output/backend_theme_{}.png", name));
+            .save(format!("generated/tests/render/backend_theme_{}.png", name));
 
         // THEN: Should produce consistent output for all themes
         assert!(result.is_ok(), "{} theme failed", name);
         assert_png_rendered(
-            format!("tests/output/backend_theme_{}.png", name),
+            format!("generated/tests/render/backend_theme_{}.png", name),
             Some((640, 480)),
         );
     }
@@ -203,7 +221,7 @@ fn test_backend_consistency_dpi() {
             .dpi(dpi)
             .title(format!("Backend - {} DPI", dpi))
             .line(&x, &y)
-            .save(format!("tests/output/backend_dpi_{}.png", dpi));
+            .save(format!("generated/tests/render/backend_dpi_{}.png", dpi));
 
         // THEN: Should succeed for all DPIs
         assert!(result.is_ok(), "{} DPI failed", dpi);
@@ -213,7 +231,7 @@ fn test_backend_consistency_dpi() {
         let expected_width = (6.4 * dpi as f32) as u32;
         let expected_height = (4.8 * dpi as f32) as u32;
         assert_png_dimensions_with_tolerance(
-            format!("tests/output/backend_dpi_{}.png", dpi),
+            format!("generated/tests/render/backend_dpi_{}.png", dpi),
             (expected_width, expected_height),
             1,
         );
@@ -232,13 +250,19 @@ fn test_backend_consistency_dimensions() {
             .size_px(width, height)
             .title(format!("{}x{}", width, height))
             .line(&x, &y)
-            .save(format!("tests/output/backend_dim_{}x{}.png", width, height));
+            .save(format!(
+                "generated/tests/render/backend_dim_{}x{}.png",
+                width, height
+            ));
 
         // THEN: Should produce correct dimensions
         assert!(result.is_ok(), "{}x{} failed", width, height);
 
         assert_png_dimensions_with_tolerance(
-            format!("tests/output/backend_dim_{}x{}.png", width, height),
+            format!(
+                "generated/tests/render/backend_dim_{}x{}.png",
+                width, height
+            ),
             (width, height),
             1,
         );
@@ -254,7 +278,7 @@ fn test_backend_error_handling() {
     // WHEN: Attempting to plot empty data
     let result = Plot::new()
         .line(&empty_x, &empty_y)
-        .save("tests/output/backend_should_not_exist.png");
+        .save("generated/tests/render/backend_should_not_exist.png");
 
     // THEN: Should fail gracefully across all backends
     assert!(result.is_err(), "Empty data should produce error");
@@ -265,7 +289,7 @@ fn test_backend_error_handling() {
 
     let result = Plot::new()
         .line(&x, &y)
-        .save("tests/output/backend_should_not_exist_2.png");
+        .save("generated/tests/render/backend_should_not_exist_2.png");
 
     assert!(result.is_err(), "Mismatched data should produce error");
 }

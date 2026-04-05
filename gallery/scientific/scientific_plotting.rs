@@ -5,7 +5,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Generating scientific plotting examples...");
 
     // Create test output directory if it doesn't exist
-    std::fs::create_dir_all("test_output")?;
+    std::fs::create_dir_all("generated/bench")?;
 
     // Example 1: Error Bars - Experimental vs Theoretical Data
     generate_error_bars_example()?;
@@ -19,7 +19,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Example 4: Publication-Quality Multi-Panel Figure
     generate_publication_figure()?;
 
-    println!("✅ Generated scientific plotting examples in test_output/");
+    println!("✅ Generated scientific plotting examples in generated/bench/");
 
     Ok(())
 }
@@ -57,7 +57,7 @@ fn generate_error_bars_example() -> std::result::Result<(), Box<dyn std::error::
         .error_bars(&x_data, &experimental, &y_errors)
         .label("Experimental Data")
         .marker(MarkerStyle::Circle)
-        .save_with_size("test_output/scientific_error_bars.png", 1200, 900)?;
+        .save_with_size("generated/bench/scientific_error_bars.png", 1200, 900)?;
 
     Ok(())
 }
@@ -88,7 +88,11 @@ fn generate_multi_series_with_errors() -> std::result::Result<(), Box<dyn std::e
         .label("Medium Precision (±0.5)")
         .error_bars(&x_data, &technique_c, &errors_c)
         .label("Low Precision (±0.8)")
-        .save_with_size("test_output/scientific_multi_series_errors.png", 1200, 900)?;
+        .save_with_size(
+            "generated/bench/scientific_multi_series_errors.png",
+            1200,
+            900,
+        )?;
 
     Ok(())
 }
@@ -120,7 +124,7 @@ fn generate_statistical_plots() -> std::result::Result<(), Box<dyn std::error::E
         .line(&x_range, &normal_3)
         .label("μ=-0.5, σ=1.5")
         .style(LineStyle::Dotted)
-        .save_with_size("test_output/scientific_distributions.png", 1200, 900)?;
+        .save_with_size("generated/bench/scientific_distributions.png", 1200, 900)?;
 
     Ok(())
 }
@@ -178,7 +182,11 @@ fn generate_publication_figure() -> std::result::Result<(), Box<dyn std::error::
         .error_bars(&measurement_times, &measurements, &measurement_errors)
         .label("Measured Data Points")
         .marker(MarkerStyle::Square)
-        .save_with_size("test_output/scientific_publication_quality.png", 1400, 1000)?;
+        .save_with_size(
+            "generated/bench/scientific_publication_quality.png",
+            1400,
+            1000,
+        )?;
 
     Ok(())
 }

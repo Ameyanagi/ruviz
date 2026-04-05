@@ -64,9 +64,9 @@ async fn async_main() -> Result<()> {
     {
         println!("Interactive features not enabled.");
         println!("To enable: cargo run --features interactive --example interactive_multi_series");
-        std::fs::create_dir_all("examples/output").ok();
-        plot.save("examples/output/interactive_multi_series_static.png")?;
-        println!("Saved static version as: examples/output/interactive_multi_series_static.png");
+        std::fs::create_dir_all("generated/examples").ok();
+        plot.save("generated/examples/interactive_multi_series_static.png")?;
+        println!("Saved static version as: generated/examples/interactive_multi_series_static.png");
     }
 
     Ok(())

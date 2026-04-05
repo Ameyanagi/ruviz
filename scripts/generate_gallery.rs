@@ -1,303 +1,551 @@
 #!/usr/bin/env rust-script
-//! Gallery generation script
-//! Categorizes examples, renders to PNG, generates thumbnails and markdown indexes
+//! Generate curated Rust gallery assets and markdown indexes.
 //!
 //! Usage: cargo run --bin generate_gallery
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🎨 ruviz Gallery Generator");
-    println!("==========================\n");
+const GALLERY_DOCS_ROOT: &str = "docs/gallery";
+const GALLERY_ASSETS_ROOT: &str = "docs/assets/gallery/rust";
 
-    // Step 1: Discover all example files
-    let examples = discover_examples("examples")?;
-    println!("📂 Found {} example files", examples.len());
+#[derive(Clone, Copy)]
+struct Category {
+    slug: &'static str,
+    title: &'static str,
+    description: &'static str,
+    icon: &'static str,
+}
 
-    // Step 2: Categorize examples
-    let categorized = categorize_examples(&examples);
-    print_categorization_summary(&categorized);
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+struct ExampleRun {
+    name: &'static str,
+    features: Option<&'static str>,
+}
 
-    // Step 3: Generate images by running examples
-    println!("\n📸 Generating images from examples...");
-    generate_images(&categorized)?;
+#[derive(Clone, Copy)]
+enum AssetSource {
+    Example {
+        run: ExampleRun,
+        output_rel: &'static str,
+    },
+    Copy {
+        source_rel: &'static str,
+    },
+}
 
-    // Step 4: Update category README files
-    println!("\n📝 Updating category README files...");
-    update_category_readmes(&categorized)?;
+#[derive(Clone, Copy)]
+struct GalleryEntry {
+    category: &'static str,
+    title: &'static str,
+    summary: &'static str,
+    asset_name: &'static str,
+    source_label: &'static str,
+    source: AssetSource,
+}
 
-    // Step 5: Update main gallery index
-    println!("\n📋 Updating main gallery index...");
-    update_main_index(&categorized)?;
+fn categories() -> Vec<Category> {
+    vec![
+        Category {
+            slug: "basic",
+            title: "Basic Plots",
+            description: "Fundamental plot types for everyday visualization and quick starts.",
+            icon: "📊",
+        },
+        Category {
+            slug: "statistical",
+            title: "Statistical Plots",
+            description: "Distribution, density, and uncertainty-focused plot recipes.",
+            icon: "📈",
+        },
+        Category {
+            slug: "publication",
+            title: "Publication Quality",
+            description: "Layouts and themes tuned for papers, reports, and slides.",
+            icon: "📄",
+        },
+        Category {
+            slug: "performance",
+            title: "Performance",
+            description: "Large-dataset examples and optimization-oriented render outputs.",
+            icon: "⚡",
+        },
+        Category {
+            slug: "advanced",
+            title: "Advanced Techniques",
+            description: "Styling, polar/radar, and layout-heavy visualizations.",
+            icon: "🎨",
+        },
+        Category {
+            slug: "animation",
+            title: "Animation",
+            description: "GIF examples generated from the animation helpers and `record!` flows.",
+            icon: "🎬",
+        },
+        Category {
+            slug: "internationalization",
+            title: "Internationalization",
+            description: "Examples covering multilingual text layout and CJK rendering.",
+            icon: "🌍",
+        },
+    ]
+}
 
-    println!("\n✅ Gallery generation complete!");
-    println!("   View at: docs/gallery/README.md");
+fn entries() -> Vec<GalleryEntry> {
+    vec![
+        GalleryEntry {
+            category: "basic",
+            title: "Line Plot",
+            summary: "The core line example used across the README and rustdoc.",
+            asset_name: "line_plot.png",
+            source_label: "`examples/doc_line_plot.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/line_plot.png",
+            },
+        },
+        GalleryEntry {
+            category: "basic",
+            title: "Histogram Example",
+            summary: "Standalone histogram example rendered from the example suite.",
+            asset_name: "histogram_example.png",
+            source_label: "`examples/histogram_example.rs`",
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "histogram_example",
+                    features: None,
+                },
+                output_rel: "generated/examples/histogram_example.png",
+            },
+        },
+        GalleryEntry {
+            category: "basic",
+            title: "Boxplot Example",
+            summary: "Standalone boxplot example rendered from the example suite.",
+            asset_name: "boxplot_example.png",
+            source_label: "`examples/boxplot_example.rs`",
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "boxplot_example",
+                    features: None,
+                },
+                output_rel: "generated/examples/boxplot_example.png",
+            },
+        },
+        GalleryEntry {
+            category: "statistical",
+            title: "Kernel Density Estimate",
+            summary: "KDE example copied from the rustdoc image set.",
+            asset_name: "kde_plot.png",
+            source_label: "`examples/doc_kde.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/kde_plot.png",
+            },
+        },
+        GalleryEntry {
+            category: "statistical",
+            title: "ECDF",
+            summary: "Empirical CDF example copied from the rustdoc image set.",
+            asset_name: "ecdf_plot.png",
+            source_label: "`examples/doc_ecdf.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/ecdf_plot.png",
+            },
+        },
+        GalleryEntry {
+            category: "statistical",
+            title: "Violin Plot",
+            summary: "Distribution plot with quartile-aware styling.",
+            asset_name: "violin_plot.png",
+            source_label: "`examples/doc_violin.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/violin_plot.png",
+            },
+        },
+        GalleryEntry {
+            category: "statistical",
+            title: "Seaborn-Style Boxplot",
+            summary: "A style-heavy statistical example generated from the example suite.",
+            asset_name: "seaborn_boxplot_example.png",
+            source_label: "`examples/seaborn_style_example.rs`",
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "seaborn_style_example",
+                    features: None,
+                },
+                output_rel: "generated/examples/seaborn_boxplot_example.png",
+            },
+        },
+        GalleryEntry {
+            category: "publication",
+            title: "Scientific Analysis Figure",
+            summary: "Multi-panel figure assembled for report-style presentation.",
+            asset_name: "scientific_analysis_figure.png",
+            source_label: "`examples/scientific_showcase.rs`",
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "scientific_showcase",
+                    features: None,
+                },
+                output_rel: "generated/examples/scientific_analysis_figure.png",
+            },
+        },
+        GalleryEntry {
+            category: "publication",
+            title: "Publication Theme",
+            summary: "Publication-oriented theme reference used by docs and comparisons.",
+            asset_name: "theme_publication.png",
+            source_label: "`examples/doc_themes.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/theme_publication.png",
+            },
+        },
+        GalleryEntry {
+            category: "publication",
+            title: "Subplot Layout",
+            summary: "A multi-panel subplot layout used for publication-scale figures.",
+            asset_name: "subplots.png",
+            source_label: "`examples/doc_subplots.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/subplots.png",
+            },
+        },
+        GalleryEntry {
+            category: "performance",
+            title: "Memory Optimization Demo",
+            summary: "Performance-oriented chart generated by the memory optimization example.",
+            asset_name: "memory_optimization_demo.png",
+            source_label: "`examples/memory_optimization_demo.rs`",
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "memory_optimization_demo",
+                    features: None,
+                },
+                output_rel: "generated/examples/memory_optimization_demo.png",
+            },
+        },
+        GalleryEntry {
+            category: "performance",
+            title: "Parallel Demo 100k",
+            summary: "Parallel rendering example targeting a large 100k-point dataset.",
+            asset_name: "parallel_demo_100k.png",
+            source_label: "`examples/parallel_demo.rs`",
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "parallel_demo",
+                    features: None,
+                },
+                output_rel: "generated/examples/parallel_demo_100k.png",
+            },
+        },
+        GalleryEntry {
+            category: "advanced",
+            title: "Contour Plot",
+            summary: "Contour rendering example with level interpolation.",
+            asset_name: "contour_plot.png",
+            source_label: "`examples/doc_contour.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/contour_plot.png",
+            },
+        },
+        GalleryEntry {
+            category: "advanced",
+            title: "Radar Chart",
+            summary: "Radar chart example demonstrating non-cartesian layout support.",
+            asset_name: "radar_chart.png",
+            source_label: "`examples/doc_radar.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/radar_chart.png",
+            },
+        },
+        GalleryEntry {
+            category: "advanced",
+            title: "Legend Positions",
+            summary: "Reference image covering legend placement options.",
+            asset_name: "legend_positions.png",
+            source_label: "`examples/doc_legend_positions.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/legend_positions.png",
+            },
+        },
+        GalleryEntry {
+            category: "advanced",
+            title: "Seaborn-Style Histogram",
+            summary: "A styling-heavy histogram variant from the Seaborn example set.",
+            asset_name: "seaborn_histogram_example.png",
+            source_label: "`examples/seaborn_style_example.rs`",
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "seaborn_style_example",
+                    features: None,
+                },
+                output_rel: "generated/examples/seaborn_histogram_example.png",
+            },
+        },
+        GalleryEntry {
+            category: "animation",
+            title: "Traveling Sine Wave",
+            summary: "Animated sine wave generated with the `record!` macro.",
+            asset_name: "animation_sine_wave.gif",
+            source_label: "`examples/generate_animation_gallery.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/animation_sine_wave.gif",
+            },
+        },
+        GalleryEntry {
+            category: "animation",
+            title: "Animated Bars",
+            summary: "Animated categorical data example rendered as a GIF.",
+            asset_name: "animation_bars.gif",
+            source_label: "`examples/generate_animation_gallery.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/animation_bars.gif",
+            },
+        },
+        GalleryEntry {
+            category: "animation",
+            title: "Wave Interference",
+            summary: "Animated wave interference example rendered as a GIF.",
+            asset_name: "animation_interference.gif",
+            source_label: "`examples/generate_animation_gallery.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/animation_interference.gif",
+            },
+        },
+        GalleryEntry {
+            category: "internationalization",
+            title: "Japanese Labels",
+            summary: "Japanese-language labels rendered with the default browser/document fonts.",
+            asset_name: "international_japanese.png",
+            source_label: "`examples/doc_international.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/international_japanese.png",
+            },
+        },
+        GalleryEntry {
+            category: "internationalization",
+            title: "Chinese Labels",
+            summary: "Chinese-language bar chart rendering example.",
+            asset_name: "international_chinese.png",
+            source_label: "`examples/doc_international.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/international_chinese.png",
+            },
+        },
+        GalleryEntry {
+            category: "internationalization",
+            title: "Korean Labels",
+            summary: "Korean-language line chart rendering example.",
+            asset_name: "international_korean.png",
+            source_label: "`examples/doc_international.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/international_korean.png",
+            },
+        },
+        GalleryEntry {
+            category: "internationalization",
+            title: "Multi-Language Comparison",
+            summary: "A four-panel comparison of CJK and mixed-language labels.",
+            asset_name: "international_comparison.png",
+            source_label: "`examples/doc_international.rs`",
+            source: AssetSource::Copy {
+                source_rel: "docs/assets/rustdoc/international_comparison.png",
+            },
+        },
+    ]
+}
+
+fn repo_path(relative: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
+}
+
+fn run_examples(entries: &[GalleryEntry]) -> Result<(), String> {
+    let mut runs = BTreeSet::new();
+    for entry in entries {
+        if let AssetSource::Example { run, .. } = entry.source {
+            runs.insert(run);
+        }
+    }
+
+    for run in runs {
+        println!("Running example: {}", run.name);
+        let mut cmd = Command::new("cargo");
+        cmd.args(["run", "--example", run.name, "--release"]);
+        if let Some(features) = run.features {
+            cmd.args(["--features", features]);
+        }
+
+        let output = cmd
+            .output()
+            .map_err(|err| format!("failed to run example `{}`: {}", run.name, err))?;
+        if !output.status.success() {
+            return Err(format!(
+                "example `{}` failed\nstdout:\n{}\nstderr:\n{}",
+                run.name,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
 
     Ok(())
 }
 
-fn discover_examples(dir: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-    let mut examples = Vec::new();
-
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("rs") {
-            // Skip test files and internal utilities
-            let filename = path.file_name().unwrap().to_str().unwrap();
-            if !filename.contains("test")
-                && !filename.contains("debug")
-                && !filename.starts_with("generate_")
-            {
-                examples.push(path);
-            }
-        }
-    }
-
-    examples.sort();
-    Ok(examples)
-}
-
-fn categorize_examples(examples: &[PathBuf]) -> CategoryMap {
-    let mut map = CategoryMap::new();
-
-    for example in examples {
-        if let Some(filename) = example.file_name().and_then(|s| s.to_str()) {
-            if let Some(category) = categorize_filename(filename) {
-                map.add(category.to_string(), example.clone());
-            }
-        }
-    }
-
-    map
-}
-
-fn categorize_filename(filename: &str) -> Option<&'static str> {
-    let name = filename.to_lowercase();
-
-    // Basic patterns
-    if name.contains("basic") || name.contains("simple") || name.contains("first") {
-        return Some("basic");
-    }
-
-    // Statistical patterns
-    if name.contains("histogram")
-        || name.contains("boxplot")
-        || name.contains("distribution")
-        || name.contains("statistical")
-    {
-        return Some("statistical");
-    }
-
-    // Publication patterns
-    if name.contains("publication") || name.contains("scientific") || name.contains("showcase") {
-        return Some("publication");
-    }
-
-    // Performance patterns
-    if name.contains("parallel")
-        || name.contains("memory_optimization")
-        || name.contains("performance")
-        || name.contains("benchmark")
-    {
-        return Some("performance");
-    }
-
-    // Advanced patterns
-    if name.contains("font")
-        || name.contains("seaborn")
-        || name.contains("subplot")
-        || name.contains("theme")
-        || name.contains("advanced")
-    {
-        return Some("advanced");
-    }
-
-    None
-}
-
-fn print_categorization_summary(map: &CategoryMap) {
-    println!("\n📊 Categorization Summary:");
-    for category in &[
-        "basic",
-        "statistical",
-        "publication",
-        "performance",
-        "advanced",
-    ] {
-        let count = map.get(category).map(|v| v.len()).unwrap_or(0);
-        println!("   {} {} example(s)", category, count);
-    }
-}
-
-fn generate_images(map: &CategoryMap) -> Result<(), Box<dyn std::error::Error>> {
-    for (category, examples) in map.iter() {
-        println!("   📁 {}/", category);
-
-        for example in examples {
-            let example_name = example.file_stem().unwrap().to_str().unwrap();
-
-            // Run the example
-            print!("      ▶ {} ... ", example_name);
-
-            let output = Command::new("cargo")
-                .args(["run", "--example", example_name, "--quiet"])
-                .output()?;
-
-            if output.status.success() {
-                println!("✅");
-            } else {
-                println!("⚠️  (skipped)");
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn update_category_readmes(map: &CategoryMap) -> Result<(), Box<dyn std::error::Error>> {
-    for (category, examples) in map.iter() {
-        let category_path = Path::new("docs/gallery").join(category);
-        let readme_path = category_path.join("README.md");
-
-        let title = match category.as_str() {
-            "basic" => "Basic Plots",
-            "statistical" => "Statistical Plots",
-            "publication" => "Publication Quality",
-            "performance" => "Performance Demonstrations",
-            "advanced" => "Advanced Techniques",
-            _ => category,
+fn sync_assets(entries: &[GalleryEntry]) -> Result<(), String> {
+    for entry in entries {
+        let source = match entry.source {
+            AssetSource::Example { output_rel, .. } => repo_path(output_rel),
+            AssetSource::Copy { source_rel } => repo_path(source_rel),
         };
 
-        let description = match category.as_str() {
-            "basic" => "Fundamental plot types for everyday data visualization.",
-            "statistical" => "Statistical analysis and distribution visualization.",
-            "publication" => {
-                "Professional figures meeting journal standards (IEEE, Nature, Science)."
-            }
-            "performance" => "Large dataset handling with parallel rendering and optimization.",
-            "advanced" => "Complex visualizations and advanced customization.",
-            _ => "",
-        };
-
-        let mut content = format!("# {}\n\n{}\n\n## Examples\n\n", title, description);
-
-        // Add images for each example
-        for example in examples {
-            let example_name = example.file_stem().unwrap().to_str().unwrap();
-            let image_name = format!("{}.png", example_name);
-
-            if category_path.join(&image_name).exists() {
-                let title = example_name.replace('_', " ").replace(".rs", "");
-                content.push_str(&format!("### {}\n\n", title));
-                content.push_str(&format!("![{}]({})\n\n", title, image_name));
-            }
+        if !source.exists() {
+            return Err(format!(
+                "missing source asset for `{}`: {}",
+                entry.title,
+                source.display()
+            ));
         }
 
-        content.push_str("\n[← Back to Gallery](../README.md)\n");
-
-        fs::write(&readme_path, content)?;
-        println!("   ✅ {}/README.md", category);
+        let dest = repo_path(GALLERY_ASSETS_ROOT)
+            .join(entry.category)
+            .join(entry.asset_name);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                format!(
+                    "failed to create gallery asset directory {}: {}",
+                    parent.display(),
+                    err
+                )
+            })?;
+        }
+        fs::copy(&source, &dest).map_err(|err| {
+            format!(
+                "failed to copy gallery asset {} -> {}: {}",
+                source.display(),
+                dest.display(),
+                err
+            )
+        })?;
     }
 
     Ok(())
 }
 
-fn update_main_index(map: &CategoryMap) -> Result<(), Box<dyn std::error::Error>> {
+fn write_category_pages(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
+    let mut by_category: BTreeMap<&str, Vec<&GalleryEntry>> = BTreeMap::new();
+    for entry in entries {
+        by_category.entry(entry.category).or_default().push(entry);
+    }
+
+    for category in categories {
+        let category_entries = by_category.get(category.slug).cloned().unwrap_or_default();
+        let mut content = String::new();
+        content.push_str(&format!("# {}\n\n", category.title));
+        content.push_str(category.description);
+        content.push_str("\n\n## Examples\n\n");
+
+        for entry in category_entries {
+            content.push_str(&format!("### {}\n\n", entry.title));
+            content.push_str(entry.summary);
+            content.push_str("\n\n");
+            content.push_str(&format!(
+                "![{}](../../assets/gallery/rust/{}/{})\n\n",
+                entry.title, entry.category, entry.asset_name
+            ));
+            content.push_str(&format!("Source: {}\n\n", entry.source_label));
+        }
+
+        content.push_str("[← Back to Gallery](../README.md)\n");
+
+        let readme_path = repo_path(GALLERY_DOCS_ROOT)
+            .join(category.slug)
+            .join("README.md");
+        fs::write(&readme_path, content).map_err(|err| {
+            format!(
+                "failed to write gallery page {}: {}",
+                readme_path.display(),
+                err
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn write_gallery_index(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
+    let mut counts = BTreeMap::new();
+    for entry in entries {
+        *counts.entry(entry.category).or_insert(0usize) += 1;
+    }
+
     let mut content = String::from("# ruviz Gallery\n\n");
-    content.push_str("Comprehensive visual showcase of ruviz plotting capabilities.\n\n");
-
-    // Summary statistics
-    let total_examples: usize = map.iter().map(|(_, v)| v.len()).sum();
-    content.push_str(&format!("**Total Examples**: {}\n\n", total_examples));
-
+    content.push_str(
+        "Curated visual showcase of the Rust examples and rustdoc media for `ruviz`.\n\n",
+    );
+    content.push_str(&format!("**Total Examples**: {}\n\n", entries.len()));
     content.push_str("## Gallery Categories\n\n");
 
-    // Add each category
-    for category in &[
-        "basic",
-        "statistical",
-        "publication",
-        "performance",
-        "advanced",
-    ] {
-        let count = map.get(category).map(|v| v.len()).unwrap_or(0);
-
-        let (title, desc, icon) = match *category {
-            "basic" => (
-                "Basic Plots",
-                "Fundamental plot types for everyday visualization",
-                "📊",
-            ),
-            "statistical" => (
-                "Statistical Plots",
-                "Statistical analysis and distributions",
-                "📈",
-            ),
-            "publication" => (
-                "Publication Quality",
-                "Professional figures for journals",
-                "📄",
-            ),
-            "performance" => (
-                "Performance",
-                "Large dataset handling and optimization",
-                "⚡",
-            ),
-            "advanced" => (
-                "Advanced Techniques",
-                "Complex visualizations and customization",
-                "🎨",
-            ),
-            _ => (*category, "", "📁"),
-        };
-
-        content.push_str(&format!("### {} {} ({} examples)\n\n", icon, title, count));
-        content.push_str(&format!("{}\n\n", desc));
+    for category in categories {
+        let count = counts.get(category.slug).copied().unwrap_or(0);
         content.push_str(&format!(
-            "[View {} Examples →]({}/README.md)\n\n",
-            title, category
+            "### {} {} ({} examples)\n\n{}\n\n[View {} →]({}/README.md)\n\n",
+            category.icon,
+            category.title,
+            count,
+            category.description,
+            category.title,
+            category.slug
         ));
     }
 
     content.push_str("---\n\n");
-    content
-        .push_str("All examples are automatically generated from the `examples/` directory.\n\n");
-    content.push_str("To regenerate the gallery:\n\n");
-    content.push_str("```bash\n");
-    content.push_str("cargo run --bin generate_gallery\n");
-    content.push_str("```\n");
+    content.push_str(
+        "Gallery assets are generated from `generated/examples/` and `docs/assets/rustdoc/`.\n",
+    );
+    content.push_str("Refresh them with:\n\n```bash\ncargo run --bin generate_gallery\n```\n");
 
-    fs::write("docs/gallery/README.md", content)?;
-    println!("   ✅ docs/gallery/README.md");
+    let index_path = repo_path(GALLERY_DOCS_ROOT).join("README.md");
+    fs::write(&index_path, content).map_err(|err| {
+        format!(
+            "failed to write gallery index {}: {}",
+            index_path.display(),
+            err
+        )
+    })?;
+    Ok(())
+}
+
+fn ensure_gallery_layout(categories: &[Category]) -> Result<(), String> {
+    for category in categories {
+        fs::create_dir_all(repo_path(GALLERY_DOCS_ROOT).join(category.slug)).map_err(|err| {
+            format!(
+                "failed to create gallery docs directory for {}: {}",
+                category.slug, err
+            )
+        })?;
+        fs::create_dir_all(repo_path(GALLERY_ASSETS_ROOT).join(category.slug)).map_err(|err| {
+            format!(
+                "failed to create gallery asset directory for {}: {}",
+                category.slug, err
+            )
+        })?;
+    }
 
     Ok(())
 }
 
-// Helper struct for category mapping
-struct CategoryMap {
-    map: std::collections::HashMap<String, Vec<PathBuf>>,
-}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let categories = categories();
+    let entries = entries();
 
-impl CategoryMap {
-    fn new() -> Self {
-        CategoryMap {
-            map: std::collections::HashMap::new(),
-        }
-    }
+    ensure_gallery_layout(&categories)?;
+    run_examples(&entries)?;
+    sync_assets(&entries)?;
+    write_category_pages(&categories, &entries)?;
+    write_gallery_index(&categories, &entries)?;
 
-    fn add(&mut self, category: String, path: PathBuf) {
-        self.map.entry(category).or_default().push(path);
-    }
-
-    fn get(&self, category: &str) -> Option<&Vec<PathBuf>> {
-        self.map.get(category)
-    }
-
-    fn iter(&self) -> impl Iterator<Item = (&String, &Vec<PathBuf>)> {
-        self.map.iter()
-    }
+    println!("Gallery assets refreshed under {GALLERY_ASSETS_ROOT}");
+    println!("Gallery markdown refreshed under {GALLERY_DOCS_ROOT}");
+    Ok(())
 }

@@ -6,7 +6,7 @@ use std::f64::consts::PI;
 /// Comprehensive showcase of scientific plotting themes
 fn main() -> Result<()> {
     println!("Scientific Themes Showcase");
-    std::fs::create_dir_all("examples/output").ok();
+    std::fs::create_dir_all("generated/examples").ok();
 
     // Generate sample scientific data
     let n = 50;
@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         .label("sin(x)")
         .line(&x, &y_cos)
         .label("cos(x)")
-        .save("examples/output/ieee_theme_example.png")?;
+        .save("generated/examples/ieee_theme_example.png")?;
 
     // 2. Nature Journal Theme
     println!("Creating Nature journal theme plot...");
@@ -43,7 +43,7 @@ fn main() -> Result<()> {
         .theme(Theme::nature())
         .scatter(&x, &y_exp)
         .label("exp(x/10)")
-        .save("examples/output/nature_theme_example.png")?;
+        .save("generated/examples/nature_theme_example.png")?;
 
     // 3. Presentation Theme
     println!("Creating presentation theme plot...");
@@ -56,7 +56,7 @@ fn main() -> Result<()> {
         .ylabel("Values")
         .theme(Theme::presentation())
         .bar(&categories, &values)
-        .save("examples/output/presentation_theme_example.png")?;
+        .save("generated/examples/presentation_theme_example.png")?;
 
     // 4. Paul Tol Theme - Colorblind-friendly
     println!("Creating Paul Tol accessibility theme plot...");
@@ -77,7 +77,7 @@ fn main() -> Result<()> {
         .label("Series 2")
         .line(&x_multi, &y3)
         .label("Series 3")
-        .save("examples/output/paul_tol_theme_example.png")?;
+        .save("generated/examples/paul_tol_theme_example.png")?;
 
     // 5. Scientific palette histogram
     println!("Creating scientific palette histogram...");
@@ -92,7 +92,7 @@ fn main() -> Result<()> {
         .ylabel("Frequency")
         .theme(Theme::ieee())
         .histogram(&histogram_data, Some(hist_config))
-        .save("examples/output/scientific_palette_histogram.png")?;
+        .save("generated/examples/scientific_palette_histogram.png")?;
 
     // 6. Theme comparison
     println!("Creating theme comparison plots...");
@@ -117,7 +117,7 @@ fn main() -> Result<()> {
             .line(&x, &y_cos)
             .label("cos(x)")
             .save(format!(
-                "examples/output/{}_theme_comparison.png",
+                "generated/examples/{}_theme_comparison.png",
                 name.to_lowercase()
             ))?;
     }

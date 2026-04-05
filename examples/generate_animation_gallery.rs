@@ -2,11 +2,14 @@
 //!
 //! Run with: cargo run --features animation --example generate_animation_gallery
 //!
-//! This generates GIF animations in docs/images/ for documentation.
+//! This generates GIF animations in docs/assets/rustdoc/ for documentation.
 //! Animations are generated in parallel for faster execution.
+
+mod util;
 
 use rayon::prelude::*;
 use ruviz::animation::{RecordConfig, easing};
+use ruviz::core::PlottingError;
 use ruviz::prelude::*;
 use ruviz::record;
 use std::f64::consts::PI;
@@ -15,8 +18,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn main() -> Result<()> {
     println!("Generating animation gallery images in parallel...\n");
 
-    let output_dir = "docs/images";
-    std::fs::create_dir_all(output_dir)?;
+    let output_dir = util::docs_assets_root().join("rustdoc");
+    let output_dir = output_dir
+        .to_str()
+        .ok_or_else(|| PlottingError::RenderError("non-UTF-8 rustdoc asset path".to_string()))?
+        .to_string();
 
     // Use smaller resolution for faster generation while maintaining quality
     let config = RecordConfig::new().max_resolution(640, 480).framerate(30);
@@ -42,7 +48,7 @@ fn main() -> Result<()> {
     let results: Vec<Result<()>> = generators
         .into_par_iter()
         .map(|(name, generator)| {
-            let result = generator(output_dir, config.clone());
+            let result = generator(&output_dir, config.clone());
             let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
             println!("  [{}/{}] Completed: {}", done, total, name);
             result
