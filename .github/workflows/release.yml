@@ -62,6 +62,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Ensure wasm target is installed for the pinned toolchain
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -339,6 +342,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Ensure wasm target is installed for the pinned toolchain
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -547,6 +553,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
+      - name: Ensure wasm target is installed for the pinned toolchain
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
