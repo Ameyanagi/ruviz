@@ -21,6 +21,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Restored the `center_plot` content-centering option in the layout path and added regression coverage for centered versus asymmetric layouts.
+- Fixed the heatmap raster parity regression introduced by the `0.3.5` output-surface fast path by restoring the normal per-cell renderer for heatmaps and adding regression coverage for downsampled narrow-feature visibility.
+- Fixed `draw_datashader_image` so image-backed raster paths apply their scale-and-translate transform correctly when blitting into the plot area.
 - Fixed the Python widget build bootstrap so wasm-bindgen version lookup is deterministic and concurrent installs do not race on the cached CLI directory.
 - Stabilized notebook/widget media regeneration and golden-image refresh flows so release assets can be rebuilt consistently from one documented command.
 
