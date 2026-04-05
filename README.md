@@ -520,6 +520,7 @@ The pre-commit hooks will automatically run `cargo fmt --check`, `cargo clippy`,
 - [ ] High-level APIs for area, hexbin, step, and stem plots
 - [ ] High-level APIs for regression and composite plots
 - [ ] Stabilize the interactive zoom/pan workflow
+- [ ] Reintroduce a correctness-preserving heatmap raster fast path
 - [ ] 3D plotting (v1.0+)
 
 ## License
