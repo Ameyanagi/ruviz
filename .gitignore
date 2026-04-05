@@ -1,7 +1,9 @@
 # Rust
 target/
 Cargo.lock
-generated/
+generated/*
+!generated/README.md
+!generated/manifest.json
 
 # IDE
 .vscode/

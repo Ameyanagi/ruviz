@@ -31,5 +31,6 @@ for the current artifact layout and regeneration workflow.
 
 - Keep [README.md](README.md) and the files under [docs](docs) consistent with the current API.
 - Prefer examples that compile against the current public surface.
-- Keep generated assets in their canonical committed paths and keep transient
-  artifacts under `generated/`.
+- Keep published assets in their canonical committed paths.
+- Use `generated/` only for local preview output and CI preview artifacts; do
+  not add published docs dependencies on that tree.

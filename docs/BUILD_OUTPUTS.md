@@ -1,11 +1,17 @@
 # Build Outputs
 
-This repository distinguishes between transient generated output and committed
-published media.
+This repository distinguishes between generated preview artifacts and
+committed published media.
 
-## Transient Output
+## Generated Output
 
-Transient files go under `generated/` and should not be committed.
+Generated preview artifacts go under `generated/`.
+
+The `generated/` tree is for local rebuilds and pull request preview artifacts.
+Only `generated/README.md` and `generated/manifest.json` are tracked in git.
+Everything else under `generated/` is ignored so frequent binary rebuilds do not
+bloat repository history. PR CI uploads the full rebuilt tree as preview
+artifacts when the manifest changes.
 
 Primary subdirectories:
 
@@ -40,6 +46,9 @@ make release-docs
 Supporting targets:
 
 ```sh
+make build-generated-preview
+make generated-manifest
+make check-doc-asset-refs
 make release-docs-rust
 make release-docs-python
 make release-docs-web
@@ -56,4 +65,12 @@ Do not add new writes to these retired roots:
 - `export_output/`
 - `export_test_output/`
 
-The cleanup script removes them when they still exist locally.
+The cleanup script removes them when they still exist locally before
+regeneration.
+
+## Packaging
+
+`generated/` is intentionally excluded from the published root Rust crate via
+the workspace package metadata in `Cargo.toml`. The adapter crates under
+`crates/` do not package the repository-root `generated/` tree because it sits
+outside their crate directories.

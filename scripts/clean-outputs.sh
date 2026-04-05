@@ -1,8 +1,8 @@
 #!/bin/bash
 # Clean generated output artifacts from ruviz.
 #
-# Transient build outputs now live under `generated/`. This script also removes
-# a small set of retired legacy output roots if they still exist locally.
+# Generated preview outputs now live under `generated/`. This script also
+# removes a small set of retired legacy output roots if they still exist locally.
 
 set -euo pipefail
 
@@ -12,8 +12,8 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 echo "Cleaning ruviz output files..."
 
 if [ -d "$PROJECT_ROOT/generated" ]; then
-    rm -rf "$PROJECT_ROOT/generated"
-    echo "  Removed generated/"
+    find "$PROJECT_ROOT/generated" -mindepth 1 ! -name "README.md" -exec rm -rf {} +
+    echo "  Cleared generated/ (preserved generated/README.md)"
 fi
 
 for legacy_dir in \

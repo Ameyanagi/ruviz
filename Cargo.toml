@@ -24,6 +24,8 @@ categories = ["visualization", "graphics"]
 repository = "https://github.com/Ameyanagi/ruviz"
 readme = "README.md"
 exclude = [
+    # Repo-only generated preview artifacts. Keep only lightweight metadata in
+    # git, and do not ship the generated tree in the crates.io package.
     "generated/",
     "docs/gallery/",
     "tests/",

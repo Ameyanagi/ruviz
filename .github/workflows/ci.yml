@@ -77,8 +77,8 @@ jobs:
 
       - name: Create test output directories
         run: |
-          mkdir -p tests/output
-          mkdir -p export_test_output/{png,svg,raw,direct}
+          mkdir -p generated/tests/render
+          mkdir -p generated/tests/export/{png,svg,raw,direct}
 
       - name: Run library tests
         run: cargo test --lib --verbose
@@ -115,8 +115,8 @@ jobs:
 
       - name: Create test output directories
         run: |
-          mkdir -p tests/output
-          mkdir -p export_test_output/{png,svg,raw,direct}
+          mkdir -p generated/tests/render
+          mkdir -p generated/tests/export/{png,svg,raw,direct}
 
       - name: Run visual output suite
         run: cargo test --test visual_output_tests_fixed --verbose
@@ -362,7 +362,205 @@ jobs:
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
 
+      - name: Check published docs do not reference generated preview assets
+        run: python3 scripts/check_no_generated_asset_refs.py
+
       - name: Build documentation
         run: cargo doc --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  generated-preview:
+    name: Generated Preview
+    runs-on: ubuntu-latest
+    needs: [test-fast, python, wasm-web, docs]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+          working-directory: python
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-generated-preview-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-generated-preview-
+
+      - name: Cache Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Sync Python dependencies
+        run: cd python && uv sync
+
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build generated preview artifacts
+        run: make build-generated-preview
+
+      - name: Compare manifest to base branch
+        id: manifest
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "${BASE_REF}"
+          if git show "origin/${BASE_REF}:generated/manifest.json" > /tmp/base-generated-manifest.json 2>/dev/null; then
+            if cmp -s /tmp/base-generated-manifest.json generated/manifest.json; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package preview artifacts
+        id: package
+        if: steps.manifest.outputs.changed == 'true'
+        run: |
+          tar -czf generated-preview-examples-tests.tar.gz generated/examples generated/tests
+          tar -czf generated-preview-python-site.tar.gz generated/python/site
+          tar -czf generated-preview-web-docs.tar.gz generated/web/docs
+          echo "examples_tests_size=$(du -sh generated-preview-examples-tests.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "python_site_size=$(du -sh generated-preview-python-site.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "web_docs_size=$(du -sh generated-preview-web-docs.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload examples and tests preview
+        if: steps.manifest.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-preview-examples-tests
+          path: generated-preview-examples-tests.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload Python docs preview
+        if: steps.manifest.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-preview-python-site
+          path: generated-preview-python-site.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload web docs preview
+        if: steps.manifest.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-preview-web-docs
+          path: generated-preview-web-docs.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload manifest
+        if: steps.manifest.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-manifest
+          path: generated/manifest.json
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Update pull request comment
+        if: github.event.pull_request.head.repo.fork == false
+        uses: actions/github-script@v7
+        env:
+          MANIFEST_CHANGED: ${{ steps.manifest.outputs.changed }}
+          EXAMPLES_TESTS_SIZE: ${{ steps.package.outputs.examples_tests_size }}
+          PYTHON_SITE_SIZE: ${{ steps.package.outputs.python_site_size }}
+          WEB_DOCS_SIZE: ${{ steps.package.outputs.web_docs_size }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        with:
+          script: |
+            const marker = "<!-- generated-preview-comment -->";
+            const changed = process.env.MANIFEST_CHANGED === "true";
+            const body = changed
+              ? `${marker}
+            ## Generated Preview Artifacts
+
+            Generated output changed relative to \`${process.env.BASE_REF}\`.
+
+            - \`generated-preview-examples-tests\` (${process.env.EXAMPLES_TESTS_SIZE})
+            - \`generated-preview-python-site\` (${process.env.PYTHON_SITE_SIZE})
+            - \`generated-preview-web-docs\` (${process.env.WEB_DOCS_SIZE})
+            - \`generated-manifest\`
+
+            Workflow run: ${process.env.RUN_URL}
+
+            Published docs still read only from committed assets under \`docs/assets/**\`, \`python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`
+              : `${marker}
+            ## Generated Preview Artifacts
+
+            The regenerated \`generated/manifest.json\` matches \`${process.env.BASE_REF}\`, so CI did not upload fresh preview archives for this PR.
+
+            Workflow run: ${process.env.RUN_URL}
+
+            Published docs still read only from committed assets under \`docs/assets/**\`, \`python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) =>
+              comment.user?.type === "Bot" && comment.body?.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
