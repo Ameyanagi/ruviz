@@ -411,7 +411,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-release
     # Only publish on non-prerelease tags
-    if: ${{ !contains(env.RELEASE_TAG, '-') }}
+    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -447,7 +447,7 @@ jobs:
     name: Publish ruviz-web to crates.io
     runs-on: ubuntu-latest
     needs: publish-ruviz
-    if: ${{ !contains(env.RELEASE_TAG, '-') }}
+    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -505,7 +505,7 @@ jobs:
     name: Publish ruviz-gpui to crates.io
     runs-on: ubuntu-latest
     needs: publish-ruviz
-    if: ${{ !contains(env.RELEASE_TAG, '-') }}
+    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -567,7 +567,7 @@ jobs:
     name: Publish ruviz JS SDK to npm
     runs-on: ubuntu-latest
     needs: [publish-ruviz, publish-ruviz-web]
-    if: ${{ !contains(env.RELEASE_TAG, '-') }}
+    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     permissions:
       contents: read
       id-token: write
