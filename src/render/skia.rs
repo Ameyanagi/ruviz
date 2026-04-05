@@ -613,10 +613,6 @@ impl SkiaRenderer {
         }
 
         // Scale and draw the DataShader image onto the plot area
-        let src_rect = Rect::from_xywh(0.0, 0.0, image.width as f32, image.height as f32).ok_or(
-            PlottingError::RenderError("Invalid source rect".to_string()),
-        )?;
-
         let transform = Transform::from_scale(
             plot_area.width() / image.width as f32,
             plot_area.height() / image.height as f32,
@@ -624,11 +620,11 @@ impl SkiaRenderer {
         .post_translate(plot_area.x(), plot_area.y());
 
         self.pixmap.draw_pixmap(
-            plot_area.x() as i32,
-            plot_area.y() as i32,
+            0,
+            0,
             datashader_pixmap.as_ref(),
             &PixmapPaint::default(),
-            Transform::identity(),
+            transform,
             None,
         );
 

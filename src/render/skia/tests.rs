@@ -7,6 +7,11 @@ fn pixel_is_dark(image: &Image, x: u32, y: u32) -> bool {
         .all(|channel| *channel < 220)
 }
 
+fn pixel_is_bright_rgba(image: &image::RgbaImage, x: u32, y: u32) -> bool {
+    let pixel = image.get_pixel(x, y).0;
+    pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 && pixel[3] > 0
+}
+
 fn count_red_pixels_outside_rect(image: &Image, rect: Rect) -> usize {
     let left = rect.left().floor() as i32;
     let right = rect.right().ceil() as i32;
@@ -208,6 +213,25 @@ fn test_draw_polyline_clipped_keeps_pixels_inside_clip_rect() {
 
     let image = renderer.into_image();
     assert_eq!(count_red_pixels_outside_rect(&image, clip_rect), 0);
+}
+
+#[test]
+fn test_draw_datashader_image_scales_into_plot_area() {
+    let theme = Theme::dark();
+    let mut renderer = SkiaRenderer::new(80, 60, theme).unwrap();
+    renderer.clear();
+
+    let image = crate::data::DataShaderImage::new(1, 1, vec![255, 255, 255, 255]);
+    let plot_area = Rect::from_xywh(10.0, 15.0, 30.0, 20.0).unwrap();
+
+    renderer.draw_datashader_image(&image, plot_area).unwrap();
+
+    let png = renderer.encode_png_bytes().unwrap();
+    let rendered = image::load_from_memory(&png).unwrap().to_rgba8();
+    assert!(pixel_is_bright_rgba(&rendered, 15, 20));
+    assert!(pixel_is_bright_rgba(&rendered, 35, 30));
+    assert!(!pixel_is_bright_rgba(&rendered, 5, 5));
+    assert!(!pixel_is_bright_rgba(&rendered, 50, 45));
 }
 
 #[cfg(feature = "typst-math")]

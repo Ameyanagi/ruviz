@@ -1,8 +1,5 @@
 use super::*;
 use crate::core::types::Point2f;
-use crate::data::DataShaderImage;
-use crate::plots::heatmap::{HeatmapData, Interpolation};
-use tiny_skia::Rect;
 
 #[derive(Clone, Copy, Debug)]
 struct BucketPoint {
@@ -100,51 +97,6 @@ pub(super) fn reduce_line_points_for_raster(
     }
 }
 
-pub(super) fn should_rasterize_heatmap(data: &HeatmapData) -> bool {
-    matches!(data.config.interpolation, Interpolation::Nearest) && !data.config.annotate
-}
-
-pub(super) fn rasterize_heatmap_surface(
-    data: &HeatmapData,
-    width: u32,
-    height: u32,
-) -> DataShaderImage {
-    let width = width.max(1);
-    let height = height.max(1);
-    let mut pixels = vec![0_u8; width as usize * height as usize * 4];
-
-    for pixel_y in 0..height as usize {
-        let source_row = (((height as usize - 1 - pixel_y) * 2 + 1) * data.n_rows
-            / (height as usize * 2))
-            .min(data.n_rows.saturating_sub(1));
-        let row = &data.values[source_row.min(data.n_rows.saturating_sub(1))];
-        for pixel_x in 0..width as usize {
-            let source_col = (((pixel_x * 2 + 1) * data.n_cols) / (width as usize * 2))
-                .min(data.n_cols.saturating_sub(1));
-            let mut color = data.get_color(row[source_col]);
-            if data.config.alpha < 1.0 {
-                color =
-                    Color::new_rgba(color.r, color.g, color.b, (data.config.alpha * 255.0) as u8);
-            }
-
-            let offset = (pixel_y * width as usize + pixel_x) * 4;
-            pixels[offset] = color.r;
-            pixels[offset + 1] = color.g;
-            pixels[offset + 2] = color.b;
-            pixels[offset + 3] = color.a;
-        }
-    }
-
-    DataShaderImage::new(width as usize, height as usize, pixels)
-}
-
-pub(super) fn plot_area_surface_size(plot_area: Rect) -> (u32, u32) {
-    (
-        plot_area.width().max(1.0).round() as u32,
-        plot_area.height().max(1.0).round() as u32,
-    )
-}
-
 fn is_finite_point(point: &Point2f) -> bool {
     point.x.is_finite() && point.y.is_finite()
 }
@@ -210,7 +162,49 @@ fn flush_bucket(bucket: &ColumnBucket, output: &mut Vec<Point2f>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plots::heatmap::HeatmapConfig;
+    use crate::render::{Color, LineStyle, SkiaRenderer, Theme};
+
+    fn render_polyline(points: &[Point2f], clip_rect: (f32, f32, f32, f32)) -> Image {
+        let width = 680;
+        let height = 220;
+        let mut renderer = SkiaRenderer::new(width, height, Theme::default()).expect("renderer");
+        renderer.clear();
+        renderer
+            .draw_polyline_points_clipped(points, Color::BLACK, 2.0, LineStyle::Solid, clip_rect)
+            .expect("polyline render");
+        renderer.into_image()
+    }
+
+    fn mean_normalized_channel_diff(lhs: &Image, rhs: &Image) -> f64 {
+        assert_eq!(lhs.width, rhs.width);
+        assert_eq!(lhs.height, rhs.height);
+
+        lhs.pixels
+            .iter()
+            .zip(&rhs.pixels)
+            .map(|(left, right)| (*left as f64 - *right as f64).abs() / 255.0)
+            .sum::<f64>()
+            / lhs.pixels.len() as f64
+    }
+
+    fn image_has_dark_pixel_near(image: &Image, x: u32, y: u32, radius: u32) -> bool {
+        let x_start = x.saturating_sub(radius);
+        let x_end = (x + radius).min(image.width.saturating_sub(1));
+        let y_start = y.saturating_sub(radius);
+        let y_end = (y + radius).min(image.height.saturating_sub(1));
+
+        for sample_y in y_start..=y_end {
+            for sample_x in x_start..=x_end {
+                let idx = ((sample_y * image.width + sample_x) * 4) as usize;
+                let pixel = &image.pixels[idx..idx + 4];
+                if pixel[3] > 0 && pixel[0] < 80 && pixel[1] < 80 && pixel[2] < 80 {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 
     #[test]
     fn test_reduce_line_points_preserves_monotonic_envelope() {
@@ -264,42 +258,61 @@ mod tests {
     }
 
     #[test]
-    fn test_rasterize_heatmap_surface_matches_output_size() {
-        let heatmap = crate::plots::heatmap::process_heatmap(
-            &[vec![0.0, 1.0], vec![2.0, 3.0]],
-            HeatmapConfig {
-                colorbar: false,
-                ..HeatmapConfig::default()
-            },
-        )
-        .expect("heatmap data");
+    fn test_reduce_line_points_matches_original_raster_with_small_deviation() {
+        let plot_left = 20.0;
+        let plot_top = 20.0;
+        let plot_width = 640.0;
+        let plot_height = 180.0;
+        let samples_per_column = 10usize;
+        let clip_rect = (plot_left, plot_top, plot_width, plot_height);
+        let mut points = Vec::with_capacity(plot_width as usize * samples_per_column);
 
-        let image = rasterize_heatmap_surface(&heatmap, 8, 6);
-        assert_eq!(image.width, 8);
-        assert_eq!(image.height, 6);
-        assert_eq!(image.pixels.len(), 8 * 6 * 4);
-    }
+        for column in 0..plot_width as usize {
+            for sample in 0..samples_per_column {
+                let phase = (column * samples_per_column + sample) as f32;
+                let x = plot_left + column as f32 + sample as f32 / samples_per_column as f32;
+                let mut y =
+                    plot_top + plot_height * 0.52 + phase.sin() * 18.0 + (phase / 7.0).cos() * 11.0;
 
-    #[test]
-    fn test_rasterize_heatmap_surface_reaches_last_source_row_and_column() {
-        let heatmap = crate::plots::heatmap::process_heatmap(
-            &[
-                vec![0.0, 1.0, 2.0, 3.0],
-                vec![4.0, 5.0, 6.0, 7.0],
-                vec![8.0, 9.0, 10.0, 11.0],
-                vec![12.0, 13.0, 14.0, 15.0],
-            ],
-            HeatmapConfig {
-                colorbar: false,
-                ..HeatmapConfig::default()
-            },
-        )
-        .expect("heatmap data");
+                if column % 61 == 17 && sample == samples_per_column / 2 {
+                    y = plot_top + 8.0;
+                } else if column % 79 == 41 && sample == samples_per_column / 3 {
+                    y = plot_top + plot_height - 8.0;
+                }
 
-        let image = rasterize_heatmap_surface(&heatmap, 2, 2);
-        let expected = heatmap.get_color(15.0);
-        let top_right = &image.pixels[4..8];
+                y = y.clamp(plot_top + 2.0, plot_top + plot_height - 2.0);
+                points.push(Point2f::new(x, y));
+            }
+        }
 
-        assert_eq!(top_right, &[expected.r, expected.g, expected.b, expected.a]);
+        let reduced = reduce_line_points_for_raster(&points, plot_left, plot_width)
+            .expect("expected point reduction for dense monotonic line");
+
+        let original_image = render_polyline(&points, clip_rect);
+        let reduced_image = render_polyline(&reduced, clip_rect);
+        let diff = mean_normalized_channel_diff(&original_image, &reduced_image);
+
+        assert!(
+            diff <= 0.01,
+            "reduced line render deviated too much from original: {diff:.6}"
+        );
+        assert!(
+            image_has_dark_pixel_near(
+                &reduced_image,
+                (plot_left + 17.0).round() as u32,
+                (plot_top + 8.0).round() as u32,
+                4,
+            ),
+            "reduced line should preserve top spike detail"
+        );
+        assert!(
+            image_has_dark_pixel_near(
+                &reduced_image,
+                (plot_left + 41.0).round() as u32,
+                (plot_top + plot_height - 8.0).round() as u32,
+                4,
+            ),
+            "reduced line should preserve bottom spike detail"
+        );
     }
 }
