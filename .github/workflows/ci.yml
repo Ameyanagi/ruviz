@@ -350,6 +350,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.0.0
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -363,7 +366,7 @@ jobs:
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Check published docs do not reference generated preview assets
-        run: python3 scripts/check_no_generated_asset_refs.py
+        run: uv run python scripts/check_no_generated_asset_refs.py
 
       - name: Build documentation
         run: cargo doc --all-features --no-deps
@@ -457,7 +460,17 @@ jobs:
         id: package
         if: steps.manifest.outputs.changed == 'true'
         run: |
-          tar -czf generated-preview-examples-tests.tar.gz generated/examples generated/tests
+          preview_examples_tests=()
+          for path in generated/examples generated/tests; do
+            if [ -d "$path" ]; then
+              preview_examples_tests+=("$path")
+            fi
+          done
+          if [ ${#preview_examples_tests[@]} -eq 0 ]; then
+            mkdir -p generated/empty-preview
+            preview_examples_tests=("generated/empty-preview")
+          fi
+          tar -czf generated-preview-examples-tests.tar.gz "${preview_examples_tests[@]}"
           tar -czf generated-preview-python-site.tar.gz generated/python/site
           tar -czf generated-preview-web-docs.tar.gz generated/web/docs
           echo "examples_tests_size=$(du -sh generated-preview-examples-tests.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"

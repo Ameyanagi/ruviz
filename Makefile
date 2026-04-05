@@ -84,10 +84,10 @@ build-generated-preview: clean-generated
 	$(MAKE) check-doc-asset-refs
 
 generated-manifest:
-	python3 scripts/generate_output_manifest.py
+	uv run python scripts/generate_output_manifest.py
 
 check-doc-asset-refs:
-	python3 scripts/check_no_generated_asset_refs.py
+	uv run python scripts/check_no_generated_asset_refs.py
 
 fmt:
 	cargo fmt --all -- --check

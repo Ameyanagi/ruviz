@@ -9,16 +9,16 @@ from pathlib import Path
 
 ROOTS = [
     Path("README.md"),
-    Path("src/lib.rs"),
+    Path("src"),
     Path("docs"),
     Path("python/README.md"),
     Path("python/docs"),
     Path("packages/ruviz-web/README.md"),
     Path("packages/ruviz-web/docs"),
     Path("crates/ruviz-web/README.md"),
-    Path("crates/ruviz-web/src/lib.rs"),
+    Path("crates/ruviz-web/src"),
     Path("crates/ruviz-gpui/README.md"),
-    Path("crates/ruviz-gpui/src/lib.rs"),
+    Path("crates/ruviz-gpui/src"),
 ]
 
 TEXT_SUFFIXES = {".md", ".rs"}
