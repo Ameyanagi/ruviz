@@ -6,7 +6,7 @@
 
 # Interface: NormalizedSineSignalOptions
 
-Defined in: [shared.ts:42](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L42)
+Defined in: [shared.ts:42](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L42)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:42](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **amplitude**: `number`
 
-Defined in: [shared.ts:46](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L46)
+Defined in: [shared.ts:46](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L46)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:46](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **cycles**: `number`
 
-Defined in: [shared.ts:47](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L47)
+Defined in: [shared.ts:47](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L47)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:47](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **domainEnd**: `number`
 
-Defined in: [shared.ts:45](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L45)
+Defined in: [shared.ts:45](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L45)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [shared.ts:45](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **domainStart**: `number`
 
-Defined in: [shared.ts:44](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L44)
+Defined in: [shared.ts:44](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L44)
 
 ***
 
@@ -46,7 +46,7 @@ Defined in: [shared.ts:44](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **phaseOffset**: `number`
 
-Defined in: [shared.ts:49](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L49)
+Defined in: [shared.ts:49](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L49)
 
 ***
 
@@ -54,7 +54,7 @@ Defined in: [shared.ts:49](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **phaseVelocity**: `number`
 
-Defined in: [shared.ts:48](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L48)
+Defined in: [shared.ts:48](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L48)
 
 ***
 
@@ -62,7 +62,7 @@ Defined in: [shared.ts:48](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **points**: `number`
 
-Defined in: [shared.ts:43](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L43)
+Defined in: [shared.ts:43](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L43)
 
 ***
 
@@ -70,4 +70,4 @@ Defined in: [shared.ts:43](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **verticalOffset**: `number`
 
-Defined in: [shared.ts:50](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L50)
+Defined in: [shared.ts:50](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L50)

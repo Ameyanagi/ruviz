@@ -10,20 +10,29 @@ Generated preview artifacts go under `generated/`.
 The `generated/` tree is for local rebuilds and pull request preview artifacts.
 Only `generated/README.md` and `generated/manifest.json` are tracked in git.
 Everything else under `generated/` is ignored so frequent binary rebuilds do not
-bloat repository history. PR CI uploads the full rebuilt tree as preview
-artifacts when the manifest changes.
+bloat repository history. PR CI uploads the tracked docs-facing preview trees
+when the manifest changes.
 
 Primary subdirectories:
 
 - `generated/examples/` for Rust example outputs
-- `generated/tests/render/` for test render artifacts
-- `generated/tests/visual/` for visual test output
-- `generated/tests/visual-diff/` for visual diff failures
-- `generated/tests/export/` for export-format test artifacts
+- `generated/tests/render/` for optional test render artifacts
+- `generated/tests/visual/` for optional visual test output
+- `generated/tests/visual-diff/` for optional visual diff failures
+- `generated/tests/export/` for optional export-format test artifacts
 - `generated/bench/` for gallery, benchmark, and utility image output
 - `generated/python/` for built Python docs output
 - `generated/web/` for built web docs output
 - `generated/reports/` for generated reports
+
+The tracked `generated/manifest.json` intentionally covers only:
+
+- `generated/examples/`
+- `generated/python/site/`
+- `generated/web/docs/`
+
+Test output under `generated/tests/` is still useful for local debugging, but it
+is not part of the default preview manifest or PR artifact upload path.
 
 ## Committed Media
 

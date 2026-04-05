@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a deterministic manifest for local preview artifacts."""
+"""Generate a deterministic manifest for tracked preview artifacts."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+DEFAULT_INCLUDE_PREFIXES = ("examples/", "python/site/", "web/docs/")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -20,6 +22,15 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default="generated/manifest.json",
         help="manifest file path",
+    )
+    parser.add_argument(
+        "--include-prefix",
+        action="append",
+        dest="include_prefixes",
+        help=(
+            "relative path prefix to include in the manifest; defaults to the "
+            "tracked docs-facing preview trees"
+        ),
     )
     return parser.parse_args()
 
@@ -132,6 +143,7 @@ def main() -> int:
     args = parse_args()
     root = Path(args.root)
     output = Path(args.output)
+    include_prefixes = tuple(args.include_prefixes or DEFAULT_INCLUDE_PREFIXES)
 
     files: list[dict[str, Any]] = []
     if root.exists():
@@ -141,6 +153,10 @@ def main() -> int:
 
             relative_path = path.relative_to(root).as_posix()
             if relative_path in {"README.md", "manifest.json"}:
+                continue
+            if include_prefixes and not any(
+                relative_path.startswith(prefix) for prefix in include_prefixes
+            ):
                 continue
 
             entry: dict[str, Any] = {

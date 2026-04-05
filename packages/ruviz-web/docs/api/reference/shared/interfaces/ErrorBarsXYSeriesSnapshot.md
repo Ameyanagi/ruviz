@@ -6,7 +6,7 @@
 
 # Interface: ErrorBarsXYSeriesSnapshot
 
-Defined in: [shared.ts:114](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L114)
+Defined in: [shared.ts:114](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L114)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:114](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **kind**: `"error-bars-xy"`
 
-Defined in: [shared.ts:115](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L115)
+Defined in: [shared.ts:115](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L115)
 
 ***
 
@@ -22,7 +22,7 @@ Defined in: [shared.ts:115](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **x**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:116](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L116)
+Defined in: [shared.ts:116](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L116)
 
 ***
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:116](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **xErrors**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:118](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L118)
+Defined in: [shared.ts:118](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L118)
 
 ***
 
@@ -38,7 +38,7 @@ Defined in: [shared.ts:118](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **y**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:117](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L117)
+Defined in: [shared.ts:117](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L117)
 
 ***
 
@@ -46,4 +46,4 @@ Defined in: [shared.ts:117](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **yErrors**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:119](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L119)
+Defined in: [shared.ts:119](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L119)

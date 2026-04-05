@@ -460,29 +460,29 @@ jobs:
         id: package
         if: steps.manifest.outputs.changed == 'true'
         run: |
-          preview_examples_tests=()
-          for path in generated/examples generated/tests; do
+          preview_examples=()
+          for path in generated/examples; do
             if [ -d "$path" ]; then
-              preview_examples_tests+=("$path")
+              preview_examples+=("$path")
             fi
           done
-          if [ ${#preview_examples_tests[@]} -eq 0 ]; then
+          if [ ${#preview_examples[@]} -eq 0 ]; then
             mkdir -p generated/empty-preview
-            preview_examples_tests=("generated/empty-preview")
+            preview_examples=("generated/empty-preview")
           fi
-          tar -czf generated-preview-examples-tests.tar.gz "${preview_examples_tests[@]}"
+          tar -czf generated-preview-examples.tar.gz "${preview_examples[@]}"
           tar -czf generated-preview-python-site.tar.gz generated/python/site
           tar -czf generated-preview-web-docs.tar.gz generated/web/docs
-          echo "examples_tests_size=$(du -sh generated-preview-examples-tests.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "examples_size=$(du -sh generated-preview-examples.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
           echo "python_site_size=$(du -sh generated-preview-python-site.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
           echo "web_docs_size=$(du -sh generated-preview-web-docs.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Upload examples and tests preview
+      - name: Upload examples preview
         if: steps.manifest.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: generated-preview-examples-tests
-          path: generated-preview-examples-tests.tar.gz
+          name: generated-preview-examples
+          path: generated-preview-examples.tar.gz
           retention-days: 7
           if-no-files-found: error
 
@@ -518,7 +518,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           MANIFEST_CHANGED: ${{ steps.manifest.outputs.changed }}
-          EXAMPLES_TESTS_SIZE: ${{ steps.package.outputs.examples_tests_size }}
+          EXAMPLES_SIZE: ${{ steps.package.outputs.examples_size }}
           PYTHON_SITE_SIZE: ${{ steps.package.outputs.python_site_size }}
           WEB_DOCS_SIZE: ${{ steps.package.outputs.web_docs_size }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -533,7 +533,7 @@ jobs:
 
             Generated output changed relative to \`${process.env.BASE_REF}\`.
 
-            - \`generated-preview-examples-tests\` (${process.env.EXAMPLES_TESTS_SIZE})
+            - \`generated-preview-examples\` (${process.env.EXAMPLES_SIZE})
             - \`generated-preview-python-site\` (${process.env.PYTHON_SITE_SIZE})
             - \`generated-preview-web-docs\` (${process.env.WEB_DOCS_SIZE})
             - \`generated-manifest\`

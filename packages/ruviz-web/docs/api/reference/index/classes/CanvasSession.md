@@ -6,7 +6,7 @@
 
 # Class: CanvasSession
 
-Defined in: [index.ts:1341](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1341)
+Defined in: [index.ts:1341](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1341)
 
 Main-thread interactive canvas session.
 
@@ -16,7 +16,7 @@ Main-thread interactive canvas session.
 
 > **new CanvasSession**(`module`, `rawSession`, `canvas`): `CanvasSession`
 
-Defined in: [index.ts:1349](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1349)
+Defined in: [index.ts:1349](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1349)
 
 #### Parameters
 
@@ -42,7 +42,7 @@ Defined in: [index.ts:1349](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > `readonly` **mode**: [`SessionMode`](../../shared/type-aliases/SessionMode.md) = `"main-thread"`
 
-Defined in: [index.ts:1342](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1342)
+Defined in: [index.ts:1342](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1342)
 
 ## Methods
 
@@ -50,7 +50,7 @@ Defined in: [index.ts:1342](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **\_pushCleanup**(`dispose`): `void`
 
-Defined in: [index.ts:1469](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1469)
+Defined in: [index.ts:1469](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1469)
 
 #### Parameters
 
@@ -68,7 +68,7 @@ Defined in: [index.ts:1469](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **destroy**(): `void`
 
-Defined in: [index.ts:1458](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1458)
+Defined in: [index.ts:1458](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1458)
 
 #### Returns
 
@@ -80,7 +80,7 @@ Defined in: [index.ts:1458](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **dispose**(): `void`
 
-Defined in: [index.ts:1462](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1462)
+Defined in: [index.ts:1462](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1462)
 
 #### Returns
 
@@ -92,7 +92,7 @@ Defined in: [index.ts:1462](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **exportPng**(): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Defined in: [index.ts:1442](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1442)
+Defined in: [index.ts:1442](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1442)
 
 #### Returns
 
@@ -104,7 +104,7 @@ Defined in: [index.ts:1442](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **exportSvg**(): `Promise`\<`string`\>
 
-Defined in: [index.ts:1450](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1450)
+Defined in: [index.ts:1450](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1450)
 
 #### Returns
 
@@ -116,7 +116,7 @@ Defined in: [index.ts:1450](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **hasPlot**(): `boolean`
 
-Defined in: [index.ts:1356](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1356)
+Defined in: [index.ts:1356](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1356)
 
 #### Returns
 
@@ -128,7 +128,7 @@ Defined in: [index.ts:1356](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **pointerDown**(`x`, `y`, `button`): `void`
 
-Defined in: [index.ts:1412](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1412)
+Defined in: [index.ts:1412](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1412)
 
 #### Parameters
 
@@ -154,7 +154,7 @@ Defined in: [index.ts:1412](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **pointerLeave**(): `void`
 
-Defined in: [index.ts:1430](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1430)
+Defined in: [index.ts:1430](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1430)
 
 #### Returns
 
@@ -166,7 +166,7 @@ Defined in: [index.ts:1430](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **pointerMove**(`x`, `y`): `void`
 
-Defined in: [index.ts:1418](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1418)
+Defined in: [index.ts:1418](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1418)
 
 #### Parameters
 
@@ -188,7 +188,7 @@ Defined in: [index.ts:1418](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **pointerUp**(`x`, `y`, `button`): `void`
 
-Defined in: [index.ts:1424](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1424)
+Defined in: [index.ts:1424](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1424)
 
 #### Parameters
 
@@ -214,7 +214,7 @@ Defined in: [index.ts:1424](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **render**(): `void`
 
-Defined in: [index.ts:1400](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1400)
+Defined in: [index.ts:1400](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1400)
 
 #### Returns
 
@@ -226,7 +226,7 @@ Defined in: [index.ts:1400](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **resetView**(): `void`
 
-Defined in: [index.ts:1406](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1406)
+Defined in: [index.ts:1406](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1406)
 
 #### Returns
 
@@ -238,7 +238,7 @@ Defined in: [index.ts:1406](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **resize**(`width?`, `height?`, `scaleFactor?`): `void`
 
-Defined in: [index.ts:1381](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1381)
+Defined in: [index.ts:1381](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1381)
 
 #### Parameters
 
@@ -264,7 +264,7 @@ Defined in: [index.ts:1381](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setBackendPreference**(`backendPreference`): `void`
 
-Defined in: [index.ts:1394](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1394)
+Defined in: [index.ts:1394](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1394)
 
 #### Parameters
 
@@ -282,7 +282,7 @@ Defined in: [index.ts:1394](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setPlot**(`plot`): `Promise`\<`void`\>
 
-Defined in: [index.ts:1376](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1376)
+Defined in: [index.ts:1376](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1376)
 
 #### Parameters
 
@@ -300,7 +300,7 @@ Defined in: [index.ts:1376](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setTime**(`timeSeconds`): `void`
 
-Defined in: [index.ts:1390](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1390)
+Defined in: [index.ts:1390](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1390)
 
 #### Parameters
 
@@ -318,7 +318,7 @@ Defined in: [index.ts:1390](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **wheel**(`deltaY`, `x`, `y`): `void`
 
-Defined in: [index.ts:1436](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1436)
+Defined in: [index.ts:1436](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1436)
 
 #### Parameters
 

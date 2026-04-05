@@ -6,7 +6,7 @@
 
 # Interface: WorkerSessionOptions
 
-Defined in: [shared.ts:23](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L23)
+Defined in: [shared.ts:23](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L23)
 
 ## Extends
 
@@ -18,7 +18,7 @@ Defined in: [shared.ts:23](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **autoResize?**: `boolean`
 
-Defined in: [shared.ts:18](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L18)
+Defined in: [shared.ts:18](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L18)
 
 #### Inherited from
 
@@ -30,7 +30,7 @@ Defined in: [shared.ts:18](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **backendPreference?**: [`BackendPreference`](../type-aliases/BackendPreference.md)
 
-Defined in: [shared.ts:17](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L17)
+Defined in: [shared.ts:17](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L17)
 
 #### Inherited from
 
@@ -42,7 +42,7 @@ Defined in: [shared.ts:17](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **bindInput?**: `boolean`
 
-Defined in: [shared.ts:19](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L19)
+Defined in: [shared.ts:19](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L19)
 
 #### Inherited from
 
@@ -54,7 +54,7 @@ Defined in: [shared.ts:19](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **fallbackToMainThread?**: `boolean`
 
-Defined in: [shared.ts:24](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L24)
+Defined in: [shared.ts:24](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L24)
 
 ***
 
@@ -62,7 +62,7 @@ Defined in: [shared.ts:24](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **initialTime?**: `number`
 
-Defined in: [shared.ts:20](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L20)
+Defined in: [shared.ts:20](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L20)
 
 #### Inherited from
 

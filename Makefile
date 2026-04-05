@@ -3,17 +3,18 @@ SHELL := /bin/bash
 RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
 PYTHON_SITE_DIR := ../generated/python/site
 
-.PHONY: help assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web build-generated-preview generated-manifest check-doc-asset-refs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
+.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web build-generated-preview generated-manifest check-doc-asset-refs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 help:
 	@echo "ruviz release documentation workflow"
 	@echo ""
 	@echo "Primary targets:"
+	@echo "  make setup-hooks         Configure git to use .githooks/pre-commit"
 	@echo "  make release-docs        Regenerate release media, docs, and validation output"
 	@echo "  make release-docs-rust   Refresh Rust README/rustdoc/gallery/golden assets"
 	@echo "  make release-docs-python Refresh Python gallery and build the MkDocs site"
 	@echo "  make release-docs-web    Build the npm package docs site and API reference"
-	@echo "  make build-generated-preview Rebuild local preview outputs under generated/"
+	@echo "  make build-generated-preview Rebuild docs-facing preview outputs under generated/"
 	@echo "  make generated-manifest  Refresh generated/manifest.json from local outputs"
 	@echo "  make check-doc-asset-refs Fail if published docs reference generated/ assets"
 	@echo "  make clean-generated     Remove generated/ and retired local output roots"
@@ -39,6 +40,11 @@ assert-release-branch:
 		echo "release docs must run on $(RELEASE_DOCS_BRANCH), found $$current"; \
 		exit 1; \
 	fi
+
+setup-hooks:
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit
+	@echo "Configured git hooks path to .githooks"
 
 clean-generated:
 	./scripts/clean-outputs.sh

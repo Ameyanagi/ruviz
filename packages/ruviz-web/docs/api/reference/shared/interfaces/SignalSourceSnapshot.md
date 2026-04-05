@@ -6,7 +6,7 @@
 
 # Interface: SignalSourceSnapshot
 
-Defined in: [shared.ts:63](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L63)
+Defined in: [shared.ts:63](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L63)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:63](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **kind**: `"sine-signal"`
 
-Defined in: [shared.ts:64](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L64)
+Defined in: [shared.ts:64](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L64)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:64](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **options**: [`NormalizedSineSignalOptions`](NormalizedSineSignalOptions.md)
 
-Defined in: [shared.ts:65](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L65)
+Defined in: [shared.ts:65](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L65)

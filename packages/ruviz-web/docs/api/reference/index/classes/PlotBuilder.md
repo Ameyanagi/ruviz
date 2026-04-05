@@ -6,7 +6,7 @@
 
 # Class: PlotBuilder
 
-Defined in: [index.ts:819](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L819)
+Defined in: [index.ts:819](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L819)
 
 Fluent plot builder for static export and interactive canvas mounting.
 
@@ -16,7 +16,7 @@ Fluent plot builder for static export and interactive canvas mounting.
 
 > **new PlotBuilder**(`state?`): `PlotBuilder`
 
-Defined in: [index.ts:822](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L822)
+Defined in: [index.ts:822](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L822)
 
 #### Parameters
 
@@ -34,7 +34,7 @@ Defined in: [index.ts:822](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **\_toRawPlot**(`module?`): `Promise`\<`JsPlot`\>
 
-Defined in: [index.ts:1260](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1260)
+Defined in: [index.ts:1260](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1260)
 
 #### Parameters
 
@@ -52,7 +52,7 @@ Defined in: [index.ts:1260](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **addLine**(`input`): `this`
 
-Defined in: [index.ts:1063](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1063)
+Defined in: [index.ts:1063](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1063)
 
 #### Parameters
 
@@ -70,7 +70,7 @@ Defined in: [index.ts:1063](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **addScatter**(`input`): `this`
 
-Defined in: [index.ts:1071](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1071)
+Defined in: [index.ts:1071](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1071)
 
 #### Parameters
 
@@ -88,7 +88,7 @@ Defined in: [index.ts:1071](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **bar**(`input`): `this`
 
-Defined in: [index.ts:1075](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1075)
+Defined in: [index.ts:1075](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1075)
 
 #### Parameters
 
@@ -106,7 +106,7 @@ Defined in: [index.ts:1075](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **boxplot**(`input`): `this`
 
-Defined in: [index.ts:1091](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1091)
+Defined in: [index.ts:1091](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1091)
 
 #### Parameters
 
@@ -124,7 +124,7 @@ Defined in: [index.ts:1091](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **clone**(): `PlotBuilder`
 
-Defined in: [index.ts:1199](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1199)
+Defined in: [index.ts:1199](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1199)
 
 #### Returns
 
@@ -136,7 +136,7 @@ Defined in: [index.ts:1199](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **contour**(`input`): `this`
 
-Defined in: [index.ts:1141](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1141)
+Defined in: [index.ts:1141](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1141)
 
 #### Parameters
 
@@ -154,7 +154,7 @@ Defined in: [index.ts:1141](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **ecdf**(`input`): `this`
 
-Defined in: [index.ts:1136](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1136)
+Defined in: [index.ts:1136](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1136)
 
 #### Parameters
 
@@ -172,7 +172,7 @@ Defined in: [index.ts:1136](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **errorBars**(`input`): `this`
 
-Defined in: [index.ts:1103](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1103)
+Defined in: [index.ts:1103](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1103)
 
 #### Parameters
 
@@ -190,7 +190,7 @@ Defined in: [index.ts:1103](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **errorBarsXY**(`input`): `this`
 
-Defined in: [index.ts:1114](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1114)
+Defined in: [index.ts:1114](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1114)
 
 #### Parameters
 
@@ -208,7 +208,7 @@ Defined in: [index.ts:1114](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **heatmap**(`input`): `this`
 
-Defined in: [index.ts:1097](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1097)
+Defined in: [index.ts:1097](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1097)
 
 #### Parameters
 
@@ -226,7 +226,7 @@ readonly [`NumericArray`](../../shared/type-aliases/NumericArray.md)[]
 
 > **histogram**(`input`): `this`
 
-Defined in: [index.ts:1085](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1085)
+Defined in: [index.ts:1085](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1085)
 
 #### Parameters
 
@@ -244,7 +244,7 @@ Defined in: [index.ts:1085](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **kde**(`input`): `this`
 
-Defined in: [index.ts:1131](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1131)
+Defined in: [index.ts:1131](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1131)
 
 #### Parameters
 
@@ -262,7 +262,7 @@ Defined in: [index.ts:1131](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **line**(`input`): `this`
 
-Defined in: [index.ts:1059](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1059)
+Defined in: [index.ts:1059](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1059)
 
 #### Parameters
 
@@ -280,7 +280,7 @@ Defined in: [index.ts:1059](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **mount**(`canvas`, `options?`): `Promise`\<[`CanvasSession`](CanvasSession.md)\>
 
-Defined in: [index.ts:1243](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1243)
+Defined in: [index.ts:1243](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1243)
 
 #### Parameters
 
@@ -302,7 +302,7 @@ Defined in: [index.ts:1243](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **mountWorker**(`canvas`, `options?`): `Promise`\<[`WorkerSession`](WorkerSession.md)\>
 
-Defined in: [index.ts:1250](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1250)
+Defined in: [index.ts:1250](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1250)
 
 #### Parameters
 
@@ -324,7 +324,7 @@ Defined in: [index.ts:1250](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **pie**(`values`, `labelsInput?`): `this`
 
-Defined in: [index.ts:1152](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1152)
+Defined in: [index.ts:1152](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1152)
 
 #### Parameters
 
@@ -346,7 +346,7 @@ Defined in: [index.ts:1152](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **polarLine**(`input`): `this`
 
-Defined in: [index.ts:1189](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1189)
+Defined in: [index.ts:1189](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1189)
 
 #### Parameters
 
@@ -364,7 +364,7 @@ Defined in: [index.ts:1189](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **radar**(`input`): `this`
 
-Defined in: [index.ts:1162](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1162)
+Defined in: [index.ts:1162](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1162)
 
 #### Parameters
 
@@ -382,7 +382,7 @@ Defined in: [index.ts:1162](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **renderPng**(): `Promise`\<`Uint8Array`\<`ArrayBufferLike`\>\>
 
-Defined in: [index.ts:1217](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1217)
+Defined in: [index.ts:1217](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1217)
 
 #### Returns
 
@@ -394,7 +394,7 @@ Defined in: [index.ts:1217](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **renderSvg**(): `Promise`\<`string`\>
 
-Defined in: [index.ts:1223](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1223)
+Defined in: [index.ts:1223](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1223)
 
 #### Returns
 
@@ -406,7 +406,7 @@ Defined in: [index.ts:1223](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **save**(`options?`): `Promise`\<`void`\>
 
-Defined in: [index.ts:1229](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1229)
+Defined in: [index.ts:1229](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1229)
 
 #### Parameters
 
@@ -424,7 +424,7 @@ Defined in: [index.ts:1229](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **scatter**(`input`): `this`
 
-Defined in: [index.ts:1067](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1067)
+Defined in: [index.ts:1067](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1067)
 
 #### Parameters
 
@@ -442,7 +442,7 @@ Defined in: [index.ts:1067](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setSizePx**(`width`, `height`): `this`
 
-Defined in: [index.ts:1009](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1009)
+Defined in: [index.ts:1009](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1009)
 
 #### Parameters
 
@@ -464,7 +464,7 @@ Defined in: [index.ts:1009](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setTheme**(`theme`): `this`
 
-Defined in: [index.ts:1018](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1018)
+Defined in: [index.ts:1018](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1018)
 
 #### Parameters
 
@@ -482,7 +482,7 @@ Defined in: [index.ts:1018](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setTicks**(`enabled`): `this`
 
-Defined in: [index.ts:1027](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1027)
+Defined in: [index.ts:1027](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1027)
 
 #### Parameters
 
@@ -500,7 +500,7 @@ Defined in: [index.ts:1027](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setTitle**(`title`): `this`
 
-Defined in: [index.ts:1036](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1036)
+Defined in: [index.ts:1036](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1036)
 
 #### Parameters
 
@@ -518,7 +518,7 @@ Defined in: [index.ts:1036](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setXLabel**(`label`): `this`
 
-Defined in: [index.ts:1045](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1045)
+Defined in: [index.ts:1045](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1045)
 
 #### Parameters
 
@@ -536,7 +536,7 @@ Defined in: [index.ts:1045](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **setYLabel**(`label`): `this`
 
-Defined in: [index.ts:1054](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1054)
+Defined in: [index.ts:1054](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1054)
 
 #### Parameters
 
@@ -554,7 +554,7 @@ Defined in: [index.ts:1054](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **sizePx**(`width`, `height`): `this`
 
-Defined in: [index.ts:1005](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1005)
+Defined in: [index.ts:1005](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1005)
 
 #### Parameters
 
@@ -576,7 +576,7 @@ Defined in: [index.ts:1005](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **theme**(`theme`): `this`
 
-Defined in: [index.ts:1014](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1014)
+Defined in: [index.ts:1014](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1014)
 
 #### Parameters
 
@@ -594,7 +594,7 @@ Defined in: [index.ts:1014](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **ticks**(`enabled`): `this`
 
-Defined in: [index.ts:1023](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1023)
+Defined in: [index.ts:1023](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1023)
 
 #### Parameters
 
@@ -612,7 +612,7 @@ Defined in: [index.ts:1023](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **title**(`title`): `this`
 
-Defined in: [index.ts:1032](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1032)
+Defined in: [index.ts:1032](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1032)
 
 #### Parameters
 
@@ -630,7 +630,7 @@ Defined in: [index.ts:1032](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **toSnapshot**(): [`PlotSnapshot`](../../shared/interfaces/PlotSnapshot.md)
 
-Defined in: [index.ts:1203](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1203)
+Defined in: [index.ts:1203](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1203)
 
 #### Returns
 
@@ -642,7 +642,7 @@ Defined in: [index.ts:1203](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **violin**(`input`): `this`
 
-Defined in: [index.ts:1184](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1184)
+Defined in: [index.ts:1184](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1184)
 
 #### Parameters
 
@@ -660,7 +660,7 @@ Defined in: [index.ts:1184](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **xlabel**(`label`): `this`
 
-Defined in: [index.ts:1041](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1041)
+Defined in: [index.ts:1041](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1041)
 
 #### Parameters
 
@@ -678,7 +678,7 @@ Defined in: [index.ts:1041](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > **ylabel**(`label`): `this`
 
-Defined in: [index.ts:1050](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1050)
+Defined in: [index.ts:1050](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1050)
 
 #### Parameters
 
@@ -696,7 +696,7 @@ Defined in: [index.ts:1050](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b
 
 > `static` **fromSnapshot**(`snapshot`): `PlotBuilder`
 
-Defined in: [index.ts:836](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L836)
+Defined in: [index.ts:836](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L836)
 
 #### Parameters
 

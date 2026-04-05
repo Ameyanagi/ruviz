@@ -6,7 +6,7 @@
 
 # Interface: HistogramSeriesSnapshot
 
-Defined in: [shared.ts:90](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L90)
+Defined in: [shared.ts:90](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L90)
 
 ## Properties
 
@@ -14,7 +14,7 @@ Defined in: [shared.ts:90](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **data**: [`NumericReactiveSourceSnapshot`](../type-aliases/NumericReactiveSourceSnapshot.md)
 
-Defined in: [shared.ts:92](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L92)
+Defined in: [shared.ts:92](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L92)
 
 ***
 
@@ -22,4 +22,4 @@ Defined in: [shared.ts:92](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > **kind**: `"histogram"`
 
-Defined in: [shared.ts:91](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L91)
+Defined in: [shared.ts:91](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L91)

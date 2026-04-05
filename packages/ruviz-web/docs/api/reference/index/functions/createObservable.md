@@ -8,7 +8,7 @@
 
 > **createObservable**(`values`): [`ObservableSeries`](../classes/ObservableSeries.md)
 
-Defined in: [index.ts:1830](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/index.ts#L1830)
+Defined in: [index.ts:1830](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/index.ts#L1830)
 
 Create a mutable observable numeric series.
 

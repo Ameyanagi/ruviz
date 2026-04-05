@@ -6,7 +6,7 @@
 
 # Interface: CanvasSessionOptions
 
-Defined in: [shared.ts:16](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L16)
+Defined in: [shared.ts:16](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L16)
 
 ## Extended by
 
@@ -18,7 +18,7 @@ Defined in: [shared.ts:16](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **autoResize?**: `boolean`
 
-Defined in: [shared.ts:18](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L18)
+Defined in: [shared.ts:18](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L18)
 
 ***
 
@@ -26,7 +26,7 @@ Defined in: [shared.ts:18](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **backendPreference?**: [`BackendPreference`](../type-aliases/BackendPreference.md)
 
-Defined in: [shared.ts:17](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L17)
+Defined in: [shared.ts:17](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L17)
 
 ***
 
@@ -34,7 +34,7 @@ Defined in: [shared.ts:17](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **bindInput?**: `boolean`
 
-Defined in: [shared.ts:19](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L19)
+Defined in: [shared.ts:19](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L19)
 
 ***
 
@@ -42,4 +42,4 @@ Defined in: [shared.ts:19](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b7
 
 > `optional` **initialTime?**: `number`
 
-Defined in: [shared.ts:20](https://github.com/Ameyanagi/ruviz/blob/2ea97bee578b78d3002281618aecdb4fafa6ecec/packages/ruviz-web/src/shared.ts#L20)
+Defined in: [shared.ts:20](https://github.com/Ameyanagi/ruviz/blob/main/packages/ruviz-web/src/shared.ts#L20)
