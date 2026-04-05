@@ -1,7 +1,6 @@
 use super::*;
 use crate::core::plot::raster_fast_path::{
-    plot_area_surface_size, rasterize_heatmap_surface, reduce_line_points_for_raster,
-    should_rasterize_heatmap, should_reduce_line_series,
+    reduce_line_points_for_raster, should_reduce_line_series,
 };
 use crate::core::types::Point2f;
 
@@ -884,44 +883,19 @@ impl Plot {
                 }
             }
             SeriesType::Heatmap { data } => {
-                if should_rasterize_heatmap(data) {
-                    let (surface_width, surface_height) = plot_area_surface_size(plot_area);
-                    let image = rasterize_heatmap_surface(data, surface_width, surface_height);
-                    renderer.draw_datashader_image(&image, plot_area)?;
-
-                    if data.config.colorbar {
-                        let colorbar_width = 20.0;
-                        let colorbar_margin = 10.0;
-                        let colorbar_x = plot_area.right() + colorbar_margin;
-                        let colorbar_y = plot_area.y();
-                        let colorbar_height = plot_area.height();
-
-                        renderer.draw_colorbar(
-                            &data.config.colormap,
-                            data.vmin,
-                            data.vmax,
-                            colorbar_x,
-                            colorbar_y,
-                            colorbar_width,
-                            colorbar_height,
-                            &data.config.value_scale,
-                            data.config.colorbar_label.as_deref(),
-                            self.display.theme.foreground,
-                            data.config.colorbar_tick_font_size,
-                            Some(data.config.colorbar_label_font_size),
-                        )?;
-                    }
-
-                    return Ok(());
-                }
-
                 // Calculate cell dimensions in pixel space
+                // Reintroduce a heatmap surface fast path only after it matches
+                // the per-cell raster output within a tight parity threshold.
                 let cell_width = plot_area.width() / data.n_cols as f32;
                 let cell_height = plot_area.height() / data.n_rows as f32;
 
                 // Render each cell as a filled rectangle
                 for (row_idx, row) in data.values.iter().enumerate() {
                     for (col_idx, &value) in row.iter().enumerate() {
+                        if !value.is_finite() {
+                            continue;
+                        }
+
                         let cell_color = data.get_color(value);
 
                         // Apply alpha from config

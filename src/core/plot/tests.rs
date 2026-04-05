@@ -201,6 +201,57 @@ fn image_has_dark_pixel_near(image: &Image, x: u32, y: u32, radius: u32) -> bool
     false
 }
 
+fn image_pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
+    let idx = ((y * image.width + x) * 4) as usize;
+    [
+        image.pixels[idx],
+        image.pixels[idx + 1],
+        image.pixels[idx + 2],
+        image.pixels[idx + 3],
+    ]
+}
+
+fn mean_normalized_channel_diff(lhs: &Image, rhs: &Image) -> f64 {
+    assert_eq!(lhs.width, rhs.width);
+    assert_eq!(lhs.height, rhs.height);
+
+    lhs.pixels
+        .iter()
+        .zip(&rhs.pixels)
+        .map(|(left, right)| (*left as f64 - *right as f64).abs() / 255.0)
+        .sum::<f64>()
+        / lhs.pixels.len() as f64
+}
+
+fn compute_render_plot_area(plot: &Plot) -> tiny_skia::Rect {
+    let (x_min, x_max, y_min, y_max) = plot
+        .calculate_data_bounds()
+        .expect("data bounds should be available");
+    let content = plot.create_plot_content(y_min, y_max);
+    let mut measurement_renderer = crate::render::SkiaRenderer::new(
+        plot.display.dimensions.0,
+        plot.display.dimensions.1,
+        plot.display.theme.clone(),
+    )
+    .expect("measurement renderer");
+    measurement_renderer.set_render_scale(plot.render_scale());
+    measurement_renderer.set_text_engine_mode(plot.display.text_engine);
+    let (layout, _, _) = plot
+        .compute_layout_with_configured_ticks(
+            &measurement_renderer,
+            plot.display.dimensions,
+            &content,
+            plot.display.config.figure.dpi,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
+        .expect("configured layout with tick measurements");
+
+    Plot::plot_area_from_layout(&layout).expect("valid plot area")
+}
+
 fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
     let (x_min, x_max, y_min, y_max) = plot
         .calculate_data_bounds()
@@ -386,6 +437,97 @@ fn test_snapshot_bounds_cover_heatmap_and_pie_series() {
         .calculate_data_bounds_for_series(&pie.snapshot_series(0.0))
         .expect("pie bounds should resolve");
     assert_eq!(pie_bounds, (0.0, 1.0, 0.0, 1.0));
+}
+
+#[test]
+fn test_heatmap_render_preserves_downsampled_vertical_feature() {
+    let rows = 48usize;
+    let cols = 256usize;
+    let stripe_start = cols / 2 - 4;
+    let stripe_end = stripe_start + 8;
+    let mut values = vec![vec![0.0; cols]; rows];
+    for row in &mut values {
+        for cell in &mut row[stripe_start..stripe_end] {
+            *cell = 1.0;
+        }
+    }
+
+    let plot = Plot::new()
+        .size_px(120, 120)
+        .heatmap(
+            &values,
+            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+        )
+        .end_series();
+    let image = plot.render().expect("heatmap render should succeed");
+    let plot_area = compute_render_plot_area(&plot);
+    let cell_width = plot_area.width() / cols as f32;
+    let stripe_center_x =
+        (plot_area.left() + ((stripe_start + stripe_end) as f32 * 0.5) * cell_width).round() as u32;
+    let background_x = (plot_area.left() + plot_area.width() * 0.2).round() as u32;
+    let y_start = (plot_area.top() + 4.0).round() as u32;
+    let y_end = (plot_area.bottom() - 4.0).round() as u32;
+
+    let stripe_peak_brightness = (stripe_center_x.saturating_sub(2)..=stripe_center_x + 2)
+        .flat_map(|x| (y_start..=y_end).map(move |y| (x, y)))
+        .map(|(x, y)| {
+            let pixel = image_pixel_rgba(&image, x.min(image.width - 1), y);
+            pixel[0] as u32 + pixel[1] as u32 + pixel[2] as u32
+        })
+        .max()
+        .unwrap_or(0);
+    let background_peak_brightness = (background_x.saturating_sub(2)..=background_x + 2)
+        .flat_map(|x| (y_start..=y_end).map(move |y| (x, y)))
+        .map(|(x, y)| {
+            let pixel = image_pixel_rgba(&image, x.min(image.width - 1), y);
+            pixel[0] as u32 + pixel[1] as u32 + pixel[2] as u32
+        })
+        .max()
+        .unwrap_or(0);
+
+    assert!(
+        stripe_peak_brightness > background_peak_brightness + 80,
+        "downsampled heatmap should keep the bright central stripe visible: stripe={} background={}",
+        stripe_peak_brightness,
+        background_peak_brightness
+    );
+}
+
+#[test]
+fn test_heatmap_render_skips_non_finite_cells() {
+    let plot = Plot::new()
+        .size_px(240, 160)
+        .heatmap(
+            &vec![vec![0.0, f64::NAN, 1.0]],
+            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+        )
+        .end_series();
+    let image = plot
+        .render()
+        .expect("heatmap with non-finite values should render");
+    let plot_area = compute_render_plot_area(&plot);
+    let cell_width = plot_area.width() / 3.0;
+    let center_y = (plot_area.top() + plot_area.height() * 0.5).round() as u32;
+    let left_center_x = (plot_area.left() + cell_width * 0.5).round() as u32;
+    let nan_center_x = (plot_area.left() + cell_width * 1.5).round() as u32;
+    let right_center_x = (plot_area.left() + cell_width * 2.5).round() as u32;
+    let background = image_pixel_rgba(&image, 0, 0);
+
+    assert_eq!(
+        image_pixel_rgba(&image, nan_center_x, center_y),
+        background,
+        "non-finite heatmap cells should be skipped instead of colored"
+    );
+    assert_ne!(
+        image_pixel_rgba(&image, left_center_x, center_y),
+        background,
+        "finite heatmap cells should still render"
+    );
+    assert_ne!(
+        image_pixel_rgba(&image, right_center_x, center_y),
+        background,
+        "finite heatmap cells should still render"
+    );
 }
 
 #[test]
@@ -2180,6 +2322,56 @@ fn test_histogram_source_keeps_prepared_histogram_lazy() {
         SeriesType::Histogram { prepared, .. } => assert!(prepared.is_none()),
         other => panic!("expected histogram series, got {other:?}"),
     }
+}
+
+#[test]
+fn test_histogram_prepared_and_source_backed_paths_match() {
+    let data: Vec<f64> = (0..200)
+        .map(|i| ((i as f64) * 0.17).sin() * 2.0 + (i % 11) as f64 * 0.1)
+        .collect();
+    let config = crate::plots::histogram::HistogramConfig::new()
+        .bins(18)
+        .density(true)
+        .bar_width(0.85);
+
+    let static_plot: Plot = Plot::new()
+        .size_px(320, 240)
+        .histogram(&data, Some(config.clone()))
+        .into();
+    let source_plot: Plot = Plot::new()
+        .size_px(320, 240)
+        .histogram_source(data.clone(), Some(config))
+        .into();
+
+    let static_hist = static_plot.series_mgr.series[0]
+        .series_type
+        .histogram_data_at(0.0)
+        .expect("static histogram data");
+    let source_hist = source_plot.series_mgr.series[0]
+        .series_type
+        .histogram_data_at(0.0)
+        .expect("source histogram data");
+
+    assert_eq!(static_hist.bin_edges.len(), source_hist.bin_edges.len());
+    assert_eq!(static_hist.counts.len(), source_hist.counts.len());
+    assert_eq!(static_hist.n_samples, source_hist.n_samples);
+    assert_eq!(static_hist.is_density, source_hist.is_density);
+    assert!((static_hist.bar_width - source_hist.bar_width).abs() < f32::EPSILON);
+    for (left, right) in static_hist.bin_edges.iter().zip(&source_hist.bin_edges) {
+        assert!((left - right).abs() < 1e-12);
+    }
+    for (left, right) in static_hist.counts.iter().zip(&source_hist.counts) {
+        assert!((left - right).abs() < 1e-12);
+    }
+
+    let static_image = static_plot.render().expect("static histogram render");
+    let source_image = source_plot.render().expect("source histogram render");
+    let diff = mean_normalized_channel_diff(&static_image, &source_image);
+
+    assert!(
+        diff <= f64::EPSILON,
+        "prepared and source-backed histogram renders should match exactly, diff={diff:.6}"
+    );
 }
 
 #[test]
