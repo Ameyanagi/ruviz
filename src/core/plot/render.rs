@@ -1,5 +1,16 @@
 use super::*;
 
+#[derive(Debug, Clone)]
+struct ColorbarMeasurementSpec {
+    vmin: f64,
+    vmax: f64,
+    value_scale: AxisScale,
+    label: Option<String>,
+    tick_font_size: f32,
+    label_font_size: f32,
+    show_log_subticks: bool,
+}
+
 impl Plot {
     /// Render the plot to an in-memory image.
     ///
@@ -705,6 +716,80 @@ impl Plot {
         self.create_plot_content_at_time(y_min, y_max, 0.0)
     }
 
+    fn colorbar_measurement_spec(&self) -> Option<ColorbarMeasurementSpec> {
+        self.series_mgr
+            .series
+            .iter()
+            .find_map(|series| match &series.series_type {
+                SeriesType::Heatmap { data } if data.config.colorbar => {
+                    Some(ColorbarMeasurementSpec {
+                        vmin: data.vmin,
+                        vmax: data.vmax,
+                        value_scale: data.config.value_scale.clone(),
+                        label: data.config.colorbar_label.clone(),
+                        tick_font_size: data.config.colorbar_tick_font_size,
+                        label_font_size: data.config.colorbar_label_font_size,
+                        show_log_subticks: data.config.colorbar_log_subticks,
+                    })
+                }
+                SeriesType::Contour { data } if data.config.colorbar => {
+                    let (vmin, vmax) = if data.levels.is_empty() {
+                        (0.0, 1.0)
+                    } else {
+                        (
+                            data.levels.first().copied().unwrap_or(0.0),
+                            data.levels.last().copied().unwrap_or(1.0),
+                        )
+                    };
+
+                    Some(ColorbarMeasurementSpec {
+                        vmin,
+                        vmax,
+                        value_scale: AxisScale::Linear,
+                        label: data.config.colorbar_label.clone(),
+                        tick_font_size: data.config.colorbar_tick_font_size,
+                        label_font_size: data.config.colorbar_label_font_size,
+                        show_log_subticks: false,
+                    })
+                }
+                _ => None,
+            })
+    }
+
+    fn measure_colorbar_right_margin(
+        &self,
+        renderer: &SkiaRenderer,
+        spec: &ColorbarMeasurementSpec,
+    ) -> Result<f32> {
+        const COLORBAR_MARGIN: f32 = 10.0;
+        const COLORBAR_WIDTH: f32 = 20.0;
+
+        let ticks = crate::render::skia::compute_colorbar_ticks(
+            spec.vmin,
+            spec.vmax,
+            &spec.value_scale,
+            spec.show_log_subticks,
+        );
+        let max_label_width =
+            Self::measure_tick_label_extent(renderer, &ticks.major_labels, spec.tick_font_size)?
+                .map(|(width, _)| width)
+                .unwrap_or(0.0);
+        let rotated_label_width = if let Some(label) = spec.label.as_deref() {
+            renderer.measure_text(label, spec.label_font_size)?.1
+        } else {
+            0.0
+        };
+        let layout = crate::render::skia::compute_colorbar_layout_metrics(
+            COLORBAR_WIDTH,
+            spec.tick_font_size,
+            max_label_width,
+            spec.label.as_ref().map(|_| rotated_label_width),
+        );
+        let outer_padding = spec.tick_font_size.max(4.0) * 0.5;
+
+        Ok(COLORBAR_MARGIN + layout.total_extent + outer_padding)
+    }
+
     /// Pre-measure title/xlabel/ylabel for Typst layout parity.
     pub(super) fn measure_layout_text(
         &self,
@@ -752,6 +837,9 @@ impl Plot {
                 Self::measure_tick_label_extent(renderer, x_tick_labels, tick_size_px)?;
             measurements.ytick =
                 Self::measure_tick_label_extent(renderer, y_tick_labels, tick_size_px)?;
+        }
+        if let Some(spec) = self.colorbar_measurement_spec() {
+            measurements.right_margin = Some(self.measure_colorbar_right_margin(renderer, &spec)?);
         }
 
         Ok(Some(measurements))
@@ -810,6 +898,7 @@ impl Plot {
         let measured_ylabel = measurements.and_then(|m| m.ylabel);
         let measured_xtick = measurements.and_then(|m| m.xtick);
         let measured_ytick = measurements.and_then(|m| m.ytick);
+        let measured_right_margin = measurements.and_then(|m| m.right_margin);
 
         let title_height = if content.title.is_some() {
             measured_title
@@ -858,16 +947,19 @@ impl Plot {
             calculate_plot_area_config(canvas_size.0, canvas_size.1, &computed_margins, dpi);
         let canvas_width = canvas_size.0 as f32;
         let canvas_height = canvas_size.1 as f32;
+        let configured_right_margin = canvas_width - plot_area_rect.right();
+        let effective_right_margin =
+            configured_right_margin.max(measured_right_margin.unwrap_or(0.0));
         let margins = crate::core::layout::ComputedMarginsPixels {
             left: plot_area_rect.left(),
-            right: canvas_width - plot_area_rect.right(),
+            right: effective_right_margin,
             top: plot_area_rect.top(),
             bottom: canvas_height - plot_area_rect.bottom(),
         };
         let plot_area = crate::core::layout::LayoutRect {
             left: plot_area_rect.left(),
             top: plot_area_rect.top(),
-            right: plot_area_rect.right(),
+            right: canvas_width - effective_right_margin,
             bottom: plot_area_rect.bottom(),
         };
 

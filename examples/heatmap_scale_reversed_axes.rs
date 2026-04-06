@@ -37,19 +37,35 @@ fn main() -> Result<()> {
         .marker_size(5.0)
         .ylim(16.0, 0.0);
 
-    let heatmap_data: Vec<Vec<f64>> = (0..10)
+    let heatmap_rows = 14usize;
+    let heatmap_cols = 14usize;
+    let center_col = (heatmap_cols.saturating_sub(1)) as f64 / 2.0;
+    let heatmap_data: Vec<Vec<f64>> = (0..heatmap_rows)
         .map(|row| {
-            (0..10)
+            let depth = 1.0 - row as f64 / (heatmap_rows.saturating_sub(1).max(1)) as f64;
+
+            (0..heatmap_cols)
                 .map(|col| {
-                    let exponent = (row + col) as i32;
-                    10.0_f64.powi(exponent / 4)
+                    let x = (col as f64 - center_col) / heatmap_cols as f64;
+                    let beam = 900.0 * (-(x / 0.05).powi(2)).exp() * (-(depth / 0.18)).exp();
+                    let halo = 20.0 * (-(x / 0.24).powi(2)).exp() * (-(depth / 0.55)).exp();
+                    let buildup = 12.0
+                        * (-(x / 0.28).powi(2)).exp()
+                        * (-((depth - 0.30) / 0.06).powi(2)).exp();
+                    let masked_edge = col == 0 || col == heatmap_cols - 1;
+
+                    if masked_edge {
+                        0.0
+                    } else {
+                        beam + halo + buildup
+                    }
                 })
                 .collect()
         })
         .collect();
 
     let heatmap_plot = Plot::new()
-        .title("Heatmap Value Scale: Log")
+        .title("Heatmap Log Scale + Masking")
         .xlabel("Column")
         .ylabel("Row")
         .heatmap(
@@ -58,7 +74,8 @@ fn main() -> Result<()> {
                 HeatmapConfig::new()
                     .value_scale(AxisScale::Log)
                     .colorbar(true)
-                    .colorbar_label("Intensity")
+                    .colorbar_log_subticks(true)
+                    .colorbar_label("Absorbed Energy")
                     .aspect(1.0),
             ),
         );

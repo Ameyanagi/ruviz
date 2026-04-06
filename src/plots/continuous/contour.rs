@@ -377,6 +377,71 @@ pub fn contour_fill_regions(data: &ContourPlotData) -> Vec<(f64, f64, Vec<Vec<(f
     regions
 }
 
+fn axis_aligned_rectangle_bounds(polygon: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
+    if polygon.len() != 4 {
+        return None;
+    }
+
+    let min_x = polygon
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::INFINITY, f64::min);
+    let max_x = polygon
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_y = polygon
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::INFINITY, f64::min);
+    let max_y = polygon
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let corners = [
+        (min_x, min_y),
+        (max_x, min_y),
+        (max_x, max_y),
+        (min_x, max_y),
+    ];
+
+    if corners
+        .iter()
+        .all(|corner| polygon.iter().any(|point| point == corner))
+    {
+        Some((min_x, min_y, max_x, max_y))
+    } else {
+        None
+    }
+}
+
+fn draw_filled_contour_region(
+    renderer: &mut SkiaRenderer,
+    area: &PlotArea,
+    polygon: &[(f64, f64)],
+    fill_color: Color,
+) -> Result<()> {
+    if let Some((min_x, min_y, max_x, max_y)) = axis_aligned_rectangle_bounds(polygon) {
+        let (sx1, sy1) = area.data_to_screen(min_x, max_y);
+        let (sx2, sy2) = area.data_to_screen(max_x, min_y);
+        renderer.draw_pixel_aligned_solid_rectangle(
+            sx1.min(sx2),
+            sy1.min(sy2),
+            (sx2 - sx1).abs(),
+            (sy2 - sy1).abs(),
+            fill_color,
+        )?;
+    } else {
+        let screen_polygon: Vec<(f32, f32)> = polygon
+            .iter()
+            .map(|(x, y)| area.data_to_screen(*x, *y))
+            .collect();
+        renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+    }
+
+    Ok(())
+}
+
 /// Compute data range for contour plot
 pub fn contour_range(x: &[f64], y: &[f64]) -> ((f64, f64), (f64, f64)) {
     if x.is_empty() || y.is_empty() {
@@ -467,11 +532,7 @@ impl PlotRender for ContourPlotData {
                 let fill_color = cmap.sample(t).with_alpha(config.alpha);
 
                 for polygon in &polygons {
-                    let screen_polygon: Vec<(f32, f32)> = polygon
-                        .iter()
-                        .map(|(x, y)| area.data_to_screen(*x, *y))
-                        .collect();
-                    renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+                    draw_filled_contour_region(renderer, area, polygon, fill_color)?;
                 }
             }
         }
@@ -551,11 +612,7 @@ impl PlotRender for ContourPlotData {
                 let fill_color = cmap.sample(t).with_alpha(effective_alpha);
 
                 for polygon in &polygons {
-                    let screen_polygon: Vec<(f32, f32)> = polygon
-                        .iter()
-                        .map(|(x, y)| area.data_to_screen(*x, *y))
-                        .collect();
-                    renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+                    draw_filled_contour_region(renderer, area, polygon, fill_color)?;
                 }
             }
         }

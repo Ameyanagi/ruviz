@@ -478,6 +478,79 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    fn pixel_aligned_rect_bounds(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Option<(f32, f32, f32, f32)> {
+        let left = x.min(x + width).round();
+        let right = x.max(x + width).round();
+        let top = y.min(y + height).round();
+        let bottom = y.max(y + height).round();
+
+        if right <= left || bottom <= top {
+            None
+        } else {
+            Some((left, top, right - left, bottom - top))
+        }
+    }
+
+    /// Draw a rectangle snapped to whole-pixel edges with no transparency or border.
+    ///
+    /// This is useful for tiled raster-like visuals such as heatmaps and filled
+    /// contour cells where adjacent shapes should share exact boundaries.
+    pub fn draw_pixel_aligned_solid_rectangle(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        if let Some((x, y, width, height)) = Self::pixel_aligned_rect_bounds(x, y, width, height) {
+            let left = x.max(0.0).floor() as u32;
+            let top = y.max(0.0).floor() as u32;
+            let right = (x + width).min(self.width as f32).ceil() as u32;
+            let bottom = (y + height).min(self.height as f32).ceil() as u32;
+
+            if left < right && top < bottom {
+                let fill = PremultipliedColorU8::from_rgba(color.r, color.g, color.b, color.a)
+                    .ok_or_else(|| {
+                        PlottingError::RenderError(
+                            "Invalid color for pixel-aligned rectangle fill".to_string(),
+                        )
+                    })?;
+
+                let pixels = self.pixmap.pixels_mut();
+                for py in top..bottom {
+                    let row_start = (py * self.width) as usize;
+                    for px in left..right {
+                        pixels[row_start + px as usize] = fill;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Draw a rectangle outline snapped to whole-pixel edges.
+    pub fn draw_pixel_aligned_rectangle_outline(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        if let Some((x, y, width, height)) = Self::pixel_aligned_rect_bounds(x, y, width, height) {
+            self.draw_rectangle(x, y, width, height, color, false)?;
+        }
+
+        Ok(())
+    }
+
     /// Draw a rounded rectangle with the given corner radius
     pub fn draw_rounded_rectangle(
         &mut self,

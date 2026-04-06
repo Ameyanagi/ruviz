@@ -109,6 +109,21 @@ fn estimate_text_metrics(text: &str, config: &FontConfig) -> TextPlacementMetric
     TextPlacementMetrics::new(width, height, config.size)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct InkBoxMetrics {
+    width: f32,
+    height: f32,
+    min_y_from_top: f32,
+    max_y_from_top: f32,
+    baseline_from_top: f32,
+}
+
+impl InkBoxMetrics {
+    fn center_y_from_top(self) -> f32 {
+        (self.min_y_from_top + self.max_y_from_top) / 2.0
+    }
+}
+
 // =============================================================================
 // Global Singletons
 // =============================================================================
@@ -832,6 +847,125 @@ impl TextRenderer {
 
         let baseline_from_top = baseline_from_top.unwrap_or(height);
         Ok(TextPlacementMetrics::new(width, height, baseline_from_top))
+    }
+
+    /// Measure tight ink bounds for shaped text.
+    ///
+    /// Unlike `measure_text_placement`, this returns the bounds of the rasterized
+    /// glyph ink rather than the full line box. This is useful for visually
+    /// centering labels against ticks.
+    fn measure_text_ink_box(&self, text: &str, config: &FontConfig) -> Result<InkBoxMetrics> {
+        if !is_renderable_text(text) {
+            return Ok(InkBoxMetrics {
+                width: 0.0,
+                height: config.size,
+                min_y_from_top: 0.0,
+                max_y_from_top: config.size,
+                baseline_from_top: config.size,
+            });
+        }
+
+        let mut font_system = lock_font_system()?;
+        if font_system.db().is_empty() {
+            log::debug!("Estimating text ink metrics because no fonts are registered");
+            let estimated = estimate_text_metrics(text, config);
+            return Ok(InkBoxMetrics {
+                width: estimated.width,
+                height: estimated.height,
+                min_y_from_top: 0.0,
+                max_y_from_top: estimated.height,
+                baseline_from_top: estimated.baseline_from_top,
+            });
+        }
+
+        let mut swash_cache = lock_swash_cache()?;
+        let metrics = Metrics::new(config.size, config.size * 1.2);
+        let mut buffer = Buffer::new(&mut font_system, metrics);
+
+        let buffer_width = (text.len() as f32 * config.size * 2.0).max(800.0);
+        let buffer_height = (config.size * 4.0).max(100.0);
+        buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
+
+        let attrs = config.to_cosmic_attrs();
+        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut font_system, false);
+
+        let cosmic_color = CosmicColor::rgba(0, 0, 0, 255);
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+        let mut baseline_from_top: Option<f32> = None;
+
+        for run in buffer.layout_runs() {
+            baseline_from_top.get_or_insert(run.line_y);
+            let line_y = run.line_y;
+
+            for glyph in run.glyphs.iter() {
+                let physical_glyph = glyph.physical((0.0, line_y), 1.0);
+                swash_cache.with_pixels(
+                    &mut font_system,
+                    physical_glyph.cache_key,
+                    cosmic_color,
+                    |dx, dy, glyph_color| {
+                        if glyph_color.a() == 0 {
+                            return;
+                        }
+
+                        let px = physical_glyph.x + dx;
+                        let py = physical_glyph.y + dy;
+                        min_x = min_x.min(px);
+                        min_y = min_y.min(py);
+                        max_x = max_x.max(px);
+                        max_y = max_y.max(py);
+                    },
+                );
+            }
+        }
+
+        if min_x == i32::MAX || min_y == i32::MAX {
+            let placement = self.measure_text_placement(text, config)?;
+            return Ok(InkBoxMetrics {
+                width: placement.width,
+                height: placement.height,
+                min_y_from_top: 0.0,
+                max_y_from_top: placement.height,
+                baseline_from_top: placement.baseline_from_top,
+            });
+        }
+
+        let width = (max_x - min_x + 1).max(1) as f32;
+        let height = (max_y - min_y + 1).max(1) as f32;
+        let baseline_from_top = baseline_from_top.unwrap_or(height) - min_y as f32;
+
+        Ok(InkBoxMetrics {
+            width,
+            height,
+            min_y_from_top: min_y as f32,
+            max_y_from_top: max_y as f32,
+            baseline_from_top,
+        })
+    }
+
+    pub(crate) fn measure_text_ink_placement(
+        &self,
+        text: &str,
+        config: &FontConfig,
+    ) -> Result<TextPlacementMetrics> {
+        let ink_box = self.measure_text_ink_box(text, config)?;
+        Ok(TextPlacementMetrics::new(
+            ink_box.width,
+            ink_box.height,
+            ink_box.baseline_from_top,
+        ))
+    }
+
+    pub(crate) fn measure_text_ink_center_from_top(
+        &self,
+        text: &str,
+        config: &FontConfig,
+    ) -> Result<f32> {
+        Ok(self.measure_text_ink_box(text, config)?.center_y_from_top())
     }
 
     /// Measure text dimensions for layout calculations

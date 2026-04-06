@@ -4,7 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- _None yet._
+- Heatmap log colorbars now use superscript decade labels again, reserve enough right-side layout space to avoid clipping, keep decade labels centered on their ticks, and draw visible logarithmic subticks by default.
+- Log-scaled heatmaps now mask `<= 0` and non-finite cells out of auto range detection instead of coloring them as the minimum valid bin, matching Matplotlib-style `LogNorm` behavior more closely.
+- Added `HeatmapConfig::colorbar_log_subticks(bool)` and `HeatmapConfig::symlog_auto_linthresh(bool)` for heatmap-specific logarithmic colorbar and SymLog convenience tuning.
+- Added a dedicated `examples/montecarlo_heatmap.rs` example for a synthetic absorbed-energy style log heatmap.
 
 ## [0.4.0] - 2026-04-05
 

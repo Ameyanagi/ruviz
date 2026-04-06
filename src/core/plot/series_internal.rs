@@ -883,58 +883,49 @@ impl Plot {
                 }
             }
             SeriesType::Heatmap { data } => {
-                // Calculate cell dimensions in pixel space
-                // Reintroduce a heatmap surface fast path only after it matches
-                // the per-cell raster output within a tight parity threshold.
+                let heatmap_plot_area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+
+                // Keep the main heatmap cell fill path in HeatmapData so the
+                // normal renderer, tests, and styled path all share the same
+                // border/seam behavior.
+                data.render(renderer, &heatmap_plot_area, &self.display.theme, color)?;
+
+                // Calculate cell dimensions in pixel space for optional
+                // annotations and colorbar placement.
                 let cell_width = plot_area.width() / data.n_cols as f32;
                 let cell_height = plot_area.height() / data.n_rows as f32;
 
-                // Render each cell as a filled rectangle
                 for (row_idx, row) in data.values.iter().enumerate() {
                     for (col_idx, &value) in row.iter().enumerate() {
-                        if !value.is_finite() {
+                        if !data.config.annotate || data.should_mask_value(value) {
                             continue;
                         }
 
-                        let cell_color = data.get_color(value);
-
-                        // Apply alpha from config
                         let cell_color = if data.config.alpha < 1.0 {
-                            Color::new_rgba(
-                                cell_color.r,
-                                cell_color.g,
-                                cell_color.b,
-                                (data.config.alpha * 255.0) as u8,
-                            )
+                            data.get_color(value).with_alpha(data.config.alpha)
                         } else {
-                            cell_color
+                            data.get_color(value)
                         };
 
-                        // Calculate cell position (row 0 at top)
                         let cell_x = plot_area.x() + col_idx as f32 * cell_width;
                         let cell_y =
                             plot_area.y() + (data.n_rows - 1 - row_idx) as f32 * cell_height;
-
-                        renderer.draw_rectangle(
-                            cell_x,
-                            cell_y,
-                            cell_width,
-                            cell_height,
-                            cell_color,
-                            true,
-                        )?;
-
-                        // Draw cell annotation if enabled
-                        if data.config.annotate {
-                            let text = format!("{:.2}", value);
-                            let text_color = data.get_text_color(cell_color);
-                            let text_x = cell_x + cell_width / 2.0;
-                            let font_size = (cell_height * 0.3).clamp(8.0, 20.0);
-                            // Center vertically: y position at cell center + half font size
-                            let text_y = cell_y + cell_height / 2.0 + font_size / 3.0;
-                            renderer
-                                .draw_text_centered(&text, text_x, text_y, font_size, text_color)?;
-                        }
+                        let text = format!("{:.2}", value);
+                        let text_color = data.get_text_color(cell_color);
+                        let text_x = cell_x + cell_width / 2.0;
+                        let font_size = (cell_height * 0.3).clamp(8.0, 20.0);
+                        let text_y = cell_y + cell_height / 2.0 + font_size / 3.0;
+                        renderer
+                            .draw_text_centered(&text, text_x, text_y, font_size, text_color)?;
                     }
                 }
 
@@ -956,9 +947,10 @@ impl Plot {
                         colorbar_height,
                         &data.config.value_scale,
                         data.config.colorbar_label.as_deref(),
-                        color,
+                        self.display.theme.foreground,
                         data.config.colorbar_tick_font_size,
                         Some(data.config.colorbar_label_font_size),
+                        data.config.colorbar_log_subticks,
                     )?;
                 }
             }
@@ -1164,6 +1156,7 @@ impl Plot {
                         self.display.theme.foreground,
                         data.config.colorbar_tick_font_size,
                         Some(data.config.colorbar_label_font_size),
+                        false,
                     )?;
                 }
             }

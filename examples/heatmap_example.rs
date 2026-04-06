@@ -15,7 +15,10 @@ fn main() -> Result<()> {
     // Example 3: Scientific heatmap with diverging colormap
     scientific_heatmap()?;
 
-    // Example 4: Large heatmap demonstration
+    // Example 4: Log-scaled heatmap with masked zeros
+    masked_log_heatmap()?;
+
+    // Example 5: Large heatmap demonstration
     large_heatmap()?;
 
     println!("All heatmap examples saved successfully!");
@@ -99,6 +102,53 @@ fn scientific_heatmap() -> Result<()> {
         .save("generated/examples/heatmap_scientific.png")?;
 
     println!("Saved: generated/examples/heatmap_scientific.png");
+    Ok(())
+}
+
+/// Log-scaled heatmap demonstrating masked zero-value cutouts
+fn masked_log_heatmap() -> Result<()> {
+    let rows = 72usize;
+    let cols = 96usize;
+    let center_col = (cols.saturating_sub(1)) as f64 / 2.0;
+    let mut data = vec![vec![0.0; cols]; rows];
+
+    for (row, row_values) in data.iter_mut().enumerate() {
+        let depth = 1.0 - row as f64 / (rows.saturating_sub(1).max(1)) as f64;
+
+        for (col, value) in row_values.iter_mut().enumerate() {
+            let x = (col as f64 - center_col) / cols as f64;
+            let beam_core = 250.0 * (-(x / 0.018).powi(2)).exp() * (-(depth / 0.12)).exp();
+            let halo = 9.0 * (-(x / 0.18).powi(2)).exp() * (-(depth / 0.55)).exp();
+            let buildup =
+                2.5 * (-(x / 0.25).powi(2)).exp() * (-((depth - 0.32) / 0.035).powi(2)).exp();
+            let background = 2.0e-4 * (-(x / 0.34).powi(2)).exp() * (-(depth / 0.9)).exp();
+            let masked_edge = col < 8 || col >= cols.saturating_sub(8);
+            let sparse_mask =
+                (col < 14 || col >= cols.saturating_sub(14)) && ((row + col * 5) % 13 < 5);
+
+            *value = if masked_edge || sparse_mask {
+                0.0
+            } else {
+                beam_core + halo + buildup + background
+            };
+        }
+    }
+
+    let config = HeatmapConfig::new()
+        .value_scale(AxisScale::Log)
+        .colorbar(true)
+        .colorbar_log_subticks(true)
+        .colorbar_label("Absorbed Energy");
+
+    Plot::new()
+        .heatmap(&data, Some(config))
+        .title("Masked Log Heatmap")
+        .xlabel("Position in x (cells)")
+        .ylabel("Depth (cells)")
+        .ylim(rows as f64, 0.0)
+        .save("generated/examples/heatmap_log_masked.png")?;
+
+    println!("Saved: generated/examples/heatmap_log_masked.png");
     Ok(())
 }
 

@@ -204,6 +204,7 @@ Plot::new()
 let z = DMatrix::from_row_slice(2, 3, &[1.0, 2.0, 4.0, 8.0, 16.0, 32.0]);
 let heatmap_config = HeatmapConfig::new()
     .value_scale(AxisScale::Log)
+    .colorbar_log_subticks(true)
     .colorbar_label("Intensity");
 
 Plot::new()
@@ -211,6 +212,14 @@ Plot::new()
     .title("nalgebra DMatrix Heatmap")
     .save("nalgebra_heatmap.png")?;
 ```
+
+For logarithmic heatmaps, `ruviz` now follows Matplotlib-style masking for
+nonpositive cells: `<= 0` values are excluded from auto log-range detection and
+render as background/cutout cells instead of being clamped into the lowest
+color. Log colorbars use superscript decade labels such as `10^-5` visually
+rendered as `10⁻⁵`, and `colorbar_log_subticks(false)` switches back to a
+cleaner major-ticks-only colorbar. See `examples/montecarlo_heatmap.rs` for a
+synthetic absorbed-energy style example.
 
 ## polars Integration
 
