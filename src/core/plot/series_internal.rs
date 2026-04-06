@@ -925,9 +925,7 @@ impl Plot {
 
                 // Draw colorbar if enabled
                 if data.config.colorbar {
-                    let colorbar_width = 20.0;
-                    let colorbar_margin = 10.0;
-                    let colorbar_x = plot_area.right() + colorbar_margin;
+                    let colorbar_x = plot_area.right() + COLORBAR_MARGIN_PX;
                     let colorbar_y = plot_area.y();
                     let colorbar_height = plot_area.height();
 
@@ -937,7 +935,7 @@ impl Plot {
                         data.vmax,
                         colorbar_x,
                         colorbar_y,
-                        colorbar_width,
+                        COLORBAR_WIDTH_PX,
                         colorbar_height,
                         &data.config.value_scale,
                         data.config.colorbar_label.as_deref(),
@@ -1117,9 +1115,7 @@ impl Plot {
 
                 // Draw colorbar if enabled
                 if data.config.colorbar {
-                    let colorbar_width = 20.0;
-                    let colorbar_margin = 10.0;
-                    let colorbar_x = plot_area.right() + colorbar_margin;
+                    let colorbar_x = plot_area.right() + COLORBAR_MARGIN_PX;
                     let colorbar_y = plot_area.y();
                     let colorbar_height = plot_area.height();
 
@@ -1143,7 +1139,7 @@ impl Plot {
                         vmax,
                         colorbar_x,
                         colorbar_y,
-                        colorbar_width,
+                        COLORBAR_WIDTH_PX,
                         colorbar_height,
                         &crate::axes::AxisScale::Linear,
                         data.config.colorbar_label.as_deref(),

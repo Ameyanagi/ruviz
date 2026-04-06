@@ -44,6 +44,9 @@
 //!
 //! See [`PlotBuilder`] for details on the generic builder implementation.
 
+pub(super) const COLORBAR_MARGIN_PX: f32 = 10.0;
+pub(super) const COLORBAR_WIDTH_PX: f32 = 20.0;
+
 macro_rules! impl_series_continuation_methods {
     ($self_:ident.$finalize:ident()) => {
         /// Continue with a new line series.
