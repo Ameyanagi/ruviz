@@ -2204,8 +2204,7 @@ impl SkiaRenderer {
         };
         let log_decade_base_center = matches!(value_scale, crate::axes::AxisScale::Log)
             .then(|| self.measure_text_ink_center_from_top("10", tick_font_size))
-            .transpose()?
-            .map(|center| center);
+            .transpose()?;
         let layout = compute_colorbar_layout_metrics(
             width,
             tick_font_size,

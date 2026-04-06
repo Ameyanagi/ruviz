@@ -455,21 +455,17 @@ pub fn process_heatmap(data: &[Vec<f64>], config: HeatmapConfig) -> Result<Heatm
         return Err("Heatmap data contains only non-finite values".to_string());
     }
 
-    if config.symlog_auto_linthresh {
-        match config.value_scale {
-            AxisScale::SymLog { .. } => {
-                if !positive_min.is_finite() {
-                    return Err(
-                        "SymLog auto linthresh requires at least one positive finite value."
-                            .to_string(),
-                    );
-                }
-                config.value_scale = AxisScale::SymLog {
-                    linthresh: positive_min,
-                };
-            }
-            _ => {}
+    if config.symlog_auto_linthresh
+        && let AxisScale::SymLog { .. } = config.value_scale
+    {
+        if !positive_min.is_finite() {
+            return Err(
+                "SymLog auto linthresh requires at least one positive finite value.".to_string(),
+            );
         }
+        config.value_scale = AxisScale::SymLog {
+            linthresh: positive_min,
+        };
     }
 
     // Use config overrides or data range
