@@ -85,6 +85,8 @@ pub struct HeatmapConfig {
     pub cell_borders: bool,
     /// Whether SymLog heatmaps should derive linthresh from the smallest positive finite value
     pub symlog_auto_linthresh: bool,
+    /// Physical extent for the heatmap grid as (xmin, xmax, ymin, ymax)
+    pub extent: Option<(f64, f64, f64, f64)>,
 }
 
 impl Default for HeatmapConfig {
@@ -108,6 +110,7 @@ impl Default for HeatmapConfig {
             alpha: 1.0,
             cell_borders: false,
             symlog_auto_linthresh: false,
+            extent: None,
         }
     }
 }
@@ -239,6 +242,16 @@ impl HeatmapConfig {
         self.symlog_auto_linthresh = enabled;
         self
     }
+
+    /// Set the physical extent covered by the heatmap grid.
+    ///
+    /// The extent is interpreted as `(xmin, xmax, ymin, ymax)` and must be
+    /// strictly increasing on both axes. Use `xlim`/`ylim` separately when you
+    /// want to reverse the visible axis direction.
+    pub fn extent(mut self, xmin: f64, xmax: f64, ymin: f64, ymax: f64) -> Self {
+        self.extent = Some((xmin, xmax, ymin, ymax));
+        self
+    }
 }
 
 // Implement PlotConfig marker trait
@@ -261,11 +274,51 @@ pub struct HeatmapData {
     pub vmin: f64,
     /// Effective maximum for color mapping
     pub vmax: f64,
+    /// Physical x extent covered by the heatmap grid
+    pub x_extent: (f64, f64),
+    /// Physical y extent covered by the heatmap grid
+    pub y_extent: (f64, f64),
     /// Configuration
     pub config: HeatmapConfig,
 }
 
 impl HeatmapData {
+    fn x_step(&self) -> f64 {
+        (self.x_extent.1 - self.x_extent.0) / self.n_cols.max(1) as f64
+    }
+
+    fn y_step(&self) -> f64 {
+        (self.y_extent.1 - self.y_extent.0) / self.n_rows.max(1) as f64
+    }
+
+    pub(crate) fn cell_data_bounds(&self, row: usize, col: usize) -> ((f64, f64), (f64, f64)) {
+        let dx = self.x_step();
+        let dy = self.y_step();
+        let x1 = self.x_extent.0 + col as f64 * dx;
+        let x2 = self.x_extent.0 + (col + 1) as f64 * dx;
+        // Row 0 remains at the visual top of the heatmap, so it occupies the
+        // highest y interval within the configured extent.
+        let y_top = self.y_extent.1 - row as f64 * dy;
+        let y_bottom = self.y_extent.1 - (row + 1) as f64 * dy;
+        ((x1, x2), (y_bottom, y_top))
+    }
+
+    pub(crate) fn cell_screen_rect(
+        &self,
+        area: &PlotArea,
+        row: usize,
+        col: usize,
+    ) -> (f32, f32, f32, f32) {
+        let ((x1, x2), (y1, y2)) = self.cell_data_bounds(row, col);
+        let (sx1, sy1) = area.data_to_screen(x1, y2);
+        let (sx2, sy2) = area.data_to_screen(x2, y1);
+        let x = sx1.min(sx2);
+        let y = sy1.min(sy2);
+        let width = (sx2 - sx1).abs();
+        let height = (sy2 - sy1).abs();
+        (x, y, width, height)
+    }
+
     fn normalized_value(&self, value: f64) -> f64 {
         self.config
             .value_scale
@@ -314,25 +367,24 @@ impl HeatmapData {
 
                 let cell_color = self.get_color(value).with_alpha(alpha);
 
-                // Y is inverted so row 0 stays at the visual top of the heatmap.
-                let x1 = col as f64;
-                let x2 = (col + 1) as f64;
-                let y1 = (self.n_rows - row - 1) as f64;
-                let y2 = (self.n_rows - row) as f64;
+                let (x, y, width, height) = self.cell_screen_rect(area, row, col);
+                let left = x.max(area.x);
+                let top = y.max(area.y);
+                let right = (x + width).min(area.x + area.width);
+                let bottom = (y + height).min(area.y + area.height);
+                if right <= left || bottom <= top {
+                    continue;
+                }
+                let width = right - left;
+                let height = bottom - top;
 
-                let (sx1, sy1) = area.data_to_screen(x1, y2);
-                let (sx2, sy2) = area.data_to_screen(x2, y1);
-                let x = sx1.min(sx2);
-                let y = sy1.min(sy2);
-                let width = (sx2 - sx1).abs();
-                let height = (sy2 - sy1).abs();
-
-                renderer.draw_pixel_aligned_solid_rectangle(x, y, width, height, cell_color)?;
+                renderer
+                    .draw_pixel_aligned_solid_rectangle(left, top, width, height, cell_color)?;
 
                 if self.config.cell_borders {
                     renderer.draw_pixel_aligned_rectangle_outline(
-                        x,
-                        y,
+                        left,
+                        top,
                         width,
                         height,
                         cell_color.darken(0.2),
@@ -367,6 +419,18 @@ pub fn process_heatmap(data: &[Vec<f64>], config: HeatmapConfig) -> Result<Heatm
     }
 
     let mut config = config;
+    let (x_extent, y_extent) = match config.extent {
+        Some((xmin, xmax, ymin, ymax)) => {
+            if !xmin.is_finite() || !xmax.is_finite() || !ymin.is_finite() || !ymax.is_finite() {
+                return Err("Heatmap extent must contain only finite values".to_string());
+            }
+            if xmax <= xmin || ymax <= ymin {
+                return Err("Heatmap extent must satisfy xmin < xmax and ymin < ymax".to_string());
+            }
+            ((xmin, xmax), (ymin, ymax))
+        }
+        None => ((0.0, n_cols as f64), (0.0, n_rows as f64)),
+    };
 
     // Calculate data range
     let mut data_min = f64::INFINITY;
@@ -446,6 +510,8 @@ pub fn process_heatmap(data: &[Vec<f64>], config: HeatmapConfig) -> Result<Heatm
         data_max,
         vmin,
         vmax,
+        x_extent,
+        y_extent,
         config,
     })
 }
@@ -480,9 +546,16 @@ pub fn process_heatmap_flat(
 
 impl PlotData for HeatmapData {
     fn data_bounds(&self) -> ((f64, f64), (f64, f64)) {
-        // X bounds: 0 to n_cols
-        // Y bounds: 0 to n_rows
-        ((0.0, self.n_cols as f64), (0.0, self.n_rows as f64))
+        (
+            (
+                self.x_extent.0.min(self.x_extent.1),
+                self.x_extent.0.max(self.x_extent.1),
+            ),
+            (
+                self.y_extent.0.min(self.y_extent.1),
+                self.y_extent.0.max(self.y_extent.1),
+            ),
+        )
     }
 
     fn is_empty(&self) -> bool {
@@ -545,6 +618,7 @@ mod tests {
         assert!(config.colorbar_log_subticks);
         assert!(!config.cell_borders);
         assert!(!config.symlog_auto_linthresh);
+        assert!(config.extent.is_none());
     }
 
     #[test]
@@ -559,6 +633,7 @@ mod tests {
             .colorbar_log_subticks(false)
             .cell_borders(true)
             .symlog_auto_linthresh(true)
+            .extent(0.0, 3.0, 0.0, 2.0)
             .annotate(true);
 
         assert_eq!(config.vmin, Some(0.0));
@@ -569,6 +644,7 @@ mod tests {
         assert!(!config.colorbar_log_subticks);
         assert!(config.cell_borders);
         assert!(config.symlog_auto_linthresh);
+        assert_eq!(config.extent, Some((0.0, 3.0, 0.0, 2.0)));
         assert!(config.annotate);
     }
 
@@ -592,6 +668,23 @@ mod tests {
 
         assert!((result.vmin - 0.0).abs() < f64::EPSILON);
         assert!((result.vmax - 10.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_process_heatmap_uses_custom_extent() {
+        let data = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
+        let config = HeatmapConfig::new().extent(10.0, 14.0, 20.0, 24.0);
+        let result = process_heatmap(&data, config).unwrap();
+
+        assert_eq!(result.x_extent, (10.0, 14.0));
+        assert_eq!(result.y_extent, (20.0, 24.0));
+    }
+
+    #[test]
+    fn test_process_heatmap_rejects_invalid_extent() {
+        let data = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
+        let config = HeatmapConfig::new().extent(1.0, 1.0, 0.0, 2.0);
+        assert!(process_heatmap(&data, config).is_err());
     }
 
     #[test]
@@ -738,5 +831,16 @@ mod tests {
 
         // Test is_empty
         assert!(!heatmap.is_empty());
+    }
+
+    #[test]
+    fn test_heatmap_plot_data_trait_uses_extent_bounds() {
+        let data = vec![vec![1.0, 2.0], vec![3.0, 4.0]];
+        let config = HeatmapConfig::new().extent(0.0, 8.0, 0.0, 4.0);
+        let heatmap = process_heatmap(&data, config).unwrap();
+
+        let ((x_min, x_max), (y_min, y_max)) = heatmap.data_bounds();
+        assert_eq!((x_min, x_max), (0.0, 8.0));
+        assert_eq!((y_min, y_max), (0.0, 4.0));
     }
 }

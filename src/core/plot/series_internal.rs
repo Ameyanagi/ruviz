@@ -899,11 +899,6 @@ impl Plot {
                 // border/seam behavior.
                 data.render(renderer, &heatmap_plot_area, &self.display.theme, color)?;
 
-                // Calculate cell dimensions in pixel space for optional
-                // annotations and colorbar placement.
-                let cell_width = plot_area.width() / data.n_cols as f32;
-                let cell_height = plot_area.height() / data.n_rows as f32;
-
                 for (row_idx, row) in data.values.iter().enumerate() {
                     for (col_idx, &value) in row.iter().enumerate() {
                         if !data.config.annotate || data.should_mask_value(value) {
@@ -916,9 +911,8 @@ impl Plot {
                             data.get_color(value)
                         };
 
-                        let cell_x = plot_area.x() + col_idx as f32 * cell_width;
-                        let cell_y =
-                            plot_area.y() + (data.n_rows - 1 - row_idx) as f32 * cell_height;
+                        let (cell_x, cell_y, cell_width, cell_height) =
+                            data.cell_screen_rect(&heatmap_plot_area, row_idx, col_idx);
                         let text = format!("{:.2}", value);
                         let text_color = data.get_text_color(cell_color);
                         let text_x = cell_x + cell_width / 2.0;

@@ -481,6 +481,7 @@ pub struct HeatmapCell {
     pub width: f32,
     pub height: f32,
     pub color: Color,
+    pub border_color: Option<Color>,
 }
 
 // LineSegment imported from crate::data::elements (canonical definition)

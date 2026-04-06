@@ -498,6 +498,53 @@ fn test_heatmap_render_preserves_downsampled_vertical_feature() {
 }
 
 #[test]
+fn test_heatmap_extent_maps_cells_into_physical_axis_limits() {
+    let rows = 24usize;
+    let cols = 80usize;
+    let stripe_start = cols / 2 - 3;
+    let stripe_end = stripe_start + 6;
+    let mut values = vec![vec![0.0; cols]; rows];
+    for row in &mut values {
+        for cell in &mut row[stripe_start..stripe_end] {
+            *cell = 1.0;
+        }
+    }
+
+    let plot = Plot::new()
+        .size_px(240, 160)
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .colorbar(false)
+                    .vmin(0.0)
+                    .vmax(1.0)
+                    .extent(0.0, 8.0, 0.0, 2.4),
+            ),
+        )
+        .xlim(0.0, 8.0)
+        .ylim(0.0, 2.4)
+        .end_series();
+    let image = plot.render().expect("extent-aware heatmap should render");
+    let plot_area = compute_render_plot_area(&plot);
+    let stripe_center_x = (plot_area.left() + plot_area.width() * 0.5).round() as u32;
+    let background_x = (plot_area.left() + plot_area.width() * 0.1).round() as u32;
+    let center_y = (plot_area.top() + plot_area.height() * 0.5).round() as u32;
+
+    let stripe = image_pixel_rgba(&image, stripe_center_x, center_y);
+    let background = image_pixel_rgba(&image, background_x, center_y);
+    let stripe_brightness = stripe[0] as u32 + stripe[1] as u32 + stripe[2] as u32;
+    let background_brightness = background[0] as u32 + background[1] as u32 + background[2] as u32;
+
+    assert!(
+        stripe_brightness > background_brightness + 120,
+        "heatmap extent should map the central stripe into the visible 0..8 mm viewport: stripe={} background={}",
+        stripe_brightness,
+        background_brightness
+    );
+}
+
+#[test]
 fn test_heatmap_render_default_has_no_cell_seams() {
     let values = vec![vec![0.5, 0.5], vec![0.5, 0.5]];
     let plot = Plot::new()
