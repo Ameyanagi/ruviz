@@ -1110,6 +1110,9 @@ impl InteractivePlotSession {
                         .clamp(0.0, data.n_rows.saturating_sub(1) as f64)
                         as usize;
                     let value = data.values[row][col];
+                    if data.should_mask_value(value) {
+                        continue;
+                    }
                     let ((x1, x2), (y1, y2)) = data.cell_data_bounds(row, col);
                     let (sx1, sy1) = map_data_to_pixels(
                         x1,
@@ -2070,6 +2073,10 @@ fn refresh_hit_result(
             if *row >= data.n_rows || *col >= data.n_cols {
                 return None;
             }
+            let value = data.values[*row][*col];
+            if data.should_mask_value(value) {
+                return None;
+            }
 
             let ((x1, x2), (y1, y2)) = data.cell_data_bounds(*row, *col);
             let (sx1, sy1) = map_data_to_pixels(
@@ -2094,7 +2101,7 @@ fn refresh_hit_result(
                 series_index: *series_index,
                 row: *row,
                 col: *col,
-                value: data.values[*row][*col],
+                value,
                 screen_rect: ViewportRect {
                     min: ViewportPoint::new(sx1.min(sx2) as f64, sy1.min(sy2) as f64),
                     max: ViewportPoint::new(sx1.max(sx2) as f64, sy1.max(sy2) as f64),

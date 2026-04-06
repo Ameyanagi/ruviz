@@ -12,6 +12,16 @@ fn pixel_is_bright_rgba(image: &image::RgbaImage, x: u32, y: u32) -> bool {
     pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 && pixel[3] > 0
 }
 
+fn image_pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
+    let idx = ((y * image.width + x) * 4) as usize;
+    [
+        image.pixels[idx],
+        image.pixels[idx + 1],
+        image.pixels[idx + 2],
+        image.pixels[idx + 3],
+    ]
+}
+
 fn count_red_pixels_outside_rect(image: &Image, rect: Rect) -> usize {
     let left = rect.left().floor() as i32;
     let right = rect.right().ceil() as i32;
@@ -155,6 +165,54 @@ fn test_colorbar_major_label_anchor_center_keeps_rendered_center_for_non_log_lab
     );
 
     assert!((anchor_center - 8.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_draw_pixel_aligned_solid_rectangle_blends_transparent_fill() {
+    let theme = Theme::default();
+    let mut renderer = SkiaRenderer::new(6, 6, theme).unwrap();
+    renderer
+        .pixmap
+        .fill(crate::render::Color::new(0, 0, 255).to_tiny_skia_color());
+
+    renderer
+        .draw_pixel_aligned_solid_rectangle(
+            1.0,
+            1.0,
+            4.0,
+            4.0,
+            crate::render::Color::new_rgba(255, 0, 0, 128),
+        )
+        .expect("transparent pixel-aligned fill should composite successfully");
+
+    let image = renderer.into_image();
+    let pixel = image_pixel_rgba(&image, 2, 2);
+    assert!(
+        pixel[0] > 0,
+        "composited fill should retain red contribution"
+    );
+    assert!(
+        pixel[2] > 0,
+        "composited fill should retain background contribution instead of overwriting it"
+    );
+    assert_eq!(pixel[3], 255);
+}
+
+#[test]
+fn test_draw_pixel_aligned_solid_rectangle_preserves_subpixel_tiles() {
+    let theme = Theme::default();
+    let mut renderer = SkiaRenderer::new(8, 8, theme).unwrap();
+    renderer.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+    renderer
+        .draw_pixel_aligned_solid_rectangle(3.2, 1.0, 0.25, 6.0, crate::render::Color::RED)
+        .expect("subpixel-aligned fill should render via composited fallback");
+
+    let image = renderer.into_image();
+    assert!(
+        image.pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+        "thin pixel-aligned tiles should still contribute visible coverage"
+    );
 }
 
 #[test]
