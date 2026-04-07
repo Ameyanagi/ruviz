@@ -535,12 +535,52 @@ fn ensure_gallery_layout(categories: &[Category]) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Mode {
+    Full,
+    PreviewOnly,
+}
+
+fn parse_mode() -> Result<Mode, String> {
+    let mut mode = Mode::Full;
+    let mut saw_positional = false;
+
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--preview-only" => mode = Mode::PreviewOnly,
+            "--help" | "-h" => {
+                println!("Usage: cargo run --bin generate_gallery -- [--preview-only]");
+                std::process::exit(0);
+            }
+            _ if arg.starts_with('-') => {
+                return Err(format!("unsupported flag `{arg}`"));
+            }
+            _ => {
+                saw_positional = true;
+                break;
+            }
+        }
+    }
+
+    if saw_positional {
+        return Err("generate_gallery does not accept positional arguments".to_string());
+    }
+
+    Ok(mode)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mode = parse_mode()?;
     let categories = categories();
     let entries = entries();
 
-    ensure_gallery_layout(&categories)?;
     run_examples(&entries)?;
+    if mode == Mode::PreviewOnly {
+        println!("Preview example assets refreshed under generated/examples");
+        return Ok(());
+    }
+
+    ensure_gallery_layout(&categories)?;
     sync_assets(&entries)?;
     write_category_pages(&categories, &entries)?;
     write_gallery_index(&categories, &entries)?;

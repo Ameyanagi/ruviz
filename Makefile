@@ -3,7 +3,7 @@ SHELL := /bin/bash
 RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
 PYTHON_SITE_DIR := ../generated/python/site
 
-.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web build-generated-preview generated-manifest check-doc-asset-refs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
+.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 help:
 	@echo "ruviz release documentation workflow"
@@ -15,6 +15,9 @@ help:
 	@echo "  make release-docs-python Refresh Python gallery and build the MkDocs site"
 	@echo "  make release-docs-web    Build the npm package docs site and API reference"
 	@echo "  make build-generated-preview Rebuild docs-facing preview outputs under generated/"
+	@echo "  make build-generated-preview-rust Rebuild only generated/examples/ preview assets"
+	@echo "  make build-generated-preview-python Rebuild only generated/python/site/"
+	@echo "  make build-generated-preview-web Rebuild only generated/web/docs/"
 	@echo "  make generated-manifest  Refresh generated/manifest.json from local outputs"
 	@echo "  make check-doc-asset-refs Fail if published docs reference generated/ assets"
 	@echo "  make clean-generated     Remove generated/ and retired local output roots"
@@ -70,22 +73,31 @@ release-docs-python:
 release-docs-web:
 	bun run --cwd packages/ruviz-web build
 	bun run --cwd packages/ruviz-web docs:api
-	bun run --cwd packages/ruviz-web docs:build
+	bun run --cwd packages/ruviz-web docs:build:preview
 
 build-generated-preview: clean-generated
-	cargo run --example readme_quickstart
-	./scripts/generate-doc-images.sh
-	cargo run --bin generate_gallery
-	cargo run --example generate_golden_images
+	$(MAKE) build-generated-preview-rust
+	$(MAKE) build-generated-preview-python
+	$(MAKE) build-generated-preview-web
+	$(MAKE) generated-manifest
+	$(MAKE) check-doc-asset-refs
+
+build-generated-preview-rust:
+	rm -rf generated/examples
+	cargo run --bin generate_gallery -- --preview-only
+
+build-generated-preview-python:
+	rm -rf generated/python/site
 	bun run build:python-widget
 	cd python && uv run maturin develop
 	cd python && uv run python scripts/generate_gallery.py
 	cd python && uv run mkdocs build --site-dir $(PYTHON_SITE_DIR)
+
+build-generated-preview-web:
+	rm -rf generated/web/docs
 	bun run --cwd packages/ruviz-web build
 	bun run --cwd packages/ruviz-web docs:api
-	bun run --cwd packages/ruviz-web docs:build
-	$(MAKE) generated-manifest
-	$(MAKE) check-doc-asset-refs
+	bun run --cwd packages/ruviz-web docs:build:preview
 
 generated-manifest:
 	uv run python scripts/generate_output_manifest.py

@@ -373,19 +373,80 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
-  generated-preview:
-    name: Generated Preview
+  preview-scope:
+    name: Preview Scope
     runs-on: ubuntu-latest
-    needs: [test-fast, python, wasm-web, docs]
     if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-      pull-requests: write
+    outputs:
+      run_preview: ${{ steps.scope.outputs.run_preview }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Detect preview-relevant changes
+        id: scope
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "${BASE_REF}"
+          run_preview=false
+          while IFS= read -r path; do
+            [ -z "${path}" ] && continue
+            case "${path}" in
+              .github/workflows/ci.yml|.github/actions/install-linux-desktop-build-deps/*|Cargo.toml|Cargo.lock|Makefile|package.json|bun.lock|generated/manifest.json|docs/BUILD_OUTPUTS.md|src/*|examples/*|python/*|packages/ruviz-web/*|crates/ruviz-web/*|demo/web/*|scripts/*)
+                run_preview=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only "origin/${BASE_REF}...HEAD")
+          echo "run_preview=${run_preview}" >> "$GITHUB_OUTPUT"
+
+  generated-preview-rust:
+    name: Generated Preview (Rust)
+    runs-on: ubuntu-latest
+    needs: [preview-scope]
+    if: needs.preview-scope.outputs.run_preview == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-generated-preview-rust-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-generated-preview-rust-
+
+      - name: Build Rust preview artifacts
+        run: make build-generated-preview-rust
+
+      - name: Pack staged Rust preview
+        run: tar -czf generated-preview-stage-examples.tar.gz generated/examples
+
+      - name: Upload staged Rust preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-preview-stage-examples
+          path: generated-preview-stage-examples.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  generated-preview-python:
+    name: Generated Preview (Python)
+    runs-on: ubuntu-latest
+    needs: [preview-scope]
+    if: needs.preview-scope.outputs.run_preview == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -415,8 +476,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-generated-preview-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-generated-preview-
+          key: ${{ runner.os }}-cargo-generated-preview-python-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-generated-preview-python-
 
       - name: Cache Bun
         uses: actions/cache@v4
@@ -425,23 +486,176 @@ jobs:
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
 
+      - name: Cache preview wasm tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ruviz-tools
+          key: ${{ runner.os }}-ruviz-tools-${{ hashFiles('Cargo.lock', 'packages/ruviz-web/scripts/ensure-wasm-pack.sh', 'packages/ruviz-web/scripts/ensure-wasm-bindgen.sh') }}
+          restore-keys: ${{ runner.os }}-ruviz-tools-
+
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
 
       - name: Sync Python dependencies
         run: cd python && uv sync
 
-      - name: Install wasm target
-        run: rustup target add wasm32-unknown-unknown
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build Python preview artifacts
+        run: make build-generated-preview-python
+
+      - name: Pack staged Python preview
+        run: tar -czf generated-preview-stage-python-site.tar.gz generated/python/site
+
+      - name: Upload staged Python preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-preview-stage-python-site
+          path: generated-preview-stage-python-site.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  generated-preview-web:
+    name: Generated Preview (Web)
+    runs-on: ubuntu-latest
+    needs: [preview-scope]
+    if: needs.preview-scope.outputs.run_preview == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-generated-preview-web-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-generated-preview-web-
+
+      - name: Cache Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Cache preview wasm tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ruviz-tools
+          key: ${{ runner.os }}-ruviz-tools-${{ hashFiles('Cargo.lock', 'packages/ruviz-web/scripts/ensure-wasm-pack.sh', 'packages/ruviz-web/scripts/ensure-wasm-bindgen.sh') }}
+          restore-keys: ${{ runner.os }}-ruviz-tools-
 
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build generated preview artifacts
-        run: make build-generated-preview
+      - name: Build web preview artifacts
+        run: make build-generated-preview-web
+
+      - name: Pack staged web preview
+        run: tar -czf generated-preview-stage-web-docs.tar.gz generated/web/docs
+
+      - name: Upload staged web preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-preview-stage-web-docs
+          path: generated-preview-stage-web-docs.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  generated-preview-package:
+    name: Generated Preview
+    runs-on: ubuntu-latest
+    needs: [preview-scope, generated-preview-rust, generated-preview-python, generated-preview-web]
+    if: github.event_name == 'pull_request' && always() && !cancelled()
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.0.0
+
+      - name: Resolve preview state
+        id: state
+        env:
+          RUN_PREVIEW: ${{ needs.preview-scope.outputs.run_preview }}
+          RUST_RESULT: ${{ needs.generated-preview-rust.result }}
+          PYTHON_RESULT: ${{ needs.generated-preview-python.result }}
+          WEB_RESULT: ${{ needs.generated-preview-web.result }}
+        run: |
+          if [[ "${RUN_PREVIEW}" != "true" ]]; then
+            echo "mode=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "${RUST_RESULT}" != "success" || "${PYTHON_RESULT}" != "success" || "${WEB_RESULT}" != "success" ]]; then
+            echo "mode=failed" >> "$GITHUB_OUTPUT"
+            echo "one or more preview component jobs failed" >&2
+            exit 1
+          fi
+          echo "mode=package" >> "$GITHUB_OUTPUT"
+
+      - name: Download staged Rust preview
+        if: steps.state.outputs.mode == 'package'
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-preview-stage-examples
+          path: preview-staging/examples
+
+      - name: Download staged Python preview
+        if: steps.state.outputs.mode == 'package'
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-preview-stage-python-site
+          path: preview-staging/python
+
+      - name: Download staged web preview
+        if: steps.state.outputs.mode == 'package'
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-preview-stage-web-docs
+          path: preview-staging/web
+
+      - name: Extract staged preview artifacts
+        if: steps.state.outputs.mode == 'package'
+        run: |
+          tar -xzf preview-staging/examples/generated-preview-stage-examples.tar.gz
+          tar -xzf preview-staging/python/generated-preview-stage-python-site.tar.gz
+          tar -xzf preview-staging/web/generated-preview-stage-web-docs.tar.gz
+
+      - name: Generate preview manifest
+        if: steps.state.outputs.mode == 'package'
+        run: make generated-manifest
+
+      - name: Verify published docs asset references
+        if: steps.state.outputs.mode == 'package'
+        run: make check-doc-asset-refs
 
       - name: Compare manifest to base branch
         id: manifest
+        if: steps.state.outputs.mode == 'package'
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -458,7 +672,7 @@ jobs:
 
       - name: Package preview artifacts
         id: package
-        if: steps.manifest.outputs.changed == 'true'
+        if: steps.state.outputs.mode == 'package' && steps.manifest.outputs.changed == 'true'
         run: |
           preview_examples=()
           for path in generated/examples; do
@@ -478,7 +692,7 @@ jobs:
           echo "web_docs_size=$(du -sh generated-preview-web-docs.tar.gz | cut -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Upload examples preview
-        if: steps.manifest.outputs.changed == 'true'
+        if: steps.state.outputs.mode == 'package' && steps.manifest.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: generated-preview-examples
@@ -487,7 +701,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Python docs preview
-        if: steps.manifest.outputs.changed == 'true'
+        if: steps.state.outputs.mode == 'package' && steps.manifest.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: generated-preview-python-site
@@ -496,7 +710,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload web docs preview
-        if: steps.manifest.outputs.changed == 'true'
+        if: steps.state.outputs.mode == 'package' && steps.manifest.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: generated-preview-web-docs
@@ -505,7 +719,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload manifest
-        if: steps.manifest.outputs.changed == 'true'
+        if: steps.state.outputs.mode == 'package' && steps.manifest.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: generated-manifest
@@ -517,6 +731,7 @@ jobs:
         if: github.event.pull_request.head.repo.fork == false
         uses: actions/github-script@v7
         env:
+          PREVIEW_MODE: ${{ steps.state.outputs.mode }}
           MANIFEST_CHANGED: ${{ steps.manifest.outputs.changed }}
           EXAMPLES_SIZE: ${{ steps.package.outputs.examples_size }}
           PYTHON_SITE_SIZE: ${{ steps.package.outputs.python_site_size }}
@@ -527,8 +742,19 @@ jobs:
           script: |
             const marker = "<!-- generated-preview-comment -->";
             const changed = process.env.MANIFEST_CHANGED === "true";
-            const body = changed
-              ? `${marker}
+            const mode = process.env.PREVIEW_MODE;
+            const body =
+              mode === "skipped"
+                ? `${marker}
+            ## Generated Preview Artifacts
+
+            Generated preview was skipped because this pull request does not touch preview-relevant files.
+
+            Workflow run: ${process.env.RUN_URL}
+
+            Published docs still read only from committed assets under \`docs/assets/**\`, \`python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`
+                : changed
+                  ? `${marker}
             ## Generated Preview Artifacts
 
             Generated output changed relative to \`${process.env.BASE_REF}\`.
@@ -541,7 +767,7 @@ jobs:
             Workflow run: ${process.env.RUN_URL}
 
             Published docs still read only from committed assets under \`docs/assets/**\`, \`python/docs/assets/gallery/**\`, and \`tests/fixtures/golden/**\`.`
-              : `${marker}
+                  : `${marker}
             ## Generated Preview Artifacts
 
             The regenerated \`generated/manifest.json\` matches \`${process.env.BASE_REF}\`, so CI did not upload fresh preview archives for this PR.
