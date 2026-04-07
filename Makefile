@@ -42,9 +42,7 @@ assert-release-branch:
 	fi
 
 setup-hooks:
-	git config core.hooksPath .githooks
-	chmod +x .githooks/pre-commit
-	@echo "Configured git hooks path to .githooks"
+	bash ./scripts/setup-git-hooks.sh
 
 clean-generated:
 	./scripts/clean-outputs.sh

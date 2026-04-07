@@ -496,7 +496,8 @@ cd ruviz
 
 bun install
 
-# Setup pre-commit hooks (recommended)
+# bun install auto-configures the repo git hooks for local clones.
+# Re-run manually if install scripts are disabled.
 make setup-hooks
 
 # Run code quality checks
@@ -512,7 +513,7 @@ cargo run --example basic_example --release
 cargo bench --all-features
 ```
 
-The pre-commit hooks will automatically run `cargo fmt --check`, `cargo clippy`, `oxfmt --check`, and `oxlint --deny-warnings` before each commit.
+The pre-commit hooks are installed automatically by `bun install` for local clones and run `cargo fmt --check`, `cargo clippy`, `oxfmt --check`, and `oxlint --deny-warnings` before each commit. If you disable install scripts or want to reapply them, run `make setup-hooks`.
 
 ## Roadmap
 

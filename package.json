@@ -7,6 +7,7 @@
     "demo/web"
   ],
   "scripts": {
+    "postinstall": "bash ./scripts/setup-git-hooks.sh",
     "lint:web": "oxlint --deny-warnings packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
     "format:web": "oxfmt --check packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
     "format:web:write": "oxfmt --write packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
