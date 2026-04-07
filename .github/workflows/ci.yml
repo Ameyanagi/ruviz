@@ -499,6 +499,9 @@ jobs:
       - name: Sync Python dependencies
         run: cd python && uv sync
 
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
 
@@ -558,6 +561,9 @@ jobs:
           path: ~/.cache/ruviz-tools
           key: ${{ runner.os }}-ruviz-tools-${{ hashFiles('Cargo.lock', 'packages/ruviz-web/scripts/ensure-wasm-pack.sh', 'packages/ruviz-web/scripts/ensure-wasm-bindgen.sh') }}
           restore-keys: ${{ runner.os }}-ruviz-tools-
+
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
 
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
