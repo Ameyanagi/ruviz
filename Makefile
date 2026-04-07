@@ -67,8 +67,8 @@ release-docs-python:
 	bun run build:python-widget
 	cd python && uv run maturin develop
 	cd python && uv run python scripts/generate_gallery.py
-	cd python && uv run mkdocs build --site-dir $(PYTHON_SITE_DIR)
-	cd python && uv run pytest
+	cd python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
+	cd python && uv run python -m pytest
 
 release-docs-web:
 	bun run --cwd packages/ruviz-web build
@@ -91,7 +91,7 @@ build-generated-preview-python:
 	bun run build:python-widget
 	cd python && uv run maturin develop
 	cd python && uv run python scripts/generate_gallery.py
-	cd python && uv run mkdocs build --site-dir $(PYTHON_SITE_DIR)
+	cd python && uv run python -m mkdocs build --site-dir $(PYTHON_SITE_DIR)
 
 build-generated-preview-web:
 	rm -rf generated/web/docs

@@ -206,10 +206,10 @@ jobs:
         run: cd python && uv run cargo test
 
       - name: Run Python package tests
-        run: cd python && uv run pytest
+        run: cd python && uv run python -m pytest
 
       - name: Run Python lint
-        run: cd python && uv run ruff check
+        run: cd python && uv run python -m ruff check
 
   platform-build:
     name: Build (${{ matrix.platform.name }})
