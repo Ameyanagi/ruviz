@@ -2,14 +2,14 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.4.0
+## What's New in v0.4.1
 
-- Descending `.xlim()` and `.ylim()` values now preserve reversed axes instead of being dropped.
-- Heatmaps support non-linear value scaling through `HeatmapConfig::value_scale(AxisScale)`, including log-aware colorbars.
-- A new Rust feature-impact benchmark suite documents how `default`, `parallel`, `simd`, `performance`, and `gpu` configurations compare on plotting workloads.
+- Heatmaps can now map cells into physical coordinate extents with `HeatmapConfig::extent(...)`, which pairs cleanly with reversed display limits.
+- Log-scale heatmaps treat `<= 0` and non-finite cells as masked cutouts, with improved superscript decade labels and optional logarithmic subticks on the colorbar.
+- `HeatmapConfig` adds `cell_borders(...)`, `colorbar_log_subticks(...)`, and `symlog_auto_linthresh(...)` for denser heatmap tuning, plus a new Monte Carlo absorbed-energy example.
 
 See full details:
-- [Release notes for v0.4.0](releases/v0.4.0.md)
+- [Release notes for v0.4.1](releases/v0.4.1.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -23,7 +23,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.4.0"
+ruviz = "0.4.1"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -62,8 +62,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.4.0"
-ruviz-gpui = "0.4.0"
+ruviz = "0.4.1"
+ruviz-gpui = "0.4.1"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -91,7 +91,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.0", features = ["typst-math"] }
+ruviz = { version = "0.4.1", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
@@ -104,7 +104,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.0", default-features = false }
+ruviz = { version = "0.4.1", default-features = false }
 
 [features]
 default = []
@@ -355,7 +355,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.4.0", features = ["polars_support"] }
+ruviz = { version = "0.4.1", features = ["polars_support"] }
 polars = "0.35"
 ```
 
@@ -382,14 +382,14 @@ Plot::new()
 Enable parallel rendering:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.0", features = ["parallel"] }
+ruviz = { version = "0.4.1", features = ["parallel"] }
 ```
 
 ### For Very Large Datasets (>100K points)
 Enable SIMD optimization:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.0", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.1", features = ["parallel", "simd"] }
 ```
 
 ### Large Dataset Export

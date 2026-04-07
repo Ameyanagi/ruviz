@@ -62,14 +62,14 @@ Add ruviz to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ruviz = "0.4.0"
+ruviz = "0.4.1"
 ```
 
 Or with specific features:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.0", features = ["ndarray_support", "parallel"] }
+ruviz = { version = "0.4.1", features = ["ndarray_support", "parallel"] }
 ```
 
 ## Feature Flags
@@ -79,7 +79,7 @@ ruviz uses feature flags to enable optional functionality. Choose based on your 
 ### Default Features
 
 ```toml
-ruviz = "0.4.0"  # Includes: ndarray, parallel
+ruviz = "0.4.1"  # Includes: ndarray, parallel
 ```
 
 **Enabled by default**:
@@ -107,40 +107,40 @@ SVG export is available without an extra feature flag. The legacy `svg` feature 
 
 ```toml
 # High performance (parallel + SIMD)
-ruviz = { version = "0.4.0", features = ["performance"] }
+ruviz = { version = "0.4.1", features = ["performance"] }
 
 # Maximum capability (all features)
-ruviz = { version = "0.4.0", features = ["full"] }
+ruviz = { version = "0.4.1", features = ["full"] }
 
 # Minimal (no default features)
-ruviz = { version = "0.4.0", default-features = false }
+ruviz = { version = "0.4.1", default-features = false }
 ```
 
 ### Feature Combinations
 
 **Scientific Computing**:
 ```toml
-ruviz = { version = "0.4.0", features = ["ndarray_support", "parallel"] }
+ruviz = { version = "0.4.1", features = ["ndarray_support", "parallel"] }
 ```
 
 **Data Analysis**:
 ```toml
-ruviz = { version = "0.4.0", features = ["polars_support", "performance"] }
+ruviz = { version = "0.4.1", features = ["polars_support", "performance"] }
 ```
 
 **Publication Quality**:
 ```toml
-ruviz = { version = "0.4.0", features = ["serde", "pdf"] }
+ruviz = { version = "0.4.1", features = ["serde", "pdf"] }
 ```
 
 **Real-time Visualization**:
 ```toml
-ruviz = { version = "0.4.0", features = ["interactive-gpu"] }
+ruviz = { version = "0.4.1", features = ["interactive-gpu"] }
 ```
 
 **Large Datasets**:
 ```toml
-ruviz = { version = "0.4.0", features = ["parallel", "simd", "gpu"] }
+ruviz = { version = "0.4.1", features = ["parallel", "simd", "gpu"] }
 ```
 
 ## Verification
@@ -273,7 +273,7 @@ rustup update
 
 ### Feature Conflicts
 
-**Problem**: `error: package ruviz v0.4.0 cannot be built because it requires rustc 1.92 or newer`
+**Problem**: `error: package ruviz v0.4.1 cannot be built because it requires rustc 1.92 or newer`
 
 **Solution**: Update Rust:
 ```bash
@@ -297,7 +297,7 @@ vulkaninfo
 
 Or disable GPU features:
 ```toml
-ruviz = { version = "0.4.0", default-features = false, features = ["parallel"] }
+ruviz = { version = "0.4.1", default-features = false, features = ["parallel"] }
 ```
 
 ### Memory Issues (Large Datasets)
