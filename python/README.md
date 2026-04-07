@@ -9,6 +9,13 @@ static export helpers, native desktop `show()`, and notebook widget support.
 pip install ruviz
 ```
 
+If you want pandas or Polars dataframe inputs, install the optional dataframe
+extras:
+
+```sh
+pip install "ruviz[dataframes]"
+```
+
 ## Quick Start
 
 ```python

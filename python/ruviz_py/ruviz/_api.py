@@ -218,10 +218,7 @@ class ObservableSeries:
             memo[id(self)] = clone
             return clone
 
-        copied_inputs = tuple(
-            deepcopy(value, memo) if isinstance(value, ObservableSeries) else deepcopy(value, memo)
-            for value in self._derivation.inputs
-        )
+        copied_inputs = tuple(deepcopy(value, memo) for value in self._derivation.inputs)
         clone = type(self)._from_ufunc(self._derivation.ufunc, *copied_inputs)
         memo[id(self)] = clone
         return clone

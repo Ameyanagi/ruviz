@@ -8,6 +8,12 @@ For normal use:
 pip install ruviz
 ```
 
+Install the dataframe extras if you want pandas or Polars inputs:
+
+```sh
+pip install "ruviz[dataframes]"
+```
+
 For local contributor builds:
 
 ```sh
