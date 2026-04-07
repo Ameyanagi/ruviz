@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.2] - 2026-04-08
+
+### Added
+
+- Added live `ObservableSeries` arithmetic and NumPy ufunc derivations in the Python API, with copied observables preserving independent live state.
+- Added Python package extras for dataframe workflows (`dataframes`, `pandas`, and `polars`) plus new docs/examples for dataframe input, deepcopy templates, and observable math.
+
+### Changed
+
+- The Python notebook widget now builds from the shared web SDK frontend, and `plot.size_px(width, height)` drives the widget aspect ratio in notebook displays.
+- Refreshed the release-facing version snippets, quickstart, and release notes for `0.4.2`.
+
+### Fixed
+
+- Fixed Python copy/deepcopy behavior so copied plots keep independent native plot handles and live observables instead of aliasing shared state.
+- Fixed Python CI and preview lanes to invoke the packaged tools consistently and to avoid running the full generated-preview pipeline when unaffected paths change.
+
 ## [0.4.1] - 2026-04-07
 
 ### Added
