@@ -17,26 +17,28 @@ if [ -z "${repo_root}" ]; then
   exit 0
 fi
 
-hook_path=".githooks"
-hook_file="${repo_root}/${hook_path}/pre-commit"
+lefthook_bin="${repo_root}/node_modules/.bin/lefthook"
+legacy_hook_path=".githooks"
 
-if [ ! -f "${hook_file}" ]; then
-  echo "Skipping git hook setup because ${hook_file} is missing."
-  exit 0
+if [ ! -x "${lefthook_bin}" ]; then
+  echo "Lefthook is not installed yet. Run 'bun install' before configuring git hooks."
+  exit 1
 fi
 
 current_hook_path="$(git -C "${repo_root}" config --local --get core.hooksPath || true)"
-if [ -n "${current_hook_path}" ] && [ "${current_hook_path}" != "${hook_path}" ]; then
+if [ -n "${current_hook_path}" ] && [ "${current_hook_path}" != "${legacy_hook_path}" ]; then
   echo "Leaving existing core.hooksPath=${current_hook_path}"
   exit 0
 fi
 
-chmod +x "${hook_file}"
-
-if [ "${current_hook_path}" = "${hook_path}" ]; then
-  echo "Git hooks already configured at ${hook_path}"
-  exit 0
+if [ "${current_hook_path}" = "${legacy_hook_path}" ]; then
+  git -C "${repo_root}" config --local --unset core.hooksPath
+  echo "Removed legacy core.hooksPath=${legacy_hook_path}"
 fi
 
-git -C "${repo_root}" config --local core.hooksPath "${hook_path}"
-echo "Configured git hooks path to ${hook_path}"
+(
+  cd "${repo_root}"
+  "${lefthook_bin}" install
+)
+
+echo "Installed Lefthook hooks"

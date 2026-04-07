@@ -496,8 +496,8 @@ cd ruviz
 
 bun install
 
-# bun install auto-configures the repo git hooks for local clones.
-# Re-run manually if install scripts are disabled.
+# bun install auto-installs the repo's Lefthook hooks for local clones.
+# Re-run manually if install scripts are disabled or you need to migrate an older clone.
 make setup-hooks
 
 # Run code quality checks
@@ -513,7 +513,7 @@ cargo run --example basic_example --release
 cargo bench --all-features
 ```
 
-The pre-commit hooks are installed automatically by `bun install` for local clones and run `cargo fmt --check`, `cargo clippy`, `oxfmt --check`, and `oxlint --deny-warnings` before each commit. If you disable install scripts or want to reapply them, run `make setup-hooks`.
+The repo uses Lefthook for local git hooks. `bun install` installs the hooks automatically for local clones, and `make setup-hooks` reinstalls them when install scripts are disabled or an older checkout still has the legacy `.githooks` setup. The `pre-commit` hook runs `cargo fmt --check`, `cargo clippy`, `oxfmt --check`, and `oxlint --deny-warnings`. To debug the hook manually, run `bunx lefthook run pre-commit`.
 
 ## Roadmap
 

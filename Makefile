@@ -9,7 +9,7 @@ help:
 	@echo "ruviz release documentation workflow"
 	@echo ""
 	@echo "Primary targets:"
-	@echo "  make setup-hooks         Configure git to use .githooks/pre-commit"
+	@echo "  make setup-hooks         Install Lefthook git hooks"
 	@echo "  make release-docs        Regenerate release media, docs, and validation output"
 	@echo "  make release-docs-rust   Refresh Rust README/rustdoc/gallery/golden assets"
 	@echo "  make release-docs-python Refresh Python gallery and build the MkDocs site"
