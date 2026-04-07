@@ -19,6 +19,7 @@ fi
 
 lefthook_bin="${repo_root}/node_modules/.bin/lefthook"
 legacy_hook_path=".githooks"
+git_hook_file="${repo_root}/.git/hooks/pre-commit"
 
 if [ ! -x "${lefthook_bin}" ]; then
   echo "Lefthook is not installed yet. Run 'bun install' before configuring git hooks."
@@ -40,5 +41,21 @@ fi
   cd "${repo_root}"
   "${lefthook_bin}" install
 )
+
+cat >"${git_hook_file}" <<EOF
+#!/bin/sh
+set -eu
+
+repo_root="\$(git rev-parse --show-toplevel)"
+lefthook_bin="\${repo_root}/node_modules/.bin/lefthook"
+
+if [ ! -x "\${lefthook_bin}" ]; then
+  echo "Lefthook is not installed yet. Run 'bun install' before committing."
+  exit 1
+fi
+
+exec "\${lefthook_bin}" run pre-commit "\$@"
+EOF
+chmod +x "${git_hook_file}"
 
 echo "Installed Lefthook hooks"
