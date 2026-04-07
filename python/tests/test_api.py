@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import gc
 import weakref
+from copy import copy, deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+import pytest
 import ruviz
 
 
@@ -88,6 +91,102 @@ def test_clone_rebuilds_native_plot_from_mixed_series_shapes() -> None:
 
     assert clone.render_png().startswith(b"\x89PNG\r\n\x1a\n")
     assert clone.to_snapshot() == plot.to_snapshot()
+
+
+def test_clone_keeps_observable_series_static() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source)
+
+    clone = plot.clone()
+    source.replace([3.0, 2.0, 1.0])
+
+    assert clone.to_snapshot()["series"][0]["y"]["values"] == [1.0, 2.0, 3.0]
+
+
+def test_plot_copy_is_independent() -> None:
+    plot = ruviz.plot().line([0, 1, 2], [0, 1, 4]).title("base")
+
+    clone = copy(plot)
+    clone.xlabel("copy-x")
+
+    assert plot.to_snapshot().get("xLabel") is None
+    assert clone.to_snapshot()["xLabel"] == "copy-x"
+    assert clone._state is not plot._state
+    assert clone._native_plot is not plot._native_plot
+
+
+def test_plot_deepcopy_preserves_independent_live_observables() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    plot = ruviz.plot().line([0.0, 1.0, 2.0], source).scatter([0.0, 1.0, 2.0], source)
+
+    clone = deepcopy(plot)
+
+    assert len(clone._observables) == 1
+    assert clone.to_snapshot() == plot.to_snapshot()
+
+    source.replace([3.0, 2.0, 1.0])
+
+    assert plot.to_snapshot()["series"][0]["y"]["values"] == [3.0, 2.0, 1.0]
+    assert clone.to_snapshot()["series"][0]["y"]["values"] == [1.0, 2.0, 3.0]
+
+    cloned_source = clone._observables[0]
+    cloned_source.replace([9.0, 8.0, 7.0])
+
+    clone_snapshot = clone.to_snapshot()
+    assert clone_snapshot["series"][0]["y"]["values"] == [9.0, 8.0, 7.0]
+    assert clone_snapshot["series"][1]["y"]["values"] == [9.0, 8.0, 7.0]
+    assert plot.to_snapshot()["series"][0]["y"]["values"] == [3.0, 2.0, 1.0]
+
+
+def test_observable_copy_and_deepcopy_are_independent() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+
+    shallow = copy(source)
+    deep = deepcopy(source)
+
+    shallow.set_at(0, 10.0)
+    deep.replace([7.0, 8.0, 9.0])
+
+    assert source.snapshot_values() == [1.0, 2.0, 3.0]
+    assert shallow.snapshot_values() == [10.0, 2.0, 3.0]
+    assert deep.snapshot_values() == [7.0, 8.0, 9.0]
+    assert shallow._native_observable is not source._native_observable
+    assert deep._native_observable is not source._native_observable
+
+
+def test_observable_math_stays_live_for_scalars_pairs_and_ufuncs() -> None:
+    left = ruviz.observable([1.0, 2.0, 3.0])
+    right = ruviz.observable([0.5, 1.5, 2.5])
+
+    result = np.sin((left * 2.0) + right)
+    np.testing.assert_allclose(result.snapshot_values(), np.sin(np.asarray([2.5, 5.5, 8.5])))
+
+    left.replace([2.0, 4.0, 6.0])
+
+    np.testing.assert_allclose(result.snapshot_values(), np.sin(np.asarray([4.5, 9.5, 14.5])))
+
+
+def test_observable_math_detaches_on_write() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+    derived = source * 2.0
+
+    derived.set_at(0, 99.0)
+    source.replace([4.0, 5.0, 6.0])
+
+    assert derived.snapshot_values() == [99.0, 4.0, 6.0]
+
+
+def test_observable_numpy_bridge_supports_snapshot_and_shape_validation() -> None:
+    source = ruviz.observable([1.0, 2.0, 3.0])
+
+    np.testing.assert_allclose(np.asarray(source), [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(np.add(source, 1.0).snapshot_values(), [2.0, 3.0, 4.0])
+
+    with pytest.raises(ValueError, match="same length"):
+        _ = source + [1.0]
+
+    with pytest.raises(TypeError, match="keyword arguments"):
+        np.add(source, 1.0, out=np.empty(3))
 
 
 def test_show_uses_static_image_in_notebooks() -> None:

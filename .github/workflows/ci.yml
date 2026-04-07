@@ -197,10 +197,10 @@ jobs:
         run: |
           bun run build:python-widget
           first_widget="$(mktemp)"
-          cp python/python/ruviz/widget.js "${first_widget}"
+          cp python/ruviz_py/ruviz/widget.js "${first_widget}"
           bun run build:python-widget
-          sha256sum "${first_widget}" python/python/ruviz/widget.js
-          cmp --silent "${first_widget}" python/python/ruviz/widget.js
+          sha256sum "${first_widget}" python/ruviz_py/ruviz/widget.js
+          cmp --silent "${first_widget}" python/ruviz_py/ruviz/widget.js
 
       - name: Run Python extension tests
         run: cd python && uv run cargo test

@@ -26,15 +26,29 @@ import ruviz
 x = np.linspace(0.0, 6.0, 200)
 y = ruviz.observable(np.sin(x))
 
-plot = ruviz.plot().line(x, y).title("Live Sine Wave")
+plot = ruviz.plot().size_px(640, 360).line(x, y).title("Live Sine Wave")
 widget = plot.widget()
 ```
+
+When a plot has `size_px(width, height)` configured, the widget keeps that
+aspect ratio while resizing to the available notebook width. If no plot size is
+configured, the widget falls back to the default fixed height.
 
 Observable updates stay live in the widget:
 
 ```python
 y.replace(np.cos(x))
 ```
+
+Observable math also stays live:
+
+```python
+phase = ruviz.observable(np.linspace(0.0, 1.0, x.size))
+signal = np.sin((phase * 2.0) + 0.5)
+```
+
+Derived observables detach on the first direct write, so `signal.set_at(...)`
+turns `signal` into an independent mutable series without mutating `phase`.
 
 ## Desktop Windows
 
@@ -48,7 +62,7 @@ ruviz.plot().scatter([0, 1, 2], [1.2, 0.4, 1.7]).show()
 
 ## Widget Bundles
 
-The widget frontend is bundled from `python/python/ruviz/widget.entry.js` and
+The widget frontend is bundled from `packages/ruviz-web/src/python-widget.ts` and
 the web SDK. Rebuild it from the repository root after frontend changes:
 
 ```sh

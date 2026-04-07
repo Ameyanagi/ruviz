@@ -33,7 +33,7 @@ bench = [
 ]
 
 [tool.maturin]
-python-source = "python"
+python-source = "ruviz_py"
 module-name = "ruviz._native"
 features = ["pyo3/extension-module"]
 

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 
 const PYTHON_WIDGET_BUNDLE = readFileSync(
-  fileURLToPath(new URL("../../../python/python/ruviz/widget.js", import.meta.url)),
+  fileURLToPath(new URL("../../../python/ruviz_py/ruviz/widget.js", import.meta.url)),
   "utf8",
 );
 
@@ -207,10 +207,10 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       throw new Error("SDK test hooks are unavailable");
     }
 
-    const buildSnapshot = (title, values) =>
+    const buildSnapshot = (title, values, sizePx = [640, 360]) =>
       demo.sdk
         .createPlot()
-        .setSizePx(640, 360)
+        .setSizePx(sizePx[0], sizePx[1])
         .setTitle(title)
         .setXLabel("x")
         .setYLabel("y")
@@ -279,8 +279,24 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       throw new Error("widget canvas did not update");
     };
 
+    const waitForCanvasBox = async (canvas, previousHeight) => {
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await waitForNextPaint();
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          continue;
+        }
+        if (previousHeight === undefined || Math.abs(rect.height - previousHeight) > 0.5) {
+          return { width: rect.width, height: rect.height };
+        }
+      }
+
+      throw new Error("widget canvas size did not update");
+    };
+
     const mount = document.createElement("div");
     mount.id = "python-widget-test-host";
+    mount.style.width = "600px";
     document.body.appendChild(mount);
 
     const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
@@ -294,15 +310,17 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       }
 
       const initialImage = await waitForCanvasChange(canvas);
-      model.setSnapshot(buildSnapshot("widget updated", [1.1, 0.4, 1.0, 0.2]));
+      const initialBox = await waitForCanvasBox(canvas);
+      model.setSnapshot(buildSnapshot("widget updated", [1.1, 0.4, 1.0, 0.2], [360, 360]));
       const updatedImage = await waitForCanvasChange(canvas, initialImage);
+      const updatedBox = await waitForCanvasBox(canvas, initialBox.height);
 
       if (typeof cleanup === "function") {
         cleanup();
       }
 
       mount.remove();
-      return { initialImage, updatedImage };
+      return { initialBox, initialImage, updatedBox, updatedImage };
     } finally {
       URL.revokeObjectURL(moduleUrl);
     }
@@ -310,6 +328,8 @@ test("python widget bundle renders when loaded from a blob-backed module", async
 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
+  expect(result.initialBox.width / result.initialBox.height).toBeCloseTo(640 / 360, 1);
+  expect(result.updatedBox.width / result.updatedBox.height).toBeCloseTo(1, 1);
   expect(result.initialImage).not.toEqual(result.updatedImage);
 });
 

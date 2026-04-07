@@ -403,7 +403,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-widget-bundle
-          path: python/python/ruviz/widget.js
+          path: python/ruviz_py/ruviz/widget.js
           if-no-files-found: error
 
   publish-ruviz:
