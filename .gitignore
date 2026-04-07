@@ -47,8 +47,8 @@ python/site/
 python/**/__pycache__/
 python/**/*.pyc
 python/**/*.pyo
-python/python/ruviz/_native*.so
-python/python/ruviz/*.dSYM/
+python/ruviz_py/ruviz/_native*.so
+python/ruviz_py/ruviz/*.dSYM/
 
 # AI/Assistant artifacts
 .serena/

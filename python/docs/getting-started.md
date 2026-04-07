@@ -8,6 +8,12 @@ For normal use:
 pip install ruviz
 ```
 
+Install the dataframe extras if you want pandas or Polars inputs:
+
+```sh
+pip install "ruviz[dataframes]"
+```
+
 For local contributor builds:
 
 ```sh
@@ -61,6 +67,25 @@ This works with:
 - `save()` writes a file
 - `render_png()` and `render_svg()` return in-memory export data
 - `to_snapshot()` serializes the current state for widget sync and inspection
+- `copy.deepcopy(plot)` creates an independent live copy, while `plot.clone()` stays snapshot-only
+
+## Reactive Data
+
+`ObservableSeries` works as both a mutable data source and a live math input:
+
+```python
+from copy import deepcopy
+import numpy as np
+import ruviz
+
+source = ruviz.observable([0.2, 0.8, 1.3])
+scaled = np.sin(source * 2.0)
+plot = ruviz.plot().line([0, 1, 2], scaled)
+template = deepcopy(plot)
+```
+
+`scaled` updates when `source` changes. If you write to `scaled` directly, it
+detaches from `source` and becomes its own mutable observable.
 
 ## Examples
 

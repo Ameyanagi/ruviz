@@ -7,6 +7,7 @@
     "demo/web"
   ],
   "scripts": {
+    "postinstall": "bash ./scripts/setup-git-hooks.sh",
     "lint:web": "oxlint --deny-warnings packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
     "format:web": "oxfmt --check packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
     "format:web:write": "oxfmt --write packages/ruviz-web/src demo/web/src demo/web/tests demo/web/playwright.config.js",
@@ -17,11 +18,11 @@
     "build:python-widget": "bun python/scripts/build_widget.ts",
     "sync:python": "cd python && uv sync",
     "build:python": "cd python && uv run maturin develop",
-    "lint:python": "cd python && uv run ruff check",
-    "test:python": "cd python && uv run cargo test && uv run pytest",
+    "lint:python": "cd python && uv run python -m ruff check",
+    "test:python": "cd python && uv run cargo test && uv run python -m pytest",
     "gallery:python": "cd python && uv run maturin develop && uv run python scripts/generate_gallery.py",
-    "docs:python": "cd python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run mkdocs serve",
-    "build:docs:python": "cd python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run mkdocs build",
+    "docs:python": "cd python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run python -m mkdocs serve",
+    "build:docs:python": "cd python && uv run maturin develop && uv run python scripts/generate_gallery.py && uv run python -m mkdocs build",
     "docs:web": "bun run --cwd packages/ruviz-web docs:dev",
     "build:docs:web": "bun run --cwd packages/ruviz-web docs:build",
     "dev:web": "bun run --cwd demo/web dev",
@@ -31,6 +32,7 @@
     "pack:web-sdk": "bun run --cwd packages/ruviz-web pack:dry"
   },
   "devDependencies": {
+    "lefthook": "^2.1.5",
     "oxfmt": "^0.42.0",
     "oxlint": "^1.57.0"
   }

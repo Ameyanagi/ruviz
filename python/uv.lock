@@ -2138,10 +2138,21 @@ dependencies = [
     { name = "anywidget" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "traitlets" },
+]
+
+[package.optional-dependencies]
+dataframes = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "polars" },
-    { name = "traitlets" },
+]
+pandas = [
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+polars = [
+    { name = "polars" },
 ]
 
 [package.dev-dependencies]
@@ -2154,6 +2165,9 @@ dev = [
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pandas", version = "3.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "polars" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -2162,10 +2176,13 @@ dev = [
 requires-dist = [
     { name = "anywidget", specifier = ">=0.9" },
     { name = "numpy", specifier = ">=2.0" },
-    { name = "pandas", specifier = ">=2.2" },
-    { name = "polars", specifier = ">=1.0" },
+    { name = "pandas", marker = "extra == 'dataframes'", specifier = ">=2.2" },
+    { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.2" },
+    { name = "polars", marker = "extra == 'dataframes'", specifier = ">=1.0" },
+    { name = "polars", marker = "extra == 'polars'", specifier = ">=1.0" },
     { name = "traitlets", specifier = ">=5.14" },
 ]
+provides-extras = ["dataframes", "pandas", "polars"]
 
 [package.metadata.requires-dev]
 bench = [{ name = "matplotlib", specifier = ">=3.10" }]
@@ -2175,6 +2192,8 @@ dev = [
     { name = "mkdocs", specifier = ">=1.6" },
     { name = "mkdocs-material", specifier = ">=9.6" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.30" },
+    { name = "pandas", specifier = ">=2.2" },
+    { name = "polars", specifier = ">=1.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.12" },
 ]

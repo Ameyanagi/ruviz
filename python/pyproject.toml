@@ -13,9 +13,19 @@ authors = [{ name = "Ruviz Contributors" }]
 dependencies = [
   "anywidget>=0.9",
   "numpy>=2.0",
+  "traitlets>=5.14",
+]
+
+[project.optional-dependencies]
+dataframes = [
   "pandas>=2.2",
   "polars>=1.0",
-  "traitlets>=5.14",
+]
+pandas = [
+  "pandas>=2.2",
+]
+polars = [
+  "polars>=1.0",
 ]
 
 [dependency-groups]
@@ -25,6 +35,8 @@ dev = [
   "mkdocs-material>=9.6",
   "mkdocs>=1.6",
   "mkdocstrings[python]>=0.30",
+  "pandas>=2.2",
+  "polars>=1.0",
   "pytest>=8.0",
   "ruff>=0.12",
 ]
@@ -33,7 +45,7 @@ bench = [
 ]
 
 [tool.maturin]
-python-source = "python"
+python-source = "ruviz_py"
 module-name = "ruviz._native"
 features = ["pyo3/extension-module"]
 

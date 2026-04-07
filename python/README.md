@@ -9,6 +9,13 @@ static export helpers, native desktop `show()`, and notebook widget support.
 pip install ruviz
 ```
 
+If you want pandas or Polars dataframe inputs, install the optional dataframe
+extras:
+
+```sh
+pip install "ruviz[dataframes]"
+```
+
 ## Quick Start
 
 ```python
@@ -32,6 +39,7 @@ y = x**2
 
 - In Jupyter, `plot.show()` displays a static PNG in the cell output.
 - Use `plot.widget()` when you want the synced WASM-backed notebook widget.
+- `plot.size_px(width, height)` also controls the widget's displayed aspect ratio.
 - Outside notebooks, `plot.show()` opens the native interactive window.
 - `plot.render_png()` and `plot.render_svg()` return in-memory export data.
 
@@ -51,6 +59,20 @@ plot = ruviz.plot().line(x, y).title("Live Sine Wave")
 widget = plot.widget()
 ```
 
+`ObservableSeries` supports elementwise arithmetic and NumPy ufuncs. Derived
+observables stay live until you write to them directly:
+
+```python
+from copy import deepcopy
+import numpy as np
+
+scaled = np.sin(y * 2.0 + 0.25)
+template = deepcopy(plot)
+```
+
+`deepcopy(plot)` creates an independent live copy with fresh observables, while
+`plot.clone()` remains a static snapshot copy.
+
 ## Documentation
 
 - Python docs source: `python/docs/`
@@ -68,7 +90,7 @@ uv run mkdocs serve
 ```
 
 Rebuild the bundled widget frontend from the repository root when you change
-the web SDK or `python/python/ruviz/widget.entry.js`:
+the web SDK or `packages/ruviz-web/src/python-widget.ts`:
 
 ```sh
 bun run build:python-widget

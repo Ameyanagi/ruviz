@@ -1,0 +1,14 @@
+pre-commit:
+  jobs:
+    - name: rustfmt
+      files: echo Cargo.toml
+      run: cargo fmt --all -- --check
+    - name: clippy
+      files: echo Cargo.toml
+      run: cargo clippy --all-features -- -D warnings
+    - name: oxfmt
+      files: git diff --cached --name-only --diff-filter=ACMR | grep -E '^(packages/ruviz-web/src/.*\.(js|ts)|demo/web/src/.*\.(js|ts)|demo/web/tests/.*\.(js|ts)|demo/web/playwright\.config\.js)$' || true
+      run: bunx oxfmt --check {files}
+    - name: oxlint
+      files: git diff --cached --name-only --diff-filter=ACMR | grep -E '^(packages/ruviz-web/src/.*\.(js|ts)|demo/web/src/.*\.(js|ts)|demo/web/tests/.*\.(js|ts)|demo/web/playwright\.config\.js)$' || true
+      run: bunx oxlint --deny-warnings {files}
