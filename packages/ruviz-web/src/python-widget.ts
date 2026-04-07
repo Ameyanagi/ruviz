@@ -1,7 +1,4 @@
-import {
-  configureNotebookRawModuleSource,
-  createNotebookCanvasSession,
-} from "./notebook.js";
+import { configureNotebookRawModuleSource, createNotebookCanvasSession } from "./notebook.js";
 import type { PlotSnapshot } from "./shared.js";
 import wasmBytes from "virtual:ruviz-wasm";
 
