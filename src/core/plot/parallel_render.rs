@@ -453,9 +453,20 @@ impl Plot {
                         }
                     }
                     SeriesType::Heatmap { data } => {
-                        // Calculate cell dimensions in pixel space
-                        let cell_width = parallel_plot_area.width() / data.n_cols as f32;
-                        let cell_height = parallel_plot_area.height() / data.n_rows as f32;
+                        let heatmap_plot_area = crate::plots::traits::PlotArea::new(
+                            parallel_plot_area.left,
+                            parallel_plot_area.top,
+                            parallel_plot_area.width(),
+                            parallel_plot_area.height(),
+                            data_bounds.x_min,
+                            data_bounds.x_max,
+                            data_bounds.y_min,
+                            data_bounds.y_max,
+                        );
+                        let plot_left = parallel_plot_area.left;
+                        let plot_top = parallel_plot_area.top;
+                        let plot_right = parallel_plot_area.left + parallel_plot_area.width();
+                        let plot_bottom = parallel_plot_area.top + parallel_plot_area.height();
 
                         // Create heatmap cells with colors
                         let cells: Vec<crate::render::parallel::HeatmapCell> = data
@@ -463,17 +474,34 @@ impl Plot {
                             .iter()
                             .enumerate()
                             .flat_map(|(row_idx, row)| {
-                                row.iter().enumerate().map(move |(col_idx, &value)| {
-                                    let cell_color = data.get_color(value);
-                                    crate::render::parallel::HeatmapCell {
-                                        x: parallel_plot_area.left + col_idx as f32 * cell_width,
-                                        // Flip Y axis (row 0 at top)
-                                        y: parallel_plot_area.top
-                                            + (data.n_rows - 1 - row_idx) as f32 * cell_height,
-                                        width: cell_width,
-                                        height: cell_height,
-                                        color: cell_color,
+                                row.iter().enumerate().filter_map(move |(col_idx, &value)| {
+                                    if data.should_mask_value(value) {
+                                        return None;
                                     }
+
+                                    let (x, y, width, height) =
+                                        data.cell_screen_rect(&heatmap_plot_area, row_idx, col_idx);
+                                    let left = x.max(plot_left);
+                                    let top = y.max(plot_top);
+                                    let right = (x + width).min(plot_right);
+                                    let bottom = (y + height).min(plot_bottom);
+                                    if right <= left || bottom <= top {
+                                        return None;
+                                    }
+
+                                    let cell_color =
+                                        data.get_color(value).with_alpha(data.config.alpha);
+                                    Some(crate::render::parallel::HeatmapCell {
+                                        x: left,
+                                        y: top,
+                                        width: right - left,
+                                        height: bottom - top,
+                                        color: cell_color,
+                                        border_color: data
+                                            .config
+                                            .cell_borders
+                                            .then_some(cell_color.darken(0.2)),
+                                    })
                                 })
                             })
                             .collect();
@@ -851,17 +879,25 @@ impl Plot {
                     // Error bars implementation would go here
                 }
                 RenderSeriesType::Heatmap { cells, .. } => {
-                    // Draw all heatmap cells as filled rectangles
+                    // Draw all heatmap cells as pixel-aligned rectangles so custom
+                    // extents and clipped views stay seam-free.
                     for cell in cells {
-                        renderer.draw_rectangle_clipped(
+                        renderer.draw_pixel_aligned_solid_rectangle(
                             cell.x,
                             cell.y,
                             cell.width,
                             cell.height,
                             cell.color,
-                            true, // filled
-                            clip_rect,
                         )?;
+                        if let Some(border_color) = cell.border_color {
+                            renderer.draw_pixel_aligned_rectangle_outline(
+                                cell.x,
+                                cell.y,
+                                cell.width,
+                                cell.height,
+                                border_color,
+                            )?;
+                        }
                     }
                 }
             }
@@ -1054,11 +1090,12 @@ impl Plot {
                     }
                 }
                 SeriesType::Heatmap { data } => {
-                    // Heatmap bounds: x from 0 to n_cols, y from 0 to n_rows
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(data.n_cols as f64);
-                    y_min = y_min.min(0.0);
-                    y_max = y_max.max(data.n_rows as f64);
+                    let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
+                        crate::plots::traits::PlotData::data_bounds(data);
+                    x_min = x_min.min(series_x_min);
+                    x_max = x_max.max(series_x_max);
+                    y_min = y_min.min(series_y_min);
+                    y_max = y_max.max(series_y_max);
                 }
                 SeriesType::Kde { data } => {
                     // KDE bounds from x/y data
@@ -1422,10 +1459,12 @@ impl Plot {
                     }
                 }
                 SeriesType::Heatmap { data } => {
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(data.n_cols as f64);
-                    y_min = y_min.min(0.0);
-                    y_max = y_max.max(data.n_rows as f64);
+                    let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
+                        crate::plots::traits::PlotData::data_bounds(data);
+                    x_min = x_min.min(series_x_min);
+                    x_max = x_max.max(series_x_max);
+                    y_min = y_min.min(series_y_min);
+                    y_max = y_max.max(series_y_max);
                 }
                 SeriesType::Kde { data } => {
                     for (&x_val, &y_val) in data.x.iter().zip(data.y.iter()) {

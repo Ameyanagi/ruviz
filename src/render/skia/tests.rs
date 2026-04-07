@@ -12,6 +12,16 @@ fn pixel_is_bright_rgba(image: &image::RgbaImage, x: u32, y: u32) -> bool {
     pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 && pixel[3] > 0
 }
 
+fn image_pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
+    let idx = ((y * image.width + x) * 4) as usize;
+    [
+        image.pixels[idx],
+        image.pixels[idx + 1],
+        image.pixels[idx + 2],
+        image.pixels[idx + 3],
+    ]
+}
+
 fn count_red_pixels_outside_rect(image: &Image, rect: Rect) -> usize {
     let left = rect.left().floor() as i32;
     let right = rect.right().ceil() as i32;
@@ -101,6 +111,108 @@ fn test_tick_generation() {
     // Test edge case
     let ticks = generate_ticks(5.0, 5.0, 3);
     assert_eq!(ticks, vec![5.0, 5.0]);
+}
+
+#[test]
+fn test_compute_colorbar_ticks_formats_log_decades_and_minor_ticks() {
+    let ticks = compute_colorbar_ticks(1e-5, 1e3, &crate::axes::AxisScale::Log, true);
+
+    assert_eq!(ticks.major_labels.first().map(String::as_str), Some("10⁻⁵"));
+    assert_eq!(ticks.major_labels.last().map(String::as_str), Some("10³"));
+    assert!(ticks.minor_values.contains(&2e-5));
+    assert!(ticks.minor_values.contains(&900.0));
+}
+
+#[test]
+fn test_colorbar_layout_metrics_keep_rotated_label_after_tick_labels() {
+    let metrics = super::compute_colorbar_layout_metrics(20.0, 12.0, 36.0, Some(14.0));
+
+    assert!((metrics.major_tick_width - 6.0).abs() < 1e-6);
+    assert!((metrics.minor_tick_width - 3.6).abs() < 1e-6);
+    assert!(metrics.tick_label_x_offset > 20.0);
+    assert_eq!(metrics.rotated_label_center_x_offset, Some(78.0));
+    assert!((metrics.total_extent - 85.0).abs() < 1e-6);
+}
+
+#[test]
+fn test_colorbar_major_label_top_centers_label_on_tick() {
+    let tick_y = 48.0;
+    let label_center_from_top = 9.5;
+    let label_top = super::colorbar_major_label_top(tick_y, label_center_from_top);
+
+    assert!(((label_top + label_center_from_top) - tick_y).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_colorbar_major_label_anchor_center_uses_base_center_for_log_decades() {
+    let anchor_center = super::colorbar_major_label_anchor_center_from_top(
+        &crate::axes::AxisScale::Log,
+        "10²",
+        8.0,
+        Some(6.0),
+    );
+
+    assert!((anchor_center - 6.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_colorbar_major_label_anchor_center_keeps_rendered_center_for_non_log_labels() {
+    let anchor_center = super::colorbar_major_label_anchor_center_from_top(
+        &crate::axes::AxisScale::Linear,
+        "6",
+        8.0,
+        Some(6.0),
+    );
+
+    assert!((anchor_center - 8.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_draw_pixel_aligned_solid_rectangle_blends_transparent_fill() {
+    let theme = Theme::default();
+    let mut renderer = SkiaRenderer::new(6, 6, theme).unwrap();
+    renderer
+        .pixmap
+        .fill(crate::render::Color::new(0, 0, 255).to_tiny_skia_color());
+
+    renderer
+        .draw_pixel_aligned_solid_rectangle(
+            1.0,
+            1.0,
+            4.0,
+            4.0,
+            crate::render::Color::new_rgba(255, 0, 0, 128),
+        )
+        .expect("transparent pixel-aligned fill should composite successfully");
+
+    let image = renderer.into_image();
+    let pixel = image_pixel_rgba(&image, 2, 2);
+    assert!(
+        pixel[0] > 0,
+        "composited fill should retain red contribution"
+    );
+    assert!(
+        pixel[2] > 0,
+        "composited fill should retain background contribution instead of overwriting it"
+    );
+    assert_eq!(pixel[3], 255);
+}
+
+#[test]
+fn test_draw_pixel_aligned_solid_rectangle_preserves_subpixel_tiles() {
+    let theme = Theme::default();
+    let mut renderer = SkiaRenderer::new(8, 8, theme).unwrap();
+    renderer.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+    renderer
+        .draw_pixel_aligned_solid_rectangle(3.2, 1.0, 0.25, 6.0, crate::render::Color::RED)
+        .expect("subpixel-aligned fill should render via composited fallback");
+
+    let image = renderer.into_image();
+    assert!(
+        image.pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+        "thin pixel-aligned tiles should still contribute visible coverage"
+    );
 }
 
 #[test]

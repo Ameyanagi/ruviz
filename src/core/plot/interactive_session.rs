@@ -1079,32 +1079,67 @@ impl InteractivePlotSession {
                     {
                         continue;
                     }
-                    let cell_width = rect.width() as f64 / data.n_cols.max(1) as f64;
-                    let cell_height = rect.height() as f64 / data.n_rows.max(1) as f64;
-                    let col = ((position_px.x - rect.left() as f64) / cell_width)
+                    let data_position = screen_to_data(
+                        DataBounds::from_limits(
+                            geometry.x_bounds.0,
+                            geometry.x_bounds.1,
+                            geometry.y_bounds.0,
+                            geometry.y_bounds.1,
+                        ),
+                        rect,
+                        position_px,
+                    );
+                    if data_position.x < data.x_extent.0
+                        || data_position.x > data.x_extent.1
+                        || data_position.y < data.y_extent.0
+                        || data_position.y > data.y_extent.1
+                    {
+                        continue;
+                    }
+
+                    let cell_width =
+                        (data.x_extent.1 - data.x_extent.0) / data.n_cols.max(1) as f64;
+                    let cell_height =
+                        (data.y_extent.1 - data.y_extent.0) / data.n_rows.max(1) as f64;
+                    let col = ((data_position.x - data.x_extent.0) / cell_width)
                         .floor()
                         .clamp(0.0, data.n_cols.saturating_sub(1) as f64)
                         as usize;
-                    let row_from_top = ((position_px.y - rect.top() as f64) / cell_height)
+                    let row = ((data.y_extent.1 - data_position.y) / cell_height)
                         .floor()
                         .clamp(0.0, data.n_rows.saturating_sub(1) as f64)
                         as usize;
-                    let row = data.n_rows.saturating_sub(row_from_top + 1);
                     let value = data.values[row][col];
+                    if data.should_mask_value(value) {
+                        continue;
+                    }
+                    let ((x1, x2), (y1, y2)) = data.cell_data_bounds(row, col);
+                    let (sx1, sy1) = map_data_to_pixels(
+                        x1,
+                        y2,
+                        geometry.x_bounds.0,
+                        geometry.x_bounds.1,
+                        geometry.y_bounds.0,
+                        geometry.y_bounds.1,
+                        rect,
+                    );
+                    let (sx2, sy2) = map_data_to_pixels(
+                        x2,
+                        y1,
+                        geometry.x_bounds.0,
+                        geometry.x_bounds.1,
+                        geometry.y_bounds.0,
+                        geometry.y_bounds.1,
+                        rect,
+                    );
                     best_hit = HitResult::HeatmapCell {
                         series_index,
                         row,
                         col,
                         value,
                         screen_rect: ViewportRect {
-                            min: ViewportPoint::new(
-                                rect.left() as f64 + cell_width * col as f64,
-                                rect.top() as f64 + cell_height * row_from_top as f64,
-                            ),
-                            max: ViewportPoint::new(
-                                rect.left() as f64 + cell_width * (col as f64 + 1.0),
-                                rect.top() as f64 + cell_height * (row_from_top as f64 + 1.0),
-                            ),
+                            min: ViewportPoint::new(sx1.min(sx2) as f64, sy1.min(sy2) as f64),
+                            max: ViewportPoint::new(sx1.max(sx2) as f64, sy1.max(sy2) as f64),
                         },
                     };
                 }
@@ -2038,24 +2073,38 @@ fn refresh_hit_result(
             if *row >= data.n_rows || *col >= data.n_cols {
                 return None;
             }
+            let value = data.values[*row][*col];
+            if data.should_mask_value(value) {
+                return None;
+            }
 
-            let cell_width = f64::from(geometry.plot_area.width()) / data.n_cols.max(1) as f64;
-            let cell_height = f64::from(geometry.plot_area.height()) / data.n_rows.max(1) as f64;
-            let row_from_top = data.n_rows.saturating_sub(*row + 1);
+            let ((x1, x2), (y1, y2)) = data.cell_data_bounds(*row, *col);
+            let (sx1, sy1) = map_data_to_pixels(
+                x1,
+                y2,
+                geometry.x_bounds.0,
+                geometry.x_bounds.1,
+                geometry.y_bounds.0,
+                geometry.y_bounds.1,
+                geometry.plot_area,
+            );
+            let (sx2, sy2) = map_data_to_pixels(
+                x2,
+                y1,
+                geometry.x_bounds.0,
+                geometry.x_bounds.1,
+                geometry.y_bounds.0,
+                geometry.y_bounds.1,
+                geometry.plot_area,
+            );
             Some(HitResult::HeatmapCell {
                 series_index: *series_index,
                 row: *row,
                 col: *col,
-                value: data.values[*row][*col],
+                value,
                 screen_rect: ViewportRect {
-                    min: ViewportPoint::new(
-                        geometry.plot_area.left() as f64 + cell_width * *col as f64,
-                        geometry.plot_area.top() as f64 + cell_height * row_from_top as f64,
-                    ),
-                    max: ViewportPoint::new(
-                        geometry.plot_area.left() as f64 + cell_width * (*col as f64 + 1.0),
-                        geometry.plot_area.top() as f64 + cell_height * (row_from_top as f64 + 1.0),
-                    ),
+                    min: ViewportPoint::new(sx1.min(sx2) as f64, sy1.min(sy2) as f64),
+                    max: ViewportPoint::new(sx1.max(sx2) as f64, sy1.max(sy2) as f64),
                 },
             })
         }

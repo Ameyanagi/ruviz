@@ -676,6 +676,8 @@ impl Plot {
                             data_max: 0.0,
                             vmin: 0.0,
                             vmax: 1.0,
+                            x_extent: (0.0, 1.0),
+                            y_extent: (0.0, 1.0),
                             config: crate::plots::heatmap::HeatmapConfig::default(),
                         },
                     },

@@ -21,9 +21,14 @@ mod annotations;
 mod primitives;
 mod utils;
 pub use self::utils::{
-    calculate_plot_area, calculate_plot_area_config, calculate_plot_area_dpi, format_tick_label,
-    format_tick_labels, generate_minor_ticks, generate_ticks, map_data_to_pixels,
+    ColorbarTicks, calculate_plot_area, calculate_plot_area_config, calculate_plot_area_dpi,
+    compute_colorbar_ticks, format_log_tick_label, format_tick_label, format_tick_labels,
+    format_tick_labels_for_scale, generate_minor_ticks, generate_ticks, map_data_to_pixels,
     map_data_to_pixels_scaled,
+};
+pub(crate) use self::utils::{
+    colorbar_major_label_anchor_center_from_top, colorbar_major_label_top,
+    compute_colorbar_layout_metrics,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -760,6 +765,18 @@ impl SkiaRenderer {
                     "Skia text measurement",
                 )
             }
+        }
+    }
+
+    pub(crate) fn measure_text_ink_center_from_top(&self, text: &str, size: f32) -> Result<f32> {
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let config = FontConfig::new(self.font_config.family.clone(), size);
+                self.text_renderer
+                    .measure_text_ink_center_from_top(text, &config)
+            }
+            #[cfg(feature = "typst-math")]
+            TextEngineMode::Typst => Ok(self.measure_text(text, size)?.1 / 2.0),
         }
     }
 
@@ -2128,6 +2145,7 @@ impl SkiaRenderer {
     /// * `foreground_color` - Color for ticks, text, and border
     /// * `tick_font_size` - Font size for tick labels (in points)
     /// * `label_font_size` - Font size for colorbar label (in points, optional)
+    /// * `show_log_subticks` - Whether to draw unlabeled logarithmic subticks
     pub fn draw_colorbar(
         &mut self,
         colormap: &crate::render::ColorMap,
@@ -2142,6 +2160,7 @@ impl SkiaRenderer {
         foreground_color: Color,
         tick_font_size: f32,
         label_font_size: Option<f32>,
+        show_log_subticks: bool,
     ) -> Result<()> {
         // Use tick font size for label if not specified separately
         let label_font_size = label_font_size.unwrap_or(tick_font_size * 1.1);
@@ -2166,13 +2185,56 @@ impl SkiaRenderer {
         let stroke_width = 1.0;
         self.draw_rectangle(x, y, width, height, foreground_color, false)?;
 
-        // Generate nice tick values using tick formatter
-        let ticks = crate::axes::generate_ticks_for_scale(vmin, vmax, 6, value_scale);
-        let tick_labels = format_tick_labels(&ticks);
-        let tick_width = width * 0.3;
-        let text_offset = width + tick_font_size * 0.5;
+        let ticks = compute_colorbar_ticks(vmin, vmax, value_scale, show_log_subticks);
+        let mut measured_major_labels = Vec::with_capacity(ticks.major_labels.len());
+        let mut max_label_width: f32 = 0.0;
+        for label_text in &ticks.major_labels {
+            let label_snippet = self.generated_label(label_text);
+            let (text_width, _) = self.measure_text(&label_snippet, tick_font_size)?;
+            let ink_center_from_top =
+                self.measure_text_ink_center_from_top(&label_snippet, tick_font_size)?;
+            max_label_width = max_label_width.max(text_width);
+            measured_major_labels.push((label_snippet, ink_center_from_top));
+        }
 
-        for (value, label_text) in ticks.iter().zip(tick_labels.iter()) {
+        let rotated_label_width = if let Some(label_text) = label {
+            Some(self.measure_text(label_text, label_font_size)?.1)
+        } else {
+            None
+        };
+        let log_decade_base_center = matches!(value_scale, crate::axes::AxisScale::Log)
+            .then(|| self.measure_text_ink_center_from_top("10", tick_font_size))
+            .transpose()?;
+        let layout = compute_colorbar_layout_metrics(
+            width,
+            tick_font_size,
+            max_label_width,
+            rotated_label_width,
+        );
+
+        for minor_value in &ticks.minor_values {
+            let t = value_scale
+                .normalized_position(*minor_value, vmin, vmax)
+                .clamp(0.0, 1.0);
+            let tick_y = y + height * (1.0 - t as f32);
+
+            self.draw_line(
+                x + width,
+                tick_y,
+                x + width + layout.minor_tick_width,
+                tick_y,
+                foreground_color,
+                stroke_width * 0.8,
+                LineStyle::Solid,
+            )?;
+        }
+
+        for ((value, _), (label_text, ink_center_from_top)) in ticks
+            .major_values
+            .iter()
+            .zip(ticks.major_labels.iter())
+            .zip(measured_major_labels.iter())
+        {
             // Map value to Y position (top = vmax, bottom = vmin)
             let t = value_scale
                 .normalized_position(*value, vmin, vmax)
@@ -2183,26 +2245,34 @@ impl SkiaRenderer {
             self.draw_line(
                 x + width,
                 tick_y,
-                x + width + tick_width,
+                x + width + layout.major_tick_width,
                 tick_y,
                 foreground_color,
                 stroke_width,
                 LineStyle::Solid,
             )?;
 
-            // Draw value label using unified TickFormatter
+            let anchor_center = colorbar_major_label_anchor_center_from_top(
+                value_scale,
+                label_text,
+                *ink_center_from_top,
+                log_decade_base_center,
+            );
+            let label_y = colorbar_major_label_top(tick_y, anchor_center);
             self.draw_text(
                 label_text,
-                x + text_offset,
-                tick_y + tick_font_size * 0.3,
+                x + layout.tick_label_x_offset,
+                label_y,
                 tick_font_size,
                 foreground_color,
             )?;
         }
 
         // Draw colorbar label (rotated 90 degrees) if provided
-        if let Some(label) = label {
-            let label_x = x + width + tick_font_size * 4.0;
+        if let Some((label, label_center_x_offset)) =
+            label.zip(layout.rotated_label_center_x_offset)
+        {
+            let label_x = x + label_center_x_offset;
             let label_y = y + height / 2.0;
             self.draw_text_rotated(label, label_x, label_y, label_font_size, foreground_color)?;
         }

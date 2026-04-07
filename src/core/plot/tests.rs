@@ -224,6 +224,11 @@ fn mean_normalized_channel_diff(lhs: &Image, rhs: &Image) -> f64 {
 }
 
 fn compute_render_plot_area(plot: &Plot) -> tiny_skia::Rect {
+    let layout = compute_render_layout(plot);
+    Plot::plot_area_from_layout(&layout).expect("valid plot area")
+}
+
+fn compute_render_layout(plot: &Plot) -> PlotLayout {
     let (x_min, x_max, y_min, y_max) = plot
         .calculate_data_bounds()
         .expect("data bounds should be available");
@@ -248,8 +253,7 @@ fn compute_render_plot_area(plot: &Plot) -> tiny_skia::Rect {
             y_max,
         )
         .expect("configured layout with tick measurements");
-
-    Plot::plot_area_from_layout(&layout).expect("valid plot area")
+    layout
 }
 
 fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
@@ -494,6 +498,118 @@ fn test_heatmap_render_preserves_downsampled_vertical_feature() {
 }
 
 #[test]
+fn test_heatmap_extent_maps_cells_into_physical_axis_limits() {
+    let rows = 24usize;
+    let cols = 80usize;
+    let stripe_start = cols / 2 - 3;
+    let stripe_end = stripe_start + 6;
+    let mut values = vec![vec![0.0; cols]; rows];
+    for row in &mut values {
+        for cell in &mut row[stripe_start..stripe_end] {
+            *cell = 1.0;
+        }
+    }
+
+    let plot = Plot::new()
+        .size_px(240, 160)
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .colorbar(false)
+                    .vmin(0.0)
+                    .vmax(1.0)
+                    .extent(0.0, 8.0, 0.0, 2.4),
+            ),
+        )
+        .xlim(0.0, 8.0)
+        .ylim(0.0, 2.4)
+        .end_series();
+    let image = plot.render().expect("extent-aware heatmap should render");
+    let plot_area = compute_render_plot_area(&plot);
+    let stripe_center_x = (plot_area.left() + plot_area.width() * 0.5).round() as u32;
+    let background_x = (plot_area.left() + plot_area.width() * 0.1).round() as u32;
+    let center_y = (plot_area.top() + plot_area.height() * 0.5).round() as u32;
+
+    let stripe = image_pixel_rgba(&image, stripe_center_x, center_y);
+    let background = image_pixel_rgba(&image, background_x, center_y);
+    let stripe_brightness = stripe[0] as u32 + stripe[1] as u32 + stripe[2] as u32;
+    let background_brightness = background[0] as u32 + background[1] as u32 + background[2] as u32;
+
+    assert!(
+        stripe_brightness > background_brightness + 120,
+        "heatmap extent should map the central stripe into the visible 0..8 mm viewport: stripe={} background={}",
+        stripe_brightness,
+        background_brightness
+    );
+}
+
+#[test]
+fn test_heatmap_render_default_has_no_cell_seams() {
+    let values = vec![vec![0.5, 0.5], vec![0.5, 0.5]];
+    let plot = Plot::new()
+        .size_px(240, 160)
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .colorbar(false)
+                    .vmin(0.0)
+                    .vmax(1.0),
+            ),
+        )
+        .end_series();
+    let image = plot.render().expect("uniform heatmap should render");
+    let plot_area = compute_render_plot_area(&plot);
+    let center_x = (plot_area.left() + plot_area.width() * 0.5).round() as u32;
+    let center_y = (plot_area.top() + plot_area.height() * 0.5).round() as u32;
+    let interior_x = (plot_area.left() + plot_area.width() * 0.25).round() as u32;
+    let interior_y = (plot_area.top() + plot_area.height() * 0.25).round() as u32;
+    let interior = image_pixel_rgba(&image, interior_x, interior_y);
+
+    assert_eq!(
+        image_pixel_rgba(&image, center_x, interior_y),
+        interior,
+        "shared vertical tile boundaries should not leave visible seams"
+    );
+    assert_eq!(
+        image_pixel_rgba(&image, interior_x, center_y),
+        interior,
+        "shared horizontal tile boundaries should not leave visible seams"
+    );
+}
+
+#[test]
+fn test_heatmap_render_cell_borders_are_opt_in() {
+    let values = vec![vec![0.5, 0.5], vec![0.5, 0.5]];
+    let plot = Plot::new()
+        .size_px(240, 160)
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .colorbar(false)
+                    .vmin(0.0)
+                    .vmax(1.0)
+                    .cell_borders(true),
+            ),
+        )
+        .end_series();
+    let image = plot.render().expect("heatmap with borders should render");
+    let plot_area = compute_render_plot_area(&plot);
+    let center_x = (plot_area.left() + plot_area.width() * 0.5).round() as u32;
+    let interior_x = (plot_area.left() + plot_area.width() * 0.25).round() as u32;
+    let interior_y = (plot_area.top() + plot_area.height() * 0.25).round() as u32;
+    let interior = image_pixel_rgba(&image, interior_x, interior_y);
+
+    assert_ne!(
+        image_pixel_rgba(&image, center_x, interior_y),
+        interior,
+        "enabled cell borders should make shared heatmap edges visually distinct"
+    );
+}
+
+#[test]
 fn test_heatmap_render_skips_non_finite_cells() {
     let plot = Plot::new()
         .size_px(240, 160)
@@ -527,6 +643,127 @@ fn test_heatmap_render_skips_non_finite_cells() {
         image_pixel_rgba(&image, right_center_x, center_y),
         background,
         "finite heatmap cells should still render"
+    );
+}
+
+#[test]
+fn test_filled_contour_without_lines_has_no_cell_seams() {
+    let x = vec![0.0, 1.0, 2.0];
+    let y = vec![0.0, 1.0];
+    let z = vec![0.5; x.len() * y.len()];
+    let plot = Plot::new()
+        .size_px(240, 160)
+        .contour(&x, &y, &z)
+        .level_values(vec![0.0, 1.0])
+        .filled(true)
+        .show_lines(false)
+        .end_series();
+    let image = plot.render().expect("filled contour should render");
+    let rect = compute_render_plot_area(&plot);
+    let area = crate::plots::traits::PlotArea::new(
+        rect.left(),
+        rect.top(),
+        rect.width(),
+        rect.height(),
+        0.0,
+        2.0,
+        0.0,
+        1.0,
+    );
+    let (center_x, sample_y) = area.data_to_screen(1.0, 0.5);
+    let (interior_x, interior_y) = area.data_to_screen(0.5, 0.5);
+    let center_x = center_x.round() as u32;
+    let sample_y = sample_y.round() as u32;
+    let interior_x = interior_x.round() as u32;
+    let interior_y = interior_y.round() as u32;
+
+    assert_eq!(
+        image_pixel_rgba(&image, center_x, sample_y),
+        image_pixel_rgba(&image, interior_x, interior_y),
+        "filled contour regions without contour lines should not show cell seams"
+    );
+}
+
+#[test]
+fn test_heatmap_render_skips_nonpositive_cells_on_log_scale() {
+    let plot = Plot::new()
+        .size_px(240, 160)
+        .heatmap(
+            &vec![vec![0.0, 1.0, 10.0]],
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .colorbar(false)
+                    .value_scale(crate::axes::AxisScale::Log),
+            ),
+        )
+        .end_series();
+    let image = plot
+        .render()
+        .expect("log heatmap with zero values should render");
+    let plot_area = compute_render_plot_area(&plot);
+    let cell_width = plot_area.width() / 3.0;
+    let center_y = (plot_area.top() + plot_area.height() * 0.5).round() as u32;
+    let zero_center_x = (plot_area.left() + cell_width * 0.5).round() as u32;
+    let one_center_x = (plot_area.left() + cell_width * 1.5).round() as u32;
+    let ten_center_x = (plot_area.left() + cell_width * 2.5).round() as u32;
+    let background = image_pixel_rgba(&image, 0, 0);
+
+    assert_eq!(
+        image_pixel_rgba(&image, zero_center_x, center_y),
+        background,
+        "nonpositive log heatmap cells should be skipped instead of colored"
+    );
+    assert_ne!(
+        image_pixel_rgba(&image, one_center_x, center_y),
+        background,
+        "positive log heatmap cells should still render"
+    );
+    assert_ne!(
+        image_pixel_rgba(&image, ten_center_x, center_y),
+        background,
+        "positive log heatmap cells should still render"
+    );
+}
+
+#[test]
+fn test_heatmap_log_colorbar_layout_reserves_right_margin() {
+    let values = vec![vec![0.0, 1e-5, 1e-4, 1e-3], vec![1e-2, 1e-1, 1.0, 10.0]];
+    let without_colorbar = Plot::new()
+        .size_px(360, 220)
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .value_scale(crate::axes::AxisScale::Log)
+                    .colorbar(false),
+            ),
+        )
+        .end_series();
+    let with_colorbar = Plot::new()
+        .size_px(360, 220)
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .value_scale(crate::axes::AxisScale::Log)
+                    .colorbar(true)
+                    .colorbar_label("Absorbed Energy"),
+            ),
+        )
+        .end_series();
+
+    let without_layout = compute_render_layout(&without_colorbar);
+    let with_layout = compute_render_layout(&with_colorbar);
+
+    assert!(
+        with_layout.margins.right > without_layout.margins.right + 40.0,
+        "colorbar layout should reserve a larger right margin: without={} with={}",
+        without_layout.margins.right,
+        with_layout.margins.right
+    );
+    assert!(
+        with_layout.plot_area.right < without_layout.plot_area.right,
+        "reserved colorbar margin should reduce available plot width"
     );
 }
 

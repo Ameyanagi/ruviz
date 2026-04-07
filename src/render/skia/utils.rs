@@ -1,5 +1,21 @@
 use super::*;
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ColorbarTicks {
+    pub major_values: Vec<f64>,
+    pub major_labels: Vec<String>,
+    pub minor_values: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ColorbarLayoutMetrics {
+    pub major_tick_width: f32,
+    pub minor_tick_width: f32,
+    pub tick_label_x_offset: f32,
+    pub rotated_label_center_x_offset: Option<f32>,
+    pub total_extent: f32,
+}
+
 /// Helper function to calculate plot area with margins
 pub fn calculate_plot_area(canvas_width: u32, canvas_height: u32, margin_fraction: f32) -> Rect {
     let margin_x = (canvas_width as f32) * margin_fraction;
@@ -312,6 +328,196 @@ pub fn generate_minor_ticks(major_ticks: &[f64], minor_count: usize) -> Vec<f64>
     }
 
     minor_ticks
+}
+
+fn generate_log_colorbar_major_ticks(min: f64, max: f64) -> Vec<f64> {
+    let (min, max) = if min <= max { (min, max) } else { (max, min) };
+    if min <= 0.0 || max <= 0.0 {
+        return vec![min.max(f64::EPSILON), max.max(f64::EPSILON)];
+    }
+
+    let start_exp = min.log10().ceil() as i32;
+    let end_exp = max.log10().floor() as i32;
+    let mut ticks = Vec::new();
+
+    for exp in start_exp..=end_exp {
+        let tick = 10.0_f64.powi(exp);
+        if tick >= min && tick <= max {
+            ticks.push(tick);
+        }
+    }
+
+    if ticks.is_empty() {
+        crate::axes::generate_log_ticks(min, max, 6)
+    } else {
+        ticks
+    }
+}
+
+fn generate_log_colorbar_minor_ticks(min: f64, max: f64) -> Vec<f64> {
+    let (min, max) = if min <= max { (min, max) } else { (max, min) };
+    if min <= 0.0 || max <= 0.0 {
+        return Vec::new();
+    }
+
+    let start_exp = min.log10().floor() as i32;
+    let end_exp = max.log10().ceil() as i32;
+    let mut ticks = Vec::new();
+
+    for exp in start_exp..=end_exp {
+        let base = 10.0_f64.powi(exp);
+        for multiplier in 2..=9 {
+            let tick = base * multiplier as f64;
+            if tick > min && tick < max {
+                ticks.push(tick);
+            }
+        }
+    }
+
+    ticks.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ticks
+}
+
+pub(crate) fn compute_colorbar_layout_metrics(
+    colorbar_width: f32,
+    tick_font_size: f32,
+    max_tick_label_width: f32,
+    rotated_label_width: Option<f32>,
+) -> ColorbarLayoutMetrics {
+    let major_tick_width = colorbar_width * 0.3;
+    let minor_tick_width = colorbar_width * 0.18;
+    let tick_label_x_offset = colorbar_width + tick_font_size * 0.5;
+    let label_gap = tick_font_size.max(4.0) * 0.75;
+    let tick_label_extent = tick_label_x_offset + max_tick_label_width;
+    let rotated_label_center_x_offset = rotated_label_width
+        .map(|width| tick_label_x_offset + max_tick_label_width + label_gap + width / 2.0);
+    let rotated_label_extent = rotated_label_width
+        .map(|width| tick_label_x_offset + max_tick_label_width + label_gap + width)
+        .unwrap_or(0.0);
+    let total_extent =
+        (colorbar_width + major_tick_width).max(tick_label_extent.max(rotated_label_extent));
+
+    ColorbarLayoutMetrics {
+        major_tick_width,
+        minor_tick_width,
+        tick_label_x_offset,
+        rotated_label_center_x_offset,
+        total_extent,
+    }
+}
+
+pub(crate) fn colorbar_major_label_top(tick_center_y: f32, label_center_from_top: f32) -> f32 {
+    tick_center_y - label_center_from_top
+}
+
+fn is_superscript_digit(ch: char) -> bool {
+    matches!(
+        ch,
+        '⁰' | '¹' | '²' | '³' | '⁴' | '⁵' | '⁶' | '⁷' | '⁸' | '⁹' | '⁻'
+    )
+}
+
+pub(crate) fn colorbar_major_label_anchor_center_from_top(
+    scale: &crate::axes::AxisScale,
+    label: &str,
+    rendered_center_from_top: f32,
+    log_decade_base_center_from_top: Option<f32>,
+) -> f32 {
+    match scale {
+        crate::axes::AxisScale::Log
+            if label.starts_with("10")
+                && label.chars().skip(2).all(is_superscript_digit)
+                && label.chars().count() > 2 =>
+        {
+            log_decade_base_center_from_top.unwrap_or(rendered_center_from_top)
+        }
+        _ => rendered_center_from_top,
+    }
+}
+
+pub fn format_tick_labels_for_scale(values: &[f64], scale: &crate::axes::AxisScale) -> Vec<String> {
+    match scale {
+        crate::axes::AxisScale::Log => values
+            .iter()
+            .map(|&value| format_log_tick_label(value))
+            .collect(),
+        _ => format_tick_labels(values),
+    }
+}
+
+pub fn format_log_tick_label(value: f64) -> String {
+    if !value.is_finite() || value <= 0.0 {
+        return format_tick_label(value);
+    }
+
+    let exponent = value.log10();
+    if (exponent.round() - exponent).abs() < 1e-10 {
+        format!("10{}", superscript_exponent(exponent.round() as i32))
+    } else {
+        format_tick_label(value)
+    }
+}
+
+fn superscript_exponent(exponent: i32) -> String {
+    let exponent = exponent as i64;
+    let mut formatted = String::new();
+    if exponent < 0 {
+        formatted.push('⁻');
+    }
+
+    for digit in exponent.abs().to_string().chars() {
+        let superscript = match digit {
+            '0' => '⁰',
+            '1' => '¹',
+            '2' => '²',
+            '3' => '³',
+            '4' => '⁴',
+            '5' => '⁵',
+            '6' => '⁶',
+            '7' => '⁷',
+            '8' => '⁸',
+            '9' => '⁹',
+            _ => digit,
+        };
+        formatted.push(superscript);
+    }
+
+    formatted
+}
+
+pub fn compute_colorbar_ticks(
+    vmin: f64,
+    vmax: f64,
+    scale: &crate::axes::AxisScale,
+    show_log_subticks: bool,
+) -> ColorbarTicks {
+    match scale {
+        crate::axes::AxisScale::Log => {
+            let major_values = generate_log_colorbar_major_ticks(vmin, vmax);
+            let major_labels = format_tick_labels_for_scale(&major_values, scale);
+            let minor_values = if show_log_subticks {
+                generate_log_colorbar_minor_ticks(vmin, vmax)
+            } else {
+                Vec::new()
+            };
+
+            ColorbarTicks {
+                major_values,
+                major_labels,
+                minor_values,
+            }
+        }
+        _ => {
+            let major_values = crate::axes::generate_ticks_for_scale(vmin, vmax, 6, scale);
+            let major_labels = format_tick_labels_for_scale(&major_values, scale);
+
+            ColorbarTicks {
+                major_values,
+                major_labels,
+                minor_values: Vec::new(),
+            }
+        }
+    }
 }
 
 /// Format a tick value using the unified TickFormatter

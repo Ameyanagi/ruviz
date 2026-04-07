@@ -478,6 +478,137 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    fn rect_bounds(x: f32, y: f32, width: f32, height: f32) -> Option<(f32, f32, f32, f32)> {
+        let left = x.min(x + width);
+        let right = x.max(x + width);
+        let top = y.min(y + height);
+        let bottom = y.max(y + height);
+
+        if !left.is_finite() || !right.is_finite() || !top.is_finite() || !bottom.is_finite() {
+            return None;
+        }
+
+        if right <= left || bottom <= top {
+            None
+        } else {
+            Some((left, top, right - left, bottom - top))
+        }
+    }
+
+    fn pixel_aligned_rect_bounds(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Option<(f32, f32, f32, f32)> {
+        let (left, top, width, height) = Self::rect_bounds(x, y, width, height)?;
+        let right = (left + width).round();
+        let bottom = (top + height).round();
+        let left = left.round();
+        let top = top.round();
+
+        if right <= left || bottom <= top {
+            None
+        } else {
+            Some((left, top, right - left, bottom - top))
+        }
+    }
+
+    fn draw_composited_solid_rectangle(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        let Some((x, y, width, height)) = Self::rect_bounds(x, y, width, height) else {
+            return Ok(());
+        };
+        let rect = Rect::from_xywh(x, y, width, height).ok_or(PlottingError::RenderError(
+            "Invalid rectangle dimensions".to_string(),
+        ))?;
+
+        let mut path = PathBuilder::new();
+        path.push_rect(rect);
+        let path = path.finish().ok_or(PlottingError::RenderError(
+            "Failed to create rectangle path".to_string(),
+        ))?;
+
+        let mut paint = Paint::default();
+        paint.set_color(color.to_tiny_skia_color());
+        paint.anti_alias = true;
+
+        self.fill_path_masked(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        )?;
+
+        Ok(())
+    }
+
+    /// Draw a rectangle snapped to whole-pixel edges when the fill is fully opaque.
+    ///
+    /// This is useful for tiled raster-like visuals such as heatmaps and filled
+    /// contour cells where adjacent shapes should share exact boundaries. When
+    /// the input is translucent or snapping would collapse the tile, this
+    /// falls back to the normal composited fill path so alpha blending and
+    /// subpixel coverage are preserved.
+    pub fn draw_pixel_aligned_solid_rectangle(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        if color.a != u8::MAX {
+            return self.draw_composited_solid_rectangle(x, y, width, height, color);
+        }
+
+        if let Some((x, y, width, height)) = Self::pixel_aligned_rect_bounds(x, y, width, height) {
+            let left = x.max(0.0).floor() as u32;
+            let top = y.max(0.0).floor() as u32;
+            let right = (x + width).min(self.width as f32).ceil() as u32;
+            let bottom = (y + height).min(self.height as f32).ceil() as u32;
+
+            if left < right && top < bottom {
+                let fill = color.to_tiny_skia_color().premultiply().to_color_u8();
+
+                let pixels = self.pixmap.pixels_mut();
+                for py in top..bottom {
+                    let row_start = (py * self.width) as usize;
+                    for px in left..right {
+                        pixels[row_start + px as usize] = fill;
+                    }
+                }
+
+                return Ok(());
+            }
+        }
+
+        self.draw_composited_solid_rectangle(x, y, width, height, color)
+    }
+
+    /// Draw a rectangle outline snapped to whole-pixel edges.
+    pub fn draw_pixel_aligned_rectangle_outline(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        if let Some((x, y, width, height)) = Self::pixel_aligned_rect_bounds(x, y, width, height) {
+            self.draw_rectangle(x, y, width, height, color, false)?;
+        }
+
+        Ok(())
+    }
+
     /// Draw a rounded rectangle with the given corner radius
     pub fn draw_rounded_rectangle(
         &mut self,

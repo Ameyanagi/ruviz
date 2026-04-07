@@ -171,6 +171,7 @@ pub struct MeasuredDimensions {
     pub ylabel: Option<(f32, f32)>,
     pub xtick: Option<(f32, f32)>,
     pub ytick: Option<(f32, f32)>,
+    pub right_margin: Option<f32>,
 }
 
 // =============================================================================
@@ -275,6 +276,7 @@ impl LayoutCalculator {
         let measured_ylabel = measurements.and_then(|m| m.ylabel);
         let measured_xtick = measurements.and_then(|m| m.xtick);
         let measured_ytick = measurements.and_then(|m| m.ytick);
+        let measured_right_margin = measurements.and_then(|m| m.right_margin);
 
         let title_height = if content.title.is_some() {
             measured_title
@@ -334,7 +336,9 @@ impl LayoutCalculator {
             min_left += ylabel_width + label_pad;
         }
 
-        let min_right = edge_buffer;
+        let min_right = measured_right_margin
+            .unwrap_or(edge_buffer)
+            .max(edge_buffer);
 
         // Clamp margins to max fraction of dimension
         let max_h_margin = canvas_width * self.config.max_margin_fraction;
@@ -550,6 +554,7 @@ mod tests {
             ylabel: Some((140.0, 50.0)),
             xtick: None,
             ytick: None,
+            right_margin: None,
         };
         let measured = calculator.compute(
             (640, 480),
@@ -691,6 +696,35 @@ mod tests {
         // At 100 DPI, 10pt = ~14px
         let expected_buffer = 10.0 * 100.0 / 72.0;
         assert!(layout.margins.right >= expected_buffer - 1.0);
+    }
+
+    #[test]
+    fn test_layout_measured_right_margin_keeps_edge_buffer_floor() {
+        let calculator = LayoutCalculator::new(LayoutConfig {
+            edge_buffer_pt: 10.0,
+            center_plot: false,
+            ..Default::default()
+        });
+        let content = PlotContent::new();
+        let measured = MeasuredDimensions {
+            right_margin: Some(2.0),
+            ..Default::default()
+        };
+
+        let layout = calculator.compute(
+            (640, 480),
+            &content,
+            &default_typography(),
+            &default_spacing(),
+            100.0,
+            Some(&measured),
+        );
+
+        let expected_buffer = 10.0 * 100.0 / 72.0;
+        assert!(
+            layout.margins.right >= expected_buffer - 1.0,
+            "measured right margins should not shrink below the configured edge buffer"
+        );
     }
 
     #[test]

@@ -673,6 +673,137 @@ fn test_hover_refreshes_after_time_change() {
 }
 
 #[test]
+fn test_heatmap_hover_skips_masked_log_cells() {
+    let values = vec![vec![0.0, 1.0, 10.0]];
+    let plot: Plot = Plot::new()
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .value_scale(crate::axes::AxisScale::Log)
+                    .colorbar(false),
+            ),
+        )
+        .into();
+    let session = plot.prepare_interactive();
+
+    session
+        .render_to_surface(render_target())
+        .expect("log heatmap surface frame should render");
+
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available after log heatmap render");
+    let (masked_x, masked_y) = map_data_to_pixels(
+        0.5,
+        0.5,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    session.apply_input(PlotInputEvent::Hover {
+        position_px: ViewportPoint::new(masked_x as f64, masked_y as f64),
+    });
+
+    let state = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .clone();
+    assert!(state.hovered.is_none());
+    assert!(state.tooltip.is_none());
+
+    let (valid_x, valid_y) = map_data_to_pixels(
+        1.5,
+        0.5,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    session.apply_input(PlotInputEvent::Hover {
+        position_px: ViewportPoint::new(valid_x as f64, valid_y as f64),
+    });
+
+    let state = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .clone();
+    match state.hovered {
+        Some(HitResult::HeatmapCell {
+            row, col, value, ..
+        }) => {
+            assert_eq!((row, col), (0, 1));
+            assert_eq!(value, 1.0);
+        }
+        other => panic!("expected unmasked heatmap hover hit, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
+    let values = vec![vec![0.0, 1.0, 10.0]];
+    let plot: Plot = Plot::new()
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .value_scale(crate::axes::AxisScale::Log)
+                    .colorbar(false),
+            ),
+        )
+        .into();
+    let session = plot.prepare_interactive();
+
+    session
+        .render_to_surface(render_target())
+        .expect("log heatmap surface frame should render");
+
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available after log heatmap render");
+    let snapshot = session.prepared_plot().plot().snapshot_series(0.0);
+
+    let masked = HitResult::HeatmapCell {
+        series_index: 0,
+        row: 0,
+        col: 0,
+        value: 0.0,
+        screen_rect: ViewportRect::from_points(
+            ViewportPoint::new(0.0, 0.0),
+            ViewportPoint::new(1.0, 1.0),
+        ),
+    };
+    assert!(refresh_hit_result(&masked, &snapshot, &geometry).is_none());
+
+    let valid = HitResult::HeatmapCell {
+        series_index: 0,
+        row: 0,
+        col: 1,
+        value: 1.0,
+        screen_rect: ViewportRect::from_points(
+            ViewportPoint::new(0.0, 0.0),
+            ViewportPoint::new(1.0, 1.0),
+        ),
+    };
+    match refresh_hit_result(&valid, &snapshot, &geometry) {
+        Some(HitResult::HeatmapCell {
+            row, col, value, ..
+        }) => {
+            assert_eq!((row, col), (0, 1));
+            assert_eq!(value, 1.0);
+        }
+        other => panic!("expected refresh to preserve unmasked heatmap cell, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_zoom_keeps_cursor_anchor_stable() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 10.0], &[0.0, 10.0])
