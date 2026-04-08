@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.5] - 2026-04-08
+
+### Fixed
+
+- The `Python Packaging` CI job now installs the `wasm32-unknown-unknown` target before rebuilding the notebook widget bundle, fixing the tag-triggered packaging failure that blocked the `v0.4.4` release workflow.
+
 ## [0.4.4] - 2026-04-08
 
 ### Changed
@@ -301,7 +307,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/Ameyanagi/ruviz/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/Ameyanagi/ruviz/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/Ameyanagi/ruviz/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Ameyanagi/ruviz/compare/v0.4.1...v0.4.2

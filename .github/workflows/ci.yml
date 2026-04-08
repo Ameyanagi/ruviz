@@ -246,6 +246,9 @@ jobs:
       - name: Sync Python dependencies
         run: cd python && uv sync
 
+      - name: Install wasm target
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
 
