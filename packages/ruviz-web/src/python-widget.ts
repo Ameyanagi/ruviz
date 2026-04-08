@@ -386,6 +386,10 @@ function render({ model, el }: RenderContext): () => void {
   let activeResizePointerId: number | null = null;
 
   const finishResize = (): void => {
+    const pointerId = activeResizePointerId;
+    if (pointerId !== null && resizeHandle.hasPointerCapture(pointerId)) {
+      resizeHandle.releasePointerCapture(pointerId);
+    }
     isResizingWidget = false;
     activeResizePointerId = null;
     resizeHandle.style.background = RESIZE_HANDLE_BACKGROUND;
@@ -406,6 +410,11 @@ function render({ model, el }: RenderContext): () => void {
     resizeStartHeight = viewport.getBoundingClientRect().height;
     resizeStartAspectRatio = resizeStartHeight > 0 ? resizeStartWidth / resizeStartHeight : 1;
     resizeHandle.style.background = RESIZE_HANDLE_BACKGROUND_ACTIVE;
+    try {
+      resizeHandle.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic tests can dispatch pointer events without creating a browser-managed active pointer.
+    }
   };
 
   const onResizeHandlePointerMove = (event: PointerEvent): void => {
