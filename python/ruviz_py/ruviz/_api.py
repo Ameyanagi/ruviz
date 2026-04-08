@@ -890,7 +890,7 @@ class Plot:
         return Image(data=self.render_png(), format="png")
 
     def show(self) -> Any:
-        """Display a static image in Jupyter or open a native interactive window."""
+        """Display a static image in Jupyter or open a native interactive window when available."""
         if _is_notebook():
             from IPython.display import display
 

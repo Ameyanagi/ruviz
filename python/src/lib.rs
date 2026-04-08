@@ -7,7 +7,6 @@ use pyo3::{
 };
 use ruviz::{
     core::{IntoPlot, Plot},
-    interactive::show_interactive,
     render::Theme,
 };
 use serde::Deserialize;
@@ -15,6 +14,12 @@ use serde::Deserialize;
 mod native_handle;
 
 use native_handle::{NativeObservable1D, NativePlotHandle};
+
+#[cfg(feature = "native-interactive")]
+use ruviz::interactive::show_interactive;
+
+#[cfg(not(feature = "native-interactive"))]
+pub(crate) const NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE: &str = "native interactive windows are unavailable in this wheel; install ruviz from source on Linux to enable plot.show()";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -379,9 +384,21 @@ fn save(snapshot_json: &str, path: &str) -> PyResult<()> {
 
 #[pyfunction]
 fn show_native(snapshot_json: &str) -> PyResult<()> {
+    #[cfg(not(feature = "native-interactive"))]
+    {
+        let _ = snapshot_json;
+        return Err(PyRuntimeError::new_err(
+            NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE,
+        ));
+    }
+
+    #[cfg(feature = "native-interactive")]
     let plot = parse_plot(snapshot_json)?;
-    pollster::block_on(show_interactive(plot))
-        .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    #[cfg(feature = "native-interactive")]
+    {
+        pollster::block_on(show_interactive(plot))
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    }
 }
 
 #[pyfunction]
