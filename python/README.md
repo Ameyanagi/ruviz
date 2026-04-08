@@ -39,7 +39,8 @@ y = x**2
 
 - In Jupyter, `plot.show()` displays a static PNG in the cell output.
 - Use `plot.widget()` when you want the synced WASM-backed notebook widget.
-- `plot.size_px(width, height)` also controls the widget's displayed aspect ratio.
+- `plot.size_px(width, height)` also controls the widget's displayed size and aspect ratio.
+- In the widget, right click opens the export menu and right drag performs box zoom.
 - Outside notebooks, `plot.show()` opens the native interactive window.
 - `plot.render_png()` and `plot.render_svg()` return in-memory export data.
 
