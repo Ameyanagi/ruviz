@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: write
+  checks: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,60 +30,27 @@ jobs:
     name: Wait for CI
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout workflow utilities
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/checkout@v4
+
       - name: Skip CI wait during manual recovery
         if: github.event_name == 'workflow_dispatch'
         run: echo "Manual release dispatch skips push-check waiting."
 
-      - name: Wait for CI to complete
+      - name: Wait for required CI checks to complete
         if: github.event_name != 'workflow_dispatch'
-        uses: fountainhead/action-wait-for-check@v1.2.0
-        id: wait-for-ci
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: 'Test Fast Lane'
-          ref: ${{ github.sha }}
-          timeoutSeconds: 600
-          intervalSeconds: 15
-
-      - name: Fail if CI failed
-        if: github.event_name != 'workflow_dispatch' && steps.wait-for-ci.outputs.conclusion != 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "CI check failed with conclusion: ${{ steps.wait-for-ci.outputs.conclusion }}"
-          exit 1
-
-      - name: Wait for Python CI to complete
-        if: github.event_name != 'workflow_dispatch'
-        uses: fountainhead/action-wait-for-check@v1.2.0
-        id: wait-for-python
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: 'Python'
-          ref: ${{ github.sha }}
-          timeoutSeconds: 600
-          intervalSeconds: 15
-
-      - name: Fail if Python CI failed
-        if: github.event_name != 'workflow_dispatch' && steps.wait-for-python.outputs.conclusion != 'success'
-        run: |
-          echo "Python CI check failed with conclusion: ${{ steps.wait-for-python.outputs.conclusion }}"
-          exit 1
-
-      - name: Wait for Python packaging CI to complete
-        if: github.event_name != 'workflow_dispatch'
-        uses: fountainhead/action-wait-for-check@v1.2.0
-        id: wait-for-python-packaging
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: 'Python Packaging'
-          ref: ${{ github.sha }}
-          timeoutSeconds: 600
-          intervalSeconds: 15
-
-      - name: Fail if Python packaging CI failed
-        if: github.event_name != 'workflow_dispatch' && steps.wait-for-python-packaging.outputs.conclusion != 'success'
-        run: |
-          echo "Python packaging CI check failed with conclusion: ${{ steps.wait-for-python-packaging.outputs.conclusion }}"
-          exit 1
+          python3 scripts/wait_for_github_checks.py \
+            --repo "${{ github.repository }}" \
+            --sha "${{ github.sha }}" \
+            --timeout 2400 \
+            --interval 15 \
+            --check "Test Fast Lane" \
+            --check "Python" \
+            --check "Python Packaging"
 
   build-release:
     name: Build Release
