@@ -384,6 +384,7 @@ export class NotebookCanvasSession {
     this.#cleanup.push(
       installCanvasResize(canvas, (width, height, scaleFactor) => {
         this.resize(width, height, scaleFactor);
+        this.render();
       }),
     );
     this.#cleanup.push(

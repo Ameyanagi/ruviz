@@ -321,8 +321,9 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       const initialBox = await waitForElementBox(viewport);
       mount.style.width = "600px";
       const shrunkBox = await waitForElementBox(viewport, initialBox);
+      const shrunkImage = await waitForCanvasChange(canvas, initialImage);
       model.setSnapshot(buildSnapshot("widget updated", [1.1, 0.4, 1.0, 0.2], [360, 360]));
-      const updatedImage = await waitForCanvasChange(canvas, initialImage);
+      const updatedImage = await waitForCanvasChange(canvas, shrunkImage);
       const updatedBox = await waitForElementBox(viewport, shrunkBox);
 
       if (typeof cleanup === "function") {
@@ -330,7 +331,7 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       }
 
       mount.remove();
-      return { initialBox, initialImage, shrunkBox, updatedBox, updatedImage };
+      return { initialBox, initialImage, shrunkBox, shrunkImage, updatedBox, updatedImage };
     } finally {
       URL.revokeObjectURL(moduleUrl);
     }
@@ -342,9 +343,307 @@ test("python widget bundle renders when loaded from a blob-backed module", async
   expect(result.initialBox.height).toBeCloseTo(360, 0);
   expect(result.shrunkBox.width).toBeCloseTo(600, 0);
   expect(result.shrunkBox.height).toBeCloseTo(337.5, 0);
+  expect(result.initialImage).not.toEqual(result.shrunkImage);
   expect(result.updatedBox.width).toBeCloseTo(360, 0);
   expect(result.updatedBox.height).toBeCloseTo(360, 0);
-  expect(result.initialImage).not.toEqual(result.updatedImage);
+  expect(result.shrunkImage).not.toEqual(result.updatedImage);
+});
+
+test("python widget bundle uses the default PNG size when sizePx is omitted", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error));
+  });
+
+  const result = await page.evaluate(async (widgetSource) => {
+    const demo = window.__ruvizDemo;
+    if (!demo?.sdk) {
+      throw new Error("SDK test hooks are unavailable");
+    }
+
+    const snapshot = demo.sdk
+      .createPlot()
+      .setTitle("widget default size")
+      .setXLabel("x")
+      .setYLabel("y")
+      .addLine({
+        x: Array.from({ length: 60 }, (_, index) => index / 10),
+        y: Array.from({ length: 60 }, (_, index) => Math.sin(index / 10)),
+      })
+      .toSnapshot();
+
+    const model = {
+      snapshot,
+      get(name) {
+        return name === "snapshot" ? this.snapshot : undefined;
+      },
+      on() {},
+      off() {},
+    };
+
+    const waitForElementBox = async (element, previousBox = null) => {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const box = element.getBoundingClientRect();
+        const candidate = { width: box.width, height: box.height };
+        if (
+          candidate.width > 0 &&
+          candidate.height > 0 &&
+          (!previousBox ||
+            Math.abs(candidate.width - previousBox.width) > 0.5 ||
+            Math.abs(candidate.height - previousBox.height) > 0.5)
+        ) {
+          return candidate;
+        }
+      }
+      throw new Error("widget element size did not settle");
+    };
+
+    const mount = document.createElement("div");
+    mount.id = "python-widget-default-size-host";
+    mount.style.width = "1000px";
+    document.body.appendChild(mount);
+
+    const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
+
+    try {
+      const mod = await import(moduleUrl);
+      const cleanup = mod.default.render({ model, el: mount });
+      const viewport = mount.querySelector("[data-ruviz-widget-viewport='true']");
+      if (!(viewport instanceof HTMLDivElement)) {
+        throw new Error("widget bundle did not create a viewport");
+      }
+
+      const roomyBox = await waitForElementBox(viewport);
+      mount.style.width = "500px";
+      const constrainedBox = await waitForElementBox(viewport, roomyBox);
+
+      if (typeof cleanup === "function") {
+        cleanup();
+      }
+
+      mount.remove();
+      return { roomyBox, constrainedBox };
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  }, PYTHON_WIDGET_BUNDLE);
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(result.roomyBox.width).toBeCloseTo(640, 0);
+  expect(result.roomyBox.height).toBeCloseTo(480, 0);
+  expect(result.constrainedBox.width).toBeCloseTo(500, 0);
+  expect(result.constrainedBox.height).toBeCloseTo(375, 0);
+});
+
+test("python widget bundle can be resized by dragging the resize handle", async ({ page }) => {
+  await waitForDemoReady(page);
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error));
+  });
+
+  await page.evaluate(async (widgetSource) => {
+    const demo = window.__ruvizDemo;
+    if (!demo?.sdk) {
+      throw new Error("SDK test hooks are unavailable");
+    }
+
+    const snapshot = demo.sdk
+      .createPlot()
+      .setSizePx(640, 360)
+      .setTitle("widget resize handle")
+      .setXLabel("x")
+      .setYLabel("y")
+      .addLine({
+        x: Array.from({ length: 120 }, (_, index) => index / 8),
+        y: Array.from({ length: 120 }, (_, index) => Math.sin(index / 8)),
+      })
+      .toSnapshot();
+
+    const model = {
+      snapshot,
+      get(name) {
+        return name === "snapshot" ? this.snapshot : undefined;
+      },
+      on() {},
+      off() {},
+    };
+
+    const mount = document.createElement("div");
+    mount.id = "python-widget-resize-host";
+    mount.style.width = "900px";
+    document.body.appendChild(mount);
+
+    const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
+    const mod = await import(moduleUrl);
+    const cleanup = mod.default.render({ model, el: mount });
+
+    window.__ruvizWidgetResizeTest = {
+      dispatchGesture: ({
+        dx,
+        dy,
+        pointerId = 1,
+        pointerType = "mouse",
+        shiftKey = false,
+        ctrlKey = false,
+      }) => {
+        const handle = document.querySelector("[data-ruviz-widget-resize-handle='true']");
+        if (!(handle instanceof HTMLElement)) {
+          throw new Error("widget bundle did not create a resize handle");
+        }
+        const rect = handle.getBoundingClientRect();
+        const startX = rect.left + rect.width / 2;
+        const startY = rect.top + rect.height / 2;
+        const baseEvent = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 0,
+          isPrimary: true,
+          pointerId,
+          pointerType,
+          shiftKey,
+          ctrlKey,
+        };
+        handle.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            ...baseEvent,
+            buttons: 1,
+            clientX: startX,
+            clientY: startY,
+          }),
+        );
+        document.dispatchEvent(
+          new PointerEvent("pointermove", {
+            ...baseEvent,
+            buttons: 1,
+            clientX: startX + dx,
+            clientY: startY + dy,
+          }),
+        );
+        document.dispatchEvent(
+          new PointerEvent("pointerup", {
+            ...baseEvent,
+            buttons: 0,
+            clientX: startX + dx,
+            clientY: startY + dy,
+          }),
+        );
+      },
+      cleanup: () => {
+        if (typeof cleanup === "function") {
+          cleanup();
+        }
+        mount.remove();
+        URL.revokeObjectURL(moduleUrl);
+      },
+    };
+  }, PYTHON_WIDGET_BUNDLE);
+
+  try {
+    const host = page.locator("#python-widget-resize-host");
+    const viewport = host.locator("[data-ruviz-widget-viewport='true']");
+
+    const initialBox = await viewport.boundingBox();
+    expect(initialBox).not.toBeNull();
+    const initialRatio = (initialBox?.width ?? 1) / (initialBox?.height ?? 1);
+
+    await page.evaluate(() => {
+      window.__ruvizWidgetResizeTest.dispatchGesture({ dx: 120, dy: 60, pointerId: 1 });
+    });
+
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.width ?? 0)
+      .toBeGreaterThan((initialBox?.width ?? 0) + 80);
+
+    const freeformBox = await viewport.boundingBox();
+    expect(freeformBox).not.toBeNull();
+    expect(freeformBox.width).toBeCloseTo(760, 0);
+    expect(freeformBox.height).toBeCloseTo(420, 0);
+    expect(Math.abs(freeformBox.width / freeformBox.height - initialRatio)).toBeGreaterThan(0.01);
+
+    await page.evaluate(() => {
+      window.__ruvizWidgetResizeTest.dispatchGesture({
+        dx: -40,
+        dy: 50,
+        pointerId: 2,
+        pointerType: "touch",
+      });
+    });
+
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.width ?? 0)
+      .toBeLessThan(freeformBox.width - 20);
+
+    const touchBox = await viewport.boundingBox();
+    expect(touchBox).not.toBeNull();
+    expect(touchBox.height).toBeCloseTo(470, 0);
+    expect(Math.abs(touchBox.width / touchBox.height - initialRatio)).toBeGreaterThan(0.01);
+
+    const touchRatio = touchBox.width / touchBox.height;
+    await page.evaluate(() => {
+      window.__ruvizWidgetResizeTest.dispatchGesture({
+        dx: 100,
+        dy: 20,
+        pointerId: 3,
+        shiftKey: true,
+      });
+    });
+
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(touchBox.width + 60);
+
+    const lockedBox = await viewport.boundingBox();
+    expect(lockedBox).not.toBeNull();
+    expect(Math.abs(lockedBox.width / lockedBox.height - touchRatio)).toBeLessThan(0.02);
+
+    await page.evaluate(() => {
+      window.__ruvizWidgetResizeTest.dispatchGesture({
+        dx: -2000,
+        dy: 10,
+        pointerId: 4,
+        ctrlKey: true,
+      });
+    });
+
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.height ?? 0)
+      .toBeLessThan(lockedBox.height - 200);
+
+    const minLockedBox = await viewport.boundingBox();
+    expect(minLockedBox).not.toBeNull();
+    const minLockedRatio = lockedBox.width / lockedBox.height;
+    const expectedMinWidth = Math.max(220, 160 * minLockedRatio);
+    expect(minLockedBox.height).toBeCloseTo(expectedMinWidth / minLockedRatio, 0);
+    expect(minLockedBox.width).toBeCloseTo(expectedMinWidth, 0);
+    expect(Math.abs(minLockedBox.width / minLockedBox.height - minLockedRatio)).toBeLessThan(0.02);
+  } finally {
+    await page.evaluate(() => {
+      window.__ruvizWidgetResizeTest?.cleanup?.();
+      delete window.__ruvizWidgetResizeTest;
+    });
+  }
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
 });
 
 test("python widget bundle uses a right-click export menu without breaking zoom", async ({

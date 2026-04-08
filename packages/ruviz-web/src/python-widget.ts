@@ -14,9 +14,28 @@ interface RenderContext {
 }
 
 let rawModuleConfigured = false;
-const DEFAULT_WIDGET_HEIGHT_PX = 420;
+const DEFAULT_FALLBACK_WIDGET_WIDTH_PX = 640;
+const DEFAULT_FALLBACK_WIDGET_HEIGHT_PX = 480;
 const CONTEXT_MENU_EDGE_MARGIN_PX = 8;
 const CONTEXT_MENU_MIN_WIDTH_PX = 150;
+const MIN_WIDGET_HEIGHT_PX = 160;
+const MIN_WIDGET_WIDTH_PX = 220;
+const RESIZE_HANDLE_SIZE_PX = 16;
+const CONTEXT_MENU_BACKGROUND =
+  "var(--vscode-menu-background, var(--jp-layout-color1, rgba(248, 250, 252, 0.98)))";
+const CONTEXT_MENU_FOREGROUND = "var(--vscode-menu-foreground, var(--jp-ui-font-color1, #111827))";
+const CONTEXT_MENU_BORDER =
+  "var(--vscode-widget-border, var(--jp-border-color2, rgba(15, 23, 42, 0.32)))";
+const CONTEXT_MENU_HOVER_BACKGROUND =
+  "var(--vscode-list-hoverBackground, var(--jp-layout-color2, rgba(15, 23, 42, 0.08)))";
+const CONTEXT_MENU_FOCUS_RING = "var(--vscode-focusBorder, rgba(37, 99, 235, 0.85))";
+const CONTEXT_MENU_SHADOW = "0 18px 40px rgba(15, 23, 42, 0.28), 0 6px 14px rgba(15, 23, 42, 0.18)";
+const RESIZE_HANDLE_BACKGROUND =
+  "var(--vscode-button-secondaryBackground, var(--jp-layout-color2, rgba(15, 23, 42, 0.18)))";
+const RESIZE_HANDLE_BACKGROUND_ACTIVE =
+  "var(--vscode-button-background, var(--jp-brand-color1, rgba(37, 99, 235, 0.92)))";
+const RESIZE_HANDLE_BORDER =
+  "var(--vscode-widget-border, var(--jp-border-color2, rgba(15, 23, 42, 0.32)))";
 
 function cloneBytes(bytes: Uint8Array<ArrayBufferLike>): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(bytes);
@@ -60,14 +79,50 @@ function waitForLayoutPaint(): Promise<void> {
   });
 }
 
+function resolveWidgetDisplaySize(snapshot: PlotSnapshot | undefined): {
+  width: number;
+  height: number;
+} {
+  const sizePx = snapshot?.sizePx;
+  if (
+    Array.isArray(sizePx) &&
+    sizePx.length === 2 &&
+    Number.isFinite(sizePx[0]) &&
+    Number.isFinite(sizePx[1]) &&
+    sizePx[0] > 0 &&
+    sizePx[1] > 0
+  ) {
+    return {
+      width: Math.round(sizePx[0]),
+      height: Math.round(sizePx[1]),
+    };
+  }
+
+  return {
+    width: DEFAULT_FALLBACK_WIDGET_WIDTH_PX,
+    height: DEFAULT_FALLBACK_WIDGET_HEIGHT_PX,
+  };
+}
+
 function applyWidgetLayout(
   wrapper: HTMLDivElement,
   viewport: HTMLDivElement,
   canvas: HTMLCanvasElement,
   snapshot: PlotSnapshot | undefined,
-): void {
-  const sizePx = snapshot?.sizePx;
-  wrapper.style.width = "100%";
+  sizeOverridePx: { width: number; height: number } | null = null,
+): { width: number; height: number; naturalWidth: number; naturalHeight: number } {
+  const { width: naturalWidth, height: naturalHeight } = resolveWidgetDisplaySize(snapshot);
+  const width =
+    sizeOverridePx && Number.isFinite(sizeOverridePx.width)
+      ? Math.max(MIN_WIDGET_WIDTH_PX, Math.round(sizeOverridePx.width))
+      : naturalWidth;
+  const height =
+    sizeOverridePx && Number.isFinite(sizeOverridePx.height)
+      ? Math.max(MIN_WIDGET_HEIGHT_PX, Math.round(sizeOverridePx.height))
+      : (width * naturalHeight) / naturalWidth;
+
+  wrapper.style.width = `${width}px`;
+  wrapper.style.maxWidth = "100%";
   wrapper.style.boxSizing = "border-box";
 
   viewport.style.width = "100%";
@@ -79,24 +134,38 @@ function applyWidgetLayout(
   canvas.style.boxSizing = "border-box";
   canvas.style.width = "100%";
   canvas.style.height = "100%";
-
-  if (
-    Array.isArray(sizePx) &&
-    sizePx.length === 2 &&
-    Number.isFinite(sizePx[0]) &&
-    Number.isFinite(sizePx[1]) &&
-    sizePx[0] > 0 &&
-    sizePx[1] > 0
-  ) {
-    wrapper.style.maxWidth = `${sizePx[0]}px`;
-    viewport.style.aspectRatio = `${sizePx[0]} / ${sizePx[1]}`;
+  if (sizeOverridePx) {
+    viewport.style.aspectRatio = "";
+    viewport.style.height = `${height}px`;
+  } else {
+    viewport.style.aspectRatio = `${naturalWidth} / ${naturalHeight}`;
     viewport.style.height = "";
-    return;
+  }
+  return { width, height, naturalWidth, naturalHeight };
+}
+
+function resolveLockedResize(
+  startWidth: number,
+  startHeight: number,
+  aspectRatio: number,
+  rawWidthDelta: number,
+  rawHeightDelta: number,
+): { width: number; height: number } {
+  if (Math.abs(rawWidthDelta) >= Math.abs(rawHeightDelta * aspectRatio)) {
+    const minWidth = Math.max(MIN_WIDGET_WIDTH_PX, MIN_WIDGET_HEIGHT_PX * aspectRatio);
+    const width = Math.max(minWidth, startWidth + rawWidthDelta);
+    return {
+      width,
+      height: width / aspectRatio,
+    };
   }
 
-  wrapper.style.maxWidth = "";
-  viewport.style.aspectRatio = "";
-  viewport.style.height = `${DEFAULT_WIDGET_HEIGHT_PX}px`;
+  const minHeight = Math.max(MIN_WIDGET_HEIGHT_PX, MIN_WIDGET_WIDTH_PX / aspectRatio);
+  const height = Math.max(minHeight, startHeight + rawHeightDelta);
+  return {
+    width: height * aspectRatio,
+    height,
+  };
 }
 
 function render({ model, el }: RenderContext): () => void {
@@ -116,7 +185,25 @@ function render({ model, el }: RenderContext): () => void {
   const canvas = document.createElement("canvas");
   canvas.style.border = "1px solid rgba(0, 0, 0, 0.12)";
   viewport.appendChild(canvas);
-  applyWidgetLayout(wrapper, viewport, canvas, getSnapshot(model));
+  let displaySizeOverridePx: { width: number; height: number } | null = null;
+  applyWidgetLayout(wrapper, viewport, canvas, getSnapshot(model), displaySizeOverridePx);
+
+  const resizeHandle = document.createElement("div");
+  resizeHandle.dataset.ruvizWidgetResizeHandle = "true";
+  resizeHandle.style.position = "absolute";
+  resizeHandle.style.right = "0.5rem";
+  resizeHandle.style.bottom = "0.5rem";
+  resizeHandle.style.width = `${RESIZE_HANDLE_SIZE_PX}px`;
+  resizeHandle.style.height = `${RESIZE_HANDLE_SIZE_PX}px`;
+  resizeHandle.style.border = `1px solid ${RESIZE_HANDLE_BORDER}`;
+  resizeHandle.style.borderRadius = "0.35rem";
+  resizeHandle.style.background = RESIZE_HANDLE_BACKGROUND;
+  resizeHandle.style.boxShadow = "0 2px 8px rgba(15, 23, 42, 0.14)";
+  resizeHandle.style.cursor = "nwse-resize";
+  resizeHandle.style.zIndex = "11";
+  resizeHandle.style.boxSizing = "border-box";
+  resizeHandle.style.touchAction = "none";
+  resizeHandle.style.userSelect = "none";
 
   const menu = document.createElement("div");
   menu.dataset.ruvizWidgetMenu = "true";
@@ -126,10 +213,12 @@ function render({ model, el }: RenderContext): () => void {
   menu.style.zIndex = "10";
   menu.style.minWidth = `${CONTEXT_MENU_MIN_WIDTH_PX}px`;
   menu.style.padding = "0.25rem";
-  menu.style.border = "1px solid rgba(0, 0, 0, 0.18)";
+  menu.style.border = `1px solid ${CONTEXT_MENU_BORDER}`;
   menu.style.borderRadius = "0.5rem";
-  menu.style.background = "rgba(255, 255, 255, 0.98)";
-  menu.style.boxShadow = "0 8px 20px rgba(0, 0, 0, 0.16)";
+  menu.style.background = CONTEXT_MENU_BACKGROUND;
+  menu.style.color = CONTEXT_MENU_FOREGROUND;
+  menu.style.boxShadow = CONTEXT_MENU_SHADOW;
+  menu.style.backdropFilter = "blur(10px)";
   menu.style.boxSizing = "border-box";
   menu.style.gridAutoFlow = "row";
   menu.style.gap = "0.125rem";
@@ -152,6 +241,44 @@ function render({ model, el }: RenderContext): () => void {
     item.style.color = "inherit";
     item.style.textAlign = "left";
     item.style.cursor = "pointer";
+    item.style.font = "500 13px/1.35 system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
+    item.style.outline = "none";
+
+    const setDefaultItemStyle = (): void => {
+      item.style.background = "transparent";
+      item.style.boxShadow = "none";
+    };
+
+    const setHoveredItemStyle = (): void => {
+      item.style.background = CONTEXT_MENU_HOVER_BACKGROUND;
+    };
+
+    const setFocusedItemStyle = (): void => {
+      item.style.background = CONTEXT_MENU_HOVER_BACKGROUND;
+      item.style.boxShadow = `inset 0 0 0 1px ${CONTEXT_MENU_FOCUS_RING}`;
+    };
+
+    setDefaultItemStyle();
+
+    item.addEventListener("pointerenter", () => {
+      setHoveredItemStyle();
+    });
+
+    item.addEventListener("pointerleave", () => {
+      if (document.activeElement === item) {
+        setFocusedItemStyle();
+        return;
+      }
+      setDefaultItemStyle();
+    });
+
+    item.addEventListener("focus", () => {
+      setFocusedItemStyle();
+    });
+
+    item.addEventListener("blur", () => {
+      setDefaultItemStyle();
+    });
 
     item.addEventListener("click", () => {
       closeContextMenu();
@@ -222,14 +349,127 @@ function render({ model, el }: RenderContext): () => void {
     buildMenuItem("svg", "Save SVG", triggerSvgDownload),
   );
 
-  wrapper.append(viewport, menu);
+  wrapper.append(viewport, resizeHandle, menu);
   el.appendChild(wrapper);
+
+  const applyCurrentLayout = (snapshot: PlotSnapshot | undefined): void => {
+    applyWidgetLayout(wrapper, viewport, canvas, snapshot, displaySizeOverridePx);
+  };
+
+  let resizeRenderScheduled = false;
+  const scheduleResizeRender = (): void => {
+    if (resizeRenderScheduled) {
+      return;
+    }
+    resizeRenderScheduled = true;
+    requestAnimationFrame(async () => {
+      resizeRenderScheduled = false;
+      try {
+        const session = await sessionPromise;
+        if (!session.hasPlot()) {
+          return;
+        }
+        session.resize();
+        session.render();
+      } catch (error) {
+        console.error("Failed to resize the ruviz widget after a layout change.", error);
+      }
+    });
+  };
+
+  let isResizingWidget = false;
+  let resizeStartClientX = 0;
+  let resizeStartClientY = 0;
+  let resizeStartWidth = 0;
+  let resizeStartHeight = 0;
+  let resizeStartAspectRatio = 1;
+  let activeResizePointerId: number | null = null;
+
+  const finishResize = (): void => {
+    const pointerId = activeResizePointerId;
+    if (pointerId !== null && resizeHandle.hasPointerCapture(pointerId)) {
+      resizeHandle.releasePointerCapture(pointerId);
+    }
+    isResizingWidget = false;
+    activeResizePointerId = null;
+    resizeHandle.style.background = RESIZE_HANDLE_BACKGROUND;
+  };
+
+  const onResizeHandlePointerDown = (event: PointerEvent): void => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    closeContextMenu();
+    isResizingWidget = true;
+    activeResizePointerId = event.pointerId;
+    resizeStartClientX = event.clientX;
+    resizeStartClientY = event.clientY;
+    resizeStartWidth = wrapper.getBoundingClientRect().width;
+    resizeStartHeight = viewport.getBoundingClientRect().height;
+    resizeStartAspectRatio = resizeStartHeight > 0 ? resizeStartWidth / resizeStartHeight : 1;
+    resizeHandle.style.background = RESIZE_HANDLE_BACKGROUND_ACTIVE;
+    try {
+      resizeHandle.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic tests can dispatch pointer events without creating a browser-managed active pointer.
+    }
+  };
+
+  const onResizeHandlePointerMove = (event: PointerEvent): void => {
+    if (!isResizingWidget || activeResizePointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    const rawWidthDelta = event.clientX - resizeStartClientX;
+    const rawHeightDelta = event.clientY - resizeStartClientY;
+    let nextWidth = Math.max(MIN_WIDGET_WIDTH_PX, resizeStartWidth + rawWidthDelta);
+    let nextHeight = Math.max(MIN_WIDGET_HEIGHT_PX, resizeStartHeight + rawHeightDelta);
+
+    if (event.shiftKey || event.ctrlKey) {
+      ({ width: nextWidth, height: nextHeight } = resolveLockedResize(
+        resizeStartWidth,
+        resizeStartHeight,
+        resizeStartAspectRatio,
+        rawWidthDelta,
+        rawHeightDelta,
+      ));
+    }
+
+    displaySizeOverridePx = { width: nextWidth, height: nextHeight };
+    applyCurrentLayout(getSnapshot(model));
+    scheduleResizeRender();
+  };
+
+  const onResizeHandlePointerUp = (event: PointerEvent): void => {
+    if (!isResizingWidget || activeResizePointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    finishResize();
+  };
+
+  const onResizeHandlePointerCancel = (event: PointerEvent): void => {
+    if (!isResizingWidget || activeResizePointerId !== event.pointerId) {
+      return;
+    }
+
+    finishResize();
+  };
+
+  resizeHandle.addEventListener("pointerdown", onResizeHandlePointerDown);
+  document.addEventListener("pointermove", onResizeHandlePointerMove, true);
+  document.addEventListener("pointerup", onResizeHandlePointerUp, true);
+  document.addEventListener("pointercancel", onResizeHandlePointerCancel, true);
 
   const syncPlot = async (): Promise<void> => {
     try {
       closeContextMenu();
       const snapshot = getSnapshot(model);
-      applyWidgetLayout(wrapper, viewport, canvas, snapshot);
+      applyCurrentLayout(snapshot);
       const session = await sessionPromise;
       await waitForLayoutPaint();
       session.resize();
@@ -268,8 +508,13 @@ function render({ model, el }: RenderContext): () => void {
 
   return () => {
     closeContextMenu();
+    finishResize();
     document.removeEventListener("pointerdown", onDocumentPointerDown, true);
+    document.removeEventListener("pointermove", onResizeHandlePointerMove, true);
+    document.removeEventListener("pointerup", onResizeHandlePointerUp, true);
+    document.removeEventListener("pointercancel", onResizeHandlePointerCancel, true);
     document.removeEventListener("keydown", onDocumentKeyDown);
+    resizeHandle.removeEventListener("pointerdown", onResizeHandlePointerDown);
     model.off("change:snapshot", onSnapshotChange);
     void sessionPromise.then((session) => session.dispose());
   };
