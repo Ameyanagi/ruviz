@@ -144,6 +144,30 @@ function applyWidgetLayout(
   return { width, height, naturalWidth, naturalHeight };
 }
 
+function resolveLockedResize(
+  startWidth: number,
+  startHeight: number,
+  aspectRatio: number,
+  rawWidthDelta: number,
+  rawHeightDelta: number,
+): { width: number; height: number } {
+  if (Math.abs(rawWidthDelta) >= Math.abs(rawHeightDelta * aspectRatio)) {
+    const minWidth = Math.max(MIN_WIDGET_WIDTH_PX, MIN_WIDGET_HEIGHT_PX * aspectRatio);
+    const width = Math.max(minWidth, startWidth + rawWidthDelta);
+    return {
+      width,
+      height: width / aspectRatio,
+    };
+  }
+
+  const minHeight = Math.max(MIN_WIDGET_HEIGHT_PX, MIN_WIDGET_WIDTH_PX / aspectRatio);
+  const height = Math.max(minHeight, startHeight + rawHeightDelta);
+  return {
+    width: height * aspectRatio,
+    height,
+  };
+}
+
 function render({ model, el }: RenderContext): () => void {
   ensureRawModuleConfigured();
 
@@ -359,17 +383,23 @@ function render({ model, el }: RenderContext): () => void {
   let resizeStartWidth = 0;
   let resizeStartHeight = 0;
   let resizeStartAspectRatio = 1;
+  let activeResizePointerId: number | null = null;
 
   const finishResize = (): void => {
     isResizingWidget = false;
+    activeResizePointerId = null;
     resizeHandle.style.background = RESIZE_HANDLE_BACKGROUND;
   };
 
-  const onResizeHandleMouseDown = (event: MouseEvent): void => {
+  const onResizeHandlePointerDown = (event: PointerEvent): void => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     closeContextMenu();
     isResizingWidget = true;
+    activeResizePointerId = event.pointerId;
     resizeStartClientX = event.clientX;
     resizeStartClientY = event.clientY;
     resizeStartWidth = wrapper.getBoundingClientRect().width;
@@ -378,25 +408,25 @@ function render({ model, el }: RenderContext): () => void {
     resizeHandle.style.background = RESIZE_HANDLE_BACKGROUND_ACTIVE;
   };
 
-  const onResizeHandleMouseMove = (event: MouseEvent): void => {
-    if (!isResizingWidget) {
+  const onResizeHandlePointerMove = (event: PointerEvent): void => {
+    if (!isResizingWidget || activeResizePointerId !== event.pointerId) {
       return;
     }
 
     event.preventDefault();
-    const rawWidth = resizeStartWidth + event.clientX - resizeStartClientX;
-    const rawHeight = resizeStartHeight + event.clientY - resizeStartClientY;
-    let nextWidth = Math.max(MIN_WIDGET_WIDTH_PX, rawWidth);
-    let nextHeight = Math.max(MIN_WIDGET_HEIGHT_PX, rawHeight);
+    const rawWidthDelta = event.clientX - resizeStartClientX;
+    const rawHeightDelta = event.clientY - resizeStartClientY;
+    let nextWidth = Math.max(MIN_WIDGET_WIDTH_PX, resizeStartWidth + rawWidthDelta);
+    let nextHeight = Math.max(MIN_WIDGET_HEIGHT_PX, resizeStartHeight + rawHeightDelta);
 
     if (event.shiftKey || event.ctrlKey) {
-      const widthDelta = nextWidth - resizeStartWidth;
-      const heightDelta = nextHeight - resizeStartHeight;
-      if (Math.abs(widthDelta) >= Math.abs(heightDelta * resizeStartAspectRatio)) {
-        nextHeight = Math.max(MIN_WIDGET_HEIGHT_PX, nextWidth / resizeStartAspectRatio);
-      } else {
-        nextWidth = Math.max(MIN_WIDGET_WIDTH_PX, nextHeight * resizeStartAspectRatio);
-      }
+      ({ width: nextWidth, height: nextHeight } = resolveLockedResize(
+        resizeStartWidth,
+        resizeStartHeight,
+        resizeStartAspectRatio,
+        rawWidthDelta,
+        rawHeightDelta,
+      ));
     }
 
     displaySizeOverridePx = { width: nextWidth, height: nextHeight };
@@ -404,8 +434,8 @@ function render({ model, el }: RenderContext): () => void {
     scheduleResizeRender();
   };
 
-  const onResizeHandleMouseUp = (event: MouseEvent): void => {
-    if (!isResizingWidget) {
+  const onResizeHandlePointerUp = (event: PointerEvent): void => {
+    if (!isResizingWidget || activeResizePointerId !== event.pointerId) {
       return;
     }
 
@@ -413,9 +443,18 @@ function render({ model, el }: RenderContext): () => void {
     finishResize();
   };
 
-  resizeHandle.addEventListener("mousedown", onResizeHandleMouseDown);
-  document.addEventListener("mousemove", onResizeHandleMouseMove, true);
-  document.addEventListener("mouseup", onResizeHandleMouseUp, true);
+  const onResizeHandlePointerCancel = (event: PointerEvent): void => {
+    if (!isResizingWidget || activeResizePointerId !== event.pointerId) {
+      return;
+    }
+
+    finishResize();
+  };
+
+  resizeHandle.addEventListener("pointerdown", onResizeHandlePointerDown);
+  document.addEventListener("pointermove", onResizeHandlePointerMove, true);
+  document.addEventListener("pointerup", onResizeHandlePointerUp, true);
+  document.addEventListener("pointercancel", onResizeHandlePointerCancel, true);
 
   const syncPlot = async (): Promise<void> => {
     try {
@@ -462,10 +501,11 @@ function render({ model, el }: RenderContext): () => void {
     closeContextMenu();
     finishResize();
     document.removeEventListener("pointerdown", onDocumentPointerDown, true);
-    document.removeEventListener("mousemove", onResizeHandleMouseMove, true);
-    document.removeEventListener("mouseup", onResizeHandleMouseUp, true);
+    document.removeEventListener("pointermove", onResizeHandlePointerMove, true);
+    document.removeEventListener("pointerup", onResizeHandlePointerUp, true);
+    document.removeEventListener("pointercancel", onResizeHandlePointerCancel, true);
     document.removeEventListener("keydown", onDocumentKeyDown);
-    resizeHandle.removeEventListener("mousedown", onResizeHandleMouseDown);
+    resizeHandle.removeEventListener("pointerdown", onResizeHandlePointerDown);
     model.off("change:snapshot", onSnapshotChange);
     void sessionPromise.then((session) => session.dispose());
   };

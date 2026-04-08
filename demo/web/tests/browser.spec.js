@@ -496,6 +496,57 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     const cleanup = mod.default.render({ model, el: mount });
 
     window.__ruvizWidgetResizeTest = {
+      dispatchGesture: ({
+        dx,
+        dy,
+        pointerId = 1,
+        pointerType = "mouse",
+        shiftKey = false,
+        ctrlKey = false,
+      }) => {
+        const handle = document.querySelector("[data-ruviz-widget-resize-handle='true']");
+        if (!(handle instanceof HTMLElement)) {
+          throw new Error("widget bundle did not create a resize handle");
+        }
+        const rect = handle.getBoundingClientRect();
+        const startX = rect.left + rect.width / 2;
+        const startY = rect.top + rect.height / 2;
+        const baseEvent = {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 0,
+          isPrimary: true,
+          pointerId,
+          pointerType,
+          shiftKey,
+          ctrlKey,
+        };
+        handle.dispatchEvent(
+          new PointerEvent("pointerdown", {
+            ...baseEvent,
+            buttons: 1,
+            clientX: startX,
+            clientY: startY,
+          }),
+        );
+        document.dispatchEvent(
+          new PointerEvent("pointermove", {
+            ...baseEvent,
+            buttons: 1,
+            clientX: startX + dx,
+            clientY: startY + dy,
+          }),
+        );
+        document.dispatchEvent(
+          new PointerEvent("pointerup", {
+            ...baseEvent,
+            buttons: 0,
+            clientX: startX + dx,
+            clientY: startY + dy,
+          }),
+        );
+      },
       cleanup: () => {
         if (typeof cleanup === "function") {
           cleanup();
@@ -515,40 +566,7 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     const initialRatio = (initialBox?.width ?? 1) / (initialBox?.height ?? 1);
 
     await page.evaluate(() => {
-      const handle = document.querySelector("[data-ruviz-widget-resize-handle='true']");
-      if (!(handle instanceof HTMLElement)) {
-        throw new Error("widget bundle did not create a resize handle");
-      }
-      const rect = handle.getBoundingClientRect();
-      const startX = rect.left + rect.width / 2;
-      const startY = rect.top + rect.height / 2;
-      handle.dispatchEvent(
-        new MouseEvent("mousedown", {
-          bubbles: true,
-          cancelable: true,
-          clientX: startX,
-          clientY: startY,
-          buttons: 1,
-        }),
-      );
-      document.dispatchEvent(
-        new MouseEvent("mousemove", {
-          bubbles: true,
-          cancelable: true,
-          clientX: startX + 120,
-          clientY: startY + 60,
-          buttons: 1,
-        }),
-      );
-      document.dispatchEvent(
-        new MouseEvent("mouseup", {
-          bubbles: true,
-          cancelable: true,
-          clientX: startX + 120,
-          clientY: startY + 60,
-          buttons: 0,
-        }),
-      );
+      window.__ruvizWidgetResizeTest.dispatchGesture({ dx: 120, dy: 60, pointerId: 1 });
     });
 
     await expect
@@ -561,54 +579,62 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     expect(freeformBox.height).toBeCloseTo(420, 0);
     expect(Math.abs(freeformBox.width / freeformBox.height - initialRatio)).toBeGreaterThan(0.01);
 
-    const freeformRatio = freeformBox.width / freeformBox.height;
     await page.evaluate(() => {
-      const handle = document.querySelector("[data-ruviz-widget-resize-handle='true']");
-      if (!(handle instanceof HTMLElement)) {
-        throw new Error("widget bundle did not create a resize handle");
-      }
-      const rect = handle.getBoundingClientRect();
-      const startX = rect.left + rect.width / 2;
-      const startY = rect.top + rect.height / 2;
-      handle.dispatchEvent(
-        new MouseEvent("mousedown", {
-          bubbles: true,
-          cancelable: true,
-          clientX: startX,
-          clientY: startY,
-          buttons: 1,
-          shiftKey: true,
-        }),
-      );
-      document.dispatchEvent(
-        new MouseEvent("mousemove", {
-          bubbles: true,
-          cancelable: true,
-          clientX: startX + 100,
-          clientY: startY + 20,
-          buttons: 1,
-          shiftKey: true,
-        }),
-      );
-      document.dispatchEvent(
-        new MouseEvent("mouseup", {
-          bubbles: true,
-          cancelable: true,
-          clientX: startX + 100,
-          clientY: startY + 20,
-          buttons: 0,
-          shiftKey: true,
-        }),
-      );
+      window.__ruvizWidgetResizeTest.dispatchGesture({
+        dx: -40,
+        dy: 50,
+        pointerId: 2,
+        pointerType: "touch",
+      });
     });
 
     await expect
       .poll(async () => (await viewport.boundingBox())?.width ?? 0)
-      .toBeGreaterThan(freeformBox.width + 60);
+      .toBeLessThan(freeformBox.width - 20);
+
+    const touchBox = await viewport.boundingBox();
+    expect(touchBox).not.toBeNull();
+    expect(touchBox.height).toBeCloseTo(470, 0);
+    expect(Math.abs(touchBox.width / touchBox.height - initialRatio)).toBeGreaterThan(0.01);
+
+    const touchRatio = touchBox.width / touchBox.height;
+    await page.evaluate(() => {
+      window.__ruvizWidgetResizeTest.dispatchGesture({
+        dx: 100,
+        dy: 20,
+        pointerId: 3,
+        shiftKey: true,
+      });
+    });
+
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(touchBox.width + 60);
 
     const lockedBox = await viewport.boundingBox();
     expect(lockedBox).not.toBeNull();
-    expect(Math.abs(lockedBox.width / lockedBox.height - freeformRatio)).toBeLessThan(0.02);
+    expect(Math.abs(lockedBox.width / lockedBox.height - touchRatio)).toBeLessThan(0.02);
+
+    await page.evaluate(() => {
+      window.__ruvizWidgetResizeTest.dispatchGesture({
+        dx: -2000,
+        dy: 10,
+        pointerId: 4,
+        ctrlKey: true,
+      });
+    });
+
+    await expect
+      .poll(async () => (await viewport.boundingBox())?.height ?? 0)
+      .toBeLessThan(lockedBox.height - 200);
+
+    const minLockedBox = await viewport.boundingBox();
+    expect(minLockedBox).not.toBeNull();
+    const minLockedRatio = lockedBox.width / lockedBox.height;
+    const expectedMinWidth = Math.max(220, 160 * minLockedRatio);
+    expect(minLockedBox.height).toBeCloseTo(expectedMinWidth / minLockedRatio, 0);
+    expect(minLockedBox.width).toBeCloseTo(expectedMinWidth, 0);
+    expect(Math.abs(minLockedBox.width / minLockedBox.height - minLockedRatio)).toBeLessThan(0.02);
   } finally {
     await page.evaluate(() => {
       window.__ruvizWidgetResizeTest?.cleanup?.();
