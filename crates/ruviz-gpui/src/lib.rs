@@ -23,8 +23,8 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = "0.4.6"
-//! ruviz-gpui = "0.4.6"
+//! ruviz = "0.4.7"
+//! ruviz-gpui = "0.4.7"
 //! ```
 //!
 //! Then build a normal `ruviz::Plot` or `PreparedPlot` and hand it to the GPUI

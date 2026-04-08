@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.7] - 2026-04-09
+
+### Fixed
+
+- Notebook widgets now shrink-wrap their notebook host container instead of reserving a full-width output box, so smaller plots no longer show a large white notebook area around the figure.
+- Added browser regression coverage for roomy, constrained, and manually resized notebook widget hosts so the outer widget box keeps tracking the displayed plot width.
+
 ## [0.4.6] - 2026-04-08
 
 ### Changed
@@ -319,7 +326,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/Ameyanagi/ruviz/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/Ameyanagi/ruviz/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/Ameyanagi/ruviz/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/Ameyanagi/ruviz/compare/v0.4.3...v0.4.4
