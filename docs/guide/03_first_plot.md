@@ -166,7 +166,7 @@ Plot::new()
 Add to `Cargo.toml`:
 ```toml
 [dependencies]
-ruviz = "0.4.3"
+ruviz = "0.4.4"
 ```
 
 ## Customization Basics
@@ -304,7 +304,7 @@ Plot::new()
 Add to `Cargo.toml`:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.3", features = ["ndarray_support"] }
+ruviz = { version = "0.4.4", features = ["ndarray_support"] }
 ndarray = "0.15"
 ```
 

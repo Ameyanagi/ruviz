@@ -11,6 +11,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -18,7 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   CRATES_IO_USER_AGENT: ruviz-release-workflow/1.0 (https://github.com/Ameyanagi/ruviz)
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
-  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref }}
+  RELEASE_REF: refs/tags/${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
 
 jobs:
   check-ci:
@@ -61,6 +65,23 @@ jobs:
         if: github.event_name != 'workflow_dispatch' && steps.wait-for-python.outputs.conclusion != 'success'
         run: |
           echo "Python CI check failed with conclusion: ${{ steps.wait-for-python.outputs.conclusion }}"
+          exit 1
+
+      - name: Wait for Python packaging CI to complete
+        if: github.event_name != 'workflow_dispatch'
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-for-python-packaging
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: 'Python Packaging'
+          ref: ${{ github.sha }}
+          timeoutSeconds: 600
+          intervalSeconds: 15
+
+      - name: Fail if Python packaging CI failed
+        if: github.event_name != 'workflow_dispatch' && steps.wait-for-python-packaging.outputs.conclusion != 'success'
+        run: |
+          echo "Python packaging CI check failed with conclusion: ${{ steps.wait-for-python-packaging.outputs.conclusion }}"
           exit 1
 
   build-release:
@@ -350,6 +371,40 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-dist-windows
+          path: python/dist/*.whl
+          if-no-files-found: error
+
+  build-python-wheel-linux:
+    name: Build Python wheel (Linux)
+    runs-on: ubuntu-latest
+    needs: [build-release, build-python-widget-bundle]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Download canonical widget bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: python-widget-bundle
+          path: .
+
+      - name: Build Linux wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          maturin-version: v1.12.6
+          rust-toolchain: 1.94.1
+          manylinux: 2_28
+          target: x86_64-unknown-linux-gnu
+          working-directory: python
+          args: --release --out dist --compatibility pypi --interpreter python3.10 --no-default-features --features pyo3/extension-module
+
+      - name: Upload Linux wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist-linux
           path: python/dist/*.whl
           if-no-files-found: error
 
@@ -664,6 +719,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-python-sdist
+      - build-python-wheel-linux
       - build-python-wheel-macos-intel
       - build-python-wheel-macos-arm
       - build-python-wheel-windows

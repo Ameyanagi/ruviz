@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.4] - 2026-04-08
+
+### Changed
+
+- Python release CI/CD now builds and publishes a manylinux `x86_64` wheel so Linux `uv add ruviz` installs can use a prebuilt wheel instead of falling back to a source build.
+- The GitHub release workflow now publishes from `refs/tags/<tag>` even for manual recovery runs, and the release runbook now documents GitHub Actions as the single supported publishing path.
+
+### Fixed
+
+- Python source distributions now include the root `benches/` tree required by the workspace `Cargo.toml`, fixing source-install failures caused by missing bench targets during Cargo manifest parsing.
+- Added Python packaging CI coverage that smoke-tests both the sdist install path and the Linux wheel artifact path before release.
+
 ## [0.4.3] - 2026-04-08
 
 ### Changed
@@ -289,7 +301,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/Ameyanagi/ruviz/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/Ameyanagi/ruviz/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Ameyanagi/ruviz/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ameyanagi/ruviz/compare/v0.4.0...v0.4.1

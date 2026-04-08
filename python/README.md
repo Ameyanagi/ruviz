@@ -42,6 +42,7 @@ y = x**2
 - `plot.size_px(width, height)` also controls the widget's displayed size and aspect ratio.
 - In the widget, right click opens the export menu and right drag performs box zoom.
 - Outside notebooks, `plot.show()` opens the native interactive window.
+- The published Linux wheel focuses on static rendering and notebook widgets. Install from source on Linux if you need the native desktop `plot.show()` window.
 - `plot.render_png()` and `plot.render_svg()` return in-memory export data.
 
 ## Reactive Notebook Data

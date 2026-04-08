@@ -12,9 +12,14 @@ use ruviz::{
     },
     data::Observable,
     export::write_rgba_png_atomic,
-    interactive::show_interactive,
     render::Theme,
 };
+
+#[cfg(feature = "native-interactive")]
+use ruviz::interactive::show_interactive;
+
+#[cfg(not(feature = "native-interactive"))]
+use crate::NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE;
 
 const DEFAULT_PLOT_SIZE: (u32, u32) = (640, 480);
 
@@ -682,8 +687,19 @@ impl NativePlotHandle {
     }
 
     fn show_native(&mut self) -> PyResult<()> {
+        #[cfg(not(feature = "native-interactive"))]
+        {
+            return Err(PyRuntimeError::new_err(
+                NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE,
+            ));
+        }
+
+        #[cfg(feature = "native-interactive")]
         self.ensure_built()?;
-        pollster::block_on(show_interactive(self.plot.clone()))
-            .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+        #[cfg(feature = "native-interactive")]
+        {
+            pollster::block_on(show_interactive(self.plot.clone()))
+                .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+        }
     }
 }

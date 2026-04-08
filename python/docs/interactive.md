@@ -69,6 +69,10 @@ import ruviz
 ruviz.plot().scatter([0, 1, 2], [1.2, 0.4, 1.7]).show()
 ```
 
+The published Linux wheel focuses on static rendering and notebook widgets. If
+you need the native desktop window on Linux, install `ruviz` from source so the
+interactive backend can be compiled against the local desktop stack.
+
 ## Widget Bundles
 
 The widget frontend is bundled from `packages/ruviz-web/src/python-widget.ts` and

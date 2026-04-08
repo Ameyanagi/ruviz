@@ -22,6 +22,10 @@ The release workflow (`.github/workflows/release.yml`) automatically:
 6. Uses that file as the GitHub Release body when found
 7. Falls back to a minimal generated release body when missing
 
+Releases are expected to publish from this GitHub workflow, not from local
+`cargo publish`, `npm publish`, `gh release create`, or manual PyPI uploads.
+The release workflow is the single supported publishing path.
+
 ## One-Time Setup
 
 Before the first Python release, configure PyPI Trusted Publishing for this repository:
@@ -40,3 +44,10 @@ Before creating a tag:
 3. Keep release versions aligned across `Cargo.toml`, `crates/ruviz-web`, `packages/ruviz-web/package.json`, `python/Cargo.toml`, and `python/pyproject.toml`
 4. For prerelease tags such as `vX.Y.Z-rc1`, use the matching PEP 440 version in `python/pyproject.toml` (`X.Y.Zrc1`)
 5. Verify documentation snippets reflect the target release version where needed
+
+## Release Procedure
+
+1. Merge the version bump, changelog, and release notes to `main`
+2. Create and push the release tag, for example `git tag -a vX.Y.Z -m "Release vX.Y.Z"` followed by `git push origin vX.Y.Z`
+3. Let `.github/workflows/release.yml` publish the crates, npm package, Python distributions, and GitHub Release from that tag
+4. Use `workflow_dispatch` only to recover or rerun an existing tag release; it still publishes from `refs/tags/<tag>`, not from a branch tip or ad hoc commit
