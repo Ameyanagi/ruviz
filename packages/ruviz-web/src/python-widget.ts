@@ -171,16 +171,23 @@ function resolveLockedResize(
 function render({ model, el }: RenderContext): () => void {
   ensureRawModuleConfigured();
 
-  el.style.width = "100%";
+  el.dataset.ruvizWidgetHost = "true";
+  el.style.display = "inline-block";
+  el.style.width = "auto";
+  el.style.maxWidth = "100%";
   el.style.boxSizing = "border-box";
+  el.style.background = "transparent";
+  el.style.verticalAlign = "top";
 
   const wrapper = document.createElement("div");
   wrapper.dataset.ruvizWidgetRoot = "true";
   wrapper.style.display = "block";
   wrapper.style.position = "relative";
+  wrapper.style.background = "transparent";
 
   const viewport = document.createElement("div");
   viewport.dataset.ruvizWidgetViewport = "true";
+  viewport.style.background = "transparent";
 
   const canvas = document.createElement("canvas");
   canvas.style.border = "1px solid rgba(0, 0, 0, 0.12)";
