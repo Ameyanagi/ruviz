@@ -8123,7 +8123,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "approx",
@@ -8181,7 +8181,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-gpui"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "arboard",
  "core-foundation 0.10.0",
@@ -8199,7 +8199,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-py"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "image",
  "pollster 0.4.0",
@@ -8211,7 +8211,7 @@ dependencies = [
 
 [[package]]
 name = "ruviz-web"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",

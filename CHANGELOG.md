@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.3] - 2026-04-08
+
+### Changed
+
+- Notebook widgets now use `plot.size_px(width, height)` as their on-screen display size in Jupyter and VS Code notebook outputs, shrinking proportionally when the cell is narrower than the configured width.
+- Notebook widget exports now move behind a right-click menu with `Save PNG` and `Save SVG`, removing the always-visible download buttons while keeping right-drag box zoom intact.
+- Refreshed the release-facing version snippets, quickstart, and release notes for `0.4.3`.
+
+### Fixed
+
+- Fixed notebook widget sizing so the displayed widget aspect ratio and clamped size now match the exported PNG/SVG output instead of stretching to the notebook width.
+- Added browser regression coverage for notebook-like host sizing, right-click export menu behavior, and preserved secondary-button zoom interactions in the blob-backed widget runtime.
+
 ## [0.4.2] - 2026-04-08
 
 ### Added
@@ -276,7 +289,10 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/Ameyanagi/ruviz/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/Ameyanagi/ruviz/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/Ameyanagi/ruviz/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ameyanagi/ruviz/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/Ameyanagi/ruviz/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/Ameyanagi/ruviz/compare/v0.3.4...v0.3.5
