@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.6] - 2026-04-08
+
+### Changed
+
+- Notebook widgets can now be resized directly in notebook outputs with a drag handle; free resize is the default and `Shift` or `Ctrl` preserves the current aspect ratio while resizing.
+- The default notebook widget display size now matches the default exported PNG size when `size_px(...)` is not set, while still shrinking proportionally in narrower notebook cells.
+
+### Fixed
+
+- Improved notebook widget context-menu contrast so the right-click export menu remains legible on light notebook surfaces.
+- Hardened notebook widget pointer handling for resize drags across mouse, touch, and pen input, including better constrained-resize behavior near minimum sizes.
+
 ## [0.4.5] - 2026-04-08
 
 ### Fixed
@@ -307,7 +319,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/Ameyanagi/ruviz/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/Ameyanagi/ruviz/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/Ameyanagi/ruviz/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/Ameyanagi/ruviz/compare/v0.4.2...v0.4.3

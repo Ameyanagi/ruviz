@@ -23,7 +23,7 @@
     },
     "packages/ruviz-web": {
       "name": "ruviz",
-      "version": "0.4.5",
+      "version": "0.4.6",
       "devDependencies": {
         "typedoc": "^0.28.14",
         "typedoc-plugin-markdown": "^4.9.0",

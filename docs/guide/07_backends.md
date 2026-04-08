@@ -120,7 +120,7 @@ not change the chunk-size path.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.5", features = ["parallel"] }
+ruviz = { version = "0.4.6", features = ["parallel"] }
 ```
 
 ```rust
@@ -144,7 +144,7 @@ it helps the `render()` path when parallel rendering is active.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.5", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.6", features = ["parallel", "simd"] }
 ```
 
 ## What `save()` actually does
@@ -201,7 +201,7 @@ back to CPU rendering.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.5", features = ["gpu"] }
+ruviz = { version = "0.4.6", features = ["gpu"] }
 ```
 
 ```rust
@@ -236,7 +236,7 @@ dependency for you.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.5", features = ["interactive"] }
+ruviz = { version = "0.4.6", features = ["interactive"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
