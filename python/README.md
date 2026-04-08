@@ -40,6 +40,9 @@ y = x**2
 - In Jupyter, `plot.show()` displays a static PNG in the cell output.
 - Use `plot.widget()` when you want the synced WASM-backed notebook widget.
 - `plot.size_px(width, height)` also controls the widget's displayed size and aspect ratio.
+- Without `size_px(...)`, the widget uses the default PNG size (`640x480`) and shrinks proportionally if the notebook column is narrower.
+- Drag the widget's bottom-right handle to resize the display freely.
+- Hold `Shift` or `Ctrl` while dragging the handle to preserve the current aspect ratio.
 - In the widget, right click opens the export menu and right drag performs box zoom.
 - Outside notebooks, `plot.show()` opens the native interactive window.
 - The published Linux wheel focuses on static rendering and notebook widgets. Install from source on Linux if you need the native desktop `plot.show()` window.

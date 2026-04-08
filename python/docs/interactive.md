@@ -34,13 +34,16 @@ When a plot has `size_px(width, height)` configured, the widget uses that as
 its display size inside the notebook. If the notebook column is narrower than
 the configured width, the widget shrinks proportionally while preserving the
 same aspect ratio as the PNG/export output. If no plot size is configured, the
-widget falls back to the default fixed height.
+widget falls back to the plot's default PNG size (`640x480`) and still shrinks
+proportionally when the notebook column is narrower.
 
 Notebook widget controls:
 
 - `Mouse wheel`: zoom in/out under the cursor
 - `Left drag`: pan
 - `Right drag`: box zoom
+- `Bottom-right drag handle`: resize the widget display freely
+- `Shift` or `Ctrl` + drag handle: resize while preserving the current aspect ratio
 - `Right click`: open the export menu with `Save PNG` and `Save SVG`
 
 Observable updates stay live in the widget:
