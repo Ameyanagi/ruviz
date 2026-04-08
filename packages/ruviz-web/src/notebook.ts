@@ -8,6 +8,7 @@ import type { PlotSnapshot, YSourceSnapshot } from "./shared.js";
 
 let rawModuleSource: BufferSource | null = null;
 let rawModuleInitialized = false;
+const DEFAULT_SECONDARY_DRAG_THRESHOLD_PX = 4;
 
 export function configureNotebookRawModuleSource(source: BufferSource): void {
   if (rawModuleInitialized) {
@@ -236,9 +237,29 @@ interface InputHandlers {
   pointerUp: (x: number, y: number, button: number) => void;
   pointerLeave: () => void;
   wheel: (deltaY: number, x: number, y: number) => void;
+  secondaryClick?: (clientX: number, clientY: number) => void;
 }
 
-function attachCanvasEvents(canvas: HTMLCanvasElement, handlers: InputHandlers): () => void {
+interface CanvasEventOptions {
+  secondaryDragThresholdPx?: number;
+}
+
+function attachCanvasEvents(
+  canvas: HTMLCanvasElement,
+  handlers: InputHandlers,
+  options: CanvasEventOptions = {},
+): () => void {
+  const secondaryDragThresholdPx =
+    options.secondaryDragThresholdPx ?? DEFAULT_SECONDARY_DRAG_THRESHOLD_PX;
+  const secondaryDragThresholdSq = secondaryDragThresholdPx * secondaryDragThresholdPx;
+  let secondaryDrag: {
+    pointerId: number;
+    anchorPoint: { x: number; y: number };
+    anchorClientX: number;
+    anchorClientY: number;
+    dragging: boolean;
+  } | null = null;
+
   const onContextMenu = (event: MouseEvent) => {
     event.preventDefault();
   };
@@ -246,11 +267,40 @@ function attachCanvasEvents(canvas: HTMLCanvasElement, handlers: InputHandlers):
   const onPointerDown = (event: PointerEvent) => {
     const point = pointerPosition(canvas, event);
     canvas.setPointerCapture(event.pointerId);
+
+    if (event.button === 2) {
+      secondaryDrag = {
+        pointerId: event.pointerId,
+        anchorPoint: point,
+        anchorClientX: event.clientX,
+        anchorClientY: event.clientY,
+        dragging: false,
+      };
+      return;
+    }
+
     handlers.pointerDown(point.x, point.y, event.button);
   };
 
   const onPointerMove = (event: PointerEvent) => {
     const point = pointerPosition(canvas, event);
+
+    if (secondaryDrag && secondaryDrag.pointerId === event.pointerId) {
+      if (!secondaryDrag.dragging) {
+        const dx = event.clientX - secondaryDrag.anchorClientX;
+        const dy = event.clientY - secondaryDrag.anchorClientY;
+        if (dx * dx + dy * dy > secondaryDragThresholdSq) {
+          secondaryDrag.dragging = true;
+          handlers.pointerDown(secondaryDrag.anchorPoint.x, secondaryDrag.anchorPoint.y, 2);
+        }
+      }
+
+      if (secondaryDrag.dragging) {
+        handlers.pointerMove(point.x, point.y);
+      }
+      return;
+    }
+
     handlers.pointerMove(point.x, point.y);
   };
 
@@ -259,6 +309,17 @@ function attachCanvasEvents(canvas: HTMLCanvasElement, handlers: InputHandlers):
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
+
+    if (secondaryDrag && secondaryDrag.pointerId === event.pointerId && event.button === 2) {
+      if (secondaryDrag.dragging) {
+        handlers.pointerUp(point.x, point.y, event.button);
+      } else {
+        handlers.secondaryClick?.(event.clientX, event.clientY);
+      }
+      secondaryDrag = null;
+      return;
+    }
+
     handlers.pointerUp(point.x, point.y, event.button);
   };
 
@@ -266,6 +327,15 @@ function attachCanvasEvents(canvas: HTMLCanvasElement, handlers: InputHandlers):
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
+
+    if (secondaryDrag && secondaryDrag.pointerId === event.pointerId) {
+      if (secondaryDrag.dragging) {
+        handlers.pointerLeave();
+      }
+      secondaryDrag = null;
+      return;
+    }
+
     handlers.pointerLeave();
   };
 
@@ -304,7 +374,7 @@ export class NotebookCanvasSession {
   #rawSession: WebCanvasSession;
   #cleanup: Array<() => void>;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, options: NotebookCanvasSessionOptions = {}) {
     ensureRawModuleInitialized();
     this.#canvas = canvas;
     this.#rawSession = new WebCanvasSession(canvas);
@@ -317,13 +387,20 @@ export class NotebookCanvasSession {
       }),
     );
     this.#cleanup.push(
-      attachCanvasEvents(canvas, {
-        pointerDown: (x, y, button) => this.pointerDown(x, y, button),
-        pointerMove: (x, y) => this.pointerMove(x, y),
-        pointerUp: (x, y, button) => this.pointerUp(x, y, button),
-        pointerLeave: () => this.pointerLeave(),
-        wheel: (deltaY, x, y) => this.wheel(deltaY, x, y),
-      }),
+      attachCanvasEvents(
+        canvas,
+        {
+          pointerDown: (x, y, button) => this.pointerDown(x, y, button),
+          pointerMove: (x, y) => this.pointerMove(x, y),
+          pointerUp: (x, y, button) => this.pointerUp(x, y, button),
+          pointerLeave: () => this.pointerLeave(),
+          wheel: (deltaY, x, y) => this.wheel(deltaY, x, y),
+          secondaryClick: options.onSecondaryClick,
+        },
+        {
+          secondaryDragThresholdPx: options.secondaryDragThresholdPx,
+        },
+      ),
     );
   }
 
@@ -417,8 +494,14 @@ export class NotebookCanvasSession {
   }
 }
 
+export interface NotebookCanvasSessionOptions {
+  onSecondaryClick?: (clientX: number, clientY: number) => void;
+  secondaryDragThresholdPx?: number;
+}
+
 export async function createNotebookCanvasSession(
   canvas: HTMLCanvasElement,
+  options: NotebookCanvasSessionOptions = {},
 ): Promise<NotebookCanvasSession> {
-  return new NotebookCanvasSession(canvas);
+  return new NotebookCanvasSession(canvas, options);
 }

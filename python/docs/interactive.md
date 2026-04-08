@@ -30,9 +30,18 @@ plot = ruviz.plot().size_px(640, 360).line(x, y).title("Live Sine Wave")
 widget = plot.widget()
 ```
 
-When a plot has `size_px(width, height)` configured, the widget keeps that
-aspect ratio while resizing to the available notebook width. If no plot size is
-configured, the widget falls back to the default fixed height.
+When a plot has `size_px(width, height)` configured, the widget uses that as
+its display size inside the notebook. If the notebook column is narrower than
+the configured width, the widget shrinks proportionally while preserving the
+same aspect ratio as the PNG/export output. If no plot size is configured, the
+widget falls back to the default fixed height.
+
+Notebook widget controls:
+
+- `Mouse wheel`: zoom in/out under the cursor
+- `Left drag`: pan
+- `Right drag`: box zoom
+- `Right click`: open the export menu with `Save PNG` and `Save SVG`
 
 Observable updates stay live in the widget:
 

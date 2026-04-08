@@ -279,24 +279,28 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       throw new Error("widget canvas did not update");
     };
 
-    const waitForCanvasBox = async (canvas, previousHeight) => {
+    const waitForElementBox = async (element, previousBox) => {
       for (let attempt = 0; attempt < 120; attempt += 1) {
         await waitForNextPaint();
-        const rect = canvas.getBoundingClientRect();
+        const rect = element.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) {
           continue;
         }
-        if (previousHeight === undefined || Math.abs(rect.height - previousHeight) > 0.5) {
+        if (
+          previousBox === undefined ||
+          Math.abs(rect.width - previousBox.width) > 0.5 ||
+          Math.abs(rect.height - previousBox.height) > 0.5
+        ) {
           return { width: rect.width, height: rect.height };
         }
       }
 
-      throw new Error("widget canvas size did not update");
+      throw new Error("widget element size did not update");
     };
 
     const mount = document.createElement("div");
     mount.id = "python-widget-test-host";
-    mount.style.width = "600px";
+    mount.style.width = "1000px";
     document.body.appendChild(mount);
 
     const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
@@ -305,22 +309,28 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       const mod = await import(moduleUrl);
       const cleanup = mod.default.render({ model, el: mount });
       const canvas = mount.querySelector("canvas");
+      const viewport = mount.querySelector("[data-ruviz-widget-viewport='true']");
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new Error("widget bundle did not create a canvas");
       }
+      if (!(viewport instanceof HTMLDivElement)) {
+        throw new Error("widget bundle did not create a viewport");
+      }
 
       const initialImage = await waitForCanvasChange(canvas);
-      const initialBox = await waitForCanvasBox(canvas);
+      const initialBox = await waitForElementBox(viewport);
+      mount.style.width = "600px";
+      const shrunkBox = await waitForElementBox(viewport, initialBox);
       model.setSnapshot(buildSnapshot("widget updated", [1.1, 0.4, 1.0, 0.2], [360, 360]));
       const updatedImage = await waitForCanvasChange(canvas, initialImage);
-      const updatedBox = await waitForCanvasBox(canvas, initialBox.height);
+      const updatedBox = await waitForElementBox(viewport, shrunkBox);
 
       if (typeof cleanup === "function") {
         cleanup();
       }
 
       mount.remove();
-      return { initialBox, initialImage, updatedBox, updatedImage };
+      return { initialBox, initialImage, shrunkBox, updatedBox, updatedImage };
     } finally {
       URL.revokeObjectURL(moduleUrl);
     }
@@ -328,9 +338,155 @@ test("python widget bundle renders when loaded from a blob-backed module", async
 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
-  expect(result.initialBox.width / result.initialBox.height).toBeCloseTo(640 / 360, 1);
-  expect(result.updatedBox.width / result.updatedBox.height).toBeCloseTo(1, 1);
+  expect(result.initialBox.width).toBeCloseTo(640, 0);
+  expect(result.initialBox.height).toBeCloseTo(360, 0);
+  expect(result.shrunkBox.width).toBeCloseTo(600, 0);
+  expect(result.shrunkBox.height).toBeCloseTo(337.5, 0);
+  expect(result.updatedBox.width).toBeCloseTo(360, 0);
+  expect(result.updatedBox.height).toBeCloseTo(360, 0);
   expect(result.initialImage).not.toEqual(result.updatedImage);
+});
+
+test("python widget bundle uses a right-click export menu without breaking zoom", async ({
+  page,
+}) => {
+  await waitForDemoReady(page);
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error));
+  });
+
+  await page.evaluate(async (widgetSource) => {
+    const demo = window.__ruvizDemo;
+    if (!demo?.sdk) {
+      throw new Error("SDK test hooks are unavailable");
+    }
+
+    const snapshot = demo.sdk
+      .createPlot()
+      .setSizePx(640, 360)
+      .setTitle("widget export menu")
+      .setXLabel("x")
+      .setYLabel("y")
+      .addLine({
+        x: Array.from({ length: 120 }, (_, index) => index / 8),
+        y: Array.from({ length: 120 }, (_, index) => Math.sin(index / 8)),
+      })
+      .toSnapshot();
+
+    const model = {
+      snapshot,
+      get(name) {
+        return name === "snapshot" ? this.snapshot : undefined;
+      },
+      on() {},
+      off() {},
+    };
+
+    const mount = document.createElement("div");
+    mount.id = "python-widget-context-menu-host";
+    mount.style.width = "640px";
+    document.body.appendChild(mount);
+
+    const downloads = [];
+    const originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function click() {
+      downloads.push({ download: this.download, href: this.href });
+    };
+
+    const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
+    const mod = await import(moduleUrl);
+    const cleanup = mod.default.render({ model, el: mount });
+
+    window.__ruvizWidgetContextMenuTest = {
+      downloads,
+      cleanup: () => {
+        HTMLAnchorElement.prototype.click = originalClick;
+        if (typeof cleanup === "function") {
+          cleanup();
+        }
+        mount.remove();
+        URL.revokeObjectURL(moduleUrl);
+      },
+    };
+  }, PYTHON_WIDGET_BUNDLE);
+
+  try {
+    const host = page.locator("#python-widget-context-menu-host");
+    const canvas = host.locator("canvas");
+    const menu = host.locator("[data-ruviz-widget-menu='true']");
+    const savePng = host.locator("[data-ruviz-widget-menu-item='png']");
+    const saveSvg = host.locator("[data-ruviz-widget-menu-item='svg']");
+
+    await expect(host).not.toContainText("Download PNG");
+    await expect(host).not.toContainText("Download SVG");
+    await expect(menu).toBeHidden();
+
+    await canvas.click({ button: "right", position: { x: 140, y: 100 } });
+    await expect(menu).toBeVisible();
+    await expect(savePng).toBeVisible();
+    await expect(saveSvg).toBeVisible();
+
+    await page.mouse.click(8, 8);
+    await expect(menu).toBeHidden();
+
+    await canvas.click({ button: "right", position: { x: 160, y: 120 } });
+    await expect(menu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+
+    await canvas.click({ button: "right", position: { x: 180, y: 130 } });
+    await savePng.click();
+    await page.waitForFunction(
+      () =>
+        window.__ruvizWidgetContextMenuTest?.downloads?.some(
+          (entry) => entry.download === "ruviz.png",
+        ) ?? false,
+    );
+    await expect(menu).toBeHidden();
+
+    await canvas.click({ button: "right", position: { x: 200, y: 145 } });
+    await saveSvg.click();
+    await page.waitForFunction(
+      () =>
+        window.__ruvizWidgetContextMenuTest?.downloads?.some(
+          (entry) => entry.download === "ruviz.svg",
+        ) ?? false,
+    );
+
+    const beforeZoom = await canvas.screenshot();
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+
+    await page.mouse.move(box.x + box.width * 0.32, box.y + box.height * 0.24);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.48);
+    await page.mouse.up({ button: "right" });
+
+    await expect(menu).toBeHidden();
+    const afterZoom = await canvas.screenshot();
+    expect(beforeZoom.equals(afterZoom)).toBeFalsy();
+
+    const downloads = await page.evaluate(
+      () => window.__ruvizWidgetContextMenuTest?.downloads?.map((entry) => entry.download) ?? [],
+    );
+    expect(downloads).toEqual(["ruviz.png", "ruviz.svg"]);
+  } finally {
+    await page.evaluate(() => {
+      window.__ruvizWidgetContextMenuTest?.cleanup?.();
+      delete window.__ruvizWidgetContextMenuTest;
+    });
+  }
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
 });
 
 test("python widget bundle handles a single-point sine signal snapshot", async ({ page }) => {
