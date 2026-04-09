@@ -42,10 +42,7 @@ impl Plot {
     }
 
     pub(super) fn series_supports_auto_datashader(series: &PlotSeries) -> bool {
-        matches!(
-            series.series_type,
-            SeriesType::Scatter { .. } | SeriesType::Histogram { .. }
-        )
+        matches!(series.series_type, SeriesType::Scatter { .. })
     }
 
     pub(super) fn is_non_cartesian_series(series: &PlotSeries) -> bool {
@@ -108,30 +105,6 @@ impl Plot {
                 SeriesType::Scatter { x_data, y_data } => {
                     let x_data = x_data.resolve(0.0);
                     let y_data = y_data.resolve(0.0);
-                    let mut datashader = DataShader::with_canvas_size(
-                        series_area.width() as usize,
-                        series_area.height() as usize,
-                    );
-
-                    datashader.aggregate_with_bounds(
-                        &x_data,
-                        &y_data,
-                        series_bounds.0,
-                        series_bounds.1,
-                        series_bounds.2,
-                        series_bounds.3,
-                    )?;
-                    let image = datashader.render();
-                    renderer.draw_datashader_image(&image, series_area)?;
-                }
-                SeriesType::Histogram { .. } => {
-                    let hist_data = series.series_type.histogram_data_at(0.0)?;
-                    let x_data: Vec<f64> = hist_data
-                        .bin_edges
-                        .windows(2)
-                        .map(|w| (w[0] + w[1]) / 2.0)
-                        .collect();
-                    let y_data: Vec<f64> = hist_data.counts;
                     let mut datashader = DataShader::with_canvas_size(
                         series_area.width() as usize,
                         series_area.height() as usize,

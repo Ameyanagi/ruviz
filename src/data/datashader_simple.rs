@@ -193,8 +193,9 @@ impl DataShaderCanvas {
         let max_log = f64::from(max_count).ln_1p();
 
         for y in 0..self.height {
+            let source_y = self.height - 1 - y;
             for x in 0..self.width {
-                let idx = y * self.width + x;
+                let idx = source_y * self.width + x;
                 let count = self.canvas[idx].load(Ordering::Relaxed);
 
                 // Empty bins stay transparent so the normal plot background shows through.
@@ -512,6 +513,33 @@ mod tests {
         assert!(
             transparent_bins > 0,
             "large scatter datashader render should keep empty bins transparent"
+        );
+    }
+
+    #[test]
+    fn test_datashader_render_flips_y_axis_into_screen_space() {
+        let mut ds = DataShader::with_canvas_size(4, 4);
+        ds.aggregate_with_bounds(&[0.5, 0.5], &[0.0, 1.0], 0.0, 1.0, 0.0, 1.0)
+            .unwrap();
+
+        let image = ds.render();
+        let top_row_alpha: Vec<u8> = image.pixels[0..(4 * 4)]
+            .chunks_exact(4)
+            .map(|px| px[3])
+            .collect();
+        let bottom_row_start = (image.height - 1) * image.width * 4;
+        let bottom_row_alpha: Vec<u8> = image.pixels[bottom_row_start..bottom_row_start + (4 * 4)]
+            .chunks_exact(4)
+            .map(|px| px[3])
+            .collect();
+
+        assert!(
+            top_row_alpha.iter().any(|alpha| *alpha > 0),
+            "y_max should land in the top image row after render"
+        );
+        assert!(
+            bottom_row_alpha.iter().any(|alpha| *alpha > 0),
+            "y_min should land in the bottom image row after render"
         );
     }
 

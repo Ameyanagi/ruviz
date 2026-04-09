@@ -1001,6 +1001,20 @@ fn test_auto_datashader_policy_keeps_large_scatter_series_eligible() {
 }
 
 #[test]
+fn test_auto_datashader_policy_excludes_large_histogram_series() {
+    let samples: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0002).sin()).collect();
+    let plot = Plot::new().histogram(&samples, None).end_series();
+    let snapshot_series = plot.snapshot_series(0.0);
+    let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
+
+    assert!(DataShader::should_activate(total_points));
+    assert!(!Plot::should_auto_use_datashader(
+        &snapshot_series,
+        total_points
+    ));
+}
+
+#[test]
 fn test_prepared_frame_large_line_stays_off_auto_datashader() {
     let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|x| x.sin()).collect();
@@ -2068,6 +2082,17 @@ fn test_benchmark_save_png_bytes_uses_datashader_for_large_scatter() {
     let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
 
     assert_eq!(backend, "datashader");
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_benchmark_save_png_bytes_keeps_large_histogram_on_skia() {
+    let samples: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0002).sin()).collect();
+
+    let plot = Plot::new().histogram(&samples, None).end_series();
+    let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
+
+    assert_eq!(backend, "skia");
 }
 
 #[test]
