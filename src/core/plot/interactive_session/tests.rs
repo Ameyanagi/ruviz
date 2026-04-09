@@ -166,6 +166,69 @@ fn assert_surface_base_visually_sane(name: &str, image: &Image) {
     );
 }
 
+fn surface_image_to_rgba(image: &Image) -> ::image::RgbaImage {
+    ::image::load_from_memory(
+        &image
+            .encode_png()
+            .expect("interactive frame should encode to straight-alpha PNG"),
+    )
+    .expect("interactive frame PNG should decode")
+    .to_rgba8()
+}
+
+fn mean_normalized_rgba_diff(lhs: &::image::RgbaImage, rhs: &::image::RgbaImage) -> f64 {
+    assert_eq!(lhs.dimensions(), rhs.dimensions());
+
+    lhs.as_raw()
+        .iter()
+        .zip(rhs.as_raw().iter())
+        .map(|(left, right)| (*left as f64 - *right as f64).abs() / 255.0)
+        .sum::<f64>()
+        / lhs.as_raw().len() as f64
+}
+
+fn fraction_pixels_within_channel_delta(
+    lhs: &::image::RgbaImage,
+    rhs: &::image::RgbaImage,
+    max_delta: u8,
+) -> f64 {
+    assert_eq!(lhs.dimensions(), rhs.dimensions());
+
+    let matching = lhs
+        .pixels()
+        .zip(rhs.pixels())
+        .filter(|(left, right)| {
+            left.0
+                .iter()
+                .zip(right.0.iter())
+                .all(|(lhs, rhs)| (*lhs as i16 - *rhs as i16).abs() <= max_delta as i16)
+        })
+        .count() as f64;
+    matching / (lhs.width() * lhs.height()) as f64
+}
+
+fn assert_surface_frame_parity(name: &str, reference: &Image, candidate: &Image) {
+    let reference_rgba = surface_image_to_rgba(reference);
+    let candidate_rgba = surface_image_to_rgba(candidate);
+    let mean_diff = mean_normalized_rgba_diff(&reference_rgba, &candidate_rgba);
+    let within_delta = fraction_pixels_within_channel_delta(&reference_rgba, &candidate_rgba, 24);
+    let reference_ink = non_background_fraction(reference);
+    let candidate_ink = non_background_fraction(candidate);
+
+    assert!(
+        mean_diff <= 0.015,
+        "{name} drifted too far from the image reference frame: mean_diff={mean_diff:.6}"
+    );
+    assert!(
+        within_delta >= 0.99,
+        "{name} has too many per-pixel outliers relative to the image reference frame: within_delta={within_delta:.4}"
+    );
+    assert!(
+        (reference_ink - candidate_ink).abs() <= 0.10,
+        "{name} changed visible ink coverage too much: reference_ink={reference_ink:.4} candidate_ink={candidate_ink:.4}"
+    );
+}
+
 #[test]
 fn test_dirty_domains_mark_and_clear() {
     let mut dirty = DirtyDomains::default();
@@ -451,6 +514,95 @@ fn test_supported_surface_series_use_fast_path_on_full_rerender() {
 
     assert_eq!(frame.surface_capability, SurfaceCapability::FastPath);
     assert!(!frame.layer_state.used_incremental_data);
+}
+
+#[test]
+fn test_surface_frames_stay_in_parity_with_image_frames_for_supported_series() {
+    let line_plot: Plot = Plot::new()
+        .size_px(320, 240)
+        .ticks(false)
+        .grid(false)
+        .line(&[0.0, 1.0, 2.0, 3.0], &[0.0, 1.0, 4.0, 9.0])
+        .into();
+    let line_session = line_plot.prepare_interactive();
+    let line_image = line_session
+        .render_to_image(ImageTarget {
+            size_px: (320, 240),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .expect("line image frame should render");
+    let line_surface = line_session
+        .render_to_surface(render_target())
+        .expect("line surface frame should render");
+    assert_eq!(line_surface.surface_capability, SurfaceCapability::FastPath);
+    assert_surface_frame_parity(
+        "line surface frame",
+        line_image.layers.base.as_ref(),
+        line_surface.layers.base.as_ref(),
+    );
+
+    let scatter_plot: Plot = Plot::new()
+        .size_px(320, 240)
+        .ticks(false)
+        .grid(false)
+        .scatter(&[0.0, 0.5, 1.5, 2.0], &[1.0, 0.2, 1.8, 0.9])
+        .marker(MarkerStyle::Circle)
+        .marker_size(8.0)
+        .into();
+    let scatter_session = scatter_plot.prepare_interactive();
+    let scatter_image = scatter_session
+        .render_to_image(ImageTarget {
+            size_px: (320, 240),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .expect("scatter image frame should render");
+    let scatter_surface = scatter_session
+        .render_to_surface(render_target())
+        .expect("scatter surface frame should render");
+    assert_eq!(
+        scatter_surface.surface_capability,
+        SurfaceCapability::FastPath
+    );
+    assert_surface_frame_parity(
+        "scatter surface frame",
+        scatter_image.layers.base.as_ref(),
+        scatter_surface.layers.base.as_ref(),
+    );
+
+    let heatmap_values = vec![
+        vec![0.1, 0.3, 0.6, 0.9],
+        vec![0.2, 0.5, 0.7, 0.4],
+        vec![0.8, 0.6, 0.2, 0.1],
+        vec![0.9, 0.7, 0.4, 0.2],
+    ];
+    let heatmap_plot: Plot = Plot::new()
+        .size_px(320, 240)
+        .ticks(false)
+        .grid(false)
+        .heatmap(&heatmap_values, None)
+        .into();
+    let heatmap_session = heatmap_plot.prepare_interactive();
+    let heatmap_image = heatmap_session
+        .render_to_image(ImageTarget {
+            size_px: (320, 240),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .expect("heatmap image frame should render");
+    let heatmap_surface = heatmap_session
+        .render_to_surface(render_target())
+        .expect("heatmap surface frame should render");
+    assert_eq!(
+        heatmap_surface.surface_capability,
+        SurfaceCapability::FastPath
+    );
+    assert_surface_frame_parity(
+        "heatmap surface frame",
+        heatmap_image.layers.base.as_ref(),
+        heatmap_surface.layers.base.as_ref(),
+    );
 }
 
 #[test]

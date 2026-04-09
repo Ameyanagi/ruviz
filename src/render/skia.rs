@@ -2342,14 +2342,10 @@ impl SkiaRenderer {
         x: u32,
         y: u32,
     ) -> Result<()> {
-        // Convert our Image struct to tiny-skia Pixmap for drawing
-        let subplot_pixmap = tiny_skia::Pixmap::from_vec(
-            subplot_image.pixels,
-            tiny_skia::IntSize::from_wh(subplot_image.width, subplot_image.height).ok_or_else(
-                || PlottingError::InvalidInput("Invalid subplot dimensions".to_string()),
-            )?,
-        )
-        .ok_or_else(|| PlottingError::RenderError("Failed to create subplot pixmap".to_string()))?;
+        let subplot_png = subplot_image.encode_png()?;
+        let subplot_pixmap = tiny_skia::Pixmap::decode_png(&subplot_png).map_err(|error| {
+            PlottingError::RenderError(format!("Failed to decode subplot image: {error}"))
+        })?;
 
         // Draw the subplot pixmap onto our main pixmap at the specified position
         self.pixmap.draw_pixmap(

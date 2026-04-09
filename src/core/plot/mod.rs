@@ -47,6 +47,26 @@
 pub(super) const COLORBAR_MARGIN_PX: f32 = 10.0;
 pub(super) const COLORBAR_WIDTH_PX: f32 = 20.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RenderExecutionMode {
+    Reference,
+    Optimized,
+}
+
+impl RenderExecutionMode {
+    pub(super) fn allows_parallel(self) -> bool {
+        matches!(self, Self::Optimized)
+    }
+
+    pub(super) fn allows_auto_datashader(self) -> bool {
+        matches!(self, Self::Optimized)
+    }
+
+    pub(super) fn allows_raster_line_reduction(self) -> bool {
+        matches!(self, Self::Optimized)
+    }
+}
+
 macro_rules! impl_series_continuation_methods {
     ($self_:ident.$finalize:ident()) => {
         /// Continue with a new line series.

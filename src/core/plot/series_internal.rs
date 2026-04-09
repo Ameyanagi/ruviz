@@ -535,6 +535,7 @@ impl Plot {
         x_max: f64,
         y_min: f64,
         y_max: f64,
+        mode: RenderExecutionMode,
     ) -> Result<()> {
         let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
@@ -561,7 +562,9 @@ impl Plot {
                     })
                     .collect();
 
-                if should_reduce_line_series(series, points.len(), plot_area.width()) {
+                if mode.allows_raster_line_reduction()
+                    && should_reduce_line_series(series, points.len(), plot_area.width())
+                {
                     if let Some(reduced) =
                         reduce_line_points_for_raster(&points, plot_area.left(), plot_area.width())
                     {
@@ -1306,7 +1309,16 @@ impl Plot {
             }
             // For other series types, fall back to normal rendering
             _ => {
-                self.render_series_normal(series, renderer, plot_area, x_min, x_max, y_min, y_max)?;
+                self.render_series_normal(
+                    series,
+                    renderer,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    RenderExecutionMode::Optimized,
+                )?;
             }
         }
 

@@ -12,31 +12,16 @@ struct ColorbarMeasurementSpec {
 }
 
 impl Plot {
-    /// Render the plot to an in-memory image.
-    ///
-    /// Reactive plots are first resolved into a static snapshot. Temporal
-    /// `Signal` sources are sampled at `0.0`; push-based observables and
-    /// streaming sources use their latest values. Use `render_at()` to sample
-    /// temporal sources at a different time.
-    pub fn render(&self) -> Result<Image> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let image = resolved.render()?;
-            self.mark_reactive_sources_rendered();
-            return Ok(image);
-        }
-
+    fn render_image_with_mode(&self, mode: RenderExecutionMode) -> Result<Image> {
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
         if !snapshot_series.is_empty() {
             Self::validate_series_list(&snapshot_series)?;
         }
 
-        // Check if DataShader optimization should be used
         let total_points = Self::calculate_total_points_for_series(&snapshot_series);
         let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
 
-        // Warn for very large datasets
         const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
         if total_points > LARGE_DATASET_THRESHOLD {
             log::warn!(
@@ -45,36 +30,33 @@ impl Plot {
             );
         }
 
-        // Check if parallel processing should be used.
-        // Reactive plots are resolved into a static snapshot above, so they can
-        // reuse the normal backend-selection path here.
         #[cfg(feature = "parallel")]
         {
-            let series_count = snapshot_series.len();
-            let parallel_safe_for_markers =
-                snapshot_series
-                    .iter()
-                    .all(|series| match &series.series_type {
-                        SeriesType::Line { .. } => {
-                            series.marker_style.is_none()
-                                && series.x_errors.is_none()
-                                && series.y_errors.is_none()
-                        }
-                        SeriesType::Heatmap { .. } => false,
-                        _ => true,
-                    });
-            if !has_mixed_coordinates
-                && parallel_safe_for_markers
-                && self
-                    .render
-                    .parallel_renderer
-                    .should_use_parallel(series_count, total_points)
-            {
-                return self.render_with_parallel();
+            if mode.allows_parallel() {
+                let series_count = snapshot_series.len();
+                let parallel_safe_for_markers = snapshot_series.iter().all(|series| match &series
+                    .series_type
+                {
+                    SeriesType::Line { .. } => {
+                        series.marker_style.is_none()
+                            && series.x_errors.is_none()
+                            && series.y_errors.is_none()
+                    }
+                    SeriesType::Heatmap { .. } => false,
+                    _ => true,
+                });
+                if !has_mixed_coordinates
+                    && parallel_safe_for_markers
+                    && self
+                        .render
+                        .parallel_renderer
+                        .should_use_parallel(series_count, total_points)
+                {
+                    return self.render_with_parallel();
+                }
             }
         }
 
-        // Create renderer for standard rendering with DPI scaling
         let (scaled_width, scaled_height) = self.config_canvas_size();
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
@@ -86,7 +68,6 @@ impl Plot {
         let (x_min, x_max, y_min, y_max) =
             self.effective_main_panel_bounds_for_series(&snapshot_series)?;
 
-        // Extract bar chart categories if present (for categorical x-axis labels)
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
             if let SeriesType::Bar { categories, .. } = &s.series_type {
                 Some(categories.clone())
@@ -95,7 +76,6 @@ impl Plot {
             }
         });
 
-        // Extract violin categories and positions if present (for categorical x-axis labels)
         let violin_data: Vec<(String, f64)> = self
             .series_mgr
             .series
@@ -115,10 +95,8 @@ impl Plot {
         let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
             violin_data.into_iter().unzip();
 
-        // Check if this is a violin categorical plot (to use special rendering)
         let is_violin_categorical = !violin_categories.is_empty();
 
-        // Use violin categories if bar_categories is not present and violin categories exist
         let bar_categories = bar_categories.or_else(|| {
             if is_violin_categorical {
                 Some(violin_categories.clone())
@@ -138,14 +116,7 @@ impl Plot {
             y_max,
         )?;
         let plot_area = Self::plot_area_from_layout(&layout)?;
-        let clip_rect = (
-            plot_area.x(),
-            plot_area.y(),
-            plot_area.width(),
-            plot_area.height(),
-        );
 
-        // Convert ticks to pixel coordinates
         let x_tick_pixels: Vec<f32> = x_ticks
             .iter()
             .map(|&tick| map_data_to_pixels(tick, 0.0, x_min, x_max, y_min, y_max, plot_area).0)
@@ -155,8 +126,6 @@ impl Plot {
             .map(|&tick| map_data_to_pixels(0.0, tick, x_min, x_max, y_min, y_max, plot_area).1)
             .collect();
 
-        // Draw grid if enabled - using unified GridStyle
-        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
         if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
@@ -194,13 +163,9 @@ impl Plot {
             )?;
         }
 
-        // Draw axes and labels using computed layout positions
         let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
 
-        // Draw tick labels using layout positions
-        // Use categorical labels for bar/violin charts, numeric for others
         if draw_axes && is_violin_categorical {
-            // Violin plots use their own x-positions for category labels
             renderer.draw_axis_labels_at_categorical_violin(
                 &layout.plot_area,
                 &violin_categories,
@@ -256,7 +221,6 @@ impl Plot {
             }
         }
 
-        // Draw title if present (resolve at t=0 for static render)
         if let Some(ref pos) = layout.title_pos {
             if let Some(ref title) = self.display.title {
                 let title_str = title.resolve(0.0);
@@ -264,7 +228,6 @@ impl Plot {
             }
         }
 
-        // Draw xlabel if present
         if let Some(ref pos) = layout.xlabel_pos {
             if let Some(ref xlabel) = self.display.xlabel {
                 let xlabel_str = xlabel.resolve(0.0);
@@ -272,7 +235,6 @@ impl Plot {
             }
         }
 
-        // Draw ylabel if present
         if let Some(ref pos) = layout.ylabel_pos {
             if let Some(ref ylabel) = self.display.ylabel {
                 let ylabel_str = ylabel.resolve(0.0);
@@ -289,6 +251,7 @@ impl Plot {
             y_min,
             y_max,
             render_scale,
+            mode,
         )? {
             self.render_series_collection_normal(
                 &snapshot_series,
@@ -299,11 +262,37 @@ impl Plot {
                 y_min,
                 y_max,
                 render_scale,
+                mode,
             )?;
         }
 
-        // Convert renderer output to Image
         Ok(renderer.into_image())
+    }
+
+    /// Render the plot to an in-memory image.
+    ///
+    /// Reactive plots are first resolved into a static snapshot. Temporal
+    /// `Signal` sources are sampled at `0.0`; push-based observables and
+    /// streaming sources use their latest values. Use `render_at()` to sample
+    /// temporal sources at a different time.
+    pub fn render(&self) -> Result<Image> {
+        if self.is_reactive() {
+            let resolved = self.resolved_plot(0.0);
+            let image = resolved.render()?;
+            self.mark_reactive_sources_rendered();
+            return Ok(image);
+        }
+
+        self.render_image_with_mode(RenderExecutionMode::Reference)
+    }
+
+    #[cfg(test)]
+    pub(super) fn render_optimized_for_test(&self) -> Result<Image> {
+        if self.is_reactive() {
+            return self.resolved_plot(0.0).render_optimized_for_test();
+        }
+
+        self.render_image_with_mode(RenderExecutionMode::Optimized)
     }
 
     /// Render the plot using a caller-provided temporal sample time.
@@ -411,300 +400,12 @@ impl Plot {
         if let Some(err) = self.pending_ingestion_error() {
             return Err(err);
         }
-        renderer.set_text_engine_mode(self.display.text_engine);
-
-        let snapshot_series = self.snapshot_series(0.0);
-        if !snapshot_series.is_empty() {
-            Self::validate_series_list(&snapshot_series)?;
-        }
-
-        let (x_min, x_max, y_min, y_max) =
-            self.effective_main_panel_bounds_for_series(&snapshot_series)?;
-
-        // Extract bar chart categories if present (for categorical x-axis labels)
-        let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
-            if let SeriesType::Bar { categories, .. } = &s.series_type {
-                Some(categories.clone())
-            } else {
-                None
-            }
-        });
-
-        // Extract violin categories and positions if present (for categorical x-axis labels)
-        let violin_data: Vec<(String, f64)> = self
-            .series_mgr
-            .series
-            .iter()
-            .filter_map(|s| {
-                if let SeriesType::Violin { data } = &s.series_type {
-                    data.config
-                        .category
-                        .clone()
-                        .map(|cat| (cat, data.config.x_position))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
-            violin_data.into_iter().unzip();
-
-        // Use violin categories if bar_categories is not present and violin categories exist
-        let is_violin_categorical = !violin_categories.is_empty();
-        let bar_categories = bar_categories.or_else(|| {
-            if is_violin_categorical {
-                Some(violin_categories.clone())
-            } else {
-                None
-            }
-        });
-        let content = self.create_plot_content(y_min, y_max);
-        let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
-            renderer,
-            (renderer.width(), renderer.height()),
-            &content,
-            dpi,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-        )?;
-        let plot_area = Self::plot_area_from_layout(&layout)?;
-        let clip_rect = (
-            plot_area.x(),
-            plot_area.y(),
-            plot_area.width(),
-            plot_area.height(),
-        );
-
-        // Convert ticks to pixel coordinates
-        let x_tick_pixels: Vec<f32> = x_ticks
-            .iter()
-            .map(|&tick| map_data_to_pixels(tick, 0.0, x_min, x_max, y_min, y_max, plot_area).0)
-            .collect();
-        let y_tick_pixels: Vec<f32> = y_ticks
-            .iter()
-            .map(|&tick| map_data_to_pixels(0.0, tick, x_min, x_max, y_min, y_max, plot_area).1)
-            .collect();
-
-        // Draw grid if enabled - using unified GridStyle
-        // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
-        if self.layout.grid_style.visible && draw_axes {
-            let grid_color = self.layout.grid_style.effective_color();
-            let grid_width_px = pt_to_px(self.layout.grid_style.line_width, dpi);
-            renderer.draw_grid(
-                &x_tick_pixels,
-                &y_tick_pixels,
-                plot_area,
-                grid_color,
-                self.layout.grid_style.line_style.clone(),
-                grid_width_px,
-            )?;
-        }
-
-        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
-            plot_area,
-            x_min,
-            x_max,
-            bar_categories.as_ref().map(Vec::len),
-            &violin_positions,
-        );
-
-        let draw_ticks = draw_axes && self.layout.tick_config.enabled;
-        if draw_ticks {
-            let x_axis_ticks = categorical_x_tick_pixels
-                .as_deref()
-                .unwrap_or(x_tick_pixels.as_slice());
-            renderer.draw_axes(
-                plot_area,
-                x_axis_ticks,
-                &y_tick_pixels,
-                &self.layout.tick_config.direction,
-                &self.layout.tick_config.sides,
-                self.display.theme.foreground,
-            )?;
-        }
-
-        // Draw axes and labels using computed layout positions
-        let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
-
-        // Draw tick labels using layout positions
-        // Use categorical labels for bar/violin charts, numeric for others
-        if draw_axes && is_violin_categorical {
-            renderer.draw_axis_labels_at_categorical_violin(
-                &layout.plot_area,
-                &violin_categories,
-                &violin_positions,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                &y_ticks,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.display.theme.foreground,
-                dpi,
-                self.layout.tick_config.enabled,
-                !draw_ticks,
-            )?;
-        } else if draw_axes {
-            if let Some(ref categories) = bar_categories {
-                renderer.draw_axis_labels_at_categorical(
-                    &layout.plot_area,
-                    categories,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    !draw_ticks,
-                )?;
-            } else {
-                renderer.draw_axis_labels_at(
-                    &layout.plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &x_ticks,
-                    &y_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    !draw_ticks,
-                )?;
-            }
-        }
-
-        // Draw title if present (resolve at t=0 for static render)
-        if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.display.title {
-                let title_str = title.resolve(0.0);
-                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
-            }
-        }
-
-        // Draw xlabel if present
-        if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(ref xlabel) = self.display.xlabel {
-                let xlabel_str = xlabel.resolve(0.0);
-                renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
-            }
-        }
-
-        // Draw ylabel if present
-        if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ref ylabel) = self.display.ylabel {
-                let ylabel_str = ylabel.resolve(0.0);
-                renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
-            }
-        }
-
-        if !self.render_series_collection_auto_datashader(
-            &snapshot_series,
-            renderer,
-            plot_area,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-            RenderScale::new(dpi),
-        )? {
-            self.render_series_collection_normal(
-                &snapshot_series,
-                renderer,
-                plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                RenderScale::new(dpi),
-            )?;
-        }
-
-        // Draw annotations after data series but before legend
-        if !self.annotations.is_empty() {
-            renderer.draw_annotations(
-                &self.annotations,
-                plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                dpi,
-            )?;
-        }
-
-        // Collect legend items, including grouped-series collapse behavior.
-        let legend_items = self.collect_legend_items();
-
-        // Draw legend if there are labeled series and legend is enabled
-        if !legend_items.is_empty() && self.layout.legend.enabled {
-            let mut legend = self.layout.legend.to_legend();
-            // Scale legend font size from points to pixels for proper DPI handling
-            legend.font_size = pt_to_px(legend.font_size, dpi);
-
-            // Collect data bounding boxes for best position algorithm
-            let data_bboxes: Vec<(f32, f32, f32, f32)> =
-                if matches!(legend.position, LegendPosition::Best) {
-                    let marker_radius = 4.0_f32;
-                    self.series_mgr
-                        .series
-                        .iter()
-                        .flat_map(|series| match &series.series_type {
-                            SeriesType::Line { x_data, y_data }
-                            | SeriesType::Scatter { x_data, y_data } => {
-                                let x_data = x_data.resolve(0.0);
-                                let y_data = y_data.resolve(0.0);
-                                x_data
-                                    .iter()
-                                    .zip(y_data.iter())
-                                    .filter_map(|(&x, &y)| {
-                                        if x.is_finite() && y.is_finite() {
-                                            let (px, py) = map_data_to_pixels(
-                                                x, y, x_min, x_max, y_min, y_max, plot_area,
-                                            );
-                                            Some((
-                                                px - marker_radius,
-                                                py - marker_radius,
-                                                px + marker_radius,
-                                                py + marker_radius,
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                            }
-                            _ => vec![],
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
-
-            let bbox_slice: Option<&[(f32, f32, f32, f32)]> = if data_bboxes.is_empty() {
-                None
-            } else {
-                Some(&data_bboxes)
-            };
-
-            renderer.draw_legend_full(&legend_items, &legend, plot_area, bbox_slice)?;
-        }
-
-        Ok(())
+        let image = self
+            .clone()
+            .dpi(dpi.round().max(1.0) as u32)
+            .set_output_pixels(renderer.width(), renderer.height())
+            .render_image_with_mode(RenderExecutionMode::Reference)?;
+        renderer.draw_subplot(image, 0, 0)
     }
 
     /// Calculate total number of data points across all series
@@ -1492,537 +1193,8 @@ impl Plot {
             return self.resolved_plot(0.0).save_png_bytes_with_backend();
         }
 
-        use crate::render::skia::SkiaRenderer;
-
-        self.validate_runtime_environment()?;
-        let snapshot_series = self.snapshot_series(0.0);
-        if !snapshot_series.is_empty() {
-            Self::validate_series_list(&snapshot_series)?;
-        }
-
-        // Create renderer and render the plot with DPI scaling
-        let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
-        let mut renderer =
-            SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
-        renderer.set_text_engine_mode(self.display.text_engine);
-
-        // Clear background
-        renderer.clear();
-
-        let base_bounds = self.effective_main_panel_bounds_for_series(&snapshot_series)?;
-        let (x_min, x_max, y_min, y_max) = if snapshot_series.is_empty() {
-            base_bounds
-        } else {
-            self.apply_auto_padding_to_bounds(base_bounds, 0.05)
-        };
-
-        // Extract bar chart categories if present (for categorical x-axis labels)
-        let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
-            if let SeriesType::Bar { categories, .. } = &s.series_type {
-                Some(categories.clone())
-            } else {
-                None
-            }
-        });
-
-        // Extract violin categories and positions if present (for categorical x-axis labels)
-        let violin_data: Vec<(String, f64)> = self
-            .series_mgr
-            .series
-            .iter()
-            .filter_map(|s| {
-                if let SeriesType::Violin { data } = &s.series_type {
-                    data.config
-                        .category
-                        .clone()
-                        .map(|cat| (cat, data.config.x_position))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let (violin_categories, violin_positions): (Vec<String>, Vec<f64>) =
-            violin_data.into_iter().unzip();
-
-        let is_violin_categorical = !violin_categories.is_empty();
-        let bar_categories = bar_categories.or_else(|| {
-            if is_violin_categorical {
-                Some(violin_categories.clone())
-            } else {
-                None
-            }
-        });
-
-        let dpi = self.display.dpi as f32;
-        let render_scale = self.render_scale();
-        renderer.set_render_scale(render_scale);
-        let content = self.create_plot_content(y_min, y_max);
-        let (x_major_ticks, y_major_ticks) =
-            self.configured_major_ticks(x_min, x_max, y_min, y_max);
-        let (x_major_labels, y_major_labels) = (
-            crate::render::skia::format_tick_labels(&x_major_ticks),
-            crate::render::skia::format_tick_labels(&y_major_ticks),
-        );
-        let measured_dimensions = self.measure_layout_text_with_ticks(
-            &renderer,
-            &content,
-            dpi,
-            &x_major_labels,
-            &y_major_labels,
-        )?;
-        let layout = self.compute_layout_from_measurements(
-            (scaled_width, scaled_height),
-            &content,
-            dpi,
-            measured_dimensions.as_ref(),
-        );
-        let plot_area = Self::plot_area_from_layout(&layout)?;
-
-        let x_minor_ticks = if self.layout.tick_config.minor_ticks_x > 0 {
-            match &self.layout.x_scale {
-                AxisScale::Log => crate::axes::generate_log_minor_ticks(&x_major_ticks),
-                _ => crate::render::skia::generate_minor_ticks(
-                    &x_major_ticks,
-                    self.layout.tick_config.minor_ticks_x,
-                ),
-            }
-        } else {
-            Vec::new()
-        };
-        let y_minor_ticks = if self.layout.tick_config.minor_ticks_y > 0 {
-            match &self.layout.y_scale {
-                AxisScale::Log => crate::axes::generate_log_minor_ticks(&y_major_ticks),
-                _ => crate::render::skia::generate_minor_ticks(
-                    &y_major_ticks,
-                    self.layout.tick_config.minor_ticks_y,
-                ),
-            }
-        } else {
-            Vec::new()
-        };
-
-        let x_ticks = match self.layout.tick_config.grid_mode {
-            GridMode::MajorOnly => x_major_ticks.clone(),
-            GridMode::MinorOnly => x_minor_ticks.clone(),
-            GridMode::Both => {
-                let mut combined = x_major_ticks.clone();
-                combined.extend(x_minor_ticks.iter());
-                combined.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                combined
-            }
-        };
-        let y_ticks = match self.layout.tick_config.grid_mode {
-            GridMode::MajorOnly => y_major_ticks.clone(),
-            GridMode::MinorOnly => y_minor_ticks.clone(),
-            GridMode::Both => {
-                let mut combined = y_major_ticks.clone();
-                combined.extend(y_minor_ticks.iter());
-                combined.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                combined
-            }
-        };
-
-        let x_tick_pixels: Vec<f32> = x_ticks
-            .iter()
-            .map(|&x| {
-                crate::render::skia::map_data_to_pixels_scaled(
-                    x,
-                    0.0,
-                    x_min,
-                    x_max,
-                    0.0,
-                    1.0,
-                    plot_area,
-                    &self.layout.x_scale,
-                    &AxisScale::Linear,
-                )
-                .0
-            })
-            .collect();
-        let y_tick_pixels: Vec<f32> = y_ticks
-            .iter()
-            .map(|&y| {
-                crate::render::skia::map_data_to_pixels_scaled(
-                    0.0,
-                    y,
-                    0.0,
-                    1.0,
-                    y_min,
-                    y_max,
-                    plot_area,
-                    &AxisScale::Linear,
-                    &self.layout.y_scale,
-                )
-                .1
-            })
-            .collect();
-
-        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
-        if self.layout.grid_style.visible && draw_axes {
-            let grid_color = self.layout.grid_style.effective_color();
-            renderer.draw_grid(
-                &x_tick_pixels,
-                &y_tick_pixels,
-                plot_area,
-                grid_color,
-                self.layout.grid_style.line_style.clone(),
-                self.dpi_scaled_line_width(self.layout.grid_style.line_width),
-            )?;
-        }
-
-        let x_major_tick_pixels: Vec<f32> = x_major_ticks
-            .iter()
-            .map(|&x| {
-                crate::render::skia::map_data_to_pixels_scaled(
-                    x,
-                    0.0,
-                    x_min,
-                    x_max,
-                    0.0,
-                    1.0,
-                    plot_area,
-                    &self.layout.x_scale,
-                    &AxisScale::Linear,
-                )
-                .0
-            })
-            .collect();
-        let y_major_tick_pixels: Vec<f32> = y_major_ticks
-            .iter()
-            .map(|&y| {
-                crate::render::skia::map_data_to_pixels_scaled(
-                    0.0,
-                    y,
-                    0.0,
-                    1.0,
-                    y_min,
-                    y_max,
-                    plot_area,
-                    &AxisScale::Linear,
-                    &self.layout.y_scale,
-                )
-                .1
-            })
-            .collect();
-
-        let x_minor_tick_pixels: Vec<f32> = x_minor_ticks
-            .iter()
-            .map(|&x| {
-                crate::render::skia::map_data_to_pixels_scaled(
-                    x,
-                    0.0,
-                    x_min,
-                    x_max,
-                    0.0,
-                    1.0,
-                    plot_area,
-                    &self.layout.x_scale,
-                    &AxisScale::Linear,
-                )
-                .0
-            })
-            .collect();
-        let y_minor_tick_pixels: Vec<f32> = y_minor_ticks
-            .iter()
-            .map(|&y| {
-                crate::render::skia::map_data_to_pixels_scaled(
-                    0.0,
-                    y,
-                    0.0,
-                    1.0,
-                    y_min,
-                    y_max,
-                    plot_area,
-                    &AxisScale::Linear,
-                    &self.layout.y_scale,
-                )
-                .1
-            })
-            .collect();
-
-        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
-            plot_area,
-            x_min,
-            x_max,
-            bar_categories.as_ref().map(Vec::len),
-            &violin_positions,
-        );
-        let x_major_axis_ticks = categorical_x_tick_pixels
-            .as_deref()
-            .unwrap_or(x_major_tick_pixels.as_slice());
-        let x_minor_axis_ticks = if categorical_x_tick_pixels.is_some() {
-            &[][..]
-        } else {
-            x_minor_tick_pixels.as_slice()
-        };
-
-        let draw_ticks = draw_axes && self.layout.tick_config.enabled;
-
-        if draw_ticks {
-            renderer.draw_axes_with_config(
-                plot_area,
-                x_major_axis_ticks,
-                &y_major_tick_pixels,
-                x_minor_axis_ticks,
-                &y_minor_tick_pixels,
-                &self.layout.tick_config.direction,
-                &self.layout.tick_config.sides,
-                self.display.theme.foreground,
-                render_scale.reference_scale(),
-            )?;
-        }
-
-        let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
-
-        if draw_axes {
-            if is_violin_categorical {
-                renderer.draw_axis_labels_at_categorical_violin(
-                    &layout.plot_area,
-                    &violin_categories,
-                    &violin_positions,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &y_major_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    !draw_ticks,
-                )?;
-            } else if let Some(ref categories) = bar_categories {
-                renderer.draw_axis_labels_at_categorical(
-                    &layout.plot_area,
-                    categories,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &y_major_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    !draw_ticks,
-                )?;
-            } else {
-                renderer.draw_axis_labels_at(
-                    &layout.plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    &x_major_ticks,
-                    &y_major_ticks,
-                    layout.xtick_baseline_y,
-                    layout.ytick_right_x,
-                    tick_size_px,
-                    self.display.theme.foreground,
-                    dpi,
-                    self.layout.tick_config.enabled,
-                    !draw_ticks,
-                )?;
-            }
-        }
-
-        if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.display.title {
-                let title_str = title.resolve(0.0);
-                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
-            }
-        }
-
-        if draw_axes {
-            if let Some(ref pos) = layout.xlabel_pos {
-                if let Some(ref xlabel) = self.display.xlabel {
-                    let xlabel_str = xlabel.resolve(0.0);
-                    renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
-                }
-            }
-
-            if let Some(ref pos) = layout.ylabel_pos {
-                if let Some(ref ylabel) = self.display.ylabel {
-                    let ylabel_str = ylabel.resolve(0.0);
-                    renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
-                }
-            }
-        }
-
-        let total_points = Self::calculate_total_points_for_series(&snapshot_series);
-        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
-        #[cfg(feature = "gpu")]
-        const GPU_THRESHOLD: usize = 5_000;
-
-        #[cfg(feature = "gpu")]
-        let backend_used = if self.render_series_collection_auto_datashader(
-            &snapshot_series,
-            &mut renderer,
-            plot_area,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-            render_scale,
-        )? {
-            "datashader"
-        } else {
-            let use_gpu_rendering =
-                self.render.enable_gpu && total_points >= GPU_THRESHOLD && !has_mixed_coordinates;
-
-            if use_gpu_rendering {
-                match pollster::block_on(GpuRenderer::new()) {
-                    Ok(mut gpu_renderer) => {
-                        log::info!(
-                            "Using GPU rendering for {} points (threshold: {})",
-                            total_points,
-                            GPU_THRESHOLD
-                        );
-                        for series in &snapshot_series {
-                            self.render_series_gpu(
-                                series,
-                                &mut renderer,
-                                &mut gpu_renderer,
-                                plot_area,
-                                x_min,
-                                x_max,
-                                y_min,
-                                y_max,
-                            )?;
-                        }
-                        "gpu"
-                    }
-                    Err(e) => {
-                        log::warn!("GPU initialization failed, falling back to CPU: {}", e);
-                        self.render_series_collection_normal(
-                            &snapshot_series,
-                            &mut renderer,
-                            plot_area,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            render_scale,
-                        )?;
-                        "gpu_fallback_skia"
-                    }
-                }
-            } else {
-                self.render_series_collection_normal(
-                    &snapshot_series,
-                    &mut renderer,
-                    plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    render_scale,
-                )?;
-                "skia"
-            }
-        };
-
-        #[cfg(not(feature = "gpu"))]
-        let backend_used = if self.render_series_collection_auto_datashader(
-            &snapshot_series,
-            &mut renderer,
-            plot_area,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-            render_scale,
-        )? {
-            "datashader"
-        } else {
-            self.render_series_collection_normal(
-                &snapshot_series,
-                &mut renderer,
-                plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                render_scale,
-            )?;
-            "skia"
-        };
-
-        if !self.annotations.is_empty() {
-            renderer.draw_annotations(
-                &self.annotations,
-                plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                self.display.config.figure.dpi,
-            )?;
-        }
-
-        let legend_items = self.collect_legend_items();
-        if !legend_items.is_empty() && self.layout.legend.enabled {
-            let mut legend = self.layout.legend.to_legend();
-            legend.font_size = pt_to_px(legend.font_size, self.display.config.figure.dpi);
-
-            let data_bboxes: Vec<(f32, f32, f32, f32)> =
-                if matches!(legend.position, LegendPosition::Best) {
-                    let marker_radius = 4.0_f32;
-                    snapshot_series
-                        .iter()
-                        .flat_map(|series| match &series.series_type {
-                            SeriesType::Line { x_data, y_data }
-                            | SeriesType::Scatter { x_data, y_data }
-                            | SeriesType::ErrorBars { x_data, y_data, .. }
-                            | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                                let x_data = x_data.resolve(0.0);
-                                let y_data = y_data.resolve(0.0);
-                                x_data
-                                    .iter()
-                                    .zip(y_data.iter())
-                                    .map(|(&x, &y)| {
-                                        let (px, py) =
-                                            crate::render::skia::map_data_to_pixels_scaled(
-                                                x,
-                                                y,
-                                                x_min,
-                                                x_max,
-                                                y_min,
-                                                y_max,
-                                                plot_area,
-                                                &self.layout.x_scale,
-                                                &self.layout.y_scale,
-                                            );
-                                        (
-                                            px - marker_radius,
-                                            py - marker_radius,
-                                            px + marker_radius,
-                                            py + marker_radius,
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                            }
-                            _ => vec![],
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
-
-            let bbox_slice = if data_bboxes.is_empty() {
-                None
-            } else {
-                Some(data_bboxes.as_slice())
-            };
-            renderer.draw_legend_full(&legend_items, &legend, plot_area, bbox_slice)?;
-        }
-
-        Ok((renderer.encode_png_bytes()?, backend_used))
+        let image = self.render_image_with_mode(RenderExecutionMode::Reference)?;
+        Ok((image.encode_png()?, "skia"))
     }
 
     /// Save the plot to a PNG file with custom dimensions

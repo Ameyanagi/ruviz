@@ -109,6 +109,14 @@ fn decode_png_rgba(png_bytes: &[u8]) -> ::image::RgbaImage {
         .to_rgba8()
 }
 
+fn plot_image_to_rgba(image: &Image) -> ::image::RgbaImage {
+    decode_png_rgba(
+        &image
+            .encode_png()
+            .expect("plot image should encode to straight-alpha PNG"),
+    )
+}
+
 fn mean_normalized_rgba_diff(lhs: &::image::RgbaImage, rhs: &::image::RgbaImage) -> f64 {
     assert_eq!(lhs.dimensions(), rhs.dimensions());
 
@@ -118,6 +126,62 @@ fn mean_normalized_rgba_diff(lhs: &::image::RgbaImage, rhs: &::image::RgbaImage)
         .map(|(left, right)| (*left as f64 - *right as f64).abs() / 255.0)
         .sum::<f64>()
         / lhs.as_raw().len() as f64
+}
+
+fn fraction_pixels_within_channel_delta(
+    lhs: &::image::RgbaImage,
+    rhs: &::image::RgbaImage,
+    max_delta: u8,
+) -> f64 {
+    assert_eq!(lhs.dimensions(), rhs.dimensions());
+
+    let matching = lhs
+        .pixels()
+        .zip(rhs.pixels())
+        .filter(|(left, right)| {
+            left.0
+                .iter()
+                .zip(right.0.iter())
+                .all(|(lhs, rhs)| (*lhs as i16 - *rhs as i16).abs() <= max_delta as i16)
+        })
+        .count() as f64;
+    matching / (lhs.width() * lhs.height()) as f64
+}
+
+fn assert_rgba_parity_against_reference(
+    name: &str,
+    reference: &::image::RgbaImage,
+    candidate: &::image::RgbaImage,
+) {
+    let mean_diff = mean_normalized_rgba_diff(reference, candidate);
+    let within_delta = fraction_pixels_within_channel_delta(reference, candidate, 24);
+    let reference_ink = non_background_fraction(reference.as_raw());
+    let candidate_ink = non_background_fraction(candidate.as_raw());
+
+    assert!(
+        mean_diff <= 0.015,
+        "{name} drifted too far from the reference render: mean_diff={mean_diff:.6}"
+    );
+    assert!(
+        within_delta >= 0.99,
+        "{name} has too many per-pixel outliers relative to the reference render: within_delta={within_delta:.4}"
+    );
+    assert!(
+        (reference_ink - candidate_ink).abs() <= 0.10,
+        "{name} changed visible ink coverage too much: reference_ink={reference_ink:.4} candidate_ink={candidate_ink:.4}"
+    );
+}
+
+fn assert_plot_image_parity_against_reference(name: &str, reference: &Image, candidate: &Image) {
+    let reference_rgba = plot_image_to_rgba(reference);
+    let candidate_rgba = plot_image_to_rgba(candidate);
+    assert_rgba_parity_against_reference(name, &reference_rgba, &candidate_rgba);
+}
+
+fn assert_png_parity_against_reference(name: &str, reference: &Image, candidate_png: &[u8]) {
+    let reference_rgba = plot_image_to_rgba(reference);
+    let candidate_rgba = decode_png_rgba(candidate_png);
+    assert_rgba_parity_against_reference(name, &reference_rgba, &candidate_rgba);
 }
 
 fn assert_png_background_preserved(name: &str, png_bytes: &[u8]) {
@@ -254,11 +318,11 @@ fn render_plot_to_renderer_png(plot: &Plot, width: u32, height: u32) -> Vec<u8> 
     let mut renderer =
         crate::render::SkiaRenderer::new(width, height, crate::render::Theme::default())
             .expect("renderer should be created");
-    plot.render_to_renderer(&mut renderer, 96.0)
+    renderer.clear();
+    plot.render_to_renderer(&mut renderer, plot.display.dpi as f32)
         .expect("plot should render to external renderer");
     renderer
-        .into_image()
-        .encode_png()
+        .encode_png_bytes()
         .expect("renderer output should encode as PNG")
 }
 
@@ -2087,14 +2151,14 @@ fn test_benchmark_save_png_bytes_uses_skia_backend() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_benchmark_save_png_bytes_uses_datashader_for_large_scatter() {
+fn test_benchmark_save_png_bytes_keeps_large_scatter_on_skia_reference_path() {
     let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
 
     let plot = Plot::new().scatter(&x_data, &y_data).end_series();
     let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
 
-    assert_eq!(backend, "datashader");
+    assert_eq!(backend, "skia");
 }
 
 #[test]
@@ -2181,6 +2245,73 @@ fn test_render_large_line_and_histogram_png_preserve_background() {
         .render_png_bytes()
         .expect("large histogram should render as PNG");
     assert_png_background_preserved("large histogram", &histogram_png);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_optimized_line_render_stays_in_parity_with_reference_render() {
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .grid(false)
+        .line(&x, &y)
+        .into_plot();
+
+    let reference = plot.render().expect("reference line render should succeed");
+    let optimized = plot
+        .render_optimized_for_test()
+        .expect("optimized line render should succeed");
+
+    assert_plot_image_parity_against_reference("optimized line render", &reference, &optimized);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_png_fast_path_stays_in_parity_with_reference_render_for_large_scatter() {
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .grid(false)
+        .scatter(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .marker_size(6.0)
+        .into_plot();
+
+    let reference = plot
+        .render()
+        .expect("reference scatter render should succeed");
+    let (candidate_png, backend) = plot
+        .benchmark_save_png_bytes()
+        .expect("optimized PNG path should render");
+
+    assert_png_parity_against_reference(
+        &format!("optimized PNG path ({backend})"),
+        &reference,
+        &candidate_png,
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_render_to_renderer_stays_in_parity_with_reference_render_for_large_scatter() {
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .grid(false)
+        .scatter(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .marker_size(6.0)
+        .into_plot();
+
+    let reference = plot
+        .render()
+        .expect("reference scatter render should succeed");
+    let renderer_png = render_plot_to_renderer_png(&plot, 320, 200);
+
+    assert_png_parity_against_reference("render_to_renderer", &reference, &renderer_png);
 }
 
 #[test]
