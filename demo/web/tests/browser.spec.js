@@ -303,9 +303,18 @@ test("python widget bundle renders when loaded from a blob-backed module", async
     frame.style.width = "1000px";
     document.body.appendChild(frame);
 
+    const shell = document.createElement("div");
+    shell.id = "python-widget-test-shell";
+    shell.style.display = "flex";
+    shell.style.flexDirection = "column";
+    shell.style.alignItems = "stretch";
+    shell.style.width = "100%";
+    shell.style.background = "rgb(255, 255, 255)";
+    frame.appendChild(shell);
+
     const mount = document.createElement("div");
     mount.id = "python-widget-test-host";
-    frame.appendChild(mount);
+    shell.appendChild(mount);
 
     const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
 
@@ -315,6 +324,9 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       const canvas = mount.querySelector("canvas");
       const host = mount;
       const viewport = mount.querySelector("[data-ruviz-widget-viewport='true']");
+      const shellBackground = getComputedStyle(shell).backgroundColor;
+      const bodyBackground = getComputedStyle(document.body).backgroundColor;
+      const htmlBackground = getComputedStyle(document.documentElement).backgroundColor;
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new Error("widget bundle did not create a canvas");
       }
@@ -328,30 +340,40 @@ test("python widget bundle renders when loaded from a blob-backed module", async
       const initialImage = await waitForCanvasChange(canvas);
       const initialBox = await waitForElementBox(viewport);
       const initialHostBox = await waitForElementBox(host);
+      const initialShellBox = await waitForElementBox(shell);
       frame.style.width = "600px";
       const shrunkBox = await waitForElementBox(viewport, initialBox);
       const shrunkHostBox = await waitForElementBox(host, initialHostBox);
+      const shrunkShellBox = await waitForElementBox(shell, initialShellBox);
       const shrunkImage = await waitForCanvasChange(canvas, initialImage);
       model.setSnapshot(buildSnapshot("widget updated", [1.1, 0.4, 1.0, 0.2], [360, 360]));
       const updatedImage = await waitForCanvasChange(canvas, shrunkImage);
       const updatedBox = await waitForElementBox(viewport, shrunkBox);
       const updatedHostBox = await waitForElementBox(host, shrunkHostBox);
+      const updatedShellBox = await waitForElementBox(shell, shrunkShellBox);
 
       if (typeof cleanup === "function") {
         cleanup();
       }
 
       frame.remove();
+      shell.remove();
       mount.remove();
       return {
+        bodyBackground,
+        htmlBackground,
         initialBox,
         initialHostBox,
+        initialShellBox,
         initialImage,
+        shellBackground,
         shrunkBox,
         shrunkHostBox,
+        shrunkShellBox,
         shrunkImage,
         updatedBox,
         updatedHostBox,
+        updatedShellBox,
         updatedImage,
       };
     } finally {
@@ -365,15 +387,24 @@ test("python widget bundle renders when loaded from a blob-backed module", async
   expect(result.initialBox.height).toBeCloseTo(360, 0);
   expect(result.initialHostBox.width).toBeCloseTo(640, 0);
   expect(result.initialHostBox.height).toBeCloseTo(result.initialBox.height, 0);
+  expect(result.initialShellBox.width).toBeCloseTo(640, 0);
+  expect(result.initialShellBox.height).toBeCloseTo(result.initialHostBox.height, 0);
   expect(result.shrunkBox.width).toBeCloseTo(600, 0);
   expect(result.shrunkBox.height).toBeCloseTo(337.5, 0);
   expect(result.shrunkHostBox.width).toBeCloseTo(600, 0);
   expect(result.shrunkHostBox.height).toBeCloseTo(result.shrunkBox.height, 0);
+  expect(result.shrunkShellBox.width).toBeCloseTo(600, 0);
+  expect(result.shrunkShellBox.height).toBeCloseTo(result.shrunkHostBox.height, 0);
   expect(result.initialImage).not.toEqual(result.shrunkImage);
   expect(result.updatedBox.width).toBeCloseTo(360, 0);
   expect(result.updatedBox.height).toBeCloseTo(360, 0);
   expect(result.updatedHostBox.width).toBeCloseTo(360, 0);
   expect(result.updatedHostBox.height).toBeCloseTo(result.updatedBox.height, 0);
+  expect(result.updatedShellBox.width).toBeCloseTo(360, 0);
+  expect(result.updatedShellBox.height).toBeCloseTo(result.updatedHostBox.height, 0);
+  expect(result.shellBackground).toContain("0, 0, 0, 0");
+  expect(result.bodyBackground).toContain("0, 0, 0, 0");
+  expect(result.htmlBackground).toContain("0, 0, 0, 0");
   expect(result.shrunkImage).not.toEqual(result.updatedImage);
 });
 
@@ -440,9 +471,18 @@ test("python widget bundle uses the default PNG size when sizePx is omitted", as
     frame.style.width = "1000px";
     document.body.appendChild(frame);
 
+    const shell = document.createElement("div");
+    shell.id = "python-widget-default-size-shell";
+    shell.style.display = "flex";
+    shell.style.flexDirection = "column";
+    shell.style.alignItems = "stretch";
+    shell.style.width = "100%";
+    shell.style.background = "rgb(255, 255, 255)";
+    frame.appendChild(shell);
+
     const mount = document.createElement("div");
     mount.id = "python-widget-default-size-host";
-    frame.appendChild(mount);
+    shell.appendChild(mount);
 
     const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
 
@@ -451,6 +491,7 @@ test("python widget bundle uses the default PNG size when sizePx is omitted", as
       const cleanup = mod.default.render({ model, el: mount });
       const host = mount;
       const viewport = mount.querySelector("[data-ruviz-widget-viewport='true']");
+      const shellBackground = getComputedStyle(shell).backgroundColor;
       if (!(host instanceof HTMLDivElement) || host.dataset.ruvizWidgetHost !== "true") {
         throw new Error("widget bundle did not create a host");
       }
@@ -460,17 +501,28 @@ test("python widget bundle uses the default PNG size when sizePx is omitted", as
 
       const roomyBox = await waitForElementBox(viewport);
       const roomyHostBox = await waitForElementBox(host);
+      const roomyShellBox = await waitForElementBox(shell);
       frame.style.width = "500px";
       const constrainedBox = await waitForElementBox(viewport, roomyBox);
       const constrainedHostBox = await waitForElementBox(host, roomyHostBox);
+      const constrainedShellBox = await waitForElementBox(shell, roomyShellBox);
 
       if (typeof cleanup === "function") {
         cleanup();
       }
 
       frame.remove();
+      shell.remove();
       mount.remove();
-      return { roomyBox, roomyHostBox, constrainedBox, constrainedHostBox };
+      return {
+        roomyBox,
+        roomyHostBox,
+        roomyShellBox,
+        shellBackground,
+        constrainedBox,
+        constrainedHostBox,
+        constrainedShellBox,
+      };
     } finally {
       URL.revokeObjectURL(moduleUrl);
     }
@@ -482,10 +534,15 @@ test("python widget bundle uses the default PNG size when sizePx is omitted", as
   expect(result.roomyBox.height).toBeCloseTo(480, 0);
   expect(result.roomyHostBox.width).toBeCloseTo(640, 0);
   expect(result.roomyHostBox.height).toBeCloseTo(result.roomyBox.height, 0);
+  expect(result.roomyShellBox.width).toBeCloseTo(640, 0);
+  expect(result.roomyShellBox.height).toBeCloseTo(result.roomyHostBox.height, 0);
   expect(result.constrainedBox.width).toBeCloseTo(500, 0);
   expect(result.constrainedBox.height).toBeCloseTo(375, 0);
   expect(result.constrainedHostBox.width).toBeCloseTo(500, 0);
   expect(result.constrainedHostBox.height).toBeCloseTo(result.constrainedBox.height, 0);
+  expect(result.constrainedShellBox.width).toBeCloseTo(500, 0);
+  expect(result.constrainedShellBox.height).toBeCloseTo(result.constrainedHostBox.height, 0);
+  expect(result.shellBackground).toContain("0, 0, 0, 0");
 });
 
 test("python widget bundle can be resized by dragging the resize handle", async ({ page }) => {
@@ -534,9 +591,18 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     frame.style.width = "900px";
     document.body.appendChild(frame);
 
+    const shell = document.createElement("div");
+    shell.id = "python-widget-resize-shell";
+    shell.style.display = "flex";
+    shell.style.flexDirection = "column";
+    shell.style.alignItems = "stretch";
+    shell.style.width = "100%";
+    shell.style.background = "rgb(255, 255, 255)";
+    frame.appendChild(shell);
+
     const mount = document.createElement("div");
     mount.id = "python-widget-resize-host";
-    frame.appendChild(mount);
+    shell.appendChild(mount);
 
     const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
     const mod = await import(moduleUrl);
@@ -599,6 +665,7 @@ test("python widget bundle can be resized by dragging the resize handle", async 
           cleanup();
         }
         frame.remove();
+        shell.remove();
         mount.remove();
         URL.revokeObjectURL(moduleUrl);
       },
@@ -607,6 +674,7 @@ test("python widget bundle can be resized by dragging the resize handle", async 
 
   try {
     const host = page.locator("#python-widget-resize-host");
+    const widgetShell = page.locator("#python-widget-resize-shell");
     const widgetHost = page.locator("#python-widget-resize-host[data-ruviz-widget-host='true']");
     const viewport = host.locator("[data-ruviz-widget-viewport='true']");
 
@@ -614,8 +682,11 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     expect(initialBox).not.toBeNull();
     const initialRatio = (initialBox?.width ?? 1) / (initialBox?.height ?? 1);
     const initialHostBox = await widgetHost.boundingBox();
+    const initialShellBox = await widgetShell.boundingBox();
     expect(initialHostBox).not.toBeNull();
+    expect(initialShellBox).not.toBeNull();
     expect(initialHostBox.width).toBeCloseTo(initialBox.width, 0);
+    expect(initialShellBox.width).toBeCloseTo(initialBox.width, 0);
 
     await page.evaluate(() => {
       window.__ruvizWidgetResizeTest.dispatchGesture({ dx: 120, dy: 60, pointerId: 1 });
@@ -628,10 +699,13 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     const freeformBox = await viewport.boundingBox();
     expect(freeformBox).not.toBeNull();
     const freeformHostBox = await widgetHost.boundingBox();
+    const freeformShellBox = await widgetShell.boundingBox();
     expect(freeformHostBox).not.toBeNull();
+    expect(freeformShellBox).not.toBeNull();
     expect(freeformBox.width).toBeCloseTo(760, 0);
     expect(freeformBox.height).toBeCloseTo(420, 0);
     expect(freeformHostBox.width).toBeCloseTo(freeformBox.width, 0);
+    expect(freeformShellBox.width).toBeCloseTo(freeformBox.width, 0);
     expect(Math.abs(freeformBox.width / freeformBox.height - initialRatio)).toBeGreaterThan(0.01);
 
     await page.evaluate(() => {
@@ -650,9 +724,12 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     const touchBox = await viewport.boundingBox();
     expect(touchBox).not.toBeNull();
     const touchHostBox = await widgetHost.boundingBox();
+    const touchShellBox = await widgetShell.boundingBox();
     expect(touchHostBox).not.toBeNull();
+    expect(touchShellBox).not.toBeNull();
     expect(touchBox.height).toBeCloseTo(470, 0);
     expect(touchHostBox.width).toBeCloseTo(touchBox.width, 0);
+    expect(touchShellBox.width).toBeCloseTo(touchBox.width, 0);
     expect(Math.abs(touchBox.width / touchBox.height - initialRatio)).toBeGreaterThan(0.01);
 
     const touchRatio = touchBox.width / touchBox.height;
@@ -672,8 +749,11 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     const lockedBox = await viewport.boundingBox();
     expect(lockedBox).not.toBeNull();
     const lockedHostBox = await widgetHost.boundingBox();
+    const lockedShellBox = await widgetShell.boundingBox();
     expect(lockedHostBox).not.toBeNull();
+    expect(lockedShellBox).not.toBeNull();
     expect(lockedHostBox.width).toBeCloseTo(lockedBox.width, 0);
+    expect(lockedShellBox.width).toBeCloseTo(lockedBox.width, 0);
     expect(Math.abs(lockedBox.width / lockedBox.height - touchRatio)).toBeLessThan(0.02);
 
     await page.evaluate(() => {
@@ -692,12 +772,15 @@ test("python widget bundle can be resized by dragging the resize handle", async 
     const minLockedBox = await viewport.boundingBox();
     expect(minLockedBox).not.toBeNull();
     const minLockedHostBox = await widgetHost.boundingBox();
+    const minLockedShellBox = await widgetShell.boundingBox();
     expect(minLockedHostBox).not.toBeNull();
+    expect(minLockedShellBox).not.toBeNull();
     const minLockedRatio = lockedBox.width / lockedBox.height;
     const expectedMinWidth = Math.max(220, 160 * minLockedRatio);
     expect(minLockedBox.height).toBeCloseTo(expectedMinWidth / minLockedRatio, 0);
     expect(minLockedBox.width).toBeCloseTo(expectedMinWidth, 0);
     expect(minLockedHostBox.width).toBeCloseTo(minLockedBox.width, 0);
+    expect(minLockedShellBox.width).toBeCloseTo(minLockedBox.width, 0);
     expect(Math.abs(minLockedBox.width / minLockedBox.height - minLockedRatio)).toBeLessThan(0.02);
   } finally {
     await page.evaluate(() => {

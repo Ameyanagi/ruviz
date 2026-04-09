@@ -14,6 +14,9 @@ interface RenderContext {
 }
 
 let rawModuleConfigured = false;
+const DOCUMENT_SURFACE_CLEANUP_KEY = "__ruvizWidgetDocumentSurfaceCleanup";
+const DOCUMENT_SURFACE_REFCOUNT_KEY = "__ruvizWidgetDocumentSurfaceRefs";
+const DOCUMENT_SURFACE_STYLE_ID = "ruviz-widget-surface-style";
 const DEFAULT_FALLBACK_WIDGET_WIDTH_PX = 640;
 const DEFAULT_FALLBACK_WIDGET_HEIGHT_PX = 480;
 const CONTEXT_MENU_EDGE_MARGIN_PX = 8;
@@ -104,6 +107,121 @@ function resolveWidgetDisplaySize(snapshot: PlotSnapshot | undefined): {
   };
 }
 
+type StylePatch = ReadonlyArray<
+  readonly [property: string, value: string, priority?: "important" | ""]
+>;
+
+function patchInlineStyles(target: HTMLElement, patches: StylePatch): () => void {
+  const previous = patches.map(
+    ([property]) =>
+      [
+        property,
+        target.style.getPropertyValue(property),
+        target.style.getPropertyPriority(property),
+      ] as const,
+  );
+  for (const [property, value, priority = ""] of patches) {
+    target.style.setProperty(property, value, priority);
+  }
+  return () => {
+    for (const [property, value, priority] of previous) {
+      if (value) {
+        target.style.setProperty(property, value, priority);
+        continue;
+      }
+      target.style.removeProperty(property);
+    }
+  };
+}
+
+function acquireTransparentDocumentSurface(): () => void {
+  const widgetDocument = document as Document & {
+    [DOCUMENT_SURFACE_CLEANUP_KEY]?: (() => void) | undefined;
+    [DOCUMENT_SURFACE_REFCOUNT_KEY]?: number | undefined;
+  };
+  const activeRefs = widgetDocument[DOCUMENT_SURFACE_REFCOUNT_KEY] ?? 0;
+
+  if (activeRefs === 0) {
+    const styleElement =
+      document.getElementById(DOCUMENT_SURFACE_STYLE_ID) instanceof HTMLStyleElement
+        ? (document.getElementById(DOCUMENT_SURFACE_STYLE_ID) as HTMLStyleElement)
+        : document.createElement("style");
+    styleElement.id = DOCUMENT_SURFACE_STYLE_ID;
+    styleElement.textContent = `
+      html,
+      body,
+      [data-ruviz-widget-shell="true"],
+      [data-ruviz-widget-host="true"],
+      [data-ruviz-widget-root="true"],
+      [data-ruviz-widget-viewport="true"] {
+        background: transparent !important;
+        background-color: transparent !important;
+      }
+    `;
+    document.head.appendChild(styleElement);
+    widgetDocument[DOCUMENT_SURFACE_CLEANUP_KEY] = () => {
+      styleElement.remove();
+    };
+  }
+
+  widgetDocument[DOCUMENT_SURFACE_REFCOUNT_KEY] = activeRefs + 1;
+
+  return () => {
+    const nextRefs = (widgetDocument[DOCUMENT_SURFACE_REFCOUNT_KEY] ?? 1) - 1;
+    if (nextRefs > 0) {
+      widgetDocument[DOCUMENT_SURFACE_REFCOUNT_KEY] = nextRefs;
+      return;
+    }
+
+    widgetDocument[DOCUMENT_SURFACE_REFCOUNT_KEY] = 0;
+    widgetDocument[DOCUMENT_SURFACE_CLEANUP_KEY]?.();
+    delete widgetDocument[DOCUMENT_SURFACE_CLEANUP_KEY];
+  };
+}
+
+function patchNotebookWidgetSurface(el: HTMLElement): Array<() => void> {
+  const cleanups: Array<() => void> = [];
+  cleanups.push(
+    patchInlineStyles(el, [
+      ["display", "inline-block"],
+      ["width", "fit-content"],
+      ["max-width", "100%"],
+      ["min-width", "0"],
+      ["box-sizing", "border-box"],
+      ["background", "transparent"],
+      ["background-color", "transparent"],
+      ["vertical-align", "top"],
+      ["align-self", "flex-start"],
+      ["justify-self", "start"],
+      ["flex", "0 0 auto"],
+    ]),
+  );
+
+  let ancestor: HTMLElement | null = el.parentElement;
+  for (
+    let depth = 0;
+    depth < 3 && ancestor instanceof HTMLElement && ancestor.childElementCount === 1;
+    depth += 1, ancestor = ancestor.parentElement
+  ) {
+    ancestor.dataset.ruvizWidgetShell = "true";
+    cleanups.push(
+      patchInlineStyles(ancestor, [
+        ["width", "fit-content"],
+        ["max-width", "100%"],
+        ["min-width", "0"],
+        ["box-sizing", "border-box"],
+        ["background", "transparent"],
+        ["background-color", "transparent"],
+        ["align-self", "flex-start"],
+        ["justify-self", "start"],
+        ["flex", "0 0 auto"],
+      ]),
+    );
+  }
+
+  return cleanups;
+}
+
 function applyWidgetLayout(
   wrapper: HTMLDivElement,
   viewport: HTMLDivElement,
@@ -172,12 +290,7 @@ function render({ model, el }: RenderContext): () => void {
   ensureRawModuleConfigured();
 
   el.dataset.ruvizWidgetHost = "true";
-  el.style.display = "inline-block";
-  el.style.width = "auto";
-  el.style.maxWidth = "100%";
-  el.style.boxSizing = "border-box";
-  el.style.background = "transparent";
-  el.style.verticalAlign = "top";
+  const styleCleanups = [acquireTransparentDocumentSurface(), ...patchNotebookWidgetSurface(el)];
 
   const wrapper = document.createElement("div");
   wrapper.dataset.ruvizWidgetRoot = "true";
@@ -524,6 +637,9 @@ function render({ model, el }: RenderContext): () => void {
     resizeHandle.removeEventListener("pointerdown", onResizeHandlePointerDown);
     model.off("change:snapshot", onSnapshotChange);
     void sessionPromise.then((session) => session.dispose());
+    for (let index = styleCleanups.length - 1; index >= 0; index -= 1) {
+      styleCleanups[index]();
+    }
   };
 }
 
