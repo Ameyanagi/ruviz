@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.9] - 2026-04-09
+
+### Fixed
+
+- Fixed Python large-scatter PNG renders that could black out the full plot area when automatic DataShader rendering activated on datasets around `100_000` points and above.
+- Corrected DataShader image composition so empty bins stay transparent, plotted density aligns with screen-space `y` orientation, and large scatter subplots rendered through `render_to_renderer()` use the same safe composition path as the main render/save flows.
+- Kept large histograms on the normal renderer instead of the scatter-oriented auto-DataShader path, preventing incorrect histogram rendering at large input sizes.
+
+### Changed
+
+- Added broad large-dataset regression coverage across Rust, Python, notebook widget, and interactive render surfaces for line, scatter, histogram, bar, boxplot, violin, KDE, ECDF, heatmap, contour, error-bars, and polar-line plots.
+
 ## [0.4.8] - 2026-04-09
 
 ### Fixed
@@ -333,7 +345,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.9...HEAD
+[0.4.9]: https://github.com/Ameyanagi/ruviz/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/Ameyanagi/ruviz/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/Ameyanagi/ruviz/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/Ameyanagi/ruviz/compare/v0.4.5...v0.4.6
