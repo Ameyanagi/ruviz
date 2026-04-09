@@ -249,6 +249,19 @@ fn blank_large_plot_png() -> Vec<u8> {
         .expect("blank large-plot baseline should render")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn render_plot_to_renderer_png(plot: &Plot, width: u32, height: u32) -> Vec<u8> {
+    let mut renderer =
+        crate::render::SkiaRenderer::new(width, height, crate::render::Theme::default())
+            .expect("renderer should be created");
+    plot.render_to_renderer(&mut renderer, 96.0)
+        .expect("plot should render to external renderer");
+    renderer
+        .into_image()
+        .encode_png()
+        .expect("renderer output should encode as PNG")
+}
+
 fn assert_large_plot_png_and_save(name: &str, plot: &Plot) {
     let blank_png = blank_large_plot_png();
     let rendered_png = plot
@@ -2125,6 +2138,27 @@ fn test_render_large_scatter_source_png_preserves_background() {
         .render_png_bytes()
         .expect("source-backed large scatter should render as PNG");
     assert_png_background_preserved("source-backed large scatter", &png);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_render_to_renderer_large_scatter_stays_visually_sane() {
+    let (x, y) = large_xy_data();
+    let blank = Plot::new().size_px(320, 200).ticks(false).into_plot();
+    let plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .scatter(&x, &y)
+        .into_plot();
+
+    let blank_png = render_plot_to_renderer_png(&blank, 320, 200);
+    let rendered_png = render_plot_to_renderer_png(&plot, 320, 200);
+
+    assert_png_visual_sane_against_blank(
+        "render_to_renderer large scatter",
+        &rendered_png,
+        &blank_png,
+    );
 }
 
 #[test]

@@ -612,7 +612,7 @@ impl Plot {
             }
         }
 
-        self.render_series_collection_normal(
+        if !self.render_series_collection_auto_datashader(
             &snapshot_series,
             renderer,
             plot_area,
@@ -621,7 +621,18 @@ impl Plot {
             y_min,
             y_max,
             RenderScale::new(dpi),
-        )?;
+        )? {
+            self.render_series_collection_normal(
+                &snapshot_series,
+                renderer,
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                RenderScale::new(dpi),
+            )?;
+        }
 
         // Draw annotations after data series but before legend
         if !self.annotations.is_empty() {
