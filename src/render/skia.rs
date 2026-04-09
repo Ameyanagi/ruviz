@@ -596,19 +596,18 @@ impl SkiaRenderer {
             ));
         }
 
-        // Convert RGBA u8 data to tiny-skia's format
+        let tint = self.theme.foreground;
+
+        // Convert the density mask to tiny-skia's native tinted premultiplied format.
         let pixmap_data = datashader_pixmap.data_mut();
         for (i, chunk) in image.pixels.chunks_exact(4).enumerate() {
-            let r = chunk[0];
-            let g = chunk[1];
-            let b = chunk[2];
             let a = chunk[3];
 
             // tiny-skia uses premultiplied alpha BGRA format
             let alpha_f = a as f32 / 255.0;
-            let premult_r = (r as f32 * alpha_f) as u8;
-            let premult_g = (g as f32 * alpha_f) as u8;
-            let premult_b = (b as f32 * alpha_f) as u8;
+            let premult_r = (tint.r as f32 * alpha_f).round() as u8;
+            let premult_g = (tint.g as f32 * alpha_f).round() as u8;
+            let premult_b = (tint.b as f32 * alpha_f).round() as u8;
 
             // BGRA order for tiny-skia
             pixmap_data[i * 4] = premult_b;
