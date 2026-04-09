@@ -2246,6 +2246,7 @@ fn test_reference_save_png_reports_marker_sprite_compositor_for_large_scatter() 
     assert!(diagnostics.used_marker_sprite_compositor);
     assert!(diagnostics.used_marker_sprite_cache);
     assert!(!diagnostics.used_marker_sprite_fallback);
+    assert!(diagnostics.used_circle_scanline_blit);
 }
 
 #[test]

@@ -1149,7 +1149,12 @@ impl SkiaRenderer {
                 continue;
             }
 
-            self.blit_marker_sprite(&sprite, dst_x, dst_y, mask.as_ref());
+            if self.can_use_unmasked_circle_scanline_blit(&sprite, dst_x, dst_y, clip_rect) {
+                self.note_circle_scanline_blit();
+                self.blit_circle_sprite_scanlines_unmasked(&sprite, dst_x, dst_y);
+            } else {
+                self.blit_marker_sprite(&sprite, dst_x, dst_y, mask.as_ref());
+            }
         }
 
         Ok(())
@@ -1220,6 +1225,90 @@ impl SkiaRenderer {
         }
     }
 
+    fn can_use_unmasked_circle_scanline_blit(
+        &self,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> bool {
+        if sprite.circle_scanlines.is_none() {
+            return false;
+        }
+
+        let clip_left = clip_rect.0.ceil() as i32;
+        let clip_top = clip_rect.1.ceil() as i32;
+        let clip_right = (clip_rect.0 + clip_rect.2).floor() as i32;
+        let clip_bottom = (clip_rect.1 + clip_rect.3).floor() as i32;
+
+        dst_x >= clip_left
+            && dst_y >= clip_top
+            && dst_x + sprite.width as i32 <= clip_right
+            && dst_y + sprite.height as i32 <= clip_bottom
+            && dst_x >= 0
+            && dst_y >= 0
+            && dst_x + sprite.width as i32 <= self.width as i32
+            && dst_y + sprite.height as i32 <= self.height as i32
+    }
+
+    fn blit_circle_sprite_scanlines_unmasked(
+        &mut self,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+    ) {
+        let Some(scanlines) = sprite.circle_scanlines.as_ref() else {
+            return;
+        };
+
+        let sprite_stride = sprite.width as usize * 4;
+        let canvas_stride = self.width as usize * 4;
+        let dst_data = self.pixmap.data_mut();
+
+        for (row_index, scanline) in scanlines.iter().enumerate() {
+            if scanline.end_x <= scanline.start_x {
+                continue;
+            }
+
+            let row_y = dst_y as usize + row_index;
+            let src_row = row_index * sprite_stride;
+            let dst_row = row_y * canvas_stride;
+
+            let start = scanline.start_x as usize;
+            let end = scanline.end_x as usize;
+            let opaque_start = scanline.opaque_start_x as usize;
+            let opaque_end = scanline.opaque_end_x as usize;
+
+            let left_partial_end = opaque_start.max(start).min(end);
+            for col in start..left_partial_end {
+                let src_idx = src_row + col * 4;
+                let dst_idx = dst_row + (dst_x as usize + col) * 4;
+                Self::blend_premultiplied_rgba_unmasked(
+                    &mut dst_data[dst_idx..dst_idx + 4],
+                    &sprite.pixels[src_idx..src_idx + 4],
+                );
+            }
+
+            if opaque_end > opaque_start {
+                let src_start = src_row + opaque_start * 4;
+                let src_end = src_row + opaque_end * 4;
+                let dst_start = dst_row + (dst_x as usize + opaque_start) * 4;
+                let dst_end = dst_row + (dst_x as usize + opaque_end) * 4;
+                dst_data[dst_start..dst_end].copy_from_slice(&sprite.pixels[src_start..src_end]);
+            }
+
+            let right_partial_start = opaque_end.max(start).min(end);
+            for col in right_partial_start..end {
+                let src_idx = src_row + col * 4;
+                let dst_idx = dst_row + (dst_x as usize + col) * 4;
+                Self::blend_premultiplied_rgba_unmasked(
+                    &mut dst_data[dst_idx..dst_idx + 4],
+                    &sprite.pixels[src_idx..src_idx + 4],
+                );
+            }
+        }
+    }
+
     fn blend_premultiplied_rgba(dst: &mut [u8], src: &[u8], mask_alpha: u8) {
         let effective_alpha = Self::mul_div_255(src[3], mask_alpha);
         if effective_alpha == 0 {
@@ -1240,6 +1329,24 @@ impl SkiaRenderer {
         dst[1] = src_g.saturating_add(Self::mul_div_255(dst[1], inv_alpha));
         dst[2] = src_b.saturating_add(Self::mul_div_255(dst[2], inv_alpha));
         dst[3] = effective_alpha.saturating_add(Self::mul_div_255(dst[3], inv_alpha));
+    }
+
+    fn blend_premultiplied_rgba_unmasked(dst: &mut [u8], src: &[u8]) {
+        let src_alpha = src[3];
+        if src_alpha == 0 {
+            return;
+        }
+
+        if src_alpha == u8::MAX {
+            dst.copy_from_slice(src);
+            return;
+        }
+
+        let inv_alpha = u8::MAX - src_alpha;
+        dst[0] = src[0].saturating_add(Self::mul_div_255(dst[0], inv_alpha));
+        dst[1] = src[1].saturating_add(Self::mul_div_255(dst[1], inv_alpha));
+        dst[2] = src[2].saturating_add(Self::mul_div_255(dst[2], inv_alpha));
+        dst[3] = src_alpha.saturating_add(Self::mul_div_255(dst[3], inv_alpha));
     }
 
     fn mul_div_255(value: u8, alpha: u8) -> u8 {

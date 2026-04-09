@@ -87,12 +87,21 @@ impl MarkerSpriteKey {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct MarkerSpriteScanline {
+    pub start_x: u16,
+    pub end_x: u16,
+    pub opaque_start_x: u16,
+    pub opaque_end_x: u16,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct MarkerSprite {
     pub width: u32,
     pub height: u32,
     pub origin_x: i32,
     pub origin_y: i32,
     pub pixels: Vec<u8>,
+    pub circle_scanlines: Option<Arc<[MarkerSpriteScanline]>>,
 }
 
 /// Tiny-skia based renderer with cosmic-text for professional typography
@@ -244,6 +253,10 @@ impl SkiaRenderer {
         self.render_diagnostics.used_marker_sprite_fallback = true;
     }
 
+    pub(crate) fn note_circle_scanline_blit(&mut self) {
+        self.render_diagnostics.used_circle_scanline_blit = true;
+    }
+
     pub(crate) fn note_direct_rect_fill(&mut self) {
         self.render_diagnostics.used_direct_rect_fill = true;
     }
@@ -365,7 +378,65 @@ impl SkiaRenderer {
             origin_x: origin,
             origin_y: origin,
             pixels: sprite_renderer.pixmap.data().to_vec(),
+            circle_scanlines: Self::circle_marker_scanlines(
+                style,
+                sprite_renderer.pixmap.data(),
+                side,
+                side,
+            ),
         })
+    }
+
+    fn circle_marker_scanlines(
+        style: MarkerStyle,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<Arc<[MarkerSpriteScanline]>> {
+        if style != MarkerStyle::Circle {
+            return None;
+        }
+
+        let width = width as usize;
+        let height = height as usize;
+        let mut scanlines = Vec::with_capacity(height);
+        for row in 0..height {
+            let row_start = row * width * 4;
+            let mut start = None;
+            let mut end = None;
+            let mut opaque_start = None;
+            let mut opaque_end = None;
+
+            for col in 0..width {
+                let alpha = pixels[row_start + col * 4 + 3];
+                if alpha != 0 {
+                    start.get_or_insert(col);
+                    end = Some(col + 1);
+                }
+                if alpha == u8::MAX {
+                    opaque_start.get_or_insert(col);
+                    opaque_end = Some(col + 1);
+                }
+            }
+
+            if let (Some(start), Some(end)) = (start, end) {
+                scanlines.push(MarkerSpriteScanline {
+                    start_x: start as u16,
+                    end_x: end as u16,
+                    opaque_start_x: opaque_start.unwrap_or(start) as u16,
+                    opaque_end_x: opaque_end.unwrap_or(start) as u16,
+                });
+            } else {
+                scanlines.push(MarkerSpriteScanline {
+                    start_x: 0,
+                    end_x: 0,
+                    opaque_start_x: 0,
+                    opaque_end_x: 0,
+                });
+            }
+        }
+
+        Some(scanlines.into())
     }
 
     pub(crate) const fn marker_subpixel_phases() -> u8 {
