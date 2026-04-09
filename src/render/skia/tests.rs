@@ -22,6 +22,95 @@ fn image_pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
     ]
 }
 
+fn assert_exact_rgba_pixels(name: &str, reference: &Image, candidate: &Image) {
+    assert_eq!(reference.width, candidate.width, "{name} width changed");
+    assert_eq!(reference.height, candidate.height, "{name} height changed");
+    assert_eq!(reference.pixels, candidate.pixels, "{name} pixels changed");
+}
+
+fn legacy_draw_circle(
+    renderer: &mut SkiaRenderer,
+    x: f32,
+    y: f32,
+    radius: f32,
+    color: Color,
+    filled: bool,
+) {
+    let mut paint = Paint::default();
+    paint.set_color(color.to_tiny_skia_color());
+    paint.anti_alias = true;
+
+    let mut path = PathBuilder::new();
+    path.push_circle(x, y, radius);
+    let path = path.finish().expect("legacy circle path");
+
+    if filled {
+        renderer.pixmap.fill_path(
+            &path,
+            &paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    } else {
+        renderer.pixmap.stroke_path(
+            &path,
+            &paint,
+            &Stroke::default(),
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+fn legacy_draw_composited_rect(
+    renderer: &mut SkiaRenderer,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Color,
+) {
+    let rect = Rect::from_xywh(x, y, width, height).expect("legacy rect");
+    let mut path = PathBuilder::new();
+    path.push_rect(rect);
+    let path = path.finish().expect("legacy rectangle path");
+    let mut paint = Paint::default();
+    paint.set_color(color.to_tiny_skia_color());
+    paint.anti_alias = true;
+    renderer.pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+}
+
+fn legacy_draw_solid_rect(
+    renderer: &mut SkiaRenderer,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Color,
+) {
+    let rect = Rect::from_xywh(x, y, width, height).expect("legacy solid rect");
+    let mut path = PathBuilder::new();
+    path.push_rect(rect);
+    let path = path.finish().expect("legacy solid rectangle path");
+    let mut paint = Paint::default();
+    paint.set_color(color.to_tiny_skia_color());
+    paint.anti_alias = false;
+    renderer.pixmap.fill_path(
+        &path,
+        &paint,
+        FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+}
+
 fn count_red_pixels_outside_rect(image: &Image, rect: Rect) -> usize {
     let left = rect.left().floor() as i32;
     let right = rect.right().ceil() as i32;
@@ -196,6 +285,93 @@ fn test_draw_pixel_aligned_solid_rectangle_blends_transparent_fill() {
         "composited fill should retain background contribution instead of overwriting it"
     );
     assert_eq!(pixel[3], 255);
+}
+
+#[test]
+fn test_draw_circle_cached_path_matches_legacy_circle_pixels() {
+    let theme = Theme::default();
+    let mut candidate = SkiaRenderer::new(64, 64, theme.clone()).unwrap();
+    let mut reference = SkiaRenderer::new(64, 64, theme).unwrap();
+    candidate.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+    reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+    candidate
+        .draw_circle(22.5, 19.25, 6.0, Color::new(30, 120, 220), true)
+        .expect("cached circle should render");
+    legacy_draw_circle(
+        &mut reference,
+        22.5,
+        19.25,
+        6.0,
+        Color::new(30, 120, 220),
+        true,
+    );
+
+    assert_exact_rgba_pixels(
+        "cached circle path",
+        &reference.into_image(),
+        &candidate.into_image(),
+    );
+}
+
+#[test]
+fn test_draw_pixel_aligned_solid_rectangle_fallback_matches_legacy_rect_fill() {
+    let theme = Theme::default();
+    let mut candidate = SkiaRenderer::new(32, 24, theme.clone()).unwrap();
+    let mut reference = SkiaRenderer::new(32, 24, theme).unwrap();
+    candidate.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+    reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+    candidate
+        .draw_pixel_aligned_solid_rectangle(
+            3.25,
+            4.5,
+            5.75,
+            6.25,
+            Color::new_rgba(200, 80, 20, 180),
+        )
+        .expect("fallback rectangle should render");
+    legacy_draw_composited_rect(
+        &mut reference,
+        3.25,
+        4.5,
+        5.75,
+        6.25,
+        Color::new_rgba(200, 80, 20, 180),
+    );
+
+    assert_exact_rgba_pixels(
+        "direct composited rectangle fill",
+        &reference.into_image(),
+        &candidate.into_image(),
+    );
+}
+
+#[test]
+fn test_draw_solid_rectangle_matches_legacy_fill_pixels() {
+    let theme = Theme::default();
+    let mut candidate = SkiaRenderer::new(32, 24, theme.clone()).unwrap();
+    let mut reference = SkiaRenderer::new(32, 24, theme).unwrap();
+    candidate.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+    reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+    candidate
+        .draw_solid_rectangle(3.25, 4.5, 5.75, 6.25, Color::new(40, 150, 210))
+        .expect("solid rectangle should render");
+    legacy_draw_solid_rect(
+        &mut reference,
+        3.25,
+        4.5,
+        5.75,
+        6.25,
+        Color::new(40, 150, 210),
+    );
+
+    assert_exact_rgba_pixels(
+        "solid rectangle fill",
+        &reference.into_image(),
+        &candidate.into_image(),
+    );
 }
 
 #[test]

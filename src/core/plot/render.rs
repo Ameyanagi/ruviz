@@ -13,6 +13,14 @@ struct ColorbarMeasurementSpec {
 
 impl Plot {
     fn render_image_with_mode(&self, mode: RenderExecutionMode) -> Result<Image> {
+        self.render_image_with_mode_and_diagnostics(mode)
+            .map(|(image, _)| image)
+    }
+
+    fn render_image_with_mode_and_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<(Image, RenderDiagnostics)> {
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
         if !snapshot_series.is_empty() {
@@ -52,7 +60,16 @@ impl Plot {
                         .parallel_renderer
                         .should_use_parallel(series_count, total_points)
                 {
-                    return self.render_with_parallel();
+                    let image = self.render_with_parallel()?;
+                    let diagnostics = RenderDiagnostics {
+                        render_mode: match mode {
+                            RenderExecutionMode::Reference => "reference",
+                            RenderExecutionMode::Optimized => "optimized",
+                        },
+                        used_parallel: true,
+                        ..RenderDiagnostics::default()
+                    };
+                    return Ok((image, diagnostics));
                 }
             }
         }
@@ -61,6 +78,10 @@ impl Plot {
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         renderer.set_text_engine_mode(self.display.text_engine);
+        renderer.set_render_mode_diagnostics(match mode {
+            RenderExecutionMode::Reference => "reference",
+            RenderExecutionMode::Optimized => "optimized",
+        });
         let render_scale = self.render_scale();
         let dpi = render_scale.dpi();
         renderer.set_render_scale(render_scale);
@@ -266,7 +287,8 @@ impl Plot {
             )?;
         }
 
-        Ok(renderer.into_image())
+        let diagnostics = renderer.render_diagnostics().clone();
+        Ok((renderer.into_image(), diagnostics))
     }
 
     /// Render the plot to an in-memory image.
@@ -293,6 +315,19 @@ impl Plot {
         }
 
         self.render_image_with_mode(RenderExecutionMode::Optimized)
+    }
+
+    #[cfg(test)]
+    pub(super) fn render_optimized_for_test_with_diagnostics(
+        &self,
+    ) -> Result<(Image, RenderDiagnostics)> {
+        if self.is_reactive() {
+            return self
+                .resolved_plot(0.0)
+                .render_optimized_for_test_with_diagnostics();
+        }
+
+        self.render_image_with_mode_and_diagnostics(RenderExecutionMode::Optimized)
     }
 
     /// Render the plot using a caller-provided temporal sample time.
@@ -341,7 +376,7 @@ impl Plot {
             let reactive = self.is_reactive();
             let result = self
                 .save_png_bytes_with_backend()
-                .map(|(png_bytes, _)| png_bytes);
+                .map(|(png_bytes, _, _)| png_bytes);
             if result.is_ok() && reactive {
                 self.mark_reactive_sources_rendered();
             }
@@ -352,6 +387,22 @@ impl Plot {
         {
             self.render()?.encode_png()
         }
+    }
+
+    /// Render the plot to PNG bytes while reporting internal raster diagnostics.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[doc(hidden)]
+    pub fn benchmark_render_png_bytes_with_diagnostics(
+        &self,
+    ) -> Result<(Vec<u8>, RenderDiagnostics)> {
+        let reactive = self.is_reactive();
+        let result = self
+            .save_png_bytes_with_backend()
+            .map(|(png_bytes, _, diagnostics)| (png_bytes, diagnostics));
+        if result.is_ok() && reactive {
+            self.mark_reactive_sources_rendered();
+        }
+        result
     }
 
     /// Check if this plot contains any reactive data (Signal or Observable).
@@ -1164,7 +1215,7 @@ impl Plot {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
         let reactive = self.is_reactive();
-        let (png_bytes, _) = self.save_png_bytes_with_backend()?;
+        let (png_bytes, _, _) = self.save_png_bytes_with_backend()?;
         let result = crate::export::write_bytes_atomic(path, &png_bytes);
         if result.is_ok() && reactive {
             self.mark_reactive_sources_rendered();
@@ -1179,6 +1230,17 @@ impl Plot {
     #[cfg(not(target_arch = "wasm32"))]
     #[doc(hidden)]
     pub fn benchmark_save_png_bytes(&self) -> Result<(Vec<u8>, &'static str)> {
+        self.benchmark_save_png_bytes_with_diagnostics()
+            .map(|(png, backend, _)| (png, backend))
+    }
+
+    /// Render PNG bytes through the same backend-selection path used by `save()`
+    /// and report internal diagnostics about which exact raster fast paths ran.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[doc(hidden)]
+    pub fn benchmark_save_png_bytes_with_diagnostics(
+        &self,
+    ) -> Result<(Vec<u8>, &'static str, RenderDiagnostics)> {
         let reactive = self.is_reactive();
         let result = self.save_png_bytes_with_backend();
         if result.is_ok() && reactive {
@@ -1188,13 +1250,14 @@ impl Plot {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn save_png_bytes_with_backend(&self) -> Result<(Vec<u8>, &'static str)> {
+    fn save_png_bytes_with_backend(&self) -> Result<(Vec<u8>, &'static str, RenderDiagnostics)> {
         if self.is_reactive() {
             return self.resolved_plot(0.0).save_png_bytes_with_backend();
         }
 
-        let image = self.render_image_with_mode(RenderExecutionMode::Reference)?;
-        Ok((image.encode_png()?, "skia"))
+        let (image, diagnostics) =
+            self.render_image_with_mode_and_diagnostics(RenderExecutionMode::Reference)?;
+        Ok((image.encode_png()?, "skia", diagnostics))
     }
 
     /// Save the plot to a PNG file with custom dimensions

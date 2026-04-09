@@ -67,6 +67,19 @@ impl RenderExecutionMode {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[doc(hidden)]
+pub struct RenderDiagnostics {
+    pub render_mode: &'static str,
+    pub used_parallel: bool,
+    pub used_auto_datashader: bool,
+    pub used_exact_line_canonicalization: bool,
+    pub used_raster_line_reduction: bool,
+    pub used_marker_path_cache: bool,
+    pub used_direct_rect_fill: bool,
+    pub used_pixel_aligned_rect_fill: bool,
+}
+
 macro_rules! impl_series_continuation_methods {
     ($self_:ident.$finalize:ident()) => {
         /// Continue with a new line series.

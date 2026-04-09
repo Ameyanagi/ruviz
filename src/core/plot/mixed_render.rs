@@ -97,6 +97,8 @@ impl Plot {
             return Ok(false);
         }
 
+        renderer.note_auto_datashader();
+
         let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
 
         for (idx, series) in series_list.iter().enumerate() {

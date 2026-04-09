@@ -3,7 +3,7 @@ use crate::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
         LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
         SpacingConfig, TextPosition, TickFormatter, find_best_position,
-        plot::{Image, TextEngineMode, TickDirection, TickSides},
+        plot::{Image, RenderDiagnostics, TextEngineMode, TickDirection, TickSides},
         pt_to_px,
     },
     render::{
@@ -39,6 +39,21 @@ struct ClipMaskKey {
     height_bits: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MarkerPathKey {
+    style: MarkerStyle,
+    size_bits: u32,
+}
+
+impl MarkerPathKey {
+    fn new(style: MarkerStyle, size: f32) -> Self {
+        Self {
+            style,
+            size_bits: size.to_bits(),
+        }
+    }
+}
+
 impl ClipMaskKey {
     fn new((x, y, width, height): (f32, f32, f32, f32)) -> Self {
         Self {
@@ -64,6 +79,8 @@ pub struct SkiaRenderer {
     /// Active text rendering engine.
     text_engine_mode: TextEngineMode,
     clip_mask_cache: HashMap<ClipMaskKey, Arc<Mask>>,
+    marker_path_cache: HashMap<MarkerPathKey, Arc<tiny_skia::Path>>,
+    render_diagnostics: RenderDiagnostics,
 }
 
 impl SkiaRenderer {
@@ -102,6 +119,8 @@ impl SkiaRenderer {
             render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
             clip_mask_cache: HashMap::new(),
+            marker_path_cache: HashMap::new(),
+            render_diagnostics: RenderDiagnostics::default(),
         })
     }
 
@@ -155,6 +174,95 @@ impl SkiaRenderer {
     /// Get text rendering backend mode.
     pub fn text_engine_mode(&self) -> TextEngineMode {
         self.text_engine_mode
+    }
+
+    pub(crate) fn set_render_mode_diagnostics(&mut self, mode: &'static str) {
+        self.render_diagnostics.render_mode = mode;
+    }
+
+    pub(crate) fn note_parallel_render(&mut self) {
+        self.render_diagnostics.used_parallel = true;
+    }
+
+    pub(crate) fn note_auto_datashader(&mut self) {
+        self.render_diagnostics.used_auto_datashader = true;
+    }
+
+    pub(crate) fn note_exact_line_canonicalization(&mut self) {
+        self.render_diagnostics.used_exact_line_canonicalization = true;
+    }
+
+    pub(crate) fn note_raster_line_reduction(&mut self) {
+        self.render_diagnostics.used_raster_line_reduction = true;
+    }
+
+    pub(crate) fn note_marker_path_cache(&mut self) {
+        self.render_diagnostics.used_marker_path_cache = true;
+    }
+
+    pub(crate) fn note_direct_rect_fill(&mut self) {
+        self.render_diagnostics.used_direct_rect_fill = true;
+    }
+
+    pub(crate) fn note_pixel_aligned_rect_fill(&mut self) {
+        self.render_diagnostics.used_pixel_aligned_rect_fill = true;
+    }
+
+    pub(crate) fn render_diagnostics(&self) -> &RenderDiagnostics {
+        &self.render_diagnostics
+    }
+
+    pub(crate) fn marker_path(
+        &mut self,
+        style: MarkerStyle,
+        size: f32,
+    ) -> Result<Option<Arc<tiny_skia::Path>>> {
+        let key = MarkerPathKey::new(style, size);
+        if let Some(path) = self.marker_path_cache.get(&key) {
+            return Ok(Some(Arc::clone(path)));
+        }
+
+        let path = match style {
+            MarkerStyle::Circle | MarkerStyle::CircleOpen => {
+                let mut builder = PathBuilder::new();
+                builder.push_circle(0.0, 0.0, size * 0.5);
+                builder.finish()
+            }
+            MarkerStyle::Triangle | MarkerStyle::TriangleOpen | MarkerStyle::TriangleDown => {
+                let radius = size * 0.5;
+                let mut builder = PathBuilder::new();
+                if style == MarkerStyle::TriangleDown {
+                    builder.move_to(0.0, radius);
+                    builder.line_to(-radius * 0.866, -radius * 0.5);
+                    builder.line_to(radius * 0.866, -radius * 0.5);
+                } else {
+                    builder.move_to(0.0, -radius);
+                    builder.line_to(-radius * 0.866, radius * 0.5);
+                    builder.line_to(radius * 0.866, radius * 0.5);
+                }
+                builder.close();
+                builder.finish()
+            }
+            MarkerStyle::Diamond | MarkerStyle::DiamondOpen => {
+                let radius = size * 0.5;
+                let mut builder = PathBuilder::new();
+                builder.move_to(0.0, -radius);
+                builder.line_to(radius, 0.0);
+                builder.line_to(0.0, radius);
+                builder.line_to(-radius, 0.0);
+                builder.close();
+                builder.finish()
+            }
+            _ => None,
+        };
+
+        let Some(path) = path else {
+            return Ok(None);
+        };
+
+        let path = Arc::new(path);
+        self.marker_path_cache.insert(key, Arc::clone(&path));
+        Ok(Some(path))
     }
 
     fn vertical_tick_span(

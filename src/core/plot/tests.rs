@@ -178,6 +178,15 @@ fn assert_plot_image_parity_against_reference(name: &str, reference: &Image, can
     assert_rgba_parity_against_reference(name, &reference_rgba, &candidate_rgba);
 }
 
+fn assert_plot_image_exact_rgba_match(name: &str, reference: &Image, candidate: &Image) {
+    assert_eq!(reference.width, candidate.width, "{name} width changed");
+    assert_eq!(reference.height, candidate.height, "{name} height changed");
+    assert_eq!(
+        reference.pixels, candidate.pixels,
+        "{name} RGBA pixels changed"
+    );
+}
+
 fn assert_png_parity_against_reference(name: &str, reference: &Image, candidate_png: &[u8]) {
     let reference_rgba = plot_image_to_rgba(reference);
     let candidate_rgba = decode_png_rgba(candidate_png);
@@ -2174,6 +2183,70 @@ fn test_benchmark_save_png_bytes_keeps_large_histogram_on_skia() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_reports_exact_line_canonicalization() {
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .ticks(false)
+        .grid(false)
+        .line(&x, &y)
+        .into_plot();
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference PNG render should produce diagnostics");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(diagnostics.used_exact_line_canonicalization);
+    assert!(!diagnostics.used_raster_line_reduction);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_reports_marker_path_cache_for_large_scatter() {
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .ticks(false)
+        .grid(false)
+        .scatter(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .marker_size(6.0)
+        .into_plot();
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference scatter PNG render should produce diagnostics");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(diagnostics.used_marker_path_cache);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_reports_direct_rect_fill_for_large_heatmap() {
+    let heatmap_values = large_heatmap_matrix();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .heatmap(
+            &heatmap_values,
+            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+        )
+        .into_plot();
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference heatmap PNG render should produce diagnostics");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(diagnostics.used_direct_rect_fill || diagnostics.used_pixel_aligned_rect_fill);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_render_large_scatter_png_preserves_background() {
     let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
@@ -2259,11 +2332,12 @@ fn test_optimized_line_render_stays_in_parity_with_reference_render() {
         .into_plot();
 
     let reference = plot.render().expect("reference line render should succeed");
-    let optimized = plot
-        .render_optimized_for_test()
+    let (optimized, diagnostics) = plot
+        .render_optimized_for_test_with_diagnostics()
         .expect("optimized line render should succeed");
 
     assert_plot_image_parity_against_reference("optimized line render", &reference, &optimized);
+    assert!(diagnostics.used_exact_line_canonicalization || diagnostics.used_raster_line_reduction);
 }
 
 #[test]

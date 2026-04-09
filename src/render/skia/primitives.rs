@@ -316,23 +316,26 @@ impl SkiaRenderer {
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
 
-        let mut path = PathBuilder::new();
-        path.push_circle(x, y, radius);
-        let path = path.finish().ok_or(PlottingError::RenderError(
-            "Failed to create circle path".to_string(),
-        ))?;
+        let path = self
+            .marker_path(
+                if filled {
+                    MarkerStyle::Circle
+                } else {
+                    MarkerStyle::CircleOpen
+                },
+                radius * 2.0,
+            )?
+            .ok_or(PlottingError::RenderError(
+                "Failed to create circle path".to_string(),
+            ))?;
+        let transform = Transform::from_translate(x, y);
+        self.note_marker_path_cache();
 
         if filled {
-            self.fill_path_masked(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                mask,
-            )?;
+            self.fill_path_masked(path.as_ref(), &paint, FillRule::Winding, transform, mask)?;
         } else {
             let stroke = Stroke::default();
-            self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+            self.stroke_path_masked(path.as_ref(), &paint, &stroke, transform, mask)?;
         }
 
         Ok(())
@@ -528,17 +531,14 @@ impl SkiaRenderer {
         let rect = Rect::from_xywh(x, y, width, height).ok_or(PlottingError::RenderError(
             "Invalid rectangle dimensions".to_string(),
         ))?;
-
         let mut path = PathBuilder::new();
         path.push_rect(rect);
         let path = path.finish().ok_or(PlottingError::RenderError(
             "Failed to create rectangle path".to_string(),
         ))?;
-
         let mut paint = Paint::default();
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
-
         self.fill_path_masked(
             &path,
             &paint,
@@ -577,6 +577,7 @@ impl SkiaRenderer {
 
             if left < right && top < bottom {
                 let fill = color.to_tiny_skia_color().premultiply().to_color_u8();
+                self.note_pixel_aligned_rect_fill();
 
                 let pixels = self.pixmap.pixels_mut();
                 for py in top..bottom {
@@ -899,28 +900,19 @@ impl SkiaRenderer {
                 let mut paint = Paint::default();
                 paint.set_color(color.to_tiny_skia_color());
                 paint.anti_alias = true;
-
-                let mut path = PathBuilder::new();
-                if style == MarkerStyle::TriangleDown {
-                    path.move_to(x, y + radius);
-                    path.line_to(x - radius * 0.866, y - radius * 0.5);
-                    path.line_to(x + radius * 0.866, y - radius * 0.5);
-                } else {
-                    path.move_to(x, y - radius);
-                    path.line_to(x - radius * 0.866, y + radius * 0.5); // 60 degree angles
-                    path.line_to(x + radius * 0.866, y + radius * 0.5);
-                }
-                path.close();
-
-                let path = path.finish().ok_or(PlottingError::RenderError(
-                    "Failed to create triangle path".to_string(),
-                ))?;
+                let path = self
+                    .marker_path(style, size)?
+                    .ok_or(PlottingError::RenderError(
+                        "Failed to create triangle path".to_string(),
+                    ))?;
+                let transform = Transform::from_translate(x, y);
+                self.note_marker_path_cache();
                 if style.is_filled() {
                     self.fill_path_masked(
-                        &path,
+                        path.as_ref(),
                         &paint,
                         FillRule::Winding,
-                        Transform::identity(),
+                        transform,
                         mask,
                     )?;
                 } else {
@@ -928,30 +920,26 @@ impl SkiaRenderer {
                         width: (size * 0.15).max(1.0),
                         ..Stroke::default()
                     };
-                    self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+                    self.stroke_path_masked(path.as_ref(), &paint, &stroke, transform, mask)?;
                 }
             }
             MarkerStyle::Diamond | MarkerStyle::DiamondOpen => {
                 let mut paint = Paint::default();
                 paint.set_color(color.to_tiny_skia_color());
                 paint.anti_alias = true;
-
-                let mut path = PathBuilder::new();
-                path.move_to(x, y - radius);
-                path.line_to(x + radius, y);
-                path.line_to(x, y + radius);
-                path.line_to(x - radius, y);
-                path.close();
-
-                let path = path.finish().ok_or(PlottingError::RenderError(
-                    "Failed to create diamond path".to_string(),
-                ))?;
+                let path = self
+                    .marker_path(style, size)?
+                    .ok_or(PlottingError::RenderError(
+                        "Failed to create diamond path".to_string(),
+                    ))?;
+                let transform = Transform::from_translate(x, y);
+                self.note_marker_path_cache();
                 if style.is_filled() {
                     self.fill_path_masked(
-                        &path,
+                        path.as_ref(),
                         &paint,
                         FillRule::Winding,
-                        Transform::identity(),
+                        transform,
                         mask,
                     )?;
                 } else {
@@ -959,7 +947,7 @@ impl SkiaRenderer {
                         width: (size * 0.15).max(1.0),
                         ..Stroke::default()
                     };
-                    self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+                    self.stroke_path_masked(path.as_ref(), &paint, &stroke, transform, mask)?;
                 }
             }
             MarkerStyle::Plus => {

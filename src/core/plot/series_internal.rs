@@ -1,6 +1,6 @@
 use super::*;
 use crate::core::plot::raster_fast_path::{
-    reduce_line_points_for_raster, should_reduce_line_series,
+    canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
 use crate::core::types::Point2f;
 
@@ -562,14 +562,22 @@ impl Plot {
                     })
                     .collect();
 
+                if series.marker_style.is_none()
+                    && series.x_errors.is_none()
+                    && series.y_errors.is_none()
+                    && let Some(canonicalized) = canonicalize_line_points_exact(&points)
+                {
+                    renderer.note_exact_line_canonicalization();
+                    points = canonicalized;
+                }
+
                 if mode.allows_raster_line_reduction()
                     && should_reduce_line_series(series, points.len(), plot_area.width())
-                {
-                    if let Some(reduced) =
+                    && let Some(reduced) =
                         reduce_line_points_for_raster(&points, plot_area.left(), plot_area.width())
-                    {
-                        points = reduced;
-                    }
+                {
+                    renderer.note_raster_line_reduction();
+                    points = reduced;
                 }
 
                 renderer.draw_polyline_points_clipped(

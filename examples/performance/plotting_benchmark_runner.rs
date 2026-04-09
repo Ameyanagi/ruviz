@@ -147,8 +147,23 @@ struct BenchmarkResult {
     byte_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     actual_backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    render_diagnostics: Option<RenderDiagnosticsRecord>,
     iterations_ms: Vec<f64>,
     summary: Summary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderDiagnosticsRecord {
+    render_mode: String,
+    used_parallel: bool,
+    used_auto_datashader: bool,
+    used_exact_line_canonicalization: bool,
+    used_raster_line_reduction: bool,
+    used_marker_path_cache: bool,
+    used_direct_rect_fill: bool,
+    used_pixel_aligned_rect_fill: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -323,14 +338,14 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
     let dataset = build_dataset(run)?;
     let built_plot = build_plot(run, &dataset);
 
-    let (render_only_ms, render_only_bytes) =
-        measure(run.warmup_iterations, run.measured_iterations, || {
-            Ok(built_plot.render_png_bytes()?)
+    let (render_only_ms, render_only_bytes, render_only_diagnostics) =
+        measure_with_diagnostics(run.warmup_iterations, run.measured_iterations, || {
+            Ok(built_plot.benchmark_render_png_bytes_with_diagnostics()?)
         })?;
 
-    let (public_ms, public_bytes) =
-        measure(run.warmup_iterations, run.measured_iterations, || {
-            Ok(build_plot(run, &dataset).render_png_bytes()?)
+    let (public_ms, public_bytes, public_diagnostics) =
+        measure_with_diagnostics(run.warmup_iterations, run.measured_iterations, || {
+            Ok(build_plot(run, &dataset).benchmark_render_png_bytes_with_diagnostics()?)
         })?;
 
     let mut results = vec![
@@ -342,6 +357,7 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
             render_only_bytes,
             render_only_ms,
             None,
+            Some(render_only_diagnostics),
         ),
         make_result(
             run,
@@ -351,20 +367,27 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
             public_bytes,
             public_ms,
             None,
+            Some(public_diagnostics),
         ),
     ];
 
     if args.include_save_path {
         let built_save_plot = build_plot_with_options(run, &dataset, args.request_gpu);
-        let (save_only_ms, save_only_bytes, save_backend) =
-            measure_with_backend(run.warmup_iterations, run.measured_iterations, || {
-                Ok(built_save_plot.benchmark_save_png_bytes()?)
-            })?;
-        let (public_save_ms, public_save_bytes, public_save_backend) =
-            measure_with_backend(run.warmup_iterations, run.measured_iterations, || {
-                Ok(build_plot_with_options(run, &dataset, args.request_gpu)
-                    .benchmark_save_png_bytes()?)
-            })?;
+        let (save_only_ms, save_only_bytes, save_backend, save_diagnostics) =
+            measure_with_backend_and_diagnostics(
+                run.warmup_iterations,
+                run.measured_iterations,
+                || Ok(built_save_plot.benchmark_save_png_bytes_with_diagnostics()?),
+            )?;
+        let (public_save_ms, public_save_bytes, public_save_backend, public_save_diagnostics) =
+            measure_with_backend_and_diagnostics(
+                run.warmup_iterations,
+                run.measured_iterations,
+                || {
+                    Ok(build_plot_with_options(run, &dataset, args.request_gpu)
+                        .benchmark_save_png_bytes_with_diagnostics()?)
+                },
+            )?;
 
         results.push(make_result(
             run,
@@ -374,6 +397,7 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
             save_only_bytes,
             save_only_ms,
             Some(save_backend),
+            Some(save_diagnostics),
         ));
         results.push(make_result(
             run,
@@ -383,6 +407,7 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
             public_save_bytes,
             public_save_ms,
             Some(public_save_backend),
+            Some(public_save_diagnostics),
         ));
     }
 
@@ -399,6 +424,7 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
             plotters_bytes,
             plotters_ms,
             None,
+            None,
         ));
     }
 
@@ -413,6 +439,7 @@ fn make_result(
     byte_count: usize,
     iterations_ms: Vec<f64>,
     actual_backend: Option<String>,
+    render_diagnostics: Option<RenderDiagnosticsRecord>,
 ) -> BenchmarkResult {
     BenchmarkResult {
         implementation: implementation.to_string(),
@@ -428,6 +455,7 @@ fn make_result(
         measured_iterations: run.measured_iterations,
         byte_count,
         actual_backend,
+        render_diagnostics,
         summary: summarize_iterations(&iterations_ms, run.elements),
         iterations_ms,
     }
@@ -456,26 +484,81 @@ where
     Ok((iterations_ms, last_len))
 }
 
-fn measure_with_backend<F>(
+fn measure_with_diagnostics<F>(
     warmup_iterations: usize,
     measured_iterations: usize,
     mut f: F,
-) -> Result<(Vec<f64>, usize, String)>
+) -> Result<(Vec<f64>, usize, RenderDiagnosticsRecord)>
 where
-    F: FnMut() -> Result<(Vec<u8>, &'static str)>,
+    F: FnMut() -> Result<(Vec<u8>, ruviz::core::plot::RenderDiagnostics)>,
 {
-    let mut backend = None;
+    let mut diagnostics = None;
     for _ in 0..warmup_iterations {
-        let (_, current_backend) = f()?;
-        record_backend(&mut backend, current_backend)?;
+        let (_, current_diagnostics) = f()?;
+        record_diagnostics(
+            &mut diagnostics,
+            RenderDiagnosticsRecord::from(current_diagnostics),
+        )?;
     }
 
     let mut iterations_ms = Vec::with_capacity(measured_iterations);
     let mut last_len = 0;
     for _ in 0..measured_iterations {
         let start = Instant::now();
-        let (bytes, current_backend) = f()?;
+        let (bytes, current_diagnostics) = f()?;
+        record_diagnostics(
+            &mut diagnostics,
+            RenderDiagnosticsRecord::from(current_diagnostics),
+        )?;
+        iterations_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+        last_len = bytes.len();
+    }
+
+    Ok((
+        iterations_ms,
+        last_len,
+        diagnostics.unwrap_or_else(|| RenderDiagnosticsRecord {
+            render_mode: "unknown".to_string(),
+            used_parallel: false,
+            used_auto_datashader: false,
+            used_exact_line_canonicalization: false,
+            used_raster_line_reduction: false,
+            used_marker_path_cache: false,
+            used_direct_rect_fill: false,
+            used_pixel_aligned_rect_fill: false,
+        }),
+    ))
+}
+
+fn measure_with_backend_and_diagnostics<F>(
+    warmup_iterations: usize,
+    measured_iterations: usize,
+    mut f: F,
+) -> Result<(Vec<f64>, usize, String, RenderDiagnosticsRecord)>
+where
+    F: FnMut() -> Result<(Vec<u8>, &'static str, ruviz::core::plot::RenderDiagnostics)>,
+{
+    let mut backend = None;
+    let mut diagnostics = None;
+    for _ in 0..warmup_iterations {
+        let (_, current_backend, current_diagnostics) = f()?;
         record_backend(&mut backend, current_backend)?;
+        record_diagnostics(
+            &mut diagnostics,
+            RenderDiagnosticsRecord::from(current_diagnostics),
+        )?;
+    }
+
+    let mut iterations_ms = Vec::with_capacity(measured_iterations);
+    let mut last_len = 0;
+    for _ in 0..measured_iterations {
+        let start = Instant::now();
+        let (bytes, current_backend, current_diagnostics) = f()?;
+        record_backend(&mut backend, current_backend)?;
+        record_diagnostics(
+            &mut diagnostics,
+            RenderDiagnosticsRecord::from(current_diagnostics),
+        )?;
         iterations_ms.push(start.elapsed().as_secs_f64() * 1000.0);
         last_len = bytes.len();
     }
@@ -484,6 +567,16 @@ where
         iterations_ms,
         last_len,
         backend.unwrap_or_else(|| "unknown".to_string()),
+        diagnostics.unwrap_or_else(|| RenderDiagnosticsRecord {
+            render_mode: "unknown".to_string(),
+            used_parallel: false,
+            used_auto_datashader: false,
+            used_exact_line_canonicalization: false,
+            used_raster_line_reduction: false,
+            used_marker_path_cache: false,
+            used_direct_rect_fill: false,
+            used_pixel_aligned_rect_fill: false,
+        }),
     ))
 }
 
@@ -496,6 +589,37 @@ fn record_backend(seen: &mut Option<String>, current: &str) -> Result<()> {
         None => {
             *seen = Some(current.to_string());
             Ok(())
+        }
+    }
+}
+
+fn record_diagnostics(
+    seen: &mut Option<RenderDiagnosticsRecord>,
+    current: RenderDiagnosticsRecord,
+) -> Result<()> {
+    match seen {
+        Some(previous) if previous != &current => Err(anyhow!(
+            "render diagnostics changed within a single benchmark case: {previous:?} -> {current:?}"
+        )),
+        Some(_) => Ok(()),
+        None => {
+            *seen = Some(current);
+            Ok(())
+        }
+    }
+}
+
+impl From<ruviz::core::plot::RenderDiagnostics> for RenderDiagnosticsRecord {
+    fn from(value: ruviz::core::plot::RenderDiagnostics) -> Self {
+        Self {
+            render_mode: value.render_mode.to_string(),
+            used_parallel: value.used_parallel,
+            used_auto_datashader: value.used_auto_datashader,
+            used_exact_line_canonicalization: value.used_exact_line_canonicalization,
+            used_raster_line_reduction: value.used_raster_line_reduction,
+            used_marker_path_cache: value.used_marker_path_cache,
+            used_direct_rect_fill: value.used_direct_rect_fill,
+            used_pixel_aligned_rect_fill: value.used_pixel_aligned_rect_fill,
         }
     }
 }

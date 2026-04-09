@@ -1,6 +1,6 @@
 use super::*;
 use crate::core::plot::raster_fast_path::{
-    reduce_line_points_for_raster, should_reduce_line_series,
+    canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
 
 impl Plot {
@@ -17,6 +17,7 @@ impl Plot {
         let mut renderer =
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         renderer.set_text_engine_mode(self.display.text_engine);
+        renderer.note_parallel_render();
         let dpi = self.display.dpi as f32;
         let render_scale = self.render_scale();
         renderer.set_render_scale(render_scale);
@@ -148,18 +149,24 @@ impl Plot {
 
                         // Process line segments in parallel
                         let mut points = points;
+                        if series.marker_style.is_none()
+                            && series.x_errors.is_none()
+                            && series.y_errors.is_none()
+                            && let Some(canonicalized) = canonicalize_line_points_exact(&points)
+                        {
+                            points = canonicalized;
+                        }
+
                         if should_reduce_line_series(
                             series,
                             points.len(),
                             parallel_plot_area.width(),
+                        ) && let Some(reduced) = reduce_line_points_for_raster(
+                            &points,
+                            parallel_plot_area.left,
+                            parallel_plot_area.width(),
                         ) {
-                            if let Some(reduced) = reduce_line_points_for_raster(
-                                &points,
-                                parallel_plot_area.left,
-                                parallel_plot_area.width(),
-                            ) {
-                                points = reduced;
-                            }
+                            points = reduced;
                         }
 
                         RenderSeriesType::Polyline {
