@@ -346,6 +346,36 @@ fn test_draw_datashader_image_scales_into_plot_area() {
     assert!(!pixel_is_bright_rgba(&rendered, 50, 45));
 }
 
+#[test]
+fn test_draw_datashader_image_preserves_transparent_bins() {
+    let theme = Theme::light();
+    let mut renderer = SkiaRenderer::new(20, 10, theme).unwrap();
+    renderer.clear();
+
+    let image = crate::data::DataShaderImage::new(
+        2,
+        1,
+        vec![
+            0, 0, 0, 0, // Transparent bin
+            0, 0, 0, 255, // Fully occupied bin
+        ],
+    );
+    let plot_area = Rect::from_xywh(0.0, 0.0, 20.0, 10.0).unwrap();
+
+    renderer.draw_datashader_image(&image, plot_area).unwrap();
+
+    let png = renderer.encode_png_bytes().unwrap();
+    let rendered = image::load_from_memory(&png).unwrap().to_rgba8();
+    assert!(
+        pixel_is_bright_rgba(&rendered, 2, 5),
+        "transparent bins should preserve the white plot background"
+    );
+    assert!(
+        !pixel_is_bright_rgba(&rendered, 17, 5),
+        "occupied bins should still draw a visible foreground tint"
+    );
+}
+
 #[cfg(feature = "typst-math")]
 #[test]
 fn test_typst_raster_uses_native_1x_scale() {

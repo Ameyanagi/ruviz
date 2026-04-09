@@ -74,6 +74,46 @@ fn extract_svg_group_translate_xy(svg: &str, text: &str) -> (f32, f32) {
     (x, y)
 }
 
+fn mean_rgb(pixels: &[u8]) -> (f64, f64, f64) {
+    let total = pixels.chunks_exact(4).len() as f64;
+    let (r, g, b) = pixels
+        .chunks_exact(4)
+        .fold((0_u64, 0_u64, 0_u64), |(r, g, b), px| {
+            (r + px[0] as u64, g + px[1] as u64, b + px[2] as u64)
+        });
+    (r as f64 / total, g as f64 / total, b as f64 / total)
+}
+
+fn dark_pixel_fraction(pixels: &[u8]) -> f64 {
+    let total = pixels.chunks_exact(4).len() as f64;
+    let dark = pixels
+        .chunks_exact(4)
+        .filter(|px| px[0] < 32 && px[1] < 32 && px[2] < 32)
+        .count() as f64;
+    dark / total
+}
+
+fn decode_png_rgba(png_bytes: &[u8]) -> ::image::RgbaImage {
+    ::image::load_from_memory(png_bytes)
+        .expect("PNG bytes should decode")
+        .to_rgba8()
+}
+
+fn assert_png_background_preserved(name: &str, png_bytes: &[u8]) {
+    let image = decode_png_rgba(png_bytes);
+    let (mean_r, mean_g, mean_b) = mean_rgb(image.as_raw());
+    let dark_fraction = dark_pixel_fraction(image.as_raw());
+
+    assert!(
+        mean_r > 180.0 && mean_g > 180.0 && mean_b > 180.0,
+        "{name} PNG unexpectedly dark: mean=({mean_r:.2}, {mean_g:.2}, {mean_b:.2})"
+    );
+    assert!(
+        dark_fraction < 0.25,
+        "{name} PNG unexpectedly blacks out the canvas: dark_fraction={dark_fraction:.4}"
+    );
+}
+
 #[test]
 fn test_plot_series_static_source_helpers_materialize_values() {
     let mut series = PlotSeries {
@@ -1877,6 +1917,60 @@ fn test_benchmark_save_png_bytes_uses_datashader_for_large_scatter() {
     let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
 
     assert_eq!(backend, "datashader");
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_render_large_scatter_png_preserves_background() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let png = Plot::new()
+        .size_px(640, 480)
+        .title("large scatter")
+        .xlabel("x")
+        .ylabel("y")
+        .scatter(&x_data, &y_data)
+        .render_png_bytes()
+        .expect("large scatter should render as PNG");
+    assert_png_background_preserved("large scatter", &png);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_render_large_scatter_source_png_preserves_background() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let png = Plot::new()
+        .size_px(640, 480)
+        .scatter_source(x_data.clone(), y_data)
+        .into_plot()
+        .render_png_bytes()
+        .expect("source-backed large scatter should render as PNG");
+    assert_png_background_preserved("source-backed large scatter", &png);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_render_large_line_and_histogram_png_preserve_background() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let line_png = Plot::new()
+        .size_px(640, 480)
+        .line(&x_data, &y_data)
+        .render_png_bytes()
+        .expect("large line should render as PNG");
+    assert_png_background_preserved("large line", &line_png);
+
+    let histogram_input: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0001).sin()).collect();
+    let histogram_png = Plot::new()
+        .size_px(640, 480)
+        .histogram(&histogram_input, None)
+        .render_png_bytes()
+        .expect("large histogram should render as PNG");
+    assert_png_background_preserved("large histogram", &histogram_png);
 }
 
 // ========================================================================
