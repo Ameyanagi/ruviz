@@ -2183,7 +2183,7 @@ fn test_benchmark_save_png_bytes_keeps_large_histogram_on_skia() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_reference_save_png_reports_exact_line_canonicalization() {
+fn test_reference_save_png_reports_line_raster_optimizations() {
     let (x, y) = large_xy_data();
     let plot = Plot::new()
         .size_px(640, 480)
@@ -2199,12 +2199,34 @@ fn test_reference_save_png_reports_exact_line_canonicalization() {
     assert_eq!(backend, "skia");
     assert_eq!(diagnostics.render_mode, "reference");
     assert!(diagnostics.used_exact_line_canonicalization);
+    assert!(diagnostics.used_raster_line_reduction);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_keeps_line_markers_off_raster_reduction() {
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .ticks(false)
+        .grid(false)
+        .line(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .marker_size(6.0)
+        .into_plot();
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference line-marker PNG render should produce diagnostics");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
     assert!(!diagnostics.used_raster_line_reduction);
 }
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_reference_save_png_reports_marker_path_cache_for_large_scatter() {
+fn test_reference_save_png_reports_marker_sprite_compositor_for_large_scatter() {
     let (x, y) = large_xy_data();
     let plot = Plot::new()
         .size_px(640, 480)
@@ -2221,7 +2243,67 @@ fn test_reference_save_png_reports_marker_path_cache_for_large_scatter() {
 
     assert_eq!(backend, "skia");
     assert_eq!(diagnostics.render_mode, "reference");
-    assert!(diagnostics.used_marker_path_cache);
+    assert!(diagnostics.used_marker_sprite_compositor);
+    assert!(diagnostics.used_marker_sprite_cache);
+    assert!(!diagnostics.used_marker_sprite_fallback);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_reports_marker_sprite_compositor_for_line_markers() {
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .ticks(false)
+        .grid(false)
+        .line(&x, &y)
+        .marker(MarkerStyle::Diamond)
+        .marker_size(7.0)
+        .into_plot();
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference line-marker PNG render should produce diagnostics");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(diagnostics.used_marker_sprite_compositor);
+    assert!(diagnostics.used_marker_sprite_cache);
+    assert!(!diagnostics.used_marker_sprite_fallback);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_reports_marker_sprite_compositor_for_scatter_with_error_bars() {
+    let (x, y) = large_error_bar_xy_data();
+    let y_errors: Vec<f64> = x
+        .iter()
+        .map(|value| 0.03 + 0.01 * (value * 0.7).sin().abs())
+        .collect();
+    let x_errors: Vec<f64> = x
+        .iter()
+        .map(|value| 0.02 + 0.008 * (value * 0.9).cos().abs())
+        .collect();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .ticks(false)
+        .grid(false)
+        .scatter(&x, &y)
+        .marker(MarkerStyle::Diamond)
+        .marker_size(9.0)
+        .with_yerr(&y_errors)
+        .with_xerr(&x_errors)
+        .into_plot();
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference scatter-with-errors PNG render should produce diagnostics");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(diagnostics.used_marker_sprite_compositor);
+    assert!(diagnostics.used_marker_sprite_cache);
+    assert!(!diagnostics.used_marker_sprite_fallback);
 }
 
 #[test]

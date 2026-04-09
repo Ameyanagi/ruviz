@@ -28,6 +28,72 @@ fn assert_exact_rgba_pixels(name: &str, reference: &Image, candidate: &Image) {
     assert_eq!(reference.pixels, candidate.pixels, "{name} pixels changed");
 }
 
+fn mean_normalized_rgba_diff(reference: &Image, candidate: &Image) -> f64 {
+    assert_eq!(reference.width, candidate.width);
+    assert_eq!(reference.height, candidate.height);
+
+    reference
+        .pixels
+        .iter()
+        .zip(candidate.pixels.iter())
+        .map(|(lhs, rhs)| (*lhs as f64 - *rhs as f64).abs() / 255.0)
+        .sum::<f64>()
+        / reference.pixels.len() as f64
+}
+
+fn fraction_pixels_within_channel_delta(
+    reference: &Image,
+    candidate: &Image,
+    max_delta: u8,
+) -> f64 {
+    assert_eq!(reference.width, candidate.width);
+    assert_eq!(reference.height, candidate.height);
+
+    let matching = reference
+        .pixels
+        .chunks_exact(4)
+        .zip(candidate.pixels.chunks_exact(4))
+        .filter(|(lhs, rhs)| {
+            lhs.iter()
+                .zip(rhs.iter())
+                .all(|(left, right)| (*left as i16 - *right as i16).abs() <= max_delta as i16)
+        })
+        .count() as f64;
+    matching / (reference.width * reference.height) as f64
+}
+
+fn non_background_fraction(pixels: &[u8]) -> f64 {
+    let mut non_background = 0usize;
+    let mut total = 0usize;
+    for pixel in pixels.chunks_exact(4) {
+        total += 1;
+        if pixel[3] > 0 && (pixel[0] > 0 || pixel[1] > 0 || pixel[2] > 0) {
+            non_background += 1;
+        }
+    }
+    non_background as f64 / total.max(1) as f64
+}
+
+fn assert_premultiplied_parity_against_reference(name: &str, reference: &Image, candidate: &Image) {
+    let mean_diff = mean_normalized_rgba_diff(reference, candidate);
+    let within_delta = fraction_pixels_within_channel_delta(reference, candidate, 24);
+    let reference_ink = non_background_fraction(&reference.pixels);
+    let candidate_ink = non_background_fraction(&candidate.pixels);
+
+    assert!(
+        mean_diff <= 0.015,
+        "{name} drifted too far from the reference render: mean_diff={mean_diff:.6}"
+    );
+    assert!(
+        within_delta >= 0.99,
+        "{name} has too many per-pixel outliers relative to the reference render: within_delta={within_delta:.4}"
+    );
+    assert!(
+        (reference_ink - candidate_ink).abs() <= 0.10,
+        "{name} changed visible ink coverage too much: reference_ink={reference_ink:.4} candidate_ink={candidate_ink:.4}"
+    );
+}
+
 fn legacy_draw_circle(
     renderer: &mut SkiaRenderer,
     x: f32,
@@ -133,6 +199,18 @@ fn count_red_pixels_outside_rect(image: &Image, rect: Rect) -> usize {
     }
 
     count
+}
+
+fn marker_parity_points() -> Vec<crate::core::types::Point2f> {
+    (0..160)
+        .map(|index| {
+            let x_base = ((index * 17) % 90) as f32 * 0.75 - 8.0;
+            let y_base = ((index * 23) % 88) as f32 * 0.68 - 7.0;
+            let x = x_base + [0.06, 0.21, 0.44, 0.57, 0.81][index % 5];
+            let y = y_base + [0.11, 0.29, 0.38, 0.63, 0.87][index % 5];
+            crate::core::types::Point2f::new(x, y)
+        })
+        .collect()
 }
 
 #[test]
@@ -312,6 +390,82 @@ fn test_draw_circle_cached_path_matches_legacy_circle_pixels() {
         &reference.into_image(),
         &candidate.into_image(),
     );
+}
+
+#[test]
+fn test_draw_markers_clipped_sprite_compositor_stays_in_parity_for_supported_marker_styles() {
+    let theme = Theme::default();
+    let points = marker_parity_points();
+    let clip_rect = (6.25, 5.5, 46.5, 44.25);
+    let color = Color::new_rgba(35, 140, 220, 216);
+
+    for style in [
+        MarkerStyle::Circle,
+        MarkerStyle::Square,
+        MarkerStyle::Triangle,
+        MarkerStyle::TriangleDown,
+        MarkerStyle::Diamond,
+        MarkerStyle::CircleOpen,
+    ] {
+        let mut candidate = SkiaRenderer::new(64, 56, theme.clone()).unwrap();
+        let mut reference = SkiaRenderer::new(64, 56, theme.clone()).unwrap();
+        candidate.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+        reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+        candidate
+            .draw_markers_clipped(&points, 8.5, style, color, clip_rect)
+            .expect("sprite-composited markers should render");
+        for point in &points {
+            reference
+                .draw_marker_clipped(point.x, point.y, 8.5, style, color, clip_rect)
+                .expect("legacy markers should render");
+        }
+
+        assert_premultiplied_parity_against_reference(
+            style.name(),
+            &reference.into_image(),
+            &candidate.into_image(),
+        );
+    }
+}
+
+#[test]
+fn test_draw_markers_clipped_uses_vector_fallback_for_line_based_markers() {
+    let theme = Theme::default();
+    let points = marker_parity_points();
+    let clip_rect = (6.25, 5.5, 46.5, 44.25);
+    let color = Color::new_rgba(180, 60, 220, 216);
+
+    for style in [
+        MarkerStyle::Plus,
+        MarkerStyle::Cross,
+        MarkerStyle::Star,
+        MarkerStyle::SquareOpen,
+        MarkerStyle::TriangleOpen,
+        MarkerStyle::DiamondOpen,
+    ] {
+        let mut candidate = SkiaRenderer::new(64, 56, theme.clone()).unwrap();
+        let mut reference = SkiaRenderer::new(64, 56, theme.clone()).unwrap();
+        candidate.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+        reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+        candidate
+            .draw_markers_clipped(&points, 8.5, style, color, clip_rect)
+            .expect("fallback markers should render");
+        for point in &points {
+            reference
+                .draw_marker_clipped(point.x, point.y, 8.5, style, color, clip_rect)
+                .expect("legacy markers should render");
+        }
+
+        assert!(candidate.render_diagnostics().used_marker_sprite_fallback);
+        assert!(!candidate.render_diagnostics().used_marker_sprite_compositor);
+        assert_exact_rgba_pixels(
+            style.name(),
+            &reference.into_image(),
+            &candidate.into_image(),
+        );
+    }
 }
 
 #[test]

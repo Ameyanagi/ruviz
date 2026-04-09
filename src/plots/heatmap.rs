@@ -283,6 +283,10 @@ pub struct HeatmapData {
 }
 
 impl HeatmapData {
+    fn can_use_pixel_aligned_grid_fast_path(&self, alpha: f32) -> bool {
+        matches!(self.config.interpolation, Interpolation::Nearest) && alpha >= 1.0
+    }
+
     fn x_step(&self) -> f64 {
         (self.x_extent.1 - self.x_extent.0) / self.n_cols.max(1) as f64
     }
@@ -352,7 +356,87 @@ impl HeatmapData {
         }
     }
 
-    fn draw_cells(
+    fn pixel_aligned_screen_edges(&self, area: &PlotArea) -> (Vec<i32>, Vec<i32>) {
+        let x_min = area.x;
+        let x_max = area.x + area.width;
+        let y_min = area.y;
+        let y_max = area.y + area.height;
+        let x_step = self.x_step();
+        let y_step = self.y_step();
+
+        let x_edges = (0..=self.n_cols)
+            .map(|index| {
+                let x = self.x_extent.0 + index as f64 * x_step;
+                area.data_to_screen(x, self.y_extent.0)
+                    .0
+                    .clamp(x_min, x_max)
+                    .round() as i32
+            })
+            .collect();
+        let y_edges = (0..=self.n_rows)
+            .map(|index| {
+                let y = self.y_extent.1 - index as f64 * y_step;
+                area.data_to_screen(self.x_extent.0, y)
+                    .1
+                    .clamp(y_min, y_max)
+                    .round() as i32
+            })
+            .collect();
+
+        (x_edges, y_edges)
+    }
+
+    fn draw_cells_pixel_aligned_grid(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        alpha: f32,
+    ) -> PlotResult<()> {
+        let (x_edges, y_edges) = self.pixel_aligned_screen_edges(area);
+
+        for row in 0..self.n_rows {
+            let top = y_edges[row].min(y_edges[row + 1]);
+            let bottom = y_edges[row].max(y_edges[row + 1]);
+            if bottom <= top {
+                continue;
+            }
+
+            for col in 0..self.n_cols {
+                let value = self.values[row][col];
+                if self.should_mask_value(value) {
+                    continue;
+                }
+
+                let left = x_edges[col].min(x_edges[col + 1]);
+                let right = x_edges[col].max(x_edges[col + 1]);
+                if right <= left {
+                    continue;
+                }
+
+                let cell_color = self.get_color(value).with_alpha(alpha);
+                let x = left as f32;
+                let y = top as f32;
+                let width = (right - left) as f32;
+                let height = (bottom - top) as f32;
+
+                renderer.draw_pixel_aligned_solid_rectangle(x, y, width, height, cell_color)?;
+
+                if self.config.cell_borders {
+                    renderer.draw_pixel_aligned_rectangle_outline(
+                        x,
+                        y,
+                        width,
+                        height,
+                        cell_color.darken(0.2),
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn draw_cells_legacy(
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
@@ -394,6 +478,19 @@ impl HeatmapData {
         }
 
         Ok(())
+    }
+
+    fn draw_cells(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        alpha: f32,
+    ) -> PlotResult<()> {
+        if self.can_use_pixel_aligned_grid_fast_path(alpha) {
+            return self.draw_cells_pixel_aligned_grid(renderer, area, alpha);
+        }
+
+        self.draw_cells_legacy(renderer, area, alpha)
     }
 }
 
@@ -601,6 +698,89 @@ impl PlotRender for HeatmapData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::plot::Image;
+
+    fn mean_normalized_rgba_diff(reference: &Image, candidate: &Image) -> f64 {
+        assert_eq!(reference.width, candidate.width);
+        assert_eq!(reference.height, candidate.height);
+
+        reference
+            .pixels
+            .iter()
+            .zip(candidate.pixels.iter())
+            .map(|(lhs, rhs)| (*lhs as f64 - *rhs as f64).abs() / 255.0)
+            .sum::<f64>()
+            / reference.pixels.len() as f64
+    }
+
+    fn fraction_pixels_within_channel_delta(
+        reference: &Image,
+        candidate: &Image,
+        max_delta: u8,
+    ) -> f64 {
+        assert_eq!(reference.width, candidate.width);
+        assert_eq!(reference.height, candidate.height);
+
+        let mut matching = 0usize;
+        for (lhs, rhs) in reference
+            .pixels
+            .chunks_exact(4)
+            .zip(candidate.pixels.chunks_exact(4))
+        {
+            if lhs
+                .iter()
+                .zip(rhs.iter())
+                .all(|(left, right)| (*left as i16 - *right as i16).abs() <= max_delta as i16)
+            {
+                matching += 1;
+            }
+        }
+        matching as f64 / (reference.width * reference.height) as f64
+    }
+
+    fn non_background_fraction(image: &Image) -> f64 {
+        let total = image.pixels.chunks_exact(4).len() as f64;
+        let ink = image
+            .pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0 && (pixel[0] < 248 || pixel[1] < 248 || pixel[2] < 248))
+            .count() as f64;
+        ink / total.max(1.0)
+    }
+
+    fn assert_heatmap_parity(reference: &Image, candidate: &Image) {
+        let mean_diff = mean_normalized_rgba_diff(reference, candidate);
+        let within_delta = fraction_pixels_within_channel_delta(reference, candidate, 24);
+        let reference_ink = non_background_fraction(reference);
+        let candidate_ink = non_background_fraction(candidate);
+
+        assert!(
+            mean_diff <= 0.015,
+            "heatmap drifted too far from legacy cells: mean_diff={mean_diff:.6}"
+        );
+        assert!(
+            within_delta >= 0.99,
+            "heatmap has too many per-pixel outliers relative to legacy cells: within_delta={within_delta:.4}"
+        );
+        assert!(
+            (reference_ink - candidate_ink).abs() <= 0.10,
+            "heatmap changed visible ink coverage too much: reference_ink={reference_ink:.4} candidate_ink={candidate_ink:.4}"
+        );
+    }
+
+    fn render_heatmap_cells(
+        data: &HeatmapData,
+        area: &PlotArea,
+        use_legacy: bool,
+    ) -> crate::core::Result<Image> {
+        let mut renderer = SkiaRenderer::new(120, 120, Theme::default())?;
+        if use_legacy {
+            data.draw_cells_legacy(&mut renderer, area, data.config.alpha)?;
+        } else {
+            data.draw_cells(&mut renderer, area, data.config.alpha)?;
+        }
+        Ok(renderer.into_image())
+    }
 
     #[test]
     fn test_heatmap_config_defaults() {
@@ -615,6 +795,47 @@ mod tests {
         assert!(!config.cell_borders);
         assert!(!config.symlog_auto_linthresh);
         assert!(config.extent.is_none());
+    }
+
+    #[test]
+    fn test_opaque_nearest_heatmap_fast_path_stays_in_parity_with_legacy_cells() {
+        let rows = 48usize;
+        let cols = 256usize;
+        let stripe_start = cols / 2 - 4;
+        let stripe_end = stripe_start + 8;
+        let mut values = vec![vec![0.0; cols]; rows];
+        for row in &mut values {
+            for cell in &mut row[stripe_start..stripe_end] {
+                *cell = 1.0;
+            }
+        }
+
+        let data = process_heatmap(&values, HeatmapConfig::new().colorbar(false))
+            .expect("heatmap data should process");
+        let area = PlotArea::new(8.0, 10.0, 90.0, 92.0, 0.0, cols as f64, 0.0, rows as f64);
+
+        let reference = render_heatmap_cells(&data, &area, true).expect("legacy heatmap render");
+        let candidate = render_heatmap_cells(&data, &area, false).expect("fast heatmap render");
+
+        assert_heatmap_parity(&reference, &candidate);
+    }
+
+    #[test]
+    fn test_translucent_heatmap_keeps_legacy_cell_renderer() {
+        let values = vec![
+            vec![0.1, 0.4, 0.7],
+            vec![0.2, 0.5, 0.8],
+            vec![0.3, 0.6, 0.9],
+        ];
+        let data = process_heatmap(&values, HeatmapConfig::new().colorbar(false).alpha(0.5))
+            .expect("heatmap data should process");
+        let area = PlotArea::new(8.0, 10.0, 90.0, 92.0, 0.0, 3.0, 0.0, 3.0);
+
+        let reference = render_heatmap_cells(&data, &area, true).expect("legacy heatmap render");
+        let candidate =
+            render_heatmap_cells(&data, &area, false).expect("translucent heatmap render");
+
+        assert_eq!(reference.pixels, candidate.pixels);
     }
 
     #[test]

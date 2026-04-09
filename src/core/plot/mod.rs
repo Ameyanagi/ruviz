@@ -63,7 +63,7 @@ impl RenderExecutionMode {
     }
 
     pub(super) fn allows_raster_line_reduction(self) -> bool {
-        matches!(self, Self::Optimized)
+        true
     }
 }
 
@@ -76,6 +76,9 @@ pub struct RenderDiagnostics {
     pub used_exact_line_canonicalization: bool,
     pub used_raster_line_reduction: bool,
     pub used_marker_path_cache: bool,
+    pub used_marker_sprite_cache: bool,
+    pub used_marker_sprite_compositor: bool,
+    pub used_marker_sprite_fallback: bool,
     pub used_direct_rect_fill: bool,
     pub used_pixel_aligned_rect_fill: bool,
 }

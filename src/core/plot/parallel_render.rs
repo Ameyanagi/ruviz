@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::Point2f;
 use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
@@ -776,16 +777,33 @@ impl Plot {
                     }
                 }
                 RenderSeriesType::Scatter { markers } => {
-                    // Draw all markers
-                    for marker in markers {
-                        renderer.draw_marker_clipped(
-                            marker.position.x,
-                            marker.position.y,
-                            marker.size,
-                            marker.style,
-                            marker.color,
-                            clip_rect,
-                        )?;
+                    if let Some(first) = markers.first() {
+                        if markers.iter().all(|marker| {
+                            marker.style == first.style
+                                && marker.color == first.color
+                                && marker.size.to_bits() == first.size.to_bits()
+                        }) {
+                            let points: Vec<Point2f> =
+                                markers.iter().map(|marker| marker.position).collect();
+                            renderer.draw_markers_clipped(
+                                &points,
+                                first.size,
+                                first.style,
+                                first.color,
+                                clip_rect,
+                            )?;
+                        } else {
+                            for marker in markers {
+                                renderer.draw_marker_clipped(
+                                    marker.position.x,
+                                    marker.position.y,
+                                    marker.size,
+                                    marker.style,
+                                    marker.color,
+                                    clip_rect,
+                                )?;
+                            }
+                        }
                     }
                 }
                 RenderSeriesType::Bar { bars } => {

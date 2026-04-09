@@ -585,16 +585,13 @@ impl Plot {
                 )?;
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                    for point in &points {
-                        renderer.draw_marker_clipped(
-                            point.x,
-                            point.y,
-                            marker_size,
-                            marker_style,
-                            color,
-                            clip_rect,
-                        )?;
-                    }
+                    renderer.draw_markers_clipped(
+                        &points,
+                        marker_size,
+                        marker_style,
+                        color,
+                        clip_rect,
+                    )?;
                 }
 
                 // Draw attached error bars if present
@@ -622,20 +619,24 @@ impl Plot {
                 let y_data = y_data.resolve(0.0);
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)); // DPI-scaled marker size
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let points: Vec<Point2f> = x_data
+                    .iter()
+                    .zip(y_data.iter())
+                    .map(|(&x, &y)| {
+                        let (px, py) = crate::render::skia::map_data_to_pixels(
+                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                        );
+                        Point2f::new(px, py)
+                    })
+                    .collect();
 
-                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                    let (px, py) = crate::render::skia::map_data_to_pixels(
-                        x, y, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    renderer.draw_marker_clipped(
-                        px,
-                        py,
-                        marker_size,
-                        marker_style,
-                        color,
-                        clip_rect,
-                    )?;
-                }
+                renderer.draw_markers_clipped(
+                    &points,
+                    marker_size,
+                    marker_style,
+                    color,
+                    clip_rect,
+                )?;
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
