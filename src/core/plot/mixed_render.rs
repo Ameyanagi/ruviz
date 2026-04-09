@@ -75,6 +75,96 @@ impl Plot {
         series_list.is_empty() || Self::has_cartesian_series(series_list)
     }
 
+    pub(super) fn render_series_collection_auto_datashader(
+        &self,
+        series_list: &[PlotSeries],
+        renderer: &mut SkiaRenderer,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        render_scale: RenderScale,
+    ) -> Result<bool> {
+        if Self::has_mixed_coordinate_series(series_list) {
+            return Ok(false);
+        }
+
+        let total_points = Self::calculate_total_points_for_series(series_list);
+        if !Self::should_auto_use_datashader(series_list, total_points) {
+            return Ok(false);
+        }
+
+        let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
+
+        for (idx, series) in series_list.iter().enumerate() {
+            let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
+                (inset_rect, self.raw_bounds_for_single_series(series)?)
+            } else {
+                (plot_area, (x_min, x_max, y_min, y_max))
+            };
+
+            match &series.series_type {
+                SeriesType::Scatter { x_data, y_data } => {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
+                    let mut datashader = DataShader::with_canvas_size(
+                        series_area.width() as usize,
+                        series_area.height() as usize,
+                    );
+
+                    datashader.aggregate_with_bounds(
+                        &x_data,
+                        &y_data,
+                        series_bounds.0,
+                        series_bounds.1,
+                        series_bounds.2,
+                        series_bounds.3,
+                    )?;
+                    let image = datashader.render();
+                    renderer.draw_datashader_image(&image, series_area)?;
+                }
+                SeriesType::Histogram { .. } => {
+                    let hist_data = series.series_type.histogram_data_at(0.0)?;
+                    let x_data: Vec<f64> = hist_data
+                        .bin_edges
+                        .windows(2)
+                        .map(|w| (w[0] + w[1]) / 2.0)
+                        .collect();
+                    let y_data: Vec<f64> = hist_data.counts;
+                    let mut datashader = DataShader::with_canvas_size(
+                        series_area.width() as usize,
+                        series_area.height() as usize,
+                    );
+
+                    datashader.aggregate_with_bounds(
+                        &x_data,
+                        &y_data,
+                        series_bounds.0,
+                        series_bounds.1,
+                        series_bounds.2,
+                        series_bounds.3,
+                    )?;
+                    let image = datashader.render();
+                    renderer.draw_datashader_image(&image, series_area)?;
+                }
+                _ => {
+                    self.render_series_normal(
+                        series,
+                        renderer,
+                        series_area,
+                        series_bounds.0,
+                        series_bounds.1,
+                        series_bounds.2,
+                        series_bounds.3,
+                    )?;
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
     pub(super) fn empty_cartesian_bounds(&self) -> (f64, f64, f64, f64) {
         self.apply_manual_axis_limits((0.0, 1.0, 0.0, 1.0))
     }

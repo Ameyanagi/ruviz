@@ -11,7 +11,6 @@ use ruviz::{
         plot::{IntoPlotData, PlotData},
     },
     data::Observable,
-    export::write_rgba_png_atomic,
     render::Theme,
 };
 
@@ -20,8 +19,6 @@ use ruviz::interactive::show_interactive;
 
 #[cfg(not(feature = "native-interactive"))]
 use crate::NATIVE_INTERACTIVE_UNAVAILABLE_MESSAGE;
-
-const DEFAULT_PLOT_SIZE: (u32, u32) = (640, 480);
 
 #[derive(Clone)]
 enum NumericSourceState {
@@ -157,10 +154,6 @@ impl NativePlotState {
         }
 
         Ok(plot)
-    }
-
-    fn render_size(&self) -> (u32, u32) {
-        self.size_px.unwrap_or(DEFAULT_PLOT_SIZE)
     }
 }
 
@@ -373,12 +366,8 @@ impl NativePlotHandle {
 
     fn render_png_vec(&mut self) -> PyResult<Vec<u8>> {
         self.ensure_built()?;
-        let image = self
-            .prepared
-            .render_frame(self.state.render_size(), 1.0, 0.0)
-            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
-        image
-            .encode_png()
+        self.plot
+            .render_png_bytes()
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
 }
@@ -675,14 +664,11 @@ impl NativePlotHandle {
                 .clone()
                 .save_pdf(output)
                 .map_err(|err| PyRuntimeError::new_err(err.to_string())),
-            _ => {
-                let image = self
-                    .prepared
-                    .render_frame(self.state.render_size(), 1.0, 0.0)
-                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
-                write_rgba_png_atomic(output, &image)
-                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))
-            }
+            _ => self
+                .plot
+                .clone()
+                .save(output)
+                .map_err(|err| PyRuntimeError::new_err(err.to_string())),
         }
     }
 

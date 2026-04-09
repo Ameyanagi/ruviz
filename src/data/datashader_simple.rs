@@ -186,28 +186,34 @@ impl DataShaderCanvas {
         }
     }
 
-    /// Create image data as simple grayscale
+    /// Create image data as a density mask.
     pub fn to_image_data(&self) -> Vec<u8> {
         let max_count = self.max_count();
         let mut pixels = Vec::with_capacity(self.width * self.height * 4);
+        let max_log = f64::from(max_count).ln_1p();
 
         for y in 0..self.height {
             for x in 0..self.width {
                 let idx = y * self.width + x;
                 let count = self.canvas[idx].load(Ordering::Relaxed);
 
-                // Normalize to grayscale
-                let intensity = if max_count > 0 {
-                    ((count as f64 / max_count as f64) * 255.0) as u8
-                } else {
+                // Empty bins stay transparent so the normal plot background shows through.
+                let alpha = if count == 0 || max_count == 0 {
                     0
+                } else {
+                    let normalized = if max_log > 0.0 {
+                        f64::from(count).ln_1p() / max_log
+                    } else {
+                        1.0
+                    };
+                    (normalized * 255.0).round().clamp(24.0, 255.0) as u8
                 };
 
-                // RGBA
-                pixels.push(intensity); // R
-                pixels.push(intensity); // G  
-                pixels.push(intensity); // B
-                pixels.push(255); // A
+                // Store density in alpha only. The renderer tints it with the active theme.
+                pixels.push(0); // R
+                pixels.push(0); // G
+                pixels.push(0); // B
+                pixels.push(alpha); // A
             }
         }
 
@@ -473,6 +479,40 @@ mod tests {
         assert_eq!(image.width, 10);
         assert_eq!(image.height, 10);
         assert_eq!(image.pixels.len(), 10 * 10 * 4); // RGBA
+    }
+
+    #[test]
+    fn test_datashader_render_keeps_empty_bins_transparent() {
+        let mut ds = DataShader::with_canvas_size(8, 8);
+        ds.aggregate(&[0.5], &[0.5]).unwrap();
+
+        let image = ds.render();
+
+        assert!(
+            image.pixels.chunks_exact(4).any(|px| px[3] == 0),
+            "empty bins should remain transparent so DataShader does not overwrite the plot background"
+        );
+        assert!(
+            image.pixels.chunks_exact(4).any(|px| px[3] > 0),
+            "occupied bins should remain visible after density shading"
+        );
+    }
+
+    #[test]
+    fn test_large_scatter_datashader_render_retains_empty_bins() {
+        let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+        let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+        let mut ds = DataShader::with_canvas_size(512, 384);
+        ds.aggregate_with_bounds(&x_data, &y_data, 0.0, 1.0, -1.0, 1.0)
+            .unwrap();
+
+        let image = ds.render();
+        let transparent_bins = image.pixels.chunks_exact(4).filter(|px| px[3] == 0).count();
+
+        assert!(
+            transparent_bins > 0,
+            "large scatter datashader render should keep empty bins transparent"
+        );
     }
 
     #[test]

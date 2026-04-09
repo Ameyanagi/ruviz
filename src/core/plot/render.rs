@@ -45,14 +45,6 @@ impl Plot {
             );
         }
 
-        let use_datashader = !has_mixed_coordinates
-            && Self::should_auto_use_datashader(&snapshot_series, total_points);
-
-        if use_datashader {
-            // Use DataShader for large datasets
-            return self.render_with_datashader(&snapshot_series);
-        }
-
         // Check if parallel processing should be used.
         // Reactive plots are resolved into a static snapshot above, so they can
         // reuse the normal backend-selection path here.
@@ -288,7 +280,7 @@ impl Plot {
             }
         }
 
-        self.render_series_collection_normal(
+        if !self.render_series_collection_auto_datashader(
             &snapshot_series,
             &mut renderer,
             plot_area,
@@ -297,7 +289,18 @@ impl Plot {
             y_min,
             y_max,
             render_scale,
-        )?;
+        )? {
+            self.render_series_collection_normal(
+                &snapshot_series,
+                &mut renderer,
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                render_scale,
+            )?;
+        }
 
         // Convert renderer output to Image
         Ok(renderer.into_image())
@@ -344,7 +347,22 @@ impl Plot {
 
     /// Render the plot and encode it as PNG bytes.
     pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
-        self.render()?.encode_png()
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let reactive = self.is_reactive();
+            let result = self
+                .save_png_bytes_with_backend()
+                .map(|(png_bytes, _)| png_bytes);
+            if result.is_ok() && reactive {
+                self.mark_reactive_sources_rendered();
+            }
+            result
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.render()?.encode_png()
+        }
     }
 
     /// Check if this plot contains any reactive data (Signal or Observable).
@@ -1831,59 +1849,16 @@ impl Plot {
         const GPU_THRESHOLD: usize = 5_000;
 
         #[cfg(feature = "gpu")]
-        let backend_used = if !has_mixed_coordinates
-            && Self::should_auto_use_datashader(&snapshot_series, total_points)
-        {
-            use crate::data::DataShader;
-
-            for series in &snapshot_series {
-                match &series.series_type {
-                    SeriesType::Scatter { x_data, y_data } => {
-                        let x_data = x_data.resolve(0.0);
-                        let y_data = y_data.resolve(0.0);
-                        let mut datashader = DataShader::with_canvas_size(
-                            plot_area.width() as usize,
-                            plot_area.height() as usize,
-                        );
-
-                        datashader
-                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
-                        let image = datashader.render();
-                        renderer.draw_datashader_image(&image, plot_area)?;
-                    }
-                    SeriesType::Histogram { .. } => {
-                        let hist_data = series.series_type.histogram_data_at(0.0)?;
-                        let x_data: Vec<f64> = hist_data
-                            .bin_edges
-                            .windows(2)
-                            .map(|w| (w[0] + w[1]) / 2.0)
-                            .collect();
-                        let y_data: Vec<f64> = hist_data.counts;
-
-                        let mut datashader = DataShader::with_canvas_size(
-                            plot_area.width() as usize,
-                            plot_area.height() as usize,
-                        );
-
-                        datashader
-                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
-                        let image = datashader.render();
-                        renderer.draw_datashader_image(&image, plot_area)?;
-                    }
-                    _ => {
-                        self.render_series_normal(
-                            series,
-                            &mut renderer,
-                            plot_area,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                        )?;
-                    }
-                }
-            }
-
+        let backend_used = if self.render_series_collection_auto_datashader(
+            &snapshot_series,
+            &mut renderer,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            render_scale,
+        )? {
             "datashader"
         } else {
             let use_gpu_rendering =
@@ -1942,59 +1917,16 @@ impl Plot {
         };
 
         #[cfg(not(feature = "gpu"))]
-        let backend_used = if !has_mixed_coordinates
-            && Self::should_auto_use_datashader(&snapshot_series, total_points)
-        {
-            use crate::data::DataShader;
-
-            for series in &snapshot_series {
-                match &series.series_type {
-                    SeriesType::Scatter { x_data, y_data } => {
-                        let x_data = x_data.resolve(0.0);
-                        let y_data = y_data.resolve(0.0);
-                        let mut datashader = DataShader::with_canvas_size(
-                            plot_area.width() as usize,
-                            plot_area.height() as usize,
-                        );
-
-                        datashader
-                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
-                        let image = datashader.render();
-                        renderer.draw_datashader_image(&image, plot_area)?;
-                    }
-                    SeriesType::Histogram { .. } => {
-                        let hist_data = series.series_type.histogram_data_at(0.0)?;
-                        let x_data: Vec<f64> = hist_data
-                            .bin_edges
-                            .windows(2)
-                            .map(|w| (w[0] + w[1]) / 2.0)
-                            .collect();
-                        let y_data: Vec<f64> = hist_data.counts;
-
-                        let mut datashader = DataShader::with_canvas_size(
-                            plot_area.width() as usize,
-                            plot_area.height() as usize,
-                        );
-
-                        datashader
-                            .aggregate_with_bounds(&x_data, &y_data, x_min, x_max, y_min, y_max)?;
-                        let image = datashader.render();
-                        renderer.draw_datashader_image(&image, plot_area)?;
-                    }
-                    _ => {
-                        self.render_series_normal(
-                            series,
-                            &mut renderer,
-                            plot_area,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                        )?;
-                    }
-                }
-            }
-
+        let backend_used = if self.render_series_collection_auto_datashader(
+            &snapshot_series,
+            &mut renderer,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            render_scale,
+        )? {
             "datashader"
         } else {
             self.render_series_collection_normal(
