@@ -366,7 +366,7 @@ impl NativePlotHandle {
 
     fn render_png_vec(&mut self) -> PyResult<Vec<u8>> {
         self.ensure_built()?;
-        self.plot
+        self.prepared
             .render_png_bytes()
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))
     }
@@ -631,8 +631,8 @@ impl NativePlotHandle {
     fn render_png_bytes_uncached<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         self.ensure_built()?;
         let bytes = self
-            .plot
-            .render_png_bytes()
+            .prepared
+            .render_png_bytes_uncached()
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
         Ok(PyBytes::new(py, &bytes))
     }

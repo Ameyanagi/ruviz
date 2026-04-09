@@ -22,6 +22,12 @@ struct PreparedFrameCache {
     image: Image,
 }
 
+#[derive(Clone, Debug)]
+struct PreparedResolvedPlotCache {
+    key: PreparedFrameKey,
+    plot: Plot,
+}
+
 /// Active subscriptions to the push-based reactive inputs of a plot.
 ///
 /// Dropping this value unsubscribes all registered listeners.
@@ -61,6 +67,7 @@ impl ReactiveSubscription {
 pub struct PreparedPlot {
     plot: Plot,
     cache: Mutex<Option<PreparedFrameCache>>,
+    resolved_cache: Mutex<Option<PreparedResolvedPlotCache>>,
 }
 
 impl Clone for PreparedPlot {
@@ -73,6 +80,12 @@ impl Clone for PreparedPlot {
         Self {
             plot: self.plot.clone(),
             cache: Mutex::new(cache),
+            resolved_cache: Mutex::new(
+                self.resolved_cache
+                    .lock()
+                    .expect("PreparedPlot resolved cache lock poisoned")
+                    .clone(),
+            ),
         }
     }
 }
@@ -82,6 +95,7 @@ impl PreparedPlot {
         Self {
             plot,
             cache: Mutex::new(None),
+            resolved_cache: Mutex::new(None),
         }
     }
 
@@ -93,6 +107,10 @@ impl PreparedPlot {
     /// Drop any cached frame so the next render recomputes it.
     pub fn invalidate(&self) {
         *self.cache.lock().expect("PreparedPlot cache lock poisoned") = None;
+        *self
+            .resolved_cache
+            .lock()
+            .expect("PreparedPlot resolved cache lock poisoned") = None;
     }
 
     /// Check whether the requested frame differs from the cached one.
@@ -120,8 +138,7 @@ impl PreparedPlot {
         }
 
         let image = self
-            .plot
-            .prepared_frame_plot(size_px, scale_factor, time)
+            .prepared_render_plot(size_px, scale_factor, time)?
             .render()?;
         self.plot.mark_reactive_sources_rendered();
 
@@ -131,6 +148,37 @@ impl PreparedPlot {
         });
 
         Ok(image)
+    }
+
+    /// Render a frame while bypassing the cached image, but still reusing the
+    /// prepared per-frame plot state when the key is unchanged.
+    pub fn render_frame_uncached(
+        &self,
+        size_px: (u32, u32),
+        scale_factor: f32,
+        time: f64,
+    ) -> Result<Image> {
+        let image = self
+            .prepared_render_plot(size_px, scale_factor, time)?
+            .render()?;
+        self.plot.mark_reactive_sources_rendered();
+        Ok(image)
+    }
+
+    /// Render PNG bytes for the plot's configured output size through the
+    /// prepared runtime. Reuses the cached image when the prepared frame key
+    /// has not changed.
+    pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
+        let (width, height) = self.plot.config_canvas_size();
+        self.render_frame((width, height), 1.0, 0.0)?.encode_png()
+    }
+
+    /// Render PNG bytes while bypassing the cached image, but still reusing the
+    /// cached prepared per-frame plot state when possible.
+    pub fn render_png_bytes_uncached(&self) -> Result<Vec<u8>> {
+        let (width, height) = self.plot.config_canvas_size();
+        self.render_frame_uncached((width, height), 1.0, 0.0)?
+            .encode_png()
     }
 
     /// Subscribe to push-based reactive updates for the underlying plot.
@@ -155,6 +203,35 @@ impl PreparedPlot {
             time_bits: self.plot.has_temporal_sources().then_some(time.to_bits()),
             versions: self.plot.collect_reactive_versions(),
         }
+    }
+
+    fn prepared_render_plot(
+        &self,
+        size_px: (u32, u32),
+        scale_factor: f32,
+        time: f64,
+    ) -> Result<Plot> {
+        let key = self.frame_key(size_px, scale_factor, time);
+        if let Some(plot) = self
+            .resolved_cache
+            .lock()
+            .expect("PreparedPlot resolved cache lock poisoned")
+            .as_ref()
+            .and_then(|cached| (cached.key == key).then(|| cached.plot.clone()))
+        {
+            return Ok(plot);
+        }
+
+        let plot = self.plot.prepared_frame_plot(size_px, scale_factor, time);
+        *self
+            .resolved_cache
+            .lock()
+            .expect("PreparedPlot resolved cache lock poisoned") =
+            Some(PreparedResolvedPlotCache {
+                key,
+                plot: plot.clone(),
+            });
+        Ok(plot)
     }
 
     /// Promote this prepared plot into a shared interactive session.
@@ -197,6 +274,39 @@ mod tests {
 
         y.set(vec![0.0, 1.0, 9.0]);
         assert!(prepared.is_dirty((320, 240), 1.0, 0.0));
+    }
+
+    #[test]
+    fn test_prepared_plot_render_png_bytes_uses_cached_image() {
+        let plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0]).into();
+        let prepared = plot.prepare();
+
+        let png_a = prepared
+            .render_png_bytes()
+            .expect("prepared plot should render cached png");
+        let png_b = prepared
+            .render_png_bytes()
+            .expect("prepared plot should reuse cached png image");
+
+        assert_eq!(png_a, png_b);
+        assert!(!prepared.is_dirty(plot.config_canvas_size(), 1.0, 0.0));
+    }
+
+    #[test]
+    fn test_prepared_plot_render_png_bytes_uncached_matches_cached_path() {
+        let plot: Plot = Plot::new()
+            .scatter(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0])
+            .into();
+        let prepared = plot.prepare();
+
+        let cached = prepared
+            .render_png_bytes()
+            .expect("prepared cached png should render");
+        let uncached = prepared
+            .render_png_bytes_uncached()
+            .expect("prepared uncached png should render");
+
+        assert_eq!(cached, uncached);
     }
 
     #[test]

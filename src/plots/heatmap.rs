@@ -480,7 +480,7 @@ impl HeatmapData {
         Ok(())
     }
 
-    fn draw_cells(
+    pub(crate) fn draw_cells_batch(
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
@@ -669,7 +669,7 @@ impl PlotRender for HeatmapData {
         }
 
         let config = &self.config;
-        self.draw_cells(renderer, area, config.alpha)
+        self.draw_cells_batch(renderer, area, config.alpha)
     }
 
     fn render_styled(
@@ -691,7 +691,7 @@ impl PlotRender for HeatmapData {
         // Use provided alpha or config alpha
         let effective_alpha = if alpha != 1.0 { alpha } else { config.alpha };
 
-        self.draw_cells(renderer, area, effective_alpha)
+        self.draw_cells_batch(renderer, area, effective_alpha)
     }
 }
 
@@ -777,7 +777,7 @@ mod tests {
         if use_legacy {
             data.draw_cells_legacy(&mut renderer, area, data.config.alpha)?;
         } else {
-            data.draw_cells(&mut renderer, area, data.config.alpha)?;
+            data.draw_cells_batch(&mut renderer, area, data.config.alpha)?;
         }
         Ok(renderer.into_image())
     }

@@ -1,8 +1,10 @@
 use super::*;
+use crate::core::plot::raster_batches::{
+    SeriesRasterPlan, clip_rect_from_plot_area, plot_area_from_rect, project_xy_points,
+};
 use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
-use crate::core::types::Point2f;
 
 impl Plot {
     /// Add a new line to existing plot (for incremental updates)
@@ -540,59 +542,49 @@ impl Plot {
         let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
-        let clip_rect = (
-            plot_area.x(),
-            plot_area.y(),
-            plot_area.width(),
-            plot_area.height(),
-        );
+        let clip_rect = clip_rect_from_plot_area(plot_area);
 
         match &series.series_type {
             SeriesType::Line { x_data, y_data } => {
                 let x_data = x_data.resolve(0.0);
                 let y_data = y_data.resolve(0.0);
-                let mut points: Vec<Point2f> = x_data
-                    .iter()
-                    .zip(y_data.iter())
-                    .map(|(&x, &y)| {
-                        let (px, py) = crate::render::skia::map_data_to_pixels(
-                            x, y, x_min, x_max, y_min, y_max, plot_area,
-                        );
-                        Point2f::new(px, py)
-                    })
-                    .collect();
+                let mut points =
+                    project_xy_points(&x_data, &y_data, x_min, x_max, y_min, y_max, plot_area);
 
                 if series.marker_style.is_none()
                     && series.x_errors.is_none()
                     && series.y_errors.is_none()
-                    && let Some(canonicalized) = canonicalize_line_points_exact(&points)
+                    && let Some(canonicalized) = canonicalize_line_points_exact(points.as_ref())
                 {
                     renderer.note_exact_line_canonicalization();
-                    points = canonicalized;
+                    points = canonicalized.into();
                 }
 
                 if mode.allows_raster_line_reduction()
                     && should_reduce_line_series(series, points.len(), plot_area.width())
-                    && let Some(reduced) =
-                        reduce_line_points_for_raster(&points, plot_area.left(), plot_area.width())
+                    && let Some(reduced) = reduce_line_points_for_raster(
+                        points.as_ref(),
+                        plot_area.left(),
+                        plot_area.width(),
+                    )
                 {
                     renderer.note_raster_line_reduction();
-                    points = reduced;
+                    points = reduced.into();
                 }
 
-                renderer.draw_polyline_points_clipped(
-                    &points, color, line_width, line_style, clip_rect,
-                )?;
+                let mut raster_plan = SeriesRasterPlan::default();
+                raster_plan.push_polyline(
+                    std::sync::Arc::clone(&points),
+                    color,
+                    line_width,
+                    line_style.clone(),
+                    clip_rect,
+                );
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                    renderer.draw_markers_clipped(
-                        &points,
-                        marker_size,
-                        marker_style,
-                        color,
-                        clip_rect,
-                    )?;
+                    raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
                 }
+                raster_plan.execute(renderer)?;
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
@@ -619,24 +611,11 @@ impl Plot {
                 let y_data = y_data.resolve(0.0);
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)); // DPI-scaled marker size
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-                let points: Vec<Point2f> = x_data
-                    .iter()
-                    .zip(y_data.iter())
-                    .map(|(&x, &y)| {
-                        let (px, py) = crate::render::skia::map_data_to_pixels(
-                            x, y, x_min, x_max, y_min, y_max, plot_area,
-                        );
-                        Point2f::new(px, py)
-                    })
-                    .collect();
-
-                renderer.draw_markers_clipped(
-                    &points,
-                    marker_size,
-                    marker_style,
-                    color,
-                    clip_rect,
-                )?;
+                let points =
+                    project_xy_points(&x_data, &y_data, x_min, x_max, y_min, y_max, plot_area);
+                let mut raster_plan = SeriesRasterPlan::default();
+                raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
+                raster_plan.execute(renderer)?;
 
                 // Draw attached error bars if present
                 if series.y_errors.is_some() || series.x_errors.is_some() {
@@ -895,22 +874,14 @@ impl Plot {
                 }
             }
             SeriesType::Heatmap { data } => {
-                let heatmap_plot_area = crate::plots::PlotArea::new(
-                    plot_area.x(),
-                    plot_area.y(),
-                    plot_area.width(),
-                    plot_area.height(),
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                );
+                let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
+                let mut raster_plan = SeriesRasterPlan::default();
+                raster_plan.push_rect_grid(data, heatmap_plot_area, data.config.alpha);
+                raster_plan.execute(renderer)?;
 
                 // Keep the main heatmap cell fill path in HeatmapData so the
                 // normal renderer, tests, and styled path all share the same
                 // border/seam behavior.
-                data.render(renderer, &heatmap_plot_area, &self.display.theme, color)?;
-
                 for (row_idx, row) in data.values.iter().enumerate() {
                     for (col_idx, &value) in row.iter().enumerate() {
                         if !data.config.annotate || data.should_mask_value(value) {
