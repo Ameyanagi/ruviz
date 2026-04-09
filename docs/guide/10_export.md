@@ -518,7 +518,7 @@ Plot::new()
 ### PDF Export
 
 ```rust
-// Requires: ruviz = { version = "0.4.7", features = ["pdf"] }
+// Requires: ruviz = { version = "0.4.8", features = ["pdf"] }
 use ruviz::prelude::*;
 
 Plot::new()

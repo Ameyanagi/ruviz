@@ -2,14 +2,14 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.4.7
+## What's New in v0.4.8
 
-- Notebook widgets now default to the same `640x480` display size as the exported PNG when `size_px(...)` is not set, instead of stretching to the full notebook width.
-- Notebook widgets can now be resized directly in notebook outputs with a bottom-right drag handle; `Shift` or `Ctrl` keeps the current aspect ratio while resizing.
-- The notebook right-click export menu now has higher contrast and the resize handle works across mouse, touch, and pen input.
+- Notebook widgets now force transparent notebook host surfaces so VS Code Jupyter no longer leaves a large white wrapper around smaller plots.
+- The notebook widget keeps the existing PNG-matching default size, proportional shrink behavior, manual resize handle, and right-click export menu.
+- Browser regression coverage now simulates notebook-like white wrapper shells to keep the host-level transparency fix stable.
 
 See full details:
-- [Release notes for v0.4.7](releases/v0.4.7.md)
+- [Release notes for v0.4.8](releases/v0.4.8.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -23,7 +23,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.4.7"
+ruviz = "0.4.8"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -62,8 +62,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.4.7"
-ruviz-gpui = "0.4.7"
+ruviz = "0.4.8"
+ruviz-gpui = "0.4.8"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -91,7 +91,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.7", features = ["typst-math"] }
+ruviz = { version = "0.4.8", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
@@ -104,7 +104,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.7", default-features = false }
+ruviz = { version = "0.4.8", default-features = false }
 
 [features]
 default = []
@@ -355,7 +355,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.4.7", features = ["polars_support"] }
+ruviz = { version = "0.4.8", features = ["polars_support"] }
 polars = "0.35"
 ```
 
@@ -382,14 +382,14 @@ Plot::new()
 Enable parallel rendering:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.7", features = ["parallel"] }
+ruviz = { version = "0.4.8", features = ["parallel"] }
 ```
 
 ### For Very Large Datasets (>100K points)
 Enable SIMD optimization:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.7", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.8", features = ["parallel", "simd"] }
 ```
 
 ### Large Dataset Export

@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.8] - 2026-04-09
+
+### Fixed
+
+- Notebook widgets now force transparent notebook host surfaces through the VS Code Jupyter wrapper chain, preventing host-injected white backgrounds from surrounding smaller plots in notebook outputs.
+- Added browser regression coverage for notebook-like white wrapper shells so the widget stays transparent and content-sized across Chromium, Firefox, and WebKit.
+
 ## [0.4.7] - 2026-04-09
 
 ### Fixed
@@ -326,7 +333,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/Ameyanagi/ruviz/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/Ameyanagi/ruviz/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/Ameyanagi/ruviz/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/Ameyanagi/ruviz/compare/v0.4.4...v0.4.5
