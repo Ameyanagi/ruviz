@@ -252,6 +252,14 @@ impl SkiaRenderer {
         self.render_diagnostics.used_pixel_aligned_rect_fill = true;
     }
 
+    pub(crate) fn note_prepared_geometry_cache(&mut self) {
+        self.render_diagnostics.used_prepared_geometry_cache = true;
+    }
+
+    pub(crate) fn note_rebuilt_prepared_geometry_cache(&mut self) {
+        self.render_diagnostics.rebuilt_prepared_geometry_cache = true;
+    }
+
     pub(crate) fn render_diagnostics(&self) -> &RenderDiagnostics {
         &self.render_diagnostics
     }

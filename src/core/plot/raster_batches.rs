@@ -80,31 +80,93 @@ impl MarkerBatch {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct RectGridBatch<'a> {
-    data: &'a HeatmapData,
-    area: PlotArea,
-    alpha: f32,
+#[derive(Debug, Clone)]
+pub(super) struct RectGridBatch {
+    x_edges: Arc<[i32]>,
+    y_edges: Arc<[i32]>,
+    colors: Arc<[Option<Color>]>,
+    n_rows: usize,
+    n_cols: usize,
+    cell_borders: bool,
 }
 
-impl<'a> RectGridBatch<'a> {
-    pub(super) fn new(data: &'a HeatmapData, area: PlotArea, alpha: f32) -> Self {
-        Self { data, area, alpha }
+impl RectGridBatch {
+    pub(super) fn from_heatmap_data(
+        data: &HeatmapData,
+        area: PlotArea,
+        alpha: f32,
+    ) -> Option<Self> {
+        if !data.can_use_pixel_aligned_grid_fast_path(alpha) {
+            return None;
+        }
+
+        let (x_edges, y_edges) = data.pixel_aligned_screen_edges(&area);
+        let colors = data
+            .values
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(|&value| {
+                (!data.should_mask_value(value)).then(|| data.get_color(value).with_alpha(alpha))
+            })
+            .collect::<Vec<_>>();
+
+        Some(Self {
+            x_edges: x_edges.into(),
+            y_edges: y_edges.into(),
+            colors: colors.into(),
+            n_rows: data.n_rows,
+            n_cols: data.n_cols,
+            cell_borders: data.config.cell_borders,
+        })
     }
 
     fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
-        self.data.draw_cells_batch(renderer, &self.area, self.alpha)
+        for row in 0..self.n_rows {
+            let top = self.y_edges[row].min(self.y_edges[row + 1]);
+            let bottom = self.y_edges[row].max(self.y_edges[row + 1]);
+            if bottom <= top {
+                continue;
+            }
+
+            for col in 0..self.n_cols {
+                let Some(cell_color) = self.colors[row * self.n_cols + col] else {
+                    continue;
+                };
+                let left = self.x_edges[col].min(self.x_edges[col + 1]);
+                let right = self.x_edges[col].max(self.x_edges[col + 1]);
+                if right <= left {
+                    continue;
+                }
+
+                let x = left as f32;
+                let y = top as f32;
+                let width = (right - left) as f32;
+                let height = (bottom - top) as f32;
+                renderer.draw_pixel_aligned_solid_rectangle(x, y, width, height, cell_color)?;
+
+                if self.cell_borders {
+                    renderer.draw_pixel_aligned_rectangle_outline(
+                        x,
+                        y,
+                        width,
+                        height,
+                        cell_color.darken(0.2),
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum StaticRasterBatch<'a> {
+pub(super) enum StaticRasterBatch {
     Polyline(PolylineBatch),
     Markers(MarkerBatch),
-    RectGrid(RectGridBatch<'a>),
+    RectGrid(RectGridBatch),
 }
 
-impl StaticRasterBatch<'_> {
+impl StaticRasterBatch {
     fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
         match self {
             Self::Polyline(batch) => batch.execute(renderer),
@@ -115,11 +177,13 @@ impl StaticRasterBatch<'_> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct SeriesRasterPlan<'a> {
-    batches: Vec<StaticRasterBatch<'a>>,
+pub(super) struct SeriesRasterPlan {
+    batches: Vec<StaticRasterBatch>,
+    used_exact_line_canonicalization: bool,
+    used_raster_line_reduction: bool,
 }
 
-impl<'a> SeriesRasterPlan<'a> {
+impl SeriesRasterPlan {
     pub(super) fn push_polyline(
         &mut self,
         points: Arc<[Point2f]>,
@@ -148,15 +212,27 @@ impl<'a> SeriesRasterPlan<'a> {
             )));
     }
 
-    pub(super) fn push_rect_grid(&mut self, data: &'a HeatmapData, area: PlotArea, alpha: f32) {
-        self.batches
-            .push(StaticRasterBatch::RectGrid(RectGridBatch::new(
-                data, area, alpha,
-            )));
+    pub(super) fn push_rect_grid(&mut self, batch: RectGridBatch) {
+        self.batches.push(StaticRasterBatch::RectGrid(batch));
     }
 
-    pub(super) fn execute(self, renderer: &mut SkiaRenderer) -> Result<()> {
-        for batch in self.batches {
+    pub(super) fn note_exact_line_canonicalization(&mut self) {
+        self.used_exact_line_canonicalization = true;
+    }
+
+    pub(super) fn note_raster_line_reduction(&mut self) {
+        self.used_raster_line_reduction = true;
+    }
+
+    pub(super) fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
+        if self.used_exact_line_canonicalization {
+            renderer.note_exact_line_canonicalization();
+        }
+        if self.used_raster_line_reduction {
+            renderer.note_raster_line_reduction();
+        }
+
+        for batch in &self.batches {
             batch.execute(renderer)?;
         }
         Ok(())

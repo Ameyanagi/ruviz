@@ -81,6 +81,8 @@ pub struct RenderDiagnostics {
     pub used_marker_sprite_fallback: bool,
     pub used_direct_rect_fill: bool,
     pub used_pixel_aligned_rect_fill: bool,
+    pub used_prepared_geometry_cache: bool,
+    pub rebuilt_prepared_geometry_cache: bool,
 }
 
 macro_rules! impl_series_continuation_methods {

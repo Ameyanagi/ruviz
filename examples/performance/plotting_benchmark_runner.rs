@@ -167,6 +167,8 @@ struct RenderDiagnosticsRecord {
     used_marker_sprite_fallback: bool,
     used_direct_rect_fill: bool,
     used_pixel_aligned_rect_fill: bool,
+    used_prepared_geometry_cache: bool,
+    rebuilt_prepared_geometry_cache: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -532,6 +534,8 @@ where
             used_marker_sprite_fallback: false,
             used_direct_rect_fill: false,
             used_pixel_aligned_rect_fill: false,
+            used_prepared_geometry_cache: false,
+            rebuilt_prepared_geometry_cache: false,
         }),
     ))
 }
@@ -585,6 +589,8 @@ where
             used_marker_sprite_fallback: false,
             used_direct_rect_fill: false,
             used_pixel_aligned_rect_fill: false,
+            used_prepared_geometry_cache: false,
+            rebuilt_prepared_geometry_cache: false,
         }),
     ))
 }
@@ -632,6 +638,8 @@ impl From<ruviz::core::plot::RenderDiagnostics> for RenderDiagnosticsRecord {
             used_marker_sprite_fallback: value.used_marker_sprite_fallback,
             used_direct_rect_fill: value.used_direct_rect_fill,
             used_pixel_aligned_rect_fill: value.used_pixel_aligned_rect_fill,
+            used_prepared_geometry_cache: value.used_prepared_geometry_cache,
+            rebuilt_prepared_geometry_cache: value.rebuilt_prepared_geometry_cache,
         }
     }
 }

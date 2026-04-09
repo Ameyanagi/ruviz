@@ -283,7 +283,7 @@ pub struct HeatmapData {
 }
 
 impl HeatmapData {
-    fn can_use_pixel_aligned_grid_fast_path(&self, alpha: f32) -> bool {
+    pub(crate) fn can_use_pixel_aligned_grid_fast_path(&self, alpha: f32) -> bool {
         matches!(self.config.interpolation, Interpolation::Nearest) && alpha >= 1.0
     }
 
@@ -356,7 +356,7 @@ impl HeatmapData {
         }
     }
 
-    fn pixel_aligned_screen_edges(&self, area: &PlotArea) -> (Vec<i32>, Vec<i32>) {
+    pub(crate) fn pixel_aligned_screen_edges(&self, area: &PlotArea) -> (Vec<i32>, Vec<i32>) {
         let x_min = area.x;
         let x_max = area.x + area.width;
         let y_min = area.y;

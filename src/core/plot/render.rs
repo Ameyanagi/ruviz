@@ -17,10 +17,25 @@ impl Plot {
             .map(|(image, _)| image)
     }
 
-    fn render_image_with_mode_and_diagnostics(
+    pub(super) fn render_image_with_mode_and_series_renderer<F>(
         &self,
         mode: RenderExecutionMode,
-    ) -> Result<(Image, RenderDiagnostics)> {
+        draw_series: F,
+    ) -> Result<(Image, RenderDiagnostics)>
+    where
+        F: FnOnce(
+            &Plot,
+            &[PlotSeries],
+            &mut SkiaRenderer,
+            tiny_skia::Rect,
+            f64,
+            f64,
+            f64,
+            f64,
+            RenderScale,
+            RenderExecutionMode,
+        ) -> Result<()>,
+    {
         self.validate_runtime_environment()?;
         let snapshot_series = self.snapshot_series(0.0);
         if !snapshot_series.is_empty() {
@@ -263,7 +278,8 @@ impl Plot {
             }
         }
 
-        if !self.render_series_collection_auto_datashader(
+        draw_series(
+            self,
             &snapshot_series,
             &mut renderer,
             plot_area,
@@ -273,22 +289,54 @@ impl Plot {
             y_max,
             render_scale,
             mode,
-        )? {
-            self.render_series_collection_normal(
-                &snapshot_series,
-                &mut renderer,
-                plot_area,
-                x_min,
-                x_max,
-                y_min,
-                y_max,
-                render_scale,
-                mode,
-            )?;
-        }
+        )?;
 
         let diagnostics = renderer.render_diagnostics().clone();
         Ok((renderer.into_image(), diagnostics))
+    }
+
+    fn render_image_with_mode_and_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<(Image, RenderDiagnostics)> {
+        self.render_image_with_mode_and_series_renderer(
+            mode,
+            |plot,
+             snapshot_series,
+             renderer,
+             plot_area,
+             x_min,
+             x_max,
+             y_min,
+             y_max,
+             render_scale,
+             mode| {
+                if !plot.render_series_collection_auto_datashader(
+                    snapshot_series,
+                    renderer,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    render_scale,
+                    mode,
+                )? {
+                    plot.render_series_collection_normal(
+                        snapshot_series,
+                        renderer,
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        render_scale,
+                        mode,
+                    )?;
+                }
+                Ok(())
+            },
+        )
     }
 
     /// Render the plot to an in-memory image.

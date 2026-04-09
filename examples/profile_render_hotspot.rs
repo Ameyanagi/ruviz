@@ -14,6 +14,7 @@ enum Case {
 enum Operation {
     Render,
     Png,
+    PreparedPngUncached,
 }
 
 fn parse_args() -> (Case, Operation, usize) {
@@ -39,6 +40,7 @@ fn parse_args() -> (Case, Operation, usize) {
     let operation = match args.next().as_deref() {
         Some("render") => Operation::Render,
         Some("png") => Operation::Png,
+        Some("prepared-png-uncached") => Operation::PreparedPngUncached,
         _ => Operation::Png,
     };
 
@@ -147,8 +149,13 @@ fn main() -> Result<()> {
     match operation {
         Operation::Render => println!("Operation: render()"),
         Operation::Png => println!("Operation: render_png_bytes()"),
+        Operation::PreparedPngUncached => {
+            println!("Operation: PreparedPlot::render_png_bytes_uncached()")
+        }
     }
     println!("Iterations: {iterations}");
+
+    let prepared = matches!(operation, Operation::PreparedPngUncached).then(|| plot.prepare());
 
     match operation {
         Operation::Render => {
@@ -156,6 +163,12 @@ fn main() -> Result<()> {
         }
         Operation::Png => {
             let _ = plot.render_png_bytes()?;
+        }
+        Operation::PreparedPngUncached => {
+            let _ = prepared
+                .as_ref()
+                .expect("prepared plot should exist")
+                .render_png_bytes_uncached()?;
         }
     }
 
@@ -167,6 +180,14 @@ fn main() -> Result<()> {
             }
             Operation::Png => {
                 black_box(plot.render_png_bytes()?);
+            }
+            Operation::PreparedPngUncached => {
+                black_box(
+                    prepared
+                        .as_ref()
+                        .expect("prepared plot should exist")
+                        .render_png_bytes_uncached()?,
+                );
             }
         }
     }
