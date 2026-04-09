@@ -1036,6 +1036,220 @@ test("python widget bundle handles a single-point sine signal snapshot", async (
   expect(result.imageLength).toBeGreaterThan(0);
 });
 
+test("python widget bundle renders representative large snapshots without blacking out", async ({
+  page,
+}) => {
+  await waitForDemoReady(page);
+
+  const consoleErrors = [];
+  const pageErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    pageErrors.push(String(error));
+  });
+
+  const result = await page.evaluate(async (widgetSource) => {
+    const demo = window.__ruvizDemo;
+    if (!demo?.sdk) {
+      throw new Error("SDK test hooks are unavailable");
+    }
+
+    const waitForNextPaint = () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      });
+
+    const waitForCanvasChange = async (canvas, previousData) => {
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        await waitForNextPaint();
+        const currentData = canvas.toDataURL("image/png");
+        if (previousData === undefined) {
+          const blankCanvas = document.createElement("canvas");
+          blankCanvas.width = canvas.width;
+          blankCanvas.height = canvas.height;
+          if (currentData !== blankCanvas.toDataURL("image/png")) {
+            return currentData;
+          }
+          continue;
+        }
+        if (currentData !== previousData) {
+          return currentData;
+        }
+      }
+
+      throw new Error("widget canvas did not update for large snapshot");
+    };
+
+    const analyzeCanvas = (canvas) => {
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error("widget canvas context is unavailable");
+      }
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      const total = data.length / 4;
+      let dark = 0;
+      let ink = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+        const a = data[index + 3];
+        if (r < 32 && g < 32 && b < 32) {
+          dark += 1;
+        }
+        if (a > 0 && (r < 248 || g < 248 || b < 248)) {
+          ink += 1;
+        }
+      }
+      return {
+        darkFraction: dark / total,
+        inkFraction: ink / total,
+      };
+    };
+
+    const x = Array.from({ length: 100_000 }, (_, index) => index * 0.0001);
+    const lineY = x.map((value) => Math.sin(value) + 0.2 * Math.cos(value * 3.0));
+    const heatmap = Array.from({ length: 320 }, (_, rowIndex) => {
+      const y = -1 + (2 * rowIndex) / 319;
+      return Array.from({ length: 320 }, (_, colIndex) => {
+        const xValue = -1 + (2 * colIndex) / 319;
+        const ridge = Math.exp(-(((xValue - 0.25) ** 2 + (y + 0.1) ** 2) * 9.0));
+        const waves = 0.35 * Math.sin(xValue * 8.0) * Math.cos(y * 6.0);
+        return ridge + waves;
+      });
+    });
+    const categories = Array.from({ length: 20_000 }, (_, index) => `c${index}`);
+    const barValues = Array.from(
+      { length: 20_000 },
+      (_, index) => 1 + 0.45 * Math.sin(index * 0.001) + 0.1 * Math.cos(index * 0.004),
+    );
+
+    const snapshots = [
+      {
+        slug: "line",
+        snapshot: demo.sdk
+          .createPlot()
+          .setSizePx(320, 200)
+          .setTicks(false)
+          .setTitle("large widget line")
+          .addLine({ x, y: lineY })
+          .toSnapshot(),
+      },
+      {
+        slug: "heatmap",
+        snapshot: demo.sdk
+          .createPlot()
+          .setSizePx(320, 200)
+          .setTicks(false)
+          .setTitle("large widget heatmap")
+          .heatmap(heatmap)
+          .toSnapshot(),
+      },
+      {
+        slug: "bar",
+        snapshot: demo.sdk
+          .createPlot()
+          .setSizePx(320, 200)
+          .setTicks(false)
+          .setTitle("large widget bar")
+          .bar({ categories, values: barValues })
+          .toSnapshot(),
+      },
+    ];
+
+    const listeners = new Map();
+    const model = {
+      snapshot: snapshots[0].snapshot,
+      get(name) {
+        return name === "snapshot" ? this.snapshot : undefined;
+      },
+      on(name, callback) {
+        const callbacks = listeners.get(name) ?? [];
+        callbacks.push(callback);
+        listeners.set(name, callbacks);
+      },
+      off(name, callback) {
+        const callbacks = listeners.get(name);
+        if (!callbacks) {
+          return;
+        }
+        listeners.set(
+          name,
+          callbacks.filter((registered) => registered !== callback),
+        );
+      },
+      setSnapshot(snapshot) {
+        this.snapshot = snapshot;
+        for (const callback of listeners.get("change:snapshot") ?? []) {
+          callback();
+        }
+      },
+    };
+
+    const mount = document.createElement("div");
+    mount.id = "python-widget-large-snapshots-host";
+    mount.style.width = "720px";
+    document.body.appendChild(mount);
+
+    const moduleUrl = URL.createObjectURL(new Blob([widgetSource], { type: "text/javascript" }));
+
+    try {
+      const mod = await import(moduleUrl);
+      const cleanup = mod.default.render({ model, el: mount });
+      const canvas = mount.querySelector("canvas");
+      const viewport = mount.querySelector("[data-ruviz-widget-viewport='true']");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("widget bundle did not create a canvas");
+      }
+      if (!(viewport instanceof HTMLDivElement)) {
+        throw new Error("widget bundle did not create a viewport");
+      }
+
+      const metrics = [];
+      let previousImage;
+      for (const entry of snapshots) {
+        if (entry !== snapshots[0]) {
+          model.setSnapshot(entry.snapshot);
+        }
+        previousImage = await waitForCanvasChange(canvas, previousImage);
+        metrics.push({
+          slug: entry.slug,
+          ...analyzeCanvas(canvas),
+          width: viewport.getBoundingClientRect().width,
+          height: viewport.getBoundingClientRect().height,
+        });
+      }
+
+      if (typeof cleanup === "function") {
+        cleanup();
+      }
+      mount.remove();
+      return metrics;
+    } finally {
+      URL.revokeObjectURL(moduleUrl);
+    }
+  }, PYTHON_WIDGET_BUNDLE);
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+
+  for (const entry of result) {
+    expect(entry.width, `${entry.slug} widget width`).toBeCloseTo(320, 0);
+    expect(entry.height, `${entry.slug} widget height`).toBeCloseTo(200, 0);
+    expect(entry.darkFraction, `${entry.slug} widget should not black out`).toBeLessThan(0.8);
+    expect(
+      entry.inkFraction,
+      `${entry.slug} widget should contain visible plot ink`,
+    ).toBeGreaterThan(0.001);
+  }
+});
+
 test("png and svg exports work for the demo panels", async ({ page }) => {
   await waitForDemoReady(page);
 

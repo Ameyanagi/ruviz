@@ -132,6 +132,40 @@ where
     found.then_some((min_x, min_y, max_x, max_y))
 }
 
+fn dark_pixel_fraction(image: &Image) -> f64 {
+    let total = image.pixels.chunks_exact(4).len() as f64;
+    let dark = image
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[0] < 32 && pixel[1] < 32 && pixel[2] < 32)
+        .count() as f64;
+    dark / total
+}
+
+fn non_background_fraction(image: &Image) -> f64 {
+    let total = image.pixels.chunks_exact(4).len() as f64;
+    let non_background = image
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[3] > 0 && (pixel[0] < 248 || pixel[1] < 248 || pixel[2] < 248))
+        .count() as f64;
+    non_background / total
+}
+
+fn assert_surface_base_visually_sane(name: &str, image: &Image) {
+    let dark_fraction = dark_pixel_fraction(image);
+    let ink_fraction = non_background_fraction(image);
+
+    assert!(
+        dark_fraction < 0.8,
+        "{name} surface frame should not black out: dark_fraction={dark_fraction:.4}"
+    );
+    assert!(
+        ink_fraction > 0.001,
+        "{name} surface frame should contain visible plot ink: ink_fraction={ink_fraction:.4}"
+    );
+}
+
 #[test]
 fn test_dirty_domains_mark_and_clear() {
     let mut dirty = DirtyDomains::default();
@@ -435,6 +469,88 @@ fn test_unsupported_surface_series_fall_back_to_image_capability() {
         .expect("fallback surface frame should render");
 
     assert_eq!(frame.surface_capability, SurfaceCapability::FallbackImage);
+}
+
+#[test]
+fn test_large_dataset_surface_frames_render_without_blackout() {
+    let x: Vec<f64> = (0..100_000).map(|index| index as f64 * 0.0001).collect();
+    let y: Vec<f64> = x
+        .iter()
+        .map(|value| value.sin() + 0.2 * (value * 3.0).cos())
+        .collect();
+    let histogram_samples: Vec<f64> = (0..100_000)
+        .map(|index| {
+            let value = index as f64 * 0.0002;
+            value.sin() + 0.35 * (value * 1.7).cos()
+        })
+        .collect();
+    let heatmap: Vec<Vec<f64>> = (0..320)
+        .map(|row| {
+            let y = -1.0 + 2.0 * row as f64 / 319.0;
+            (0..320)
+                .map(|col| {
+                    let x = -1.0 + 2.0 * col as f64 / 319.0;
+                    let ridge = (-((x - 0.25).powi(2) + (y + 0.1).powi(2)) * 9.0).exp();
+                    let waves = 0.35 * (x * 8.0).sin() * (y * 6.0).cos();
+                    ridge + waves
+                })
+                .collect()
+        })
+        .collect();
+    let categories: Vec<String> = (0..20_000).map(|index| format!("c{index}")).collect();
+    let bar_values: Vec<f64> = (0..20_000)
+        .map(|index| {
+            let value = index as f64 * 0.001;
+            1.0 + 0.45 * value.sin() + 0.1 * (value * 4.0).cos()
+        })
+        .collect();
+
+    let line: Plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .line(&x, &y)
+        .into();
+    let line_session = line.prepare_interactive();
+    let line_frame = line_session
+        .render_to_surface(render_target())
+        .expect("large line surface frame should render");
+    assert_surface_base_visually_sane("large line", line_frame.layers.base.as_ref());
+
+    let histogram: Plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .histogram(&histogram_samples, None)
+        .into();
+    let histogram_session = histogram.prepare_interactive();
+    let histogram_frame = histogram_session
+        .render_to_surface(render_target())
+        .expect("large histogram surface frame should render");
+    assert_surface_base_visually_sane("large histogram", histogram_frame.layers.base.as_ref());
+
+    let heatmap_plot: Plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .heatmap(
+            &heatmap,
+            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+        )
+        .into();
+    let heatmap_session = heatmap_plot.prepare_interactive();
+    let heatmap_frame = heatmap_session
+        .render_to_surface(render_target())
+        .expect("large heatmap surface frame should render");
+    assert_surface_base_visually_sane("large heatmap", heatmap_frame.layers.base.as_ref());
+
+    let bar: Plot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .bar(&categories, &bar_values)
+        .into();
+    let bar_session = bar.prepare_interactive();
+    let bar_frame = bar_session
+        .render_to_surface(render_target())
+        .expect("large bar surface frame should render");
+    assert_surface_base_visually_sane("large bar", bar_frame.layers.base.as_ref());
 }
 
 #[test]

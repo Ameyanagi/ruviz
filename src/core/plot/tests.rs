@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::FigureConfig;
+use tempfile::tempdir;
 
 #[derive(Debug)]
 struct FailingIngestionData;
@@ -93,10 +94,30 @@ fn dark_pixel_fraction(pixels: &[u8]) -> f64 {
     dark / total
 }
 
+fn non_background_fraction(pixels: &[u8]) -> f64 {
+    let total = pixels.chunks_exact(4).len() as f64;
+    let non_background = pixels
+        .chunks_exact(4)
+        .filter(|px| px[3] > 0 && (px[0] < 248 || px[1] < 248 || px[2] < 248))
+        .count() as f64;
+    non_background / total
+}
+
 fn decode_png_rgba(png_bytes: &[u8]) -> ::image::RgbaImage {
     ::image::load_from_memory(png_bytes)
         .expect("PNG bytes should decode")
         .to_rgba8()
+}
+
+fn mean_normalized_rgba_diff(lhs: &::image::RgbaImage, rhs: &::image::RgbaImage) -> f64 {
+    assert_eq!(lhs.dimensions(), rhs.dimensions());
+
+    lhs.as_raw()
+        .iter()
+        .zip(rhs.as_raw().iter())
+        .map(|(left, right)| (*left as f64 - *right as f64).abs() / 255.0)
+        .sum::<f64>()
+        / lhs.as_raw().len() as f64
 }
 
 fn assert_png_background_preserved(name: &str, png_bytes: &[u8]) {
@@ -112,6 +133,136 @@ fn assert_png_background_preserved(name: &str, png_bytes: &[u8]) {
         dark_fraction < 0.25,
         "{name} PNG unexpectedly blacks out the canvas: dark_fraction={dark_fraction:.4}"
     );
+}
+
+fn assert_png_visual_sane_against_blank(name: &str, png_bytes: &[u8], blank_png_bytes: &[u8]) {
+    let image = decode_png_rgba(png_bytes);
+    let blank = decode_png_rgba(blank_png_bytes);
+    let dark_fraction = dark_pixel_fraction(image.as_raw());
+    let ink_fraction = non_background_fraction(image.as_raw());
+    let diff = mean_normalized_rgba_diff(&image, &blank);
+
+    assert!(
+        dark_fraction < 0.8,
+        "{name} PNG is unexpectedly dominated by near-black pixels: dark_fraction={dark_fraction:.4}"
+    );
+    assert!(
+        ink_fraction > 0.001,
+        "{name} PNG does not appear to contain visible plot ink: ink_fraction={ink_fraction:.4}"
+    );
+    assert!(
+        diff > 0.002,
+        "{name} PNG is too close to a blank baseline render: diff={diff:.6}"
+    );
+}
+
+fn large_xy_data() -> (Vec<f64>, Vec<f64>) {
+    let x: Vec<f64> = (0..100_000).map(|index| index as f64 * 0.0001).collect();
+    let y: Vec<f64> = x
+        .iter()
+        .map(|value| value.sin() + 0.2 * (value * 3.0).cos())
+        .collect();
+    (x, y)
+}
+
+fn large_error_bar_xy_data() -> (Vec<f64>, Vec<f64>) {
+    let x: Vec<f64> = (0..25_000).map(|index| index as f64 * 0.0004).collect();
+    let y: Vec<f64> = x
+        .iter()
+        .map(|value| value.sin() + 0.2 * (value * 3.0).cos())
+        .collect();
+    (x, y)
+}
+
+fn large_scalar_samples() -> Vec<f64> {
+    (0..100_000)
+        .map(|index| {
+            let value = index as f64 * 0.0002;
+            value.sin() + 0.35 * (value * 1.7).cos()
+        })
+        .collect()
+}
+
+fn large_bar_data() -> (Vec<String>, Vec<f64>) {
+    let categories = (0..20_000).map(|index| format!("c{index}")).collect();
+    let values = (0..20_000)
+        .map(|index| {
+            let value = index as f64 * 0.00015;
+            1.0 + 0.45 * value.sin() + 0.1 * (value * 4.0).cos()
+        })
+        .collect();
+    (categories, values)
+}
+
+fn large_heatmap_matrix() -> Vec<Vec<f64>> {
+    let rows = 320usize;
+    let cols = 320usize;
+    (0..rows)
+        .map(|row| {
+            let y = -1.0 + 2.0 * row as f64 / (rows.saturating_sub(1)) as f64;
+            (0..cols)
+                .map(|col| {
+                    let x = -1.0 + 2.0 * col as f64 / (cols.saturating_sub(1)) as f64;
+                    let ridge = (-((x - 0.25).powi(2) + (y + 0.1).powi(2)) * 9.0).exp();
+                    let waves = 0.35 * (x * 8.0).sin() * (y * 6.0).cos();
+                    ridge + waves
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn large_contour_axes() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let x: Vec<f64> = (0..320)
+        .map(|index| -2.0 + 4.0 * index as f64 / 319.0)
+        .collect();
+    let y: Vec<f64> = (0..320)
+        .map(|index| -2.0 + 4.0 * index as f64 / 319.0)
+        .collect();
+    let mut z = Vec::with_capacity(x.len() * y.len());
+    for y_value in &y {
+        for x_value in &x {
+            let saddle = x_value.powi(2) - y_value.powi(2);
+            let ripple = 0.25 * (x_value * 3.0).sin() * (y_value * 2.0).cos();
+            z.push(saddle + ripple);
+        }
+    }
+    (x, y, z)
+}
+
+fn large_polar_data() -> (Vec<f64>, Vec<f64>) {
+    let theta: Vec<f64> = (0..100_000)
+        .map(|index| index as f64 * std::f64::consts::TAU / 10_000.0)
+        .collect();
+    let r: Vec<f64> = theta
+        .iter()
+        .map(|value| 1.0 + 0.25 * (value * 2.0).sin() + 0.1 * (value * 7.0).cos())
+        .collect();
+    (r, theta)
+}
+
+fn blank_large_plot_png() -> Vec<u8> {
+    Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .render_png_bytes()
+        .expect("blank large-plot baseline should render")
+}
+
+fn assert_large_plot_png_and_save(name: &str, plot: &Plot) {
+    let blank_png = blank_large_plot_png();
+    let rendered_png = plot
+        .render_png_bytes()
+        .unwrap_or_else(|err| panic!("{name} should render as PNG: {err}"));
+    assert_png_visual_sane_against_blank(name, &rendered_png, &blank_png);
+
+    let tempdir = tempdir().expect("tempdir should be created");
+    let output = tempdir.path().join(format!("{name}.png"));
+    plot.clone()
+        .save(&output)
+        .unwrap_or_else(|err| panic!("{name} should save as PNG: {err}"));
+    let saved_png = std::fs::read(&output).expect("saved PNG should be readable");
+    assert_png_visual_sane_against_blank(&format!("{name} saved"), &saved_png, &blank_png);
 }
 
 #[test]
@@ -1971,6 +2122,130 @@ fn test_render_large_line_and_histogram_png_preserve_background() {
         .render_png_bytes()
         .expect("large histogram should render as PNG");
     assert_png_background_preserved("large histogram", &histogram_png);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_large_xy_family_png_and_save_paths_stay_visually_sane() {
+    let (x, y) = large_xy_data();
+    let (error_x, error_y) = large_error_bar_xy_data();
+    let y_errors: Vec<f64> = error_x
+        .iter()
+        .map(|value| 0.03 + 0.01 * (value * 0.7).sin().abs())
+        .collect();
+    let x_errors: Vec<f64> = error_x
+        .iter()
+        .map(|value| 0.02 + 0.008 * (value * 0.9).cos().abs())
+        .collect();
+    let (r, theta) = large_polar_data();
+
+    let line = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .line(&x, &y)
+        .into_plot();
+    assert_large_plot_png_and_save("large-line-family-line", &line);
+
+    let scatter = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .scatter(&x, &y)
+        .into_plot();
+    assert_large_plot_png_and_save("large-line-family-scatter", &scatter);
+
+    let error_bars = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .error_bars(&error_x, &error_y, &y_errors)
+        .into_plot();
+    assert_large_plot_png_and_save("large-line-family-error-bars", &error_bars);
+
+    let error_bars_xy = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .error_bars_xy(&error_x, &error_y, &x_errors, &y_errors)
+        .into_plot();
+    assert_large_plot_png_and_save("large-line-family-error-bars-xy", &error_bars_xy);
+
+    let polar = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .polar_line(&r, &theta)
+        .into_plot();
+    assert_large_plot_png_and_save("large-line-family-polar-line", &polar);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_large_distribution_and_categorical_png_and_save_paths_stay_visually_sane() {
+    let samples = large_scalar_samples();
+    let (categories, values) = large_bar_data();
+
+    let histogram = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .histogram(&samples, None)
+        .into_plot();
+    assert_large_plot_png_and_save("large-distribution-histogram", &histogram);
+
+    let boxplot = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .boxplot(&samples, None)
+        .into_plot();
+    assert_large_plot_png_and_save("large-distribution-boxplot", &boxplot);
+
+    let violin = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .violin(&samples)
+        .into_plot();
+    assert_large_plot_png_and_save("large-distribution-violin", &violin);
+
+    let kde = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .kde(&samples)
+        .into_plot();
+    assert_large_plot_png_and_save("large-distribution-kde", &kde);
+
+    let ecdf = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .ecdf(&samples)
+        .into_plot();
+    assert_large_plot_png_and_save("large-distribution-ecdf", &ecdf);
+
+    let bar = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .bar(&categories, &values)
+        .into_plot();
+    assert_large_plot_png_and_save("large-distribution-bar", &bar);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_large_grid_family_png_and_save_paths_stay_visually_sane() {
+    let heatmap_values = large_heatmap_matrix();
+    let (contour_x, contour_y, contour_z) = large_contour_axes();
+
+    let heatmap = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .heatmap(
+            &heatmap_values,
+            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+        )
+        .into_plot();
+    assert_large_plot_png_and_save("large-grid-heatmap", &heatmap);
+
+    let contour = Plot::new()
+        .size_px(320, 200)
+        .ticks(false)
+        .contour(&contour_x, &contour_y, &contour_z)
+        .into_plot();
+    assert_large_plot_png_and_save("large-grid-contour", &contour);
 }
 
 // ========================================================================
