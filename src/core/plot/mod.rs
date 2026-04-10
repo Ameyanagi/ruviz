@@ -55,7 +55,10 @@ pub(super) enum RenderExecutionMode {
 
 impl RenderExecutionMode {
     pub(super) fn allows_parallel(self) -> bool {
-        matches!(self, Self::Optimized)
+        // The reference-parity branch keeps the parallel renderer out of the
+        // candidate image path until that backend can satisfy the same visual
+        // tolerance as the reference raster pipeline.
+        false
     }
 
     pub(super) fn allows_auto_datashader(self) -> bool {
