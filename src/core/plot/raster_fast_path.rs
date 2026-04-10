@@ -40,6 +40,39 @@ pub(super) fn should_reduce_line_series(
     point_count > (plot_width.max(1.0).ceil() as usize * 4)
 }
 
+pub(super) fn canonicalize_line_points_exact(points: &[Point2f]) -> Option<Vec<Point2f>> {
+    if points.len() < 3 || !points.iter().all(is_finite_point) {
+        return None;
+    }
+
+    let mut canonical = Vec::with_capacity(points.len());
+    for point in points.iter().copied() {
+        if canonical
+            .last()
+            .is_some_and(|last: &Point2f| last.x == point.x && last.y == point.y)
+        {
+            continue;
+        }
+
+        while canonical.len() >= 2 {
+            let previous = canonical[canonical.len() - 2];
+            let current = canonical[canonical.len() - 1];
+            if !is_exactly_redundant_line_point(previous, current, point) {
+                break;
+            }
+            canonical.pop();
+        }
+
+        canonical.push(point);
+    }
+
+    if canonical.len() >= points.len() {
+        None
+    } else {
+        Some(canonical)
+    }
+}
+
 pub(super) fn reduce_line_points_for_raster(
     points: &[Point2f],
     plot_left: f32,
@@ -99,6 +132,24 @@ pub(super) fn reduce_line_points_for_raster(
 
 fn is_finite_point(point: &Point2f) -> bool {
     point.x.is_finite() && point.y.is_finite()
+}
+
+fn is_exactly_redundant_line_point(previous: Point2f, current: Point2f, next: Point2f) -> bool {
+    let ab_x = current.x - previous.x;
+    let ab_y = current.y - previous.y;
+    let bc_x = next.x - current.x;
+    let bc_y = next.y - current.y;
+    if (ab_x == 0.0 && ab_y == 0.0) || (bc_x == 0.0 && bc_y == 0.0) {
+        return false;
+    }
+
+    let cross = (ab_x as f64) * (bc_y as f64) - (ab_y as f64) * (bc_x as f64);
+    if cross != 0.0 {
+        return false;
+    }
+
+    let dot = (ab_x as f64) * (bc_x as f64) + (ab_y as f64) * (bc_y as f64);
+    dot >= 0.0
 }
 
 // Points are expected to be in pixel-space after coordinate projection.
@@ -255,6 +306,51 @@ mod tests {
         ];
 
         assert!(reduce_line_points_for_raster(&points, 0.0, 1.0).is_none());
+    }
+
+    #[test]
+    fn test_exact_line_canonicalization_removes_duplicate_and_collinear_points() {
+        let points = vec![
+            Point2f::new(0.0, 0.0),
+            Point2f::new(1.0, 1.0),
+            Point2f::new(2.0, 2.0),
+            Point2f::new(2.0, 2.0),
+            Point2f::new(3.0, 3.0),
+            Point2f::new(3.0, 4.0),
+        ];
+
+        let canonical = canonicalize_line_points_exact(&points).expect("expected canonicalization");
+
+        assert_eq!(
+            canonical,
+            vec![
+                Point2f::new(0.0, 0.0),
+                Point2f::new(3.0, 3.0),
+                Point2f::new(3.0, 4.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_exact_line_canonicalization_preserves_turns() {
+        let points = vec![
+            Point2f::new(0.0, 0.0),
+            Point2f::new(1.0, 1.0),
+            Point2f::new(1.0, 1.0),
+            Point2f::new(2.0, 1.0),
+            Point2f::new(3.0, 1.0),
+        ];
+
+        let canonical = canonicalize_line_points_exact(&points).expect("expected dedupe");
+
+        assert_eq!(
+            canonical,
+            vec![
+                Point2f::new(0.0, 0.0),
+                Point2f::new(1.0, 1.0),
+                Point2f::new(3.0, 1.0),
+            ]
+        );
     }
 
     #[test]

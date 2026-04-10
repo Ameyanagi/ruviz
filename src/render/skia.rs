@@ -3,7 +3,7 @@ use crate::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
         LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
         SpacingConfig, TextPosition, TickFormatter, find_best_position,
-        plot::{Image, TextEngineMode, TickDirection, TickSides},
+        plot::{Image, RenderDiagnostics, TextEngineMode, TickDirection, TickSides},
         pt_to_px,
     },
     render::{
@@ -39,6 +39,21 @@ struct ClipMaskKey {
     height_bits: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MarkerPathKey {
+    style: MarkerStyle,
+    size_bits: u32,
+}
+
+impl MarkerPathKey {
+    fn new(style: MarkerStyle, size: f32) -> Self {
+        Self {
+            style,
+            size_bits: size.to_bits(),
+        }
+    }
+}
+
 impl ClipMaskKey {
     fn new((x, y, width, height): (f32, f32, f32, f32)) -> Self {
         Self {
@@ -48,6 +63,45 @@ impl ClipMaskKey {
             height_bits: height.to_bits(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MarkerSpriteKey {
+    style: MarkerStyle,
+    size_bits: u32,
+    rgba_bits: u32,
+    phase_x: u8,
+    phase_y: u8,
+}
+
+impl MarkerSpriteKey {
+    fn new(style: MarkerStyle, size: f32, color: Color, phase_x: u8, phase_y: u8) -> Self {
+        Self {
+            style,
+            size_bits: size.to_bits(),
+            rgba_bits: u32::from_be_bytes([color.r, color.g, color.b, color.a]),
+            phase_x,
+            phase_y,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MarkerSpriteScanline {
+    pub start_x: u16,
+    pub end_x: u16,
+    pub opaque_start_x: u16,
+    pub opaque_end_x: u16,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MarkerSprite {
+    pub width: u32,
+    pub height: u32,
+    pub origin_x: i32,
+    pub origin_y: i32,
+    pub pixels: Vec<u8>,
+    pub scanlines: Option<Arc<[MarkerSpriteScanline]>>,
 }
 
 /// Tiny-skia based renderer with cosmic-text for professional typography
@@ -64,6 +118,9 @@ pub struct SkiaRenderer {
     /// Active text rendering engine.
     text_engine_mode: TextEngineMode,
     clip_mask_cache: HashMap<ClipMaskKey, Arc<Mask>>,
+    marker_path_cache: HashMap<MarkerPathKey, Arc<tiny_skia::Path>>,
+    marker_sprite_cache: HashMap<MarkerSpriteKey, Arc<MarkerSprite>>,
+    render_diagnostics: RenderDiagnostics,
 }
 
 impl SkiaRenderer {
@@ -102,6 +159,9 @@ impl SkiaRenderer {
             render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
             clip_mask_cache: HashMap::new(),
+            marker_path_cache: HashMap::new(),
+            marker_sprite_cache: HashMap::new(),
+            render_diagnostics: RenderDiagnostics::default(),
         })
     }
 
@@ -155,6 +215,248 @@ impl SkiaRenderer {
     /// Get text rendering backend mode.
     pub fn text_engine_mode(&self) -> TextEngineMode {
         self.text_engine_mode
+    }
+
+    pub(crate) fn set_render_mode_diagnostics(&mut self, mode: &'static str) {
+        self.render_diagnostics.render_mode = mode;
+    }
+
+    pub(crate) fn note_parallel_render(&mut self) {
+        self.render_diagnostics.used_parallel = true;
+    }
+
+    pub(crate) fn note_auto_datashader(&mut self) {
+        self.render_diagnostics.used_auto_datashader = true;
+    }
+
+    pub(crate) fn note_exact_line_canonicalization(&mut self) {
+        self.render_diagnostics.used_exact_line_canonicalization = true;
+    }
+
+    pub(crate) fn note_raster_line_reduction(&mut self) {
+        self.render_diagnostics.used_raster_line_reduction = true;
+    }
+
+    pub(crate) fn note_marker_path_cache(&mut self) {
+        self.render_diagnostics.used_marker_path_cache = true;
+    }
+
+    pub(crate) fn note_marker_sprite_cache(&mut self) {
+        self.render_diagnostics.used_marker_sprite_cache = true;
+    }
+
+    pub(crate) fn note_marker_sprite_compositor(&mut self) {
+        self.render_diagnostics.used_marker_sprite_compositor = true;
+    }
+
+    pub(crate) fn note_marker_sprite_fallback(&mut self) {
+        self.render_diagnostics.used_marker_sprite_fallback = true;
+    }
+
+    pub(crate) fn note_marker_scanline_blit(&mut self) {
+        self.render_diagnostics.used_marker_scanline_blit = true;
+    }
+
+    pub(crate) fn note_direct_rect_fill(&mut self) {
+        self.render_diagnostics.used_direct_rect_fill = true;
+    }
+
+    pub(crate) fn note_pixel_aligned_rect_fill(&mut self) {
+        self.render_diagnostics.used_pixel_aligned_rect_fill = true;
+    }
+
+    pub(crate) fn note_prepared_geometry_cache(&mut self) {
+        self.render_diagnostics.used_prepared_geometry_cache = true;
+    }
+
+    pub(crate) fn note_rebuilt_prepared_geometry_cache(&mut self) {
+        self.render_diagnostics.rebuilt_prepared_geometry_cache = true;
+    }
+
+    pub(crate) fn render_diagnostics(&self) -> &RenderDiagnostics {
+        &self.render_diagnostics
+    }
+
+    pub(crate) fn marker_path(
+        &mut self,
+        style: MarkerStyle,
+        size: f32,
+    ) -> Result<Option<Arc<tiny_skia::Path>>> {
+        let key = MarkerPathKey::new(style, size);
+        if let Some(path) = self.marker_path_cache.get(&key) {
+            return Ok(Some(Arc::clone(path)));
+        }
+
+        let path = match style {
+            MarkerStyle::Circle | MarkerStyle::CircleOpen => {
+                let mut builder = PathBuilder::new();
+                builder.push_circle(0.0, 0.0, size * 0.5);
+                builder.finish()
+            }
+            MarkerStyle::Triangle | MarkerStyle::TriangleOpen | MarkerStyle::TriangleDown => {
+                let radius = size * 0.5;
+                let mut builder = PathBuilder::new();
+                if style == MarkerStyle::TriangleDown {
+                    builder.move_to(0.0, radius);
+                    builder.line_to(-radius * 0.866, -radius * 0.5);
+                    builder.line_to(radius * 0.866, -radius * 0.5);
+                } else {
+                    builder.move_to(0.0, -radius);
+                    builder.line_to(-radius * 0.866, radius * 0.5);
+                    builder.line_to(radius * 0.866, radius * 0.5);
+                }
+                builder.close();
+                builder.finish()
+            }
+            MarkerStyle::Diamond | MarkerStyle::DiamondOpen => {
+                let radius = size * 0.5;
+                let mut builder = PathBuilder::new();
+                builder.move_to(0.0, -radius);
+                builder.line_to(radius, 0.0);
+                builder.line_to(0.0, radius);
+                builder.line_to(-radius, 0.0);
+                builder.close();
+                builder.finish()
+            }
+            _ => None,
+        };
+
+        let Some(path) = path else {
+            return Ok(None);
+        };
+
+        let path = Arc::new(path);
+        self.marker_path_cache.insert(key, Arc::clone(&path));
+        Ok(Some(path))
+    }
+
+    pub(crate) fn marker_sprite(
+        &mut self,
+        style: MarkerStyle,
+        size: f32,
+        color: Color,
+        phase_x: u8,
+        phase_y: u8,
+    ) -> Result<Arc<MarkerSprite>> {
+        let key = MarkerSpriteKey::new(style, size, color, phase_x, phase_y);
+        if let Some(sprite) = self.marker_sprite_cache.get(&key) {
+            let sprite = Arc::clone(sprite);
+            self.note_marker_sprite_cache();
+            return Ok(sprite);
+        }
+
+        let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
+        self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
+        self.note_marker_sprite_cache();
+        Ok(sprite)
+    }
+
+    fn create_marker_sprite(
+        &self,
+        style: MarkerStyle,
+        size: f32,
+        color: Color,
+        phase_x: u8,
+        phase_y: u8,
+    ) -> Result<MarkerSprite> {
+        let (origin, side) = Self::marker_sprite_geometry(style, size);
+        let mut sprite_renderer = SkiaRenderer::new(side, side, self.theme.clone())?;
+        sprite_renderer.set_render_scale(self.render_scale);
+        sprite_renderer.set_text_engine_mode(self.text_engine_mode);
+        sprite_renderer.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+        let phase_step = 1.0 / Self::marker_subpixel_phases() as f32;
+        let center_x = origin as f32 + phase_x as f32 * phase_step;
+        let center_y = origin as f32 + phase_y as f32 * phase_step;
+
+        sprite_renderer
+            .draw_marker_with_mask_vector(center_x, center_y, size, style, color, None)?;
+
+        Ok(MarkerSprite {
+            width: side,
+            height: side,
+            origin_x: origin,
+            origin_y: origin,
+            pixels: sprite_renderer.pixmap.data().to_vec(),
+            scanlines: Self::marker_scanlines(style, sprite_renderer.pixmap.data(), side, side),
+        })
+    }
+
+    fn marker_scanlines(
+        style: MarkerStyle,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<Arc<[MarkerSpriteScanline]>> {
+        if !matches!(
+            style,
+            MarkerStyle::Circle
+                | MarkerStyle::Square
+                | MarkerStyle::Triangle
+                | MarkerStyle::TriangleDown
+        ) {
+            return None;
+        }
+
+        let width = width as usize;
+        let height = height as usize;
+        let mut scanlines = Vec::with_capacity(height);
+        for row in 0..height {
+            let row_start = row * width * 4;
+            let mut start = None;
+            let mut end = None;
+            let mut opaque_start = None;
+            let mut opaque_end = None;
+
+            for col in 0..width {
+                let alpha = pixels[row_start + col * 4 + 3];
+                if alpha != 0 {
+                    start.get_or_insert(col);
+                    end = Some(col + 1);
+                }
+                if alpha == u8::MAX {
+                    opaque_start.get_or_insert(col);
+                    opaque_end = Some(col + 1);
+                }
+            }
+
+            if let (Some(start), Some(end)) = (start, end) {
+                scanlines.push(MarkerSpriteScanline {
+                    start_x: start as u16,
+                    end_x: end as u16,
+                    opaque_start_x: opaque_start.unwrap_or(start) as u16,
+                    opaque_end_x: opaque_end.unwrap_or(start) as u16,
+                });
+            } else {
+                scanlines.push(MarkerSpriteScanline {
+                    start_x: 0,
+                    end_x: 0,
+                    opaque_start_x: 0,
+                    opaque_end_x: 0,
+                });
+            }
+        }
+
+        Some(scanlines.into())
+    }
+
+    pub(crate) const fn marker_subpixel_phases() -> u8 {
+        32
+    }
+
+    pub(crate) fn marker_sprite_geometry(style: MarkerStyle, size: f32) -> (i32, u32) {
+        let radius = size * 0.5;
+        let stroke_half = match style {
+            MarkerStyle::SquareOpen => (size * 0.15).max(1.0) * 0.5,
+            MarkerStyle::TriangleOpen | MarkerStyle::DiamondOpen => (size * 0.15).max(1.0) * 0.5,
+            MarkerStyle::Plus | MarkerStyle::Cross => (size * 0.25).max(1.0) * 0.5,
+            MarkerStyle::Star => (size * 0.22).max(1.0) * 0.5,
+            _ => 0.5,
+        };
+        let padding = (radius + stroke_half + 3.0).ceil() as i32;
+        let origin = padding + 1;
+        let side = (origin * 2 + 2).max(4) as u32;
+        (origin, side)
     }
 
     fn vertical_tick_span(
@@ -2342,14 +2644,10 @@ impl SkiaRenderer {
         x: u32,
         y: u32,
     ) -> Result<()> {
-        // Convert our Image struct to tiny-skia Pixmap for drawing
-        let subplot_pixmap = tiny_skia::Pixmap::from_vec(
-            subplot_image.pixels,
-            tiny_skia::IntSize::from_wh(subplot_image.width, subplot_image.height).ok_or_else(
-                || PlottingError::InvalidInput("Invalid subplot dimensions".to_string()),
-            )?,
-        )
-        .ok_or_else(|| PlottingError::RenderError("Failed to create subplot pixmap".to_string()))?;
+        let subplot_png = subplot_image.encode_png()?;
+        let subplot_pixmap = tiny_skia::Pixmap::decode_png(&subplot_png).map_err(|error| {
+            PlottingError::RenderError(format!("Failed to decode subplot image: {error}"))
+        })?;
 
         // Draw the subplot pixmap onto our main pixmap at the specified position
         self.pixmap.draw_pixmap(

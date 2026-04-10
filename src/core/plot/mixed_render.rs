@@ -82,7 +82,12 @@ impl Plot {
         y_min: f64,
         y_max: f64,
         render_scale: RenderScale,
+        mode: RenderExecutionMode,
     ) -> Result<bool> {
+        if !mode.allows_auto_datashader() {
+            return Ok(false);
+        }
+
         if Self::has_mixed_coordinate_series(series_list) {
             return Ok(false);
         }
@@ -91,6 +96,8 @@ impl Plot {
         if !Self::should_auto_use_datashader(series_list, total_points) {
             return Ok(false);
         }
+
+        renderer.note_auto_datashader();
 
         let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
 
@@ -130,6 +137,7 @@ impl Plot {
                         series_bounds.1,
                         series_bounds.2,
                         series_bounds.3,
+                        mode,
                     )?;
                 }
             }
@@ -337,6 +345,7 @@ impl Plot {
         y_min: f64,
         y_max: f64,
         render_scale: RenderScale,
+        mode: RenderExecutionMode,
     ) -> Result<()> {
         let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
 
@@ -355,6 +364,7 @@ impl Plot {
                 series_bounds.1,
                 series_bounds.2,
                 series_bounds.3,
+                mode,
             )?;
         }
 

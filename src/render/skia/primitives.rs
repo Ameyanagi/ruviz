@@ -316,23 +316,26 @@ impl SkiaRenderer {
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
 
-        let mut path = PathBuilder::new();
-        path.push_circle(x, y, radius);
-        let path = path.finish().ok_or(PlottingError::RenderError(
-            "Failed to create circle path".to_string(),
-        ))?;
+        let path = self
+            .marker_path(
+                if filled {
+                    MarkerStyle::Circle
+                } else {
+                    MarkerStyle::CircleOpen
+                },
+                radius * 2.0,
+            )?
+            .ok_or(PlottingError::RenderError(
+                "Failed to create circle path".to_string(),
+            ))?;
+        let transform = Transform::from_translate(x, y);
+        self.note_marker_path_cache();
 
         if filled {
-            self.fill_path_masked(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                mask,
-            )?;
+            self.fill_path_masked(path.as_ref(), &paint, FillRule::Winding, transform, mask)?;
         } else {
             let stroke = Stroke::default();
-            self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+            self.stroke_path_masked(path.as_ref(), &paint, &stroke, transform, mask)?;
         }
 
         Ok(())
@@ -528,17 +531,14 @@ impl SkiaRenderer {
         let rect = Rect::from_xywh(x, y, width, height).ok_or(PlottingError::RenderError(
             "Invalid rectangle dimensions".to_string(),
         ))?;
-
         let mut path = PathBuilder::new();
         path.push_rect(rect);
         let path = path.finish().ok_or(PlottingError::RenderError(
             "Failed to create rectangle path".to_string(),
         ))?;
-
         let mut paint = Paint::default();
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
-
         self.fill_path_masked(
             &path,
             &paint,
@@ -577,6 +577,7 @@ impl SkiaRenderer {
 
             if left < right && top < bottom {
                 let fill = color.to_tiny_skia_color().premultiply().to_color_u8();
+                self.note_pixel_aligned_rect_fill();
 
                 let pixels = self.pixmap.pixels_mut();
                 for py in top..bottom {
@@ -868,7 +869,50 @@ impl SkiaRenderer {
         self.draw_marker_with_mask(x, y, size, style, color, Some(mask.as_ref()))
     }
 
+    pub fn draw_markers_clipped(
+        &mut self,
+        points: &[Point2f],
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        if points.is_empty() || size <= 0.0 || color.a == 0 {
+            return Ok(());
+        }
+
+        if Self::should_use_marker_sprite_compositor(points.len(), size, style) {
+            return self.draw_markers_with_sprite_compositor(points, size, style, color, clip_rect);
+        }
+
+        self.note_marker_sprite_fallback();
+        let mask = self.get_clip_mask(clip_rect)?;
+        for point in points {
+            self.draw_marker_with_mask_vector(
+                point.x,
+                point.y,
+                size,
+                style,
+                color,
+                Some(mask.as_ref()),
+            )?;
+        }
+        Ok(())
+    }
+
     fn draw_marker_with_mask(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
+        self.draw_marker_with_mask_vector(x, y, size, style, color, mask)
+    }
+
+    pub(crate) fn draw_marker_with_mask_vector(
         &mut self,
         x: f32,
         y: f32,
@@ -899,28 +943,19 @@ impl SkiaRenderer {
                 let mut paint = Paint::default();
                 paint.set_color(color.to_tiny_skia_color());
                 paint.anti_alias = true;
-
-                let mut path = PathBuilder::new();
-                if style == MarkerStyle::TriangleDown {
-                    path.move_to(x, y + radius);
-                    path.line_to(x - radius * 0.866, y - radius * 0.5);
-                    path.line_to(x + radius * 0.866, y - radius * 0.5);
-                } else {
-                    path.move_to(x, y - radius);
-                    path.line_to(x - radius * 0.866, y + radius * 0.5); // 60 degree angles
-                    path.line_to(x + radius * 0.866, y + radius * 0.5);
-                }
-                path.close();
-
-                let path = path.finish().ok_or(PlottingError::RenderError(
-                    "Failed to create triangle path".to_string(),
-                ))?;
+                let path = self
+                    .marker_path(style, size)?
+                    .ok_or(PlottingError::RenderError(
+                        "Failed to create triangle path".to_string(),
+                    ))?;
+                let transform = Transform::from_translate(x, y);
+                self.note_marker_path_cache();
                 if style.is_filled() {
                     self.fill_path_masked(
-                        &path,
+                        path.as_ref(),
                         &paint,
                         FillRule::Winding,
-                        Transform::identity(),
+                        transform,
                         mask,
                     )?;
                 } else {
@@ -928,30 +963,26 @@ impl SkiaRenderer {
                         width: (size * 0.15).max(1.0),
                         ..Stroke::default()
                     };
-                    self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+                    self.stroke_path_masked(path.as_ref(), &paint, &stroke, transform, mask)?;
                 }
             }
             MarkerStyle::Diamond | MarkerStyle::DiamondOpen => {
                 let mut paint = Paint::default();
                 paint.set_color(color.to_tiny_skia_color());
                 paint.anti_alias = true;
-
-                let mut path = PathBuilder::new();
-                path.move_to(x, y - radius);
-                path.line_to(x + radius, y);
-                path.line_to(x, y + radius);
-                path.line_to(x - radius, y);
-                path.close();
-
-                let path = path.finish().ok_or(PlottingError::RenderError(
-                    "Failed to create diamond path".to_string(),
-                ))?;
+                let path = self
+                    .marker_path(style, size)?
+                    .ok_or(PlottingError::RenderError(
+                        "Failed to create diamond path".to_string(),
+                    ))?;
+                let transform = Transform::from_translate(x, y);
+                self.note_marker_path_cache();
                 if style.is_filled() {
                     self.fill_path_masked(
-                        &path,
+                        path.as_ref(),
                         &paint,
                         FillRule::Winding,
-                        Transform::identity(),
+                        transform,
                         mask,
                     )?;
                 } else {
@@ -959,7 +990,7 @@ impl SkiaRenderer {
                         width: (size * 0.15).max(1.0),
                         ..Stroke::default()
                     };
-                    self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+                    self.stroke_path_masked(path.as_ref(), &paint, &stroke, transform, mask)?;
                 }
             }
             MarkerStyle::Plus => {
@@ -1058,6 +1089,307 @@ impl SkiaRenderer {
         }
 
         Ok(())
+    }
+
+    fn should_use_marker_sprite_compositor(
+        point_count: usize,
+        size: f32,
+        style: MarkerStyle,
+    ) -> bool {
+        point_count >= 32
+            && size >= 1.0
+            && !matches!(
+                style,
+                MarkerStyle::Plus
+                    | MarkerStyle::Cross
+                    | MarkerStyle::Star
+                    | MarkerStyle::SquareOpen
+                    | MarkerStyle::TriangleOpen
+                    | MarkerStyle::DiamondOpen
+            )
+    }
+
+    fn draw_markers_with_sprite_compositor(
+        &mut self,
+        points: &[Point2f],
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        let phase_count = Self::marker_subpixel_phases() as usize;
+        let mut sprites = vec![None; phase_count * phase_count];
+        let mask = self.get_clip_mask(clip_rect)?;
+        let clip_left = clip_rect.0.floor() as i32 - 1;
+        let clip_top = clip_rect.1.floor() as i32 - 1;
+        let clip_right = (clip_rect.0 + clip_rect.2).ceil() as i32 + 1;
+        let clip_bottom = (clip_rect.1 + clip_rect.3).ceil() as i32 + 1;
+
+        self.note_marker_sprite_compositor();
+
+        for point in points {
+            let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
+            let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
+            let slot = phase_y as usize * phase_count + phase_x as usize;
+            let sprite = if let Some(sprite) = &sprites[slot] {
+                Arc::clone(sprite)
+            } else {
+                let sprite = self.marker_sprite(style, size, color, phase_x, phase_y)?;
+                sprites[slot] = Some(Arc::clone(&sprite));
+                sprite
+            };
+
+            let dst_x = base_x - sprite.origin_x;
+            let dst_y = base_y - sprite.origin_y;
+            if dst_x + sprite.width as i32 <= clip_left
+                || dst_x >= clip_right
+                || dst_y + sprite.height as i32 <= clip_top
+                || dst_y >= clip_bottom
+            {
+                continue;
+            }
+
+            if self.can_use_unmasked_marker_scanline_blit(
+                &sprite,
+                dst_x,
+                dst_y,
+                clip_rect,
+                0,
+                0,
+                self.width as i32,
+                self.height as i32,
+            ) {
+                self.note_marker_scanline_blit();
+                self.blit_marker_sprite_scanlines_unmasked(&sprite, dst_x, dst_y);
+            } else {
+                self.blit_marker_sprite_region(
+                    &sprite,
+                    dst_x,
+                    dst_y,
+                    Some(mask.as_ref()),
+                    0,
+                    0,
+                    self.width as i32,
+                    self.height as i32,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn quantize_marker_subpixel(value: f32) -> (i32, u8) {
+        let phase_count = Self::marker_subpixel_phases() as i32;
+        let mut base = value.floor() as i32;
+        let fraction = value - base as f32;
+        let mut phase = (fraction * phase_count as f32).round() as i32;
+        if phase >= phase_count {
+            phase = 0;
+            base += 1;
+        }
+        (base, phase as u8)
+    }
+
+    fn blit_marker_sprite_region(
+        &mut self,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+        mask: Option<&Mask>,
+        region_left: i32,
+        region_top: i32,
+        region_right: i32,
+        region_bottom: i32,
+    ) {
+        let src_width = sprite.width as i32;
+        let src_height = sprite.height as i32;
+
+        let copy_left = dst_x.max(region_left).max(0);
+        let copy_top = dst_y.max(region_top).max(0);
+        let copy_right = (dst_x + src_width).min(region_right).min(self.width as i32);
+        let copy_bottom = (dst_y + src_height)
+            .min(region_bottom)
+            .min(self.height as i32);
+
+        if copy_left >= copy_right || copy_top >= copy_bottom {
+            return;
+        }
+
+        let src_offset_x = (copy_left - dst_x) as usize;
+        let src_offset_y = (copy_top - dst_y) as usize;
+        let copy_width = (copy_right - copy_left) as usize;
+        let copy_height = (copy_bottom - copy_top) as usize;
+
+        let sprite_stride = sprite.width as usize * 4;
+        let canvas_stride = self.width as usize * 4;
+        let mask_stride = self.width as usize;
+        let mask_data = mask.map(Mask::data);
+        let dst_data = self.pixmap.data_mut();
+
+        for row in 0..copy_height {
+            let src_row = (src_offset_y + row) * sprite_stride + src_offset_x * 4;
+            let dst_row = (copy_top as usize + row) * canvas_stride + copy_left as usize * 4;
+            let mask_row = (copy_top as usize + row) * mask_stride + copy_left as usize;
+
+            for col in 0..copy_width {
+                let src_idx = src_row + col * 4;
+                let src_a = sprite.pixels[src_idx + 3];
+                if src_a == 0 {
+                    continue;
+                }
+
+                let dst_idx = dst_row + col * 4;
+                if let Some(mask_data) = mask_data {
+                    let mask_alpha = mask_data[mask_row + col];
+                    if mask_alpha == 0 {
+                        continue;
+                    }
+
+                    Self::blend_premultiplied_rgba(
+                        &mut dst_data[dst_idx..dst_idx + 4],
+                        &sprite.pixels[src_idx..src_idx + 4],
+                        mask_alpha,
+                    );
+                } else {
+                    Self::blend_premultiplied_rgba_unmasked(
+                        &mut dst_data[dst_idx..dst_idx + 4],
+                        &sprite.pixels[src_idx..src_idx + 4],
+                    );
+                }
+            }
+        }
+    }
+
+    fn can_use_unmasked_marker_scanline_blit(
+        &self,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+        clip_rect: (f32, f32, f32, f32),
+        region_left: i32,
+        region_top: i32,
+        region_right: i32,
+        region_bottom: i32,
+    ) -> bool {
+        if sprite.scanlines.is_none() {
+            return false;
+        }
+
+        let clip_left = clip_rect.0.ceil() as i32;
+        let clip_top = clip_rect.1.ceil() as i32;
+        let clip_right = (clip_rect.0 + clip_rect.2).floor() as i32;
+        let clip_bottom = (clip_rect.1 + clip_rect.3).floor() as i32;
+
+        dst_x >= clip_left
+            && dst_y >= clip_top
+            && dst_x + sprite.width as i32 <= clip_right
+            && dst_y + sprite.height as i32 <= clip_bottom
+            && dst_x >= region_left
+            && dst_y >= region_top
+            && dst_x + sprite.width as i32 <= region_right
+            && dst_y + sprite.height as i32 <= region_bottom
+    }
+
+    fn blit_marker_sprite_scanlines_unmasked(
+        &mut self,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+    ) {
+        let Some(scanlines) = sprite.scanlines.as_ref() else {
+            return;
+        };
+
+        let sprite_stride = sprite.width as usize * 4;
+        let canvas_stride = self.width as usize * 4;
+        let dst_data = self.pixmap.data_mut();
+
+        for (row_index, scanline) in scanlines.iter().enumerate() {
+            if scanline.end_x <= scanline.start_x {
+                continue;
+            }
+
+            let row_y = dst_y as usize + row_index;
+            let src_row = row_index * sprite_stride;
+            let dst_row = row_y * canvas_stride;
+
+            let start = scanline.start_x as usize;
+            let end = scanline.end_x as usize;
+            let opaque_start = scanline.opaque_start_x as usize;
+            let opaque_end = scanline.opaque_end_x as usize;
+
+            let left_partial_end = opaque_start.max(start).min(end);
+            for col in start..left_partial_end {
+                let src_idx = src_row + col * 4;
+                let dst_idx = dst_row + (dst_x as usize + col) * 4;
+                Self::blend_premultiplied_rgba_unmasked(
+                    &mut dst_data[dst_idx..dst_idx + 4],
+                    &sprite.pixels[src_idx..src_idx + 4],
+                );
+            }
+
+            if opaque_end > opaque_start {
+                let src_start = src_row + opaque_start * 4;
+                let src_end = src_row + opaque_end * 4;
+                let dst_start = dst_row + (dst_x as usize + opaque_start) * 4;
+                let dst_end = dst_row + (dst_x as usize + opaque_end) * 4;
+                dst_data[dst_start..dst_end].copy_from_slice(&sprite.pixels[src_start..src_end]);
+            }
+
+            let right_partial_start = opaque_end.max(start).min(end);
+            for col in right_partial_start..end {
+                let src_idx = src_row + col * 4;
+                let dst_idx = dst_row + (dst_x as usize + col) * 4;
+                Self::blend_premultiplied_rgba_unmasked(
+                    &mut dst_data[dst_idx..dst_idx + 4],
+                    &sprite.pixels[src_idx..src_idx + 4],
+                );
+            }
+        }
+    }
+
+    fn blend_premultiplied_rgba(dst: &mut [u8], src: &[u8], mask_alpha: u8) {
+        let effective_alpha = Self::mul_div_255(src[3], mask_alpha);
+        if effective_alpha == 0 {
+            return;
+        }
+
+        if effective_alpha == u8::MAX && mask_alpha == u8::MAX {
+            dst.copy_from_slice(src);
+            return;
+        }
+
+        let src_r = Self::mul_div_255(src[0], mask_alpha);
+        let src_g = Self::mul_div_255(src[1], mask_alpha);
+        let src_b = Self::mul_div_255(src[2], mask_alpha);
+        let inv_alpha = u8::MAX - effective_alpha;
+
+        dst[0] = src_r.saturating_add(Self::mul_div_255(dst[0], inv_alpha));
+        dst[1] = src_g.saturating_add(Self::mul_div_255(dst[1], inv_alpha));
+        dst[2] = src_b.saturating_add(Self::mul_div_255(dst[2], inv_alpha));
+        dst[3] = effective_alpha.saturating_add(Self::mul_div_255(dst[3], inv_alpha));
+    }
+
+    fn blend_premultiplied_rgba_unmasked(dst: &mut [u8], src: &[u8]) {
+        let src_alpha = src[3];
+        if src_alpha == 0 {
+            return;
+        }
+
+        if src_alpha == u8::MAX {
+            dst.copy_from_slice(src);
+            return;
+        }
+
+        let inv_alpha = u8::MAX - src_alpha;
+        dst[0] = src[0].saturating_add(Self::mul_div_255(dst[0], inv_alpha));
+        dst[1] = src[1].saturating_add(Self::mul_div_255(dst[1], inv_alpha));
+        dst[2] = src[2].saturating_add(Self::mul_div_255(dst[2], inv_alpha));
+        dst[3] = src_alpha.saturating_add(Self::mul_div_255(dst[3], inv_alpha));
+    }
+
+    fn mul_div_255(value: u8, alpha: u8) -> u8 {
+        (((value as u32 * alpha as u32) + 127) / 255) as u8
     }
 
     /// Draw grid lines

@@ -47,6 +47,51 @@
 pub(super) const COLORBAR_MARGIN_PX: f32 = 10.0;
 pub(super) const COLORBAR_WIDTH_PX: f32 = 20.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RenderExecutionMode {
+    Reference,
+    Optimized,
+}
+
+impl RenderExecutionMode {
+    pub(super) fn allows_parallel(self) -> bool {
+        // The reference-parity branch keeps the parallel renderer out of the
+        // candidate image path until that backend can satisfy the same visual
+        // tolerance as the reference raster pipeline.
+        false
+    }
+
+    pub(super) fn allows_auto_datashader(self) -> bool {
+        matches!(self, Self::Optimized)
+    }
+
+    pub(super) fn allows_raster_line_reduction(self) -> bool {
+        // Raster line reduction is treated as reference-safe on this branch.
+        // Public raster output still uses the reference pipeline; only
+        // auto-DataShader remains Optimized-exclusive.
+        true
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[doc(hidden)]
+pub struct RenderDiagnostics {
+    pub render_mode: &'static str,
+    pub used_parallel: bool,
+    pub used_auto_datashader: bool,
+    pub used_exact_line_canonicalization: bool,
+    pub used_raster_line_reduction: bool,
+    pub used_marker_path_cache: bool,
+    pub used_marker_sprite_cache: bool,
+    pub used_marker_sprite_compositor: bool,
+    pub used_marker_sprite_fallback: bool,
+    pub used_marker_scanline_blit: bool,
+    pub used_direct_rect_fill: bool,
+    pub used_pixel_aligned_rect_fill: bool,
+    pub used_prepared_geometry_cache: bool,
+    pub rebuilt_prepared_geometry_cache: bool,
+}
+
 macro_rules! impl_series_continuation_methods {
     ($self_:ident.$finalize:ident()) => {
         /// Continue with a new line series.
@@ -361,6 +406,7 @@ mod layout_manager;
 mod mixed_render;
 mod parallel_render;
 mod prepared;
+mod raster_batches;
 mod raster_fast_path;
 mod render;
 mod render_pipeline;

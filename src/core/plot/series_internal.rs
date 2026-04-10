@@ -1,8 +1,11 @@
 use super::*;
-use crate::core::plot::raster_fast_path::{
-    reduce_line_points_for_raster, should_reduce_line_series,
+use crate::core::plot::raster_batches::{
+    RectGridBatch, SeriesRasterPlan, clip_rect_from_plot_area, plot_area_from_rect,
+    project_xy_points,
 };
-use crate::core::types::Point2f;
+use crate::core::plot::raster_fast_path::{
+    canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
+};
 
 impl Plot {
     /// Add a new line to existing plot (for incremental updates)
@@ -525,6 +528,180 @@ impl Plot {
         self
     }
 
+    pub(super) fn build_prepared_series_raster_plan(
+        &self,
+        series: &PlotSeries,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        mode: RenderExecutionMode,
+    ) -> Result<Option<SeriesRasterPlan>> {
+        let color = series.color.unwrap_or(Color::new(0, 0, 0));
+        let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
+        let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let clip_rect = clip_rect_from_plot_area(plot_area);
+
+        let plan = match &series.series_type {
+            SeriesType::Line { x_data, y_data } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+                let mut points =
+                    project_xy_points(&x_data, &y_data, x_min, x_max, y_min, y_max, plot_area);
+                let mut raster_plan = SeriesRasterPlan::default();
+
+                if series.marker_style.is_none()
+                    && series.x_errors.is_none()
+                    && series.y_errors.is_none()
+                    && let Some(canonicalized) = canonicalize_line_points_exact(points.as_ref())
+                {
+                    raster_plan.note_exact_line_canonicalization();
+                    points = canonicalized.into();
+                }
+
+                if mode.allows_raster_line_reduction()
+                    && should_reduce_line_series(series, points.len(), plot_area.width())
+                    && let Some(reduced) = reduce_line_points_for_raster(
+                        points.as_ref(),
+                        plot_area.left(),
+                        plot_area.width(),
+                    )
+                {
+                    raster_plan.note_raster_line_reduction();
+                    points = reduced.into();
+                }
+
+                raster_plan.push_polyline(
+                    std::sync::Arc::clone(&points),
+                    color,
+                    line_width,
+                    line_style,
+                    clip_rect,
+                );
+                if let Some(marker_style) = series.marker_style {
+                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                    raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
+                }
+                Some(raster_plan)
+            }
+            SeriesType::Scatter { x_data, y_data } => {
+                let x_data = x_data.resolve(0.0);
+                let y_data = y_data.resolve(0.0);
+                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0));
+                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let points =
+                    project_xy_points(&x_data, &y_data, x_min, x_max, y_min, y_max, plot_area);
+                let mut raster_plan = SeriesRasterPlan::default();
+                raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
+                Some(raster_plan)
+            }
+            SeriesType::Heatmap { data } => {
+                let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
+                RectGridBatch::from_heatmap_data(data, heatmap_plot_area, data.config.alpha).map(
+                    |rect_grid| {
+                        let mut raster_plan = SeriesRasterPlan::default();
+                        raster_plan.push_rect_grid(rect_grid);
+                        raster_plan
+                    },
+                )
+            }
+            _ => None,
+        };
+
+        Ok(plan)
+    }
+
+    pub(super) fn render_series_overlays_after_raster(
+        &self,
+        series: &PlotSeries,
+        renderer: &mut SkiaRenderer,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        color: Color,
+        line_width: f32,
+        _line_style: &LineStyle,
+    ) -> Result<()> {
+        match &series.series_type {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                if series.y_errors.is_some() || series.x_errors.is_some() {
+                    let x_data = x_data.resolve(0.0);
+                    let y_data = y_data.resolve(0.0);
+                    Self::render_attached_error_bars(
+                        renderer,
+                        &x_data,
+                        &y_data,
+                        series.y_errors.as_ref(),
+                        series.x_errors.as_ref(),
+                        series.error_config.as_ref(),
+                        color,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        line_width,
+                        self.render_scale(),
+                    )?;
+                }
+            }
+            SeriesType::Heatmap { data } => {
+                let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
+                for (row_idx, row) in data.values.iter().enumerate() {
+                    for (col_idx, &value) in row.iter().enumerate() {
+                        if !data.config.annotate || data.should_mask_value(value) {
+                            continue;
+                        }
+
+                        let cell_color = if data.config.alpha < 1.0 {
+                            data.get_color(value).with_alpha(data.config.alpha)
+                        } else {
+                            data.get_color(value)
+                        };
+
+                        let (cell_x, cell_y, cell_width, cell_height) =
+                            data.cell_screen_rect(&heatmap_plot_area, row_idx, col_idx);
+                        let text = format!("{:.2}", value);
+                        let text_color = data.get_text_color(cell_color);
+                        let text_x = cell_x + cell_width / 2.0;
+                        let font_size = (cell_height * 0.3).clamp(8.0, 20.0);
+                        let text_y = cell_y + cell_height / 2.0 + font_size / 3.0;
+                        renderer
+                            .draw_text_centered(&text, text_x, text_y, font_size, text_color)?;
+                    }
+                }
+
+                if data.config.colorbar {
+                    let colorbar_x = plot_area.right() + COLORBAR_MARGIN_PX;
+                    let colorbar_y = plot_area.y();
+                    let colorbar_height = plot_area.height();
+
+                    renderer.draw_colorbar(
+                        &data.config.colormap,
+                        data.vmin,
+                        data.vmax,
+                        colorbar_x,
+                        colorbar_y,
+                        COLORBAR_WIDTH_PX,
+                        colorbar_height,
+                        &data.config.value_scale,
+                        data.config.colorbar_label.as_deref(),
+                        self.display.theme.foreground,
+                        data.config.colorbar_tick_font_size,
+                        Some(data.config.colorbar_label_font_size),
+                        data.config.colorbar_log_subticks,
+                    )?;
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     /// Helper method to render a single series using normal (non-DataShader) rendering
     pub(super) fn render_series_normal(
         &self,
@@ -535,117 +712,36 @@ impl Plot {
         x_max: f64,
         y_min: f64,
         y_max: f64,
+        mode: RenderExecutionMode,
     ) -> Result<()> {
         let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
-        let clip_rect = (
-            plot_area.x(),
-            plot_area.y(),
-            plot_area.width(),
-            plot_area.height(),
-        );
+        let clip_rect = clip_rect_from_plot_area(plot_area);
+
+        if let Some(raster_plan) = self.build_prepared_series_raster_plan(
+            series, plot_area, x_min, x_max, y_min, y_max, mode,
+        )? {
+            raster_plan.execute(renderer)?;
+            self.render_series_overlays_after_raster(
+                series,
+                renderer,
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                color,
+                line_width,
+                &line_style,
+            )?;
+            return Ok(());
+        }
 
         match &series.series_type {
-            SeriesType::Line { x_data, y_data } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
-                let mut points: Vec<Point2f> = x_data
-                    .iter()
-                    .zip(y_data.iter())
-                    .map(|(&x, &y)| {
-                        let (px, py) = crate::render::skia::map_data_to_pixels(
-                            x, y, x_min, x_max, y_min, y_max, plot_area,
-                        );
-                        Point2f::new(px, py)
-                    })
-                    .collect();
-
-                if should_reduce_line_series(series, points.len(), plot_area.width()) {
-                    if let Some(reduced) =
-                        reduce_line_points_for_raster(&points, plot_area.left(), plot_area.width())
-                    {
-                        points = reduced;
-                    }
-                }
-
-                renderer.draw_polyline_points_clipped(
-                    &points, color, line_width, line_style, clip_rect,
-                )?;
-                if let Some(marker_style) = series.marker_style {
-                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                    for point in &points {
-                        renderer.draw_marker_clipped(
-                            point.x,
-                            point.y,
-                            marker_size,
-                            marker_style,
-                            color,
-                            clip_rect,
-                        )?;
-                    }
-                }
-
-                // Draw attached error bars if present
-                if series.y_errors.is_some() || series.x_errors.is_some() {
-                    Self::render_attached_error_bars(
-                        renderer,
-                        &x_data,
-                        &y_data,
-                        series.y_errors.as_ref(),
-                        series.x_errors.as_ref(),
-                        series.error_config.as_ref(),
-                        color,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                        line_width,
-                        self.render_scale(),
-                    )?;
-                }
-            }
-            SeriesType::Scatter { x_data, y_data } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
-                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0)); // DPI-scaled marker size
-                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-
-                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                    let (px, py) = crate::render::skia::map_data_to_pixels(
-                        x, y, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    renderer.draw_marker_clipped(
-                        px,
-                        py,
-                        marker_size,
-                        marker_style,
-                        color,
-                        clip_rect,
-                    )?;
-                }
-
-                // Draw attached error bars if present
-                if series.y_errors.is_some() || series.x_errors.is_some() {
-                    Self::render_attached_error_bars(
-                        renderer,
-                        &x_data,
-                        &y_data,
-                        series.y_errors.as_ref(),
-                        series.x_errors.as_ref(),
-                        series.error_config.as_ref(),
-                        color,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                        plot_area,
-                        line_width,
-                        self.render_scale(),
-                    )?;
-                }
-            }
+            SeriesType::Line { .. } | SeriesType::Scatter { .. } => unreachable!(
+                "cacheable line/scatter series should return before fallback rendering"
+            ),
             SeriesType::Bar { values, .. } => {
                 let values = values.resolve(0.0);
                 // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
@@ -883,68 +979,20 @@ impl Plot {
                 }
             }
             SeriesType::Heatmap { data } => {
-                let heatmap_plot_area = crate::plots::PlotArea::new(
-                    plot_area.x(),
-                    plot_area.y(),
-                    plot_area.width(),
-                    plot_area.height(),
+                let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
+                data.draw_cells_batch(renderer, &heatmap_plot_area, data.config.alpha)?;
+                self.render_series_overlays_after_raster(
+                    series,
+                    renderer,
+                    plot_area,
                     x_min,
                     x_max,
                     y_min,
                     y_max,
-                );
-
-                // Keep the main heatmap cell fill path in HeatmapData so the
-                // normal renderer, tests, and styled path all share the same
-                // border/seam behavior.
-                data.render(renderer, &heatmap_plot_area, &self.display.theme, color)?;
-
-                for (row_idx, row) in data.values.iter().enumerate() {
-                    for (col_idx, &value) in row.iter().enumerate() {
-                        if !data.config.annotate || data.should_mask_value(value) {
-                            continue;
-                        }
-
-                        let cell_color = if data.config.alpha < 1.0 {
-                            data.get_color(value).with_alpha(data.config.alpha)
-                        } else {
-                            data.get_color(value)
-                        };
-
-                        let (cell_x, cell_y, cell_width, cell_height) =
-                            data.cell_screen_rect(&heatmap_plot_area, row_idx, col_idx);
-                        let text = format!("{:.2}", value);
-                        let text_color = data.get_text_color(cell_color);
-                        let text_x = cell_x + cell_width / 2.0;
-                        let font_size = (cell_height * 0.3).clamp(8.0, 20.0);
-                        let text_y = cell_y + cell_height / 2.0 + font_size / 3.0;
-                        renderer
-                            .draw_text_centered(&text, text_x, text_y, font_size, text_color)?;
-                    }
-                }
-
-                // Draw colorbar if enabled
-                if data.config.colorbar {
-                    let colorbar_x = plot_area.right() + COLORBAR_MARGIN_PX;
-                    let colorbar_y = plot_area.y();
-                    let colorbar_height = plot_area.height();
-
-                    renderer.draw_colorbar(
-                        &data.config.colormap,
-                        data.vmin,
-                        data.vmax,
-                        colorbar_x,
-                        colorbar_y,
-                        COLORBAR_WIDTH_PX,
-                        colorbar_height,
-                        &data.config.value_scale,
-                        data.config.colorbar_label.as_deref(),
-                        self.display.theme.foreground,
-                        data.config.colorbar_tick_font_size,
-                        Some(data.config.colorbar_label_font_size),
-                        data.config.colorbar_log_subticks,
-                    )?;
-                }
+                    color,
+                    line_width,
+                    &line_style,
+                )?;
             }
             SeriesType::ErrorBars {
                 x_data,
@@ -1204,6 +1252,7 @@ impl Plot {
         x_max: f64,
         y_min: f64,
         y_max: f64,
+        mode: RenderExecutionMode,
     ) -> Result<()> {
         let color = series.color.unwrap_or(Color::new(0, 0, 0));
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
@@ -1306,7 +1355,9 @@ impl Plot {
             }
             // For other series types, fall back to normal rendering
             _ => {
-                self.render_series_normal(series, renderer, plot_area, x_min, x_max, y_min, y_max)?;
+                self.render_series_normal(
+                    series, renderer, plot_area, x_min, x_max, y_min, y_max, mode,
+                )?;
             }
         }
 
