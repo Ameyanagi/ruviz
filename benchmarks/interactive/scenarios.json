@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "defaults": {
+    "warmupIterations": 5,
+    "measuredIterations": 20,
+    "smokeWarmupIterations": 1,
+    "smokeMeasuredIterations": 3,
+    "hoverStridePx": 31,
+    "panDeltaPx": [12, 8],
+    "timeStepSeconds": 0.0166666667
+  },
+  "scenarios": [
+    {
+      "id": "line-interactive",
+      "plotKind": "line",
+      "datasetKind": "line_signal",
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "sizes": [
+        {
+          "label": "100k",
+          "points": 100000
+        },
+        {
+          "label": "500k",
+          "points": 500000
+        }
+      ]
+    },
+    {
+      "id": "scatter-interactive",
+      "plotKind": "scatter",
+      "datasetKind": "scatter_signal",
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "sizes": [
+        {
+          "label": "100k",
+          "points": 100000
+        },
+        {
+          "label": "250k",
+          "points": 250000
+        }
+      ]
+    },
+    {
+      "id": "heatmap-interactive",
+      "plotKind": "heatmap",
+      "datasetKind": "heatmap_field",
+      "canvas": {
+        "width": 640,
+        "height": 640,
+        "dpi": 100
+      },
+      "sizes": [
+        {
+          "label": "512x512",
+          "rows": 512,
+          "cols": 512
+        },
+        {
+          "label": "1024x1024",
+          "rows": 1024,
+          "cols": 1024
+        }
+      ]
+    }
+  ]
+}

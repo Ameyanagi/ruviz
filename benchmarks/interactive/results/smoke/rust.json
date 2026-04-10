@@ -1,0 +1,636 @@
+{
+  "schemaVersion": 1,
+  "suite": "interactive",
+  "runtime": "rust",
+  "environment": {
+    "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "ruvizVersion": "0.4.10",
+    "buildProfile": "release"
+  },
+  "results": [
+    {
+      "implementation": "ruviz",
+      "scenarioId": "line-interactive",
+      "plotKind": "line",
+      "sizeLabel": "100k",
+      "boundary": "image_hover",
+      "outputTarget": "image_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "46d5c06cecb47b37f70cf2ee8678f14cb5adaf5f56c47f6a911c85ea3a2f541b",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": false,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        1.432708,
+        52.59325,
+        0.924625
+      ],
+      "summary": {
+        "meanMs": 18.316861,
+        "medianMs": 1.432708,
+        "p95Ms": 47.4771958,
+        "minMs": 0.924625,
+        "maxMs": 52.59325,
+        "stdevMs": 29.685310664421433,
+        "throughputElementsPerSec": 69797893.22039104
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "line-interactive",
+      "plotKind": "line",
+      "sizeLabel": "100k",
+      "boundary": "image_pan",
+      "outputTarget": "image_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "46d5c06cecb47b37f70cf2ee8678f14cb5adaf5f56c47f6a911c85ea3a2f541b",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": true,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        3.364208,
+        3.451375,
+        3.364792
+      ],
+      "summary": {
+        "meanMs": 3.3934583333333332,
+        "medianMs": 3.364792,
+        "p95Ms": 3.4427167,
+        "minMs": 3.364208,
+        "maxMs": 3.451375,
+        "stdevMs": 0.050158154594575496,
+        "throughputElementsPerSec": 29719519.066854652
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "line-interactive",
+      "plotKind": "line",
+      "sizeLabel": "100k",
+      "boundary": "image_time",
+      "outputTarget": "image_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "46d5c06cecb47b37f70cf2ee8678f14cb5adaf5f56c47f6a911c85ea3a2f541b",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": true,
+        "overlayDirty": false,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        3.157583,
+        3.259166,
+        3.2994169999999996
+      ],
+      "summary": {
+        "meanMs": 3.2387219999999997,
+        "medianMs": 3.259166,
+        "p95Ms": 3.2953918999999994,
+        "minMs": 3.157583,
+        "maxMs": 3.2994169999999996,
+        "stdevMs": 0.07309369836723266,
+        "throughputElementsPerSec": 30682696.12532777
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "line-interactive",
+      "plotKind": "line",
+      "sizeLabel": "100k",
+      "boundary": "surface_hover",
+      "outputTarget": "surface_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "46d5c06cecb47b37f70cf2ee8678f14cb5adaf5f56c47f6a911c85ea3a2f541b",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": false,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        0.7452500000000001,
+        0.844792,
+        0.723167
+      ],
+      "summary": {
+        "meanMs": 0.7710696666666667,
+        "medianMs": 0.7452500000000001,
+        "p95Ms": 0.8348378,
+        "minMs": 0.723167,
+        "maxMs": 0.844792,
+        "stdevMs": 0.064793144284973,
+        "throughputElementsPerSec": 134183160.01341832
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "line-interactive",
+      "plotKind": "line",
+      "sizeLabel": "100k",
+      "boundary": "surface_pan",
+      "outputTarget": "surface_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "46d5c06cecb47b37f70cf2ee8678f14cb5adaf5f56c47f6a911c85ea3a2f541b",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": true,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        3.2715840000000003,
+        3.290459,
+        3.192084
+      ],
+      "summary": {
+        "meanMs": 3.2513756666666667,
+        "medianMs": 3.2715840000000003,
+        "p95Ms": 3.2885714999999998,
+        "minMs": 3.192084,
+        "maxMs": 3.290459,
+        "stdevMs": 0.05220816706544423,
+        "throughputElementsPerSec": 30566233.35974256
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "line-interactive",
+      "plotKind": "line",
+      "sizeLabel": "100k",
+      "boundary": "surface_time",
+      "outputTarget": "surface_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "46d5c06cecb47b37f70cf2ee8678f14cb5adaf5f56c47f6a911c85ea3a2f541b",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": true,
+        "overlayDirty": false,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        3.197292,
+        3.2117500000000003,
+        3.252709
+      ],
+      "summary": {
+        "meanMs": 3.2205836666666667,
+        "medianMs": 3.2117500000000003,
+        "p95Ms": 3.2486130999999996,
+        "minMs": 3.197292,
+        "maxMs": 3.252709,
+        "stdevMs": 0.028745194769444947,
+        "throughputElementsPerSec": 31135673.69813964
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "scatter-interactive",
+      "plotKind": "scatter",
+      "sizeLabel": "100k",
+      "boundary": "image_hover",
+      "outputTarget": "image_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "c230699a72e134c3827a9d231c46cb64cfaf92ad117846e040109c0f921acefa",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": false,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        1.1255,
+        1.133584,
+        1.041959
+      ],
+      "summary": {
+        "meanMs": 1.1003476666666667,
+        "medianMs": 1.1255,
+        "p95Ms": 1.1327756,
+        "minMs": 1.041959,
+        "maxMs": 1.133584,
+        "stdevMs": 0.05072736007652404,
+        "throughputElementsPerSec": 88849400.2665482
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "scatter-interactive",
+      "plotKind": "scatter",
+      "sizeLabel": "100k",
+      "boundary": "image_pan",
+      "outputTarget": "image_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "c230699a72e134c3827a9d231c46cb64cfaf92ad117846e040109c0f921acefa",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": true,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        14.421167,
+        14.170584,
+        14.441125000000001
+      ],
+      "summary": {
+        "meanMs": 14.344292000000001,
+        "medianMs": 14.421167,
+        "p95Ms": 14.439129200000002,
+        "minMs": 14.170584,
+        "maxMs": 14.441125000000001,
+        "stdevMs": 0.1507661513370962,
+        "throughputElementsPerSec": 6934251.576172719
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "scatter-interactive",
+      "plotKind": "scatter",
+      "sizeLabel": "100k",
+      "boundary": "image_time",
+      "outputTarget": "image_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "c230699a72e134c3827a9d231c46cb64cfaf92ad117846e040109c0f921acefa",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": true,
+        "overlayDirty": false,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        14.450792,
+        14.472292,
+        14.479084
+      ],
+      "summary": {
+        "meanMs": 14.467389333333335,
+        "medianMs": 14.472292,
+        "p95Ms": 14.4784048,
+        "minMs": 14.450792,
+        "maxMs": 14.479084,
+        "stdevMs": 0.014769442146991758,
+        "throughputElementsPerSec": 6909755.552195879
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "scatter-interactive",
+      "plotKind": "scatter",
+      "sizeLabel": "100k",
+      "boundary": "surface_hover",
+      "outputTarget": "surface_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "c230699a72e134c3827a9d231c46cb64cfaf92ad117846e040109c0f921acefa",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": false,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        0.694708,
+        0.687708,
+        0.675584
+      ],
+      "summary": {
+        "meanMs": 0.6859999999999999,
+        "medianMs": 0.687708,
+        "p95Ms": 0.694008,
+        "minMs": 0.675584,
+        "maxMs": 0.694708,
+        "stdevMs": 0.009675732117002843,
+        "throughputElementsPerSec": 145410552.15294865
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "scatter-interactive",
+      "plotKind": "scatter",
+      "sizeLabel": "100k",
+      "boundary": "surface_pan",
+      "outputTarget": "surface_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "c230699a72e134c3827a9d231c46cb64cfaf92ad117846e040109c0f921acefa",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": true,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        14.483333,
+        14.147125,
+        14.543209
+      ],
+      "summary": {
+        "meanMs": 14.391222333333333,
+        "medianMs": 14.483333,
+        "p95Ms": 14.5372214,
+        "minMs": 14.147125,
+        "maxMs": 14.543209,
+        "stdevMs": 0.21350389914316087,
+        "throughputElementsPerSec": 6904488.07605266
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "scatter-interactive",
+      "plotKind": "scatter",
+      "sizeLabel": "100k",
+      "boundary": "surface_time",
+      "outputTarget": "surface_frame",
+      "elements": 100000,
+      "canvas": {
+        "width": 800,
+        "height": 600,
+        "dpi": 100
+      },
+      "datasetHash": "c230699a72e134c3827a9d231c46cb64cfaf92ad117846e040109c0f921acefa",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1920000,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": true,
+        "overlayDirty": false,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        14.518375,
+        14.533334,
+        14.600166
+      ],
+      "summary": {
+        "meanMs": 14.550625000000002,
+        "medianMs": 14.533334,
+        "p95Ms": 14.5934828,
+        "minMs": 14.518375,
+        "maxMs": 14.600166,
+        "stdevMs": 0.04355084305728152,
+        "throughputElementsPerSec": 6880733.629324146
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "heatmap-interactive",
+      "plotKind": "heatmap",
+      "sizeLabel": "512x512",
+      "boundary": "image_hover",
+      "outputTarget": "image_frame",
+      "elements": 262144,
+      "canvas": {
+        "width": 640,
+        "height": 640,
+        "dpi": 100
+      },
+      "datasetHash": "c0b3e85ffc9848f09f8634e5029cb47da702c0adb98ace696b6885468efb5b31",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1638400,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": false,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        0.8005,
+        0.851541,
+        0.949958
+      ],
+      "summary": {
+        "meanMs": 0.867333,
+        "medianMs": 0.851541,
+        "p95Ms": 0.9401163,
+        "minMs": 0.8005,
+        "maxMs": 0.949958,
+        "stdevMs": 0.0759701513029953,
+        "throughputElementsPerSec": 307846598.10860544
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "heatmap-interactive",
+      "plotKind": "heatmap",
+      "sizeLabel": "512x512",
+      "boundary": "image_pan",
+      "outputTarget": "image_frame",
+      "elements": 262144,
+      "canvas": {
+        "width": 640,
+        "height": 640,
+        "dpi": 100
+      },
+      "datasetHash": "c0b3e85ffc9848f09f8634e5029cb47da702c0adb98ace696b6885468efb5b31",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1638400,
+      "frameDiagnostics": {
+        "target": "image",
+        "surfaceCapability": "unsupported",
+        "baseDirty": true,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        4.363042,
+        4.373292,
+        4.382874999999999
+      ],
+      "summary": {
+        "meanMs": 4.373069666666666,
+        "medianMs": 4.373292,
+        "p95Ms": 4.3819167,
+        "minMs": 4.363042,
+        "maxMs": 4.382874999999999,
+        "stdevMs": 0.009918369136774791,
+        "throughputElementsPerSec": 59942029.93991712
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "heatmap-interactive",
+      "plotKind": "heatmap",
+      "sizeLabel": "512x512",
+      "boundary": "surface_hover",
+      "outputTarget": "surface_frame",
+      "elements": 262144,
+      "canvas": {
+        "width": 640,
+        "height": 640,
+        "dpi": 100
+      },
+      "datasetHash": "c0b3e85ffc9848f09f8634e5029cb47da702c0adb98ace696b6885468efb5b31",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1638400,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": false,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        0.384334,
+        0.359625,
+        0.3865
+      ],
+      "summary": {
+        "meanMs": 0.3768196666666667,
+        "medianMs": 0.384334,
+        "p95Ms": 0.38628340000000005,
+        "minMs": 0.359625,
+        "maxMs": 0.3865,
+        "stdevMs": 0.014930348634018362,
+        "throughputElementsPerSec": 682073404.903027
+      }
+    },
+    {
+      "implementation": "ruviz",
+      "scenarioId": "heatmap-interactive",
+      "plotKind": "heatmap",
+      "sizeLabel": "512x512",
+      "boundary": "surface_pan",
+      "outputTarget": "surface_frame",
+      "elements": 262144,
+      "canvas": {
+        "width": 640,
+        "height": 640,
+        "dpi": 100
+      },
+      "datasetHash": "c0b3e85ffc9848f09f8634e5029cb47da702c0adb98ace696b6885468efb5b31",
+      "warmupIterations": 1,
+      "measuredIterations": 3,
+      "frameByteCount": 1638400,
+      "frameDiagnostics": {
+        "target": "surface",
+        "surfaceCapability": "fast_path",
+        "baseDirty": true,
+        "overlayDirty": true,
+        "usedIncrementalData": false
+      },
+      "iterationsMs": [
+        4.368042,
+        4.409209,
+        4.363874999999999
+      ],
+      "summary": {
+        "meanMs": 4.380375333333333,
+        "medianMs": 4.368042,
+        "p95Ms": 4.4050923,
+        "minMs": 4.363874999999999,
+        "maxMs": 4.409209,
+        "stdevMs": 0.025057458417272433,
+        "throughputElementsPerSec": 60014074.95623898
+      }
+    }
+  ]
+}

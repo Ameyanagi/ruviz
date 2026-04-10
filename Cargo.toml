@@ -255,6 +255,11 @@ name = "plotting_benchmark_runner"
 path = "examples/performance/plotting_benchmark_runner.rs"
 required-features = ["serde"]
 
+[[example]]
+name = "interactive_benchmark_runner"
+path = "examples/performance/interactive_benchmark_runner.rs"
+required-features = ["serde", "animation"]
+
 # GPU examples (require gpu feature)
 [[example]]
 name = "gpu_api_test"

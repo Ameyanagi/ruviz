@@ -47,7 +47,7 @@ mod wasm {
     use ruviz::{
         core::{
             Image, ImageTarget, InteractivePlotSession, IntoPlot, Plot, PlotInputEvent,
-            ViewportPoint, ViewportRect,
+            SurfaceTarget, ViewportPoint, ViewportRect,
         },
         data::{Observable, Signal},
         render::register_font_bytes,
@@ -734,6 +734,9 @@ mod wasm {
         time_seconds: f64,
         backend: WebBackendPreference,
         drag: Option<DragMode>,
+        frame_version: u64,
+        export_png_cache: Option<(u64, Vec<u8>)>,
+        export_svg_cache: Option<(u64, String)>,
     }
 
     impl BrowserSession {
@@ -746,6 +749,9 @@ mod wasm {
                 time_seconds: 0.0,
                 backend: WebBackendPreference::Auto,
                 drag: None,
+                frame_version: 0,
+                export_png_cache: None,
+                export_svg_cache: None,
             }
         }
 
@@ -763,6 +769,13 @@ mod wasm {
             self.plot = None;
             self.session = None;
             self.drag = None;
+            self.mark_frame_dirty();
+        }
+
+        fn mark_frame_dirty(&mut self) {
+            self.frame_version = self.frame_version.wrapping_add(1);
+            self.export_png_cache = None;
+            self.export_svg_cache = None;
         }
 
         fn configure_session(&self, session: &InteractivePlotSession) {
@@ -779,6 +792,7 @@ mod wasm {
             self.plot = Some(plot);
             self.session = Some(session);
             self.drag = None;
+            self.mark_frame_dirty();
         }
 
         fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
@@ -791,6 +805,7 @@ mod wasm {
             if let Some(session) = &self.session {
                 self.configure_session(session);
             }
+            self.mark_frame_dirty();
         }
 
         fn set_backend_preference(&mut self, backend: WebBackendPreference) {
@@ -798,6 +813,7 @@ mod wasm {
             if let Some(session) = &self.session {
                 session.set_prefer_gpu(matches!(backend, WebBackendPreference::Gpu));
             }
+            self.mark_frame_dirty();
         }
 
         fn set_time(&mut self, time_seconds: f64) {
@@ -805,25 +821,57 @@ mod wasm {
             if let Some(session) = &self.session {
                 session.apply_input(PlotInputEvent::SetTime { time_seconds });
             }
+            self.mark_frame_dirty();
         }
 
         fn render_frame(&mut self) -> Result<Image, JsValue> {
             let frame = self
+                .session()?
+                .render_to_surface(SurfaceTarget {
+                    size_px: self.size_px,
+                    scale_factor: self.scale_factor,
+                    time_seconds: self.time_seconds,
+                })
+                .map_err(js_err)?;
+            if let Some(overlay) = frame.layers.overlay.as_ref() {
+                Ok(compose_browser_layers(
+                    frame.layers.base.as_ref(),
+                    overlay.as_ref(),
+                ))
+            } else {
+                Ok((*frame.layers.base).clone())
+            }
+        }
+
+        fn export_png(&mut self) -> Result<Vec<u8>, JsValue> {
+            if let Some((version, cached)) = &self.export_png_cache {
+                if *version == self.frame_version {
+                    return Ok(cached.clone());
+                }
+            }
+
+            let png = self
                 .session()?
                 .render_to_image(ImageTarget {
                     size_px: self.size_px,
                     scale_factor: self.scale_factor,
                     time_seconds: self.time_seconds,
                 })
+                .map_err(js_err)?
+                .image
+                .encode_png()
                 .map_err(js_err)?;
-            Ok((*frame.image).clone())
+            self.export_png_cache = Some((self.frame_version, png.clone()));
+            Ok(png)
         }
 
-        fn export_png(&mut self) -> Result<Vec<u8>, JsValue> {
-            self.render_frame()?.encode_png().map_err(js_err)
-        }
+        fn export_svg(&mut self) -> Result<String, JsValue> {
+            if let Some((version, cached)) = &self.export_svg_cache {
+                if *version == self.frame_version {
+                    return Ok(cached.clone());
+                }
+            }
 
-        fn export_svg(&self) -> Result<String, JsValue> {
             let mut plot = self
                 .plot
                 .clone()
@@ -836,12 +884,15 @@ mod wasm {
                     .ylim(snapshot.visible_bounds.min.y, snapshot.visible_bounds.max.y);
             }
 
-            plot.render_to_svg().map_err(js_err)
+            let svg = plot.render_to_svg().map_err(js_err)?;
+            self.export_svg_cache = Some((self.frame_version, svg.clone()));
+            Ok(svg)
         }
 
         fn reset_view(&mut self) -> Result<(), JsValue> {
             self.session()?.apply_input(PlotInputEvent::ResetView);
             self.drag = None;
+            self.mark_frame_dirty();
             Ok(())
         }
 
@@ -861,6 +912,7 @@ mod wasm {
                         anchor: point,
                         moved: false,
                     });
+                    self.mark_frame_dirty();
                 }
                 _ => {}
             }
@@ -870,6 +922,7 @@ mod wasm {
         fn pointer_move(&mut self, x: f64, y: f64) -> Result<(), JsValue> {
             let point = ViewportPoint::new(x, y);
             let session = self.session()?;
+            let mut frame_changed = false;
 
             match self.drag {
                 Some(DragMode::Pan {
@@ -879,6 +932,7 @@ mod wasm {
                     let delta = ViewportPoint::new(point.x - last.x, point.y - last.y);
                     if delta.x != 0.0 || delta.y != 0.0 {
                         session.apply_input(PlotInputEvent::Pan { delta_px: delta });
+                        frame_changed = true;
                     }
                     last = point;
                     self.drag = Some(DragMode::Pan { last, moved: true });
@@ -889,10 +943,16 @@ mod wasm {
                         anchor,
                         moved: true,
                     });
+                    frame_changed = true;
                 }
                 None => {
                     session.apply_input(PlotInputEvent::Hover { position_px: point });
+                    frame_changed = true;
                 }
+            }
+
+            if frame_changed {
+                self.mark_frame_dirty();
             }
 
             Ok(())
@@ -902,11 +962,13 @@ mod wasm {
             let point = ViewportPoint::new(x, y);
             let drag = self.drag.take();
             let session = self.session()?;
+            let mut frame_changed = false;
 
             match (drag, button) {
                 (Some(DragMode::Pan { moved, .. }), 0) => {
                     if !moved {
                         session.apply_input(PlotInputEvent::SelectAt { position_px: point });
+                        frame_changed = true;
                     }
                 }
                 (Some(DragMode::ZoomRect { anchor, moved }), 2) => {
@@ -916,8 +978,13 @@ mod wasm {
                             region_px: ViewportRect::from_points(anchor, point),
                         });
                     }
+                    frame_changed = true;
                 }
                 _ => {}
+            }
+
+            if frame_changed {
+                self.mark_frame_dirty();
             }
 
             Ok(())
@@ -925,6 +992,7 @@ mod wasm {
 
         fn clear_hover(&mut self) -> Result<(), JsValue> {
             self.session()?.apply_input(PlotInputEvent::ClearHover);
+            self.mark_frame_dirty();
             Ok(())
         }
 
@@ -935,8 +1003,33 @@ mod wasm {
                 factor,
                 center_px: ViewportPoint::new(x, y),
             });
+            self.mark_frame_dirty();
             Ok(())
         }
+    }
+
+    fn compose_browser_layers(base: &Image, overlay: &Image) -> Image {
+        let mut pixels = base.pixels.clone();
+        for (dst, src) in pixels
+            .chunks_exact_mut(4)
+            .zip(overlay.pixels.chunks_exact(4))
+        {
+            let alpha = src[3] as f32 / 255.0;
+            if alpha <= 0.0 {
+                continue;
+            }
+            dst[0] = blend_channel(dst[0], src[0], alpha);
+            dst[1] = blend_channel(dst[1], src[1], alpha);
+            dst[2] = blend_channel(dst[2], src[2], alpha);
+            dst[3] = 255;
+        }
+        Image::new(base.width, base.height, pixels)
+    }
+
+    fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
+        let bg = background as f32 / 255.0;
+        let fg = foreground as f32 / 255.0;
+        ((bg * (1.0 - alpha) + fg * alpha) * 255.0) as u8
     }
 
     enum CanvasSurface {
@@ -1103,7 +1196,7 @@ mod wasm {
             self.browser.export_png()
         }
 
-        pub fn export_svg(&self) -> Result<String, JsValue> {
+        pub fn export_svg(&mut self) -> Result<String, JsValue> {
             self.browser.export_svg()
         }
 
@@ -1204,7 +1297,7 @@ mod wasm {
             self.browser.export_png()
         }
 
-        pub fn export_svg(&self) -> Result<String, JsValue> {
+        pub fn export_svg(&mut self) -> Result<String, JsValue> {
             self.browser.export_svg()
         }
 
