@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.10] - 2026-04-10
+
+### Changed
+
+- Public static raster rendering now follows one reference renderer across `render()`, PNG export/save, and `render_to_renderer()`, so those entrypoints stay visually aligned instead of drifting by backend choice.
+- Added exact-parity renderer diagnostics and reference-consistency regression coverage for the shared raster pipeline and its public render/save surfaces.
+- The static raster backend now batches shared work and caches prepared raster geometry for repeated uncached renders, reducing repeated-render setup overhead in both Rust and Python.
+
+### Fixed
+
+- Fixed static raster hot paths so large scatter, line, and heatmap renders use parity-safe CPU accelerators while preserving the reference output contract.
+- Fixed dense filled-marker scatter performance with scanline blitters for `Circle`, `Square`, `Triangle`, and `TriangleDown` markers.
+- Fixed the branch’s optimized parity candidate path so it no longer routes through the parallel renderer when that backend would violate the reference-parity test contract.
+
 ## [0.4.9] - 2026-04-09
 
 ### Fixed
@@ -345,7 +359,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.9...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.10...HEAD
+[0.4.10]: https://github.com/Ameyanagi/ruviz/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/Ameyanagi/ruviz/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/Ameyanagi/ruviz/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/Ameyanagi/ruviz/compare/v0.4.6...v0.4.7

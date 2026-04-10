@@ -64,7 +64,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.9", features = ["ndarray_support"] }
+ruviz = { version = "0.4.10", features = ["ndarray_support"] }
 ndarray = "0.15"
 ```
 
@@ -183,7 +183,7 @@ Plot::new()
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.9", features = ["nalgebra_support"] }
+ruviz = { version = "0.4.10", features = ["nalgebra_support"] }
 nalgebra = "0.32"
 ```
 
@@ -229,7 +229,7 @@ synthetic absorbed-energy style example.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.9", features = ["polars_support"] }
+ruviz = { version = "0.4.10", features = ["polars_support"] }
 polars = "0.35"
 ```
 

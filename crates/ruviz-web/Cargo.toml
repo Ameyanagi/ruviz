@@ -1,6 +1,6 @@
 [package]
 name = "ruviz-web"
-version = "0.4.9"
+version = "0.4.10"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
@@ -12,7 +12,7 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ruviz = { version = "0.4.9", path = "../..", default-features = false }
+ruviz = { version = "0.4.10", path = "../..", default-features = false }
 js-sys = "0.3.92"
 wasm-bindgen = "0.2.105"
 console_error_panic_hook = "0.1.7"

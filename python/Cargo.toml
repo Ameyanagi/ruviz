@@ -1,6 +1,6 @@
 [package]
 name = "ruviz-py"
-version = "0.4.9"
+version = "0.4.10"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Python bindings and notebook widget support for ruviz"
@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pollster = "0.4"
 pyo3 = { version = "0.24", features = ["abi3-py310"] }
-ruviz = { path = "..", version = "0.4.9", default-features = false, features = ["pdf", "svg"] }
+ruviz = { path = "..", version = "0.4.10", default-features = false, features = ["pdf", "svg"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
