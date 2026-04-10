@@ -66,6 +66,9 @@ impl RenderExecutionMode {
     }
 
     pub(super) fn allows_raster_line_reduction(self) -> bool {
+        // Raster line reduction is treated as reference-safe on this branch.
+        // Public raster output still uses the reference pipeline; only
+        // auto-DataShader remains Optimized-exclusive.
         true
     }
 }

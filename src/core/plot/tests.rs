@@ -2425,7 +2425,7 @@ fn test_optimized_line_render_stays_in_parity_with_reference_render() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_png_fast_path_stays_in_parity_with_reference_render_for_large_scatter() {
+fn test_png_export_matches_reference_render_output_for_large_scatter() {
     let (x, y) = large_xy_data();
     let plot = Plot::new()
         .size_px(320, 200)
@@ -2441,18 +2441,16 @@ fn test_png_fast_path_stays_in_parity_with_reference_render_for_large_scatter() 
         .expect("reference scatter render should succeed");
     let (candidate_png, backend) = plot
         .benchmark_save_png_bytes()
-        .expect("optimized PNG path should render");
+        .expect("PNG export path should render");
 
-    assert_png_parity_against_reference(
-        &format!("optimized PNG path ({backend})"),
-        &reference,
-        &candidate_png,
-    );
+    assert_eq!(backend, "skia");
+
+    assert_png_parity_against_reference("PNG export path", &reference, &candidate_png);
 }
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_render_to_renderer_stays_in_parity_with_reference_render_for_large_scatter() {
+fn test_render_to_renderer_matches_reference_render_output_for_large_scatter() {
     let (x, y) = large_xy_data();
     let plot = Plot::new()
         .size_px(320, 200)

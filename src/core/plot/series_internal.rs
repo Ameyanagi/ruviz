@@ -1252,6 +1252,7 @@ impl Plot {
         x_max: f64,
         y_min: f64,
         y_max: f64,
+        mode: RenderExecutionMode,
     ) -> Result<()> {
         let color = series.color.unwrap_or(Color::new(0, 0, 0));
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
@@ -1355,14 +1356,7 @@ impl Plot {
             // For other series types, fall back to normal rendering
             _ => {
                 self.render_series_normal(
-                    series,
-                    renderer,
-                    plot_area,
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                    RenderExecutionMode::Optimized,
+                    series, renderer, plot_area, x_min, x_max, y_min, y_max, mode,
                 )?;
             }
         }
