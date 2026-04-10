@@ -1149,11 +1149,29 @@ impl SkiaRenderer {
                 continue;
             }
 
-            if self.can_use_unmasked_circle_scanline_blit(&sprite, dst_x, dst_y, clip_rect) {
-                self.note_circle_scanline_blit();
-                self.blit_circle_sprite_scanlines_unmasked(&sprite, dst_x, dst_y);
+            if self.can_use_unmasked_marker_scanline_blit(
+                &sprite,
+                dst_x,
+                dst_y,
+                clip_rect,
+                0,
+                0,
+                self.width as i32,
+                self.height as i32,
+            ) {
+                self.note_marker_scanline_blit();
+                self.blit_marker_sprite_scanlines_unmasked(&sprite, dst_x, dst_y);
             } else {
-                self.blit_marker_sprite(&sprite, dst_x, dst_y, mask.as_ref());
+                self.blit_marker_sprite_region(
+                    &sprite,
+                    dst_x,
+                    dst_y,
+                    Some(mask.as_ref()),
+                    0,
+                    0,
+                    self.width as i32,
+                    self.height as i32,
+                );
             }
         }
 
@@ -1172,16 +1190,26 @@ impl SkiaRenderer {
         (base, phase as u8)
     }
 
-    fn blit_marker_sprite(&mut self, sprite: &MarkerSprite, dst_x: i32, dst_y: i32, mask: &Mask) {
-        let canvas_width = self.width as i32;
-        let canvas_height = self.height as i32;
+    fn blit_marker_sprite_region(
+        &mut self,
+        sprite: &MarkerSprite,
+        dst_x: i32,
+        dst_y: i32,
+        mask: Option<&Mask>,
+        region_left: i32,
+        region_top: i32,
+        region_right: i32,
+        region_bottom: i32,
+    ) {
         let src_width = sprite.width as i32;
         let src_height = sprite.height as i32;
 
-        let copy_left = dst_x.max(0);
-        let copy_top = dst_y.max(0);
-        let copy_right = (dst_x + src_width).min(canvas_width);
-        let copy_bottom = (dst_y + src_height).min(canvas_height);
+        let copy_left = dst_x.max(region_left).max(0);
+        let copy_top = dst_y.max(region_top).max(0);
+        let copy_right = (dst_x + src_width).min(region_right).min(self.width as i32);
+        let copy_bottom = (dst_y + src_height)
+            .min(region_bottom)
+            .min(self.height as i32);
 
         if copy_left >= copy_right || copy_top >= copy_bottom {
             return;
@@ -1195,7 +1223,7 @@ impl SkiaRenderer {
         let sprite_stride = sprite.width as usize * 4;
         let canvas_stride = self.width as usize * 4;
         let mask_stride = self.width as usize;
-        let mask_data = mask.data();
+        let mask_data = mask.map(Mask::data);
         let dst_data = self.pixmap.data_mut();
 
         for row in 0..copy_height {
@@ -1210,29 +1238,40 @@ impl SkiaRenderer {
                     continue;
                 }
 
-                let mask_alpha = mask_data[mask_row + col];
-                if mask_alpha == 0 {
-                    continue;
-                }
-
                 let dst_idx = dst_row + col * 4;
-                Self::blend_premultiplied_rgba(
-                    &mut dst_data[dst_idx..dst_idx + 4],
-                    &sprite.pixels[src_idx..src_idx + 4],
-                    mask_alpha,
-                );
+                if let Some(mask_data) = mask_data {
+                    let mask_alpha = mask_data[mask_row + col];
+                    if mask_alpha == 0 {
+                        continue;
+                    }
+
+                    Self::blend_premultiplied_rgba(
+                        &mut dst_data[dst_idx..dst_idx + 4],
+                        &sprite.pixels[src_idx..src_idx + 4],
+                        mask_alpha,
+                    );
+                } else {
+                    Self::blend_premultiplied_rgba_unmasked(
+                        &mut dst_data[dst_idx..dst_idx + 4],
+                        &sprite.pixels[src_idx..src_idx + 4],
+                    );
+                }
             }
         }
     }
 
-    fn can_use_unmasked_circle_scanline_blit(
+    fn can_use_unmasked_marker_scanline_blit(
         &self,
         sprite: &MarkerSprite,
         dst_x: i32,
         dst_y: i32,
         clip_rect: (f32, f32, f32, f32),
+        region_left: i32,
+        region_top: i32,
+        region_right: i32,
+        region_bottom: i32,
     ) -> bool {
-        if sprite.circle_scanlines.is_none() {
+        if sprite.scanlines.is_none() {
             return false;
         }
 
@@ -1245,19 +1284,19 @@ impl SkiaRenderer {
             && dst_y >= clip_top
             && dst_x + sprite.width as i32 <= clip_right
             && dst_y + sprite.height as i32 <= clip_bottom
-            && dst_x >= 0
-            && dst_y >= 0
-            && dst_x + sprite.width as i32 <= self.width as i32
-            && dst_y + sprite.height as i32 <= self.height as i32
+            && dst_x >= region_left
+            && dst_y >= region_top
+            && dst_x + sprite.width as i32 <= region_right
+            && dst_y + sprite.height as i32 <= region_bottom
     }
 
-    fn blit_circle_sprite_scanlines_unmasked(
+    fn blit_marker_sprite_scanlines_unmasked(
         &mut self,
         sprite: &MarkerSprite,
         dst_x: i32,
         dst_y: i32,
     ) {
-        let Some(scanlines) = sprite.circle_scanlines.as_ref() else {
+        let Some(scanlines) = sprite.scanlines.as_ref() else {
             return;
         };
 

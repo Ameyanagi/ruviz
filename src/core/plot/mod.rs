@@ -79,7 +79,7 @@ pub struct RenderDiagnostics {
     pub used_marker_sprite_cache: bool,
     pub used_marker_sprite_compositor: bool,
     pub used_marker_sprite_fallback: bool,
-    pub used_circle_scanline_blit: bool,
+    pub used_marker_scanline_blit: bool,
     pub used_direct_rect_fill: bool,
     pub used_pixel_aligned_rect_fill: bool,
     pub used_prepared_geometry_cache: bool,

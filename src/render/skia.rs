@@ -101,7 +101,7 @@ pub(crate) struct MarkerSprite {
     pub origin_x: i32,
     pub origin_y: i32,
     pub pixels: Vec<u8>,
-    pub circle_scanlines: Option<Arc<[MarkerSpriteScanline]>>,
+    pub scanlines: Option<Arc<[MarkerSpriteScanline]>>,
 }
 
 /// Tiny-skia based renderer with cosmic-text for professional typography
@@ -253,8 +253,8 @@ impl SkiaRenderer {
         self.render_diagnostics.used_marker_sprite_fallback = true;
     }
 
-    pub(crate) fn note_circle_scanline_blit(&mut self) {
-        self.render_diagnostics.used_circle_scanline_blit = true;
+    pub(crate) fn note_marker_scanline_blit(&mut self) {
+        self.render_diagnostics.used_marker_scanline_blit = true;
     }
 
     pub(crate) fn note_direct_rect_fill(&mut self) {
@@ -378,22 +378,23 @@ impl SkiaRenderer {
             origin_x: origin,
             origin_y: origin,
             pixels: sprite_renderer.pixmap.data().to_vec(),
-            circle_scanlines: Self::circle_marker_scanlines(
-                style,
-                sprite_renderer.pixmap.data(),
-                side,
-                side,
-            ),
+            scanlines: Self::marker_scanlines(style, sprite_renderer.pixmap.data(), side, side),
         })
     }
 
-    fn circle_marker_scanlines(
+    fn marker_scanlines(
         style: MarkerStyle,
         pixels: &[u8],
         width: u32,
         height: u32,
     ) -> Option<Arc<[MarkerSpriteScanline]>> {
-        if style != MarkerStyle::Circle {
+        if !matches!(
+            style,
+            MarkerStyle::Circle
+                | MarkerStyle::Square
+                | MarkerStyle::Triangle
+                | MarkerStyle::TriangleDown
+        ) {
             return None;
         }
 

@@ -430,31 +430,39 @@ fn test_draw_markers_clipped_sprite_compositor_stays_in_parity_for_supported_mar
 }
 
 #[test]
-fn test_draw_markers_clipped_uses_circle_scanline_blit_for_filled_circles() {
+fn test_draw_markers_clipped_uses_scanline_blit_for_supported_filled_markers() {
     let theme = Theme::default();
     let points = marker_parity_points();
     let clip_rect = (0.0, 0.0, 64.0, 56.0);
     let color = Color::new_rgba(35, 140, 220, 216);
-    let mut candidate = SkiaRenderer::new(64, 56, theme.clone()).unwrap();
-    let mut reference = SkiaRenderer::new(64, 56, theme).unwrap();
-    candidate.pixmap.fill(tiny_skia::Color::TRANSPARENT);
-    reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
-    candidate
-        .draw_markers_clipped(&points, 8.5, MarkerStyle::Circle, color, clip_rect)
-        .expect("circle markers should render");
-    for point in &points {
-        reference
-            .draw_marker_clipped(point.x, point.y, 8.5, MarkerStyle::Circle, color, clip_rect)
-            .expect("legacy circle markers should render");
+    for style in [
+        MarkerStyle::Circle,
+        MarkerStyle::Square,
+        MarkerStyle::Triangle,
+        MarkerStyle::TriangleDown,
+    ] {
+        let mut candidate = SkiaRenderer::new(64, 56, theme.clone()).unwrap();
+        let mut reference = SkiaRenderer::new(64, 56, theme.clone()).unwrap();
+        candidate.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+        reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
+
+        candidate
+            .draw_markers_clipped(&points, 8.5, style, color, clip_rect)
+            .expect("scanline markers should render");
+        for point in &points {
+            reference
+                .draw_marker_clipped(point.x, point.y, 8.5, style, color, clip_rect)
+                .expect("legacy markers should render");
+        }
+
+        assert!(candidate.render_diagnostics().used_marker_scanline_blit);
+        assert_premultiplied_parity_against_reference(
+            style.name(),
+            &reference.into_image(),
+            &candidate.into_image(),
+        );
     }
-
-    assert!(candidate.render_diagnostics().used_circle_scanline_blit);
-    assert_premultiplied_parity_against_reference(
-        "circle scanline blit",
-        &reference.into_image(),
-        &candidate.into_image(),
-    );
 }
 
 #[test]
