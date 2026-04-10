@@ -29,7 +29,7 @@
       "scenarioId": "line-interactive",
       "plotKind": "line",
       "sizeLabel": "100k",
-      "boundary": "plot_builder_export_png",
+      "boundary": "plot_builder_export_png_cached",
       "outputTarget": "png_bytes",
       "elements": 100000,
       "canvas": {
@@ -45,15 +45,15 @@
       "iterationsMs": [
         0,
         0,
-        0.09999996423721313
+        0.10000002384185791
       ],
       "summary": {
-        "meanMs": 0.03333332141240438,
+        "meanMs": 0.0333333412806193,
         "medianMs": 0,
-        "p95Ms": 0.08999996781349182,
+        "p95Ms": 0.09000002145767211,
         "minMs": 0,
-        "maxMs": 0.09999996423721313,
-        "stdevMs": 0.057735006271307954,
+        "maxMs": 0.10000002384185791,
+        "stdevMs": 0.05773504068406567,
         "throughputElementsPerSec": 0
       }
     },
@@ -62,7 +62,7 @@
       "scenarioId": "line-interactive",
       "plotKind": "line",
       "sizeLabel": "100k",
-      "boundary": "canvas_session_set_plot",
+      "boundary": "canvas_session_set_plot_cached_noop",
       "outputTarget": "interactive_frame",
       "elements": 100000,
       "canvas": {
@@ -95,7 +95,7 @@
       "scenarioId": "line-interactive",
       "plotKind": "line",
       "sizeLabel": "100k",
-      "boundary": "canvas_session_export_png",
+      "boundary": "canvas_session_export_png_cached",
       "outputTarget": "png_bytes",
       "elements": 100000,
       "canvas": {
@@ -109,17 +109,17 @@
       "sessionMode": "main-thread",
       "byteCount": 58008,
       "iterationsMs": [
-        0,
+        0.09999996423721313,
         0,
         0
       ],
       "summary": {
-        "meanMs": 0,
+        "meanMs": 0.03333332141240438,
         "medianMs": 0,
-        "p95Ms": 0,
+        "p95Ms": 0.08999996781349182,
         "minMs": 0,
-        "maxMs": 0,
-        "stdevMs": 0,
+        "maxMs": 0.09999996423721313,
+        "stdevMs": 0.057735006271307954,
         "throughputElementsPerSec": 0
       }
     },
@@ -142,17 +142,17 @@
       "sessionMode": "main-thread",
       "byteCount": 0,
       "iterationsMs": [
-        1.199999988079071,
+        1.2000000476837158,
         1.199999988079071,
         1.199999988079071
       ],
       "summary": {
-        "meanMs": 1.199999988079071,
+        "meanMs": 1.200000007947286,
         "medianMs": 1.199999988079071,
-        "p95Ms": 1.199999988079071,
+        "p95Ms": 1.2000000417232515,
         "minMs": 1.199999988079071,
-        "maxMs": 1.199999988079071,
-        "stdevMs": 0,
+        "maxMs": 1.2000000476837158,
+        "stdevMs": 3.4412757706023796e-8,
         "throughputElementsPerSec": 83333334.16117564
       }
     },
@@ -175,18 +175,18 @@
       "sessionMode": "main-thread",
       "byteCount": 0,
       "iterationsMs": [
+        6.899999976158142,
         6.800000011920929,
-        6.699999988079071,
         6.699999988079071
       ],
       "summary": {
-        "meanMs": 6.733333329359691,
-        "medianMs": 6.699999988079071,
-        "p95Ms": 6.790000009536744,
+        "meanMs": 6.799999992052714,
+        "medianMs": 6.800000011920929,
+        "p95Ms": 6.88999997973442,
         "minMs": 6.699999988079071,
-        "maxMs": 6.800000011920929,
-        "stdevMs": 0.05773504068406566,
-        "throughputElementsPerSec": 14925373.160884226
+        "maxMs": 6.899999976158142,
+        "stdevMs": 0.09999999403953701,
+        "throughputElementsPerSec": 14705882.327160621
       }
     },
     {
@@ -208,18 +208,18 @@
       "sessionMode": "main-thread",
       "byteCount": 0,
       "iterationsMs": [
-        6.599999964237213,
-        6.5,
-        6.700000047683716
+        6.799999952316284,
+        6.700000047683716,
+        6.699999988079071
       ],
       "summary": {
-        "meanMs": 6.600000003973643,
-        "medianMs": 6.599999964237213,
-        "p95Ms": 6.690000039339066,
-        "minMs": 6.5,
-        "maxMs": 6.700000047683716,
-        "stdevMs": 0.10000002384186382,
-        "throughputElementsPerSec": 15151515.233615214
+        "meanMs": 6.733333329359691,
+        "medianMs": 6.700000047683716,
+        "p95Ms": 6.789999961853027,
+        "minMs": 6.699999988079071,
+        "maxMs": 6.799999952316284,
+        "stdevMs": 0.05773498906493679,
+        "throughputElementsPerSec": 14925373.028104888
       }
     },
     {
@@ -227,7 +227,7 @@
       "scenarioId": "scatter-interactive",
       "plotKind": "scatter",
       "sizeLabel": "100k",
-      "boundary": "plot_builder_export_png",
+      "boundary": "plot_builder_export_png_cached",
       "outputTarget": "png_bytes",
       "elements": 100000,
       "canvas": {
@@ -260,7 +260,7 @@
       "scenarioId": "scatter-interactive",
       "plotKind": "scatter",
       "sizeLabel": "100k",
-      "boundary": "canvas_session_set_plot",
+      "boundary": "canvas_session_set_plot_cached_noop",
       "outputTarget": "interactive_frame",
       "elements": 100000,
       "canvas": {
@@ -293,7 +293,7 @@
       "scenarioId": "scatter-interactive",
       "plotKind": "scatter",
       "sizeLabel": "100k",
-      "boundary": "canvas_session_export_png",
+      "boundary": "canvas_session_export_png_cached",
       "outputTarget": "png_bytes",
       "elements": 100000,
       "canvas": {
@@ -373,18 +373,18 @@
       "sessionMode": "main-thread",
       "byteCount": 0,
       "iterationsMs": [
-        25.80000001192093,
-        26,
-        26.19999998807907
+        27.5,
+        26.80000001192093,
+        26.69999998807907
       ],
       "summary": {
-        "meanMs": 26,
-        "medianMs": 26,
-        "p95Ms": 26.179999989271163,
-        "minMs": 25.80000001192093,
-        "maxMs": 26.19999998807907,
-        "stdevMs": 0.19999998807907104,
-        "throughputElementsPerSec": 3846153.8461538465
+        "meanMs": 27,
+        "medianMs": 26.80000001192093,
+        "p95Ms": 27.43000000119209,
+        "minMs": 26.69999998807907,
+        "maxMs": 27.5,
+        "stdevMs": 0.43588989572149184,
+        "throughputElementsPerSec": 3731343.281922348
       }
     },
     {
@@ -406,18 +406,18 @@
       "sessionMode": "main-thread",
       "byteCount": 0,
       "iterationsMs": [
-        25.899999976158142,
-        25.80000001192093,
-        26
+        27.399999976158142,
+        27.80000001192093,
+        27.5
       ],
       "summary": {
-        "meanMs": 25.899999996026356,
-        "medianMs": 25.899999976158142,
-        "p95Ms": 25.989999997615815,
-        "minMs": 25.80000001192093,
-        "maxMs": 26,
-        "stdevMs": 0.099999994039537,
-        "throughputElementsPerSec": 3861003.864558051
+        "meanMs": 27.566666662693024,
+        "medianMs": 27.5,
+        "p95Ms": 27.770000010728836,
+        "minMs": 27.399999976158142,
+        "maxMs": 27.80000001192093,
+        "stdevMs": 0.20816661617206236,
+        "throughputElementsPerSec": 3636363.6363636362
       }
     },
     {
@@ -425,7 +425,7 @@
       "scenarioId": "heatmap-interactive",
       "plotKind": "heatmap",
       "sizeLabel": "512x512",
-      "boundary": "plot_builder_export_png",
+      "boundary": "plot_builder_export_png_cached",
       "outputTarget": "png_bytes",
       "elements": 262144,
       "canvas": {
@@ -441,16 +441,16 @@
       "iterationsMs": [
         0,
         0.10000002384185791,
-        0
+        0.09999996423721313
       ],
       "summary": {
-        "meanMs": 0.0333333412806193,
-        "medianMs": 0,
-        "p95Ms": 0.09000002145767211,
+        "meanMs": 0.06666666269302368,
+        "medianMs": 0.09999996423721313,
+        "p95Ms": 0.10000001788139343,
         "minMs": 0,
         "maxMs": 0.10000002384185791,
-        "stdevMs": 0.05773504068406567,
-        "throughputElementsPerSec": 0
+        "stdevMs": 0.0577350234776945,
+        "throughputElementsPerSec": 2621440937.500335
       }
     },
     {
@@ -458,7 +458,7 @@
       "scenarioId": "heatmap-interactive",
       "plotKind": "heatmap",
       "sizeLabel": "512x512",
-      "boundary": "canvas_session_set_plot",
+      "boundary": "canvas_session_set_plot_cached_noop",
       "outputTarget": "interactive_frame",
       "elements": 262144,
       "canvas": {
@@ -491,7 +491,7 @@
       "scenarioId": "heatmap-interactive",
       "plotKind": "heatmap",
       "sizeLabel": "512x512",
-      "boundary": "canvas_session_export_png",
+      "boundary": "canvas_session_export_png_cached",
       "outputTarget": "png_bytes",
       "elements": 262144,
       "canvas": {
@@ -506,17 +506,17 @@
       "byteCount": 536769,
       "iterationsMs": [
         0,
-        0.10000002384185791,
-        0.09999996423721313
+        0.09999996423721313,
+        0
       ],
       "summary": {
-        "meanMs": 0.06666666269302368,
-        "medianMs": 0.09999996423721313,
-        "p95Ms": 0.10000001788139343,
+        "meanMs": 0.03333332141240438,
+        "medianMs": 0,
+        "p95Ms": 0.08999996781349182,
         "minMs": 0,
-        "maxMs": 0.10000002384185791,
-        "stdevMs": 0.0577350234776945,
-        "throughputElementsPerSec": 2621440937.500335
+        "maxMs": 0.09999996423721313,
+        "stdevMs": 0.057735006271307954,
+        "throughputElementsPerSec": 0
       }
     },
     {
@@ -539,16 +539,16 @@
       "byteCount": 0,
       "iterationsMs": [
         1,
-        0.800000011920929,
-        1.0999999642372131
+        0.9000000357627869,
+        1
       ],
       "summary": {
-        "meanMs": 0.9666666587193807,
+        "meanMs": 0.9666666785875956,
         "medianMs": 1,
-        "p95Ms": 1.0899999678134917,
-        "minMs": 0.800000011920929,
-        "maxMs": 1.0999999642372131,
-        "stdevMs": 0.1527525010536354,
+        "p95Ms": 1,
+        "minMs": 0.9000000357627869,
+        "maxMs": 1,
+        "stdevMs": 0.057735006271307954,
         "throughputElementsPerSec": 262144000
       }
     },
@@ -571,18 +571,18 @@
       "sessionMode": "main-thread",
       "byteCount": 0,
       "iterationsMs": [
-        9.299999952316284,
-        9.200000047683716,
-        9.099999964237213
+        9.5,
+        9.399999976158142,
+        9.300000011920929
       ],
       "summary": {
-        "meanMs": 9.199999988079071,
-        "medianMs": 9.200000047683716,
-        "p95Ms": 9.289999961853027,
-        "minMs": 9.099999964237213,
-        "maxMs": 9.299999952316284,
-        "stdevMs": 0.09999999403954885,
-        "throughputElementsPerSec": 28493912.895793952
+        "meanMs": 9.399999996026358,
+        "medianMs": 9.399999976158142,
+        "p95Ms": 9.489999997615815,
+        "minMs": 9.300000011920929,
+        "maxMs": 9.5,
+        "stdevMs": 0.09999999403953701,
+        "throughputElementsPerSec": 27887659.645201452
       }
     }
   ]

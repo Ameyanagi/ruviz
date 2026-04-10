@@ -1,12 +1,12 @@
 {
-  "capturedAt": "2026-04-10T22:57:49Z",
+  "capturedAt": "2026-04-10T23:19:51Z",
   "os": "macOS-26.4-arm64-arm-64bit",
   "machine": "arm64",
   "processor": "arm",
   "cpuCount": 10,
   "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
   "bunVersion": "1.3.5",
-  "gitCommit": "4043059b8eef7e41b29fd6b90ac3bace205f097a",
+  "gitCommit": "a99782b24f5933046dc97a9d64538be26a815c27",
   "gitBranch": "interactive-wasm-bench-cache",
   "gitDirty": true,
   "manifest": {

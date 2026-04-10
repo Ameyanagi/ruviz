@@ -464,7 +464,7 @@ async function benchmarkCanvasSession(run, dataset, plot) {
     results.push(
       resultRecord(
         run,
-        "canvas_session_set_plot",
+        "canvas_session_set_plot_cached_noop",
         "interactive_frame",
         dataset.hash,
         setPlotMeasurement,
@@ -483,7 +483,7 @@ async function benchmarkCanvasSession(run, dataset, plot) {
     results.push(
       resultRecord(
         run,
-        "canvas_session_export_png",
+        "canvas_session_export_png_cached",
         "png_bytes",
         dataset.hash,
         exportMeasurement,
@@ -604,7 +604,7 @@ async function benchmarkWorkerSession(run, dataset, snapshot) {
     results.push(
       resultRecord(
         run,
-        "worker_session_export_png",
+        "worker_session_export_png_cached",
         "png_bytes",
         dataset.hash,
         exportMeasurement,
@@ -703,7 +703,7 @@ async function benchmarkRun(run) {
     const results = [
       resultRecord(
         run,
-        "plot_builder_export_png",
+        "plot_builder_export_png_cached",
         "png_bytes",
         dataset.hash,
         builderExportMeasurement,

@@ -1009,6 +1009,11 @@ mod wasm {
     }
 
     fn compose_browser_layers(base: &Image, overlay: &Image) -> Image {
+        debug_assert_eq!(
+            (base.width, base.height),
+            (overlay.width, overlay.height),
+            "compose_browser_layers: base and overlay must have the same dimensions"
+        );
         let mut pixels = base.pixels.clone();
         for (dst, src) in pixels
             .chunks_exact_mut(4)
