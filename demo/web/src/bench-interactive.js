@@ -688,37 +688,41 @@ async function benchmarkWorkerSession(run, dataset, snapshot) {
 async function benchmarkRun(run) {
   const dataset = await buildDataset(run);
   const plot = buildPlot(run, dataset);
-  const snapshot = plot.toSnapshot();
-
-  const builderExportMeasurement = await measure(
-    run.warmupIterations,
-    run.measuredIterations,
-    async () => {
-      const png = await plot.renderPng();
-      return { byteCount: png.length };
-    },
-  );
-
-  const results = [
-    resultRecord(
-      run,
-      "plot_builder_export_png",
-      "png_bytes",
-      dataset.hash,
-      builderExportMeasurement,
-    ),
-  ];
-  const warnings = [];
-
-  results.push(...(await benchmarkCanvasSession(run, dataset, plot)));
   try {
-    results.push(...(await benchmarkWorkerSession(run, dataset, snapshot)));
-  } catch (error) {
-    warnings.push(
-      `${run.scenarioId} ${run.size.label}: worker benchmark unavailable (${error instanceof Error ? error.message : String(error)})`,
+    const snapshot = plot.toSnapshot();
+
+    const builderExportMeasurement = await measure(
+      run.warmupIterations,
+      run.measuredIterations,
+      async () => {
+        const png = await plot.renderPng();
+        return { byteCount: png.length };
+      },
     );
+
+    const results = [
+      resultRecord(
+        run,
+        "plot_builder_export_png",
+        "png_bytes",
+        dataset.hash,
+        builderExportMeasurement,
+      ),
+    ];
+    const warnings = [];
+
+    results.push(...(await benchmarkCanvasSession(run, dataset, plot)));
+    try {
+      results.push(...(await benchmarkWorkerSession(run, dataset, snapshot)));
+    } catch (error) {
+      warnings.push(
+        `${run.scenarioId} ${run.size.label}: worker benchmark unavailable (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+    return { results, warnings };
+  } finally {
+    plot.dispose();
   }
-  return { results, warnings };
 }
 
 async function run(manifest, mode = "full") {

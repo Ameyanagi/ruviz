@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { chromium } from "../../demo/web/node_modules/@playwright/test/index.mjs";
+import { chromium } from "@playwright/test";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const baseUrl = "http://127.0.0.1:4173";

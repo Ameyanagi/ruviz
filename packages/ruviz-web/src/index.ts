@@ -1237,6 +1237,15 @@ export class PlotBuilder {
     return PlotBuilder.fromSnapshot(this.toSnapshot());
   }
 
+  dispose(): void {
+    if (this.#rawPlotCache) {
+      this.#rawPlotCache.rawPlot.free();
+      this.#rawPlotCache = null;
+    }
+    this.#pngCache = null;
+    this.#svgCache = null;
+  }
+
   toSnapshot(): PlotSnapshot {
     const snapshot: PlotSnapshot = {
       sizePx: this.#state.sizePx ? ([...this.#state.sizePx] as [number, number]) : undefined,

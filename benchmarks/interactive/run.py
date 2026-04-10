@@ -107,7 +107,7 @@ def write_results_csv(path: Path, payloads: list[dict[str, Any]]) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow({name: row.get(name) for name in fieldnames})

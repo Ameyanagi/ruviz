@@ -1,13 +1,13 @@
 {
-  "capturedAt": "2026-04-10T11:47:40Z",
+  "capturedAt": "2026-04-10T22:57:49Z",
   "os": "macOS-26.4-arm64-arm-64bit",
   "machine": "arm64",
   "processor": "arm",
   "cpuCount": 10,
   "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
   "bunVersion": "1.3.5",
-  "gitCommit": "66f71cb25593507c84d74978fa110807d5222daf",
-  "gitBranch": "main",
+  "gitCommit": "4043059b8eef7e41b29fd6b90ac3bace205f097a",
+  "gitBranch": "interactive-wasm-bench-cache",
   "gitDirty": true,
   "manifest": {
     "version": 1,
@@ -95,10 +95,10 @@
       "buildProfile": "release"
     },
     "wasm": {
-      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.7632.6 Safari/537.36",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/147.0.7727.15 Safari/537.36",
       "platform": "MacIntel",
       "hardwareConcurrency": 10,
-      "deviceMemory": 8,
+      "deviceMemory": 32,
       "runtimeCapabilities": {
         "offscreenCanvasSupported": true,
         "workerSupported": true,
@@ -107,7 +107,7 @@
         "defaultBrowserFontRegistered": true,
         "gpuCanvasFastPathAvailable": false
       },
-      "browserVersion": "145.0.7632.6",
+      "browserVersion": "147.0.7727.15",
       "baseUrl": "http://127.0.0.1:4173"
     }
   }

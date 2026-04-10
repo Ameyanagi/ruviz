@@ -325,13 +325,8 @@ fn build_dataset(run: &ScenarioRun) -> Result<Dataset> {
                 "scatter_signal" => scatter_x(points),
                 _ => unreachable!(),
             };
-            let mut hasher = Sha256::new();
-            hasher.update(run.dataset_kind.as_bytes());
-            update_f64_hash(&mut hasher, &x);
-            Ok(Dataset::TemporalX {
-                x,
-                hash: format!("{:x}", hasher.finalize()),
-            })
+            let hash = temporal_dataset_hash(run.dataset_kind.as_str(), points, &x);
+            Ok(Dataset::TemporalX { x, hash })
         }
         "heatmap_field" => {
             let rows = run
@@ -343,14 +338,9 @@ fn build_dataset(run: &ScenarioRun) -> Result<Dataset> {
                 .cols
                 .ok_or_else(|| anyhow!("heatmap scenario missing cols"))?;
             let matrix = heatmap_field(rows, cols);
-            let mut hasher = Sha256::new();
-            hasher.update(run.dataset_kind.as_bytes());
-            for row in &matrix {
-                update_f64_hash(&mut hasher, row);
-            }
             Ok(Dataset::Heatmap {
+                hash: heatmap_dataset_hash(&matrix),
                 matrix,
-                hash: format!("{:x}", hasher.finalize()),
             })
         }
         other => Err(anyhow!("unsupported dataset kind: {other}")),
@@ -391,6 +381,27 @@ fn update_f64_hash(hasher: &mut Sha256, values: &[f64]) {
     for value in values {
         hasher.update(value.to_le_bytes());
     }
+}
+
+fn hash_f64_sequences<'a>(sequences: impl IntoIterator<Item = &'a [f64]>) -> String {
+    let mut hasher = Sha256::new();
+    for values in sequences {
+        update_f64_hash(&mut hasher, values);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn temporal_dataset_hash(dataset_kind: &str, points: usize, x: &[f64]) -> String {
+    let signal_config = match dataset_kind {
+        "line_signal" => [points as f64, 0.0, 200.0, 1.0, 6.0, 1.5, 0.0, 0.0],
+        "scatter_signal" => [points as f64, 0.0, 1.0, 0.22, 5.0, 1.1, 0.0, 0.52],
+        _ => unreachable!("unsupported temporal dataset kind"),
+    };
+    hash_f64_sequences([x, signal_config.as_slice()])
+}
+
+fn heatmap_dataset_hash(matrix: &[Vec<f64>]) -> String {
+    hash_f64_sequences(matrix.iter().map(Vec::as_slice))
 }
 
 fn build_plot(run: &ScenarioRun, dataset: &Dataset) -> Plot {
