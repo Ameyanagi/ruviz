@@ -2,14 +2,14 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.4.11
+## What's New in v0.4.12
 
 - Public static raster outputs now follow the same reference renderer across `render()`, PNG export/save, and `render_to_renderer()`.
 - The static raster backend now uses parity-safe CPU hot paths for dense scatter, line, and heatmap rendering.
 - Repeated uncached prepared renders in Rust and Python now reuse prepared raster geometry instead of rebuilding the full screen-space plan every time.
 
 See full details:
-- [Release notes for v0.4.11](releases/v0.4.11.md)
+- [Release notes for v0.4.12](releases/v0.4.12.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -23,7 +23,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.4.11"
+ruviz = "0.4.12"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -62,8 +62,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.4.11"
-ruviz-gpui = "0.4.11"
+ruviz = "0.4.12"
+ruviz-gpui = "0.4.12"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -91,7 +91,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.11", features = ["typst-math"] }
+ruviz = { version = "0.4.12", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
@@ -104,7 +104,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.11", default-features = false }
+ruviz = { version = "0.4.12", default-features = false }
 
 [features]
 default = []
@@ -355,7 +355,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.4.11", features = ["polars_support"] }
+ruviz = { version = "0.4.12", features = ["polars_support"] }
 polars = "0.35"
 ```
 
@@ -382,14 +382,14 @@ Plot::new()
 Enable parallel rendering:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.11", features = ["parallel"] }
+ruviz = { version = "0.4.12", features = ["parallel"] }
 ```
 
 ### For Very Large Datasets (>100K points)
 Enable SIMD optimization:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.11", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.12", features = ["parallel", "simd"] }
 ```
 
 ### Large Dataset Export

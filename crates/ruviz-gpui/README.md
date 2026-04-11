@@ -10,8 +10,8 @@ own the window, layout tree, and surrounding application shell.
 
 ```toml
 [dependencies]
-ruviz = "0.4.11"
-ruviz-gpui = "0.4.11"
+ruviz = "0.4.12"
+ruviz-gpui = "0.4.12"
 ```
 
 ## What This Crate Provides

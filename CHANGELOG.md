@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.12] - 2026-04-12
+
+### Fixed
+
+- Fixed the canonical Python widget release build by committing the matching `Cargo.lock` workspace version bump, so the release workflow's `--locked` wasm widget build no longer fails after the version update.
+- Fixed the npm package verifier so subprocess failures now surface the exact command, exit status, stdout, and stderr in CI logs.
+
+### Changed
+
+- Completed the full synchronized `0.4.12` release after the partial `0.4.11` npm-only publish, restoring aligned Rust, npm, and PyPI release semantics.
+
 ## [0.4.11] - 2026-04-12
 
 ### Fixed
@@ -371,7 +382,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.11...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.12...HEAD
+[0.4.12]: https://github.com/Ameyanagi/ruviz/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/Ameyanagi/ruviz/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/Ameyanagi/ruviz/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/Ameyanagi/ruviz/compare/v0.4.8...v0.4.9
