@@ -1,0 +1,4 @@
+# Use the package.json "files" allowlist as the source of truth for npm
+# packaging. Without a package-local .npmignore, npm falls back to the repo
+# root .gitignore, which excludes generated/ and strips the wasm runtime from
+# the published tarball.
