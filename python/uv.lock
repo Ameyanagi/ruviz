@@ -2132,7 +2132,7 @@ wheels = [
 
 [[package]]
 name = "ruviz"
-version = "0.4.10"
+version = "0.4.11"
 source = { editable = "." }
 dependencies = [
     { name = "anywidget" },

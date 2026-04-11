@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.11] - 2026-04-12
+
+### Fixed
+
+- Fixed the published npm package so the tarball now includes the WebAssembly runtime under `generated/raw`, which restores `bun install ruviz` / `npm install ruviz` for browser and wasm consumers.
+- Fixed npm release validation so CI and the GitHub release workflow verify the real `npm pack` tarball contents and smoke-install that tarball before publish.
+
+### Changed
+
+- Added an interactive Rust/wasm benchmark suite and committed smoke baselines for hover, pan, time, `setPlot`, and export flows.
+- Browser-side repeated `renderPng()` / `renderSvg()` exports and identical `setPlot(plot)` attaches now reuse cached wasm-side state instead of rebuilding unchanged plots and session exports.
+
 ## [0.4.10] - 2026-04-10
 
 ### Changed
@@ -359,7 +371,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.10...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.11...HEAD
+[0.4.11]: https://github.com/Ameyanagi/ruviz/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/Ameyanagi/ruviz/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/Ameyanagi/ruviz/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/Ameyanagi/ruviz/compare/v0.4.7...v0.4.8
