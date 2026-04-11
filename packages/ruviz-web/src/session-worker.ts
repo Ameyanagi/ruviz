@@ -127,6 +127,10 @@ self.onmessage = async (event: MessageEvent<WorkerEnvelope>) => {
         postResponse("ack", requestId);
         return;
       }
+      case "flush": {
+        postResponse("ack", requestId);
+        return;
+      }
       case "resetView": {
         getSession().reset_view();
         postResponse("ack", requestId);

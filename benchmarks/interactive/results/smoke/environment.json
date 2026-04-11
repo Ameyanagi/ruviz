@@ -1,0 +1,114 @@
+{
+  "capturedAt": "2026-04-10T23:19:51Z",
+  "os": "macOS-26.4-arm64-arm-64bit",
+  "machine": "arm64",
+  "processor": "arm",
+  "cpuCount": 10,
+  "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+  "bunVersion": "1.3.5",
+  "gitCommit": "a99782b24f5933046dc97a9d64538be26a815c27",
+  "gitBranch": "interactive-wasm-bench-cache",
+  "gitDirty": true,
+  "manifest": {
+    "version": 1,
+    "defaults": {
+      "warmupIterations": 5,
+      "measuredIterations": 20,
+      "smokeWarmupIterations": 1,
+      "smokeMeasuredIterations": 3,
+      "hoverStridePx": 31,
+      "panDeltaPx": [
+        12,
+        8
+      ],
+      "timeStepSeconds": 0.0166666667
+    },
+    "scenarios": [
+      {
+        "id": "line-interactive",
+        "plotKind": "line",
+        "datasetKind": "line_signal",
+        "canvas": {
+          "width": 800,
+          "height": 600,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "points": 100000
+          },
+          {
+            "label": "500k",
+            "points": 500000
+          }
+        ]
+      },
+      {
+        "id": "scatter-interactive",
+        "plotKind": "scatter",
+        "datasetKind": "scatter_signal",
+        "canvas": {
+          "width": 800,
+          "height": 600,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "100k",
+            "points": 100000
+          },
+          {
+            "label": "250k",
+            "points": 250000
+          }
+        ]
+      },
+      {
+        "id": "heatmap-interactive",
+        "plotKind": "heatmap",
+        "datasetKind": "heatmap_field",
+        "canvas": {
+          "width": 640,
+          "height": 640,
+          "dpi": 100
+        },
+        "sizes": [
+          {
+            "label": "512x512",
+            "rows": 512,
+            "cols": 512
+          },
+          {
+            "label": "1024x1024",
+            "rows": 1024,
+            "cols": 1024
+          }
+        ]
+      }
+    ]
+  },
+  "runtimes": {
+    "rust": {
+      "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "ruvizVersion": "0.4.10",
+      "buildProfile": "release"
+    },
+    "wasm": {
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/147.0.7727.15 Safari/537.36",
+      "platform": "MacIntel",
+      "hardwareConcurrency": 10,
+      "deviceMemory": 32,
+      "runtimeCapabilities": {
+        "offscreenCanvasSupported": true,
+        "workerSupported": true,
+        "webgpuSupported": true,
+        "touchInputSupported": true,
+        "defaultBrowserFontRegistered": true,
+        "gpuCanvasFastPathAvailable": false
+      },
+      "browserVersion": "147.0.7727.15",
+      "baseUrl": "http://127.0.0.1:4173"
+    }
+  }
+}

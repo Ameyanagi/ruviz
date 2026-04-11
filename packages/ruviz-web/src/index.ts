@@ -818,6 +818,20 @@ function downloadBlob(blob: Blob, fileName: string): void {
 /** Fluent plot builder for static export and interactive canvas mounting. */
 export class PlotBuilder {
   #state: PlotState;
+  #revision: number;
+  #rawPlotCache: {
+    module: RawModule;
+    revision: number;
+    rawPlot: RawJsPlot;
+  } | null;
+  #pngCache: {
+    revision: number;
+    bytes: Uint8Array;
+  } | null;
+  #svgCache: {
+    revision: number;
+    value: string;
+  } | null;
 
   constructor(state?: PlotState) {
     this.#state = state
@@ -831,6 +845,10 @@ export class PlotBuilder {
           series: state.series.map((series) => PlotBuilder.#cloneSeries(series)),
         }
       : { series: [] };
+    this.#revision = 0;
+    this.#rawPlotCache = null;
+    this.#pngCache = null;
+    this.#svgCache = null;
   }
 
   static fromSnapshot(snapshot: PlotSnapshot): PlotBuilder {
@@ -1008,6 +1026,7 @@ export class PlotBuilder {
 
   setSizePx(width: number, height: number): this {
     this.#state.sizePx = [Math.max(1, Math.round(width)), Math.max(1, Math.round(height))];
+    this.#markDirty();
     return this;
   }
 
@@ -1017,6 +1036,7 @@ export class PlotBuilder {
 
   setTheme(theme: PlotTheme): this {
     this.#state.theme = theme;
+    this.#markDirty();
     return this;
   }
 
@@ -1026,6 +1046,7 @@ export class PlotBuilder {
 
   setTicks(enabled: boolean): this {
     this.#state.ticks = enabled;
+    this.#markDirty();
     return this;
   }
 
@@ -1035,6 +1056,7 @@ export class PlotBuilder {
 
   setTitle(title: string): this {
     this.#state.title = title;
+    this.#markDirty();
     return this;
   }
 
@@ -1044,6 +1066,7 @@ export class PlotBuilder {
 
   setXLabel(label: string): this {
     this.#state.xLabel = label;
+    this.#markDirty();
     return this;
   }
 
@@ -1053,6 +1076,7 @@ export class PlotBuilder {
 
   setYLabel(label: string): this {
     this.#state.yLabel = label;
+    this.#markDirty();
     return this;
   }
 
@@ -1079,24 +1103,28 @@ export class PlotBuilder {
       throw new Error("bar categories and values must have the same length");
     }
     this.#state.series.push({ kind: "bar", categories, values });
+    this.#markDirty();
     return this;
   }
 
   histogram(input: NumericArray | ObservableSeries): this {
     const values = normalizeReactiveSource(input);
     this.#state.series.push({ kind: "histogram", data: values });
+    this.#markDirty();
     return this;
   }
 
   boxplot(input: NumericArray | ObservableSeries): this {
     const values = normalizeReactiveSource(input);
     this.#state.series.push({ kind: "boxplot", data: values });
+    this.#markDirty();
     return this;
   }
 
   heatmap(input: ReadonlyArray<NumericArray>): this {
     const { values, rows, cols } = flattenHeatmapValues(input);
     this.#state.series.push({ kind: "heatmap", values, rows, cols });
+    this.#markDirty();
     return this;
   }
 
@@ -1108,6 +1136,7 @@ export class PlotBuilder {
       throw new Error("x, y, and yErrors must have the same length");
     }
     this.#state.series.push({ kind: "error-bars", x, y, yErrors });
+    this.#markDirty();
     return this;
   }
 
@@ -1125,16 +1154,19 @@ export class PlotBuilder {
       throw new Error("x, y, xErrors, and yErrors must have the same length");
     }
     this.#state.series.push({ kind: "error-bars-xy", x, y, xErrors, yErrors });
+    this.#markDirty();
     return this;
   }
 
   kde(input: NumericArray): this {
     this.#state.series.push({ kind: "kde", data: toNumberArray(input) });
+    this.#markDirty();
     return this;
   }
 
   ecdf(input: NumericArray): this {
     this.#state.series.push({ kind: "ecdf", data: toNumberArray(input) });
+    this.#markDirty();
     return this;
   }
 
@@ -1146,6 +1178,7 @@ export class PlotBuilder {
       throw new Error("contour z must contain x.length * y.length values");
     }
     this.#state.series.push({ kind: "contour", x, y, z });
+    this.#markDirty();
     return this;
   }
 
@@ -1156,6 +1189,7 @@ export class PlotBuilder {
       throw new Error("pie values and labels must have the same length");
     }
     this.#state.series.push({ kind: "pie", values: normalizedValues, labels });
+    this.#markDirty();
     return this;
   }
 
@@ -1178,11 +1212,13 @@ export class PlotBuilder {
     }
 
     this.#state.series.push({ kind: "radar", labels, series });
+    this.#markDirty();
     return this;
   }
 
   violin(input: NumericArray): this {
     this.#state.series.push({ kind: "violin", data: toNumberArray(input) });
+    this.#markDirty();
     return this;
   }
 
@@ -1193,11 +1229,21 @@ export class PlotBuilder {
       throw new Error("polar r and theta must have the same length");
     }
     this.#state.series.push({ kind: "polar-line", r, theta });
+    this.#markDirty();
     return this;
   }
 
   clone(): PlotBuilder {
     return PlotBuilder.fromSnapshot(this.toSnapshot());
+  }
+
+  dispose(): void {
+    if (this.#rawPlotCache) {
+      this.#rawPlotCache.rawPlot.free();
+      this.#rawPlotCache = null;
+    }
+    this.#pngCache = null;
+    this.#svgCache = null;
   }
 
   toSnapshot(): PlotSnapshot {
@@ -1215,15 +1261,39 @@ export class PlotBuilder {
   }
 
   async renderPng(): Promise<Uint8Array> {
+    const pngCache = this.#pngCache;
+    if (pngCache && pngCache.revision === this.#revision) {
+      return new Uint8Array(pngCache.bytes);
+    }
+
     const module = await ensureRawModule();
     const rawPlot = await this._toRawPlot(module);
-    return rawPlot.render_png_bytes();
+    const png = rawPlot.render_png_bytes();
+    if (this.#canCacheStaticExports()) {
+      this.#pngCache = {
+        revision: this.#revision,
+        bytes: new Uint8Array(png),
+      };
+    }
+    return png;
   }
 
   async renderSvg(): Promise<string> {
+    const svgCache = this.#svgCache;
+    if (svgCache && svgCache.revision === this.#revision) {
+      return svgCache.value;
+    }
+
     const module = await ensureRawModule();
     const rawPlot = await this._toRawPlot(module);
-    return rawPlot.render_svg();
+    const svg = rawPlot.render_svg();
+    if (this.#canCacheStaticExports()) {
+      this.#svgCache = {
+        revision: this.#revision,
+        value: svg,
+      };
+    }
+    return svg;
   }
 
   async save(options?: PlotSaveOptions): Promise<void> {
@@ -1259,7 +1329,21 @@ export class PlotBuilder {
 
   async _toRawPlot(module?: RawModule): Promise<RawJsPlot> {
     const currentModule = module ?? (await ensureRawModule());
-    return buildRawPlotFromState(this.#state, currentModule);
+    const cached = this.#rawPlotCache;
+    if (cached && cached.module === currentModule && cached.revision === this.#revision) {
+      return cached.rawPlot;
+    }
+
+    const rawPlot = await buildRawPlotFromState(this.#state, currentModule);
+    if (this.#rawPlotCache) {
+      this.#rawPlotCache.rawPlot.free();
+    }
+    this.#rawPlotCache = {
+      module: currentModule,
+      revision: this.#revision,
+      rawPlot,
+    };
+    return rawPlot;
   }
 
   #addXYSeries(kind: "line" | "scatter", input: XYSeriesInput): this {
@@ -1269,7 +1353,54 @@ export class PlotBuilder {
       throw new Error("x and y must have the same length");
     }
     this.#state.series.push({ kind, x, y } as LineSeriesDefinition | ScatterSeriesDefinition);
+    this.#markDirty();
     return this;
+  }
+
+  _revision(): number {
+    return this.#revision;
+  }
+
+  #markDirty(): void {
+    this.#revision += 1;
+    if (this.#rawPlotCache) {
+      this.#rawPlotCache.rawPlot.free();
+      this.#rawPlotCache = null;
+    }
+    this.#pngCache = null;
+    this.#svgCache = null;
+  }
+
+  #canCacheStaticExports(): boolean {
+    return this.#state.series.every((series) => !PlotBuilder.#seriesHasObservableSource(series));
+  }
+
+  static #seriesHasObservableSource(series: PlotSeriesDefinition): boolean {
+    switch (series.kind) {
+      case "line":
+      case "scatter":
+        return series.x.kind === "observable" || series.y.kind === "observable";
+      case "bar":
+        return series.values.kind === "observable";
+      case "histogram":
+      case "boxplot":
+        return series.data.kind === "observable";
+      case "error-bars":
+        return (
+          series.x.kind === "observable" ||
+          series.y.kind === "observable" ||
+          series.yErrors.kind === "observable"
+        );
+      case "error-bars-xy":
+        return (
+          series.x.kind === "observable" ||
+          series.y.kind === "observable" ||
+          series.xErrors.kind === "observable" ||
+          series.yErrors.kind === "observable"
+        );
+      default:
+        return false;
+    }
   }
 
   #serializeSeries(series: PlotSeriesDefinition): PlotSeriesSnapshot {
@@ -1345,12 +1476,16 @@ export class CanvasSession {
   #rawSession: RawWebCanvasSession;
   #canvas: HTMLCanvasElement;
   #cleanup: Array<() => void>;
+  #attachedPlot: PlotBuilder | null;
+  #attachedRevision: number | null;
 
   constructor(module: RawModule, rawSession: RawWebCanvasSession, canvas: HTMLCanvasElement) {
     this.#module = module;
     this.#rawSession = rawSession;
     this.#canvas = canvas;
     this.#cleanup = [];
+    this.#attachedPlot = null;
+    this.#attachedRevision = null;
   }
 
   hasPlot(): boolean {
@@ -1374,8 +1509,14 @@ export class CanvasSession {
   }
 
   async setPlot(plot: PlotBuilder): Promise<void> {
+    const revision = plot._revision();
+    if (this.#attachedPlot === plot && this.#attachedRevision === revision) {
+      return;
+    }
     const rawPlot = await plot._toRawPlot(this.#module);
     this.#rawSession.set_plot(rawPlot);
+    this.#attachedPlot = plot;
+    this.#attachedRevision = revision;
   }
 
   resize(width?: number, height?: number, scaleFactor?: number): void {
@@ -1457,6 +1598,8 @@ export class CanvasSession {
 
   destroy(): void {
     this.#rawSession.destroy();
+    this.#attachedPlot = null;
+    this.#attachedRevision = null;
   }
 
   dispose(): void {
@@ -1464,6 +1607,8 @@ export class CanvasSession {
       dispose();
     }
     this.#rawSession.destroy();
+    this.#attachedPlot = null;
+    this.#attachedRevision = null;
   }
 
   _pushCleanup(dispose: () => void): void {
@@ -1486,6 +1631,8 @@ export class WorkerSession {
   #rejectReady: ((reason: unknown) => void) | null;
   #hasPlot: boolean;
   #sessionEpoch: number;
+  #attachedPlot: PlotBuilder | null;
+  #attachedRevision: number | null;
 
   constructor(canvas: HTMLCanvasElement, mode: SessionMode, fallbackSession?: CanvasSession) {
     this.mode = mode;
@@ -1497,6 +1644,8 @@ export class WorkerSession {
     this.#nextRequestId = 1;
     this.#hasPlot = false;
     this.#sessionEpoch = 0;
+    this.#attachedPlot = null;
+    this.#attachedRevision = null;
     this.#resolveReady = null;
     this.#rejectReady = null;
     if (this.#fallbackSession) {
@@ -1538,6 +1687,11 @@ export class WorkerSession {
       return;
     }
 
+    const revision = plot._revision();
+    if (this.#attachedPlot === plot && this.#attachedRevision === revision) {
+      return;
+    }
+
     const sessionEpoch = this.#sessionEpoch;
 
     try {
@@ -1546,9 +1700,13 @@ export class WorkerSession {
         return;
       }
       this.#hasPlot = true;
+      this.#attachedPlot = plot;
+      this.#attachedRevision = revision;
     } catch (error) {
       if (sessionEpoch === this.#sessionEpoch) {
         this.#hasPlot = false;
+        this.#attachedPlot = null;
+        this.#attachedRevision = null;
       }
       throw error;
     }
@@ -1717,11 +1875,15 @@ export class WorkerSession {
     if (this.#fallbackSession) {
       this.#fallbackSession.destroy();
       this.#hasPlot = false;
+      this.#attachedPlot = null;
+      this.#attachedRevision = null;
       return;
     }
 
     this.#sessionEpoch += 1;
     this.#hasPlot = false;
+    this.#attachedPlot = null;
+    this.#attachedRevision = null;
     this.#post("destroy");
   }
 
@@ -1734,11 +1896,15 @@ export class WorkerSession {
       this.#fallbackSession.dispose();
       this.#fallbackSession = null;
       this.#hasPlot = false;
+      this.#attachedPlot = null;
+      this.#attachedRevision = null;
       return;
     }
 
     this.#sessionEpoch += 1;
     this.#hasPlot = false;
+    this.#attachedPlot = null;
+    this.#attachedRevision = null;
     this.#worker?.terminate();
     this.#worker = null;
     this.#failAll(new Error("worker session was disposed"));
@@ -1805,6 +1971,8 @@ export class WorkerSession {
 
   #failAll(reason: unknown): void {
     this.#hasPlot = false;
+    this.#attachedPlot = null;
+    this.#attachedRevision = null;
     this.#rejectReady?.(reason);
     this.#resolveReady = null;
     this.#rejectReady = null;
