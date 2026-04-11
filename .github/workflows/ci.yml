@@ -307,6 +307,47 @@ jobs:
               )
           PY
 
+  npm-package:
+    name: NPM Package
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-npm-package-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-npm-package-
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Cache Bun
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - name: Install JS workspace dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify npm tarball contents and bun installability
+        run: bun run --cwd packages/ruviz-web verify:pack
+
   platform-build:
     name: Build (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}

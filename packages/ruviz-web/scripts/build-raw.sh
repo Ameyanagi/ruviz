@@ -30,3 +30,8 @@ wasm-bindgen \
   --target web \
   --out-dir "${RAW_OUT_DIR}" \
   --out-name ruviz_web_raw
+
+cat >"${RAW_OUT_DIR}/.npmignore" <<'EOF'
+# Prevent npm from inheriting wasm-bindgen's generated .gitignore during
+# package creation. The package.json "files" allowlist is the source of truth.
+EOF

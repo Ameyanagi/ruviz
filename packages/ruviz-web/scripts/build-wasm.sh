@@ -30,3 +30,8 @@ if [[ "${RUVIZ_WASM_PACK_NO_OPT:-0}" == "1" ]]; then
 fi
 
 "${WASM_PACK_BIN}" "${WASM_PACK_ARGS[@]}"
+
+cat >"${PACKAGE_DIR}/generated/raw/.npmignore" <<'EOF'
+# Prevent npm from inheriting wasm-pack's generated .gitignore during package
+# creation. The package.json "files" allowlist is the source of truth.
+EOF

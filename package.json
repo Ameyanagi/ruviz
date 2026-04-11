@@ -29,7 +29,7 @@
     "preview:web": "bun run --cwd demo/web preview",
     "test:web": "bun run --cwd demo/web test:e2e",
     "install:web-browsers": "cd demo/web && bunx playwright install --with-deps chromium firefox webkit",
-    "pack:web-sdk": "bun run --cwd packages/ruviz-web pack:dry"
+    "pack:web-sdk": "bun run --cwd packages/ruviz-web verify:pack"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

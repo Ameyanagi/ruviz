@@ -49,6 +49,7 @@ jobs:
             --timeout 2400 \
             --interval 15 \
             --check "Test Fast Lane" \
+            --check "NPM Package" \
             --check "Python" \
             --check "Python Packaging"
 
@@ -189,11 +190,8 @@ jobs:
       - name: Verify ruviz-gpui examples compile
         run: cargo check -p ruviz-gpui --examples
 
-      - name: Build JS/TS web package
-        run: bun run --cwd packages/ruviz-web build
-
       - name: Validate npm tarball
-        run: bun run --cwd packages/ruviz-web pack:dry
+        run: bun run --cwd packages/ruviz-web verify:pack
 
   build-python-sdist:
     name: Build Python sdist
@@ -652,11 +650,8 @@ jobs:
             exit 1
           fi
 
-      - name: Build npm package
-        run: bun run --cwd packages/ruviz-web build
-
       - name: Validate npm tarball
-        run: bun run --cwd packages/ruviz-web pack:dry
+        run: bun run --cwd packages/ruviz-web verify:pack
 
       - name: Detect published npm package version
         id: npm-version
