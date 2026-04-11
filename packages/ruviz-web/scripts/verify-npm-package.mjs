@@ -21,11 +21,35 @@ const requiredInstalledFiles = [
 ];
 
 function run(command, args, cwd) {
-  return execFileSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  try {
+    return execFileSync(command, args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    if (!(error instanceof Error)) {
+      throw error;
+    }
+
+    const stdout = typeof error.stdout === "string" ? error.stdout.trim() : "";
+    const stderr = typeof error.stderr === "string" ? error.stderr.trim() : "";
+    const status = typeof error.status === "number" ? error.status : "unknown";
+    const details = [
+      `Command failed: ${command} ${args.join(" ")}`,
+      `exit status: ${status}`,
+    ];
+
+    if (stdout.length > 0) {
+      details.push(`stdout:\n${stdout}`);
+    }
+
+    if (stderr.length > 0) {
+      details.push(`stderr:\n${stderr}`);
+    }
+
+    throw new Error(details.join("\n\n"));
+  }
 }
 
 function assertFilesExist(baseDir, relativePaths, scope) {
