@@ -2251,6 +2251,37 @@ fn test_reference_save_png_reports_marker_sprite_compositor_for_large_scatter() 
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_marker_sprite_cache_keeps_image_bytes_unchanged() {
+    let (x, y) = large_xy_data();
+    let plot = || {
+        Plot::new()
+            .size_px(640, 480)
+            .ticks(false)
+            .grid(false)
+            .scatter(&x, &y)
+            .marker(MarkerStyle::Circle)
+            .marker_size(6.0)
+            .into_plot()
+    };
+
+    let (cold_png, cold_backend, cold_diagnostics) = plot()
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("cold reference scatter PNG render should succeed");
+    let (warm_png, warm_backend, warm_diagnostics) = plot()
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("warm reference scatter PNG render should succeed");
+
+    assert_eq!(cold_backend, "skia");
+    assert_eq!(warm_backend, "skia");
+    assert_eq!(cold_diagnostics.render_mode, "reference");
+    assert_eq!(warm_diagnostics.render_mode, "reference");
+    assert!(cold_diagnostics.used_marker_sprite_compositor);
+    assert!(warm_diagnostics.used_marker_sprite_compositor);
+    assert_eq!(cold_png, warm_png);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_reference_save_png_reports_marker_sprite_compositor_for_line_markers() {
     let (x, y) = large_xy_data();
     let plot = Plot::new()

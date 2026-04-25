@@ -14,7 +14,7 @@ use crate::{
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use tiny_skia::*;
 
 mod annotations;
@@ -72,6 +72,14 @@ struct MarkerSpriteKey {
     rgba_bits: u32,
     phase_x: u8,
     phase_y: u8,
+}
+
+const GLOBAL_MARKER_SPRITE_CACHE_LIMIT: usize = 4096;
+static GLOBAL_MARKER_SPRITE_CACHE: OnceLock<Mutex<HashMap<MarkerSpriteKey, Arc<MarkerSprite>>>> =
+    OnceLock::new();
+
+fn global_marker_sprite_cache() -> &'static Mutex<HashMap<MarkerSpriteKey, Arc<MarkerSprite>>> {
+    GLOBAL_MARKER_SPRITE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 impl MarkerSpriteKey {
@@ -345,8 +353,24 @@ impl SkiaRenderer {
             return Ok(sprite);
         }
 
+        if let Ok(global_cache) = global_marker_sprite_cache().lock() {
+            if let Some(sprite) = global_cache.get(&key).cloned() {
+                self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
+                self.note_marker_sprite_cache();
+                return Ok(sprite);
+            }
+        }
+
         let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
         self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
+        if let Ok(mut global_cache) = global_marker_sprite_cache().lock() {
+            if global_cache.len() >= GLOBAL_MARKER_SPRITE_CACHE_LIMIT
+                && !global_cache.contains_key(&key)
+            {
+                global_cache.clear();
+            }
+            global_cache.insert(key, Arc::clone(&sprite));
+        }
         self.note_marker_sprite_cache();
         Ok(sprite)
     }
