@@ -180,11 +180,19 @@ impl ParallelRenderer {
         output_vec.reserve(point_count);
 
         let project = |data_x: f64, data_y: f64| {
-            let normalized_x = x_scale.normalized_position(data_x, bounds.x_min, bounds.x_max);
-            let normalized_y = y_scale.normalized_position(data_y, bounds.y_min, bounds.y_max);
+            let pixel_x = if (bounds.x_max - bounds.x_min).abs() < f64::EPSILON {
+                plot_area.left + plot_area.width() * 0.5
+            } else {
+                let normalized_x = x_scale.normalized_position(data_x, bounds.x_min, bounds.x_max);
+                plot_area.left + normalized_x as f32 * plot_area.width()
+            };
 
-            let pixel_x = plot_area.left + normalized_x as f32 * plot_area.width();
-            let pixel_y = plot_area.bottom - normalized_y as f32 * plot_area.height();
+            let pixel_y = if (bounds.y_max - bounds.y_min).abs() < f64::EPSILON {
+                plot_area.top + plot_area.height() * 0.5
+            } else {
+                let normalized_y = y_scale.normalized_position(data_y, bounds.y_min, bounds.y_max);
+                plot_area.bottom - normalized_y as f32 * plot_area.height()
+            };
 
             Point2f::new(pixel_x, pixel_y)
         };
@@ -786,6 +794,44 @@ mod tests {
         assert_eq!(points.len(), 3);
         assert!((points[1].x - 50.0).abs() <= 1e-5);
         assert!((points[1].y - 50.0).abs() <= 1e-5);
+    }
+
+    #[test]
+    fn test_scaled_coordinate_transformation_handles_degenerate_log_range() {
+        let renderer = ParallelRenderer::new();
+        let x_data = vec![10.0];
+        let y_data = vec![10.0];
+
+        let bounds = DataBounds {
+            x_min: 10.0,
+            x_max: 10.0,
+            y_min: 1.0,
+            y_max: 100.0,
+        };
+
+        let plot_area = PlotArea {
+            left: 20.0,
+            right: 120.0,
+            top: 30.0,
+            bottom: 130.0,
+        };
+
+        let points = renderer
+            .transform_coordinates_parallel_scaled(
+                &x_data,
+                &y_data,
+                bounds,
+                plot_area,
+                &AxisScale::Log,
+                &AxisScale::Log,
+            )
+            .unwrap();
+
+        assert_eq!(points.len(), 1);
+        assert!((points[0].x - 70.0).abs() <= 1e-5);
+        assert!((points[0].y - 80.0).abs() <= 1e-5);
+        assert!(points[0].x.is_finite());
+        assert!(points[0].y.is_finite());
     }
 
     #[test]
