@@ -1132,6 +1132,15 @@ impl Plot {
             }
         }
 
+        let legend_items = self.collect_legend_items();
+        if !legend_items.is_empty() && self.layout.legend.enabled {
+            let legend = self
+                .layout
+                .legend
+                .to_legend(self.display.config.typography.legend_size());
+            renderer.draw_legend_full(&legend_items, &legend, plot_area, None)?;
+        }
+
         // Record performance statistics
         let duration = start_time.elapsed();
         let total_points = self.calculate_total_points();

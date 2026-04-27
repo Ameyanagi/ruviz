@@ -1407,6 +1407,51 @@ fn test_svg_legend_default_font_size_uses_typography_and_dpi() {
     );
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn test_parallel_render_draws_enabled_legend() {
+    let x: Vec<f64> = (0..25_000).map(|index| index as f64 / 250.0).collect();
+    let y: Vec<f64> = x.iter().map(|value| value.sin() * 0.2 + 0.5).collect();
+
+    let make_plot = |legend: bool| -> Plot {
+        let plot = Plot::new()
+            .scatter(&x, &y)
+            .label("Samples")
+            .end_series()
+            .xlim(0.0, 100.0)
+            .ylim(0.0, 1.0)
+            .set_output_pixels(420, 320);
+
+        if legend { plot.legend_best() } else { plot }
+    };
+
+    let with_legend = make_plot(true)
+        .render_with_parallel()
+        .expect("parallel render with legend should succeed");
+    let without_legend = make_plot(false)
+        .render_with_parallel()
+        .expect("parallel render without legend should succeed");
+
+    assert_eq!(with_legend.width, without_legend.width);
+    assert_eq!(with_legend.height, without_legend.height);
+
+    let differing_pixels = with_legend
+        .pixels
+        .chunks_exact(4)
+        .zip(without_legend.pixels.chunks_exact(4))
+        .filter(|(left, right)| {
+            left.iter()
+                .zip(right.iter())
+                .any(|(lhs, rhs)| (*lhs as i16 - *rhs as i16).abs() > 8)
+        })
+        .count();
+
+    assert!(
+        differing_pixels > 250,
+        "legend should visibly change parallel render output; differing pixels={differing_pixels}"
+    );
+}
+
 #[test]
 fn test_log_minor_ticks_are_generated_between_decades_by_default() {
     let major_ticks = vec![1.0, 10.0, 100.0, 1000.0];
