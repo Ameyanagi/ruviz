@@ -3,6 +3,7 @@ use crate::core::Point2f;
 use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
+use crate::render::skia::map_data_to_pixels_scaled;
 
 impl Plot {
     /// Render plot using parallel processing for multiple series
@@ -32,6 +33,21 @@ impl Plot {
         } else {
             self.effective_data_bounds()?
         };
+        self.validate_axis_scale_ranges_for_render(
+            &self.series_mgr.series,
+            bounds.0,
+            bounds.1,
+            bounds.2,
+            bounds.3,
+        )?;
+
+        let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
+            if let SeriesType::Bar { categories, .. } = &s.series_type {
+                Some(categories.clone())
+            } else {
+                None
+            }
+        });
 
         // Compute content-driven layout FIRST for consistent positioning
         let content = self.create_plot_content(bounds.2, bounds.3);
@@ -74,13 +90,39 @@ impl Plot {
         let x_tick_pixels: Vec<f32> = x_ticks
             .iter()
             .map(|&tick| {
-                map_data_to_pixels(tick, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).0
+                Self::scaled_x_pixel(tick, bounds.0, bounds.1, plot_area, &self.layout.x_scale)
             })
             .collect();
         let y_tick_pixels: Vec<f32> = y_ticks
             .iter()
             .map(|&tick| {
-                map_data_to_pixels(0.0, tick, bounds.0, bounds.1, bounds.2, bounds.3, plot_area).1
+                Self::scaled_y_pixel(tick, bounds.2, bounds.3, plot_area, &self.layout.y_scale)
+            })
+            .collect();
+        let x_minor_ticks = Self::minor_tick_values_for_scale(
+            &x_ticks,
+            bounds.0,
+            bounds.1,
+            &self.layout.x_scale,
+            self.layout.tick_config.minor_ticks_x,
+        );
+        let y_minor_ticks = Self::minor_tick_values_for_scale(
+            &y_ticks,
+            bounds.2,
+            bounds.3,
+            &self.layout.y_scale,
+            self.layout.tick_config.minor_ticks_y,
+        );
+        let x_minor_tick_pixels: Vec<f32> = x_minor_ticks
+            .iter()
+            .map(|&tick| {
+                Self::scaled_x_pixel(tick, bounds.0, bounds.1, plot_area, &self.layout.x_scale)
+            })
+            .collect();
+        let y_minor_tick_pixels: Vec<f32> = y_minor_ticks
+            .iter()
+            .map(|&tick| {
+                Self::scaled_y_pixel(tick, bounds.2, bounds.3, plot_area, &self.layout.y_scale)
             })
             .collect();
 
@@ -88,9 +130,19 @@ impl Plot {
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         if self.layout.grid_style.visible && self.needs_cartesian_axes() {
             let grid_color = self.layout.grid_style.effective_color();
-            renderer.draw_grid(
+            let grid_x_pixels = Self::grid_tick_pixels(
                 &x_tick_pixels,
+                &x_minor_tick_pixels,
+                &self.layout.tick_config.grid_mode,
+            );
+            let grid_y_pixels = Self::grid_tick_pixels(
                 &y_tick_pixels,
+                &y_minor_tick_pixels,
+                &self.layout.tick_config.grid_mode,
+            );
+            renderer.draw_grid(
+                &grid_x_pixels,
+                &grid_y_pixels,
                 plot_area,
                 grid_color,
                 self.layout.grid_style.line_style.clone(),
@@ -98,12 +150,30 @@ impl Plot {
             )?;
         }
 
+        let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
+            plot_area,
+            bounds.0,
+            bounds.1,
+            bar_categories.as_ref().map(Vec::len),
+            &[],
+        );
+
         // Draw axes (sequential - UI elements) - only for Cartesian plots
         if self.needs_cartesian_axes() && self.layout.tick_config.enabled {
-            renderer.draw_axes(
+            let x_axis_ticks = categorical_x_tick_pixels
+                .as_deref()
+                .unwrap_or(x_tick_pixels.as_slice());
+            let x_axis_minor_ticks = if categorical_x_tick_pixels.is_some() {
+                &[][..]
+            } else {
+                x_minor_tick_pixels.as_slice()
+            };
+            renderer.draw_axes_with_minor_ticks(
                 plot_area,
-                &x_tick_pixels,
+                x_axis_ticks,
                 &y_tick_pixels,
+                x_axis_minor_ticks,
+                &y_minor_tick_pixels,
                 &self.layout.tick_config.direction,
                 &self.layout.tick_config.sides,
                 self.display.theme.foreground,
@@ -141,11 +211,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 x_data,
                                 y_data,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         // Process line segments in parallel
@@ -192,11 +264,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 x_data,
                                 y_data,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         // Process markers in parallel
@@ -225,11 +299,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &x_data,
                                 values,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
@@ -238,8 +314,16 @@ impl Plot {
                         let pixels_per_unit = parallel_plot_area.width() / data_range;
                         let bar_width = bar_width_fraction * pixels_per_unit;
 
-                        let baseline_y = map_data_to_pixels(
-                            0.0, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area,
+                        let baseline_y = map_data_to_pixels_scaled(
+                            0.0,
+                            0.0,
+                            bounds.0,
+                            bounds.1,
+                            bounds.2,
+                            bounds.3,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .1;
 
@@ -282,11 +366,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 x_data,
                                 y_data,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         let markers = self.render.parallel_renderer.process_markers_parallel(
@@ -314,16 +400,26 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &x_data,
                                 &hist_data.counts,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         // Create bar instances for histogram
-                        let baseline_y = map_data_to_pixels(
-                            0.0, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area,
+                        let baseline_y = map_data_to_pixels_scaled(
+                            0.0,
+                            0.0,
+                            bounds.0,
+                            bounds.1,
+                            bounds.2,
+                            bounds.3,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .1;
 
@@ -369,60 +465,78 @@ impl Plot {
                         let box_width = 0.3; // Box width
 
                         // Map Y coordinates to plot area
-                        let q1_y = map_data_to_pixels(
+                        let q1_y = map_data_to_pixels_scaled(
+                            0.0,
                             box_data.q1,
-                            0.0,
                             bounds.0,
                             bounds.1,
                             bounds.2,
                             bounds.3,
                             plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .1;
-                        let median_y = map_data_to_pixels(
+                        let median_y = map_data_to_pixels_scaled(
+                            0.0,
                             box_data.median,
-                            0.0,
                             bounds.0,
                             bounds.1,
                             bounds.2,
                             bounds.3,
                             plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .1;
-                        let q3_y = map_data_to_pixels(
+                        let q3_y = map_data_to_pixels_scaled(
+                            0.0,
                             box_data.q3,
-                            0.0,
                             bounds.0,
                             bounds.1,
                             bounds.2,
                             bounds.3,
                             plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .1;
-                        let lower_whisker_y = map_data_to_pixels(
+                        let lower_whisker_y = map_data_to_pixels_scaled(
+                            0.0,
                             box_data.min,
-                            0.0,
                             bounds.0,
                             bounds.1,
                             bounds.2,
                             bounds.3,
                             plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .1;
-                        let upper_whisker_y = map_data_to_pixels(
-                            box_data.max,
+                        let upper_whisker_y = map_data_to_pixels_scaled(
                             0.0,
+                            box_data.max,
                             bounds.0,
                             bounds.1,
                             bounds.2,
                             bounds.3,
                             plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .1;
 
                         // Map X coordinate
-                        let x_center_px = map_data_to_pixels(
-                            x_center, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area,
+                        let x_center_px = map_data_to_pixels_scaled(
+                            x_center,
+                            0.0,
+                            bounds.0,
+                            bounds.1,
+                            bounds.2,
+                            bounds.3,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                         .0;
                         let box_left = x_center_px - box_width * plot_area.width() * 0.5;
@@ -431,8 +545,16 @@ impl Plot {
                         // Transform outliers
                         let mut outliers = Vec::new();
                         for &outlier in &box_data.outliers {
-                            let outlier_y = map_data_to_pixels(
-                                outlier, 0.0, bounds.0, bounds.1, bounds.2, bounds.3, plot_area,
+                            let outlier_y = map_data_to_pixels_scaled(
+                                0.0,
+                                outlier,
+                                bounds.0,
+                                bounds.1,
+                                bounds.2,
+                                bounds.3,
+                                plot_area,
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )
                             .1;
                             outliers.push(crate::core::types::Point2f {
@@ -525,11 +647,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &kde_data.x,
                                 &kde_data.y,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         // Process line segments in parallel
@@ -551,11 +675,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &step_x,
                                 &step_y,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         // Process line segments in parallel
@@ -586,11 +712,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &poly_x,
                                 &poly_y,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         let segments = self.render.parallel_renderer.process_polyline_parallel(
@@ -622,11 +750,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &poly_x,
                                 &poly_y,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         let segments = self.render.parallel_renderer.process_polyline_parallel(
@@ -653,11 +783,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &poly_x,
                                 &poly_y,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         let segments = self.render.parallel_renderer.process_polyline_parallel(
@@ -689,11 +821,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &poly_x,
                                 &poly_y,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         let segments = self.render.parallel_renderer.process_polyline_parallel(
@@ -713,11 +847,13 @@ impl Plot {
                         let points = self
                             .render
                             .parallel_renderer
-                            .transform_coordinates_parallel(
+                            .transform_coordinates_parallel_scaled(
                                 &poly_x,
                                 &poly_y,
                                 data_bounds.clone(),
                                 parallel_plot_area.clone(),
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
                             )?;
 
                         let segments = self.render.parallel_renderer.process_polyline_parallel(
@@ -931,22 +1067,43 @@ impl Plot {
         // Draw tick labels (only for Cartesian plots)
         if self.needs_cartesian_axes() {
             let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
-            renderer.draw_axis_labels_at(
-                &layout.plot_area,
-                bounds.0,
-                bounds.1,
-                bounds.2,
-                bounds.3,
-                &x_ticks,
-                &y_ticks,
-                layout.xtick_baseline_y,
-                layout.ytick_right_x,
-                tick_size_px,
-                self.display.theme.foreground,
-                dpi,
-                self.layout.tick_config.enabled,
-                !self.layout.tick_config.enabled,
-            )?;
+            if let Some(ref categories) = bar_categories {
+                renderer.draw_axis_labels_at_categorical(
+                    &layout.plot_area,
+                    categories,
+                    bounds.0,
+                    bounds.1,
+                    bounds.2,
+                    bounds.3,
+                    &y_ticks,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.display.theme.foreground,
+                    dpi,
+                    self.layout.tick_config.enabled,
+                    !self.layout.tick_config.enabled,
+                )?;
+            } else {
+                renderer.draw_axis_labels_at_scaled(
+                    &layout.plot_area,
+                    bounds.0,
+                    bounds.1,
+                    bounds.2,
+                    bounds.3,
+                    &x_ticks,
+                    &y_ticks,
+                    layout.xtick_baseline_y,
+                    layout.ytick_right_x,
+                    tick_size_px,
+                    self.display.theme.foreground,
+                    dpi,
+                    self.layout.tick_config.enabled,
+                    !self.layout.tick_config.enabled,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                )?;
+            }
         }
 
         // Draw title if present

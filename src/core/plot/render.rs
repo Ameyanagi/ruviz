@@ -17,7 +17,7 @@ impl Plot {
             .map(|(image, _)| image)
     }
 
-    fn validate_axis_scale_ranges_for_render(
+    pub(crate) fn validate_axis_scale_ranges_for_render(
         &self,
         series_list: &[PlotSeries],
         x_min: f64,
@@ -44,7 +44,7 @@ impl Plot {
         Ok(())
     }
 
-    fn scaled_x_pixel(
+    pub(crate) fn scaled_x_pixel(
         value: f64,
         min: f64,
         max: f64,
@@ -59,7 +59,7 @@ impl Plot {
         }
     }
 
-    fn scaled_y_pixel(
+    pub(crate) fn scaled_y_pixel(
         value: f64,
         min: f64,
         max: f64,
@@ -128,7 +128,11 @@ impl Plot {
         (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1e-10
     }
 
-    fn grid_tick_pixels(major_pixels: &[f32], minor_pixels: &[f32], mode: &GridMode) -> Vec<f32> {
+    pub(crate) fn grid_tick_pixels(
+        major_pixels: &[f32],
+        minor_pixels: &[f32],
+        mode: &GridMode,
+    ) -> Vec<f32> {
         match mode {
             GridMode::MajorOnly => major_pixels.to_vec(),
             GridMode::MinorOnly => minor_pixels.to_vec(),

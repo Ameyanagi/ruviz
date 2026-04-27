@@ -1207,7 +1207,7 @@ pub(crate) struct LegendConfig {
     pub(crate) enabled: bool,
     /// Legend position
     pub(crate) position: Position,
-    /// Font size override
+    /// Font size override in typographic points.
     pub(crate) font_size: Option<f32>,
     /// Corner radius for rounded corners
     pub(crate) corner_radius: Option<f32>,
