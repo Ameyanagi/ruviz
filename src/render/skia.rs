@@ -379,6 +379,8 @@ impl SkiaRenderer {
                 return Ok(sprite);
             }
 
+            // Hold the global lock across creation to avoid duplicate same-key sprite work.
+            // If parallel PNG workloads make unrelated misses contend here, switch to per-key slots.
             let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
             let sprite = insert_global_marker_sprite(&mut global_cache, key, sprite);
             self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
