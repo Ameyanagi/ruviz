@@ -438,11 +438,7 @@ function render({ model, el }: RenderContext): () => void {
     positionContextMenu(clientX, clientY);
   };
 
-  const sessionPromise = createNotebookCanvasSession(canvas, {
-    onSecondaryClick: (clientX, clientY) => {
-      openContextMenu(clientX, clientY);
-    },
-  });
+  let sessionPromise: ReturnType<typeof createNotebookCanvasSession>;
 
   const triggerPngDownload = async (): Promise<void> => {
     try {
@@ -471,6 +467,11 @@ function render({ model, el }: RenderContext): () => void {
 
   wrapper.append(viewport, resizeHandle, menu);
   el.appendChild(wrapper);
+  sessionPromise = createNotebookCanvasSession(canvas, {
+    onSecondaryClick: (clientX, clientY) => {
+      openContextMenu(clientX, clientY);
+    },
+  });
 
   const applyCurrentLayout = (snapshot: PlotSnapshot | undefined): void => {
     applyWidgetLayout(wrapper, viewport, canvas, snapshot, displaySizeOverridePx);
