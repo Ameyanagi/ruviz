@@ -17,6 +17,133 @@ impl Plot {
             .map(|(image, _)| image)
     }
 
+    pub(crate) fn validate_axis_scale_ranges_for_render(
+        &self,
+        series_list: &[PlotSeries],
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        if !Self::needs_cartesian_axes_for_series(series_list) {
+            return Ok(());
+        }
+
+        self.layout
+            .x_scale
+            .validate_range(x_min, x_max)
+            .map_err(|message| {
+                PlottingError::InvalidInput(format!("Invalid x-axis range: {message}"))
+            })?;
+        self.layout
+            .y_scale
+            .validate_range(y_min, y_max)
+            .map_err(|message| {
+                PlottingError::InvalidInput(format!("Invalid y-axis range: {message}"))
+            })?;
+        Ok(())
+    }
+
+    pub(crate) fn scaled_x_pixel(
+        value: f64,
+        min: f64,
+        max: f64,
+        plot_area: tiny_skia::Rect,
+        scale: &AxisScale,
+    ) -> f32 {
+        if (max - min).abs() < f64::EPSILON {
+            plot_area.left() + plot_area.width() * 0.5
+        } else {
+            let normalized = scale.normalized_position(value, min, max);
+            plot_area.left() + normalized as f32 * plot_area.width()
+        }
+    }
+
+    pub(crate) fn scaled_y_pixel(
+        value: f64,
+        min: f64,
+        max: f64,
+        plot_area: tiny_skia::Rect,
+        scale: &AxisScale,
+    ) -> f32 {
+        if (max - min).abs() < f64::EPSILON {
+            plot_area.top() + plot_area.height() * 0.5
+        } else {
+            let normalized = scale.normalized_position(value, min, max);
+            plot_area.bottom() - normalized as f32 * plot_area.height()
+        }
+    }
+
+    pub(crate) fn minor_tick_values_for_scale(
+        major_ticks: &[f64],
+        min: f64,
+        max: f64,
+        scale: &AxisScale,
+        requested_count: usize,
+    ) -> Vec<f64> {
+        let (range_min, range_max) = if min <= max { (min, max) } else { (max, min) };
+        let mut ticks = match scale {
+            AxisScale::Log => Self::log_minor_tick_values_for_range(range_min, range_max),
+            AxisScale::Linear | AxisScale::SymLog { .. } => {
+                crate::axes::generate_minor_ticks(major_ticks, requested_count)
+            }
+        };
+
+        ticks.retain(|tick| {
+            tick.is_finite()
+                && *tick >= range_min
+                && *tick <= range_max
+                && !major_ticks
+                    .iter()
+                    .any(|major| Self::tick_values_overlap(*major, *tick))
+        });
+        ticks.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        ticks.dedup_by(|left, right| Self::tick_values_overlap(*left, *right));
+        ticks
+    }
+
+    fn log_minor_tick_values_for_range(min: f64, max: f64) -> Vec<f64> {
+        if min <= 0.0 || max <= 0.0 || min >= max {
+            return Vec::new();
+        }
+
+        let min_exp = min.log10().floor() as i32;
+        let max_exp = max.log10().ceil() as i32;
+        let mut ticks = Vec::new();
+
+        for exp in min_exp..=max_exp {
+            let decade = 10.0_f64.powi(exp);
+            for multiplier in 2..=9 {
+                let tick = decade * multiplier as f64;
+                if tick >= min && tick <= max {
+                    ticks.push(tick);
+                }
+            }
+        }
+
+        ticks
+    }
+
+    fn tick_values_overlap(left: f64, right: f64) -> bool {
+        (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1e-10
+    }
+
+    pub(crate) fn grid_tick_pixels(
+        major_pixels: &[f32],
+        minor_pixels: &[f32],
+        mode: &GridMode,
+    ) -> Vec<f32> {
+        match mode {
+            GridMode::MajorOnly => major_pixels.to_vec(),
+            GridMode::MinorOnly => minor_pixels.to_vec(),
+            GridMode::Both => major_pixels
+                .iter()
+                .chain(minor_pixels.iter())
+                .copied()
+                .collect(),
+        }
+    }
+
     pub(super) fn render_image_with_mode_and_series_renderer<F>(
         &self,
         mode: RenderExecutionMode,
@@ -103,6 +230,7 @@ impl Plot {
 
         let (x_min, x_max, y_min, y_max) =
             self.effective_main_panel_bounds_for_series(&snapshot_series)?;
+        self.validate_axis_scale_ranges_for_render(&snapshot_series, x_min, x_max, y_min, y_max)?;
 
         let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
             if let SeriesType::Bar { categories, .. } = &s.series_type {
@@ -155,20 +283,52 @@ impl Plot {
 
         let x_tick_pixels: Vec<f32> = x_ticks
             .iter()
-            .map(|&tick| map_data_to_pixels(tick, 0.0, x_min, x_max, y_min, y_max, plot_area).0)
+            .map(|&tick| Self::scaled_x_pixel(tick, x_min, x_max, plot_area, &self.layout.x_scale))
             .collect();
         let y_tick_pixels: Vec<f32> = y_ticks
             .iter()
-            .map(|&tick| map_data_to_pixels(0.0, tick, x_min, x_max, y_min, y_max, plot_area).1)
+            .map(|&tick| Self::scaled_y_pixel(tick, y_min, y_max, plot_area, &self.layout.y_scale))
+            .collect();
+        let x_minor_ticks = Self::minor_tick_values_for_scale(
+            &x_ticks,
+            x_min,
+            x_max,
+            &self.layout.x_scale,
+            self.layout.tick_config.minor_ticks_x,
+        );
+        let y_minor_ticks = Self::minor_tick_values_for_scale(
+            &y_ticks,
+            y_min,
+            y_max,
+            &self.layout.y_scale,
+            self.layout.tick_config.minor_ticks_y,
+        );
+        let x_minor_tick_pixels: Vec<f32> = x_minor_ticks
+            .iter()
+            .map(|&tick| Self::scaled_x_pixel(tick, x_min, x_max, plot_area, &self.layout.x_scale))
+            .collect();
+        let y_minor_tick_pixels: Vec<f32> = y_minor_ticks
+            .iter()
+            .map(|&tick| Self::scaled_y_pixel(tick, y_min, y_max, plot_area, &self.layout.y_scale))
             .collect();
 
         let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
         if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
-            renderer.draw_grid(
+            let grid_x_pixels = Self::grid_tick_pixels(
                 &x_tick_pixels,
+                &x_minor_tick_pixels,
+                &self.layout.tick_config.grid_mode,
+            );
+            let grid_y_pixels = Self::grid_tick_pixels(
                 &y_tick_pixels,
+                &y_minor_tick_pixels,
+                &self.layout.tick_config.grid_mode,
+            );
+            renderer.draw_grid(
+                &grid_x_pixels,
+                &grid_y_pixels,
                 plot_area,
                 grid_color,
                 self.layout.grid_style.line_style.clone(),
@@ -189,10 +349,17 @@ impl Plot {
             let x_axis_ticks = categorical_x_tick_pixels
                 .as_deref()
                 .unwrap_or(x_tick_pixels.as_slice());
-            renderer.draw_axes(
+            let x_axis_minor_ticks = if categorical_x_tick_pixels.is_some() {
+                &[][..]
+            } else {
+                x_minor_tick_pixels.as_slice()
+            };
+            renderer.draw_axes_with_minor_ticks(
                 plot_area,
                 x_axis_ticks,
                 &y_tick_pixels,
+                x_axis_minor_ticks,
+                &y_minor_tick_pixels,
                 &self.layout.tick_config.direction,
                 &self.layout.tick_config.sides,
                 self.display.theme.foreground,
@@ -238,7 +405,7 @@ impl Plot {
                     !draw_ticks,
                 )?;
             } else {
-                renderer.draw_axis_labels_at(
+                renderer.draw_axis_labels_at_scaled(
                     &layout.plot_area,
                     x_min,
                     x_max,
@@ -253,6 +420,8 @@ impl Plot {
                     dpi,
                     self.layout.tick_config.enabled,
                     !draw_ticks,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
                 )?;
             }
         }
@@ -290,6 +459,15 @@ impl Plot {
             render_scale,
             mode,
         )?;
+
+        let legend_items = self.collect_legend_items();
+        if !legend_items.is_empty() && self.layout.legend.enabled {
+            let legend = self
+                .layout
+                .legend
+                .to_legend(self.display.config.typography.legend_size());
+            renderer.draw_legend_full(&legend_items, &legend, plot_area, None)?;
+        }
 
         let diagnostics = renderer.render_diagnostics().clone();
         Ok((renderer.into_image(), diagnostics))
@@ -1361,6 +1539,7 @@ impl Plot {
 
         let (x_min, x_max, y_min, y_max) =
             self.effective_main_panel_bounds_for_series(&snapshot_series)?;
+        self.validate_axis_scale_ranges_for_render(&snapshot_series, x_min, x_max, y_min, y_max)?;
 
         // Use the same content-driven layout path as PNG rendering.
         let content = self.create_plot_content(y_min, y_max);
@@ -1432,6 +1611,46 @@ impl Plot {
             &self.layout.y_scale,
             self.layout.tick_config.major_ticks_y,
         );
+        let x_tick_layout = if bar_categories.is_none() {
+            Some(TickLayout::compute(
+                x_min,
+                x_max,
+                plot_left,
+                plot_right,
+                &self.layout.x_scale,
+                self.layout.tick_config.major_ticks_x,
+            ))
+        } else {
+            None
+        };
+        let y_minor_ticks = Self::minor_tick_values_for_scale(
+            &y_tick_layout.data_positions,
+            y_min,
+            y_max,
+            &self.layout.y_scale,
+            self.layout.tick_config.minor_ticks_y,
+        );
+        let y_minor_tick_pixels: Vec<f32> = y_minor_ticks
+            .iter()
+            .map(|&tick| Self::scaled_y_pixel(tick, y_min, y_max, plot_area, &self.layout.y_scale))
+            .collect();
+        let x_minor_tick_pixels: Vec<f32> = x_tick_layout
+            .as_ref()
+            .map(|layout| {
+                Self::minor_tick_values_for_scale(
+                    &layout.data_positions,
+                    x_min,
+                    x_max,
+                    &self.layout.x_scale,
+                    self.layout.tick_config.minor_ticks_x,
+                )
+                .iter()
+                .map(|&tick| {
+                    Self::scaled_x_pixel(tick, x_min, x_max, plot_area, &self.layout.x_scale)
+                })
+                .collect()
+            })
+            .unwrap_or_default();
 
         // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
@@ -1439,11 +1658,16 @@ impl Plot {
         if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
+            let grid_y_pixels = Self::grid_tick_pixels(
+                &y_tick_layout.pixel_positions,
+                &y_minor_tick_pixels,
+                &self.layout.tick_config.grid_mode,
+            );
             if bar_categories.is_some() {
                 // For bar charts, only draw horizontal grid lines
                 svg.draw_grid(
                     &[], // no vertical grid lines for bar charts
-                    &y_tick_layout.pixel_positions,
+                    &grid_y_pixels,
                     plot_left,
                     plot_right,
                     plot_top,
@@ -1454,17 +1678,17 @@ impl Plot {
                 );
             } else {
                 // For other charts, compute X-axis ticks and draw full grid
-                let x_tick_layout = TickLayout::compute(
-                    x_min,
-                    x_max,
-                    plot_left,
-                    plot_right,
-                    &self.layout.x_scale,
-                    self.layout.tick_config.major_ticks_x,
+                let x_tick_layout = x_tick_layout
+                    .as_ref()
+                    .expect("non-categorical SVG render should have x tick layout");
+                let grid_x_pixels = Self::grid_tick_pixels(
+                    &x_tick_layout.pixel_positions,
+                    &x_minor_tick_pixels,
+                    &self.layout.tick_config.grid_mode,
                 );
                 svg.draw_grid(
-                    &x_tick_layout.pixel_positions,
-                    &y_tick_layout.pixel_positions,
+                    &grid_x_pixels,
+                    &grid_y_pixels,
                     plot_left,
                     plot_right,
                     plot_top,
@@ -1512,13 +1736,15 @@ impl Plot {
 
                 // Bar chart: draw axes with category labels
                 if self.layout.tick_config.enabled {
-                    svg.draw_axes(
+                    svg.draw_axes_with_minor_ticks(
                         plot_left,
                         plot_right,
                         plot_top,
                         plot_bottom,
                         &category_x_tick_positions,
                         &y_tick_layout.pixel_positions,
+                        &[],
+                        &y_minor_tick_pixels,
                         &self.layout.tick_config.direction,
                         &self.layout.tick_config.sides,
                         self.display.theme.foreground,
@@ -1553,22 +1779,19 @@ impl Plot {
                 }
             } else {
                 // Normal chart: draw axes with numeric labels
-                let x_tick_layout = TickLayout::compute(
-                    x_min,
-                    x_max,
-                    plot_left,
-                    plot_right,
-                    &self.layout.x_scale,
-                    self.layout.tick_config.major_ticks_x,
-                );
+                let x_tick_layout = x_tick_layout
+                    .as_ref()
+                    .expect("non-categorical SVG render should have x tick layout");
                 if self.layout.tick_config.enabled {
-                    svg.draw_axes(
+                    svg.draw_axes_with_minor_ticks(
                         plot_left,
                         plot_right,
                         plot_top,
                         plot_bottom,
                         &x_tick_layout.pixel_positions,
                         &y_tick_layout.pixel_positions,
+                        &x_minor_tick_pixels,
+                        &y_minor_tick_pixels,
                         &self.layout.tick_config.direction,
                         &self.layout.tick_config.sides,
                         self.display.theme.foreground,
@@ -1688,7 +1911,10 @@ impl Plot {
         // Draw legend if we have labeled series and legend is enabled
         if !legend_items.is_empty() && self.layout.legend.enabled {
             // Convert old LegendConfig to new Legend type
-            let legend = self.layout.legend.to_legend();
+            let legend = self
+                .layout
+                .legend
+                .to_legend(self.display.config.typography.legend_size());
             // Use new legend rendering with proper handles
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
             svg.draw_legend_full(&legend_items, &legend, plot_bounds, None)?;

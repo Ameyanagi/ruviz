@@ -182,29 +182,13 @@ pub fn map_data_to_pixels_scaled(
     x_scale: &crate::axes::AxisScale,
     y_scale: &crate::axes::AxisScale,
 ) -> (f32, f32) {
-    use crate::axes::Scale;
+    let normalized_x = x_scale.normalized_position(data_x, data_x_min, data_x_max);
+    let normalized_y = y_scale.normalized_position(data_y, data_y_min, data_y_max);
 
-    // Create scale objects for the data ranges
-    let x_scale_obj = x_scale.create_scale(data_x_min, data_x_max);
-    let y_scale_obj = y_scale.create_scale(data_y_min, data_y_max);
+    let pixel_x = plot_area.left() + normalized_x as f32 * plot_area.width();
+    let pixel_y = plot_area.bottom() - normalized_y as f32 * plot_area.height();
 
-    // Transform data values to normalized [0, 1] space using the scales
-    let normalized_x = x_scale_obj.transform(data_x);
-    let normalized_y = y_scale_obj.transform(data_y);
-
-    // Use CoordinateTransform with normalized [0, 1] data bounds
-    // since scaling has already been applied
-    let transform = CoordinateTransform::from_plot_area(
-        plot_area.left(),
-        plot_area.top(),
-        plot_area.width(),
-        plot_area.height(),
-        0.0, // normalized min
-        1.0, // normalized max
-        0.0, // normalized min
-        1.0, // normalized max
-    );
-    transform.data_to_screen(normalized_x, normalized_y)
+    (pixel_x, pixel_y)
 }
 
 /// Generate intelligent ticks using matplotlib's MaxNLocator algorithm

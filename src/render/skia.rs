@@ -542,12 +542,42 @@ impl SkiaRenderer {
         }
     }
 
+    fn x_label_center_scaled(
+        plot_area: &LayoutRect,
+        x_value: f64,
+        x_min: f64,
+        x_max: f64,
+        scale: &crate::axes::AxisScale,
+    ) -> f32 {
+        if (x_max - x_min).abs() < f64::EPSILON {
+            plot_area.center_x()
+        } else {
+            let normalized = scale.normalized_position(x_value, x_min, x_max);
+            plot_area.left + normalized as f32 * plot_area.width()
+        }
+    }
+
     fn y_label_center(plot_area: &LayoutRect, y_value: f64, y_min: f64, y_max: f64) -> f32 {
         let y_range = y_max - y_min;
         if y_range.abs() < f64::EPSILON {
             plot_area.center_y()
         } else {
             plot_area.bottom - ((y_value - y_min) as f32 / y_range as f32) * plot_area.height()
+        }
+    }
+
+    fn y_label_center_scaled(
+        plot_area: &LayoutRect,
+        y_value: f64,
+        y_min: f64,
+        y_max: f64,
+        scale: &crate::axes::AxisScale,
+    ) -> f32 {
+        if (y_max - y_min).abs() < f64::EPSILON {
+            plot_area.center_y()
+        } else {
+            let normalized = scale.normalized_position(y_value, y_min, y_max);
+            plot_area.bottom - normalized as f32 * plot_area.height()
         }
     }
 
@@ -678,6 +708,155 @@ impl SkiaRenderer {
                         tick_width,
                         LineStyle::Solid,
                     )?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Draw axis lines with major and minor tick marks.
+    pub fn draw_axes_with_minor_ticks(
+        &mut self,
+        plot_area: Rect,
+        x_major_ticks: &[f32],
+        y_major_ticks: &[f32],
+        x_minor_ticks: &[f32],
+        y_minor_ticks: &[f32],
+        tick_direction: &TickDirection,
+        tick_sides: &TickSides,
+        color: Color,
+    ) -> Result<()> {
+        let axis_width = self.logical_pixels_to_pixels(1.5);
+        let major_tick_size = self.logical_pixels_to_pixels(5.0);
+        let minor_tick_size = self.logical_pixels_to_pixels(3.0);
+        let major_tick_width = self.logical_pixels_to_pixels(1.0);
+        let minor_tick_width = self.logical_pixels_to_pixels(0.8);
+
+        self.draw_line(
+            plot_area.left(),
+            plot_area.bottom(),
+            plot_area.right(),
+            plot_area.bottom(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
+
+        self.draw_line(
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.left(),
+            plot_area.bottom(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
+
+        self.draw_line(
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.top(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
+
+        self.draw_line(
+            plot_area.right(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.bottom(),
+            color,
+            axis_width,
+            LineStyle::Solid,
+        )?;
+
+        for (tick_size, tick_width, ticks) in [
+            (major_tick_size, major_tick_width, x_major_ticks),
+            (minor_tick_size, minor_tick_width, x_minor_ticks),
+        ] {
+            for &x in ticks {
+                if x >= plot_area.left() && x <= plot_area.right() {
+                    if tick_sides.bottom {
+                        let (tick_start, tick_end) = Self::vertical_tick_span(
+                            plot_area.bottom(),
+                            tick_size,
+                            tick_direction,
+                            false,
+                        );
+                        self.draw_line(
+                            x,
+                            tick_start,
+                            x,
+                            tick_end,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                    if tick_sides.top {
+                        let (tick_start, tick_end) = Self::vertical_tick_span(
+                            plot_area.top(),
+                            tick_size,
+                            tick_direction,
+                            true,
+                        );
+                        self.draw_line(
+                            x,
+                            tick_start,
+                            x,
+                            tick_end,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        for (tick_size, tick_width, ticks) in [
+            (major_tick_size, major_tick_width, y_major_ticks),
+            (minor_tick_size, minor_tick_width, y_minor_ticks),
+        ] {
+            for &y in ticks {
+                if y >= plot_area.top() && y <= plot_area.bottom() {
+                    if tick_sides.left {
+                        let (tick_start, tick_end) = Self::horizontal_tick_span(
+                            plot_area.left(),
+                            tick_size,
+                            tick_direction,
+                            false,
+                        );
+                        self.draw_line(
+                            tick_start,
+                            y,
+                            tick_end,
+                            y,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
+                    if tick_sides.right {
+                        let (tick_start, tick_end) = Self::horizontal_tick_span(
+                            plot_area.right(),
+                            tick_size,
+                            tick_direction,
+                            true,
+                        );
+                        self.draw_line(
+                            tick_start,
+                            y,
+                            tick_end,
+                            y,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        )?;
+                    }
                 }
             }
         }
@@ -1603,6 +1782,74 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Draw axis tick labels and border using scale-aware layout positions.
+    pub(crate) fn draw_axis_labels_at_scaled(
+        &mut self,
+        plot_area: &LayoutRect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        x_ticks: &[f64],
+        y_ticks: &[f64],
+        xtick_baseline_y: f32,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+        dpi: f32,
+        show_tick_labels: bool,
+        draw_border: bool,
+        x_scale: &crate::axes::AxisScale,
+        y_scale: &crate::axes::AxisScale,
+    ) -> Result<()> {
+        let render_scale = RenderScale::new(dpi);
+
+        let skia_plot_area = Rect::from_ltrb(
+            plot_area.left,
+            plot_area.top,
+            plot_area.right,
+            plot_area.bottom,
+        )
+        .ok_or(PlottingError::InvalidData {
+            message: "Invalid plot area dimensions".to_string(),
+            position: None,
+        })?;
+
+        let x_labels = format_tick_labels_for_scale(x_ticks, x_scale);
+        let y_labels = format_tick_labels_for_scale(y_ticks, y_scale);
+
+        if show_tick_labels {
+            for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
+                let x_pixel =
+                    Self::x_label_center_scaled(plot_area, *tick_value, x_min, x_max, x_scale);
+
+                let label_snippet = self.generated_label(label_text);
+                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
+                let label_x = (x_pixel - text_width / 2.0)
+                    .max(0.0)
+                    .min(self.width() as f32 - text_width);
+                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
+            }
+
+            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
+                let y_pixel =
+                    Self::y_label_center_scaled(plot_area, *tick_value, y_min, y_max, y_scale);
+
+                let label_snippet = self.generated_label(label_text);
+                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
+                let label_x = (ytick_right_x - text_width).max(0.0);
+                let centered_y = y_pixel - text_height / 2.0;
+                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
+            }
+        }
+
+        if draw_border {
+            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
+        }
+
+        Ok(())
+    }
+
     /// Draw axis tick labels with categorical x-axis labels for bar charts
     ///
     /// Similar to `draw_axis_labels_at` but uses category names instead of numeric ticks
@@ -2328,6 +2575,18 @@ impl SkiaRenderer {
         legend.calculate_size(items, char_width)
     }
 
+    fn scaled_legend_for_render(&self, legend: &Legend) -> Legend {
+        let mut scaled = legend.clone();
+        scaled.font_size = self.points_to_pixels(legend.font_size);
+        scaled.style.border_width = self.points_to_pixels(legend.style.border_width);
+        scaled.style.corner_radius = self.points_to_pixels(legend.style.corner_radius);
+        scaled.style.shadow_offset = (
+            self.points_to_pixels(legend.style.shadow_offset.0),
+            self.points_to_pixels(legend.style.shadow_offset.1),
+        );
+        scaled
+    }
+
     /// Draw legend with full LegendItem support
     ///
     /// This is the new legend drawing method that properly renders different
@@ -2343,6 +2602,8 @@ impl SkiaRenderer {
             return Ok(());
         }
 
+        let legend = self.scaled_legend_for_render(legend);
+        let legend = &legend;
         let spacing = legend.spacing.to_pixels(legend.font_size);
 
         // Estimate character width for size calculation

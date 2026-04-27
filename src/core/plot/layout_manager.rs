@@ -94,7 +94,7 @@ impl LayoutManager {
         self.legend.position
     }
 
-    /// Set legend font size
+    /// Set legend font size in typographic points.
     pub fn set_legend_font_size(&mut self, size: f32) {
         self.legend.font_size = Some(size);
     }

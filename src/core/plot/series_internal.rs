@@ -547,8 +547,17 @@ impl Plot {
             SeriesType::Line { x_data, y_data } => {
                 let x_data = x_data.resolve(0.0);
                 let y_data = y_data.resolve(0.0);
-                let mut points =
-                    project_xy_points(&x_data, &y_data, x_min, x_max, y_min, y_max, plot_area);
+                let mut points = project_xy_points(
+                    &x_data,
+                    &y_data,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
                 let mut raster_plan = SeriesRasterPlan::default();
 
                 if series.marker_style.is_none()
@@ -590,8 +599,17 @@ impl Plot {
                 let y_data = y_data.resolve(0.0);
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-                let points =
-                    project_xy_points(&x_data, &y_data, x_min, x_max, y_min, y_max, plot_area);
+                let points = project_xy_points(
+                    &x_data,
+                    &y_data,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
                 let mut raster_plan = SeriesRasterPlan::default();
                 raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
                 Some(raster_plan)

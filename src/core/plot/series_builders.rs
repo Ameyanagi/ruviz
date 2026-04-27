@@ -900,7 +900,9 @@ impl PlotSeriesBuilder {
         self
     }
 
-    /// Set legend font size
+    /// Set legend font size in typographic points.
+    ///
+    /// The renderers convert this value to pixels using the configured output DPI.
     pub fn legend_font_size(mut self, size: f32) -> Self {
         self.plot.layout.legend.font_size = Some(size);
         self

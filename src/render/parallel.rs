@@ -1,4 +1,5 @@
 use crate::{
+    axes::AxisScale,
     core::{PlottingError, Result, types::Point2f},
     data::{elements::LineSegment, get_memory_manager},
     render::{Color, LineStyle, MarkerStyle},
@@ -144,6 +145,84 @@ impl ParallelRenderer {
         plot_area: PlotArea,
     ) -> Result<Vec<Point2f>> {
         self.transform_coordinates_parallel_pooled(x_data, y_data, bounds, plot_area)
+    }
+
+    /// Transform coordinates in parallel using axis-scale aware projection.
+    ///
+    /// Linear axes keep the existing SIMD/memory-pooled fast path. Non-linear
+    /// axes use the same normalized scale mapping as the main Skia/SVG paths.
+    pub fn transform_coordinates_parallel_scaled(
+        &self,
+        x_data: &[f64],
+        y_data: &[f64],
+        bounds: DataBounds,
+        plot_area: PlotArea,
+        x_scale: &AxisScale,
+        y_scale: &AxisScale,
+    ) -> Result<Vec<Point2f>> {
+        if matches!(x_scale, AxisScale::Linear) && matches!(y_scale, AxisScale::Linear) {
+            return self.transform_coordinates_parallel_pooled(x_data, y_data, bounds, plot_area);
+        }
+
+        if x_data.len() != y_data.len() {
+            return Err(PlottingError::DataLengthMismatch {
+                x_len: x_data.len(),
+                y_len: y_data.len(),
+                series_index: None,
+            });
+        }
+
+        let point_count = x_data.len();
+        let memory_manager = get_memory_manager();
+        let mut output_buffer = memory_manager.get_point_buffer(point_count);
+        let output_vec = output_buffer.get_mut();
+        output_vec.clear();
+        output_vec.reserve(point_count);
+
+        let project = |data_x: f64, data_y: f64| {
+            let pixel_x = if (bounds.x_max - bounds.x_min).abs() < f64::EPSILON {
+                plot_area.left + plot_area.width() * 0.5
+            } else {
+                let normalized_x = x_scale.normalized_position(data_x, bounds.x_min, bounds.x_max);
+                plot_area.left + normalized_x as f32 * plot_area.width()
+            };
+
+            let pixel_y = if (bounds.y_max - bounds.y_min).abs() < f64::EPSILON {
+                plot_area.top + plot_area.height() * 0.5
+            } else {
+                let normalized_y = y_scale.normalized_position(data_y, bounds.y_min, bounds.y_max);
+                plot_area.bottom - normalized_y as f32 * plot_area.height()
+            };
+
+            Point2f::new(pixel_x, pixel_y)
+        };
+
+        if !self.chunked_processing || point_count < self.chunk_size {
+            for i in 0..point_count {
+                output_vec.push(project(x_data[i], y_data[i]));
+            }
+            return Ok(output_buffer.into_inner());
+        }
+
+        let chunks: Vec<&[f64]> = x_data.chunks(self.chunk_size).collect();
+        let y_chunks: Vec<&[f64]> = y_data.chunks(self.chunk_size).collect();
+        let chunk_results: Vec<Vec<Point2f>> = chunks
+            .par_iter()
+            .zip(y_chunks.par_iter())
+            .map(|(x_chunk, y_chunk)| {
+                x_chunk
+                    .iter()
+                    .zip(y_chunk.iter())
+                    .map(|(&x, &y)| project(x, y))
+                    .collect()
+            })
+            .collect();
+
+        for chunk_result in chunk_results {
+            output_vec.extend(chunk_result);
+        }
+
+        Ok(output_buffer.into_inner())
     }
 
     /// Memory-optimized coordinate transformation using buffer pools
@@ -679,6 +758,80 @@ mod tests {
         assert_eq!(points.len(), 3);
         assert_eq!(points[0].x, 0.0); // x=1 maps to left edge
         assert_eq!(points[2].x, 100.0); // x=3 maps to right edge
+    }
+
+    #[test]
+    fn test_scaled_coordinate_transformation_uses_log_scale() {
+        let renderer = ParallelRenderer::new();
+        let x_data = vec![1.0, 10.0, 100.0];
+        let y_data = vec![1.0, 10.0, 100.0];
+
+        let bounds = DataBounds {
+            x_min: 1.0,
+            x_max: 100.0,
+            y_min: 1.0,
+            y_max: 100.0,
+        };
+
+        let plot_area = PlotArea {
+            left: 0.0,
+            right: 100.0,
+            top: 0.0,
+            bottom: 100.0,
+        };
+
+        let points = renderer
+            .transform_coordinates_parallel_scaled(
+                &x_data,
+                &y_data,
+                bounds,
+                plot_area,
+                &AxisScale::Log,
+                &AxisScale::Log,
+            )
+            .unwrap();
+
+        assert_eq!(points.len(), 3);
+        assert!((points[1].x - 50.0).abs() <= 1e-5);
+        assert!((points[1].y - 50.0).abs() <= 1e-5);
+    }
+
+    #[test]
+    fn test_scaled_coordinate_transformation_handles_degenerate_log_range() {
+        let renderer = ParallelRenderer::new();
+        let x_data = vec![10.0];
+        let y_data = vec![10.0];
+
+        let bounds = DataBounds {
+            x_min: 10.0,
+            x_max: 10.0,
+            y_min: 1.0,
+            y_max: 100.0,
+        };
+
+        let plot_area = PlotArea {
+            left: 20.0,
+            right: 120.0,
+            top: 30.0,
+            bottom: 130.0,
+        };
+
+        let points = renderer
+            .transform_coordinates_parallel_scaled(
+                &x_data,
+                &y_data,
+                bounds,
+                plot_area,
+                &AxisScale::Log,
+                &AxisScale::Log,
+            )
+            .unwrap();
+
+        assert_eq!(points.len(), 1);
+        assert!((points[0].x - 70.0).abs() <= 1e-5);
+        assert!((points[0].y - 80.0).abs() <= 1e-5);
+        assert!(points[0].x.is_finite());
+        assert!(points[0].y.is_finite());
     }
 
     #[test]
