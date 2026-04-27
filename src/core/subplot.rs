@@ -583,8 +583,6 @@ mod tests {
 
     #[test]
     fn test_subplot_rendering_integration() {
-        use crate::render::Theme;
-
         let x = vec![1.0, 2.0, 3.0];
         let y = vec![2.0, 4.0, 3.0];
 
@@ -602,6 +600,66 @@ mod tests {
         assert_eq!(figure.grid_spec().total_subplots(), 1);
         assert_eq!(figure.width, 400);
         assert_eq!(figure.height, 300);
+    }
+
+    #[test]
+    fn test_subplot_renders_child_plot_legend() {
+        let dir = tempfile::tempdir().unwrap();
+        let with_legend_path = dir.path().join("with_legend.png");
+        let without_legend_path = dir.path().join("without_legend.png");
+
+        let x = vec![0.0, 1.0, 2.0, 3.0];
+        let y1 = vec![0.1, 0.2, 0.3, 0.4];
+        let y2 = vec![0.9, 0.8, 0.7, 0.6];
+
+        let make_plot = |legend: bool| -> Plot {
+            let builder = Plot::new()
+                .line(&x, &y1)
+                .label("Alpha")
+                .line(&x, &y2)
+                .label("Beta")
+                .xlim(0.0, 3.0)
+                .ylim(0.0, 1.0);
+
+            if legend {
+                builder.legend_best().into()
+            } else {
+                builder.into()
+            }
+        };
+
+        subplots(1, 1, 500, 350)
+            .unwrap()
+            .subplot(0, 0, make_plot(true))
+            .unwrap()
+            .save(&with_legend_path)
+            .unwrap();
+        subplots(1, 1, 500, 350)
+            .unwrap()
+            .subplot(0, 0, make_plot(false))
+            .unwrap()
+            .save(&without_legend_path)
+            .unwrap();
+
+        let with_legend = image::open(with_legend_path).unwrap().to_rgba8();
+        let without_legend = image::open(without_legend_path).unwrap().to_rgba8();
+        assert_eq!(with_legend.dimensions(), without_legend.dimensions());
+
+        let differing_pixels = with_legend
+            .pixels()
+            .zip(without_legend.pixels())
+            .filter(|(left, right)| {
+                left.0
+                    .iter()
+                    .zip(right.0.iter())
+                    .any(|(lhs, rhs)| (*lhs as i16 - *rhs as i16).abs() > 8)
+            })
+            .count();
+
+        assert!(
+            differing_pixels > 250,
+            "legend should visibly change subplot output; differing pixels={differing_pixels}"
+        );
     }
 
     #[test]

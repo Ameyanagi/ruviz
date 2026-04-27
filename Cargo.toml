@@ -420,3 +420,7 @@ harness = false
 [[bench]]
 name = "plot_traits"
 harness = false
+
+[[bench]]
+name = "performance"
+harness = false

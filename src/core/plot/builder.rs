@@ -750,7 +750,7 @@ where
         self
     }
 
-    /// Set legend font size
+    /// Set legend font size in typographic points.
     ///
     /// This method forwards to the inner Plot.
     pub fn legend_font_size(mut self, size: f32) -> Self {

@@ -96,7 +96,8 @@ fn bench_multi_series(c: &mut Criterion) {
                     for (i, (x, y)) in all_series_data.iter().enumerate() {
                         plot = plot
                             .line(black_box(x), black_box(y))
-                            .label(format!("Series {}", i + 1));
+                            .label(format!("Series {}", i + 1))
+                            .end_series();
                     }
 
                     plot = plot.legend(Position::TopRight);

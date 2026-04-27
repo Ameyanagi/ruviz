@@ -47,17 +47,15 @@ impl TickLayout {
         // Generate tick positions in data coordinates
         let data_positions = generate_ticks_for_scale(data_min, data_max, target_ticks, scale);
 
-        // Convert to pixel coordinates
-        let data_range = data_max - data_min;
         let pixel_range = pixel_max - pixel_min;
 
         let pixel_positions: Vec<f32> = data_positions
             .iter()
             .map(|&data_pos| {
-                if data_range.abs() < f64::EPSILON {
+                if (data_max - data_min).abs() < f64::EPSILON {
                     pixel_min
                 } else {
-                    let normalized = (data_pos - data_min) / data_range;
+                    let normalized = scale.normalized_position(data_pos, data_min, data_max);
                     pixel_min + (normalized as f32) * pixel_range
                 }
             })
@@ -89,18 +87,16 @@ impl TickLayout {
         // Generate tick positions in data coordinates
         let data_positions = generate_ticks_for_scale(data_min, data_max, target_ticks, scale);
 
-        // Convert to pixel coordinates (inverted for Y-axis)
-        let data_range = data_max - data_min;
         let pixel_range = pixel_bottom - pixel_top;
 
         let pixel_positions: Vec<f32> = data_positions
             .iter()
             .map(|&data_pos| {
-                if data_range.abs() < f64::EPSILON {
+                if (data_max - data_min).abs() < f64::EPSILON {
                     pixel_bottom
                 } else {
                     // Invert: higher data values -> lower pixel values
-                    let normalized = (data_pos - data_min) / data_range;
+                    let normalized = scale.normalized_position(data_pos, data_min, data_max);
                     pixel_bottom - (normalized as f32) * pixel_range
                 }
             })
@@ -228,6 +224,28 @@ mod tests {
         assert!(!layout.is_empty());
         assert_eq!(layout.data_positions.len(), layout.pixel_positions.len());
         assert_eq!(layout.data_positions.len(), layout.labels.len());
+    }
+
+    #[test]
+    fn test_log_tick_layout_uses_log_pixel_positions() {
+        let layout = TickLayout::compute(1.0, 1000.0, 0.0, 300.0, &AxisScale::Log, 4);
+
+        assert_eq!(layout.data_positions, vec![1.0, 10.0, 100.0, 1000.0]);
+        assert!((layout.pixel_positions[0] - 0.0).abs() < 0.1);
+        assert!((layout.pixel_positions[1] - 100.0).abs() < 0.1);
+        assert!((layout.pixel_positions[2] - 200.0).abs() < 0.1);
+        assert!((layout.pixel_positions[3] - 300.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_log_y_tick_layout_uses_inverted_log_pixel_positions() {
+        let layout = TickLayout::compute_y_axis(1.0, 1000.0, 0.0, 300.0, &AxisScale::Log, 4);
+
+        assert_eq!(layout.data_positions, vec![1.0, 10.0, 100.0, 1000.0]);
+        assert!((layout.pixel_positions[0] - 300.0).abs() < 0.1);
+        assert!((layout.pixel_positions[1] - 200.0).abs() < 0.1);
+        assert!((layout.pixel_positions[2] - 100.0).abs() < 0.1);
+        assert!((layout.pixel_positions[3] - 0.0).abs() < 0.1);
     }
 
     #[test]

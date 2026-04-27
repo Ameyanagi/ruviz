@@ -396,8 +396,16 @@ impl Plot {
                     .iter()
                     .zip(y_data.iter())
                     .map(|(&x, &y)| {
-                        crate::render::skia::map_data_to_pixels(
-                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                        crate::render::skia::map_data_to_pixels_scaled(
+                            x,
+                            y,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
                         )
                     })
                     .collect();
@@ -417,8 +425,16 @@ impl Plot {
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                 let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
                 for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                    let (px, py) = crate::render::skia::map_data_to_pixels(
-                        x, y, x_min, x_max, y_min, y_max, plot_area,
+                    let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
+                        x,
+                        y,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
                     );
                     svg.draw_marker(px, py, marker_size, marker_style, color);
                 }

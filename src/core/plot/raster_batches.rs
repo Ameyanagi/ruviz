@@ -256,13 +256,15 @@ pub(super) fn project_xy_points(
     y_min: f64,
     y_max: f64,
     plot_area: tiny_skia::Rect,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
 ) -> Arc<[Point2f]> {
     x_data
         .iter()
         .zip(y_data.iter())
         .map(|(&x, &y)| {
-            let (px, py) = crate::render::skia::map_data_to_pixels(
-                x, y, x_min, x_max, y_min, y_max, plot_area,
+            let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
+                x, y, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
             );
             Point2f::new(px, py)
         })
