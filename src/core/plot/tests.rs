@@ -45,6 +45,15 @@ fn extract_svg_text_xy(svg: &str, text: &str) -> (f32, f32) {
     (parse_svg_attr(line, "x"), parse_svg_attr(line, "y"))
 }
 
+fn extract_svg_text_font_size(svg: &str, text: &str) -> f32 {
+    let marker = format!(">{}</text>", text);
+    let line = svg
+        .lines()
+        .find(|line| line.contains(&marker))
+        .unwrap_or_else(|| panic!("missing text node for {}", text));
+    parse_svg_attr(line, "font-size")
+}
+
 fn extract_svg_group_translate_xy(svg: &str, text: &str) -> (f32, f32) {
     let marker = format!(">{}</text>", text);
     let line = svg
@@ -73,6 +82,53 @@ fn extract_svg_group_translate_xy(svg: &str, text: &str) -> (f32, f32) {
         .parse::<f32>()
         .unwrap_or_else(|_| panic!("invalid translate y for {}", text));
     (x, y)
+}
+
+fn extract_first_svg_polyline_points(svg: &str) -> Vec<(f32, f32)> {
+    let line = svg
+        .lines()
+        .find(|line| line.contains("<polyline "))
+        .expect("missing polyline");
+    let marker = r#"points=""#;
+    let start = line
+        .find(marker)
+        .expect("missing polyline points attribute")
+        + marker.len();
+    let end = line[start..]
+        .find('"')
+        .expect("unterminated polyline points attribute")
+        + start;
+
+    line[start..end]
+        .split_whitespace()
+        .map(|pair| {
+            let mut coords = pair.split(',');
+            let x = coords
+                .next()
+                .expect("missing point x")
+                .parse::<f32>()
+                .expect("invalid point x");
+            let y = coords
+                .next()
+                .expect("missing point y")
+                .parse::<f32>()
+                .expect("invalid point y");
+            (x, y)
+        })
+        .collect()
+}
+
+fn count_short_horizontal_svg_lines(svg: &str, max_length: f32) -> usize {
+    svg.lines()
+        .filter(|line| line.contains("<line "))
+        .filter(|line| {
+            let x1 = parse_svg_attr(line, "x1");
+            let x2 = parse_svg_attr(line, "x2");
+            let y1 = parse_svg_attr(line, "y1");
+            let y2 = parse_svg_attr(line, "y2");
+            (y1 - y2).abs() <= 0.1 && (x2 - x1).abs() > 0.5 && (x2 - x1).abs() <= max_length
+        })
+        .count()
 }
 
 fn mean_rgb(pixels: &[u8]) -> (f64, f64, f64) {
@@ -486,6 +542,22 @@ fn image_pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
         image.pixels[idx + 2],
         image.pixels[idx + 3],
     ]
+}
+
+fn longest_dark_pixel_run_at_y(image: &Image, y: u32) -> usize {
+    let mut longest = 0;
+    let mut current = 0;
+
+    for x in 0..image.width {
+        if image_pixel_is_dark(image, x, y) {
+            current += 1;
+            longest = longest.max(current);
+        } else {
+            current = 0;
+        }
+    }
+
+    longest
 }
 
 fn mean_normalized_channel_diff(lhs: &Image, rhs: &Image) -> f64 {
@@ -1313,6 +1385,131 @@ fn test_group_mixed_series_uses_first_member_legend_glyph() {
         legend_items[0].item_type,
         LegendItemType::Scatter { .. }
     ));
+}
+
+#[test]
+fn test_svg_legend_default_font_size_uses_typography_and_dpi() {
+    let x = vec![0.0, 1.0];
+    let y = vec![1.0, 2.0];
+    let plot: Plot = Plot::new()
+        .line(&x, &y)
+        .label("Legend Label")
+        .legend_best()
+        .dpi(144)
+        .into();
+
+    let svg = plot.render_to_svg().unwrap();
+    let font_size = extract_svg_text_font_size(&svg, "Legend Label");
+
+    assert!(
+        (font_size - 18.0).abs() <= 0.2,
+        "default legend font should be typography legend size (9pt) scaled to 144 DPI: {font_size}"
+    );
+}
+
+#[test]
+fn test_log_minor_ticks_are_generated_between_decades_by_default() {
+    let major_ticks = vec![1.0, 10.0, 100.0, 1000.0];
+    let minor_ticks = Plot::minor_tick_values_for_scale(
+        &major_ticks,
+        1.0,
+        1000.0,
+        &crate::axes::AxisScale::Log,
+        0,
+    );
+
+    assert_eq!(minor_ticks.len(), 24);
+    assert!(minor_ticks.contains(&2.0));
+    assert!(minor_ticks.contains(&9.0));
+    assert!(minor_ticks.contains(&20.0));
+    assert!(minor_ticks.contains(&900.0));
+    assert!(!minor_ticks.contains(&10.0));
+    assert!(!minor_ticks.contains(&100.0));
+}
+
+#[test]
+fn test_log_axis_raster_draws_minor_tick_marks() {
+    let plot: Plot = Plot::new()
+        .size_px(480, 360)
+        .xlim(0.0, 1.0)
+        .ylim(1.0, 1000.0)
+        .yscale(crate::axes::AxisScale::Log)
+        .major_ticks_y(4)
+        .show_bottom_ticks(false)
+        .show_top_ticks(false)
+        .show_right_ticks(false)
+        .grid(false)
+        .into();
+
+    let plot_area = compute_render_plot_area(&plot);
+    let image = plot.render().unwrap();
+    let minor_y = plot_area.bottom() - (2.0_f64.log10() / 3.0) as f32 * plot_area.height();
+    let longest_run = longest_dark_pixel_run_at_y(&image, minor_y.round() as u32);
+
+    assert!(
+        longest_run >= 4,
+        "log minor tick at y=2 should create a short horizontal dark run; got {longest_run}"
+    );
+}
+
+#[test]
+fn test_svg_log_axis_draws_minor_tick_marks() {
+    let svg = Plot::new()
+        .size_px(480, 360)
+        .xlim(0.0, 1.0)
+        .ylim(1.0, 1000.0)
+        .yscale(crate::axes::AxisScale::Log)
+        .major_ticks_y(4)
+        .show_bottom_ticks(false)
+        .show_top_ticks(false)
+        .show_right_ticks(false)
+        .grid(false)
+        .render_to_svg()
+        .unwrap();
+
+    let short_horizontal_lines = count_short_horizontal_svg_lines(&svg, 12.0);
+    assert!(
+        short_horizontal_lines >= 25,
+        "log y-axis should include major and minor left tick marks; got {short_horizontal_lines}"
+    );
+}
+
+#[test]
+fn test_svg_line_uses_log_y_scale_for_geometry() {
+    let x = vec![0.0, 1.0, 2.0, 3.0];
+    let y = vec![1.0, 10.0, 100.0, 1000.0];
+
+    let plot: Plot = Plot::new()
+        .line(&x, &y)
+        .xlim(0.0, 3.0)
+        .ylim(1.0, 1000.0)
+        .yscale(crate::axes::AxisScale::Log)
+        .into();
+
+    let svg = plot.render_to_svg().unwrap();
+    let points = extract_first_svg_polyline_points(&svg);
+    assert_eq!(points.len(), 4);
+
+    let step_1 = (points[0].1 - points[1].1).abs();
+    let step_2 = (points[1].1 - points[2].1).abs();
+    let step_3 = (points[2].1 - points[3].1).abs();
+
+    assert!(
+        (step_1 - step_2).abs() < 2.0 && (step_2 - step_3).abs() < 2.0,
+        "log-spaced y values should have nearly equal pixel spacing: {points:?}"
+    );
+}
+
+#[test]
+fn test_log_axis_rejects_non_positive_render_range() {
+    let result = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .yscale(crate::axes::AxisScale::Log)
+        .render();
+
+    let err = result.expect_err("log scale should reject zero y range bound");
+    assert!(matches!(err, PlottingError::InvalidInput(_)));
+    assert!(err.to_string().contains("Invalid y-axis range"));
 }
 
 #[test]

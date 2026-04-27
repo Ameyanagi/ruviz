@@ -75,6 +75,22 @@ impl SvgRenderer {
         self.render_scale.logical_pixels_to_pixels(logical_pixels)
     }
 
+    fn points_to_pixels(&self, points: f32) -> f32 {
+        self.render_scale.points_to_pixels(points)
+    }
+
+    fn scaled_legend_for_render(&self, legend: &Legend) -> Legend {
+        let mut scaled = legend.clone();
+        scaled.font_size = self.points_to_pixels(legend.font_size);
+        scaled.style.border_width = self.points_to_pixels(legend.style.border_width);
+        scaled.style.corner_radius = self.points_to_pixels(legend.style.corner_radius);
+        scaled.style.shadow_offset = (
+            self.points_to_pixels(legend.style.shadow_offset.0),
+            self.points_to_pixels(legend.style.shadow_offset.1),
+        );
+        scaled
+    }
+
     /// Set text rendering backend mode.
     pub fn set_text_engine_mode(&mut self, mode: TextEngineMode) {
         self.text_engine_mode = mode;
@@ -892,6 +908,140 @@ impl SvgRenderer {
         }
     }
 
+    /// Draw axis lines with major and minor tick marks.
+    pub fn draw_axes_with_minor_ticks(
+        &mut self,
+        plot_left: f32,
+        plot_right: f32,
+        plot_top: f32,
+        plot_bottom: f32,
+        x_major_ticks: &[f32],
+        y_major_ticks: &[f32],
+        x_minor_ticks: &[f32],
+        y_minor_ticks: &[f32],
+        tick_direction: &TickDirection,
+        tick_sides: &TickSides,
+        color: Color,
+    ) {
+        let axis_width = self.logical_pixels_to_pixels(1.5);
+        let major_tick_size = self.logical_pixels_to_pixels(6.0);
+        let minor_tick_size = self.logical_pixels_to_pixels(3.5);
+        let tick_width = self.logical_pixels_to_pixels(1.0);
+        let minor_tick_width = self.logical_pixels_to_pixels(0.8);
+
+        self.draw_line(
+            plot_left,
+            plot_bottom,
+            plot_right,
+            plot_bottom,
+            color,
+            axis_width,
+            LineStyle::Solid,
+        );
+
+        self.draw_line(
+            plot_left,
+            plot_top,
+            plot_left,
+            plot_bottom,
+            color,
+            axis_width,
+            LineStyle::Solid,
+        );
+
+        self.draw_line(
+            plot_left,
+            plot_top,
+            plot_right,
+            plot_top,
+            color,
+            axis_width,
+            LineStyle::Solid,
+        );
+
+        self.draw_line(
+            plot_right,
+            plot_top,
+            plot_right,
+            plot_bottom,
+            color,
+            axis_width,
+            LineStyle::Solid,
+        );
+
+        for (tick_size, tick_width, ticks) in [
+            (major_tick_size, tick_width, x_major_ticks),
+            (minor_tick_size, minor_tick_width, x_minor_ticks),
+        ] {
+            for &x in ticks {
+                if x >= plot_left && x <= plot_right {
+                    if tick_sides.bottom {
+                        let (tick_start, tick_end) =
+                            Self::vertical_tick_span(plot_bottom, tick_size, tick_direction, false);
+                        self.draw_line(
+                            x,
+                            tick_start,
+                            x,
+                            tick_end,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        );
+                    }
+                    if tick_sides.top {
+                        let (tick_start, tick_end) =
+                            Self::vertical_tick_span(plot_top, tick_size, tick_direction, true);
+                        self.draw_line(
+                            x,
+                            tick_start,
+                            x,
+                            tick_end,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        );
+                    }
+                }
+            }
+        }
+
+        for (tick_size, tick_width, ticks) in [
+            (major_tick_size, tick_width, y_major_ticks),
+            (minor_tick_size, minor_tick_width, y_minor_ticks),
+        ] {
+            for &y in ticks {
+                if y >= plot_top && y <= plot_bottom {
+                    if tick_sides.left {
+                        let (tick_start, tick_end) =
+                            Self::horizontal_tick_span(plot_left, tick_size, tick_direction, false);
+                        self.draw_line(
+                            tick_start,
+                            y,
+                            tick_end,
+                            y,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        );
+                    }
+                    if tick_sides.right {
+                        let (tick_start, tick_end) =
+                            Self::horizontal_tick_span(plot_right, tick_size, tick_direction, true);
+                        self.draw_line(
+                            tick_start,
+                            y,
+                            tick_end,
+                            y,
+                            color,
+                            tick_width,
+                            LineStyle::Solid,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Draw axis tick labels
     pub fn draw_tick_labels(
         &mut self,
@@ -1238,6 +1388,8 @@ impl SvgRenderer {
             return Ok(());
         }
 
+        let legend = self.scaled_legend_for_render(legend);
+        let legend = &legend;
         let spacing = legend.spacing.to_pixels(legend.font_size);
         let (legend_width, legend_height, label_width) = match self.text_engine_mode {
             TextEngineMode::Plain => {

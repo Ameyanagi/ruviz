@@ -1229,11 +1229,11 @@ impl Default for LegendConfig {
 
 impl LegendConfig {
     /// Convert to new Legend type for rendering
-    pub(super) fn to_legend(&self) -> Legend {
+    pub(super) fn to_legend(&self, default_font_size: f32) -> Legend {
         let mut legend = Legend {
             enabled: self.enabled,
             position: LegendPosition::from_position(self.position),
-            font_size: self.font_size.unwrap_or(10.0),
+            font_size: self.font_size.unwrap_or(default_font_size),
             ..Legend::default()
         };
         if let Some(radius) = self.corner_radius {

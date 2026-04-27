@@ -50,7 +50,7 @@ impl Plot {
             LegendPosition::LowerCenter => Position::BottomCenter,
             LegendPosition::UpperCenter => Position::TopCenter,
             LegendPosition::Center => Position::Center,
-            LegendPosition::Best => Position::TopRight, // Default, actual best calculated at render time
+            LegendPosition::Best => Position::Best,
             LegendPosition::OutsideRight
             | LegendPosition::OutsideLeft
             | LegendPosition::OutsideUpper
@@ -88,7 +88,7 @@ impl Plot {
     /// ```
     pub fn legend_best(mut self) -> Self {
         self.layout.legend.enabled = true;
-        self.layout.legend.position = Position::TopRight; // Actual best computed at render time
+        self.layout.legend.position = Position::Best;
         self
     }
 

@@ -22,6 +22,29 @@ fn image_pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
     ]
 }
 
+fn dark_pixel_bounds(image: &Image) -> Option<(u32, u32, u32, u32)> {
+    let mut min_x = image.width;
+    let mut min_y = image.height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    let mut found = false;
+
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let pixel = image_pixel_rgba(image, x, y);
+            if pixel[3] > 0 && pixel[0] < 230 && pixel[1] < 230 && pixel[2] < 230 {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+                found = true;
+            }
+        }
+    }
+
+    found.then_some((min_x, min_y, max_x, max_y))
+}
+
 fn assert_exact_rgba_pixels(name: &str, reference: &Image, candidate: &Image) {
     assert_eq!(reference.width, candidate.width, "{name} width changed");
     assert_eq!(reference.height, candidate.height, "{name} height changed");
@@ -786,6 +809,56 @@ fn test_typst_raster_uses_native_1x_scale() {
         "native raster height should align with logical height: pixel={} logical={}",
         rendered_native.pixmap.height(),
         rendered_native.height
+    );
+}
+
+#[test]
+fn test_draw_legend_full_scales_font_with_render_dpi() {
+    fn render_legend(dpi: f32) -> Image {
+        let mut renderer = SkiaRenderer::new(360, 240, Theme::light()).unwrap();
+        renderer.clear();
+        renderer.set_render_scale(RenderScale::new(dpi));
+
+        let items = vec![LegendItem {
+            label: "Legend Label".to_string(),
+            color: Color::BLACK,
+            item_type: LegendItemType::Line {
+                style: LineStyle::Solid,
+                width: 1.0,
+            },
+            has_error_bars: false,
+        }];
+        let legend = Legend {
+            enabled: true,
+            position: LegendPosition::UpperLeft,
+            text_color: Color::BLACK,
+            ..Legend::default()
+        };
+        let plot_area = Rect::from_xywh(40.0, 40.0, 260.0, 160.0).unwrap();
+
+        renderer
+            .draw_legend_full(&items, &legend, plot_area, None)
+            .unwrap();
+        renderer.into_image()
+    }
+
+    let low_dpi = render_legend(72.0);
+    let high_dpi = render_legend(144.0);
+    let low_bounds = dark_pixel_bounds(&low_dpi).expect("low-dpi legend should draw dark pixels");
+    let high_bounds =
+        dark_pixel_bounds(&high_dpi).expect("high-dpi legend should draw dark pixels");
+    let low_width = low_bounds.2 - low_bounds.0 + 1;
+    let low_height = low_bounds.3 - low_bounds.1 + 1;
+    let high_width = high_bounds.2 - high_bounds.0 + 1;
+    let high_height = high_bounds.3 - high_bounds.1 + 1;
+
+    assert!(
+        high_width as f32 > low_width as f32 * 1.5,
+        "legend width should scale with DPI: low={low_width}, high={high_width}"
+    );
+    assert!(
+        high_height as f32 > low_height as f32 * 1.5,
+        "legend height should scale with DPI: low={low_height}, high={high_height}"
     );
 }
 
