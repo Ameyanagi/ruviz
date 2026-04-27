@@ -6,6 +6,25 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.13] - 2026-04-27
+
+### Added
+
+- Added scale-aware coordinate projection across the public PNG, SVG, and parallel render paths, including minor ticks and grid handling for logarithmic axes.
+- Added regression coverage for log-scale legend rendering, Typst-valid symbol labels, parallel legends, marker sprite cache eviction, and cold/warm PNG byte equality.
+
+### Changed
+
+- Public PNG marker rendering now reuses a bounded process-wide marker sprite cache across renderer instances, improving repeated large-scatter rendering while preserving output parity.
+- Registered the performance benchmark target and fixed the multi-series benchmark loop so `cargo bench --bench performance` runs the intended series set.
+
+### Fixed
+
+- Fixed public-render legend sizing so point-based legend text, frame, corner radius, and shadow offsets scale from the render DPI instead of fixed pixel assumptions.
+- Fixed public PNG legend rendering through the parallel plot path, including issue 68/69 coverage for log axes and Typst-valid symbol labels without adding LaTeX support.
+- Fixed box plot projection in the parallel renderer so quartiles and whiskers map through the y-axis scale.
+- Fixed a notebook widget session sizing race that could initialize WebKit test canvases at `1x1` before the notebook wrapper was attached.
+
 ## [0.4.12] - 2026-04-12
 
 ### Fixed
@@ -382,7 +401,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.12...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...HEAD
+[0.4.13]: https://github.com/Ameyanagi/ruviz/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/Ameyanagi/ruviz/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/Ameyanagi/ruviz/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/Ameyanagi/ruviz/compare/v0.4.9...v0.4.10
