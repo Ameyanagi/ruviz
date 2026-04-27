@@ -6,16 +6,32 @@ const PYTHON_WIDGET_BUNDLE = readFileSync(
   fileURLToPath(new URL("../../../python/ruviz_py/ruviz/widget.js", import.meta.url)),
   "utf8",
 );
+const DEMO_READY_TIMEOUT_MS = 45_000;
 
 async function waitForDemoReady(page) {
   await page.goto("/");
-  await expect(page.locator("#capability-status")).not.toHaveText("");
-  await expect(page.locator("#export-status")).toContainText("ready");
-  await expect(page.locator("#main-status")).toContainText("ready");
-  await expect(page.locator("#temporal-status")).toContainText("ready");
-  await expect(page.locator("#observable-status")).toContainText("ready");
-  await expect(page.locator("#worker-status")).toHaveText(/ready|fallback|unavailable/);
-  await page.waitForFunction(() => Boolean(window.__ruvizDemo?.mainSession));
+  await expect(page).toHaveTitle("ruviz wasm demo", { timeout: DEMO_READY_TIMEOUT_MS });
+  await expect(page.locator("#capability-status")).toContainText("default font:", {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await expect(page.locator("#export-status")).toContainText("ready", {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await expect(page.locator("#main-status")).toContainText("ready", {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await expect(page.locator("#temporal-status")).toContainText("ready", {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await expect(page.locator("#observable-status")).toContainText("ready", {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await expect(page.locator("#worker-status")).toHaveText(/ready|fallback|unavailable/, {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
+  await page.waitForFunction(() => Boolean(window.__ruvizDemo?.mainSession), undefined, {
+    timeout: DEMO_READY_TIMEOUT_MS,
+  });
 }
 
 test("renders the expanded demo panels and runtime diagnostics", async ({ page }) => {

@@ -82,6 +82,25 @@ fn global_marker_sprite_cache() -> &'static Mutex<HashMap<MarkerSpriteKey, Arc<M
     GLOBAL_MARKER_SPRITE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn insert_global_marker_sprite(
+    global_cache: &mut HashMap<MarkerSpriteKey, Arc<MarkerSprite>>,
+    key: MarkerSpriteKey,
+    sprite: Arc<MarkerSprite>,
+) -> Arc<MarkerSprite> {
+    if let Some(existing) = global_cache.get(&key).cloned() {
+        return existing;
+    }
+
+    if global_cache.len() >= GLOBAL_MARKER_SPRITE_CACHE_LIMIT
+        && let Some(evicted_key) = global_cache.keys().next().copied()
+    {
+        global_cache.remove(&evicted_key);
+    }
+
+    global_cache.insert(key, Arc::clone(&sprite));
+    sprite
+}
+
 impl MarkerSpriteKey {
     fn new(style: MarkerStyle, size: f32, color: Color, phase_x: u8, phase_y: u8) -> Self {
         Self {
@@ -353,24 +372,22 @@ impl SkiaRenderer {
             return Ok(sprite);
         }
 
-        if let Ok(global_cache) = global_marker_sprite_cache().lock() {
+        if let Ok(mut global_cache) = global_marker_sprite_cache().lock() {
             if let Some(sprite) = global_cache.get(&key).cloned() {
                 self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
                 self.note_marker_sprite_cache();
                 return Ok(sprite);
             }
+
+            let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
+            let sprite = insert_global_marker_sprite(&mut global_cache, key, sprite);
+            self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
+            self.note_marker_sprite_cache();
+            return Ok(sprite);
         }
 
         let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
         self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
-        if let Ok(mut global_cache) = global_marker_sprite_cache().lock() {
-            if global_cache.len() >= GLOBAL_MARKER_SPRITE_CACHE_LIMIT
-                && !global_cache.contains_key(&key)
-            {
-                global_cache.clear();
-            }
-            global_cache.insert(key, Arc::clone(&sprite));
-        }
         self.note_marker_sprite_cache();
         Ok(sprite)
     }

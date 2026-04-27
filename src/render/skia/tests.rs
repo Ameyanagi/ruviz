@@ -1,4 +1,6 @@
 use super::*;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 fn pixel_is_dark(image: &Image, x: u32, y: u32) -> bool {
     let idx = ((y * image.width + x) * 4) as usize;
@@ -115,6 +117,65 @@ fn assert_premultiplied_parity_against_reference(name: &str, reference: &Image, 
         (reference_ink - candidate_ink).abs() <= 0.10,
         "{name} changed visible ink coverage too much: reference_ink={reference_ink:.4} candidate_ink={candidate_ink:.4}"
     );
+}
+
+fn test_marker_sprite() -> Arc<MarkerSprite> {
+    Arc::new(MarkerSprite {
+        width: 1,
+        height: 1,
+        origin_x: 0,
+        origin_y: 0,
+        pixels: vec![0, 0, 0, 0],
+        scanlines: None,
+    })
+}
+
+fn test_marker_sprite_key(index: usize) -> MarkerSpriteKey {
+    MarkerSpriteKey {
+        style: MarkerStyle::Circle,
+        size_bits: index as u32,
+        rgba_bits: 0,
+        phase_x: 0,
+        phase_y: 0,
+    }
+}
+
+#[test]
+fn test_global_marker_sprite_cache_evicts_one_entry_at_limit() {
+    let mut cache = HashMap::new();
+    let sprite = test_marker_sprite();
+
+    for index in 0..GLOBAL_MARKER_SPRITE_CACHE_LIMIT {
+        cache.insert(test_marker_sprite_key(index), Arc::clone(&sprite));
+    }
+
+    let incoming_key = test_marker_sprite_key(GLOBAL_MARKER_SPRITE_CACHE_LIMIT + 1);
+    insert_global_marker_sprite(&mut cache, incoming_key, Arc::clone(&sprite));
+
+    let retained_existing_entries = (0..GLOBAL_MARKER_SPRITE_CACHE_LIMIT)
+        .filter(|&index| cache.contains_key(&test_marker_sprite_key(index)))
+        .count();
+
+    assert_eq!(cache.len(), GLOBAL_MARKER_SPRITE_CACHE_LIMIT);
+    assert_eq!(
+        retained_existing_entries,
+        GLOBAL_MARKER_SPRITE_CACHE_LIMIT - 1
+    );
+    assert!(cache.contains_key(&incoming_key));
+}
+
+#[test]
+fn test_global_marker_sprite_cache_keeps_existing_entry() {
+    let mut cache = HashMap::new();
+    let key = test_marker_sprite_key(1);
+    let existing = test_marker_sprite();
+    let replacement = test_marker_sprite();
+
+    cache.insert(key, Arc::clone(&existing));
+    let returned = insert_global_marker_sprite(&mut cache, key, replacement);
+
+    assert!(Arc::ptr_eq(&returned, &existing));
+    assert_eq!(cache.len(), 1);
 }
 
 fn legacy_draw_circle(
