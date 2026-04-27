@@ -7,6 +7,7 @@
 //! 4. Configurable frame styling
 
 use crate::core::position::Position;
+use crate::core::units::RenderScale;
 use crate::render::{Color, LineStyle, MarkerStyle};
 
 // ============================================================================
@@ -700,6 +701,19 @@ impl Legend {
         self
     }
 
+    /// Return a copy with point-based legend fields scaled for renderer pixels.
+    pub(crate) fn scaled_for_render(&self, render_scale: RenderScale) -> Self {
+        let mut scaled = self.clone();
+        scaled.font_size = render_scale.points_to_pixels(self.font_size);
+        scaled.style.border_width = render_scale.points_to_pixels(self.style.border_width);
+        scaled.style.corner_radius = render_scale.points_to_pixels(self.style.corner_radius);
+        scaled.style.shadow_offset = (
+            render_scale.points_to_pixels(self.style.shadow_offset.0),
+            render_scale.points_to_pixels(self.style.shadow_offset.1),
+        );
+        scaled
+    }
+
     /// Calculate the required size for the legend in pixels
     ///
     /// # Arguments
@@ -971,6 +985,28 @@ mod tests {
         let (width, height) = legend.calculate_size(&items, 6.0);
         assert!(width > 0.0);
         assert!(height > 0.0);
+    }
+
+    #[test]
+    fn test_scaled_for_render_scales_point_fields() {
+        let legend = Legend {
+            font_size: 12.0,
+            style: LegendStyle {
+                border_width: 1.5,
+                corner_radius: 3.0,
+                shadow_offset: (2.0, 4.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let scaled = legend.scaled_for_render(RenderScale::new(144.0));
+
+        assert!((scaled.font_size - 24.0).abs() < 0.001);
+        assert!((scaled.style.border_width - 3.0).abs() < 0.001);
+        assert!((scaled.style.corner_radius - 6.0).abs() < 0.001);
+        assert!((scaled.style.shadow_offset.0 - 4.0).abs() < 0.001);
+        assert!((scaled.style.shadow_offset.1 - 8.0).abs() < 0.001);
     }
 
     #[test]

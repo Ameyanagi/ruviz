@@ -2594,18 +2594,6 @@ impl SkiaRenderer {
         legend.calculate_size(items, char_width)
     }
 
-    fn scaled_legend_for_render(&self, legend: &Legend) -> Legend {
-        let mut scaled = legend.clone();
-        scaled.font_size = self.points_to_pixels(legend.font_size);
-        scaled.style.border_width = self.points_to_pixels(legend.style.border_width);
-        scaled.style.corner_radius = self.points_to_pixels(legend.style.corner_radius);
-        scaled.style.shadow_offset = (
-            self.points_to_pixels(legend.style.shadow_offset.0),
-            self.points_to_pixels(legend.style.shadow_offset.1),
-        );
-        scaled
-    }
-
     /// Draw legend with full LegendItem support
     ///
     /// This is the new legend drawing method that properly renders different
@@ -2621,7 +2609,7 @@ impl SkiaRenderer {
             return Ok(());
         }
 
-        let legend = self.scaled_legend_for_render(legend);
+        let legend = legend.scaled_for_render(self.render_scale);
         let legend = &legend;
         let spacing = legend.spacing.to_pixels(legend.font_size);
 

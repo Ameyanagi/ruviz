@@ -79,18 +79,6 @@ impl SvgRenderer {
         self.render_scale.points_to_pixels(points)
     }
 
-    fn scaled_legend_for_render(&self, legend: &Legend) -> Legend {
-        let mut scaled = legend.clone();
-        scaled.font_size = self.points_to_pixels(legend.font_size);
-        scaled.style.border_width = self.points_to_pixels(legend.style.border_width);
-        scaled.style.corner_radius = self.points_to_pixels(legend.style.corner_radius);
-        scaled.style.shadow_offset = (
-            self.points_to_pixels(legend.style.shadow_offset.0),
-            self.points_to_pixels(legend.style.shadow_offset.1),
-        );
-        scaled
-    }
-
     /// Set text rendering backend mode.
     pub fn set_text_engine_mode(&mut self, mode: TextEngineMode) {
         self.text_engine_mode = mode;
@@ -1388,7 +1376,7 @@ impl SvgRenderer {
             return Ok(());
         }
 
-        let legend = self.scaled_legend_for_render(legend);
+        let legend = legend.scaled_for_render(self.render_scale);
         let legend = &legend;
         let spacing = legend.spacing.to_pixels(legend.font_size);
         let (legend_width, legend_height, label_width) = match self.text_engine_mode {
