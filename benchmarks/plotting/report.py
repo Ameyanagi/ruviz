@@ -122,6 +122,39 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def _diagnostic_flags(result: dict[str, Any]) -> str:
+    diagnostics = result.get("renderDiagnostics")
+    if not diagnostics:
+        return "-"
+    flags = [
+        name
+        for name, enabled in diagnostics.items()
+        if name != "renderMode" and isinstance(enabled, bool) and enabled
+    ]
+    return ", ".join(flags) if flags else "-"
+
+
+def _rust_diagnostics_rows(runtime_payloads: list[dict[str, Any]]) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for payload in runtime_payloads:
+        if payload.get("runtime") != "rust":
+            continue
+        for result in payload["results"]:
+            if result["implementation"] != "ruviz":
+                continue
+            diagnostics = result.get("renderDiagnostics", {})
+            rows.append(
+                [
+                    result["scenarioId"],
+                    result["sizeLabel"],
+                    result["boundary"],
+                    diagnostics.get("renderMode", "-"),
+                    _diagnostic_flags(result),
+                ]
+            )
+    return rows
+
+
 def generate_markdown_report(
     *,
     environment: dict[str, Any],
@@ -149,7 +182,7 @@ def generate_markdown_report(
     sections: list[str] = [
         f"# {report_title}",
         "",
-        "This page is generated from the committed large-dataset plotting benchmark reference run.",
+        "This page is generated from the large-dataset plotting benchmark reference artifacts.",
         "",
         "## Methodology",
         "",
@@ -175,26 +208,22 @@ def generate_markdown_report(
         "- wasm target: Chromium-only browser benchmark via Playwright",
         f"- Full-run warmup / measured iterations: `{defaults['warmupIterations']}` / `{defaults['measuredIterations']}`",
         "",
-        "## Why It Got Faster",
+        "## Renderer Notes",
         "",
-        "The main change in this benchmark update is not a different benchmark harness. It is a different raster renderer path for large PNG exports.",
+        "This benchmark page describes the renderer paths active in the reference artifacts. Treat the numbers as a current snapshot for this machine, not a guarantee that every case improved relative to older snapshots.",
         "",
-        "What changed in `ruviz`:",
+        "Current `ruviz` renderer behavior:",
         "",
-        "- Large monotonic solid line series are reduced to a per-pixel-column envelope before stroking, so a `1M` point line on a `640px` canvas no longer pays to stroke every original segment.",
-        "- Static histograms now cache computed `HistogramData`, so `render_only` exports reuse prepared bins instead of re-running histogram binning on every frame.",
-        "- Nearest-neighbor, non-annotated heatmaps now render the final output surface directly and blit that image, instead of drawing one anti-aliased rectangle per source cell.",
-        "- The parallel line backend now emits a single polyline draw instead of thousands of two-point draw calls.",
-        "- Python host rendering now keeps a native Rust plot/prepared-plot handle alive across calls, so `render_png()`, `render_svg()`, `save()`, and `show()` no longer pay a Python JSON serialization + Rust JSON parse + plot reconstruction round-trip on every call.",
+        "- Large monotonic solid line series may reduce to a per-pixel-column envelope before stroking.",
+        "- Static histograms can reuse computed `HistogramData` for reused-object render boundaries.",
+        "- Eligible nearest-neighbor heatmaps can rasterize directly to the output surface before PNG encoding.",
+        "- Python host rendering keeps a native Rust plot/prepared-plot handle alive across repeated render/export calls.",
         "",
-        "Why those changes matter:",
+        "Interpretation notes:",
         "",
-        "- The old line path scaled with source vertex count even when many samples collapsed onto the same output column.",
-        "- The old histogram path repeated statistical preprocessing inside hot render loops.",
-        "- The old heatmap path scaled with source cell count rather than output pixel count for raster exports.",
-        "- The old Python binding path spent a large share of its time turning Python state into JSON and then rebuilding a fresh Rust `Plot` before rendering anything.",
-        "",
-        "The result is that current Rust PNG export timings mostly reflect output-resolution work for eligible raster cases, and current Python host-side timings reflect the renderer instead of the snapshot bridge much more closely than before.",
+        "- `render_only` excludes public API reconstruction but still measures rasterization/export work.",
+        "- `public_api_render` includes public plot construction and is the better boundary for end-to-end API cost.",
+        "- Renderer diagnostics below identify whether optimized paths were active in this run.",
         "",
         "## Scenario Matrix",
         "",
@@ -205,6 +234,7 @@ def generate_markdown_report(
         f"- Captured at: `{environment['capturedAt']}`",
         f"- Git commit: `{environment['gitCommit']}`",
         f"- Git branch: `{environment['gitBranch']}`",
+        f"- Git worktree dirty at benchmark start: `{'yes' if environment.get('gitDirty') else 'no'}`",
         f"- Host OS: `{environment['os']}`",
         f"- Host machine: `{environment['machine']}`",
         f"- Host processor: `{environment['processor']}`",
@@ -222,6 +252,19 @@ def generate_markdown_report(
         f"- [wasm.json]({raw_link_base}/wasm.json)",
         "",
     ]
+
+    diagnostics_rows = _rust_diagnostics_rows(runtime_payloads)
+    if diagnostics_rows:
+        sections.extend(
+            [
+                "## Rust Renderer Diagnostics",
+                "",
+                "These flags come from the Rust benchmark diagnostics and identify which renderer paths were active for each measured case.",
+                "",
+                _table(["Plot", "Size", "Boundary", "Mode", "Active flags"], diagnostics_rows),
+                "",
+            ]
+        )
 
     for boundary in ("render_only", "public_api_render"):
         rows: list[list[str]] = []

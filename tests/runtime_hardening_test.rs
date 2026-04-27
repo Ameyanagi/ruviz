@@ -39,8 +39,10 @@ fn render_rejects_excessive_dpi_before_rendering() {
 
 #[test]
 fn render_rejects_negative_dpi_with_context() {
-    let mut config = PlotConfig::default();
-    config.figure = FigureConfig::new(6.4, 4.8, -100.0);
+    let config = PlotConfig {
+        figure: FigureConfig::new(6.4, 4.8, -100.0),
+        ..Default::default()
+    };
 
     let err = Plot::with_config(config)
         .line(&[0.0, 1.0], &[1.0, 2.0])
@@ -56,8 +58,10 @@ fn render_rejects_negative_dpi_with_context() {
 
 #[test]
 fn render_rejects_fractional_dpi_above_max_before_rounding() {
-    let mut config = PlotConfig::default();
-    config.figure = FigureConfig::new(6.4, 4.8, 2400.4);
+    let config = PlotConfig {
+        figure: FigureConfig::new(6.4, 4.8, 2400.4),
+        ..Default::default()
+    };
 
     let err = Plot::with_config(config)
         .line(&[0.0, 1.0], &[1.0, 2.0])
@@ -97,8 +101,10 @@ fn render_rejects_nan_data_before_bounds_calculation() {
 
 #[test]
 fn render_rejects_non_finite_output_configuration_with_context() {
-    let mut config = PlotConfig::default();
-    config.figure = FigureConfig::new(f32::NAN, 4.8, 100.0);
+    let config = PlotConfig {
+        figure: FigureConfig::new(f32::NAN, 4.8, 100.0),
+        ..Default::default()
+    };
 
     let err = Plot::with_config(config)
         .line(&[0.0, 1.0], &[1.0, 2.0])

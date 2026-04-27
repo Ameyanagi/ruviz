@@ -1,14 +1,14 @@
 {
-  "capturedAt": "2026-04-04T01:13:56Z",
-  "os": "macOS-26.2-arm64-arm-64bit-Mach-O",
+  "capturedAt": "2026-04-27T16:30:26Z",
+  "os": "macOS-26.4-arm64-arm-64bit-Mach-O",
   "machine": "arm64",
   "processor": "arm",
   "cpuCount": 10,
   "pythonVersion": "3.14.2",
   "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
   "bunVersion": "1.3.5",
-  "gitCommit": "4b6e60b2ec72ce10ca862473387536cde6a26182",
-  "gitBranch": "bench/rust-feature-impact",
+  "gitCommit": "191b2876be6577d6f02dfdb8617e170be9c3023d",
+  "gitBranch": "main",
   "gitDirty": true,
   "manifest": {
     "version": 1,
@@ -204,7 +204,7 @@
   "runtimes": {
     "baseline_cpu": {
       "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
-      "ruvizVersion": "0.3.5",
+      "ruvizVersion": "0.4.13",
       "buildProfile": "release",
       "featureLabel": "baseline_cpu",
       "cargoFeatures": [
@@ -213,7 +213,7 @@
     },
     "default": {
       "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
-      "ruvizVersion": "0.3.5",
+      "ruvizVersion": "0.4.13",
       "buildProfile": "release",
       "featureLabel": "default",
       "cargoFeatures": [
@@ -224,7 +224,7 @@
     },
     "parallel_only": {
       "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
-      "ruvizVersion": "0.3.5",
+      "ruvizVersion": "0.4.13",
       "buildProfile": "release",
       "featureLabel": "parallel_only",
       "cargoFeatures": [
@@ -234,7 +234,7 @@
     },
     "parallel_simd": {
       "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
-      "ruvizVersion": "0.3.5",
+      "ruvizVersion": "0.4.13",
       "buildProfile": "release",
       "featureLabel": "parallel_simd",
       "cargoFeatures": [
@@ -245,7 +245,7 @@
     },
     "performance_alias": {
       "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
-      "ruvizVersion": "0.3.5",
+      "ruvizVersion": "0.4.13",
       "buildProfile": "release",
       "featureLabel": "performance_alias",
       "cargoFeatures": [
@@ -255,7 +255,7 @@
     },
     "gpu_only": {
       "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
-      "ruvizVersion": "0.3.5",
+      "ruvizVersion": "0.4.13",
       "buildProfile": "release",
       "featureLabel": "gpu_only",
       "cargoFeatures": [

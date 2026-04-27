@@ -1188,16 +1188,18 @@ mod tests {
             (renderer.cpu_renderer.width() * renderer.cpu_renderer.height() * 4)
                 as usize
         ];
-        let mut state = InteractionState::default();
-        state.brushed_region = Some(Rectangle::new(24.0, 24.0, 88.0, 88.0));
+        let state = InteractionState {
+            brushed_region: Some(Rectangle::new(24.0, 24.0, 88.0, 88.0)),
+            ..Default::default()
+        };
 
         renderer
             .render_brush_region(&state, &mut pixels)
             .expect("brush guide should render");
 
         let width = renderer.cpu_renderer.width() as usize;
-        let border_index = ((24usize * width + 24usize) * 4) as usize;
-        let interior_index = ((56usize * width + 56usize) * 4) as usize;
+        let border_index = (24usize * width + 24usize) * 4;
+        let interior_index = (56usize * width + 56usize) * 4;
 
         assert!(
             pixels[border_index + 3] > pixels[interior_index + 3],

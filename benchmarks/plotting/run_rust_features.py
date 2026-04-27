@@ -108,6 +108,7 @@ def main() -> None:
     else:
         docs_output = args.docs_output.resolve()
 
+    environment = host_environment()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     runtime_payloads: list[dict[str, Any]] = []
@@ -142,7 +143,6 @@ def main() -> None:
 
     validate_hashes(runtime_payloads)
 
-    environment = host_environment()
     environment["manifest"] = load_manifest(manifest_path)
     environment["featureMatrix"] = FEATURE_MATRIX
     environment["runtimes"] = {

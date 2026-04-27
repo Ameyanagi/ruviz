@@ -2,6 +2,8 @@
 //!
 //! These benchmarks measure memory allocation and pooling performance.
 
+use std::hint::black_box;
+
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ruviz::data::{MemoryPool, PooledVec, SharedMemoryPool};
 use ruviz::prelude::*;
@@ -155,7 +157,7 @@ fn bench_memory_pool_operations(c: &mut Criterion) {
 
             // Simulate processing
             let sum: f64 = vec.iter().sum();
-            criterion::black_box(sum);
+            black_box(sum);
         });
     });
 
@@ -173,7 +175,7 @@ fn bench_vec_operations(c: &mut Criterion) {
                 vec.push(i as f64);
             }
             let sum: f64 = vec.iter().sum();
-            criterion::black_box(sum);
+            black_box(sum);
         });
     });
 
@@ -186,7 +188,7 @@ fn bench_vec_operations(c: &mut Criterion) {
 
         b.iter(|| {
             let sum: f64 = vec.iter().sum();
-            criterion::black_box(sum);
+            black_box(sum);
         });
     });
 

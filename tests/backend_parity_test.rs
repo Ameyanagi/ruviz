@@ -161,7 +161,7 @@ fn test_backend_consistency_multi_series() {
     let result = Plot::new()
         .title("Backend Consistency - Multi-Series")
         .legend(Position::TopLeft)
-        .line(&x, &x.iter().copied().collect::<Vec<_>>())
+        .line(&x, &x.to_vec())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
         .label("Quadratic")

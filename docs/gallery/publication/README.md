@@ -28,4 +28,12 @@ A multi-panel subplot layout used for publication-scale figures.
 
 Source: `examples/doc_subplots.rs`
 
+### Typst Labels
+
+Publication text rendered through Typst math mode.
+
+![Typst Labels](../../assets/gallery/rust/publication/typst_text.png)
+
+Source: `examples/doc_typst_text.rs`
+
 [← Back to Gallery](../README.md)

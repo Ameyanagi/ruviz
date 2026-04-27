@@ -1,4 +1,6 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ruviz::prelude::*;
 use std::time::Duration;
 
@@ -97,7 +99,7 @@ fn bench_multi_series(c: &mut Criterion) {
                         plot = plot
                             .line(black_box(x), black_box(y))
                             .label(format!("Series {}", i + 1))
-                            .end_series();
+                            .into_plot();
                     }
 
                     plot = plot.legend(Position::TopRight);

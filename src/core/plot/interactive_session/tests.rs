@@ -1,3 +1,5 @@
+#![allow(clippy::useless_conversion)]
+
 use super::*;
 use crate::data::{Observable, StreamingXY, signal};
 use crate::prelude::Plot;
@@ -469,8 +471,8 @@ fn test_brush_overlay_renders_visible_outline() {
         .expect("surface frame should include brush overlay");
     let width = frame.layers.base.width as usize;
 
-    let border_index = ((72usize * width + 96usize) * 4) as usize;
-    let interior_index = ((104usize * width + 128usize) * 4) as usize;
+    let border_index = (72usize * width + 96usize) * 4;
+    let interior_index = (104usize * width + 128usize) * 4;
 
     assert!(
         overlay.pixels[border_index + 3] > overlay.pixels[interior_index + 3],

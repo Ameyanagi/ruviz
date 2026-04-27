@@ -12,20 +12,28 @@ The core line example used across the README and rustdoc.
 
 Source: `examples/doc_line_plot.rs`
 
-### Histogram Example
+### Scatter Plot
 
-Standalone histogram example rendered from the example suite.
+A compact point-cloud example for discrete observations.
 
-![Histogram Example](../../assets/gallery/rust/basic/histogram_example.png)
+![Scatter Plot](../../assets/gallery/rust/basic/scatter_plot.png)
 
-Source: `examples/histogram_example.rs`
+Source: `examples/doc_scatter_plot.rs`
 
-### Boxplot Example
+### Bar Chart
 
-Standalone boxplot example rendered from the example suite.
+Categorical values rendered as a simple bar chart.
 
-![Boxplot Example](../../assets/gallery/rust/basic/boxplot_example.png)
+![Bar Chart](../../assets/gallery/rust/basic/bar_chart.png)
 
-Source: `examples/boxplot_example.rs`
+Source: `examples/doc_bar_chart.rs`
+
+### Heatmap
+
+Matrix data shown with a continuous color scale.
+
+![Heatmap](../../assets/gallery/rust/basic/heatmap.png)
+
+Source: `examples/doc_heatmap.rs`
 
 [← Back to Gallery](../README.md)

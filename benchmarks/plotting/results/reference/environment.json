@@ -1,14 +1,15 @@
 {
-  "capturedAt": "2026-04-03T22:29:02Z",
-  "os": "macOS-26.2-arm64-arm-64bit-Mach-O",
+  "capturedAt": "2026-04-27T16:28:25Z",
+  "os": "macOS-26.4-arm64-arm-64bit-Mach-O",
   "machine": "arm64",
   "processor": "arm",
   "cpuCount": 10,
   "pythonVersion": "3.14.2",
   "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
   "bunVersion": "1.3.5",
-  "gitCommit": "ada0957cdceb3e71bdddf080492cd17e5881c98a",
-  "gitBranch": "bench/large-dataset-plotting",
+  "gitCommit": "191b2876be6577d6f02dfdb8617e170be9c3023d",
+  "gitBranch": "main",
+  "gitDirty": true,
   "manifest": {
     "version": 1,
     "outputTarget": "png_bytes",
@@ -123,8 +124,14 @@
   "runtimes": {
     "rust": {
       "rustVersion": "rustc 1.94.1 (e408947bf 2026-03-25)",
-      "ruvizVersion": "0.3.4",
-      "buildProfile": "release"
+      "ruvizVersion": "0.4.13",
+      "buildProfile": "release",
+      "featureLabel": "parallel+ndarray+serde",
+      "cargoFeatures": [
+        "parallel",
+        "ndarray",
+        "serde"
+      ]
     },
     "python": {
       "pythonVersion": "3.14.2",

@@ -3,7 +3,7 @@ SHELL := /bin/bash
 RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
 PYTHON_SITE_DIR := ../generated/python/site
 
-.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
+.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 help:
 	@echo "ruviz release documentation workflow"
@@ -20,6 +20,7 @@ help:
 	@echo "  make build-generated-preview-web Rebuild only generated/web/docs/"
 	@echo "  make generated-manifest  Refresh generated/manifest.json from local outputs"
 	@echo "  make check-doc-asset-refs Fail if published docs reference generated/ assets"
+	@echo "  make check-docs          Validate Markdown links/fences and README quick start syntax"
 	@echo "  make clean-generated     Remove generated/ and retired local output roots"
 	@echo ""
 	@echo "Validation targets:"
@@ -105,6 +106,9 @@ generated-manifest:
 check-doc-asset-refs:
 	uv run python scripts/check_no_generated_asset_refs.py
 
+check-docs:
+	uv run python scripts/check_docs.py
+
 fmt:
 	cargo fmt --all -- --check
 
@@ -114,15 +118,15 @@ clippy:
 check-web:
 	bun run check:web
 
-check: fmt clippy check-web
+check: fmt clippy check-web check-docs
 
 bench-plotting:
-	bun install --frozen-lockfile
+	bun install --frozen-lockfile --ignore-scripts
 	cd python && uv sync --group bench && uv run maturin develop --release
 	cd python && uv run python ../benchmarks/plotting/run.py --mode full
 
 bench-plotting-smoke:
-	bun install --frozen-lockfile
+	bun install --frozen-lockfile --ignore-scripts
 	cd python && uv sync --group bench && uv run maturin develop --release
 	cd python && uv run python ../benchmarks/plotting/run.py --mode smoke --output-dir ../benchmarks/plotting/results/smoke --docs-output ../benchmarks/plotting/results/smoke/report.md
 

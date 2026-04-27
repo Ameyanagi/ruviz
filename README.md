@@ -30,15 +30,25 @@ surface with `make release-docs` on the release docs branch.
 ```rust
 use ruviz::prelude::*;
 
-let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
-let y: Vec<f64> = x.iter().map(|&x| x * x).collect();
+fn main() -> Result<()> {
+    let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+    let y: Vec<f64> = x.iter().map(|&x| x * x).collect();
 
-Plot::new()
-    .line(&x, &y)
-    .title("Quadratic Function")
-    .xlabel("x")
-    .ylabel("y = x^2")
-    .save("plot.png")?;
+    Plot::new()
+        .line(&x, &y)
+        .title("Quadratic Function")
+        .xlabel("x")
+        .ylabel("y = x^2")
+        .save("plot.png")?;
+
+    Ok(())
+}
+```
+
+Run it with:
+
+```bash
+cargo run --release
 ```
 
 Need typeset math labels? See [Typst Text Mode](#typst-text-mode) below.

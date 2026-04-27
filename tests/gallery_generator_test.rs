@@ -149,6 +149,8 @@ impl GalleryIndex {
                 "publication".to_string(),
                 "performance".to_string(),
                 "advanced".to_string(),
+                "animation".to_string(),
+                "internationalization".to_string(),
             ],
         }
     }

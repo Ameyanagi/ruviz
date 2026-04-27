@@ -126,7 +126,7 @@ fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std:
         || {
             let x: Vec<f64> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
             Plot::new()
-                .line(&x, &x.iter().copied().collect::<Vec<_>>())
+                .line(&x, &x.to_vec())
                 .label("Linear")
                 .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
                 .label("Quadratic")

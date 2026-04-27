@@ -4,6 +4,22 @@ Distribution, density, and uncertainty-focused plot recipes.
 
 ## Examples
 
+### Histogram
+
+Distribution counts rendered with the default histogram styling.
+
+![Histogram](../../assets/gallery/rust/statistical/histogram.png)
+
+Source: `examples/doc_histogram.rs`
+
+### Box Plot
+
+Quartiles, whiskers, and outliers in a compact statistical summary.
+
+![Box Plot](../../assets/gallery/rust/statistical/boxplot.png)
+
+Source: `examples/doc_boxplot.rs`
+
 ### Kernel Density Estimate
 
 KDE example copied from the rustdoc image set.
@@ -28,12 +44,12 @@ Distribution plot with quartile-aware styling.
 
 Source: `examples/doc_violin.rs`
 
-### Seaborn-Style Boxplot
+### Error Bars
 
-A style-heavy statistical example generated from the example suite.
+Uncertainty intervals attached to line and scatter series.
 
-![Seaborn-Style Boxplot](../../assets/gallery/rust/statistical/seaborn_boxplot_example.png)
+![Error Bars](../../assets/gallery/rust/statistical/errorbar_plot.png)
 
-Source: `examples/seaborn_style_example.rs`
+Source: `examples/doc_errorbar.rs`
 
 [← Back to Gallery](../README.md)

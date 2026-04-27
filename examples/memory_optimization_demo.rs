@@ -13,10 +13,10 @@ fn main() -> Result<()> {
     let data_size = 50_000;
 
     println!("Generating {} data points...", data_size);
-    let x: Vec<f64> = (0..data_size).map(|i| i as f64 * 0.01).collect();
+    let x: Vec<f64> = (0..data_size).map(|i| i as f64 * 0.002).collect();
     let y: Vec<f64> = x
         .iter()
-        .map(|&x| (x * 2.0).sin() * (x * 0.1).exp() * (-x * 0.01).exp())
+        .map(|&x| ((x * 1.7).sin() + 0.35 * (x * 9.0).sin()) * (-x * 0.012).exp())
         .collect();
 
     let generation_time = start_time.elapsed();
@@ -43,9 +43,14 @@ fn main() -> Result<()> {
     let scatter_start = Instant::now();
 
     // Subsample for scatter plot
-    let step = 50;
-    let x_scatter: Vec<f64> = x.iter().step_by(step).cloned().collect();
-    let y_scatter: Vec<f64> = y.iter().step_by(step).cloned().collect();
+    let step = 10;
+    let x_scatter: Vec<f64> = x.iter().step_by(step).copied().collect();
+    let y_scatter: Vec<f64> = y
+        .iter()
+        .enumerate()
+        .step_by(step)
+        .map(|(index, &value)| value + 0.08 * ((index as f64) * 0.037).sin())
+        .collect();
 
     Plot::new()
         .title("Memory-Optimized Scatter Plot")

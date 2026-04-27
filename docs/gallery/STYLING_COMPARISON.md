@@ -12,7 +12,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib histogram](../tests/visual/reference/matplotlib/histogram.png) | ![ruviz histogram](../images/histogram.png) |
+| ![matplotlib histogram](../../tests/visual/reference/matplotlib/histogram.png) | ![ruviz histogram](../assets/rustdoc/histogram.png) |
 
 **Key styling elements:**
 - Fill alpha: 0.7 (70% opacity)
@@ -24,7 +24,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib boxplot](../tests/visual/reference/matplotlib/boxplot.png) | ![ruviz boxplot](../images/boxplot.png) |
+| ![matplotlib boxplot](../../tests/visual/reference/matplotlib/boxplot.png) | ![ruviz boxplot](../assets/rustdoc/boxplot.png) |
 
 **Key styling elements:**
 - Box fill with themed colors
@@ -36,7 +36,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib violin](../tests/visual/reference/matplotlib/violin.png) | ![ruviz violin](../images/violin_plot.png) |
+| ![matplotlib violin](../../tests/visual/reference/matplotlib/violin.png) | ![ruviz violin](../assets/rustdoc/violin_plot.png) |
 
 **Key styling elements:**
 - KDE curve for distribution shape
@@ -48,7 +48,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib kde](../tests/visual/reference/matplotlib/kde.png) | ![ruviz kde](../images/kde_plot.png) |
+| ![matplotlib kde](../../tests/visual/reference/matplotlib/kde.png) | ![ruviz kde](../assets/rustdoc/kde_plot.png) |
 
 **Key styling elements:**
 - Smooth density curve
@@ -62,7 +62,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib contour](../tests/visual/reference/matplotlib/contour.png) | ![ruviz contour](../images/contour_plot.png) |
+| ![matplotlib contour](../../tests/visual/reference/matplotlib/contour.png) | ![ruviz contour](../assets/rustdoc/contour_plot.png) |
 
 **Key styling elements:**
 - 20 contour levels by default
@@ -74,7 +74,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib heatmap](../tests/visual/reference/matplotlib/heatmap.png) | ![ruviz heatmap](../images/heatmap.png) |
+| ![matplotlib heatmap](../../tests/visual/reference/matplotlib/heatmap.png) | ![ruviz heatmap](../assets/rustdoc/heatmap.png) |
 
 **Key styling elements:**
 - Color-mapped cells
@@ -88,7 +88,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib ecdf](../tests/visual/reference/matplotlib/ecdf.png) | ![ruviz ecdf](../images/ecdf_plot.png) |
+| ![matplotlib ecdf](../../tests/visual/reference/matplotlib/ecdf.png) | ![ruviz ecdf](../assets/rustdoc/ecdf_plot.png) |
 
 **Key styling elements:**
 - Step function rendering
@@ -99,7 +99,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib errorbar](../tests/visual/reference/matplotlib/errorbar.png) | ![ruviz errorbar](../images/errorbar_plot.png) |
+| ![matplotlib errorbar](../../tests/visual/reference/matplotlib/errorbar.png) | ![ruviz errorbar](../assets/rustdoc/errorbar_plot.png) |
 
 **Key styling elements:**
 - Cap width proportional to data
@@ -112,7 +112,7 @@ ruviz aims to produce visually similar output to matplotlib and seaborn while pr
 
 | matplotlib | ruviz |
 |------------|-------|
-| ![matplotlib radar](../tests/visual/reference/matplotlib/radar.png) | ![ruviz radar](../images/radar_chart.png) |
+| ![matplotlib radar](../../tests/visual/reference/matplotlib/radar.png) | ![ruviz radar](../assets/rustdoc/radar_chart.png) |
 
 **Key styling elements:**
 - Filled polygon with alpha: 0.25
@@ -171,25 +171,25 @@ impl StyledShape for HistogramBar {
 
 | matplotlib | ruviz |
 |------------|-------|
-| Default palette and styling | ![ruviz default](../images/theme_default.png) |
+| Default palette and styling | ![ruviz default](../assets/rustdoc/theme_default.png) |
 
 ### Dark Theme
 
 | matplotlib | ruviz |
 |------------|-------|
-| Dark background styling | ![ruviz dark](../images/theme_dark.png) |
+| Dark background styling | ![ruviz dark](../assets/rustdoc/theme_dark.png) |
 
 ### Seaborn Theme
 
 | matplotlib | ruviz |
 |------------|-------|
-| Seaborn-inspired palette | ![ruviz seaborn](../images/theme_seaborn.png) |
+| Seaborn-inspired palette | ![ruviz seaborn](../assets/rustdoc/theme_seaborn.png) |
 
 ### Publication Theme
 
 | matplotlib | ruviz |
 |------------|-------|
-| Publication-ready styling | ![ruviz publication](../images/theme_publication.png) |
+| Publication-ready styling | ![ruviz publication](../assets/rustdoc/theme_publication.png) |
 
 ## Running Visual Tests
 

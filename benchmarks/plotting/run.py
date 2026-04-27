@@ -83,6 +83,8 @@ def main() -> None:
         docs_output = default_docs_output.resolve()
     else:
         docs_output = args.docs_output.resolve()
+
+    environment = host_environment()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rust_output = output_dir / "rust.json"
@@ -136,7 +138,6 @@ def main() -> None:
     ]
     validate_hashes(runtime_payloads)
 
-    environment = host_environment()
     environment["manifest"] = load_manifest(manifest_path)
     environment["runtimes"] = {
         payload["runtime"]: payload["environment"] for payload in runtime_payloads

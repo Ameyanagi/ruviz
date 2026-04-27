@@ -156,6 +156,42 @@ def _format_feature_cell(
     return text
 
 
+def _diagnostic_flags(result: dict[str, Any]) -> str:
+    diagnostics = result.get("renderDiagnostics")
+    if not diagnostics:
+        return "-"
+    flags = [
+        name
+        for name, enabled in diagnostics.items()
+        if name != "renderMode" and isinstance(enabled, bool) and enabled
+    ]
+    return ", ".join(flags) if flags else "-"
+
+
+def _default_diagnostics_rows(
+    result_index: dict[tuple[str, str, str, str], dict[str, Any]],
+    cases: list[tuple[str, str]],
+) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for scenario_id, size_label in cases:
+        for boundary in ("render_only", "public_api_render", "save_only", "public_api_save"):
+            result = result_index.get(("default", scenario_id, size_label, boundary))
+            if result is None:
+                continue
+            diagnostics = result.get("renderDiagnostics", {})
+            rows.append(
+                [
+                    scenario_id,
+                    size_label,
+                    boundary,
+                    result.get("actualBackend", "-"),
+                    diagnostics.get("renderMode", "-"),
+                    _diagnostic_flags(result),
+                ]
+            )
+    return rows
+
+
 def generate_feature_report(
     *,
     environment: dict[str, Any],
@@ -172,7 +208,7 @@ def generate_feature_report(
     sections: list[str] = [
         f"# {report_title}",
         "",
-        "This page is generated from the committed Rust feature-impact plotting benchmark reference run.",
+        "This page is generated from the Rust feature-impact plotting benchmark reference artifacts.",
         "",
         "## Methodology",
         "",
@@ -231,7 +267,7 @@ def generate_feature_report(
         f"- Captured at: `{environment['capturedAt']}`",
         f"- Git commit: `{environment['gitCommit']}`",
         f"- Git branch: `{environment['gitBranch']}`",
-        f"- Git worktree dirty: `{'yes' if environment.get('gitDirty') else 'no'}`",
+        f"- Git worktree dirty at benchmark start: `{'yes' if environment.get('gitDirty') else 'no'}`",
         f"- Host OS: `{environment['os']}`",
         f"- Host machine: `{environment['machine']}`",
         f"- Host processor: `{environment['processor']}`",
@@ -247,6 +283,22 @@ def generate_feature_report(
     for entry in feature_matrix:
         sections.append(f"- [{entry['label']}.json]({raw_link_base}/{entry['label']}.json)")
     sections.append("")
+
+    diagnostics_rows = _default_diagnostics_rows(result_index, cases)
+    if diagnostics_rows:
+        sections.extend(
+            [
+                "## Default Build Renderer Diagnostics",
+                "",
+                "These rows show the active renderer diagnostics for the default feature build.",
+                "",
+                _table(
+                    ["Plot", "Size", "Boundary", "Backend", "Mode", "Active flags"],
+                    diagnostics_rows,
+                ),
+                "",
+            ]
+        )
 
     for boundary in ("render_only", "public_api_render", "save_only", "public_api_save"):
         include_backend = "save" in boundary

@@ -358,22 +358,26 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
         make_result(
             run,
             &dataset,
-            "ruviz",
-            "render_only",
-            render_only_bytes,
-            render_only_ms,
-            None,
-            Some(render_only_diagnostics),
+            ResultInput {
+                implementation: "ruviz",
+                boundary: "render_only",
+                byte_count: render_only_bytes,
+                iterations_ms: render_only_ms,
+                actual_backend: None,
+                render_diagnostics: Some(render_only_diagnostics),
+            },
         ),
         make_result(
             run,
             &dataset,
-            "ruviz",
-            "public_api_render",
-            public_bytes,
-            public_ms,
-            None,
-            Some(public_diagnostics),
+            ResultInput {
+                implementation: "ruviz",
+                boundary: "public_api_render",
+                byte_count: public_bytes,
+                iterations_ms: public_ms,
+                actual_backend: None,
+                render_diagnostics: Some(public_diagnostics),
+            },
         ),
     ];
 
@@ -398,22 +402,26 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
         results.push(make_result(
             run,
             &dataset,
-            "ruviz",
-            "save_only",
-            save_only_bytes,
-            save_only_ms,
-            Some(save_backend),
-            Some(save_diagnostics),
+            ResultInput {
+                implementation: "ruviz",
+                boundary: "save_only",
+                byte_count: save_only_bytes,
+                iterations_ms: save_only_ms,
+                actual_backend: Some(save_backend),
+                render_diagnostics: Some(save_diagnostics),
+            },
         ));
         results.push(make_result(
             run,
             &dataset,
-            "ruviz",
-            "public_api_save",
-            public_save_bytes,
-            public_save_ms,
-            Some(public_save_backend),
-            Some(public_save_diagnostics),
+            ResultInput {
+                implementation: "ruviz",
+                boundary: "public_api_save",
+                byte_count: public_save_bytes,
+                iterations_ms: public_save_ms,
+                actual_backend: Some(public_save_backend),
+                render_diagnostics: Some(public_save_diagnostics),
+            },
         ));
     }
 
@@ -425,45 +433,47 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
         results.push(make_result(
             run,
             &dataset,
-            "plotters",
-            "public_api_render",
-            plotters_bytes,
-            plotters_ms,
-            None,
-            None,
+            ResultInput {
+                implementation: "plotters",
+                boundary: "public_api_render",
+                byte_count: plotters_bytes,
+                iterations_ms: plotters_ms,
+                actual_backend: None,
+                render_diagnostics: None,
+            },
         ));
     }
 
     Ok(results)
 }
 
-fn make_result(
-    run: &ScenarioRun,
-    dataset: &Dataset,
-    implementation: &str,
-    boundary: &str,
-    byte_count: usize,
+struct ResultInput {
+    implementation: &'static str,
+    boundary: &'static str,
     iterations_ms: Vec<f64>,
     actual_backend: Option<String>,
     render_diagnostics: Option<RenderDiagnosticsRecord>,
-) -> BenchmarkResult {
+    byte_count: usize,
+}
+
+fn make_result(run: &ScenarioRun, dataset: &Dataset, input: ResultInput) -> BenchmarkResult {
     BenchmarkResult {
-        implementation: implementation.to_string(),
+        implementation: input.implementation.to_string(),
         scenario_id: run.scenario_id.clone(),
         plot_kind: run.plot_kind.clone(),
         size_label: run.size.label.clone(),
-        boundary: boundary.to_string(),
+        boundary: input.boundary.to_string(),
         output_target: "png_bytes".to_string(),
         elements: run.elements,
         canvas: size_canvas(&run.canvas),
         dataset_hash: dataset_hash(dataset).to_string(),
         warmup_iterations: run.warmup_iterations,
         measured_iterations: run.measured_iterations,
-        byte_count,
-        actual_backend,
-        render_diagnostics,
-        summary: summarize_iterations(&iterations_ms, run.elements),
-        iterations_ms,
+        byte_count: input.byte_count,
+        actual_backend: input.actual_backend,
+        render_diagnostics: input.render_diagnostics,
+        summary: summarize_iterations(&input.iterations_ms, run.elements),
+        iterations_ms: input.iterations_ms,
     }
 }
 

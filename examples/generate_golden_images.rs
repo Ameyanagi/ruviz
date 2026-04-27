@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         .xlabel("X")
         .ylabel("Y")
         .legend(Position::TopLeft)
-        .line(&x, &x.iter().copied().collect::<Vec<_>>())
+        .line(&x, &x.to_vec())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
         .label("Quadratic")

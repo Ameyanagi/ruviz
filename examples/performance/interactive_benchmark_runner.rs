@@ -353,7 +353,7 @@ fn line_x(points: usize) -> Vec<f64> {
 }
 
 fn scatter_x(points: usize) -> Vec<f64> {
-    let modulus = 2_147_483_647_u64 as f64;
+    let modulus = 2_147_483_647_f64;
     (0..points)
         .map(|i| ((i as u64 * 48_271) % 2_147_483_647_u64) as f64 / modulus)
         .collect()
@@ -482,7 +482,11 @@ fn measure_case(
                 render_frame(&session, target, size_px, scale_factor, 0.0)
             }
             ActionKind::Pan => {
-                let sign = if iteration % 2 == 0 { 1.0 } else { -1.0 };
+                let sign = if iteration.is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
                 session.apply_input(PlotInputEvent::Pan {
                     delta_px: ruviz::core::plot::ViewportPoint::new(
                         run.pan_delta_px.0 as f64 * sign,

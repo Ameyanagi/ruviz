@@ -27,6 +27,8 @@ fn test_gallery_category_structure() {
         "publication",
         "performance",
         "advanced",
+        "animation",
+        "internationalization",
     ];
 
     // THEN: All category directories exist
@@ -79,6 +81,8 @@ fn test_gallery_category_indexes_exist() {
         "publication",
         "performance",
         "advanced",
+        "animation",
+        "internationalization",
     ];
 
     // THEN: Each category has README.md
@@ -111,6 +115,8 @@ fn test_gallery_has_images() {
         "publication",
         "performance",
         "advanced",
+        "animation",
+        "internationalization",
     ];
 
     // THEN: At least one category has PNG files
@@ -145,6 +151,8 @@ fn test_thumbnails_directory_structure() {
         "publication",
         "performance",
         "advanced",
+        "animation",
+        "internationalization",
     ];
 
     // THEN: Each category has a committed asset directory
@@ -159,29 +167,38 @@ fn test_thumbnails_directory_structure() {
 }
 
 #[test]
-fn test_gallery_index_links_are_valid() {
-    // GIVEN: Gallery index with links
-    let index_path = Path::new("docs/gallery/README.md");
+fn test_gallery_links_are_valid() {
+    let markdown_files = [
+        Path::new("docs/gallery/README.md").to_path_buf(),
+        Path::new("docs/gallery/basic/README.md").to_path_buf(),
+        Path::new("docs/gallery/statistical/README.md").to_path_buf(),
+        Path::new("docs/gallery/publication/README.md").to_path_buf(),
+        Path::new("docs/gallery/performance/README.md").to_path_buf(),
+        Path::new("docs/gallery/advanced/README.md").to_path_buf(),
+        Path::new("docs/gallery/animation/README.md").to_path_buf(),
+        Path::new("docs/gallery/internationalization/README.md").to_path_buf(),
+    ];
+    let link_pattern = regex::Regex::new(r"!?\[.*?\]\((.*?)\)").unwrap();
 
-    if let Ok(content) = std::fs::read_to_string(index_path) {
-        // THEN: Verify markdown image links point to existing files
-        // Pattern: ![description](path/to/image.png)
-        let image_pattern = regex::Regex::new(r"!\[.*?\]\((.*?)\)").ok();
-
-        if let Some(pattern) = image_pattern {
-            let gallery_root = Path::new("docs/gallery");
-
-            for cap in pattern.captures_iter(&content) {
-                if let Some(image_path) = cap.get(1) {
-                    let full_path = gallery_root.join(image_path.as_str());
-
-                    // Link should either exist or be a category README
-                    let exists = full_path.exists();
-                    let is_readme_link = image_path.as_str().contains("README");
-
-                    let _ = exists || is_readme_link;
-                }
+    for markdown_path in markdown_files {
+        let content = std::fs::read_to_string(&markdown_path)
+            .unwrap_or_else(|_| panic!("should read {}", markdown_path.display()));
+        for cap in link_pattern.captures_iter(&content) {
+            let target = cap.get(1).unwrap().as_str();
+            if target.starts_with("http://") || target.starts_with("https://") {
+                continue;
             }
+            let target_path = target.split('#').next().unwrap_or(target);
+            if target_path.is_empty() {
+                continue;
+            }
+            let full_path = markdown_path.parent().unwrap().join(target_path);
+            assert!(
+                full_path.exists(),
+                "{} points to missing gallery target {}",
+                markdown_path.display(),
+                target
+            );
         }
     }
 }
@@ -192,7 +209,7 @@ fn test_basic_category_has_expected_examples() {
     let basic_path = Path::new("docs/assets/gallery/rust/basic");
 
     // THEN: Check for expected basic plot types
-    let expected_patterns = vec!["line", "scatter", "bar"];
+    let expected_patterns = vec!["line", "scatter", "bar", "heatmap"];
 
     if let Ok(entries) = std::fs::read_dir(basic_path) {
         let filenames: Vec<String> = entries
@@ -206,10 +223,7 @@ fn test_basic_category_has_expected_examples() {
                 .iter()
                 .any(|name| name.to_lowercase().contains(pattern));
 
-            // Lenient check - we expect these but don't fail if missing yet
-            if !has_pattern {
-                println!("Note: Basic category missing '{}' example", pattern);
-            }
+            assert!(has_pattern, "Basic category missing '{pattern}' example");
         }
     }
 }

@@ -2,23 +2,23 @@
 
 Curated visual showcase of the Rust examples and rustdoc media for `ruviz`.
 
-**Total Examples**: 23
+**Total Examples**: 32
 
 ## Gallery Categories
 
-### 📊 Basic Plots (3 examples)
+### 📊 Basic Plots (4 examples)
 
 Fundamental plot types for everyday visualization and quick starts.
 
 [View Basic Plots →](basic/README.md)
 
-### 📈 Statistical Plots (4 examples)
+### 📈 Statistical Plots (6 examples)
 
 Distribution, density, and uncertainty-focused plot recipes.
 
 [View Statistical Plots →](statistical/README.md)
 
-### 📄 Publication Quality (3 examples)
+### 📄 Publication Quality (4 examples)
 
 Layouts and themes tuned for papers, reports, and slides.
 
@@ -30,7 +30,7 @@ Large-dataset examples and optimization-oriented render outputs.
 
 [View Performance →](performance/README.md)
 
-### 🎨 Advanced Techniques (4 examples)
+### 🎨 Advanced Techniques (9 examples)
 
 Styling, polar/radar, and layout-heavy visualizations.
 

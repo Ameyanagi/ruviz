@@ -1,3 +1,5 @@
+#![allow(clippy::useless_conversion)]
+
 use super::*;
 use crate::core::FigureConfig;
 use tempfile::tempdir;
