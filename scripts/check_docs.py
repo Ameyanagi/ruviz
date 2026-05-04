@@ -233,6 +233,7 @@ def check_readme_quickstart() -> list[str]:
         return [str(error)]
 
     if "check" in fence.flags or "compile" in fence.flags:
+        # readme_quickstart_fence has already enforced the reader-facing fn main.
         return []
 
     with tempfile.TemporaryDirectory(prefix="ruviz-readme-check-") as temp:
@@ -355,6 +356,12 @@ def check_python_snippets(fences: list[CodeFence]) -> list[str]:
 def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
     if not fences:
         return []
+
+    if not WEB_SRC.is_dir():
+        return [
+            "packages/ruviz-web/src is required to type-check TypeScript "
+            "Markdown snippets"
+        ]
 
     with tempfile.TemporaryDirectory(prefix="ruviz-ts-doc-snippets-") as temp:
         temp_path = Path(temp)
