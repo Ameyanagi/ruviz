@@ -52,18 +52,22 @@ you render, save, or start another series.
 ```rust,check
 use ruviz::prelude::*;
 
-let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-let linear = x.clone();
-let quadratic: Vec<f64> = x.iter().map(|&v| v * v).collect();
+fn main() -> Result<()> {
+    let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
+    let linear = x.clone();
+    let quadratic: Vec<f64> = x.iter().map(|&v| v * v).collect();
 
-Plot::new()
-    .line(&x, &linear)
-    .label("Linear")
-    .line(&x, &quadratic)
-    .label("Quadratic")
-    .legend(Position::TopLeft)
-    .theme(Theme::publication())
-    .save("series.png")?;
+    Plot::new()
+        .line(&x, &linear)
+        .label("Linear")
+        .line(&x, &quadratic)
+        .label("Quadratic")
+        .legend(Position::TopLeft)
+        .theme(Theme::publication())
+        .save("series.png")?;
+
+    Ok(())
+}
 ```
 
 Top-level helpers are available for line, scatter, and bar plots:
@@ -71,12 +75,16 @@ Top-level helpers are available for line, scatter, and bar plots:
 ```rust,check
 use ruviz::prelude::*;
 
-let x = vec![0.0, 1.0, 2.0];
-let y = vec![0.0, 1.0, 4.0];
+fn main() -> Result<()> {
+    let x = vec![0.0, 1.0, 2.0];
+    let y = vec![0.0, 1.0, 4.0];
 
-line(&x, &y)
-    .title("Line")
-    .save("line.png")?;
+    line(&x, &y)
+        .title("Line")
+        .save("line.png")?;
+
+    Ok(())
+}
 ```
 
 The `ruviz::simple` module also provides file-oriented helper functions such as
@@ -157,16 +165,20 @@ Then call `.typst(true)`:
 ```rust
 use ruviz::prelude::*;
 
-let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
-let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
+fn main() -> Result<()> {
+    let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+    let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
-Plot::new()
-    .line(&x, &y)
-    .title("$f(x) = e^(-x)$")
-    .xlabel("$x$")
-    .ylabel("$f(x)$")
-    .typst(true)
-    .save("typst_plot.png")?;
+    Plot::new()
+        .line(&x, &y)
+        .title("$f(x) = e^(-x)$")
+        .xlabel("$x$")
+        .ylabel("$f(x)$")
+        .typst(true)
+        .save("typst_plot.png")?;
+
+    Ok(())
+}
 ```
 
 Without `typst-math`, `.typst(true)` and `TextEngineMode::Typst` are not
@@ -184,16 +196,22 @@ typst-math = ["ruviz/typst-math"]
 ```rust
 use ruviz::prelude::*;
 
-let mut plot = Plot::new()
-    .line(&x, &y)
-    .title("$f(x) = e^(-x)$");
+fn main() -> Result<()> {
+    let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
+    let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
-#[cfg(feature = "typst-math")]
-{
-    plot = plot.typst(true);
+    let mut plot = Plot::new()
+        .line(&x, &y)
+        .title("$f(x) = e^(-x)$");
+
+    #[cfg(feature = "typst-math")]
+    {
+        plot = plot.typst(true);
+    }
+
+    plot.save("typst_plot.png")?;
+    Ok(())
 }
-
-plot.save("typst_plot.png")?;
 ```
 
 ## Examples

@@ -6,6 +6,12 @@ The checks are intentionally narrow and deterministic:
 - Local Markdown links/images in repository-facing docs must resolve.
 - The README's first Rust quick-start block must be a complete binary that
   type-checks against the local crate.
+- Root README Rust snippets must be complete `main.rs` examples, so checked
+  docs cannot pass with partial code that fails when copied into a binary.
+- Markdown Rust snippets cannot use `?` inside `fn main()` unless `main`
+  returns a fallible type.
+- Checked Rust snippets that use `?` must include their own fallible `main`,
+  instead of relying on the checker to wrap partial code.
 - Markdown code fences marked with `check` are validated:
   - `rust,check` fences are compiled against the local crate.
   - `ts,check` / `typescript,check` fences are type-checked against the local Web SDK.
@@ -84,6 +90,7 @@ export function register_default_browser_fonts_js(): void;
 export function register_font_bytes_js(bytes: Uint8Array): void;
 export function web_runtime_capabilities(): Record<string, boolean>;
 """
+MAIN_RE = re.compile(r"\b(?:async\s+)?fn\s+main\s*\([^)]*\)\s*(?P<return>->)?")
 
 
 @dataclass(frozen=True)
@@ -268,6 +275,72 @@ def check_readme_quickstart(snippet_fences: list[CodeFence]) -> list[str]:
                 + result.stderr
             ]
     return []
+
+
+def check_readme_rust_snippets_are_complete() -> list[str]:
+    errors: list[str] = []
+    for fence in extract_code_fences([ROOT / "README.md"]):
+        if fence.lang != "rust":
+            continue
+        if not re.search(r"\bfn\s+main\s*\(", fence.code):
+            errors.append(
+                f"{fence.label()} README Rust snippet must be a complete "
+                "main.rs example with fn main"
+            )
+            continue
+        if "?" in fence.code and not re.search(
+            r"\bfn\s+main\s*\([^)]*\)\s*->", fence.code
+        ):
+            errors.append(
+                f"{fence.label()} README Rust snippet uses ? but fn main "
+                "does not return Result/Option"
+            )
+    return errors
+
+
+def rust_block_after_header(code: str, start: int) -> str | None:
+    brace_start = code.find("{", start)
+    if brace_start == -1:
+        return None
+
+    depth = 0
+    for index in range(brace_start, len(code)):
+        char = code[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return code[brace_start + 1 : index]
+    return None
+
+
+def check_rust_fence_error_propagation(fences: list[CodeFence]) -> list[str]:
+    errors: list[str] = []
+    for fence in fences:
+        if fence.lang != "rust" or "?" not in fence.code:
+            continue
+
+        main_match = MAIN_RE.search(fence.code)
+        if main_match is not None:
+            main_body = rust_block_after_header(fence.code, main_match.end())
+            if (
+                main_match.group("return") is None
+                and main_body is not None
+                and "?" in main_body
+            ):
+                errors.append(
+                    f"{fence.label()} Rust snippet uses ? inside fn main, "
+                    "but fn main does not return Result/Option"
+                )
+            continue
+
+        if "check" in fence.flags or "compile" in fence.flags:
+            errors.append(
+                f"{fence.label()} checked Rust snippet uses ? but is not a "
+                "complete main.rs example"
+            )
+    return errors
 
 
 def rust_snippet_source(code: str) -> str:
@@ -455,10 +528,17 @@ def check_markdown_snippets(fences: list[CodeFence]) -> tuple[list[str], int]:
 
 def main() -> int:
     files = markdown_files()
-    snippet_fences = checked_fences()
+    all_snippet_fences = extract_code_fences(markdown_files(SNIPPET_MARKDOWN_ROOTS))
+    snippet_fences = [
+        fence
+        for fence in all_snippet_fences
+        if "check" in fence.flags or "compile" in fence.flags
+    ]
     errors = check_fences(files)
     errors.extend(check_local_links(files))
     errors.extend(check_readme_quickstart(snippet_fences))
+    errors.extend(check_readme_rust_snippets_are_complete())
+    errors.extend(check_rust_fence_error_propagation(all_snippet_fences))
     snippet_errors, checked_snippet_count = check_markdown_snippets(snippet_fences)
     errors.extend(snippet_errors)
 
@@ -468,7 +548,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Validated {len(files)} Markdown files, README quick-start syntax, "
+        f"Validated {len(files)} Markdown files, README Rust snippets, "
         f"and {checked_snippet_count} checked Markdown code fences."
     )
     return 0
