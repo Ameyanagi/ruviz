@@ -84,7 +84,7 @@ ruviz = "0.4.13"  # Includes: ndarray, parallel
 
 **Enabled by default**:
 - `ndarray` - ndarray support for scientific computing
-- `parallel` - Multi-core rendering with rayon
+- `parallel` - internal parallel renderer support and backend metadata
 
 ### Core Features
 
@@ -93,9 +93,9 @@ ruviz = "0.4.13"  # Includes: ndarray, parallel
 | `ndarray_support` | ndarray integration | Scientific computing, numpy-like arrays |
 | `nalgebra_support` | nalgebra integration | Dense vectors/matrices, linear algebra |
 | `polars_support` | polars integration | Data analysis, DataFrame support |
-| `parallel` | Multi-core rendering | >10K points, batch processing |
-| `simd` | SIMD optimization | >100K points, maximum speed |
-| `gpu` | GPU acceleration | >1M points, real-time visualization |
+| `parallel` | Internal parallel renderer support | Opt-in renderer experiments, metadata |
+| `simd` | SIMD support | Measured performance-sensitive paths |
+| `gpu` | GPU types and metadata | GPU-capable interactive work |
 | `interactive` | Interactive plots | Real-time exploration, data brushing |
 | `window` | Window support | Desktop applications |
 | `serde` | Serialization | Save/load plot configurations |
@@ -152,7 +152,7 @@ Create `src/main.rs`:
 ```rust
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
 
@@ -188,7 +188,7 @@ Test specific features:
 use ruviz::prelude::*;
 use ndarray::Array1;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x = Array1::linspace(0.0, 10.0, 100);
     let y = x.mapv(|v| v.sin());
 
@@ -201,11 +201,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Performance (parallel)**:
+**Performance smoke test**:
 ```rust
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.001).collect();
     let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
@@ -285,7 +285,7 @@ rustc --version  # Verify ≥ 1.92
 
 **Problem**: `error: failed to select Vulkan backend`
 
-**Solution**: GPU features require graphics drivers:
+**Solution**: GPU feature-gated code may require graphics drivers:
 ```bash
 # Linux - Install Vulkan drivers
 sudo apt-get install vulkan-tools  # Ubuntu/Debian
@@ -304,7 +304,9 @@ ruviz = { version = "0.4.13", default-features = false, features = ["parallel"] 
 
 **Problem**: Out of memory with large datasets
 
-**Solution**: Save directly; the PNG export path already switches to large-dataset rendering internally:
+**Solution**: Use release builds, keep output dimensions reasonable, and reduce
+or aggregate data before plotting when visual density is higher than display
+density:
 ```rust
 let x: Vec<f64> = (0..10_000_000).map(|i| i as f64).collect();
 let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
@@ -335,7 +337,7 @@ codegen-units = 1    # Single codegen unit for max optimization
 
 **CPU cores** (automatic detection):
 ```rust
-// rayon uses the available cores when the parallel render path is selected
+// Benchmark the public render path for your plot.
 let x = vec![0.0, 1.0, 2.0];
 let y = vec![0.0, 1.0, 4.0];
 

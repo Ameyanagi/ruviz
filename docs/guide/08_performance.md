@@ -4,8 +4,7 @@ Practical performance guidance for the current `ruviz` implementation.
 
 ## Start Here
 
-Measure before adding features. The biggest performance win is still running in
-release mode:
+Use release builds before adding feature flags:
 
 ```bash
 cargo run --release
@@ -20,14 +19,27 @@ codegen-units = 1
 opt-level = 3
 ```
 
-## Important Distinction
+Benchmark with your actual plot content. Marker-heavy scatter plots, text, high
+DPI output, and very large canvases stress different parts of the renderer.
 
-Two APIs matter for performance:
+## Public Output Paths
 
-- `render()` returns an in-memory `Image`
-- `save()` renders and writes a PNG file
+The public static-output APIs are conservative today:
 
-They do **not** currently use identical execution paths.
+- `render()` returns an in-memory `Image`.
+- `render_png_bytes()` returns PNG bytes.
+- `save()` writes PNG bytes to disk.
+- `export_svg()` and `render_to_svg()` use the SVG renderer.
+- `save_pdf()` is available with the `pdf` feature and converts SVG to PDF.
+
+For PNG/image output, the current public path uses the reference raster pipeline
+for output parity. `.backend(...)`, `.auto_optimize()`, `.parallel_threshold(...)`,
+and `.gpu(true)` store configuration or metadata; they should not be documented
+as hard execution guarantees for `render()` or `save()`.
+
+Reactive plots are resolved to a static snapshot first. Plain `render()` and
+`save()` sample temporal `Signal` sources at `0.0`; `render_at(t)` samples them
+at `t`.
 
 ## Feature Flags
 
@@ -38,95 +50,17 @@ ruviz = "0.4.13"
 
 Useful opt-in features:
 
-- `parallel`: enables the dedicated parallel `render()` path
-- `simd`: accelerates the parallel renderer
-- `gpu`: enables `.gpu(true)` and GPU-assisted PNG export
-- `performance`: shorthand for `["parallel", "simd"]`
+- `parallel`: enables the internal parallel renderer and backend metadata.
+- `simd`: enables SIMD support used by performance-oriented code paths.
+- `performance`: shorthand for `["parallel", "simd"]`.
+- `gpu`: enables GPU types and `.gpu(true)` metadata.
 
-## What `render()` does today
+These features can increase compile time and dependency surface. Add them when a
+measured code path benefits from them.
 
-`render()` chooses its execution path from actual plot content:
+## Large Datasets
 
-- Above `100_000` total points for aggregation-safe series such as scatter and histogram:
-  - DataShader
-- Otherwise, with `parallel` enabled:
-  - parallel rendering is used when the internal threshold logic says it is worthwhile
-- Otherwise: CPU/tiny-skia rendering
-
-Reactive plots now resolve to a static snapshot first, so push-based and
-streaming sources can still benefit from the same parallel/DataShader decisions.
-
-### Parallel rendering
-
-```toml
-[dependencies]
-ruviz = { version = "0.4.13", features = ["parallel"] }
-```
-
-```rust
-use ruviz::prelude::*;
-
-let x: Vec<f64> = (0..50_000).map(|i| i as f64 * 0.001).collect();
-let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
-
-let image = Plot::new()
-    .parallel_threshold(4)
-    .line(&x, &y)
-    .render()?;
-
-println!("Rendered {}x{}", image.width(), image.height());
-```
-
-`parallel_threshold(...)` only changes the series-count threshold. It does not
-override every internal condition used by the parallel renderer.
-
-### SIMD
-
-```toml
-[dependencies]
-ruviz = { version = "0.4.13", features = ["parallel", "simd"] }
-```
-
-The `simd` feature is used inside the parallel renderer, so it helps when the
-parallel `render()` path is active.
-
-## What `save()` does today
-
-`save()` writes PNG output and uses a different path:
-
-- Above `100_000` total points: DataShader branch
-- Otherwise, if `.gpu(true)` is enabled and the plot has at least `5_000` points:
-  - GPU path
-- Otherwise: CPU/tiny-skia rendering
-
-The current `save()` implementation does **not** call the dedicated
-`render_with_parallel()` path.
-
-### GPU-assisted PNG export
-
-```toml
-[dependencies]
-ruviz = { version = "0.4.13", features = ["gpu"] }
-```
-
-```rust
-use ruviz::prelude::*;
-
-let x: Vec<f64> = (0..20_000).map(|i| i as f64 * 0.001).collect();
-let y: Vec<f64> = x.iter().map(|v| v.cos()).collect();
-
-Plot::new()
-    .gpu(true)
-    .line(&x, &y)
-    .save("gpu_plot.png")?;
-```
-
-If GPU initialization fails, `save()` falls back to CPU rendering.
-
-## DataShader
-
-DataShader-style aggregation activates automatically above `100_000` total
-points for aggregation-safe series such as scatter and histogram.
+Large plots are still valid through the normal API:
 
 ```rust
 use ruviz::prelude::*;
@@ -137,8 +71,11 @@ let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
 Plot::new()
     .scatter(&x, &y)
-    .save("datashader_plot.png")?;
+    .save("large_scatter.png")?;
 ```
+
+For dense plots where many data points map to the same pixels, downsampling or
+aggregating before plotting is often more useful than enabling a backend flag.
 
 ## Memory Pooling
 
@@ -155,15 +92,6 @@ Plot::new()
 
 Use it when repeated large renders are spending noticeable time in allocation.
 
-## Practical Recommendations
-
-- Start with `save()` or `render()` before setting backend metadata.
-- Use `render()` when you want the in-memory image path and parallel CPU speedups.
-- Use `save()` when you want PNG output and optional `.gpu(true)` acceleration.
-- Add `simd` only alongside `parallel`.
-- Downsample scatter-style plots when visual density is higher than display density.
-- Benchmark your real workload instead of relying on generic backend labels.
-
 ## Benchmark Template
 
 ```rust
@@ -174,6 +102,7 @@ let start = Instant::now();
 let image = Plot::new()
     .line(&x, &y)
     .render()?;
+
 println!(
     "Rendered {}x{} in {:?}",
     image.width(),
@@ -181,6 +110,14 @@ println!(
     start.elapsed()
 );
 ```
+
+## Recommendations
+
+- Start with plain `save()` or `render()`.
+- Use release builds for any timing comparison.
+- Prefer smaller canvases and explicit data reduction when visual density is too high.
+- Use `.size(width_in, height_in)` plus `.dpi(...)` for print output.
+- Treat backend names as metadata unless a specific API documents otherwise.
 
 ## Related Guides
 

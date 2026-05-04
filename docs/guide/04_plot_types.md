@@ -615,18 +615,18 @@ let dendro = compute_dendrogram(&linkage_result, &config);
 Default rendering is optimal. No special configuration needed.
 
 ### Medium Datasets (1K - 100K points)
-The `parallel` feature can speed up the in-memory `render()` path. Reactive
-plots are resolved to a static snapshot first, so observable-backed series can
-use the same path as static data.
+Use release builds first. The default feature set already includes `parallel`,
+but the public static output path is conservative; benchmark your actual plot
+before adding more feature flags.
 
 ```toml
 [dependencies]
 ruviz = { version = "0.4.13", features = ["parallel"] }
 ```
 
-### Large Datasets (20K - 100K points)
-Use `parallel` and `simd` for heavier in-memory rendering workloads, and
-consider downsampling where visual density is already saturated.
+### Large Datasets (20K+ points)
+Consider downsampling or aggregating where visual density is already saturated.
+Use `performance` only after benchmarking a path that benefits from SIMD support.
 
 ```toml
 [dependencies]
@@ -634,9 +634,9 @@ ruviz = { version = "0.4.13", features = ["parallel", "simd"] }
 ```
 
 ### Very Large Datasets (> 100K points)
-DataShader-style aggregation can activate above `100_000` total points for
-aggregation-friendly series such as scatter and histogram. The exact
-`render()` vs `save()` behavior is documented in [Performance](08_performance.md).
+The crate contains DataShader-related code and backend metadata, but the current
+public `render()` and `save()` paths should not be documented as automatic
+DataShader output. See [Performance](08_performance.md).
 
 ---
 

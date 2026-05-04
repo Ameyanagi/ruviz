@@ -8,4 +8,10 @@ to PyPI:
 - `observable()` and `ObservableSeries` for synced notebook data, elementwise arithmetic, and NumPy ufuncs
 - `RuvizWidget` for explicit notebook widget embedding
 
+The public import surface is:
+
+```python
+from ruviz import ObservableSeries, Plot, RuvizWidget, observable, plot
+```
+
 ::: ruviz

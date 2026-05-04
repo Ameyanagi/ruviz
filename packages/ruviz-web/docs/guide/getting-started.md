@@ -19,8 +19,11 @@ await plot.save({ format: "png", fileName: "quadratic.png" });
 
 You can also call:
 
-- `await plot.renderPng()` to get PNG bytes
+- `await plot.renderPng()` to get PNG bytes as a `Uint8Array`
 - `await plot.renderSvg()` to get SVG markup
+
+`save()` triggers a browser download. Use `renderPng()` or `renderSvg()` when
+you want bytes or markup for your own storage flow.
 
 ## First Interactive Session
 
@@ -49,8 +52,16 @@ await session.setPlot(createPlot().line({ x: [0, 1], y: [0, 1] }));
 session.render();
 ```
 
+The constructor options are:
+
+- `backendPreference: "auto" | "cpu" | "svg" | "gpu"`
+- `autoResize`, default `true`
+- `bindInput`, default `true`
+- `initialTime`, for signal-backed plots
+
 ## Runtime Notes
 
 - The package is ESM-first.
-- WebAssembly and worker assets are resolved through module URLs.
+- WebAssembly and worker assets are resolved through package-relative module URLs.
 - Use `createWorkerSession(...)` when you want OffscreenCanvas worker rendering.
+- Use `import ... from "ruviz/raw"` only when you need the low-level wasm-bindgen API.

@@ -9,12 +9,16 @@ It combines:
 - interactive main-thread canvas sessions
 - worker-backed canvas sessions with fallback
 - reactive helpers for observable and time-based demo data
+- serializable plot snapshots for worker transfer and rehydration
 
 ## Install
 
 ```sh
 npm install ruviz
 ```
+
+The package exports the high-level SDK from `ruviz` and the raw wasm-bindgen
+bridge from `ruviz/raw`.
 
 ## Start Here
 

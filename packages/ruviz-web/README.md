@@ -13,12 +13,23 @@ rendering, and reactive demos.
 npm install ruviz
 ```
 
-The package ships as ESM and expects a bundler or runtime that can load Web
-Workers and WebAssembly from standard module URLs.
+The package ships as ESM. Browser apps should use a bundler or runtime that can
+load WebAssembly and module workers from package-relative `import.meta.url`
+references.
+
+The public package entrypoints are:
+
+```ts,check
+import { createPlot, createWorkerSession } from "ruviz";
+import initRaw, { JsPlot } from "ruviz/raw";
+
+await initRaw();
+const rawPlot = new JsPlot();
+```
 
 ## Quick Start
 
-```ts
+```ts,check
 import { createPlot } from "ruviz";
 
 const plot = createPlot()
@@ -34,7 +45,7 @@ await plot.save({ format: "png", fileName: "quadratic.png" });
 
 Mount a plot into a normal HTML canvas:
 
-```ts
+```ts,check
 import { createCanvasSession, createPlot } from "ruviz";
 
 const canvas = document.querySelector("canvas")!;
@@ -45,8 +56,49 @@ await session.setPlot(
 session.render();
 ```
 
-Use `createWorkerSession(...)` when you want OffscreenCanvas worker rendering
-with main-thread fallback support.
+Use `createWorkerSession(...)` when you want OffscreenCanvas worker rendering:
+
+```ts,check
+import { createPlot, createWorkerSession } from "ruviz";
+
+const canvas = document.querySelector("canvas")!;
+const session = await createWorkerSession(canvas, {
+  backendPreference: "auto",
+  fallbackToMainThread: true,
+});
+await session.setPlot(createPlot().scatter({ x: [0, 1, 2], y: [2, 1, 3] }));
+session.render();
+```
+
+When `Worker`, `OffscreenCanvas`, or `transferControlToOffscreen()` is missing,
+`createWorkerSession()` returns a `WorkerSession` in `mode === "main-thread"` by
+default. Pass `{ fallbackToMainThread: false }` to throw instead.
+
+Both `createCanvasSession()` and `createWorkerSession()` default to
+`autoResize: true` and `bindInput: true`, so pointer, wheel, and resize events
+are wired automatically unless you disable them.
+
+## Plot Types
+
+The fluent builder currently supports:
+
+- `line({ x, y })` and `scatter({ x, y })`
+- `bar({ categories, values })`
+- `histogram(values)` and `boxplot(values)`
+- `heatmap(rows)` where `rows` is a rectangular `number[][]`
+- `errorBars({ x, y, yErrors })`
+- `errorBarsXY({ x, y, xErrors, yErrors })`
+- `kde(values)` and `ecdf(values)`
+- `contour({ x, y, z })` where `z.length === x.length * y.length`
+- `pie(values, labels?)`
+- `radar({ labels, series })`
+- `violin(values)`
+- `polarLine({ r, theta })`
+
+`number[]`, `Float64Array`, and other `ArrayLike<number>` values are accepted
+for numeric inputs. `createObservable(...)` can drive line, scatter, bar,
+histogram, boxplot, and error-bar inputs. `createSineSignal(...)` can be used as
+the `y` input for line and scatter plots.
 
 ## Reactive Helpers
 
@@ -54,6 +106,7 @@ The package also exports:
 
 - `createObservable(...)` for mutable numeric series
 - `createSineSignal(...)` for time-varying demo inputs
+- `createPlotFromSnapshot(...)` for rehydrating `plot.toSnapshot()` output
 - `getRuntimeCapabilities()` for browser capability checks
 - `registerFont(...)` for custom browser text faces
 
@@ -72,8 +125,14 @@ The package also exports:
 
 ## Local Development
 
+From the repository root:
+
 ```sh
 bun install
+bun run --cwd packages/ruviz-web build:js
 bun run --cwd packages/ruviz-web build
 bun run --cwd packages/ruviz-web docs:dev
 ```
+
+`build:js` runs the TypeScript build against existing generated wasm bindings.
+`build` also rebuilds the wasm package before compiling TypeScript.

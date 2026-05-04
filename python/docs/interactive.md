@@ -30,6 +30,10 @@ plot = ruviz.plot().size_px(640, 360).line(x, y).title("Live Sine Wave")
 widget = plot.widget()
 ```
 
+`plot.widget()` returns a `RuvizWidget` AnyWidget instance bound to the plot.
+When observable data changes, the widget receives a refreshed JSON-friendly
+snapshot from `plot.to_snapshot()`.
+
 When a plot has `size_px(width, height)` configured, the widget uses that as
 its display size inside the notebook. If the notebook column is narrower than
 the configured width, the widget shrinks proportionally while preserving the
@@ -61,6 +65,10 @@ signal = np.sin((phase * 2.0) + 0.5)
 
 Derived observables detach on the first direct write, so `signal.set_at(...)`
 turns `signal` into an independent mutable series without mutating `phase`.
+Live observable updates are supported by `line`, `scatter`, `bar`, `histogram`,
+`boxplot`, `error_bars`, and `error_bars_xy`. Plot types such as `heatmap`,
+`kde`, `ecdf`, `contour`, `pie`, `radar`, `violin`, and `polar_line` snapshot
+their data when added.
 
 ## Desktop Windows
 

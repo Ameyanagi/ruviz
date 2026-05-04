@@ -16,10 +16,10 @@ cargo add ruviz
 
 Edit `src/main.rs`:
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Data
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
@@ -62,7 +62,7 @@ The `prelude` module includes all commonly used types and traits. This gives you
 ### Error Handling
 
 ```rust
-fn main() -> Result<(), Box<dyn std::error::Error>>
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 ```
 
 ruviz operations return `Result` types. Use `?` operator for clean error propagation:
@@ -178,7 +178,7 @@ use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
-    .color(Color::from_rgb(255, 0, 0))  // Red line
+    .color(Color::new(255, 0, 0))  // Red line
     .save("red_line.png")?;
 ```
 
@@ -203,7 +203,7 @@ Plot::new()
     .scatter(&x, &y)
     .marker(MarkerStyle::Circle)
     .marker_size(10.0)
-    .color(Color::from_rgb(0, 0, 255))
+    .color(Color::new(0, 0, 255))
     .save("blue_circles.png")?;
 ```
 
@@ -232,10 +232,10 @@ let y2 = vec![0.0, 2.0, 4.0, 6.0, 8.0];
 Plot::new()
     .line(&x, &y1)
         .label("Quadratic")
-        .color(Color::from_rgb(255, 0, 0))
+        .color(Color::new(255, 0, 0))
     .line(&x, &y2)
         .label("Linear")
-        .color(Color::from_rgb(0, 0, 255))
+        .color(Color::new(0, 0, 255))
     .legend(Position::TopLeft)
     .title("Multiple Series")
     .save("multi_series.png")?;
@@ -253,11 +253,11 @@ let y_scatter = vec![1.5, 2.3, 2.9, 4.2, 4.8];
 Plot::new()
     .line(&x, &y_line)
         .label("Theory")
-        .color(Color::from_rgb(0, 0, 255))
+        .color(Color::new(0, 0, 255))
     .scatter(&x, &y_scatter)
         .label("Measured")
         .marker(MarkerStyle::Circle)
-        .color(Color::from_rgb(255, 0, 0))
+        .color(Color::new(255, 0, 0))
     .legend(Position::TopLeft)
     .title("Theory vs Measurement")
     .save("mixed_plot.png")?;
@@ -305,7 +305,7 @@ Add to `Cargo.toml`:
 ```toml
 [dependencies]
 ruviz = { version = "0.4.13", features = ["ndarray_support"] }
-ndarray = "0.15"
+ndarray = "0.17"
 ```
 
 ```rust
@@ -327,7 +327,7 @@ Plot::new()
 
 ```rust
 Plot::new()
-    .dimensions(1200, 800)  // Width x Height pixels
+    .size_px(1200, 800)  // Width x Height pixels
     .line(&x, &y)
     .save("custom_size.png")?;
 ```
@@ -380,7 +380,7 @@ Plot::new()
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate data
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y_sin: Vec<f64> = x.iter().map(|v| v.sin()).collect();
@@ -388,18 +388,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create plot
     Plot::new()
-        .dimensions(1000, 600)
+        .size_px(1000, 600)
         .dpi(150)
         .theme(Theme::light())
         // Sine wave
         .line(&x, &y_sin)
             .label("sin(x)")
-            .color(Color::from_rgb(0, 0, 255))
+            .color(Color::new(0, 0, 255))
             .line_width(2.0)
         // Cosine wave
         .line(&x, &y_cos)
             .label("cos(x)")
-            .color(Color::from_rgb(255, 0, 0))
+            .color(Color::new(255, 0, 0))
             .line_style(LineStyle::Dashed)
             .line_width(2.0)
         // Configuration
@@ -491,9 +491,9 @@ Plot::new()
 
 ### Common Customizations
 ```rust
-.dimensions(width, height)     // Figure size
+.size_px(width, height)     // Figure size
 .dpi(resolution)               // Image resolution
-.color(Color::from_rgb(r,g,b)) // Series color
+.color(Color::new(r,g,b)) // Series color
 .line_width(width)             // Line thickness
 .marker(MarkerStyle::Circle)   // Marker shape
 .marker_size(size)             // Marker size

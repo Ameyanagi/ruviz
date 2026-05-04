@@ -12,13 +12,16 @@ API with three main workflows:
 - the same plot builder works across scripts, notebooks, and desktop sessions
 - pandas, Polars, dict, and array-like inputs work through the same API
 - notebook widgets reuse the browser runtime instead of a separate Python-only frontend
-- native static export stays in Rust for PNG, SVG, and PDF generation
+- native static export stays in Rust; `save()` writes PNG, SVG, or PDF files
 
 ## Install
 
 ```sh
 pip install ruviz
 ```
+
+Install `ruviz[dataframes]`, `ruviz[pandas]`, or `ruviz[polars]` when you want
+named dataframe column inputs. The package requires Python 3.10 or newer.
 
 ## First Plot
 

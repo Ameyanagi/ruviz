@@ -91,7 +91,7 @@ plt.plot(x, y, color='red', linewidth=2, linestyle='--', marker='o')
 ```rust
 Plot::new()
     .line(&x, &y)
-    .color(Color::from_rgb(255, 0, 0))
+    .color(Color::new(255, 0, 0))
     .line_width(2.0)
     .line_style(LineStyle::Dashed)
     .marker(MarkerStyle::Circle)
@@ -174,7 +174,7 @@ Plot::new()
 | Subplots | `subplots()` | `subplots()` |
 | Themes | `style.use()` | `.theme()` |
 | DPI control | `dpi=` | `.dpi()` |
-| Figure size | `figsize=` | `.dimensions()` |
+| Figure size | `figsize=` | `.size_px()` |
 | PNG export | `savefig()` | `.save()` |
 
 ### Support Snapshot ⚠️
@@ -300,14 +300,14 @@ let y_sin: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 let y_cos: Vec<f64> = x.iter().map(|v| v.cos()).collect();
 
 Plot::new()
-    .dimensions(1000, 600)
+    .size_px(1000, 600)
     .dpi(300)
     .line(&x, &y_sin)
-        .color(Color::from_rgb(0, 0, 255))
+        .color(Color::new(0, 0, 255))
         .line_width(2.0)
         .label("sin(x)")
     .line(&x, &y_cos)
-        .color(Color::from_rgb(255, 0, 0))
+        .color(Color::new(255, 0, 0))
         .line_style(LineStyle::Dashed)
         .line_width(2.0)
         .label("cos(x)")
@@ -394,7 +394,7 @@ Plot::new()
 **A**: Yes, but differently:
 ```rust
 // Custom colors
-.color(Color::from_rgb(255, 128, 0))
+.color(Color::new(255, 128, 0))
 .color(Color::from_hex("#FF8000")?)
 
 let viridis_like = Theme::builder()

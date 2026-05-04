@@ -65,7 +65,7 @@ Plot::new()
 ```toml
 [dependencies]
 ruviz = { version = "0.4.13", features = ["ndarray_support"] }
-ndarray = "0.15"
+ndarray = "0.17"
 ```
 
 ### Basic Usage
@@ -92,7 +92,7 @@ use ruviz::prelude::*;
 use ndarray::{Array1, Array2};
 use std::f64::consts::PI;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate mesh grid
     let n = 100;
     let x = Array1::linspace(0.0, 2.0 * PI, n);
@@ -105,14 +105,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .line(&x, &y_sin)
             .label("sin(x)")
-            .color(Color::from_rgb(255, 0, 0))
+            .color(Color::new(255, 0, 0))
         .line(&x, &y_cos)
             .label("cos(x)")
-            .color(Color::from_rgb(0, 0, 255))
+            .color(Color::new(0, 0, 255))
             .line_style(LineStyle::Dashed)
         .line(&x, &y_tan)
             .label("tan(x/2)")
-            .color(Color::from_rgb(0, 128, 0))
+            .color(Color::new(0, 128, 0))
             .line_style(LineStyle::Dotted)
         .title("Trigonometric Functions")
         .xlabel("x (radians)")
@@ -230,7 +230,7 @@ synthetic absorbed-energy style example.
 ```toml
 [dependencies]
 ruviz = { version = "0.4.13", features = ["polars_support"] }
-polars = "0.35"
+polars = "0.50"
 ```
 
 ### Basic DataFrame Plotting
@@ -239,7 +239,7 @@ polars = "0.35"
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create DataFrame
     let df = df! {
         "x" => &[1.0, 2.0, 3.0, 4.0, 5.0],
@@ -293,7 +293,7 @@ Plot::new()
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Load data
     let df = df! {
         "category" => &["A", "B", "C", "A", "B", "C", "A", "B", "C"],
@@ -339,7 +339,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create time series data
     let dates: Vec<i64> = (0..100).collect();
     let values: Vec<f64> = (0..100).map(|i| {
@@ -372,10 +372,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .line(&x_values, &original)
             .label("Original")
-            .color(Color::from_rgba(0, 0, 255, 100))
+            .color(Color::new_rgba(0, 0, 255, 100))
         .line(&x_values, &smoothed)
             .label("Rolling Average")
-            .color(Color::from_rgb(255, 0, 0))
+            .color(Color::new(255, 0, 0))
             .line_width(2.0)
         .title("Time Series with Rolling Average")
         .xlabel("Time")
@@ -396,7 +396,7 @@ use ruviz::prelude::*;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Read CSV file
     let file = File::open("data.csv")?;
     let reader = BufReader::new(file);
@@ -431,7 +431,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Read CSV with polars
     let df = CsvReader::from_path("data.csv")?
         .finish()?;
@@ -457,7 +457,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Read and filter CSV
     let df = CsvReader::from_path("measurements.csv")?
         .finish()?;
@@ -504,7 +504,7 @@ struct DataPoint {
     y: f64,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Read JSON file
     let json_data = std::fs::read_to_string("data.json")?;
     let data: Vec<DataPoint> = serde_json::from_str(&json_data)?;
@@ -531,7 +531,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // 1. Load data
     println!("Loading data from CSV...");
     let df = CsvReader::from_path("experiment_results.csv")?
@@ -574,7 +574,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating plot...");
     Plot::new()
         .bar(&conditions, &means)
-        .color(Color::from_rgb(70, 130, 180))
+        .color(Color::new(70, 130, 180))
         .title("Experimental Results by Condition")
         .xlabel("Condition")
         .ylabel("Mean Measurement")
@@ -593,7 +593,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Load experiment data
     let df = CsvReader::from_path("experiment.csv")?.finish()?;
 
