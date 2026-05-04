@@ -3,7 +3,7 @@
 
 The checks are intentionally narrow and deterministic:
 - Markdown fences must be balanced.
-- Local Markdown links/images in README.md and docs/ must resolve.
+- Local Markdown links/images in repository-facing docs must resolve.
 - The README's first Rust quick-start block must be a complete binary that
   type-checks against the local crate.
 - Markdown code fences marked with `check` are validated:
@@ -28,8 +28,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 WEB_PACKAGE = ROOT / "packages" / "ruviz-web"
 WEB_SRC = WEB_PACKAGE / "src"
-MARKDOWN_ROOTS = [ROOT / "README.md", ROOT / "docs"]
-SNIPPET_MARKDOWN_ROOTS = [
+MARKDOWN_ROOTS = [
     ROOT / "README.md",
     ROOT / "docs",
     ROOT / "python" / "README.md",
@@ -39,6 +38,7 @@ SNIPPET_MARKDOWN_ROOTS = [
     ROOT / "packages" / "ruviz-web" / "docs",
     ROOT / "packages" / "ruviz-web" / "examples" / "README.md",
 ]
+SNIPPET_MARKDOWN_ROOTS = MARKDOWN_ROOTS
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 FENCE_RE = re.compile(r"^```", re.MULTILINE)
 FENCE_BLOCK_RE = re.compile(
