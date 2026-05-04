@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
-## [0.4.14] - 2026-05-04
+## [0.4.15] - 2026-05-04
 
 ### Added
 
@@ -21,7 +21,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Fixed stale optional-result documentation examples that used `?` on API calls that no longer return `Result`.
+- Fixed root README Rust examples so every copyable snippet using `?` is a complete `fn main() -> Result<()>` program.
 - Fixed README and package documentation examples that had drifted from the current code and package entrypoints.
+- Hardened documentation validation so checked Rust snippets using `?` cannot pass as partial snippets, and Markdown `fn main()` examples cannot use `?` without returning a fallible type.
 
 ## [0.4.13] - 2026-04-27
 
@@ -418,8 +420,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.14...HEAD
-[0.4.14]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...v0.4.14
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.15...HEAD
+[0.4.15]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...v0.4.15
 [0.4.13]: https://github.com/Ameyanagi/ruviz/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/Ameyanagi/ruviz/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/Ameyanagi/ruviz/compare/v0.4.10...v0.4.11

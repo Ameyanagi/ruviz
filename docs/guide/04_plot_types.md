@@ -621,7 +621,7 @@ before adding more feature flags.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.14", features = ["parallel"] }
+ruviz = { version = "0.4.15", features = ["parallel"] }
 ```
 
 ### Large Datasets (20K+ points)
@@ -630,7 +630,7 @@ Use `performance` only after benchmarking a path that benefits from SIMD support
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.14", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.15", features = ["parallel", "simd"] }
 ```
 
 ### Very Large Datasets (> 100K points)

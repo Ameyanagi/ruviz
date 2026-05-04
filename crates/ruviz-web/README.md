@@ -21,7 +21,7 @@ Add the bridge crate to your Cargo manifest:
 
 ```toml
 [dependencies]
-ruviz-web = "0.4.14"
+ruviz-web = "0.4.15"
 ```
 
 Build for `wasm32-unknown-unknown` and generate bindings with your preferred
