@@ -226,14 +226,18 @@ def cargo_project_manifest(crate_name: str) -> str:
     )
 
 
-def check_readme_quickstart() -> list[str]:
+def check_readme_quickstart(snippet_fences: list[CodeFence]) -> list[str]:
     try:
         fence = readme_quickstart_fence()
     except RuntimeError as error:
         return [str(error)]
 
     if "check" in fence.flags or "compile" in fence.flags:
-        # readme_quickstart_fence has already enforced the reader-facing fn main.
+        if fence not in snippet_fences:
+            return [
+                "README.md first Rust block is marked for checking but was not "
+                "included in checked Markdown snippets"
+            ]
         return []
 
     with tempfile.TemporaryDirectory(prefix="ruviz-readme-check-") as temp:
@@ -393,10 +397,10 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
                         "strict": True,
                         "noEmit": True,
                         "skipLibCheck": True,
-                        "baseUrl": str(temp_path),
+                        "baseUrl": ".",
                         "paths": {
-                            "ruviz": [str(web_package / "src" / "index.ts")],
-                            "ruviz/raw": [str(raw_dir / "ruviz_web_raw.d.ts")],
+                            "ruviz": ["ruviz-web/src/index.ts"],
+                            "ruviz/raw": ["ruviz-web/generated/raw/ruviz_web_raw.d.ts"],
                         },
                     },
                     "files": files,
@@ -437,8 +441,7 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
     return []
 
 
-def check_markdown_snippets() -> tuple[list[str], int]:
-    fences = checked_fences()
+def check_markdown_snippets(fences: list[CodeFence]) -> tuple[list[str], int]:
     unsupported = sorted({fence.lang for fence in fences if fence.lang not in {"rust", "python", "ts"}})
     errors = [
         f"unsupported checked Markdown code fence language: {lang!r}"
@@ -452,10 +455,11 @@ def check_markdown_snippets() -> tuple[list[str], int]:
 
 def main() -> int:
     files = markdown_files()
+    snippet_fences = checked_fences()
     errors = check_fences(files)
     errors.extend(check_local_links(files))
-    errors.extend(check_readme_quickstart())
-    snippet_errors, checked_snippet_count = check_markdown_snippets()
+    errors.extend(check_readme_quickstart(snippet_fences))
+    snippet_errors, checked_snippet_count = check_markdown_snippets(snippet_fences)
     errors.extend(snippet_errors)
 
     if errors:
