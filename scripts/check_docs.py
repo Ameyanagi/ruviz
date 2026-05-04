@@ -2,6 +2,7 @@
 """Validate repository-facing Markdown documentation.
 
 The checks are intentionally narrow and deterministic:
+- All tracked Markdown files are checked.
 - Markdown fences must be balanced.
 - Local Markdown links/images in repository-facing docs must resolve.
 - The README's first Rust quick-start block must be a complete binary that
@@ -44,7 +45,6 @@ MARKDOWN_ROOTS = [
     ROOT / "packages" / "ruviz-web" / "docs",
     ROOT / "packages" / "ruviz-web" / "examples" / "README.md",
 ]
-SNIPPET_MARKDOWN_ROOTS = MARKDOWN_ROOTS
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 FENCE_RE = re.compile(r"^```", re.MULTILINE)
 FENCE_BLOCK_RE = re.compile(
@@ -107,7 +107,25 @@ class CodeFence:
 
 
 def markdown_files(roots: list[Path] | None = None) -> list[Path]:
-    roots = roots or MARKDOWN_ROOTS
+    if roots is None:
+        try:
+            result = subprocess.run(
+                ["git", "ls-files", "*.md"],
+                cwd=ROOT,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            roots = MARKDOWN_ROOTS
+        else:
+            return sorted(
+                (ROOT / line).resolve()
+                for line in result.stdout.splitlines()
+                if line
+            )
+
     files: list[Path] = []
     seen: set[Path] = set()
     for root in roots:
@@ -199,7 +217,7 @@ def extract_code_fences(files: list[Path]) -> list[CodeFence]:
 def checked_fences() -> list[CodeFence]:
     return [
         fence
-        for fence in extract_code_fences(markdown_files(SNIPPET_MARKDOWN_ROOTS))
+        for fence in extract_code_fences(markdown_files())
         if "check" in fence.flags or "compile" in fence.flags
     ]
 
@@ -528,7 +546,7 @@ def check_markdown_snippets(fences: list[CodeFence]) -> tuple[list[str], int]:
 
 def main() -> int:
     files = markdown_files()
-    all_snippet_fences = extract_code_fences(markdown_files(SNIPPET_MARKDOWN_ROOTS))
+    all_snippet_fences = extract_code_fences(files)
     snippet_fences = [
         fence
         for fence in all_snippet_fences

@@ -13,7 +13,7 @@ Add the crate:
 
 ```toml
 [dependencies]
-ruviz = "0.4.15"
+ruviz = "0.4.16"
 ```
 
 Create and save a PNG:
@@ -157,7 +157,7 @@ Enable Typst-backed text rendering with:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.15", features = ["typst-math"] }
+ruviz = { version = "0.4.16", features = ["typst-math"] }
 ```
 
 Then call `.typst(true)`:
@@ -186,7 +186,7 @@ compiled. If Typst is optional in your crate, forward and guard your own feature
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.15", default-features = false }
+ruviz = { version = "0.4.16", default-features = false }
 
 [features]
 default = []
