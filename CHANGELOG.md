@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.14] - 2026-05-04
+
+### Added
+
+- Added `scripts/check_docs.py` to validate Markdown links, fenced code block metadata, and checked Rust, TypeScript, and Python documentation snippets.
+- Added documentation validation to the pre-commit hook and GitHub Actions docs workflow so README and package docs examples stay aligned with the published APIs.
+
+### Changed
+
+- Refreshed the root README, Python README, npm README, crate READMEs, and guide examples to match the current Rust, Python, and browser APIs.
+- Made TypeScript documentation snippet checks independent of generated wasm bindings so docs validation can run before web artifacts are built.
+
+### Fixed
+
+- Fixed stale optional-result documentation examples that used `?` on API calls that no longer return `Result`.
+- Fixed README and package documentation examples that had drifted from the current code and package entrypoints.
+
 ## [0.4.13] - 2026-04-27
 
 ### Added
@@ -401,7 +418,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.14...HEAD
+[0.4.14]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...v0.4.14
 [0.4.13]: https://github.com/Ameyanagi/ruviz/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/Ameyanagi/ruviz/compare/v0.4.11...v0.4.12
 [0.4.11]: https://github.com/Ameyanagi/ruviz/compare/v0.4.10...v0.4.11

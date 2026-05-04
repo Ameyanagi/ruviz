@@ -58,7 +58,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = { version = "0.4.13", features = ["typst-math"] }
+//! ruviz = { version = "0.4.14", features = ["typst-math"] }
 //! ```
 //!
 //! Then opt into Typst text rendering per plot with `.typst(true)`:
@@ -95,7 +95,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = { version = "0.4.13", default-features = false }
+//! ruviz = { version = "0.4.14", default-features = false }
 //!
 //! [features]
 //! default = []

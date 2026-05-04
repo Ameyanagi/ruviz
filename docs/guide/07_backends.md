@@ -103,7 +103,7 @@ public render path:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.13", features = ["parallel"] }
+ruviz = { version = "0.4.14", features = ["parallel"] }
 ```
 
 ```rust
@@ -131,7 +131,7 @@ not a guarantee that a public `render()` call will take a SIMD path.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.13", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.14", features = ["parallel", "simd"] }
 ```
 
 ## What `save()` actually does
@@ -181,7 +181,7 @@ path.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.13", features = ["gpu"] }
+ruviz = { version = "0.4.14", features = ["gpu"] }
 ```
 
 ```rust
@@ -217,7 +217,7 @@ dependency for you.
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.13", features = ["interactive"] }
+ruviz = { version = "0.4.14", features = ["interactive"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
