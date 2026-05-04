@@ -4,9 +4,9 @@ The API reference pages are generated from the exported TypeScript surface with 
 
 - Package root API: `src/index.ts`
 - Snapshot and option types: `src/shared.ts`
-- Low-level raw bindings: `ruviz/raw`
+- Low-level raw bindings: `ruviz/raw`, exported from `generated/raw/ruviz_web_raw.js`
 
-Run `bun run --cwd packages/ruviz-web docs:api` to regenerate the markdown reference files before
-building the VitePress site.
+Run `bun run --cwd packages/ruviz-web docs:api` to regenerate the markdown
+reference files before building the VitePress site.
 
 - [Generated module reference](./reference/README.md)

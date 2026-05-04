@@ -1,18 +1,18 @@
 # Introduction to ruviz
 
-**ruviz** is a high-performance 2D plotting library for Rust that combines matplotlib's ease-of-use with Makie's performance.
+**ruviz** is a 2D plotting library for Rust with a fluent, matplotlib-inspired API.
 
 ## What is ruviz?
 
-ruviz provides a familiar, matplotlib-inspired API for creating publication-quality plots in Rust, with performance optimizations that can handle millions of data points efficiently.
+ruviz provides familiar builders for creating publication-quality plots in Rust,
+with PNG, SVG, and optional PDF export.
 
 ### Key Features
 
-- **🚀 High Performance**: <100ms for 100K points, <1s for 1M points
 - **🛡️ Memory Safe**: Zero unsafe code in public API
 - **📊 Rich Plot Types**: Line, scatter, bar, histogram, boxplot, and more
 - **🎨 Publication Quality**: Professional themes, high-DPI export, Unicode support
-- **⚡ Multiple Backends**: CPU (default), parallel, SIMD, GPU, DataShader
+- **⚡ Configurable Rendering**: reference raster output plus optional feature-gated renderer code
 - **🔧 Type Safe**: Strong typing prevents runtime errors
 - **📦 Easy Integration**: Works with ndarray, polars, standard Vec/slices
 
@@ -41,29 +41,18 @@ Plot::new()
     .save("plot.png")?;
 ```
 
-**Benefits of switching to ruviz**:
-- 10-100x faster rendering
+**Benefits of using ruviz**:
 - Compile-time error checking
 - No GC pauses or runtime overhead
-- Native performance for large datasets
 - Type-safe API prevents common mistakes
 
 ### Why not existing Rust libraries?
 
-| Feature | ruviz | plotters | plotly.rs |
-|---------|-------|----------|-----------|
-| Performance (100K pts) | <100ms | ~300ms | N/A (web-based) |
-| matplotlib-like API | ✅ | ❌ | ✅ |
-| Publication quality | ✅ | ⚠️ | ✅ |
-| Large data (>1M pts) | ✅ | ❌ | ❌ |
-| Compile time | <30s | <15s | ~45s |
-| Backend flexibility | ✅ (6 backends) | ⚠️ (2 backends) | ❌ (web only) |
-
 ruviz is designed specifically for:
-- **Scientific computing**: Handle large datasets efficiently
+- **Scientific computing**: Plot arrays and numeric data directly
 - **Data analysis**: Integration with ndarray, polars
 - **Publication**: IEEE/Nature-quality output
-- **Performance**: Real-time and batch processing
+- **Rust applications**: Native APIs without a Python or JavaScript runtime
 
 ## Design Philosophy
 
@@ -72,11 +61,10 @@ ruviz is designed specifically for:
 - **Builder pattern**: Fluent, chainable method calls
 - **Sensible defaults**: Get good results with minimal configuration
 
-### 2. Performance First
-- **Intelligent backend selection**: Automatically choose optimal renderer
-- **Zero-copy operations**: Minimal memory overhead
-- **Parallel processing**: Multi-core utilization for large data
-- **GPU acceleration**: Optional hardware acceleration
+### 2. Practical Output
+- **Reference raster path**: Conservative PNG/image output for visual parity
+- **Vector output**: SVG export and optional PDF export
+- **Feature flags**: Optional renderer/data integrations when your workload needs them
 
 ### 3. Safety & Quality
 - **No unsafe code**: Memory safe by design
@@ -122,16 +110,15 @@ Plot::new()
     .save("analysis.png")?;
 ```
 
-### Real-Time Visualization
+### Larger Datasets
 ```rust
 use ruviz::prelude::*;
 
-// 1M points rendered in <1s
-let x: Vec<f64> = (0..1_000_000).map(|i| i as f64).collect();
+let x: Vec<f64> = (0..250_000).map(|i| i as f64 * 0.001).collect();
 let y: Vec<f64> = x.iter().map(|&x| x.sin()).collect();
 
 Plot::new()
-    .line(&x, &y)  // Automatically uses parallel backend
+    .line(&x, &y)
     .save("large_dataset.png")?;
 ```
 
@@ -144,22 +131,22 @@ Plot::new()
 └─────────────────┬───────────────────────┘
                   │
 ┌─────────────────┴───────────────────────┐
-│        Backend Selection                │
-│  Auto-optimize, Manual override         │
+│       Plot Configuration               │
+│  Size, DPI, theme, stored backend label │
 └─────────────────┬───────────────────────┘
                   │
      ┌────────────┼────────────┬──────────┐
      │            │            │          │
 ┌────▼─────┐ ┌───▼────┐ ┌────▼─────┐ ┌──▼────┐
-│  Skia    │ │Parallel│ │   SIMD   │ │  GPU  │
-│ (default)│ │(rayon) │ │(portable)│ │(wgpu) │
+│ Raster   │ │  SVG   │ │   PDF    │ │Window │
+│  PNG     │ │Vector  │ │ feature  │ │feature│
 └──────────┘ └────────┘ └──────────┘ └───────┘
      │            │            │          │
      └────────────┴────────────┴──────────┘
                   │
          ┌────────▼────────┐
-         │   tiny-skia     │
-         │  Rasterization  │
+         │ Output helpers  │
+         │ save/render/... │
          └────────┬────────┘
                   │
             ┌─────▼──────┐
@@ -175,7 +162,7 @@ Plot::new()
 
 ## Philosophy Summary
 
-> **ruviz aims to make data visualization in Rust as easy as matplotlib, while being 10-100x faster and compile-time safe.**
+> **ruviz aims to make data visualization in Rust approachable while preserving Rust's type safety.**
 
 We believe that:
 1. Performance shouldn't require complexity

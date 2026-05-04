@@ -11,21 +11,21 @@ use ruviz::prelude::*;
 
 Plot::new()
     .line(&x, &y)
-    .color(Color::from_rgb(255, 0, 0))  // Red
+    .color(Color::new(255, 0, 0))  // Red
     .save("red_line.png")?;
 ```
 
 **Common Colors**:
 ```rust
-Color::from_rgb(255, 0, 0)      // Red
-Color::from_rgb(0, 255, 0)      // Green
-Color::from_rgb(0, 0, 255)      // Blue
-Color::from_rgb(255, 255, 0)    // Yellow
-Color::from_rgb(255, 0, 255)    // Magenta
-Color::from_rgb(0, 255, 255)    // Cyan
-Color::from_rgb(0, 0, 0)        // Black
-Color::from_rgb(255, 255, 255)  // White
-Color::from_rgb(128, 128, 128)  // Gray
+Color::new(255, 0, 0)      // Red
+Color::new(0, 255, 0)      // Green
+Color::new(0, 0, 255)      // Blue
+Color::new(255, 255, 0)    // Yellow
+Color::new(255, 0, 255)    // Magenta
+Color::new(0, 255, 255)    // Cyan
+Color::new(0, 0, 0)        // Black
+Color::new(255, 255, 255)  // White
+Color::new(128, 128, 128)  // Gray
 ```
 
 ### Hex Colors
@@ -44,19 +44,19 @@ Plot::new()
 **Muted Palette** (professional, readable):
 ```rust
 // Blue
-Color::from_rgb(76, 114, 176)   // #4C72B0
+Color::new(76, 114, 176)   // #4C72B0
 
 // Orange
-Color::from_rgb(221, 132, 82)   // #DD8452
+Color::new(221, 132, 82)   // #DD8452
 
 // Green
-Color::from_rgb(85, 168, 104)   // #55A868
+Color::new(85, 168, 104)   // #55A868
 
 // Red
-Color::from_rgb(196, 78, 82)    // #C44E52
+Color::new(196, 78, 82)    // #C44E52
 
 // Purple
-Color::from_rgb(129, 114, 179)  // #8172B3
+Color::new(129, 114, 179)  // #8172B3
 ```
 
 **Example with seaborn colors**:
@@ -66,13 +66,13 @@ use ruviz::prelude::*;
 Plot::new()
     .line(&x, &y1)
         .label("Series 1")
-        .color(Color::from_rgb(76, 114, 176))   // Muted blue
+        .color(Color::new(76, 114, 176))   // Muted blue
     .line(&x, &y2)
         .label("Series 2")
-        .color(Color::from_rgb(221, 132, 82))   // Muted orange
+        .color(Color::new(221, 132, 82))   // Muted orange
     .line(&x, &y3)
         .label("Series 3")
-        .color(Color::from_rgb(85, 168, 104))   // Muted green
+        .color(Color::new(85, 168, 104))   // Muted green
     .legend(Position::TopRight)
     .save("seaborn_colors.png")?;
 ```
@@ -83,11 +83,11 @@ Plot::new()
 use ruviz::prelude::*;
 
 // Semi-transparent colors
-Color::from_rgba(255, 0, 0, 128)  // 50% transparent red
+Color::new_rgba(255, 0, 0, 128)  // 50% transparent red
 
 Plot::new()
     .scatter(&x, &y)
-    .color(Color::from_rgba(0, 0, 255, 100))  // Transparent blue
+    .color(Color::new_rgba(0, 0, 255, 100))  // Transparent blue
     .marker_size(10.0)
     .save("transparent_scatter.png")?;
 ```
@@ -153,7 +153,7 @@ Plot::new()
     .line(&x, &y)
     .line_width(2.5)
     .line_style(LineStyle::Dashed)
-    .color(Color::from_rgb(255, 100, 0))
+    .color(Color::new(255, 100, 0))
     .label("Styled Line")
     .legend(Position::TopRight)
     .save("line_fully_styled.png")?;
@@ -230,7 +230,7 @@ Plot::new()
     .scatter(&x, &y)
     .marker(MarkerStyle::Circle)
     .marker_size(8.0)
-    .color(Color::from_rgb(255, 0, 128))  // Pink markers
+    .color(Color::new(255, 0, 128))  // Pink markers
     .save("colored_markers.png")?;
 ```
 
@@ -244,17 +244,17 @@ Plot::new()
         .label("Group A")
         .marker(MarkerStyle::Circle)
         .marker_size(8.0)
-        .color(Color::from_rgb(255, 0, 0))
+        .color(Color::new(255, 0, 0))
     .scatter(&x2, &y2)
         .label("Group B")
         .marker(MarkerStyle::Square)
         .marker_size(8.0)
-        .color(Color::from_rgb(0, 0, 255))
+        .color(Color::new(0, 0, 255))
     .scatter(&x3, &y3)
         .label("Group C")
         .marker(MarkerStyle::Triangle)
         .marker_size(10.0)
-        .color(Color::from_rgb(0, 128, 0))
+        .color(Color::new(0, 128, 0))
     .legend(Position::TopRight)
     .save("differentiated_series.png")?;
 ```
@@ -505,13 +505,13 @@ use ruviz::prelude::*;
 Plot::new()
     .line(&x, &y1)
         .label("Linear")
-        .color(Color::from_rgb(255, 0, 0))
+        .color(Color::new(255, 0, 0))
     .line(&x, &y2)
         .label("Quadratic")
-        .color(Color::from_rgb(0, 0, 255))
+        .color(Color::new(0, 0, 255))
     .line(&x, &y3)
         .label("Cubic")
-        .color(Color::from_rgb(0, 128, 0))
+        .color(Color::new(0, 128, 0))
     .legend(Position::TopLeft)
     .save("multi_series_legend.png")?;
 ```
@@ -597,7 +597,7 @@ Available tick controls:
 use ruviz::prelude::*;
 
 Plot::new()
-    .dimensions(1200, 800)  // Width x Height in pixels
+    .size_px(1200, 800)  // Width x Height in pixels
     .line(&x, &y)
     .title("Custom Dimensions")
     .save("custom_size.png")?;
@@ -617,7 +617,7 @@ use ruviz::prelude::*;
 
 // Single column (IEEE)
 Plot::new()
-    .dimensions(252, 189)  // 3.5" × 2.625" @ 72 DPI
+    .size_px(252, 189)  // 3.5" × 2.625" @ 72 DPI
     .dpi(300)              // High resolution
     .theme(Theme::publication())
     .line(&x, &y)
@@ -625,7 +625,7 @@ Plot::new()
 
 // Double column (IEEE)
 Plot::new()
-    .dimensions(523, 392)  // 7.25" × 5.44" @ 72 DPI
+    .size_px(523, 392)  // 7.25" × 5.44" @ 72 DPI
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -684,7 +684,7 @@ Plot::new()
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate data
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y_exp: Vec<f64> = x.iter().map(|v| (-v).exp()).collect();
@@ -698,20 +698,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create publication-quality plot
     Plot::new()
         // Figure setup
-        .dimensions(1000, 700)
+        .size_px(1000, 700)
         .dpi(300)
         .theme(publication_theme)
 
         // Data series
         .line(&x, &y_exp)
             .label("Exponential Decay")
-            .color(Color::from_rgb(76, 114, 176))   // Muted blue
+            .color(Color::new(76, 114, 176))   // Muted blue
             .line_width(2.0)
             .line_style(LineStyle::Solid)
 
         .line(&x, &y_sin)
             .label("Damped Oscillation")
-            .color(Color::from_rgb(221, 132, 82))   // Muted orange
+            .color(Color::new(221, 132, 82))   // Muted orange
             .line_width(2.0)
             .line_style(LineStyle::Dashed)
 
@@ -745,12 +745,12 @@ let presentation_theme = Theme::builder()
     .build();
 
 Plot::new()
-    .dimensions(1920, 1080)  // Full HD
+    .size_px(1920, 1080)  // Full HD
     .dpi(150)
     .theme(presentation_theme)
 
     .line(&x, &y)
-    .color(Color::from_rgb(100, 200, 255))  // Bright cyan
+    .color(Color::new(100, 200, 255))  // Bright cyan
     .line_width(4.0)  // Thick for visibility
 
     .title("Presentation Plot")

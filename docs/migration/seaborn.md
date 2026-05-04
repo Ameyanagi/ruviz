@@ -199,9 +199,9 @@ sns.color_palette("pastel")
 **ruviz**:
 ```rust
 // Seaborn "muted" palette (approximate)
-let muted_blue = Color::from_rgb(76, 114, 176);
-let muted_orange = Color::from_rgb(221, 132, 82);
-let muted_green = Color::from_rgb(85, 168, 104);
+let muted_blue = Color::new(76, 114, 176);
+let muted_orange = Color::new(221, 132, 82);
+let muted_green = Color::new(85, 168, 104);
 let muted_theme = Theme::builder()
     .palette([muted_blue, muted_orange, muted_green])
     .build();
@@ -219,11 +219,11 @@ Plot::new()
 Common seaborn palettes translated to RGB:
 
 **muted**:
-- Blue: `#4C72B0` → `Color::from_rgb(76, 114, 176)`
-- Orange: `#DD8452` → `Color::from_rgb(221, 132, 82)`
-- Green: `#55A868` → `Color::from_rgb(85, 168, 104)`
-- Red: `#C44E52` → `Color::from_rgb(196, 78, 82)`
-- Purple: `#8172B3` → `Color::from_rgb(129, 114, 179)`
+- Blue: `#4C72B0` → `Color::new(76, 114, 176)`
+- Orange: `#DD8452` → `Color::new(221, 132, 82)`
+- Green: `#55A868` → `Color::new(85, 168, 104)`
+- Red: `#C44E52` → `Color::new(196, 78, 82)`
+- Purple: `#8172B3` → `Color::new(129, 114, 179)`
 
 **deep** (default):
 - Blue: `#4C72B0`

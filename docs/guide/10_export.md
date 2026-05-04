@@ -141,25 +141,25 @@ use ruviz::prelude::*;
 
 // Widescreen (16:9)
 Plot::new()
-    .dimensions(1920, 1080)
+    .size_px(1920, 1080)
     .line(&x, &y)
     .save("widescreen.png")?;
 
 // Square
 Plot::new()
-    .dimensions(1000, 1000)
+    .size_px(1000, 1000)
     .line(&x, &y)
     .save("square.png")?;
 
 // Portrait
 Plot::new()
-    .dimensions(600, 800)
+    .size_px(600, 800)
     .line(&x, &y)
     .save("portrait.png")?;
 
 // Ultra-wide
 Plot::new()
-    .dimensions(2560, 1080)
+    .size_px(2560, 1080)
     .line(&x, &y)
     .save("ultrawide.png")?;
 ```
@@ -171,25 +171,25 @@ use ruviz::prelude::*;
 
 // Presentation (4:3)
 Plot::new()
-    .dimensions(1024, 768)
+    .size_px(1024, 768)
     .line(&x, &y)
     .save("presentation_43.png")?;
 
 // Presentation (16:9)
 Plot::new()
-    .dimensions(1920, 1080)
+    .size_px(1920, 1080)
     .line(&x, &y)
     .save("presentation_169.png")?;
 
 // Social media (Instagram post)
 Plot::new()
-    .dimensions(1080, 1080)
+    .size_px(1080, 1080)
     .line(&x, &y)
     .save("instagram.png")?;
 
 // Social media (Twitter card)
 Plot::new()
-    .dimensions(1200, 675)
+    .size_px(1200, 675)
     .line(&x, &y)
     .save("twitter.png")?;
 ```
@@ -208,7 +208,7 @@ use ruviz::prelude::*;
 // IEEE single-column: 3.5 inches wide
 // At 300 DPI: 3.5" × 300 = 1050 pixels
 Plot::new()
-    .dimensions(1050, 787)  // 3.5" × 2.625" @ 300 DPI
+    .size_px(1050, 787)  // 3.5" × 2.625" @ 300 DPI
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -226,7 +226,7 @@ use ruviz::prelude::*;
 // IEEE double-column: 7.25 inches wide
 // At 300 DPI: 7.25" × 300 = 2175 pixels
 Plot::new()
-    .dimensions(2175, 1631)  // 7.25" × 5.44" @ 300 DPI
+    .size_px(2175, 1631)  // 7.25" × 5.44" @ 300 DPI
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -244,7 +244,7 @@ use ruviz::prelude::*;
 // Nature single-column: 89mm = 3.5 inches
 // At 300 DPI: 1050 pixels
 Plot::new()
-    .dimensions(1050, 1050)  // Square or custom height
+    .size_px(1050, 1050)  // Square or custom height
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -253,7 +253,7 @@ Plot::new()
 
 // Nature two-column: 183mm = 7.2 inches
 Plot::new()
-    .dimensions(2160, 1440)
+    .size_px(2160, 1440)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -267,7 +267,7 @@ use ruviz::prelude::*;
 
 // Science single-column: 2.37 inches @ 300 DPI = 711 pixels
 Plot::new()
-    .dimensions(711, 533)
+    .size_px(711, 533)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -275,7 +275,7 @@ Plot::new()
 
 // Science double-column: 4.92 inches @ 300 DPI = 1476 pixels
 Plot::new()
-    .dimensions(1476, 1107)
+    .size_px(1476, 1107)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -306,7 +306,7 @@ fn main() {
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate publication-quality data
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y_exp: Vec<f64> = x.iter().map(|v| (-v).exp()).collect();
@@ -321,18 +321,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // IEEE double-column figure @ 300 DPI
     Plot::new()
-        .dimensions(2175, 1500)
+        .size_px(2175, 1500)
         .dpi(300)
         .theme(publication_theme)
 
         .line(&x, &y_exp)
             .label("Exponential Decay")
-            .color(Color::from_rgb(76, 114, 176))
+            .color(Color::new(76, 114, 176))
             .line_width(2.0)
 
         .line(&x, &y_decay)
             .label("Damped Oscillation")
-            .color(Color::from_rgb(221, 132, 82))
+            .color(Color::new(221, 132, 82))
             .line_width(2.0)
             .line_style(LineStyle::Dashed)
 
@@ -365,21 +365,21 @@ use ruviz::prelude::*;
 // 1. Quick draft (low DPI, fast iteration)
 Plot::new()
     .line(&x, &y)
-    .dimensions(800, 600)
+    .size_px(800, 600)
     .dpi(72)  // Fast rendering
     .save("draft.png")?;
 
 // 2. Review version (screen quality)
 Plot::new()
     .line(&x, &y)
-    .dimensions(1200, 800)
+    .size_px(1200, 800)
     .dpi(96)
     .save("review.png")?;
 
 // 3. Final version (publication quality)
 Plot::new()
     .line(&x, &y)
-    .dimensions(2175, 1500)
+    .size_px(2175, 1500)
     .dpi(300)
     .theme(Theme::publication())
     .save("final.png")?;
@@ -402,14 +402,14 @@ fn export_plot(data: &[f64], filename: &str, quality: &str) -> Result<(), Box<dy
 
     Plot::new()
         .line(&x, data)
-        .dimensions(dimensions.0, dimensions.1)
+        .size_px(dimensions.0, dimensions.1)
         .dpi(dpi)
         .save(filename)?;
 
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let data = vec![/* ... */];
 
     // Export at multiple quality levels
@@ -430,21 +430,21 @@ use ruviz::prelude::*;
 
 // Large file (high DPI + large dimensions)
 Plot::new()
-    .dimensions(3000, 2000)
+    .size_px(3000, 2000)
     .dpi(600)
     .line(&x, &y)
     .save("large.png")?;  // ~2-5 MB
 
 // Optimized (balanced quality/size)
 Plot::new()
-    .dimensions(1600, 1200)
+    .size_px(1600, 1200)
     .dpi(300)
     .line(&x, &y)
     .save("optimized.png")?;  // ~500 KB
 
 // Minimal (web-ready)
 Plot::new()
-    .dimensions(800, 600)
+    .size_px(800, 600)
     .dpi(96)
     .line(&x, &y)
     .save("web.png")?;  // ~100 KB
@@ -487,7 +487,7 @@ fn safe_export(plot: Plot, path: &str) -> Result<(), Box<dyn std::error::Error>>
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let plot = Plot::new()
         .line(&x, &y)
         .title("Safe Export");

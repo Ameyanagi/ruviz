@@ -8,10 +8,10 @@ current codebase.
 | Goal | What to use today |
 |------|-------------------|
 | Small or medium PNG export | `Plot::save()` with default settings |
-| In-memory render with CPU parallelism | `Plot::render()` plus `features = ["parallel"]` |
-| SIMD acceleration | `features = ["parallel", "simd"]` and use `render()` |
-| Very large scatter/histogram datasets | Let DataShader activate automatically above `100_000` points |
-| GPU-accelerated PNG export | Enable `gpu` and call `.gpu(true)` |
+| In-memory render | `Plot::render()` with the public reference raster path |
+| PNG export | `Plot::save()` with the public reference raster path |
+| Backend metadata | `.backend(...)`, `.auto_optimize()`, `.get_backend_name()` |
+| Experimental optimized paths | Internal/test-only paths and lower-level renderer code |
 | Interactive window | Enable `interactive` or `interactive-gpu` and use `show_interactive()` |
 | Embedded GPUI interactive plot | Use the `ruviz-gpui` crate and `plot_builder(...).interactive()` |
 | Lower allocation pressure | `.with_memory_pooling(true)` |
@@ -30,8 +30,8 @@ There are two separate concepts in the current implementation:
    - `save()`
 
 The stored backend selection is metadata today. It is visible through
-`get_backend_name()`, but the current `render()` and `save()` implementations do
-not directly dispatch on `self.render.backend`.
+`get_backend_name()`, but the current public `render()`, `render_png_bytes()`,
+and `save()` implementations do not directly dispatch on `self.render.backend`.
 
 ## GPUI Embedded Interactive Backend
 
@@ -89,34 +89,17 @@ assert_eq!(plot.get_backend_name(), "datashader");
 
 ## What `render()` actually does
 
-`render()` returns an in-memory `Image` and currently chooses its path like this:
-
-- Above `100_000` points for aggregation-safe series such as scatter and histogram: DataShader
-- Otherwise, if the `parallel` feature is enabled:
-  - parallel rendering is used when `ParallelRenderer::should_use_parallel(...)` returns `true`
-- Otherwise: CPU/tiny-skia rendering
+`render()` returns an in-memory `Image` using the public reference raster path.
+That path is CPU/tiny-skia based and is kept conservative for output parity.
 
 Reactive plots first resolve a static snapshot, then run through the same
-backend-selection logic:
+public render path:
 
 - temporal `Signal` inputs in plain `render()` are sampled at `0.0`
 - push-based `Observable` inputs and streaming buffers read their latest values
-- `render_at(t)` uses the same backend-selection logic after sampling temporal
-  inputs at `t`
+- `render_at(t)` samples temporal inputs at `t`
 
-That means signal-backed, observable-backed, and streaming-backed plots can
-still reach the parallel path after resolution, while only aggregation-safe
-series reach the automatic DataShader path.
-
-The default parallel renderer activates when either:
-
-- the series count is at least `2`, or
-- total points exceed `20_000` (default chunk size `10_000 * 2`)
-
-`parallel_threshold(...)` only adjusts the **series-count** threshold. It does
-not change the chunk-size path.
-
-### Parallel render example
+### In-memory render example
 
 ```toml
 [dependencies]
@@ -137,10 +120,14 @@ let image = Plot::new()
 println!("Rendered {}x{}", image.width(), image.height());
 ```
 
+`parallel_threshold(...)` and the `parallel` feature configure the stored
+parallel renderer, but they do not force the public reference render path to use
+parallel execution.
+
 ### SIMD note
 
-The `simd` feature is used inside the parallel renderer. In practice that means
-it helps the `render()` path when parallel rendering is active.
+The `simd` feature is available to performance-oriented renderer code, but it is
+not a guarantee that a public `render()` call will take a SIMD path.
 
 ```toml
 [dependencies]
@@ -149,29 +136,23 @@ ruviz = { version = "0.4.13", features = ["parallel", "simd"] }
 
 ## What `save()` actually does
 
-`save()` renders and writes a PNG file. Its current path is different from
-`render()`:
+`save()` renders PNG bytes through the same public reference raster path and
+writes them to the requested file.
 
-- Above `100_000` points for aggregation-safe series such as scatter and histogram:
-  - DataShader branch
-- Otherwise, if `gpu(true)` is enabled and the plot has at least `5_000` points:
-  - GPU rendering path
-- Otherwise: CPU/tiny-skia rendering
-
-Reactive snapshotting works the same as `render()`: temporal `Signal` sources
-are sampled at `0.0`, while push-based `Observable` and streaming sources use
-their latest values before backend selection.
+Reactive snapshotting works the same as `render()`: temporal `Signal` sources are
+sampled at `0.0`, while push-based `Observable` and streaming sources use their
+latest values before output.
 
 Two important details:
 
 - `save()` does **not** currently call the dedicated `render_with_parallel()` path
-- The automatic DataShader branch in `save()` is intentionally conservative to
-  preserve plot semantics for connected line-style charts
+- `save()` does **not** currently dispatch on `.gpu(true)` or stored backend metadata
 
 ## DataShader
 
-DataShader activates automatically above `100_000` total points for
-aggregation-safe series such as scatter and histogram.
+DataShader support exists in the crate, and `.auto_optimize()` may store
+`BackendType::DataShader` metadata for large datasets. The current public
+`render()` and `save()` paths do not automatically switch to DataShader output.
 
 ```rust
 use ruviz::prelude::*;
@@ -180,7 +161,6 @@ let points = 250_000;
 let x: Vec<f64> = (0..points).map(|i| i as f64 * 0.001).collect();
 let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
-// Large scatter plots switch to DataShader automatically above 100_000 points.
 Plot::new()
     .scatter(&x, &y)
     .save("datashader_plot.png")?;
@@ -188,16 +168,16 @@ Plot::new()
 
 ## GPU
 
-GPU support is opt-in and requires the `gpu` feature (or `interactive-gpu`,
-which includes it).
+GPU types and metadata are opt-in and require the `gpu` feature (or
+`interactive-gpu`, which includes it).
 
 Calling `.gpu(true)` does two things:
 
 - it stores `BackendType::GPU` on the plot
-- it enables the GPU path in `save()` for plots with at least `5_000` points
+- it records the GPU preference for APIs that inspect plot configuration
 
-If GPU initialization fails during `save()`, the code logs a warning and falls
-back to CPU rendering.
+The current public `save()` and `render()` paths do not dispatch to a GPU raster
+path.
 
 ```toml
 [dependencies]
@@ -216,7 +196,8 @@ Plot::new()
     .save("gpu_plot.png")?;
 ```
 
-`render()` does not currently use this GPU path.
+Use `interactive-gpu` for GPU-capable interactive sessions. Static file export
+should be treated as CPU/reference output today.
 
 ## Interactive windows
 
@@ -244,7 +225,7 @@ tokio = { version = "1", features = ["rt", "macros"] }
 use ruviz::prelude::*;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
@@ -351,8 +332,8 @@ Plot::new()
 ## Recommendations
 
 - Start with plain `save()` or `render()` before setting backend metadata.
-- If you need faster in-memory rendering, add `parallel` and use `render()`.
-- Add `simd` only alongside `parallel`.
-- Use `.gpu(true)` when you want GPU-assisted PNG export or `interactive-gpu`.
+- Add `parallel`/`simd` only after benchmarking a path that uses them.
+- Use `.gpu(true)` for GPU metadata or GPU-capable interactive work, not as a
+  static PNG export guarantee.
 - Treat `.backend(...)` and `.auto_optimize()` as stored selection helpers, not
   hard execution guarantees.

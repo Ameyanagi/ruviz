@@ -20,11 +20,13 @@
 //!
 //! ## Features
 //!
-//! - **High Performance**: <100ms for 100K points, <1s for 1M points
+//! - **Performance-Oriented**: Built for release-mode plotting workloads
+//!   with benchmarkable output paths
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
 //! - **30+ Plotting Primitives and Layouts**: Distribution, categorical, polar, regression, and layout helpers
 //! - **Publication Quality**: PNG/SVG export with custom themes
-//! - **Large Dataset Support**: DataShader-style aggregation for 100M+ points
+//! - **Large Dataset Support**: Streaming-friendly data structures and
+//!   practical downsampling workflows
 //! - **Cross Platform**: Linux, macOS, Windows
 //! - **Animation Tooling**: Frame-based recording plus signal-aware plot data APIs
 //!
@@ -56,7 +58,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = { version = "0.4.0", features = ["typst-math"] }
+//! ruviz = { version = "0.4.13", features = ["typst-math"] }
 //! ```
 //!
 //! Then opt into Typst text rendering per plot with `.typst(true)`:
@@ -93,7 +95,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = { version = "0.4.0", default-features = false }
+//! ruviz = { version = "0.4.13", default-features = false }
 //!
 //! [features]
 //! default = []

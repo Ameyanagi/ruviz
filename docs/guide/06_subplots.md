@@ -17,7 +17,7 @@ Subplots allow you to combine multiple plots into a single figure, essential for
 ```rust
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Prepare data
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y1 = vec![0.0, 1.0, 4.0, 9.0, 16.0];
@@ -169,7 +169,7 @@ subplots(2, 2, 1000, 1000)?
 ```rust
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate scientific datasets
     let time: Vec<f64> = (0..1000).map(|i| i as f64 * 0.01).collect();
     let signal: Vec<f64> = time.iter()
@@ -453,10 +453,10 @@ subplots(2, 2, 1000, 800)?
 use ruviz::prelude::*;
 
 let colors = [
-    Color::from_rgb(76, 114, 176),   // Muted blue
-    Color::from_rgb(221, 132, 82),   // Muted orange
-    Color::from_rgb(85, 168, 104),   // Muted green
-    Color::from_rgb(196, 78, 82),    // Muted red
+    Color::new(76, 114, 176),   // Muted blue
+    Color::new(221, 132, 82),   // Muted orange
+    Color::new(85, 168, 104),   // Muted green
+    Color::new(196, 78, 82),    // Muted red
 ];
 
 let plots: Vec<_> = (0..4).map(|i| {

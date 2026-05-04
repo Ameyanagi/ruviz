@@ -22,14 +22,14 @@ use ruviz::prelude::*;
 struct CustomPalette;
 
 impl CustomPalette {
-    fn oceanblue() -> Color { Color::from_rgb(0, 119, 182) }
-    fn deepcyan() -> Color { Color::from_rgb(0, 180, 216) }
-    fn skyblue() -> Color { Color::from_rgb(144, 224, 239) }
-    fn coral() -> Color { Color::from_rgb(240, 128, 128) }
-    fn sunset() -> Color { Color::from_rgb(255, 99, 71) }
+    fn oceanblue() -> Color { Color::new(0, 119, 182) }
+    fn deepcyan() -> Color { Color::new(0, 180, 216) }
+    fn skyblue() -> Color { Color::new(144, 224, 239) }
+    fn coral() -> Color { Color::new(240, 128, 128) }
+    fn sunset() -> Color { Color::new(255, 99, 71) }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let datasets = vec![
         vec![1.0, 2.0, 3.0, 4.0, 5.0],
@@ -71,12 +71,12 @@ fn interpolate_color(color1: Color, color2: Color, t: f64) -> Color {
     let g = (g1 as f64 * (1.0 - t) + g2 as f64 * t) as u8;
     let b = (b1 as f64 * (1.0 - t) + b2 as f64 * t) as u8;
 
-    Color::from_rgb(r, g, b)
+    Color::new(r, g, b)
 }
 
 fn create_gradient_palette(n: usize) -> Vec<Color> {
-    let start = Color::from_rgb(0, 0, 255);    // Blue
-    let end = Color::from_rgb(255, 0, 0);      // Red
+    let start = Color::new(0, 0, 255);    // Blue
+    let end = Color::new(255, 0, 0);      // Red
 
     (0..n).map(|i| {
         let t = i as f64 / (n - 1) as f64;
@@ -84,7 +84,7 @@ fn create_gradient_palette(n: usize) -> Vec<Color> {
     }).collect()
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let colors = create_gradient_palette(5);
     // Use colors for multi-series plot
     Ok(())
@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create overview panel and detail panels
     let overview = Plot::new()
         .line(&time, &overall_signal)
@@ -169,7 +169,7 @@ subplots(1, 2, 2400, 1000)?  // Extra wide for different panel shapes
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Parametric spiral
     let t: Vec<f64> = (0..1000).map(|i| i as f64 * 0.01).collect();
     let x: Vec<f64> = t.iter().map(|&t| t * (t * 2.0).cos()).collect();
@@ -192,7 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Simple harmonic oscillator phase portrait
     let n = 1000;
     let dt = 0.01;
@@ -224,7 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use ruviz::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Approximate vector field with small line segments
     let grid_size = 20;
     let step = 0.5;
@@ -282,7 +282,7 @@ fn create_plot_from_config(
     };
 
     Plot::new()
-        .dimensions(config.width, config.height)
+        .size_px(config.width, config.height)
         .dpi(config.dpi)
         .theme(theme)
         .line(x, y)
@@ -294,7 +294,7 @@ fn create_plot_from_config(
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Load configuration from JSON
     let config_json = std::fs::read_to_string("plot_config.json")?;
     let config: PlotConfig = serde_json::from_str(&config_json)?;
@@ -322,11 +322,11 @@ impl PlotTemplate {
         title: &str
     ) -> Result<(), Box<dyn std::error::Error>> {
         Plot::new()
-            .dimensions(2175, 1500)
+            .size_px(2175, 1500)
             .dpi(300)
             .theme(Theme::publication())
             .line(time, signal)
-            .color(Color::from_rgb(76, 114, 176))
+            .color(Color::new(76, 114, 176))
             .line_width(2.0)
             .title(title)
             .xlabel("Time (s)")
@@ -341,11 +341,11 @@ impl PlotTemplate {
         label: &str
     ) -> Result<(), Box<dyn std::error::Error>> {
         Plot::new()
-            .dimensions(600, 400)
+            .size_px(600, 400)
             .dpi(96)
             .theme(Theme::light())
             .histogram(data, None)
-            .color(Color::from_rgb(70, 130, 180))
+            .color(Color::new(70, 130, 180))
             .title(label)
             .xlabel("Value")
             .ylabel("Count")
@@ -448,7 +448,7 @@ fn plot_with_fallback(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Try high-quality first
     match Plot::new()
-        .dimensions(2175, 1500)
+        .size_px(2175, 1500)
         .dpi(300)
         .line(x, y)
         .save(output)
@@ -462,7 +462,7 @@ fn plot_with_fallback(
 
     // Fallback to standard quality
     Plot::new()
-        .dimensions(800, 600)
+        .size_px(800, 600)
         .dpi(96)
         .line(x, y)
         .save(output)?;

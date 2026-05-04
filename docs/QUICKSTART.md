@@ -27,7 +27,7 @@ ruviz = "0.4.13"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {
@@ -263,17 +263,17 @@ Plot::new()
     // Linear
     .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
     .label("Linear")
-    .color(Color::from_rgb(0, 100, 200))
+    .color(Color::new(0, 100, 200))
 
     // Quadratic
     .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
     .label("Quadratic")
-    .color(Color::from_rgb(200, 0, 100))
+    .color(Color::new(200, 0, 100))
 
     // Cubic
     .line(&x, &x.iter().map(|&v| v.powi(3)).collect::<Vec<_>>())
     .label("Cubic")
-    .color(Color::from_rgb(0, 200, 100))
+    .color(Color::new(0, 200, 100))
 
     .title("Polynomial Functions")
     .xlabel("x")
@@ -327,7 +327,7 @@ use ruviz::prelude::*;
 Plot::new()
     .line(&x, &y)
     .dpi(300)
-    .dimensions(1200, 900)  // Width x Height
+    .size_px(1200, 900)  // Width x Height
     .save("high_res.png")?;
 
 // For web (96 DPI, default)
@@ -356,7 +356,7 @@ Plot::new()
 ```toml
 [dependencies]
 ruviz = { version = "0.4.13", features = ["polars_support"] }
-polars = "0.35"
+polars = "0.50"
 ```
 
 ```rust
@@ -378,18 +378,12 @@ Plot::new()
 
 ## Performance Tips
 
-### For Large Datasets (>10K points)
-Enable parallel rendering:
+### For Larger Native Builds
+The default feature set already includes `parallel`. Add `performance` only
+when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.13", features = ["parallel"] }
-```
-
-### For Very Large Datasets (>100K points)
-Enable SIMD optimization:
-```toml
-[dependencies]
-ruviz = { version = "0.4.13", features = ["parallel", "simd"] }
+ruviz = { version = "0.4.13", features = ["performance"] }
 ```
 
 ### Large Dataset Export
@@ -398,6 +392,9 @@ Plot::new()
     .line(&huge_x, &huge_y)
     .save("optimized.png")?;
 ```
+
+For dense plots, reducing or aggregating data before plotting is often more
+effective than relying on a backend feature flag.
 
 ## Error Handling
 
@@ -443,7 +440,7 @@ Make sure you've added ruviz to `Cargo.toml` and run `cargo build`.
 Increase DPI: `.dpi(300)` for print quality.
 
 ### "Rendering is slow"
-Enable parallel rendering: `features = ["parallel"]` in Cargo.toml.
+Use a release build first. Add `performance` only after benchmarking your plot.
 
 ### "Missing font errors"
 ruviz automatically falls back to system fonts. If issues persist, check that your system has basic fonts installed.
