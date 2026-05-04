@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,8 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WEB_PACKAGE = ROOT / "packages" / "ruviz-web"
+WEB_SRC = WEB_PACKAGE / "src"
 MARKDOWN_ROOTS = [ROOT / "README.md", ROOT / "docs"]
 SNIPPET_MARKDOWN_ROOTS = [
     ROOT / "README.md",
@@ -42,6 +45,45 @@ FENCE_BLOCK_RE = re.compile(
     r"^```(?P<info>[^\n`]*)\n(?P<code>.*?)^```\s*$",
     re.DOTALL | re.MULTILINE,
 )
+RAW_MODULE_STUB = """\
+export default function init(input?: unknown): Promise<void>;
+
+export enum WebBackendPreference {
+  Auto = 0,
+  Cpu = 1,
+  Svg = 2,
+  Gpu = 3,
+}
+
+export class JsPlot {
+  [key: string]: any;
+  constructor();
+}
+
+export class ObservableVecF64 {
+  [key: string]: any;
+  constructor(values: Float64Array);
+}
+
+export class SignalVecF64 {
+  [key: string]: any;
+  static sineWave(...args: number[]): SignalVecF64;
+}
+
+export class WebCanvasSession {
+  [key: string]: any;
+  constructor(canvas: HTMLCanvasElement);
+}
+
+export class OffscreenCanvasSession {
+  [key: string]: any;
+  constructor(canvas: OffscreenCanvas);
+}
+
+export function register_default_browser_fonts_js(): void;
+export function register_font_bytes_js(bytes: Uint8Array): void;
+export function web_runtime_capabilities(): Record<string, boolean>;
+"""
 
 
 @dataclass(frozen=True)
@@ -316,6 +358,16 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
 
     with tempfile.TemporaryDirectory(prefix="ruviz-ts-doc-snippets-") as temp:
         temp_path = Path(temp)
+        web_package = temp_path / "ruviz-web"
+        raw_dir = web_package / "generated" / "raw"
+        raw_dir.mkdir(parents=True)
+        shutil.copytree(WEB_SRC, web_package / "src")
+        (raw_dir / "ruviz_web_raw.d.ts").write_text(
+            RAW_MODULE_STUB,
+            encoding="utf-8",
+        )
+        (raw_dir / "ruviz_web_raw.js").write_text("", encoding="utf-8")
+
         files = []
         for index, fence in enumerate(fences):
             snippet_path = temp_path / f"snippet_{index}.ts"
@@ -336,17 +388,8 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
                         "skipLibCheck": True,
                         "baseUrl": str(temp_path),
                         "paths": {
-                            "ruviz": [str(ROOT / "packages" / "ruviz-web" / "src" / "index.ts")],
-                            "ruviz/raw": [
-                                str(
-                                    ROOT
-                                    / "packages"
-                                    / "ruviz-web"
-                                    / "generated"
-                                    / "raw"
-                                    / "ruviz_web_raw.d.ts"
-                                )
-                            ],
+                            "ruviz": [str(web_package / "src" / "index.ts")],
+                            "ruviz/raw": [str(raw_dir / "ruviz_web_raw.d.ts")],
                         },
                     },
                     "files": files,
@@ -358,7 +401,15 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
 
         try:
             result = subprocess.run(
-                ["bun", "run", "--cwd", str(ROOT / "packages" / "ruviz-web"), "tsc", "-p", str(tsconfig_path)],
+                [
+                    "bun",
+                    "run",
+                    "--cwd",
+                    str(WEB_PACKAGE),
+                    "tsc",
+                    "-p",
+                    str(tsconfig_path),
+                ],
                 cwd=ROOT,
                 text=True,
                 stdout=subprocess.PIPE,
