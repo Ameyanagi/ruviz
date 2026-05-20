@@ -25,6 +25,7 @@ impl Plot {
                 SeriesType::Pie { data } => data.values.len(),
                 SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
                 SeriesType::Polar { data } => data.points.len(),
+                SeriesType::Quiver { data } => data.arrows.len(),
             })
             .sum()
     }
@@ -93,7 +94,7 @@ impl Plot {
         }
 
         let total_points = Self::calculate_total_points_for_series(series_list);
-        if !Self::should_auto_use_datashader(series_list, total_points) {
+        if !self.should_use_datashader_for_render(series_list, total_points) {
             return Ok(false);
         }
 
@@ -471,11 +472,101 @@ impl Plot {
                     svg, data, plot_area, x_min, x_max, y_min, y_max, color,
                 )?;
             }
+            SeriesType::Quiver { data } => {
+                self.render_quiver_series_svg(
+                    svg, data, plot_area, x_min, x_max, y_min, y_max, color,
+                );
+            }
             SeriesType::Histogram { .. } => {}
             _ => {}
         }
 
         Ok(())
+    }
+
+    fn render_quiver_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        data: &crate::plots::QuiverPlotData,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        default_color: Color,
+    ) {
+        if data.arrows.is_empty() {
+            return;
+        }
+
+        let base_color = data.config.color.unwrap_or(default_color);
+        let cmap = data.config.color_by_magnitude.then(|| {
+            crate::render::ColorMap::by_name(&data.config.cmap)
+                .unwrap_or_else(crate::render::ColorMap::viridis)
+        });
+        let (min_mag, max_mag) = data.magnitude_range;
+        let mag_range = if (max_mag - min_mag).abs() < 1e-10 {
+            1.0
+        } else {
+            max_mag - min_mag
+        };
+
+        for arrow in &data.arrows {
+            let arrow_color = cmap
+                .as_ref()
+                .map(|colormap| colormap.sample((arrow.magnitude - min_mag) / mag_range))
+                .unwrap_or(base_color);
+            let (sx1, sy1) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.start.0,
+                arrow.start.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            let (sx2, sy2) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.end.0,
+                arrow.end.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            svg.draw_line(
+                sx1,
+                sy1,
+                sx2,
+                sy2,
+                arrow_color,
+                data.config.width,
+                LineStyle::Solid,
+            );
+
+            let head: Vec<(f32, f32)> = arrow
+                .head
+                .iter()
+                .map(|&(x, y)| {
+                    crate::render::skia::map_data_to_pixels_scaled(
+                        x,
+                        y,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    )
+                })
+                .collect();
+            svg.draw_filled_polygon(&head, arrow_color);
+        }
     }
 
     pub(super) fn render_pie_series_svg(

@@ -307,6 +307,53 @@ impl Plot {
         self
     }
 
+    /// Internal method to add a Boxen series
+    pub(crate) fn add_boxen_series(
+        mut self,
+        mut boxen_data: crate::plots::BoxenData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        if let Some(line_width) = style.line_width {
+            boxen_data.config.line_width = line_width.max(0.0);
+        }
+        if let Some(marker_size) = style.marker_size {
+            boxen_data.config.outlier_size = marker_size.max(0.0);
+        }
+
+        let series = PlotSeries {
+            series_type: SeriesType::Boxen { data: boxen_data },
+            streaming_source: None,
+            label: style.label,
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
+            color_source: style.color_source,
+            line_width: style.line_width,
+            line_width_source: style.line_width_source,
+            line_style: style.line_style,
+            line_style_source: style.line_style_source,
+            marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
+            marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
+            alpha: style.alpha,
+            alpha_source: style.alpha_source,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            inset_layout: None,
+            group_id: None,
+        };
+
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
+        self
+    }
+
     /// Internal method to add a Polar series
     pub(crate) fn add_polar_series(
         mut self,
@@ -339,6 +386,53 @@ impl Plot {
             x_errors: None,
             error_config: None,
             inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
+            group_id: None,
+        };
+
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Quiver series
+    pub(crate) fn add_quiver_series(
+        mut self,
+        mut quiver_data: crate::plots::QuiverPlotData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        if let Some(color) = style.color {
+            quiver_data.config.color = Some(color);
+        }
+        if let Some(line_width) = style.line_width {
+            quiver_data.config.width = line_width.max(0.1);
+        }
+
+        let series = PlotSeries {
+            series_type: SeriesType::Quiver { data: quiver_data },
+            streaming_source: None,
+            label: style.label,
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
+            color_source: style.color_source,
+            line_width: style.line_width,
+            line_width_source: style.line_width_source,
+            line_style: style.line_style,
+            line_style_source: style.line_style_source,
+            marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
+            marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
+            alpha: style.alpha,
+            alpha_source: style.alpha_source,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -1165,6 +1259,19 @@ impl Plot {
                 );
                 data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
+            SeriesType::Quiver { data } => {
+                let plot_area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                data.render(renderer, &plot_area, &self.display.theme, color)?;
+            }
             SeriesType::Contour { data } => {
                 // Use PlotRender trait to render Contour
                 let contour_plot_area = crate::plots::PlotArea::new(
@@ -1499,6 +1606,11 @@ impl Plot {
                 }
                 SeriesType::Boxen { data } => {
                     if data.boxes.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Quiver { data } => {
+                    if data.arrows.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }

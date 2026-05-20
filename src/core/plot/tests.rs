@@ -2416,6 +2416,77 @@ fn test_benchmark_save_png_bytes_keeps_large_scatter_on_skia_reference_path() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
+fn test_public_png_auto_optimize_keeps_large_scatter_on_skia_visual_path() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let plot = Plot::new()
+        .scatter(&x_data, &y_data)
+        .auto_optimize()
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "skia");
+
+    let (png_bytes, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("auto-optimized scatter PNG render should preserve Skia visuals");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(!diagnostics.used_auto_datashader);
+    assert!(png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_public_png_explicit_datashader_uses_density_path_for_large_scatter() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let plot = Plot::new()
+        .backend(BackendType::DataShader)
+        .scatter(&x_data, &y_data)
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "datashader");
+
+    let (png_bytes, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("explicit DataShader scatter PNG render should use density path");
+
+    assert_eq!(backend, "datashader");
+    assert_eq!(diagnostics.render_mode, "optimized");
+    assert!(diagnostics.used_auto_datashader);
+    assert!(png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_public_png_auto_optimize_falls_back_for_unsupported_large_line() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let plot = Plot::new()
+        .line(&x_data, &y_data)
+        .auto_optimize()
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "skia");
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("unsupported DataShader line PNG render should fall back to Skia");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(!diagnostics.used_auto_datashader);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
 fn test_benchmark_save_png_bytes_keeps_large_histogram_on_skia() {
     let samples: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0002).sin()).collect();
 

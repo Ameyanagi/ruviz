@@ -16,7 +16,7 @@ pub fn quantiles(data: &[f64], probs: &[f64]) -> Vec<f64> {
     }
 
     let mut sorted: Vec<f64> = data.iter().copied().filter(|x| x.is_finite()).collect();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(f64::total_cmp);
 
     if sorted.is_empty() {
         return vec![f64::NAN; probs.len()];
@@ -61,8 +61,13 @@ fn quantile_sorted(sorted: &[f64], p: f64) -> f64 {
 /// starting from median (center) outward
 pub fn letter_values(data: &[f64], k: Option<usize>) -> Vec<(f64, f64)> {
     let mut sorted: Vec<f64> = data.iter().copied().filter(|x| x.is_finite()).collect();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.sort_by(f64::total_cmp);
 
+    letter_values_sorted(&sorted, k)
+}
+
+/// Calculate letter values from already sorted finite data.
+pub(crate) fn letter_values_sorted(sorted: &[f64], k: Option<usize>) -> Vec<(f64, f64)> {
     if sorted.is_empty() {
         return vec![];
     }
@@ -77,7 +82,7 @@ pub fn letter_values(data: &[f64], k: Option<usize>) -> Vec<(f64, f64)> {
     let mut result = Vec::with_capacity(k);
 
     // First level is median (p = 0.5)
-    let median = quantile_sorted(&sorted, 0.5);
+    let median = quantile_sorted(sorted, 0.5);
     result.push((median, median));
 
     // Subsequent levels: 1/4, 3/4; 1/8, 7/8; 1/16, 15/16; ...
@@ -86,8 +91,8 @@ pub fn letter_values(data: &[f64], k: Option<usize>) -> Vec<(f64, f64)> {
         let p_lower = 1.0 / denom;
         let p_upper = 1.0 - p_lower;
 
-        let lower = quantile_sorted(&sorted, p_lower);
-        let upper = quantile_sorted(&sorted, p_upper);
+        let lower = quantile_sorted(sorted, p_lower);
+        let upper = quantile_sorted(sorted, p_upper);
 
         result.push((lower, upper));
     }

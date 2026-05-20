@@ -259,6 +259,69 @@ pub(super) fn project_xy_points(
     x_scale: &crate::axes::AxisScale,
     y_scale: &crate::axes::AxisScale,
 ) -> Arc<[Point2f]> {
+    if matches!(x_scale, crate::axes::AxisScale::Linear)
+        && matches!(y_scale, crate::axes::AxisScale::Linear)
+    {
+        return project_linear_xy_points(x_data, y_data, x_min, x_max, y_min, y_max, plot_area);
+    }
+
+    project_scaled_xy_points(
+        x_data, y_data, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
+    )
+}
+
+fn project_linear_xy_points(
+    x_data: &[f64],
+    y_data: &[f64],
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    plot_area: tiny_skia::Rect,
+) -> Arc<[Point2f]> {
+    let x_range = x_max - x_min;
+    let y_range = y_max - y_min;
+    let x_is_degenerate = x_range.abs() < f64::EPSILON;
+    let y_is_degenerate = y_range.abs() < f64::EPSILON;
+    let left = plot_area.left();
+    let bottom = plot_area.bottom();
+    let width = plot_area.width();
+    let height = plot_area.height();
+
+    x_data
+        .iter()
+        .zip(y_data.iter())
+        .map(|(&x, &y)| {
+            let normalized_x = if x_is_degenerate {
+                0.5
+            } else {
+                (x - x_min) / x_range
+            };
+            let normalized_y = if y_is_degenerate {
+                0.5
+            } else {
+                (y - y_min) / y_range
+            };
+            Point2f::new(
+                left + normalized_x as f32 * width,
+                bottom - normalized_y as f32 * height,
+            )
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn project_scaled_xy_points(
+    x_data: &[f64],
+    y_data: &[f64],
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    plot_area: tiny_skia::Rect,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> Arc<[Point2f]> {
     x_data
         .iter()
         .zip(y_data.iter())
@@ -289,4 +352,98 @@ pub(super) fn plot_area_from_rect(
         y_min,
         y_max,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::axes::AxisScale;
+
+    #[test]
+    fn test_linear_projection_fast_path_matches_scaled_mapper() {
+        let plot_area = tiny_skia::Rect::from_xywh(73.5, 41.25, 503.75, 318.5);
+        assert!(plot_area.is_some(), "test rectangle should be valid");
+        let Some(plot_area) = plot_area else {
+            return;
+        };
+        let x_data = [-2.0, -0.5, 0.0, 1.25, 4.0, 7.5];
+        let y_data = [8.0, 1.5, -2.0, 0.25, 3.0, 5.5];
+
+        let points = project_xy_points(
+            &x_data,
+            &y_data,
+            -2.0,
+            7.5,
+            -2.0,
+            8.0,
+            plot_area,
+            &AxisScale::Linear,
+            &AxisScale::Linear,
+        );
+
+        let expected = x_data
+            .iter()
+            .zip(y_data.iter())
+            .map(|(&x, &y)| {
+                let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
+                    x,
+                    y,
+                    -2.0,
+                    7.5,
+                    -2.0,
+                    8.0,
+                    plot_area,
+                    &AxisScale::Linear,
+                    &AxisScale::Linear,
+                );
+                Point2f::new(px, py)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(points.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_linear_projection_fast_path_matches_degenerate_axis_mapper() {
+        let plot_area = tiny_skia::Rect::from_xywh(12.0, 18.0, 320.0, 240.0);
+        assert!(plot_area.is_some(), "test rectangle should be valid");
+        let Some(plot_area) = plot_area else {
+            return;
+        };
+        let x_data = [1.0, 1.0, 1.0];
+        let y_data = [-1.0, 0.0, 1.0];
+
+        let points = project_xy_points(
+            &x_data,
+            &y_data,
+            1.0,
+            1.0,
+            -1.0,
+            1.0,
+            plot_area,
+            &AxisScale::Linear,
+            &AxisScale::Linear,
+        );
+
+        let expected = x_data
+            .iter()
+            .zip(y_data.iter())
+            .map(|(&x, &y)| {
+                let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
+                    x,
+                    y,
+                    1.0,
+                    1.0,
+                    -1.0,
+                    1.0,
+                    plot_area,
+                    &AxisScale::Linear,
+                    &AxisScale::Linear,
+                );
+                Point2f::new(px, py)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(points.as_ref(), expected.as_slice());
+    }
 }

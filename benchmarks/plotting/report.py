@@ -45,6 +45,7 @@ def write_consolidated_csv(path: Path, runtime_payloads: list[dict[str, Any]]) -
         "height",
         "dpi",
         "byteCount",
+        "actualBackend",
         "datasetHash",
         "warmupIterations",
         "measuredIterations",
@@ -75,6 +76,7 @@ def write_consolidated_csv(path: Path, runtime_payloads: list[dict[str, Any]]) -
                     "height": row["canvas"]["height"],
                     "dpi": row["canvas"]["dpi"],
                     "byteCount": row["byteCount"],
+                    "actualBackend": row.get("actualBackend", ""),
                     "datasetHash": row["datasetHash"],
                     "warmupIterations": row["warmupIterations"],
                     "measuredIterations": row["measuredIterations"],
@@ -148,6 +150,7 @@ def _rust_diagnostics_rows(runtime_payloads: list[dict[str, Any]]) -> list[list[
                     result["scenarioId"],
                     result["sizeLabel"],
                     result["boundary"],
+                    result.get("actualBackend", "-"),
                     diagnostics.get("renderMode", "-"),
                     _diagnostic_flags(result),
                 ]
@@ -261,7 +264,10 @@ def generate_markdown_report(
                 "",
                 "These flags come from the Rust benchmark diagnostics and identify which renderer paths were active for each measured case.",
                 "",
-                _table(["Plot", "Size", "Boundary", "Mode", "Active flags"], diagnostics_rows),
+                _table(
+                    ["Plot", "Size", "Boundary", "Actual backend", "Mode", "Active flags"],
+                    diagnostics_rows,
+                ),
                 "",
             ]
         )

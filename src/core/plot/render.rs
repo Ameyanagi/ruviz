@@ -97,7 +97,7 @@ impl Plot {
                     .iter()
                     .any(|major| Self::tick_values_overlap(*major, *tick))
         });
-        ticks.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        ticks.sort_by(f64::total_cmp);
         ticks.dedup_by(|left, right| Self::tick_values_overlap(*left, *right));
         ticks
     }
@@ -144,11 +144,11 @@ impl Plot {
         }
     }
 
-    pub(super) fn render_image_with_mode_and_series_renderer<F>(
+    fn render_renderer_with_mode_and_series_renderer<F>(
         &self,
         mode: RenderExecutionMode,
         draw_series: F,
-    ) -> Result<(Image, RenderDiagnostics)>
+    ) -> Result<(SkiaRenderer, RenderDiagnostics)>
     where
         F: FnOnce(
             &Plot,
@@ -164,56 +164,22 @@ impl Plot {
         ) -> Result<()>,
     {
         self.validate_runtime_environment()?;
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
         let snapshot_series = self.snapshot_series(0.0);
         if !snapshot_series.is_empty() {
             Self::validate_series_list(&snapshot_series)?;
         }
 
         let total_points = Self::calculate_total_points_for_series(&snapshot_series);
-        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
-
         const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
         if total_points > LARGE_DATASET_THRESHOLD {
             log::warn!(
                 "Rendering {} points (>1M). DataShader optimization is available for large datasets.",
                 total_points
             );
-        }
-
-        #[cfg(feature = "parallel")]
-        {
-            if mode.allows_parallel() {
-                let series_count = snapshot_series.len();
-                let parallel_safe_for_markers = snapshot_series.iter().all(|series| match &series
-                    .series_type
-                {
-                    SeriesType::Line { .. } => {
-                        series.marker_style.is_none()
-                            && series.x_errors.is_none()
-                            && series.y_errors.is_none()
-                    }
-                    SeriesType::Heatmap { .. } => false,
-                    _ => true,
-                });
-                if !has_mixed_coordinates
-                    && parallel_safe_for_markers
-                    && self
-                        .render
-                        .parallel_renderer
-                        .should_use_parallel(series_count, total_points)
-                {
-                    let image = self.render_with_parallel()?;
-                    let diagnostics = RenderDiagnostics {
-                        render_mode: match mode {
-                            RenderExecutionMode::Reference => "reference",
-                            RenderExecutionMode::Optimized => "optimized",
-                        },
-                        used_parallel: true,
-                        ..RenderDiagnostics::default()
-                    };
-                    return Ok((image, diagnostics));
-                }
-            }
         }
 
         let (scaled_width, scaled_height) = self.config_canvas_size();
@@ -470,7 +436,132 @@ impl Plot {
         }
 
         let diagnostics = renderer.render_diagnostics().clone();
-        Ok((renderer.into_image(), diagnostics))
+        Ok((renderer, diagnostics))
+    }
+
+    #[cfg(feature = "parallel")]
+    fn try_render_parallel_image_with_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<Option<(Image, RenderDiagnostics)>> {
+        if !mode.allows_parallel() {
+            return Ok(None);
+        }
+
+        self.validate_runtime_environment()?;
+        let snapshot_series = self.snapshot_series(0.0);
+        if !snapshot_series.is_empty() {
+            Self::validate_series_list(&snapshot_series)?;
+        }
+
+        let total_points = Self::calculate_total_points_for_series(&snapshot_series);
+        let series_count = snapshot_series.len();
+        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
+        let parallel_safe_for_markers =
+            snapshot_series
+                .iter()
+                .all(|series| match &series.series_type {
+                    SeriesType::Line { .. } => {
+                        series.marker_style.is_none()
+                            && series.x_errors.is_none()
+                            && series.y_errors.is_none()
+                    }
+                    SeriesType::Heatmap { .. } | SeriesType::Quiver { .. } => false,
+                    _ => true,
+                });
+
+        if has_mixed_coordinates
+            || !parallel_safe_for_markers
+            || !self
+                .render
+                .parallel_renderer
+                .should_use_parallel(series_count, total_points)
+        {
+            return Ok(None);
+        }
+
+        let image = self.render_with_parallel()?;
+        let diagnostics = RenderDiagnostics {
+            render_mode: match mode {
+                RenderExecutionMode::Reference => "reference",
+                RenderExecutionMode::Optimized => "optimized",
+            },
+            used_parallel: true,
+            ..RenderDiagnostics::default()
+        };
+        Ok(Some((image, diagnostics)))
+    }
+
+    pub(super) fn render_image_with_mode_and_series_renderer<F>(
+        &self,
+        mode: RenderExecutionMode,
+        draw_series: F,
+    ) -> Result<(Image, RenderDiagnostics)>
+    where
+        F: FnOnce(
+            &Plot,
+            &[PlotSeries],
+            &mut SkiaRenderer,
+            tiny_skia::Rect,
+            f64,
+            f64,
+            f64,
+            f64,
+            RenderScale,
+            RenderExecutionMode,
+        ) -> Result<()>,
+    {
+        #[cfg(feature = "parallel")]
+        if let Some(parallel_render) = self.try_render_parallel_image_with_diagnostics(mode)? {
+            return Ok(parallel_render);
+        }
+
+        self.render_renderer_with_mode_and_series_renderer(mode, draw_series)
+            .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics))
+    }
+
+    fn render_renderer_with_mode_and_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<(SkiaRenderer, RenderDiagnostics)> {
+        self.render_renderer_with_mode_and_series_renderer(
+            mode,
+            |plot,
+             snapshot_series,
+             renderer,
+             plot_area,
+             x_min,
+             x_max,
+             y_min,
+             y_max,
+             render_scale,
+             mode| {
+                if !plot.render_series_collection_auto_datashader(
+                    snapshot_series,
+                    renderer,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    render_scale,
+                    mode,
+                )? {
+                    plot.render_series_collection_normal(
+                        snapshot_series,
+                        renderer,
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        render_scale,
+                        mode,
+                    )?;
+                }
+                Ok(())
+            },
+        )
     }
 
     fn render_image_with_mode_and_diagnostics(
@@ -515,6 +606,60 @@ impl Plot {
                 Ok(())
             },
         )
+    }
+
+    fn render_png_bytes_with_mode_and_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<(Vec<u8>, RenderDiagnostics)> {
+        let (renderer, diagnostics) = self.render_renderer_with_mode_and_diagnostics(mode)?;
+        Ok((renderer.encode_png_bytes()?, diagnostics))
+    }
+
+    fn public_png_render_mode_for_series(&self, series_list: &[PlotSeries]) -> RenderExecutionMode {
+        let total_points = Self::calculate_total_points_for_series(series_list);
+        if self.should_use_configured_datashader_for_public_png(series_list, total_points) {
+            RenderExecutionMode::Optimized
+        } else {
+            RenderExecutionMode::Reference
+        }
+    }
+
+    fn public_png_render_mode(&self) -> RenderExecutionMode {
+        let snapshot_series = self.snapshot_series(0.0);
+        self.public_png_render_mode_for_series(&snapshot_series)
+    }
+
+    fn should_use_configured_datashader_for_public_png(
+        &self,
+        series_list: &[PlotSeries],
+        total_points: usize,
+    ) -> bool {
+        matches!(self.render.backend, Some(BackendType::DataShader))
+            && !self.render.auto_optimized
+            && self.should_use_datashader_for_render(series_list, total_points)
+    }
+
+    pub(crate) fn should_use_datashader_for_render(
+        &self,
+        series_list: &[PlotSeries],
+        total_points: usize,
+    ) -> bool {
+        if Self::has_mixed_coordinate_series(series_list)
+            || !series_list
+                .iter()
+                .all(Self::series_supports_auto_datashader)
+        {
+            return false;
+        }
+
+        match self.render.backend {
+            Some(BackendType::DataShader) if self.render.auto_optimized => {
+                Self::should_auto_use_datashader(series_list, total_points)
+            }
+            Some(BackendType::DataShader) => !series_list.is_empty(),
+            _ => Self::should_auto_use_datashader(series_list, total_points),
+        }
     }
 
     /// Render the plot to an in-memory image.
@@ -1223,6 +1368,16 @@ impl Plot {
                         }
                     }
                 }
+                SeriesType::Quiver { data } => {
+                    for arrow in &data.arrows {
+                        for (x, y) in [arrow.start, arrow.end] {
+                            if x.is_finite() && y.is_finite() {
+                                x_values.push(x);
+                                y_values.push(y);
+                            }
+                        }
+                    }
+                }
                 SeriesType::Contour { data } => {
                     // Add contour line segment endpoints
                     for level in &data.lines {
@@ -1293,9 +1448,9 @@ impl Plot {
     /// - 100,000+ points: GPU when available, otherwise DataShader
     ///
     /// If a backend was explicitly set with `.backend()`, that choice is respected.
-    /// The current [`render`](Self::render) and [`save`](Self::save)
-    /// implementations still use their own internal heuristics; calling
-    /// `.auto_optimize()` does not directly switch those execution paths today.
+    /// Public PNG output keeps the reference visual path for `.auto_optimize()`;
+    /// explicit `BackendType::DataShader` remains available for callers that
+    /// deliberately want density aggregation for compatible scatter plots.
     pub fn auto_optimize(self) -> Self {
         self.auto_optimize_with_extra_points(0)
     }
@@ -1307,7 +1462,6 @@ impl Plot {
     pub(crate) fn auto_optimize_with_extra_points(mut self, extra_points: usize) -> Self {
         // If backend already explicitly set, respect that choice
         if self.render.backend.is_some() {
-            self.render.auto_optimized = true;
             return self;
         }
 
@@ -1333,6 +1487,7 @@ impl Plot {
                 SeriesType::Pie { data } => data.values.len(),
                 SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
                 SeriesType::Polar { data } => data.points.len(),
+                SeriesType::Quiver { data } => data.arrows.len(),
             })
             .sum();
 
@@ -1371,6 +1526,7 @@ impl Plot {
     /// Set backend explicitly (overrides auto-optimization)
     pub fn backend(mut self, backend: BackendType) -> Self {
         self.render.backend = Some(backend);
+        self.render.auto_optimized = false;
         self
     }
 
@@ -1410,12 +1566,18 @@ impl Plot {
 
     /// Get the current backend name (for testing)
     pub fn get_backend_name(&self) -> &'static str {
-        match self.render.backend {
-            Some(BackendType::Skia) => "skia",
-            Some(BackendType::Parallel) => "parallel",
-            Some(BackendType::GPU) => "gpu",
-            Some(BackendType::DataShader) => "datashader",
-            None => "auto",
+        self.render.backend.map_or("auto", BackendType::as_str)
+    }
+
+    /// Return the backend that the public PNG render/save path will use today.
+    ///
+    /// This differs from [`get_backend_name`](Self::get_backend_name), which
+    /// reports the configured backend preference. Unsupported optimized backend
+    /// preferences fall back to the reference Skia raster path.
+    pub fn resolved_backend_name(&self) -> &'static str {
+        match self.public_png_render_mode() {
+            RenderExecutionMode::Optimized => BackendType::DataShader.as_str(),
+            RenderExecutionMode::Reference => BackendType::Skia.as_str(),
         }
     }
 
@@ -1481,9 +1643,14 @@ impl Plot {
             return self.resolved_plot(0.0).save_png_bytes_with_backend();
         }
 
-        let (image, diagnostics) =
-            self.render_image_with_mode_and_diagnostics(RenderExecutionMode::Reference)?;
-        Ok((image.encode_png()?, "skia", diagnostics))
+        let mode = self.public_png_render_mode();
+        let (png_bytes, diagnostics) = self.render_png_bytes_with_mode_and_diagnostics(mode)?;
+        let backend = if diagnostics.used_auto_datashader {
+            BackendType::DataShader.as_str()
+        } else {
+            BackendType::Skia.as_str()
+        };
+        Ok((png_bytes, backend, diagnostics))
     }
 
     /// Save the plot to a PNG file with custom dimensions
@@ -1678,9 +1845,11 @@ impl Plot {
                 );
             } else {
                 // For other charts, compute X-axis ticks and draw full grid
-                let x_tick_layout = x_tick_layout
-                    .as_ref()
-                    .expect("non-categorical SVG render should have x tick layout");
+                let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "missing x tick layout for non-categorical SVG grid".to_string(),
+                    )
+                })?;
                 let grid_x_pixels = Self::grid_tick_pixels(
                     &x_tick_layout.pixel_positions,
                     &x_minor_tick_pixels,
@@ -1779,9 +1948,11 @@ impl Plot {
                 }
             } else {
                 // Normal chart: draw axes with numeric labels
-                let x_tick_layout = x_tick_layout
-                    .as_ref()
-                    .expect("non-categorical SVG render should have x tick layout");
+                let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "missing x tick layout for non-categorical SVG axes".to_string(),
+                    )
+                })?;
                 if self.layout.tick_config.enabled {
                     svg.draw_axes_with_minor_ticks(
                         plot_left,

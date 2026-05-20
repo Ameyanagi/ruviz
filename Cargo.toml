@@ -256,6 +256,10 @@ path = "examples/performance/plotting_benchmark_runner.rs"
 required-features = ["serde"]
 
 [[example]]
+name = "export_plotting_benchmark_outputs"
+path = "examples/performance/export_plotting_benchmark_outputs.rs"
+
+[[example]]
 name = "interactive_benchmark_runner"
 path = "examples/performance/interactive_benchmark_runner.rs"
 required-features = ["serde", "animation"]

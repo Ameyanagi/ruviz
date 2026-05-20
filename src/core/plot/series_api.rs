@@ -1,6 +1,62 @@
 use super::*;
 
 impl Plot {
+    fn collect_xy_for_derived_series<X, Y>(
+        mut self,
+        x_data: &X,
+        y_data: &Y,
+    ) -> (Self, Vec<f64>, Vec<f64>)
+    where
+        X: NumericData1D,
+        Y: NumericData1D,
+    {
+        let x_values = match collect_numeric_data_1d(x_data, self.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.set_pending_ingestion_error(err);
+                Vec::new()
+            }
+        };
+        let y_values = match collect_numeric_data_1d(y_data, self.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.set_pending_ingestion_error(err);
+                Vec::new()
+            }
+        };
+
+        if x_values.len() != y_values.len() {
+            self.set_pending_ingestion_error(PlottingError::DataLengthMismatch {
+                x_len: x_values.len(),
+                y_len: y_values.len(),
+                series_index: None,
+            });
+        }
+
+        (self, x_values, y_values)
+    }
+
+    fn collect_data1d_into_f64<T, D>(data: &D) -> Vec<f64>
+    where
+        T: Into<f64> + Copy,
+        D: Data1D<T>,
+    {
+        data.iter().copied().map(Into::into).collect()
+    }
+
+    fn collect_numeric_input<D>(&mut self, data: &D) -> Vec<f64>
+    where
+        D: NumericData1D,
+    {
+        match collect_numeric_data_1d(data, self.null_policy) {
+            Ok(values) => values,
+            Err(err) => {
+                self.set_pending_ingestion_error(err);
+                Vec::new()
+            }
+        }
+    }
+
     /// Add a scoped group of series that share style defaults.
     ///
     /// Styles configured on the group builder apply to every member series
@@ -299,6 +355,134 @@ impl Plot {
         };
 
         PlotSeriesBuilder::new(self, series)
+    }
+
+    /// Add a step plot series.
+    ///
+    /// This is a nonbreaking high-level wrapper around the existing discrete
+    /// step computation. It stores the computed step vertices as a normal line
+    /// series, so all standard line styling methods remain available.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::plots::discrete::StepWhere;
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![0.0, 1.0, 2.0, 3.0];
+    /// let y = vec![1.0, 3.0, 2.0, 4.0];
+    ///
+    /// Plot::new()
+    ///     .step(&x, &y, StepWhere::Post)
+    ///     .line_width(2.0)
+    ///     .save("step.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn step<X, Y>(
+        self,
+        x_data: &X,
+        y_data: &Y,
+        where_step: crate::plots::discrete::StepWhere,
+    ) -> PlotBuilder<crate::plots::basic::LineConfig>
+    where
+        X: NumericData1D,
+        Y: NumericData1D,
+    {
+        let (plot, x_values, y_values) = self.collect_xy_for_derived_series(x_data, y_data);
+        let (step_x, step_y): (Vec<_>, Vec<_>) =
+            crate::plots::discrete::step_line(&x_values, &y_values, where_step)
+                .into_iter()
+                .unzip();
+
+        PlotBuilder::new(
+            plot,
+            PlotInput::XY(step_x, step_y),
+            crate::plots::basic::LineConfig::default(),
+        )
+    }
+
+    /// Add an area plot filled from the curve to `baseline`.
+    ///
+    /// The fill is stored as a data-coordinate annotation and the visible curve
+    /// is stored as a normal line series, preserving existing line styling APIs.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![0.0, 1.0, 2.0, 3.0];
+    /// let y = vec![1.0, 2.5, 1.5, 3.0];
+    ///
+    /// Plot::new()
+    ///     .area(&x, &y, 0.0)
+    ///     .color(Color::BLUE)
+    ///     .save("area.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn area<X, Y>(
+        self,
+        x_data: &X,
+        y_data: &Y,
+        baseline: f64,
+    ) -> PlotBuilder<crate::plots::basic::LineConfig>
+    where
+        X: NumericData1D,
+        Y: NumericData1D,
+    {
+        let (plot, x_values, y_values) = self.collect_xy_for_derived_series(x_data, y_data);
+        let plot = plot.fill_to_baseline(&x_values, &y_values, baseline);
+
+        PlotBuilder::new(
+            plot,
+            PlotInput::XY(x_values, y_values),
+            crate::plots::basic::LineConfig::default(),
+        )
+    }
+
+    /// Add a stem plot with vertical stems from `baseline` to each point.
+    ///
+    /// Stems are rendered as annotation line segments and point heads are stored
+    /// as a normal scatter series, so scatter marker styling remains available.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![0.0, 1.0, 2.0, 3.0];
+    /// let y = vec![1.0, 3.0, 2.0, 4.0];
+    ///
+    /// Plot::new()
+    ///     .stem(&x, &y, 0.0)
+    ///     .marker_size(5.0)
+    ///     .save("stem.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn stem<X, Y>(
+        self,
+        x_data: &X,
+        y_data: &Y,
+        baseline: f64,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig>
+    where
+        X: NumericData1D,
+        Y: NumericData1D,
+    {
+        let (mut plot, x_values, y_values) = self.collect_xy_for_derived_series(x_data, y_data);
+        let stem_style = ArrowStyle::new()
+            .head_style(crate::core::ArrowHead::None)
+            .tail_style(crate::core::ArrowHead::None);
+
+        for (&x, &y) in x_values.iter().zip(y_values.iter()) {
+            plot = plot.arrow_styled(x, baseline, x, y, stem_style.clone());
+        }
+
+        PlotBuilder::new(
+            plot,
+            PlotInput::XY(x_values, y_values),
+            crate::plots::basic::ScatterConfig::default(),
+        )
     }
 
     /// Add a bar plot series
@@ -1169,17 +1353,96 @@ impl Plot {
     where
         T: Into<f64> + Copy,
     {
-        let mut data_vec = Vec::with_capacity(data.len());
-        for i in 0..data.len() {
-            if let Some(val) = data.get(i) {
-                data_vec.push((*val).into());
-            }
-        }
+        let data_vec = Self::collect_data1d_into_f64::<T, D>(data);
 
         PlotBuilder::new(
             self,
             PlotInput::Single(data_vec),
             crate::plots::ViolinConfig::default(),
+        )
+    }
+
+    /// Add a boxen (letter-value) plot for visualizing distribution tails.
+    ///
+    /// Boxen plots extend box plots by showing multiple quantile boxes, which
+    /// makes them useful for larger samples where tail structure matters.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let data: Vec<f64> = (0..500)
+    ///     .map(|i| (i as f64 * 0.05).sin() * 2.0 + i as f64 / 250.0)
+    ///     .collect();
+    ///
+    /// Plot::new()
+    ///     .boxen(&data)
+    ///     .k_depth(6)
+    ///     .show_outliers(true)
+    ///     .save("boxen.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn boxen<T, D: Data1D<T>>(self, data: &D) -> PlotBuilder<crate::plots::BoxenConfig>
+    where
+        T: Into<f64> + Copy,
+    {
+        let data_vec = Self::collect_data1d_into_f64::<T, D>(data);
+
+        PlotBuilder::new(
+            self,
+            PlotInput::Single(data_vec),
+            crate::plots::BoxenConfig::default(),
+        )
+    }
+
+    /// Add a quiver plot for visualizing a 2D vector field.
+    ///
+    /// Quiver plots draw an arrow at each `(x, y)` position. By default `u`
+    /// and `v` are the vector components. Use [`PlotBuilder::angles_mode`] to
+    /// treat `u` as an angle in radians and `v` as a magnitude instead.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![0.0, 1.0, 0.0, 1.0];
+    /// let y = vec![0.0, 0.0, 1.0, 1.0];
+    /// let u = vec![1.0, 0.4, -0.2, -0.8];
+    /// let v = vec![0.2, 0.9, 0.7, -0.1];
+    ///
+    /// Plot::new()
+    ///     .quiver(&x, &y, &u, &v)
+    ///     .scale(0.25)
+    ///     .pivot(QuiverPivot::Middle)
+    ///     .color_by_magnitude(true)
+    ///     .save("quiver.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn quiver<X, Y, U, V>(
+        self,
+        x_data: &X,
+        y_data: &Y,
+        u_data: &U,
+        v_data: &V,
+    ) -> PlotBuilder<crate::plots::QuiverConfig>
+    where
+        X: NumericData1D,
+        Y: NumericData1D,
+        U: NumericData1D,
+        V: NumericData1D,
+    {
+        let mut plot = self;
+        let x = plot.collect_numeric_input(x_data);
+        let y = plot.collect_numeric_input(y_data);
+        let u = plot.collect_numeric_input(u_data);
+        let v = plot.collect_numeric_input(v_data);
+
+        PlotBuilder::new(
+            plot,
+            PlotInput::Quiver { x, y, u, v },
+            crate::plots::QuiverConfig::default(),
         )
     }
 

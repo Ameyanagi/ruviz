@@ -14,7 +14,7 @@ use crate::core::Result;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, Theme};
-use crate::stats::quantile::letter_values;
+use crate::stats::quantile::letter_values_sorted;
 
 /// Configuration for boxen plot
 #[derive(Debug, Clone)]
@@ -83,15 +83,39 @@ impl BoxenConfig {
         self
     }
 
+    /// Set saturation gradient
+    pub fn saturation(mut self, saturation: f32) -> Self {
+        self.saturation = saturation.clamp(0.0, 1.0);
+        self
+    }
+
     /// Show outliers
     pub fn show_outliers(mut self, show: bool) -> Self {
         self.show_outliers = show;
         self
     }
 
+    /// Set outlier marker size
+    pub fn outlier_size(mut self, size: f32) -> Self {
+        self.outlier_size = size.max(0.0);
+        self
+    }
+
+    /// Set box edge line width
+    pub fn line_width(mut self, width: f32) -> Self {
+        self.line_width = width.max(0.0);
+        self
+    }
+
     /// Set horizontal orientation
     pub fn horizontal(mut self) -> Self {
         self.orient = BoxenOrientation::Horizontal;
+        self
+    }
+
+    /// Set vertical orientation
+    pub fn vertical(mut self) -> Self {
+        self.orient = BoxenOrientation::Vertical;
         self
     }
 }
@@ -150,7 +174,7 @@ pub fn compute_boxen(data: &[f64], config: &BoxenConfig) -> BoxenData {
     }
 
     let mut sorted: Vec<f64> = data.iter().copied().filter(|x| x.is_finite()).collect();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(f64::total_cmp);
 
     if sorted.is_empty() {
         return BoxenData {
@@ -171,7 +195,7 @@ pub fn compute_boxen(data: &[f64], config: &BoxenConfig) -> BoxenData {
     });
 
     // Get letter values
-    let lvs = letter_values(&sorted, Some(k));
+    let lvs = letter_values_sorted(&sorted, Some(k));
 
     // Create boxes
     let mut boxes = Vec::new();
@@ -209,13 +233,21 @@ pub fn compute_boxen(data: &[f64], config: &BoxenConfig) -> BoxenData {
         vec![]
     };
 
-    let data_range = (*sorted.first().unwrap(), *sorted.last().unwrap());
+    let Some((&data_min, &data_max)) = sorted.first().zip(sorted.last()) else {
+        return BoxenData {
+            boxes: vec![],
+            median: 0.0,
+            outliers: vec![],
+            data_range: (0.0, 1.0),
+            config: config.clone(),
+        };
+    };
 
     BoxenData {
         boxes,
         median,
         outliers,
-        data_range,
+        data_range: (data_min, data_max),
         config: config.clone(),
     }
 }

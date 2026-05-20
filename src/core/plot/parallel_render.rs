@@ -5,6 +5,28 @@ use crate::core::plot::raster_fast_path::{
 };
 use crate::render::skia::map_data_to_pixels_scaled;
 
+fn include_quiver_data_bounds(
+    data: &crate::plots::QuiverPlotData,
+    x_min: &mut f64,
+    x_max: &mut f64,
+    y_min: &mut f64,
+    y_max: &mut f64,
+) {
+    data.arrows
+        .iter()
+        .flat_map(|arrow| [arrow.start, arrow.end])
+        .for_each(|(x_val, y_val)| {
+            if x_val.is_finite() {
+                *x_min = (*x_min).min(x_val);
+                *x_max = (*x_max).max(x_val);
+            }
+            if y_val.is_finite() {
+                *y_min = (*y_min).min(y_val);
+                *y_max = (*y_max).max(y_val);
+            }
+        });
+}
+
 impl Plot {
     /// Render plot using parallel processing for multiple series
     #[cfg(feature = "parallel")]
@@ -768,6 +790,12 @@ impl Plot {
 
                         RenderSeriesType::Line { segments }
                     }
+                    SeriesType::Quiver { .. } => {
+                        return Err(PlottingError::RenderError(
+                            "Quiver series use the reference renderer to preserve arrow styling"
+                                .to_string(),
+                        ));
+                    }
                     SeriesType::Contour { data: contour_data } => {
                         // Contour plots use line segment rendering
                         let mut all_points = Vec::new();
@@ -1358,6 +1386,11 @@ impl Plot {
                     x_min = x_min.min(0.0);
                     x_max = x_max.max(1.0);
                 }
+                SeriesType::Quiver { data } => {
+                    include_quiver_data_bounds(
+                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
+                    );
+                }
                 SeriesType::Contour { data } => {
                     // Contour bounds from grid coordinates
                     for &x_val in &data.x {
@@ -1711,6 +1744,11 @@ impl Plot {
                     }
                     x_min = x_min.min(0.0);
                     x_max = x_max.max(1.0);
+                }
+                SeriesType::Quiver { data } => {
+                    include_quiver_data_bounds(
+                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
+                    );
                 }
                 SeriesType::Contour { data } => {
                     for &x_val in &data.x {

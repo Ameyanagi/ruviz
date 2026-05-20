@@ -14,6 +14,18 @@ pub enum BackendType {
     DataShader,
 }
 
+impl BackendType {
+    /// Stable lowercase name for diagnostics, benchmark output, and logs.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Skia => "skia",
+            Self::Parallel => "parallel",
+            Self::GPU => "gpu",
+            Self::DataShader => "datashader",
+        }
+    }
+}
+
 /// Tick direction configuration
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum TickDirection {

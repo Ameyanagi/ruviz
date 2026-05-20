@@ -42,10 +42,11 @@ A: `.auto_optimize()` stores an inferred backend name based on data size:
 - 1,000 to 99,999 points → Parallel when built with the `parallel` feature, otherwise Skia
 - 100,000+ points → GPU when built with the `gpu` feature, otherwise DataShader
 
-The `render()` and `save()` paths still use their own internal heuristics.
-Those runtime heuristics are more conservative than the stored label for very
-large datasets: automatic DataShader is reserved for aggregation-safe series
-such as scatter and histogram.
+The `render()` and `save()` paths still use their own public PNG policy.
+That policy is more conservative than the stored label for very large datasets:
+`.auto_optimize()` preserves the normal Skia visual path. Use explicit
+`BackendType::DataShader` only when you deliberately want density aggregation
+for compatible scatter plots.
 You can also inspect or override the stored backend label:
 ```rust
 use ruviz::core::BackendType;

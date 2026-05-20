@@ -95,9 +95,10 @@ The `ruviz::simple` module also provides file-oriented helper functions such as
 The root `Plot` builder currently exposes:
 
 - Basic: line, scatter, bar, histogram, box plot, heatmap
-- Distribution: KDE, ECDF, violin
+- Distribution: KDE, ECDF, violin, boxen
 - Composition and polar: pie, donut styling, radar, polar line
-- Continuous and error plots: contour, symmetric/asymmetric error bars
+- Continuous, discrete, and error plots: contour, area, step, stem, symmetric/asymmetric error bars
+- Vector: quiver
 - Layout helpers: subplots, legends, grid/tick controls, annotations, insets
 
 Some lower-level modules contain additional experimental plot implementations
@@ -143,9 +144,12 @@ SVG export is available without enabling the legacy `svg` feature.
 ## Backend Notes
 
 `.backend(...)`, `.auto_optimize()`, and `.get_backend_name()` store or report
-backend selection metadata. The current public `render()` and `save()` paths use
-the reference raster pipeline for output parity; treat backend metadata as a
-configuration hint, not an execution guarantee.
+backend preference metadata. Use `.resolved_backend_name()` to inspect the
+backend that the public PNG render/save path will use for the current plot.
+Unsupported optimized backend preferences fall back to the Skia reference raster
+path for output parity. `auto_optimize()` keeps public PNG output on the normal
+visual path; supported large scatter workloads resolve to DataShader only when
+that backend is explicitly configured.
 
 Use release builds and benchmark your actual workload before adding optional
 performance features. See [Backend Selection](docs/guide/07_backends.md) and
