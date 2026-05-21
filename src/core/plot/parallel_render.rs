@@ -14,7 +14,15 @@ fn include_quiver_data_bounds(
 ) {
     data.arrows
         .iter()
-        .flat_map(|arrow| [arrow.start, arrow.end])
+        .flat_map(|arrow| {
+            [
+                arrow.start,
+                arrow.end,
+                arrow.head[0],
+                arrow.head[1],
+                arrow.head[2],
+            ]
+        })
         .for_each(|(x_val, y_val)| {
             if x_val.is_finite() {
                 *x_min = (*x_min).min(x_val);
@@ -25,6 +33,117 @@ fn include_quiver_data_bounds(
                 *y_max = (*y_max).max(y_val);
             }
         });
+}
+
+fn include_plot_data_bounds<T: crate::plots::traits::PlotData>(
+    data: &T,
+    x_min: &mut f64,
+    x_max: &mut f64,
+    y_min: &mut f64,
+    y_max: &mut f64,
+) {
+    let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
+        crate::plots::traits::PlotData::data_bounds(data);
+
+    if series_x_min.is_finite() {
+        *x_min = (*x_min).min(series_x_min);
+    }
+    if series_x_max.is_finite() {
+        *x_max = (*x_max).max(series_x_max);
+    }
+    if series_y_min.is_finite() {
+        *y_min = (*y_min).min(series_y_min);
+    }
+    if series_y_max.is_finite() {
+        *y_max = (*y_max).max(series_y_max);
+    }
+}
+
+fn include_point_bounds(
+    x_val: f64,
+    y_val: f64,
+    x_min: &mut f64,
+    x_max: &mut f64,
+    y_min: &mut f64,
+    y_max: &mut f64,
+) {
+    if x_val.is_finite() {
+        *x_min = (*x_min).min(x_val);
+        *x_max = (*x_max).max(x_val);
+    }
+    if y_val.is_finite() {
+        *y_min = (*y_min).min(y_val);
+        *y_max = (*y_max).max(y_val);
+    }
+}
+
+fn include_x_bounds(x_val: f64, x_min: &mut f64, x_max: &mut f64) {
+    if x_val.is_finite() {
+        *x_min = (*x_min).min(x_val);
+        *x_max = (*x_max).max(x_val);
+    }
+}
+
+fn include_y_bounds(y_val: f64, y_min: &mut f64, y_max: &mut f64) {
+    if y_val.is_finite() {
+        *y_min = (*y_min).min(y_val);
+        *y_max = (*y_max).max(y_val);
+    }
+}
+
+fn include_annotation_data_bounds(
+    annotations: &[Annotation],
+    x_min: &mut f64,
+    x_max: &mut f64,
+    y_min: &mut f64,
+    y_max: &mut f64,
+) {
+    annotations.iter().for_each(|annotation| match annotation {
+        Annotation::Text { x, y, .. } => {
+            include_point_bounds(*x, *y, x_min, x_max, y_min, y_max);
+        }
+        Annotation::Arrow { x1, y1, x2, y2, .. } => {
+            include_point_bounds(*x1, *y1, x_min, x_max, y_min, y_max);
+            include_point_bounds(*x2, *y2, x_min, x_max, y_min, y_max);
+        }
+        Annotation::HLine { y, .. } => include_y_bounds(*y, y_min, y_max),
+        Annotation::VLine { x, .. } => include_x_bounds(*x, x_min, x_max),
+        Annotation::Rectangle {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } => {
+            include_point_bounds(*x, *y, x_min, x_max, y_min, y_max);
+            include_point_bounds(*x + *width, *y + *height, x_min, x_max, y_min, y_max);
+        }
+        Annotation::FillBetween { x, y1, y2, .. } => {
+            x.iter()
+                .zip(y1.iter())
+                .zip(y2.iter())
+                .for_each(|((&x_val, &y1_val), &y2_val)| {
+                    include_point_bounds(x_val, y1_val, x_min, x_max, y_min, y_max);
+                    include_point_bounds(x_val, y2_val, x_min, x_max, y_min, y_max);
+                });
+        }
+        Annotation::HSpan {
+            x_min: span_min,
+            x_max: span_max,
+            ..
+        } => {
+            include_x_bounds(*span_min, x_min, x_max);
+            include_x_bounds(*span_max, x_min, x_max);
+        }
+        Annotation::VSpan {
+            y_min: span_min,
+            y_max: span_max,
+            ..
+        } => {
+            include_y_bounds(*span_min, y_min, y_max);
+            include_y_bounds(*span_max, y_min, y_max);
+        }
+    });
 }
 
 impl Plot {
@@ -912,6 +1031,19 @@ impl Plot {
             plot_area.height(),
         );
 
+        renderer.draw_annotations_where_scaled(
+            &self.annotations,
+            plot_area,
+            bounds.0,
+            bounds.1,
+            bounds.2,
+            bounds.3,
+            dpi,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+            Self::is_underlay_annotation,
+        )?;
+
         // Render processed series (sequential - final drawing)
         for processed in processed_series {
             match processed.series_type {
@@ -1092,6 +1224,19 @@ impl Plot {
             }
         }
 
+        renderer.draw_annotations_where_scaled(
+            &self.annotations,
+            plot_area,
+            bounds.0,
+            bounds.1,
+            bounds.2,
+            bounds.3,
+            dpi,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+            Self::is_overlay_annotation,
+        )?;
+
         // Draw tick labels (only for Cartesian plots)
         if self.needs_cartesian_axes() {
             let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
@@ -1183,6 +1328,33 @@ impl Plot {
 
         // Convert renderer output to Image
         Ok(renderer.into_image())
+    }
+
+    /// Expand already-computed data bounds with annotation geometry.
+    pub(super) fn expand_bounds_with_annotations(
+        &self,
+        bounds: (f64, f64, f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        let (mut x_min, mut x_max, mut y_min, mut y_max) = bounds;
+
+        include_annotation_data_bounds(
+            &self.annotations,
+            &mut x_min,
+            &mut x_max,
+            &mut y_min,
+            &mut y_max,
+        );
+
+        if (x_max - x_min).abs() < f64::EPSILON {
+            x_min -= 1.0;
+            x_max += 1.0;
+        }
+        if (y_max - y_min).abs() < f64::EPSILON {
+            y_min -= 1.0;
+            y_max += 1.0;
+        }
+
+        (x_min, x_max, y_min, y_max)
     }
 
     /// Calculate data bounds across all series
@@ -1374,17 +1546,7 @@ impl Plot {
                     x_max = x_max.max(1.0);
                 }
                 SeriesType::Boxen { data } => {
-                    // Boxen bounds from data range
-                    let (data_min, data_max) = data.data_range;
-                    if data_min.is_finite() {
-                        y_min = y_min.min(data_min);
-                    }
-                    if data_max.is_finite() {
-                        y_max = y_max.max(data_max);
-                    }
-                    // X bounds for centered boxen
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
+                    include_plot_data_bounds(data, &mut x_min, &mut x_max, &mut y_min, &mut y_max);
                 }
                 SeriesType::Quiver { data } => {
                     include_quiver_data_bounds(
@@ -1441,6 +1603,14 @@ impl Plot {
                 }
             }
         }
+
+        include_annotation_data_bounds(
+            &self.annotations,
+            &mut x_min,
+            &mut x_max,
+            &mut y_min,
+            &mut y_max,
+        );
 
         // Handle edge cases
         if (x_max - x_min).abs() < f64::EPSILON {
@@ -1735,15 +1905,7 @@ impl Plot {
                     x_max = x_max.max(1.0);
                 }
                 SeriesType::Boxen { data } => {
-                    let (data_min, data_max) = data.data_range;
-                    if data_min.is_finite() {
-                        y_min = y_min.min(data_min);
-                    }
-                    if data_max.is_finite() {
-                        y_max = y_max.max(data_max);
-                    }
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
+                    include_plot_data_bounds(data, &mut x_min, &mut x_max, &mut y_min, &mut y_max);
                 }
                 SeriesType::Quiver { data } => {
                     include_quiver_data_bounds(

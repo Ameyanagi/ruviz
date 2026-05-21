@@ -10,7 +10,7 @@
 //! - [`PlotData`] for `QuiverPlotData`
 //! - [`PlotRender`] for `QuiverPlotData`
 
-use crate::core::Result;
+use crate::core::{PlottingError, Result};
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, ColorMap, LineStyle, Theme};
@@ -244,9 +244,25 @@ impl PlotCompute for Quiver {
     type Output = QuiverPlotData;
 
     fn compute(input: Self::Input<'_>, config: &Self::Config) -> Result<Self::Output> {
-        if input.x.is_empty() || input.y.is_empty() {
-            return Err(crate::core::PlottingError::EmptyDataSet);
+        if input.x.is_empty() || input.y.is_empty() || input.u.is_empty() || input.v.is_empty() {
+            return Err(PlottingError::EmptyDataSet);
         }
+
+        if let Some(len) = [input.y.len(), input.u.len(), input.v.len()]
+            .into_iter()
+            .find(|&len| len != input.x.len())
+        {
+            return Err(PlottingError::DataLengthMismatch {
+                x_len: input.x.len(),
+                y_len: len,
+                series_index: None,
+            });
+        }
+
+        PlottingError::validate_data(input.x)?;
+        PlottingError::validate_data(input.y)?;
+        PlottingError::validate_data(input.u)?;
+        PlottingError::validate_data(input.v)?;
 
         Ok(compute_quiver(input.x, input.y, input.u, input.v, config))
     }

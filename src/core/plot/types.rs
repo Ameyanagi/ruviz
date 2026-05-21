@@ -70,6 +70,7 @@ pub(crate) struct PendingIngestionError {
 
 #[derive(Clone, Debug)]
 enum PendingIngestionErrorKind {
+    EmptyDataSet,
     DataLengthMismatch {
         x_len: usize,
         y_len: usize,
@@ -89,12 +90,17 @@ enum PendingIngestionErrorKind {
         source: String,
         message: String,
     },
+    InvalidData {
+        message: String,
+        position: Option<usize>,
+    },
     InvalidInput(String),
 }
 
 impl PendingIngestionError {
     pub(super) fn from_plotting_error(err: PlottingError) -> Self {
         let kind = match err {
+            PlottingError::EmptyDataSet => PendingIngestionErrorKind::EmptyDataSet,
             PlottingError::DataLengthMismatch {
                 x_len,
                 y_len,
@@ -125,6 +131,9 @@ impl PendingIngestionError {
             PlottingError::DataExtractionFailed { source, message } => {
                 PendingIngestionErrorKind::DataExtractionFailed { source, message }
             }
+            PlottingError::InvalidData { message, position } => {
+                PendingIngestionErrorKind::InvalidData { message, position }
+            }
             PlottingError::InvalidInput(message) => {
                 PendingIngestionErrorKind::InvalidInput(message)
             }
@@ -146,6 +155,7 @@ impl PendingIngestionError {
 
     pub(super) fn to_plotting_error(&self) -> PlottingError {
         let primary_error = match &self.kind {
+            PendingIngestionErrorKind::EmptyDataSet => PlottingError::EmptyDataSet,
             PendingIngestionErrorKind::DataLengthMismatch {
                 x_len,
                 y_len,
@@ -177,6 +187,12 @@ impl PendingIngestionError {
                 PlottingError::DataExtractionFailed {
                     source: source.clone(),
                     message: message.clone(),
+                }
+            }
+            PendingIngestionErrorKind::InvalidData { message, position } => {
+                PlottingError::InvalidData {
+                    message: message.clone(),
+                    position: *position,
                 }
             }
             PendingIngestionErrorKind::InvalidInput(message) => {

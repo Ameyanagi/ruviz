@@ -335,6 +335,18 @@ fn quiver_length_mismatch(
         })
 }
 
+fn validate_quiver_input(x: &[f64], y: &[f64], u: &[f64], v: &[f64]) -> crate::core::Result<()> {
+    if let Some(err) = quiver_length_mismatch(x, y, u, v) {
+        return Err(err);
+    }
+
+    crate::core::PlottingError::validate_data(x)?;
+    crate::core::PlottingError::validate_data(y)?;
+    crate::core::PlottingError::validate_data(u)?;
+    crate::core::PlottingError::validate_data(v)?;
+    Ok(())
+}
+
 /// Style options for a series
 ///
 /// These are common styling options that apply to most plot types.
@@ -2171,7 +2183,9 @@ impl PlotBuilder<crate::plots::BoxenConfig> {
 
         let boxen_data = crate::plots::compute_boxen(&data, &self.config);
         if boxen_data.boxes.is_empty() {
-            self.plot
+            let mut plot = self.plot;
+            plot.set_pending_ingestion_error(crate::core::PlottingError::EmptyDataSet);
+            plot
         } else {
             self.plot.add_boxen_series(boxen_data, self.style)
         }
@@ -2240,7 +2254,7 @@ impl PlotBuilder<crate::plots::QuiverConfig> {
             _ => return self.plot,
         };
 
-        if let Some(err) = quiver_length_mismatch(&x, &y, &u, &v) {
+        if let Err(err) = validate_quiver_input(&x, &y, &u, &v) {
             let mut plot = self.plot;
             plot.set_pending_ingestion_error(err);
             return plot;

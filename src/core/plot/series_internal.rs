@@ -814,6 +814,94 @@ impl Plot {
         Ok(())
     }
 
+    fn render_quiver_series_scaled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        data: &crate::plots::QuiverPlotData,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        default_color: Color,
+    ) -> Result<()> {
+        if data.arrows.is_empty() {
+            return Ok(());
+        }
+
+        let base_color = data.config.color.unwrap_or(default_color);
+        let cmap = data.config.color_by_magnitude.then(|| {
+            crate::render::ColorMap::by_name(&data.config.cmap)
+                .unwrap_or_else(crate::render::ColorMap::viridis)
+        });
+        let (min_mag, max_mag) = data.magnitude_range;
+        let mag_range = if (max_mag - min_mag).abs() < 1e-10 {
+            1.0
+        } else {
+            max_mag - min_mag
+        };
+        let arrow_width = self.render_scale().points_to_pixels(data.config.width);
+
+        for arrow in &data.arrows {
+            let arrow_color = cmap
+                .as_ref()
+                .map(|colormap| colormap.sample((arrow.magnitude - min_mag) / mag_range))
+                .unwrap_or(base_color);
+            let (sx1, sy1) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.start.0,
+                arrow.start.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            let (sx2, sy2) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.end.0,
+                arrow.end.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            renderer.draw_line(
+                sx1,
+                sy1,
+                sx2,
+                sy2,
+                arrow_color,
+                arrow_width,
+                LineStyle::Solid,
+            )?;
+
+            let head: Vec<(f32, f32)> = arrow
+                .head
+                .iter()
+                .map(|&(x, y)| {
+                    crate::render::skia::map_data_to_pixels_scaled(
+                        x,
+                        y,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    )
+                })
+                .collect();
+            renderer.draw_filled_polygon(&head, arrow_color)?;
+        }
+
+        Ok(())
+    }
+
     /// Helper method to render a single series using normal (non-DataShader) rendering
     pub(super) fn render_series_normal(
         &self,
@@ -1260,17 +1348,9 @@ impl Plot {
                 data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
             SeriesType::Quiver { data } => {
-                let plot_area = crate::plots::PlotArea::new(
-                    plot_area.x(),
-                    plot_area.y(),
-                    plot_area.width(),
-                    plot_area.height(),
-                    x_min,
-                    x_max,
-                    y_min,
-                    y_max,
-                );
-                data.render(renderer, &plot_area, &self.display.theme, color)?;
+                self.render_quiver_series_scaled(
+                    renderer, data, plot_area, x_min, x_max, y_min, y_max, color,
+                )?;
             }
             SeriesType::Contour { data } => {
                 // Use PlotRender trait to render Contour
@@ -1612,6 +1692,28 @@ impl Plot {
                 SeriesType::Quiver { data } => {
                     if data.arrows.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
+                    }
+                    for (index, arrow) in data.arrows.iter().enumerate() {
+                        let all_values = [
+                            arrow.start.0,
+                            arrow.start.1,
+                            arrow.end.0,
+                            arrow.end.1,
+                            arrow.magnitude,
+                            arrow.angle,
+                            arrow.head[0].0,
+                            arrow.head[0].1,
+                            arrow.head[1].0,
+                            arrow.head[1].1,
+                            arrow.head[2].0,
+                            arrow.head[2].1,
+                        ];
+                        if let Some(value) = all_values.iter().find(|value| !value.is_finite()) {
+                            return Err(PlottingError::InvalidData {
+                                message: format!("Non-finite quiver arrow value ({value}) found"),
+                                position: Some(index),
+                            });
+                        }
                     }
                 }
                 SeriesType::Contour { data } => {

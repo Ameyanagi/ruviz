@@ -19,6 +19,40 @@ fn high_level_step_area_and_stem_apis_render() {
 }
 
 #[test]
+fn high_level_area_and_stem_apis_emit_svg_geometry() {
+    let x = vec![0.0, 1.0, 2.0, 3.0];
+    let y = vec![1.0, 3.0, 2.0, 4.0];
+
+    let line_svg = Plot::new()
+        .grid(false)
+        .ticks(false)
+        .line(&x, &y)
+        .render_to_svg()
+        .unwrap();
+    let area_svg = Plot::new()
+        .grid(false)
+        .ticks(false)
+        .area(&x, &y, 0.0)
+        .render_to_svg()
+        .unwrap();
+    assert!(area_svg.matches("<polygon").count() > line_svg.matches("<polygon").count());
+
+    let scatter_svg = Plot::new()
+        .grid(false)
+        .ticks(false)
+        .scatter(&x, &y)
+        .render_to_svg()
+        .unwrap();
+    let stem_svg = Plot::new()
+        .grid(false)
+        .ticks(false)
+        .stem(&x, &y, 0.0)
+        .render_to_svg()
+        .unwrap();
+    assert!(stem_svg.matches("<line ").count() >= scatter_svg.matches("<line ").count() + x.len());
+}
+
+#[test]
 fn high_level_step_api_reports_length_mismatch() {
     let x = vec![0.0, 1.0, 2.0];
     let y = vec![1.0, 3.0];
@@ -46,6 +80,43 @@ fn high_level_boxen_api_renders() {
         .render();
 
     assert!(boxen.is_ok());
+}
+
+#[test]
+fn high_level_boxen_api_emits_svg_geometry() {
+    let data: Vec<f64> = (0..128)
+        .map(|i| (i as f64 * 0.2).sin() + i as f64 / 64.0)
+        .collect();
+
+    let vertical_svg = Plot::new()
+        .boxen(&data)
+        .render_to_svg()
+        .expect("vertical boxen SVG should render");
+    assert!(
+        vertical_svg.matches("<polygon").count() >= 1,
+        "expected vertical boxen polygons in SVG: {vertical_svg}"
+    );
+
+    let horizontal_svg = Plot::new()
+        .boxen(&data)
+        .horizontal()
+        .render_to_svg()
+        .expect("horizontal boxen SVG should render");
+    assert!(
+        horizontal_svg.matches("<polygon").count() >= 1,
+        "expected horizontal boxen polygons in SVG: {horizontal_svg}"
+    );
+}
+
+#[test]
+fn high_level_boxen_api_reports_empty_data() {
+    let empty_data: Vec<f64> = vec![];
+    let err = Plot::new().boxen(&empty_data).render().unwrap_err();
+    assert!(matches!(err, ruviz::core::PlottingError::EmptyDataSet));
+
+    let non_finite_data = vec![f64::NAN, f64::INFINITY];
+    let err = Plot::new().boxen(&non_finite_data).render().unwrap_err();
+    assert!(matches!(err, ruviz::core::PlottingError::EmptyDataSet));
 }
 
 #[test]
@@ -114,6 +185,21 @@ fn resolved_backend_reports_actual_public_png_path() {
 }
 
 #[test]
+#[cfg(target_arch = "wasm32")]
+fn wasm_resolved_backend_reports_skia_for_explicit_datashader_scatter() {
+    let x = vec![0.0, 1.0, 2.0];
+    let y = vec![0.0, 1.0, 4.0];
+
+    let plot = Plot::new()
+        .backend(BackendType::DataShader)
+        .scatter(&x, &y)
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "skia");
+}
+
+#[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn explicit_datashader_backend_overrides_auto_optimize_ordering() {
     let x: Vec<f64> = (0..100_000).map(|index| index as f64 * 0.00001).collect();
@@ -132,4 +218,20 @@ fn explicit_datashader_backend_overrides_auto_optimize_ordering() {
         .auto_optimize()
         .into_plot();
     assert_eq!(backend_then_auto.resolved_backend_name(), "datashader");
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn explicit_datashader_backend_falls_back_on_non_linear_axes() {
+    let x = vec![1.0, 10.0, 100.0, 1000.0];
+    let y = vec![1.0, 2.0, 3.0, 4.0];
+
+    let plot = Plot::new()
+        .backend(BackendType::DataShader)
+        .xscale(AxisScale::Log)
+        .scatter(&x, &y)
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "skia");
 }

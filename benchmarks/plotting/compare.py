@@ -32,18 +32,27 @@ def format_delta(ratio: float) -> str:
     return f"{(ratio - 1.0) * 100.0:+.1f}%"
 
 
+def format_key(key: tuple[str, str, str, str, str]) -> list[str]:
+    return [key[0], key[1], key[2], key[3], key[4]]
+
+
 def compare_results(
     baseline: dict[str, Any],
     candidate: dict[str, Any],
     *,
     regression_threshold: float,
-) -> tuple[list[list[str]], list[list[str]]]:
+) -> tuple[list[list[str]], list[list[str]], list[list[str]]]:
     baseline_index = index_results(baseline)
     candidate_index = index_results(candidate)
+    baseline_keys = set(baseline_index)
+    candidate_keys = set(candidate_index)
     rows: list[list[str]] = []
     regressions: list[list[str]] = []
+    missing_candidate_rows = [
+        format_key(key) for key in sorted(baseline_keys - candidate_keys)
+    ]
 
-    for key in sorted(baseline_index.keys() & candidate_index.keys()):
+    for key in sorted(baseline_keys & candidate_keys):
         baseline_result = baseline_index[key]
         candidate_result = candidate_index[key]
         baseline_median = median_ms(baseline_result)
@@ -62,7 +71,7 @@ def compare_results(
         if ratio > 1.0 + regression_threshold:
             regressions.append(row)
 
-    return rows, regressions
+    return rows, regressions, missing_candidate_rows
 
 
 def markdown_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -89,7 +98,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    rows, regressions = compare_results(
+    rows, regressions, missing_candidate_rows = compare_results(
         load_payload(args.baseline),
         load_payload(args.candidate),
         regression_threshold=args.regression_threshold,
@@ -103,6 +112,13 @@ def main() -> None:
         "Candidate ms",
         "Delta",
     ]
+    missing_headers = [
+        "Implementation",
+        "Scenario",
+        "Size",
+        "Boundary",
+        "Output",
+    ]
     report = "\n".join(
         [
             "# Plotting Benchmark Comparison",
@@ -115,6 +131,12 @@ def main() -> None:
             if not regressions
             else markdown_table(headers, regressions),
             "",
+            "## Missing Candidate Rows",
+            "",
+            "None."
+            if not missing_candidate_rows
+            else markdown_table(missing_headers, missing_candidate_rows),
+            "",
         ]
     )
 
@@ -124,7 +146,7 @@ def main() -> None:
     else:
         print(report)
 
-    if regressions:
+    if regressions or missing_candidate_rows:
         raise SystemExit(1)
 
 

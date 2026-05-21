@@ -11,7 +11,34 @@ struct ColorbarMeasurementSpec {
     show_log_subticks: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnotationRenderLayer {
+    Underlay,
+    Overlay,
+}
+
 impl Plot {
+    fn annotation_render_layer(annotation: &Annotation) -> AnnotationRenderLayer {
+        match annotation {
+            Annotation::FillBetween { .. }
+            | Annotation::HSpan { .. }
+            | Annotation::VSpan { .. }
+            | Annotation::Rectangle { .. } => AnnotationRenderLayer::Underlay,
+            Annotation::Text { .. }
+            | Annotation::Arrow { .. }
+            | Annotation::HLine { .. }
+            | Annotation::VLine { .. } => AnnotationRenderLayer::Overlay,
+        }
+    }
+
+    pub(super) fn is_underlay_annotation(annotation: &Annotation) -> bool {
+        Self::annotation_render_layer(annotation) == AnnotationRenderLayer::Underlay
+    }
+
+    pub(super) fn is_overlay_annotation(annotation: &Annotation) -> bool {
+        Self::annotation_render_layer(annotation) == AnnotationRenderLayer::Overlay
+    }
+
     fn render_image_with_mode(&self, mode: RenderExecutionMode) -> Result<Image> {
         self.render_image_with_mode_and_diagnostics(mode)
             .map(|(image, _)| image)
@@ -413,6 +440,19 @@ impl Plot {
             }
         }
 
+        renderer.draw_annotations_where_scaled(
+            &self.annotations,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            dpi,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+            Self::is_underlay_annotation,
+        )?;
+
         draw_series(
             self,
             &snapshot_series,
@@ -424,6 +464,19 @@ impl Plot {
             y_max,
             render_scale,
             mode,
+        )?;
+
+        renderer.draw_annotations_where_scaled(
+            &self.annotations,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            dpi,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+            Self::is_overlay_annotation,
         )?;
 
         let legend_items = self.collect_legend_items();
@@ -645,6 +698,10 @@ impl Plot {
         series_list: &[PlotSeries],
         total_points: usize,
     ) -> bool {
+        if !self.datashader_supports_axis_scales() {
+            return false;
+        }
+
         if Self::has_mixed_coordinate_series(series_list)
             || !series_list
                 .iter()
@@ -660,6 +717,11 @@ impl Plot {
             Some(BackendType::DataShader) => !series_list.is_empty(),
             _ => Self::should_auto_use_datashader(series_list, total_points),
         }
+    }
+
+    fn datashader_supports_axis_scales(&self) -> bool {
+        matches!(self.layout.x_scale, AxisScale::Linear)
+            && matches!(self.layout.y_scale, AxisScale::Linear)
     }
 
     /// Render the plot to an in-memory image.
@@ -1575,9 +1637,17 @@ impl Plot {
     /// reports the configured backend preference. Unsupported optimized backend
     /// preferences fall back to the reference Skia raster path.
     pub fn resolved_backend_name(&self) -> &'static str {
-        match self.public_png_render_mode() {
-            RenderExecutionMode::Optimized => BackendType::DataShader.as_str(),
-            RenderExecutionMode::Reference => BackendType::Skia.as_str(),
+        #[cfg(target_arch = "wasm32")]
+        {
+            BackendType::Skia.as_str()
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match self.public_png_render_mode() {
+                RenderExecutionMode::Optimized => BackendType::DataShader.as_str(),
+                RenderExecutionMode::Reference => BackendType::Skia.as_str(),
+            }
         }
     }
 
@@ -1673,6 +1743,336 @@ impl Plot {
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
         let svg_content = self.render_to_svg()?;
         crate::export::write_bytes_atomic(path, svg_content.as_bytes())
+    }
+
+    fn render_svg_annotations(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        layer: AnnotationRenderLayer,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        self.annotations
+            .iter()
+            .filter(|annotation| Self::annotation_render_layer(annotation) == layer)
+            .try_for_each(|annotation| {
+                self.render_svg_annotation(svg, annotation, plot_area, x_min, x_max, y_min, y_max)
+            })
+    }
+
+    fn render_svg_annotation(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        annotation: &Annotation,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        match annotation {
+            Annotation::Text { x, y, text, style } => {
+                let (px, py) =
+                    self.svg_annotation_point(*x, *y, plot_area, x_min, x_max, y_min, y_max);
+                let font_size = pt_to_px(style.font_size, self.display.config.figure.dpi);
+                svg.draw_text(text, px, py, font_size, style.color)?;
+            }
+            Annotation::Arrow {
+                x1,
+                y1,
+                x2,
+                y2,
+                style,
+            } => {
+                let (px1, py1) =
+                    self.svg_annotation_point(*x1, *y1, plot_area, x_min, x_max, y_min, y_max);
+                let (px2, py2) =
+                    self.svg_annotation_point(*x2, *y2, plot_area, x_min, x_max, y_min, y_max);
+                let width = self.render_scale().points_to_pixels(style.line_width);
+                svg.draw_line(
+                    px1,
+                    py1,
+                    px2,
+                    py2,
+                    style.color,
+                    width,
+                    style.line_style.clone(),
+                );
+
+                if !matches!(style.head_style, crate::core::ArrowHead::None) {
+                    self.draw_svg_arrow_head(svg, (px2, py2), (px1, py1), style);
+                }
+                if !matches!(style.tail_style, crate::core::ArrowHead::None) {
+                    self.draw_svg_arrow_head(svg, (px1, py1), (px2, py2), style);
+                }
+            }
+            Annotation::HLine {
+                y,
+                style,
+                color,
+                width,
+            } => {
+                let py = Self::scaled_y_pixel(*y, y_min, y_max, plot_area, &self.layout.y_scale);
+                let width = self.render_scale().points_to_pixels(*width);
+                svg.draw_line(
+                    plot_area.left(),
+                    py,
+                    plot_area.right(),
+                    py,
+                    *color,
+                    width,
+                    style.clone(),
+                );
+            }
+            Annotation::VLine {
+                x,
+                style,
+                color,
+                width,
+            } => {
+                let px = Self::scaled_x_pixel(*x, x_min, x_max, plot_area, &self.layout.x_scale);
+                let width = self.render_scale().points_to_pixels(*width);
+                svg.draw_line(
+                    px,
+                    plot_area.top(),
+                    px,
+                    plot_area.bottom(),
+                    *color,
+                    width,
+                    style.clone(),
+                );
+            }
+            Annotation::Rectangle {
+                x,
+                y,
+                width,
+                height,
+                style,
+            } => {
+                let (px1, py1) = self.svg_annotation_point(
+                    *x,
+                    *y + *height,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                let (px2, py2) = self.svg_annotation_point(
+                    *x + *width,
+                    *y,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                self.draw_svg_styled_rect(
+                    svg,
+                    px1.min(px2),
+                    py1.min(py2),
+                    (px2 - px1).abs(),
+                    (py2 - py1).abs(),
+                    style,
+                );
+            }
+            Annotation::FillBetween {
+                x,
+                y1,
+                y2,
+                style,
+                where_positive,
+            } => {
+                let len = x.len().min(y1.len()).min(y2.len());
+                let mut points: Vec<(f32, f32)> = (0..len)
+                    .filter(|&index| !*where_positive || y1[index] >= y2[index])
+                    .map(|index| {
+                        self.svg_annotation_point(
+                            x[index], y1[index], plot_area, x_min, x_max, y_min, y_max,
+                        )
+                    })
+                    .collect();
+
+                points.extend(
+                    (0..len)
+                        .rev()
+                        .filter(|&index| !*where_positive || y1[index] >= y2[index])
+                        .map(|index| {
+                            self.svg_annotation_point(
+                                x[index], y2[index], plot_area, x_min, x_max, y_min, y_max,
+                            )
+                        }),
+                );
+
+                if points.len() >= 3 {
+                    svg.draw_filled_polygon(&points, style.color.with_alpha(style.alpha));
+                    if let Some(edge_color) = style.edge_color {
+                        let width = self.render_scale().points_to_pixels(style.edge_width);
+                        svg.draw_polygon_outline(&points, edge_color, width);
+                    }
+                }
+            }
+            Annotation::HSpan {
+                x_min: span_min,
+                x_max: span_max,
+                style,
+            } => {
+                let px1 =
+                    Self::scaled_x_pixel(*span_min, x_min, x_max, plot_area, &self.layout.x_scale);
+                let px2 =
+                    Self::scaled_x_pixel(*span_max, x_min, x_max, plot_area, &self.layout.x_scale);
+                self.draw_svg_styled_rect(
+                    svg,
+                    px1.min(px2),
+                    plot_area.top(),
+                    (px2 - px1).abs(),
+                    plot_area.height(),
+                    style,
+                );
+            }
+            Annotation::VSpan {
+                y_min: span_min,
+                y_max: span_max,
+                style,
+            } => {
+                let py1 =
+                    Self::scaled_y_pixel(*span_min, y_min, y_max, plot_area, &self.layout.y_scale);
+                let py2 =
+                    Self::scaled_y_pixel(*span_max, y_min, y_max, plot_area, &self.layout.y_scale);
+                self.draw_svg_styled_rect(
+                    svg,
+                    plot_area.left(),
+                    py1.min(py2),
+                    plot_area.width(),
+                    (py2 - py1).abs(),
+                    style,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn svg_annotation_point(
+        &self,
+        x: f64,
+        y: f64,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> (f32, f32) {
+        crate::render::skia::map_data_to_pixels_scaled(
+            x,
+            y,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            plot_area,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+        )
+    }
+
+    fn draw_svg_styled_rect(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        style: &ShapeStyle,
+    ) {
+        if let Some(fill_color) = style.fill_color {
+            svg.draw_rectangle(
+                x,
+                y,
+                width,
+                height,
+                fill_color.with_alpha(style.fill_alpha),
+                true,
+            );
+        }
+
+        if let Some(edge_color) = style.edge_color {
+            let edge_width = self.render_scale().points_to_pixels(style.edge_width);
+            svg.draw_line(
+                x,
+                y,
+                x + width,
+                y,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+            svg.draw_line(
+                x + width,
+                y,
+                x + width,
+                y + height,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+            svg.draw_line(
+                x + width,
+                y + height,
+                x,
+                y + height,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+            svg.draw_line(
+                x,
+                y + height,
+                x,
+                y,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+        }
+    }
+
+    fn draw_svg_arrow_head(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        tip: (f32, f32),
+        from: (f32, f32),
+        style: &ArrowStyle,
+    ) {
+        let dx = tip.0 - from.0;
+        let dy = tip.1 - from.1;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 0.001 {
+            return;
+        }
+
+        let ux = dx / len;
+        let uy = dy / len;
+        let perpendicular = (-uy, ux);
+        let head_length = self.render_scale().points_to_pixels(style.head_length);
+        let head_width = self.render_scale().points_to_pixels(style.head_width);
+        let base = (tip.0 - ux * head_length, tip.1 - uy * head_length);
+        let points = [
+            tip,
+            (
+                base.0 + perpendicular.0 * head_width / 2.0,
+                base.1 + perpendicular.1 * head_width / 2.0,
+            ),
+            (
+                base.0 - perpendicular.0 * head_width / 2.0,
+                base.1 - perpendicular.1 * head_width / 2.0,
+            ),
+        ];
+
+        svg.draw_filled_polygon(&points, style.color);
     }
 
     /// Render the plot to an SVG string
@@ -1988,6 +2388,15 @@ impl Plot {
         // Create clip path for data
         let clip_id = svg.add_clip_rect(plot_left, plot_top, plot_width, plot_height);
         svg.start_clip_group(&clip_id);
+        self.render_svg_annotations(
+            &mut svg,
+            AnnotationRenderLayer::Underlay,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
 
         // Collect legend items, including grouped-series collapse behavior.
         let legend_items = self.collect_legend_items();
@@ -2038,6 +2447,15 @@ impl Plot {
             }
         }
 
+        self.render_svg_annotations(
+            &mut svg,
+            AnnotationRenderLayer::Overlay,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
         svg.end_group(); // End clip group
 
         // Draw title/xlabel/ylabel using layout-computed positions.
