@@ -233,21 +233,11 @@ pub fn compute_boxen(data: &[f64], config: &BoxenConfig) -> BoxenData {
         vec![]
     };
 
-    let Some((&data_min, &data_max)) = sorted.first().zip(sorted.last()) else {
-        return BoxenData {
-            boxes: vec![],
-            median: 0.0,
-            outliers: vec![],
-            data_range: (0.0, 1.0),
-            config: config.clone(),
-        };
-    };
-
     BoxenData {
         boxes,
         median,
         outliers,
-        data_range: (data_min, data_max),
+        data_range: (sorted[0], sorted[n - 1]),
         config: config.clone(),
     }
 }

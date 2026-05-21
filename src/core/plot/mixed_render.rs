@@ -540,7 +540,7 @@ impl Plot {
 
             svg.draw_filled_polygon(&points, fill_color);
             if edge_width > 0.0 {
-                svg.draw_polygon_outline(&points, default_color, edge_width);
+                svg.draw_polygon_outline(&points, base_color, edge_width);
             }
         }
 
@@ -648,7 +648,7 @@ impl Plot {
                         )
                     }
                 };
-                svg.draw_marker(px, py, marker_size, MarkerStyle::Circle, default_color);
+                svg.draw_marker(px, py, marker_size, MarkerStyle::Circle, base_color);
             }
         }
     }

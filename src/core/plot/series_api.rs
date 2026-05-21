@@ -14,14 +14,14 @@ impl Plot {
             Ok(values) => values,
             Err(err) => {
                 self.set_pending_ingestion_error(err);
-                Vec::new()
+                return (self, Vec::new(), Vec::new());
             }
         };
         let y_values = match collect_numeric_data_1d(y_data, self.null_policy) {
             Ok(values) => values,
             Err(err) => {
                 self.set_pending_ingestion_error(err);
-                Vec::new()
+                return (self, x_values, Vec::new());
             }
         };
 

@@ -502,6 +502,10 @@ impl Plot {
         }
 
         self.validate_runtime_environment()?;
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
         let snapshot_series = self.snapshot_series(0.0);
         if !snapshot_series.is_empty() {
             Self::validate_series_list(&snapshot_series)?;
@@ -1887,31 +1891,37 @@ impl Plot {
                 where_positive,
             } => {
                 let len = x.len().min(y1.len()).min(y2.len());
-                let mut points: Vec<(f32, f32)> = (0..len)
-                    .filter(|&index| !*where_positive || y1[index] >= y2[index])
-                    .map(|index| {
-                        self.svg_annotation_point(
-                            x[index], y1[index], plot_area, x_min, x_max, y_min, y_max,
-                        )
-                    })
-                    .collect();
-
-                points.extend(
-                    (0..len)
-                        .rev()
-                        .filter(|&index| !*where_positive || y1[index] >= y2[index])
+                if len >= 2 && x.len() == y1.len() && x.len() == y2.len() {
+                    let mut points: Vec<(f32, f32)> = (0..len)
                         .map(|index| {
+                            let y = if index > 0 && *where_positive && y1[index] < y2[index] {
+                                y2[index]
+                            } else {
+                                y1[index]
+                            };
                             self.svg_annotation_point(
-                                x[index], y2[index], plot_area, x_min, x_max, y_min, y_max,
+                                x[index], y, plot_area, x_min, x_max, y_min, y_max,
                             )
-                        }),
-                );
+                        })
+                        .collect();
 
-                if points.len() >= 3 {
-                    svg.draw_filled_polygon(&points, style.color.with_alpha(style.alpha));
-                    if let Some(edge_color) = style.edge_color {
-                        let width = self.render_scale().points_to_pixels(style.edge_width);
-                        svg.draw_polygon_outline(&points, edge_color, width);
+                    points.extend(
+                        (0..len)
+                            .rev()
+                            .filter(|&index| !*where_positive || y1[index] >= y2[index])
+                            .map(|index| {
+                                self.svg_annotation_point(
+                                    x[index], y2[index], plot_area, x_min, x_max, y_min, y_max,
+                                )
+                            }),
+                    );
+
+                    if points.len() >= 3 {
+                        svg.draw_filled_polygon(&points, style.color.with_alpha(style.alpha));
+                        if let Some(edge_color) = style.edge_color {
+                            let width = self.render_scale().points_to_pixels(style.edge_width);
+                            svg.draw_polygon_outline(&points, edge_color, width);
+                        }
                     }
                 }
             }

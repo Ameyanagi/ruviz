@@ -65,6 +65,28 @@ fn high_level_step_api_reports_length_mismatch() {
 }
 
 #[test]
+#[cfg(all(not(target_arch = "wasm32"), feature = "parallel"))]
+fn public_parallel_render_honors_pending_ingestion_errors() {
+    let x: Vec<f64> = (0..5_000).map(|index| index as f64).collect();
+    let y: Vec<f64> = x.iter().map(|value| value.sin()).collect();
+    let bad_x = vec![0.0, 1.0];
+    let bad_y = vec![0.0];
+
+    let err = Plot::new()
+        .parallel_threshold(1)
+        .scatter(&x, &y)
+        .into_plot()
+        .step(&bad_x, &bad_y, StepWhere::Post)
+        .render()
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ruviz::core::PlottingError::DataLengthMismatch { .. }
+    ));
+}
+
+#[test]
 fn high_level_boxen_api_renders() {
     let data: Vec<f64> = (0..128)
         .map(|i| (i as f64 * 0.2).sin() + i as f64 / 64.0)

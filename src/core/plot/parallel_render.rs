@@ -909,12 +909,7 @@ impl Plot {
 
                         RenderSeriesType::Line { segments }
                     }
-                    SeriesType::Quiver { .. } => {
-                        return Err(PlottingError::RenderError(
-                            "Quiver series use the reference renderer to preserve arrow styling"
-                                .to_string(),
-                        ));
-                    }
+                    SeriesType::Quiver { .. } => RenderSeriesType::Line { segments: vec![] },
                     SeriesType::Contour { data: contour_data } => {
                         // Contour plots use line segment rendering
                         let mut all_points = Vec::new();
