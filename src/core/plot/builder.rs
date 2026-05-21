@@ -2249,6 +2249,10 @@ impl PlotBuilder<crate::plots::QuiverConfig> {
 
     /// Finalize the quiver series and add it to the plot.
     fn finalize(self) -> super::Plot {
+        if self.plot.pending_ingestion_error().is_some() {
+            return self.plot;
+        }
+
         let (x, y, u, v) = match &self.input {
             PlotInput::Quiver { x, y, u, v } => (x.clone(), y.clone(), u.clone(), v.clone()),
             _ => return self.plot,

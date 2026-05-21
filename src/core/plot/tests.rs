@@ -776,6 +776,25 @@ fn test_pending_ingestion_error_preserves_single_error_shape() {
 }
 
 #[test]
+fn test_quiver_preserves_ingestion_error_before_length_validation() {
+    let bad = FailingIngestionData;
+    let valid = vec![1.0, 2.0, 3.0];
+
+    let err = Plot::new()
+        .quiver(&bad, &valid, &valid, &valid)
+        .render()
+        .unwrap_err();
+
+    match err {
+        PlottingError::DataExtractionFailed { source, message } => {
+            assert_eq!(source, "test::failing-ingestion");
+            assert_eq!(message, "forced ingestion failure");
+        }
+        other => panic!("expected DataExtractionFailed, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_snapshot_validation_isolated_from_later_reactive_mutation() {
     let x = crate::data::Observable::new(vec![0.0, 1.0]);
     let plot = Plot::new().add_line_series(

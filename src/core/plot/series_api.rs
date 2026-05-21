@@ -57,6 +57,19 @@ impl Plot {
         }
     }
 
+    fn try_collect_numeric_input<D>(&mut self, data: &D) -> Option<Vec<f64>>
+    where
+        D: NumericData1D,
+    {
+        match collect_numeric_data_1d(data, self.null_policy) {
+            Ok(values) => Some(values),
+            Err(err) => {
+                self.set_pending_ingestion_error(err);
+                None
+            }
+        }
+    }
+
     /// Add a scoped group of series that share style defaults.
     ///
     /// Styles configured on the group builder apply to every member series
@@ -1434,10 +1447,54 @@ impl Plot {
         V: NumericData1D,
     {
         let mut plot = self;
-        let x = plot.collect_numeric_input(x_data);
-        let y = plot.collect_numeric_input(y_data);
-        let u = plot.collect_numeric_input(u_data);
-        let v = plot.collect_numeric_input(v_data);
+        let Some(x) = plot.try_collect_numeric_input(x_data) else {
+            return PlotBuilder::new(
+                plot,
+                PlotInput::Quiver {
+                    x: Vec::new(),
+                    y: Vec::new(),
+                    u: Vec::new(),
+                    v: Vec::new(),
+                },
+                crate::plots::QuiverConfig::default(),
+            );
+        };
+        let Some(y) = plot.try_collect_numeric_input(y_data) else {
+            return PlotBuilder::new(
+                plot,
+                PlotInput::Quiver {
+                    x,
+                    y: Vec::new(),
+                    u: Vec::new(),
+                    v: Vec::new(),
+                },
+                crate::plots::QuiverConfig::default(),
+            );
+        };
+        let Some(u) = plot.try_collect_numeric_input(u_data) else {
+            return PlotBuilder::new(
+                plot,
+                PlotInput::Quiver {
+                    x,
+                    y,
+                    u: Vec::new(),
+                    v: Vec::new(),
+                },
+                crate::plots::QuiverConfig::default(),
+            );
+        };
+        let Some(v) = plot.try_collect_numeric_input(v_data) else {
+            return PlotBuilder::new(
+                plot,
+                PlotInput::Quiver {
+                    x,
+                    y,
+                    u,
+                    v: Vec::new(),
+                },
+                crate::plots::QuiverConfig::default(),
+            );
+        };
 
         PlotBuilder::new(
             plot,
