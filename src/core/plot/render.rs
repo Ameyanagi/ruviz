@@ -11,7 +11,34 @@ struct ColorbarMeasurementSpec {
     show_log_subticks: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnotationRenderLayer {
+    Underlay,
+    Overlay,
+}
+
 impl Plot {
+    fn annotation_render_layer(annotation: &Annotation) -> AnnotationRenderLayer {
+        match annotation {
+            Annotation::FillBetween { .. }
+            | Annotation::HSpan { .. }
+            | Annotation::VSpan { .. }
+            | Annotation::Rectangle { .. } => AnnotationRenderLayer::Underlay,
+            Annotation::Text { .. }
+            | Annotation::Arrow { .. }
+            | Annotation::HLine { .. }
+            | Annotation::VLine { .. } => AnnotationRenderLayer::Overlay,
+        }
+    }
+
+    pub(super) fn is_underlay_annotation(annotation: &Annotation) -> bool {
+        Self::annotation_render_layer(annotation) == AnnotationRenderLayer::Underlay
+    }
+
+    pub(super) fn is_overlay_annotation(annotation: &Annotation) -> bool {
+        Self::annotation_render_layer(annotation) == AnnotationRenderLayer::Overlay
+    }
+
     fn render_image_with_mode(&self, mode: RenderExecutionMode) -> Result<Image> {
         self.render_image_with_mode_and_diagnostics(mode)
             .map(|(image, _)| image)
@@ -97,7 +124,7 @@ impl Plot {
                     .iter()
                     .any(|major| Self::tick_values_overlap(*major, *tick))
         });
-        ticks.sort_by(|left, right| left.partial_cmp(right).unwrap());
+        ticks.sort_by(f64::total_cmp);
         ticks.dedup_by(|left, right| Self::tick_values_overlap(*left, *right));
         ticks
     }
@@ -144,11 +171,11 @@ impl Plot {
         }
     }
 
-    pub(super) fn render_image_with_mode_and_series_renderer<F>(
+    fn render_renderer_with_mode_and_series_renderer<F>(
         &self,
         mode: RenderExecutionMode,
         draw_series: F,
-    ) -> Result<(Image, RenderDiagnostics)>
+    ) -> Result<(SkiaRenderer, RenderDiagnostics)>
     where
         F: FnOnce(
             &Plot,
@@ -164,56 +191,22 @@ impl Plot {
         ) -> Result<()>,
     {
         self.validate_runtime_environment()?;
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
         let snapshot_series = self.snapshot_series(0.0);
         if !snapshot_series.is_empty() {
             Self::validate_series_list(&snapshot_series)?;
         }
 
         let total_points = Self::calculate_total_points_for_series(&snapshot_series);
-        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
-
         const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
         if total_points > LARGE_DATASET_THRESHOLD {
             log::warn!(
                 "Rendering {} points (>1M). DataShader optimization is available for large datasets.",
                 total_points
             );
-        }
-
-        #[cfg(feature = "parallel")]
-        {
-            if mode.allows_parallel() {
-                let series_count = snapshot_series.len();
-                let parallel_safe_for_markers = snapshot_series.iter().all(|series| match &series
-                    .series_type
-                {
-                    SeriesType::Line { .. } => {
-                        series.marker_style.is_none()
-                            && series.x_errors.is_none()
-                            && series.y_errors.is_none()
-                    }
-                    SeriesType::Heatmap { .. } => false,
-                    _ => true,
-                });
-                if !has_mixed_coordinates
-                    && parallel_safe_for_markers
-                    && self
-                        .render
-                        .parallel_renderer
-                        .should_use_parallel(series_count, total_points)
-                {
-                    let image = self.render_with_parallel()?;
-                    let diagnostics = RenderDiagnostics {
-                        render_mode: match mode {
-                            RenderExecutionMode::Reference => "reference",
-                            RenderExecutionMode::Optimized => "optimized",
-                        },
-                        used_parallel: true,
-                        ..RenderDiagnostics::default()
-                    };
-                    return Ok((image, diagnostics));
-                }
-            }
         }
 
         let (scaled_width, scaled_height) = self.config_canvas_size();
@@ -447,6 +440,19 @@ impl Plot {
             }
         }
 
+        renderer.draw_annotations_where_scaled(
+            &self.annotations,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            dpi,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+            Self::is_underlay_annotation,
+        )?;
+
         draw_series(
             self,
             &snapshot_series,
@@ -460,6 +466,19 @@ impl Plot {
             mode,
         )?;
 
+        renderer.draw_annotations_where_scaled(
+            &self.annotations,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            dpi,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+            Self::is_overlay_annotation,
+        )?;
+
         let legend_items = self.collect_legend_items();
         if !legend_items.is_empty() && self.layout.legend.enabled {
             let legend = self
@@ -470,7 +489,136 @@ impl Plot {
         }
 
         let diagnostics = renderer.render_diagnostics().clone();
-        Ok((renderer.into_image(), diagnostics))
+        Ok((renderer, diagnostics))
+    }
+
+    #[cfg(feature = "parallel")]
+    fn try_render_parallel_image_with_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<Option<(Image, RenderDiagnostics)>> {
+        if !mode.allows_parallel() {
+            return Ok(None);
+        }
+
+        self.validate_runtime_environment()?;
+        if let Some(err) = self.pending_ingestion_error() {
+            return Err(err);
+        }
+
+        let snapshot_series = self.snapshot_series(0.0);
+        if !snapshot_series.is_empty() {
+            Self::validate_series_list(&snapshot_series)?;
+        }
+
+        let total_points = Self::calculate_total_points_for_series(&snapshot_series);
+        let series_count = snapshot_series.len();
+        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
+        let parallel_safe_for_markers =
+            snapshot_series
+                .iter()
+                .all(|series| match &series.series_type {
+                    SeriesType::Line { .. } => {
+                        series.marker_style.is_none()
+                            && series.x_errors.is_none()
+                            && series.y_errors.is_none()
+                    }
+                    SeriesType::Heatmap { .. } | SeriesType::Quiver { .. } => false,
+                    _ => true,
+                });
+
+        if has_mixed_coordinates
+            || !parallel_safe_for_markers
+            || !self
+                .render
+                .parallel_renderer
+                .should_use_parallel(series_count, total_points)
+        {
+            return Ok(None);
+        }
+
+        let image = self.render_with_parallel()?;
+        let diagnostics = RenderDiagnostics {
+            render_mode: match mode {
+                RenderExecutionMode::Reference => "reference",
+                RenderExecutionMode::Optimized => "optimized",
+            },
+            used_parallel: true,
+            ..RenderDiagnostics::default()
+        };
+        Ok(Some((image, diagnostics)))
+    }
+
+    pub(super) fn render_image_with_mode_and_series_renderer<F>(
+        &self,
+        mode: RenderExecutionMode,
+        draw_series: F,
+    ) -> Result<(Image, RenderDiagnostics)>
+    where
+        F: FnOnce(
+            &Plot,
+            &[PlotSeries],
+            &mut SkiaRenderer,
+            tiny_skia::Rect,
+            f64,
+            f64,
+            f64,
+            f64,
+            RenderScale,
+            RenderExecutionMode,
+        ) -> Result<()>,
+    {
+        #[cfg(feature = "parallel")]
+        if let Some(parallel_render) = self.try_render_parallel_image_with_diagnostics(mode)? {
+            return Ok(parallel_render);
+        }
+
+        self.render_renderer_with_mode_and_series_renderer(mode, draw_series)
+            .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics))
+    }
+
+    fn render_renderer_with_mode_and_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<(SkiaRenderer, RenderDiagnostics)> {
+        self.render_renderer_with_mode_and_series_renderer(
+            mode,
+            |plot,
+             snapshot_series,
+             renderer,
+             plot_area,
+             x_min,
+             x_max,
+             y_min,
+             y_max,
+             render_scale,
+             mode| {
+                if !plot.render_series_collection_auto_datashader(
+                    snapshot_series,
+                    renderer,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    render_scale,
+                    mode,
+                )? {
+                    plot.render_series_collection_normal(
+                        snapshot_series,
+                        renderer,
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        render_scale,
+                        mode,
+                    )?;
+                }
+                Ok(())
+            },
+        )
     }
 
     fn render_image_with_mode_and_diagnostics(
@@ -515,6 +663,69 @@ impl Plot {
                 Ok(())
             },
         )
+    }
+
+    fn render_png_bytes_with_mode_and_diagnostics(
+        &self,
+        mode: RenderExecutionMode,
+    ) -> Result<(Vec<u8>, RenderDiagnostics)> {
+        let (renderer, diagnostics) = self.render_renderer_with_mode_and_diagnostics(mode)?;
+        Ok((renderer.encode_png_bytes()?, diagnostics))
+    }
+
+    fn public_png_render_mode_for_series(&self, series_list: &[PlotSeries]) -> RenderExecutionMode {
+        let total_points = Self::calculate_total_points_for_series(series_list);
+        if self.should_use_configured_datashader_for_public_png(series_list, total_points) {
+            RenderExecutionMode::Optimized
+        } else {
+            RenderExecutionMode::Reference
+        }
+    }
+
+    fn public_png_render_mode(&self) -> RenderExecutionMode {
+        let snapshot_series = self.snapshot_series(0.0);
+        self.public_png_render_mode_for_series(&snapshot_series)
+    }
+
+    fn should_use_configured_datashader_for_public_png(
+        &self,
+        series_list: &[PlotSeries],
+        total_points: usize,
+    ) -> bool {
+        matches!(self.render.backend, Some(BackendType::DataShader))
+            && !self.render.auto_optimized
+            && self.should_use_datashader_for_render(series_list, total_points)
+    }
+
+    pub(crate) fn should_use_datashader_for_render(
+        &self,
+        series_list: &[PlotSeries],
+        total_points: usize,
+    ) -> bool {
+        if !self.datashader_supports_axis_scales() {
+            return false;
+        }
+
+        if Self::has_mixed_coordinate_series(series_list)
+            || !series_list
+                .iter()
+                .all(Self::series_supports_auto_datashader)
+        {
+            return false;
+        }
+
+        match self.render.backend {
+            Some(BackendType::DataShader) if self.render.auto_optimized => {
+                Self::should_auto_use_datashader(series_list, total_points)
+            }
+            Some(BackendType::DataShader) => !series_list.is_empty(),
+            _ => Self::should_auto_use_datashader(series_list, total_points),
+        }
+    }
+
+    fn datashader_supports_axis_scales(&self) -> bool {
+        matches!(self.layout.x_scale, AxisScale::Linear)
+            && matches!(self.layout.y_scale, AxisScale::Linear)
     }
 
     /// Render the plot to an in-memory image.
@@ -1223,6 +1434,16 @@ impl Plot {
                         }
                     }
                 }
+                SeriesType::Quiver { data } => {
+                    for arrow in &data.arrows {
+                        for (x, y) in [arrow.start, arrow.end] {
+                            if x.is_finite() && y.is_finite() {
+                                x_values.push(x);
+                                y_values.push(y);
+                            }
+                        }
+                    }
+                }
                 SeriesType::Contour { data } => {
                     // Add contour line segment endpoints
                     for level in &data.lines {
@@ -1293,9 +1514,9 @@ impl Plot {
     /// - 100,000+ points: GPU when available, otherwise DataShader
     ///
     /// If a backend was explicitly set with `.backend()`, that choice is respected.
-    /// The current [`render`](Self::render) and [`save`](Self::save)
-    /// implementations still use their own internal heuristics; calling
-    /// `.auto_optimize()` does not directly switch those execution paths today.
+    /// Public PNG output keeps the reference visual path for `.auto_optimize()`;
+    /// explicit `BackendType::DataShader` remains available for callers that
+    /// deliberately want density aggregation for compatible scatter plots.
     pub fn auto_optimize(self) -> Self {
         self.auto_optimize_with_extra_points(0)
     }
@@ -1307,7 +1528,6 @@ impl Plot {
     pub(crate) fn auto_optimize_with_extra_points(mut self, extra_points: usize) -> Self {
         // If backend already explicitly set, respect that choice
         if self.render.backend.is_some() {
-            self.render.auto_optimized = true;
             return self;
         }
 
@@ -1333,6 +1553,7 @@ impl Plot {
                 SeriesType::Pie { data } => data.values.len(),
                 SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
                 SeriesType::Polar { data } => data.points.len(),
+                SeriesType::Quiver { data } => data.arrows.len(),
             })
             .sum();
 
@@ -1371,6 +1592,7 @@ impl Plot {
     /// Set backend explicitly (overrides auto-optimization)
     pub fn backend(mut self, backend: BackendType) -> Self {
         self.render.backend = Some(backend);
+        self.render.auto_optimized = false;
         self
     }
 
@@ -1410,12 +1632,26 @@ impl Plot {
 
     /// Get the current backend name (for testing)
     pub fn get_backend_name(&self) -> &'static str {
-        match self.render.backend {
-            Some(BackendType::Skia) => "skia",
-            Some(BackendType::Parallel) => "parallel",
-            Some(BackendType::GPU) => "gpu",
-            Some(BackendType::DataShader) => "datashader",
-            None => "auto",
+        self.render.backend.map_or("auto", BackendType::as_str)
+    }
+
+    /// Return the backend that the public PNG render/save path will use today.
+    ///
+    /// This differs from [`get_backend_name`](Self::get_backend_name), which
+    /// reports the configured backend preference. Unsupported optimized backend
+    /// preferences fall back to the reference Skia raster path.
+    pub fn resolved_backend_name(&self) -> &'static str {
+        #[cfg(target_arch = "wasm32")]
+        {
+            BackendType::Skia.as_str()
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match self.public_png_render_mode() {
+                RenderExecutionMode::Optimized => BackendType::DataShader.as_str(),
+                RenderExecutionMode::Reference => BackendType::Skia.as_str(),
+            }
         }
     }
 
@@ -1481,9 +1717,14 @@ impl Plot {
             return self.resolved_plot(0.0).save_png_bytes_with_backend();
         }
 
-        let (image, diagnostics) =
-            self.render_image_with_mode_and_diagnostics(RenderExecutionMode::Reference)?;
-        Ok((image.encode_png()?, "skia", diagnostics))
+        let mode = self.public_png_render_mode();
+        let (png_bytes, diagnostics) = self.render_png_bytes_with_mode_and_diagnostics(mode)?;
+        let backend = if diagnostics.used_auto_datashader {
+            BackendType::DataShader.as_str()
+        } else {
+            BackendType::Skia.as_str()
+        };
+        Ok((png_bytes, backend, diagnostics))
     }
 
     /// Save the plot to a PNG file with custom dimensions
@@ -1506,6 +1747,342 @@ impl Plot {
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
         let svg_content = self.render_to_svg()?;
         crate::export::write_bytes_atomic(path, svg_content.as_bytes())
+    }
+
+    fn render_svg_annotations(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        layer: AnnotationRenderLayer,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        self.annotations
+            .iter()
+            .filter(|annotation| Self::annotation_render_layer(annotation) == layer)
+            .try_for_each(|annotation| {
+                self.render_svg_annotation(svg, annotation, plot_area, x_min, x_max, y_min, y_max)
+            })
+    }
+
+    fn render_svg_annotation(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        annotation: &Annotation,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        match annotation {
+            Annotation::Text { x, y, text, style } => {
+                let (px, py) =
+                    self.svg_annotation_point(*x, *y, plot_area, x_min, x_max, y_min, y_max);
+                let font_size = pt_to_px(style.font_size, self.display.config.figure.dpi);
+                svg.draw_text(text, px, py, font_size, style.color)?;
+            }
+            Annotation::Arrow {
+                x1,
+                y1,
+                x2,
+                y2,
+                style,
+            } => {
+                let (px1, py1) =
+                    self.svg_annotation_point(*x1, *y1, plot_area, x_min, x_max, y_min, y_max);
+                let (px2, py2) =
+                    self.svg_annotation_point(*x2, *y2, plot_area, x_min, x_max, y_min, y_max);
+                let width = self.render_scale().points_to_pixels(style.line_width);
+                svg.draw_line(
+                    px1,
+                    py1,
+                    px2,
+                    py2,
+                    style.color,
+                    width,
+                    style.line_style.clone(),
+                );
+
+                if !matches!(style.head_style, crate::core::ArrowHead::None) {
+                    self.draw_svg_arrow_head(svg, (px2, py2), (px1, py1), style);
+                }
+                if !matches!(style.tail_style, crate::core::ArrowHead::None) {
+                    self.draw_svg_arrow_head(svg, (px1, py1), (px2, py2), style);
+                }
+            }
+            Annotation::HLine {
+                y,
+                style,
+                color,
+                width,
+            } => {
+                let py = Self::scaled_y_pixel(*y, y_min, y_max, plot_area, &self.layout.y_scale);
+                let width = self.render_scale().points_to_pixels(*width);
+                svg.draw_line(
+                    plot_area.left(),
+                    py,
+                    plot_area.right(),
+                    py,
+                    *color,
+                    width,
+                    style.clone(),
+                );
+            }
+            Annotation::VLine {
+                x,
+                style,
+                color,
+                width,
+            } => {
+                let px = Self::scaled_x_pixel(*x, x_min, x_max, plot_area, &self.layout.x_scale);
+                let width = self.render_scale().points_to_pixels(*width);
+                svg.draw_line(
+                    px,
+                    plot_area.top(),
+                    px,
+                    plot_area.bottom(),
+                    *color,
+                    width,
+                    style.clone(),
+                );
+            }
+            Annotation::Rectangle {
+                x,
+                y,
+                width,
+                height,
+                style,
+            } => {
+                let (px1, py1) = self.svg_annotation_point(
+                    *x,
+                    *y + *height,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                let (px2, py2) = self.svg_annotation_point(
+                    *x + *width,
+                    *y,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                self.draw_svg_styled_rect(
+                    svg,
+                    px1.min(px2),
+                    py1.min(py2),
+                    (px2 - px1).abs(),
+                    (py2 - py1).abs(),
+                    style,
+                );
+            }
+            Annotation::FillBetween {
+                x,
+                y1,
+                y2,
+                style,
+                where_positive,
+            } => {
+                let len = x.len().min(y1.len()).min(y2.len());
+                if len >= 2 && x.len() == y1.len() && x.len() == y2.len() {
+                    let mut points: Vec<(f32, f32)> = (0..len)
+                        .map(|index| {
+                            let y = if index > 0 && *where_positive && y1[index] < y2[index] {
+                                y2[index]
+                            } else {
+                                y1[index]
+                            };
+                            self.svg_annotation_point(
+                                x[index], y, plot_area, x_min, x_max, y_min, y_max,
+                            )
+                        })
+                        .collect();
+
+                    points.extend(
+                        (0..len)
+                            .rev()
+                            .filter(|&index| !*where_positive || y1[index] >= y2[index])
+                            .map(|index| {
+                                self.svg_annotation_point(
+                                    x[index], y2[index], plot_area, x_min, x_max, y_min, y_max,
+                                )
+                            }),
+                    );
+
+                    if points.len() >= 3 {
+                        svg.draw_filled_polygon(&points, style.color.with_alpha(style.alpha));
+                        if let Some(edge_color) = style.edge_color {
+                            let width = self.render_scale().points_to_pixels(style.edge_width);
+                            svg.draw_polygon_outline(&points, edge_color, width);
+                        }
+                    }
+                }
+            }
+            Annotation::HSpan {
+                x_min: span_min,
+                x_max: span_max,
+                style,
+            } => {
+                let px1 =
+                    Self::scaled_x_pixel(*span_min, x_min, x_max, plot_area, &self.layout.x_scale);
+                let px2 =
+                    Self::scaled_x_pixel(*span_max, x_min, x_max, plot_area, &self.layout.x_scale);
+                self.draw_svg_styled_rect(
+                    svg,
+                    px1.min(px2),
+                    plot_area.top(),
+                    (px2 - px1).abs(),
+                    plot_area.height(),
+                    style,
+                );
+            }
+            Annotation::VSpan {
+                y_min: span_min,
+                y_max: span_max,
+                style,
+            } => {
+                let py1 =
+                    Self::scaled_y_pixel(*span_min, y_min, y_max, plot_area, &self.layout.y_scale);
+                let py2 =
+                    Self::scaled_y_pixel(*span_max, y_min, y_max, plot_area, &self.layout.y_scale);
+                self.draw_svg_styled_rect(
+                    svg,
+                    plot_area.left(),
+                    py1.min(py2),
+                    plot_area.width(),
+                    (py2 - py1).abs(),
+                    style,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn svg_annotation_point(
+        &self,
+        x: f64,
+        y: f64,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> (f32, f32) {
+        crate::render::skia::map_data_to_pixels_scaled(
+            x,
+            y,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            plot_area,
+            &self.layout.x_scale,
+            &self.layout.y_scale,
+        )
+    }
+
+    fn draw_svg_styled_rect(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        style: &ShapeStyle,
+    ) {
+        if let Some(fill_color) = style.fill_color {
+            svg.draw_rectangle(
+                x,
+                y,
+                width,
+                height,
+                fill_color.with_alpha(style.fill_alpha),
+                true,
+            );
+        }
+
+        if let Some(edge_color) = style.edge_color {
+            let edge_width = self.render_scale().points_to_pixels(style.edge_width);
+            svg.draw_line(
+                x,
+                y,
+                x + width,
+                y,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+            svg.draw_line(
+                x + width,
+                y,
+                x + width,
+                y + height,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+            svg.draw_line(
+                x + width,
+                y + height,
+                x,
+                y + height,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+            svg.draw_line(
+                x,
+                y + height,
+                x,
+                y,
+                edge_color,
+                edge_width,
+                style.edge_style.clone(),
+            );
+        }
+    }
+
+    fn draw_svg_arrow_head(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        tip: (f32, f32),
+        from: (f32, f32),
+        style: &ArrowStyle,
+    ) {
+        let dx = tip.0 - from.0;
+        let dy = tip.1 - from.1;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 0.001 {
+            return;
+        }
+
+        let ux = dx / len;
+        let uy = dy / len;
+        let perpendicular = (-uy, ux);
+        let head_length = self.render_scale().points_to_pixels(style.head_length);
+        let head_width = self.render_scale().points_to_pixels(style.head_width);
+        let base = (tip.0 - ux * head_length, tip.1 - uy * head_length);
+        let points = [
+            tip,
+            (
+                base.0 + perpendicular.0 * head_width / 2.0,
+                base.1 + perpendicular.1 * head_width / 2.0,
+            ),
+            (
+                base.0 - perpendicular.0 * head_width / 2.0,
+                base.1 - perpendicular.1 * head_width / 2.0,
+            ),
+        ];
+
+        svg.draw_filled_polygon(&points, style.color);
     }
 
     /// Render the plot to an SVG string
@@ -1678,9 +2255,11 @@ impl Plot {
                 );
             } else {
                 // For other charts, compute X-axis ticks and draw full grid
-                let x_tick_layout = x_tick_layout
-                    .as_ref()
-                    .expect("non-categorical SVG render should have x tick layout");
+                let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "missing x tick layout for non-categorical SVG grid".to_string(),
+                    )
+                })?;
                 let grid_x_pixels = Self::grid_tick_pixels(
                     &x_tick_layout.pixel_positions,
                     &x_minor_tick_pixels,
@@ -1779,9 +2358,11 @@ impl Plot {
                 }
             } else {
                 // Normal chart: draw axes with numeric labels
-                let x_tick_layout = x_tick_layout
-                    .as_ref()
-                    .expect("non-categorical SVG render should have x tick layout");
+                let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "missing x tick layout for non-categorical SVG axes".to_string(),
+                    )
+                })?;
                 if self.layout.tick_config.enabled {
                     svg.draw_axes_with_minor_ticks(
                         plot_left,
@@ -1817,6 +2398,15 @@ impl Plot {
         // Create clip path for data
         let clip_id = svg.add_clip_rect(plot_left, plot_top, plot_width, plot_height);
         svg.start_clip_group(&clip_id);
+        self.render_svg_annotations(
+            &mut svg,
+            AnnotationRenderLayer::Underlay,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
 
         // Collect legend items, including grouped-series collapse behavior.
         let legend_items = self.collect_legend_items();
@@ -1867,6 +2457,15 @@ impl Plot {
             }
         }
 
+        self.render_svg_annotations(
+            &mut svg,
+            AnnotationRenderLayer::Overlay,
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
         svg.end_group(); // End clip group
 
         // Draw title/xlabel/ylabel using layout-computed positions.

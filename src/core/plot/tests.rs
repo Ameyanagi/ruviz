@@ -519,6 +519,11 @@ fn image_pixel_is_dark(image: &Image, x: u32, y: u32) -> bool {
         .all(|channel| *channel < 220)
 }
 
+fn image_pixel_is_red(image: &Image, x: u32, y: u32) -> bool {
+    let rgba = image_pixel_rgba(image, x, y);
+    rgba[0] > 180 && rgba[1] < 120 && rgba[2] < 120 && rgba[3] > 128
+}
+
 fn image_has_dark_pixel_near(image: &Image, x: u32, y: u32, radius: u32) -> bool {
     let x_start = x.saturating_sub(radius);
     let x_end = (x + radius).min(image.width.saturating_sub(1));
@@ -528,6 +533,23 @@ fn image_has_dark_pixel_near(image: &Image, x: u32, y: u32, radius: u32) -> bool
     for sample_y in y_start..=y_end {
         for sample_x in x_start..=x_end {
             if image_pixel_is_dark(image, sample_x, sample_y) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn image_has_red_pixel_near(image: &Image, x: u32, y: u32, radius: u32) -> bool {
+    let x_start = x.saturating_sub(radius);
+    let x_end = (x + radius).min(image.width.saturating_sub(1));
+    let y_start = y.saturating_sub(radius);
+    let y_end = (y + radius).min(image.height.saturating_sub(1));
+
+    for sample_y in y_start..=y_end {
+        for sample_x in x_start..=x_end {
+            if image_pixel_is_red(image, sample_x, sample_y) {
                 return true;
             }
         }
@@ -744,6 +766,25 @@ fn test_pending_ingestion_error_preserves_single_error_shape() {
     let y = vec![1.0, 2.0, 3.0];
 
     let err = Plot::new().line(&bad, &y).render().unwrap_err();
+    match err {
+        PlottingError::DataExtractionFailed { source, message } => {
+            assert_eq!(source, "test::failing-ingestion");
+            assert_eq!(message, "forced ingestion failure");
+        }
+        other => panic!("expected DataExtractionFailed, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_quiver_preserves_ingestion_error_before_length_validation() {
+    let bad = FailingIngestionData;
+    let valid = vec![1.0, 2.0, 3.0];
+
+    let err = Plot::new()
+        .quiver(&bad, &valid, &valid, &valid)
+        .render()
+        .unwrap_err();
+
     match err {
         PlottingError::DataExtractionFailed { source, message } => {
             assert_eq!(source, "test::failing-ingestion");
@@ -1496,6 +1537,55 @@ fn test_log_axis_raster_draws_minor_tick_marks() {
     assert!(
         longest_run >= 4,
         "log minor tick at y=2 should create a short horizontal dark run; got {longest_run}"
+    );
+}
+
+#[test]
+fn test_png_annotation_hline_uses_log_y_scale() {
+    let plot: Plot = Plot::new()
+        .size_px(480, 360)
+        .grid(false)
+        .ticks(false)
+        .yscale(crate::axes::AxisScale::Log)
+        .line(&[0.0, 1.0], &[1.0, 1000.0])
+        .line_width(0.1)
+        .hline_styled(10.0, Color::RED, 3.0, LineStyle::Solid)
+        .into();
+
+    let image = plot.render().unwrap();
+    let plot_area = compute_render_plot_area(&plot);
+    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+    let (expected_x, expected_y) = crate::render::skia::map_data_to_pixels_scaled(
+        0.5,
+        10.0,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        plot_area,
+        &crate::axes::AxisScale::Linear,
+        &crate::axes::AxisScale::Log,
+    );
+    let (_, linear_y) =
+        crate::render::skia::map_data_to_pixels(0.5, 10.0, x_min, x_max, y_min, y_max, plot_area);
+
+    assert!(
+        image_has_red_pixel_near(
+            &image,
+            expected_x.round() as u32,
+            expected_y.round() as u32,
+            3
+        ),
+        "log-scaled annotation should render near y={expected_y}"
+    );
+    assert!(
+        !image_has_red_pixel_near(
+            &image,
+            expected_x.round() as u32,
+            linear_y.round() as u32,
+            3
+        ),
+        "annotation should not render at the linear y position {linear_y}"
     );
 }
 
@@ -2412,6 +2502,77 @@ fn test_benchmark_save_png_bytes_keeps_large_scatter_on_skia_reference_path() {
     let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
 
     assert_eq!(backend, "skia");
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_public_png_auto_optimize_keeps_large_scatter_on_skia_visual_path() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let plot = Plot::new()
+        .scatter(&x_data, &y_data)
+        .auto_optimize()
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "skia");
+
+    let (png_bytes, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("auto-optimized scatter PNG render should preserve Skia visuals");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(!diagnostics.used_auto_datashader);
+    assert!(png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_public_png_explicit_datashader_uses_density_path_for_large_scatter() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let plot = Plot::new()
+        .backend(BackendType::DataShader)
+        .scatter(&x_data, &y_data)
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "datashader");
+
+    let (png_bytes, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("explicit DataShader scatter PNG render should use density path");
+
+    assert_eq!(backend, "datashader");
+    assert_eq!(diagnostics.render_mode, "optimized");
+    assert!(diagnostics.used_auto_datashader);
+    assert!(png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_public_png_auto_optimize_falls_back_for_unsupported_large_line() {
+    let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
+    let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
+
+    let plot = Plot::new()
+        .line(&x_data, &y_data)
+        .auto_optimize()
+        .into_plot();
+
+    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.resolved_backend_name(), "skia");
+
+    let (_, backend, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("unsupported DataShader line PNG render should fall back to Skia");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(!diagnostics.used_auto_datashader);
 }
 
 #[test]
@@ -3760,6 +3921,114 @@ fn test_polar_svg_scales_line_width_and_markers_with_dpi() {
 }
 
 #[test]
+fn test_quiver_svg_scales_stroke_width_with_dpi() {
+    let x = vec![0.0, 1.0];
+    let y = vec![0.0, 1.0];
+    let u = vec![1.0, 0.5];
+    let v = vec![0.25, 0.75];
+
+    let plot: Plot = Plot::new()
+        .dpi(200)
+        .quiver(&x, &y, &u, &v)
+        .width(1.2)
+        .into();
+    let expected_stroke_width = match &plot.series_mgr.series[0].series_type {
+        SeriesType::Quiver { data } => plot.render_scale().points_to_pixels(data.config.width),
+        other => panic!("expected quiver series, got {other:?}"),
+    };
+    let svg = plot
+        .render_to_svg()
+        .expect("quiver SVG render should succeed");
+
+    assert!(
+        svg.contains(&format!(r#"stroke-width="{expected_stroke_width:.2}""#)),
+        "expected quiver line width to scale with DPI: {svg}"
+    );
+}
+
+#[test]
+fn test_quiver_png_uses_log_x_scale_for_geometry() {
+    let bounds_x = vec![1.0, 1000.0];
+    let bounds_y = vec![0.0, 2.0];
+    let x = vec![10.0];
+    let y = vec![1.0];
+    let u = vec![90.0];
+    let v = vec![0.0];
+
+    let plot: Plot = Plot::new()
+        .size_px(480, 360)
+        .grid(false)
+        .ticks(false)
+        .xscale(crate::axes::AxisScale::Log)
+        .scatter(&bounds_x, &bounds_y)
+        .marker_size(0.1)
+        .quiver(&x, &y, &u, &v)
+        .color(Color::RED)
+        .width(4.0)
+        .headlength(0.0)
+        .headwidth(0.0)
+        .into();
+
+    let image = plot.render().unwrap();
+    let plot_area = compute_render_plot_area(&plot);
+    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+    let data_midpoint = (10.0_f64 * 100.0).sqrt();
+    let (expected_x, expected_y) = crate::render::skia::map_data_to_pixels_scaled(
+        data_midpoint,
+        1.0,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        plot_area,
+        &crate::axes::AxisScale::Log,
+        &crate::axes::AxisScale::Linear,
+    );
+    let (linear_x, linear_y) = crate::render::skia::map_data_to_pixels(
+        data_midpoint,
+        1.0,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        plot_area,
+    );
+
+    assert!(
+        image_has_red_pixel_near(
+            &image,
+            expected_x.round() as u32,
+            expected_y.round() as u32,
+            5
+        ),
+        "log-scaled quiver should render near x={expected_x}"
+    );
+    assert!(
+        !image_has_red_pixel_near(&image, linear_x.round() as u32, linear_y.round() as u32, 5),
+        "quiver should not render at the old linear x position {linear_x}"
+    );
+}
+
+#[test]
+fn test_quiver_bounds_include_arrow_head_vertices() {
+    let x = vec![0.0];
+    let y = vec![0.0];
+    let u = vec![1.0];
+    let v = vec![0.0];
+
+    let plot: Plot = Plot::new()
+        .quiver(&x, &y, &u, &v)
+        .headlength(0.2)
+        .headwidth(1.0)
+        .into();
+
+    let (_, _, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+
+    assert!(y_min <= -0.5);
+    assert!(y_max >= 0.5);
+}
+
+#[test]
 fn test_pie_svg_scales_edge_width_with_dpi() {
     let mut plot_100: Plot = Plot::new().dpi(100).pie(&[2.0, 3.0, 4.0]).into();
     let mut plot_200: Plot = Plot::new().dpi(200).pie(&[2.0, 3.0, 4.0]).into();
@@ -4047,6 +4316,47 @@ fn test_implicit_conversion_in_function_param() {
         plot.series_mgr.series[0].label,
         Some("Implicit".to_string())
     );
+}
+
+#[test]
+fn test_area_and_stem_bounds_include_baseline_annotations() {
+    let x = vec![10.0, 11.0, 12.0];
+    let y = vec![5.0, 6.0, 7.0];
+
+    let area: Plot = Plot::new().area(&x, &y, 0.0).into();
+    let (_, _, area_y_min, area_y_max) = area.calculate_data_bounds().unwrap();
+    assert!(area_y_min <= 0.0);
+    assert!(area_y_max >= 7.0);
+
+    let stem: Plot = Plot::new().stem(&x, &y, 0.0).into();
+    let (_, _, stem_y_min, stem_y_max) = stem.calculate_data_bounds().unwrap();
+    assert!(stem_y_min <= 0.0);
+    assert!(stem_y_max >= 7.0);
+}
+
+#[test]
+fn test_horizontal_boxen_bounds_put_data_range_on_x_axis() {
+    let data = vec![10.0, 12.0, 18.0, 25.0, 30.0];
+    let plot: Plot = Plot::new().boxen(&data).horizontal().into();
+
+    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+
+    assert!(x_min <= 10.0);
+    assert!(x_max >= 30.0);
+    assert!(y_min <= 0.0);
+    assert!(y_max >= 1.0);
+}
+
+#[test]
+fn test_quiver_rejects_non_finite_input_values() {
+    let x = vec![0.0, f64::NAN];
+    let y = vec![0.0, 1.0];
+    let u = vec![1.0, 1.0];
+    let v = vec![0.0, 0.0];
+
+    let err = Plot::new().quiver(&x, &y, &u, &v).render().unwrap_err();
+
+    assert!(matches!(err, PlottingError::InvalidData { .. }));
 }
 
 #[cfg(feature = "typst-math")]

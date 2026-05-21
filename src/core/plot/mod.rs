@@ -67,8 +67,7 @@ impl RenderExecutionMode {
 
     pub(super) fn allows_raster_line_reduction(self) -> bool {
         // Raster line reduction is treated as reference-safe on this branch.
-        // Public raster output still uses the reference pipeline; only
-        // auto-DataShader remains Optimized-exclusive.
+        // Auto-DataShader remains Optimized-exclusive.
         true
     }
 }
@@ -308,6 +307,34 @@ macro_rules! impl_series_continuation_methods {
             T: Into<f64> + Copy,
         {
             $self_.$finalize().violin(data)
+        }
+
+        /// Continue with a boxen series.
+        pub fn boxen<T, D: $crate::data::Data1D<T>>(
+            $self_,
+            data: &D,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxenConfig>
+        where
+            T: Into<f64> + Copy,
+        {
+            $self_.$finalize().boxen(data)
+        }
+
+        /// Continue with a quiver vector-field series.
+        pub fn quiver<X, Y, U, V>(
+            $self_,
+            x_data: &X,
+            y_data: &Y,
+            u_data: &U,
+            v_data: &V,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::QuiverConfig>
+        where
+            X: $crate::data::NumericData1D,
+            Y: $crate::data::NumericData1D,
+            U: $crate::data::NumericData1D,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().quiver(x_data, y_data, u_data, v_data)
         }
 
         /// Continue with a new streaming line series.

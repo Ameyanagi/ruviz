@@ -33,9 +33,11 @@ The public static-output APIs are conservative today:
 - `save_pdf()` is available with the `pdf` feature and converts SVG to PDF.
 
 For PNG/image output, the current public path uses the reference raster pipeline
-for output parity. `.backend(...)`, `.auto_optimize()`, `.parallel_threshold(...)`,
-and `.gpu(true)` store configuration or metadata; they should not be documented
-as hard execution guarantees for `render()` or `save()`.
+for output parity unless `BackendType::DataShader` is explicitly configured for
+a supported scatter workload. `.backend(...)` and `.auto_optimize()` store
+backend preference metadata; `.resolved_backend_name()` reports the backend that
+public PNG render/save will actually use for the current plot. `auto_optimize()`
+keeps public PNG output on the normal visual path.
 
 Reactive plots are resolved to a static snapshot first. Plain `render()` and
 `save()` sample temporal `Signal` sources at `0.0`; `render_at(t)` samples them
@@ -77,6 +79,27 @@ Plot::new()
 For dense plots where many data points map to the same pixels, downsampling or
 aggregating before plotting is often more useful than enabling a backend flag.
 
+For large scatter plots, `.auto_optimize()` may store DataShader metadata, but
+public PNG output still uses the normal visual path:
+
+```rust
+use ruviz::prelude::*;
+
+let points = 250_000;
+let x: Vec<f64> = (0..points).map(|i| i as f64 * 0.001).collect();
+let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
+
+let plot = Plot::new()
+    .scatter(&x, &y)
+    .auto_optimize()
+    .into_plot();
+
+println!("public PNG backend: {}", plot.resolved_backend_name());
+```
+
+Use explicit `BackendType::DataShader` only when you deliberately want density
+aggregation instead of per-point scatter markers.
+
 ## Memory Pooling
 
 Memory pooling is opt-in:
@@ -117,7 +140,7 @@ println!(
 - Use release builds for any timing comparison.
 - Prefer smaller canvases and explicit data reduction when visual density is too high.
 - Use `.size(width_in, height_in)` plus `.dpi(...)` for print output.
-- Treat backend names as metadata unless a specific API documents otherwise.
+- Use `.resolved_backend_name()` when you need to verify the actual public PNG backend.
 
 ## Related Guides
 

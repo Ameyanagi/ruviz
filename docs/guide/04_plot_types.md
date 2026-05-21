@@ -179,14 +179,13 @@ let kde_2d = compute_kde_2d_plot(&x, &y, &config_2d);
 **Use for**: Large datasets where box plots don't show enough detail
 
 ```rust
-use ruviz::plots::distribution::{BoxenConfig, compute_boxen};
+use ruviz::prelude::*;
 
-let config = BoxenConfig::new()
-    .k(5)  // Number of letter values
-    .outlier_prop(0.007);
-
-let boxen = compute_boxen(&data, &config);
-// boxen.boxes contains nested boxes from median outward
+Plot::new()
+    .boxen(&data)
+    .k_depth(5)
+    .show_outliers(true)
+    .save("boxen.png")?;
 ```
 
 ### ECDF Plots (Empirical Cumulative Distribution)
@@ -407,14 +406,12 @@ let bars_with_xy = compute_error_bars(&x, &y, Some(&y_errors), Some(&x_errors));
 **Use for**: Discrete data, histogram outlines, signal processing
 
 ```rust
-use ruviz::plots::discrete::{StepConfig, StepWhere, step_line};
+use ruviz::prelude::*;
 
-let config = StepConfig::new()
-    .where_step(StepWhere::Pre)  // or Post, Mid
-    .fill(false);
-
-let step = step_line(&x, &y, config.where_step);
-// step contains the rendered step vertices
+Plot::new()
+    .step(&x, &y, StepWhere::Pre)
+    .line_width(2.0)
+    .save("step.png")?;
 ```
 
 ### Stem Plots (Lollipop Charts)
@@ -422,14 +419,12 @@ let step = step_line(&x, &y, config.where_step);
 **Use for**: Discrete sequences, emphasizing individual values
 
 ```rust
-use ruviz::plots::discrete::{StemConfig, compute_stems};
+use ruviz::prelude::*;
 
-let config = StemConfig::new()
+Plot::new()
+    .stem(&x, &y, 0.0)
     .marker_size(6.0)
-    .baseline(0.0);
-
-let stem = compute_stems(&x, &y, &config);
-// stem contains one StemElement per sample
+    .save("stem.png")?;
 ```
 
 ---
@@ -567,19 +562,17 @@ let (x_name, y_name) = cell_variable_names(first_cell, &config.vars);
 **Use for**: Vector fields, flow visualization
 
 ```rust
-use ruviz::plots::vector::{QuiverConfig, QuiverPivot, compute_quiver};
+use ruviz::prelude::*;
 
-let mut config = QuiverConfig::new()
+Plot::new()
+    .quiver(&x, &y, &u, &v)
     .scale(1.0)
     .width(1.5)
     .pivot(QuiverPivot::Tail)
-    .color_by_magnitude(true);
-
-config.headwidth = 0.25;
-config.headlength = 0.35;
-
-let quiver = compute_quiver(&x, &y, &u, &v, &config);
-// quiver.arrows contains arrow geometries
+    .headwidth(0.25)
+    .headlength(0.35)
+    .color_by_magnitude(true)
+    .save("quiver.png")?;
 ```
 
 ---

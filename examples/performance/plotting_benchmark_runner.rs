@@ -233,6 +233,7 @@ struct Args {
     include_save_path: bool,
     skip_plotters: bool,
     request_gpu: bool,
+    auto_optimize: bool,
 }
 
 impl Args {
@@ -245,6 +246,7 @@ impl Args {
         let mut include_save_path = false;
         let mut skip_plotters = false;
         let mut request_gpu = false;
+        let mut auto_optimize = false;
 
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -265,9 +267,10 @@ impl Args {
                 "--include-save-path" => include_save_path = true,
                 "--skip-plotters" => skip_plotters = true,
                 "--request-gpu" => request_gpu = true,
+                "--auto-optimize" => auto_optimize = true,
                 other => {
                     return Err(anyhow!(
-                        "unexpected argument: {other}. expected --manifest, --mode, --output, --feature-label, --cargo-features, --include-save-path, --skip-plotters, or --request-gpu"
+                        "unexpected argument: {other}. expected --manifest, --mode, --output, --feature-label, --cargo-features, --include-save-path, --skip-plotters, --request-gpu, or --auto-optimize"
                     ));
                 }
             }
@@ -282,6 +285,7 @@ impl Args {
             include_save_path,
             skip_plotters,
             request_gpu,
+            auto_optimize,
         })
     }
 }
@@ -342,16 +346,26 @@ fn element_count(size: &SizeSpec) -> usize {
 
 fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>> {
     let dataset = build_dataset(run)?;
-    let built_plot = build_plot(run, &dataset);
+    let built_plot = build_plot_with_options(run, &dataset, args.request_gpu, args.auto_optimize);
 
     let (render_only_ms, render_only_bytes, render_only_diagnostics) =
-        measure_with_diagnostics(run.warmup_iterations, run.measured_iterations, || {
-            Ok(built_plot.benchmark_render_png_bytes_with_diagnostics()?)
-        })?;
+        if built_plot.resolved_backend_name() == "skia" {
+            let prepared_plot = built_plot.prepare();
+            measure_with_diagnostics(run.warmup_iterations, run.measured_iterations, || {
+                Ok(prepared_plot.render_png_bytes_uncached_with_diagnostics()?)
+            })?
+        } else {
+            measure_with_diagnostics(run.warmup_iterations, run.measured_iterations, || {
+                Ok(built_plot.benchmark_render_png_bytes_with_diagnostics()?)
+            })?
+        };
 
     let (public_ms, public_bytes, public_diagnostics) =
         measure_with_diagnostics(run.warmup_iterations, run.measured_iterations, || {
-            Ok(build_plot(run, &dataset).benchmark_render_png_bytes_with_diagnostics()?)
+            Ok(
+                build_plot_with_options(run, &dataset, args.request_gpu, args.auto_optimize)
+                    .benchmark_render_png_bytes_with_diagnostics()?,
+            )
         })?;
 
     let mut results = vec![
@@ -363,7 +377,7 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
                 boundary: "render_only",
                 byte_count: render_only_bytes,
                 iterations_ms: render_only_ms,
-                actual_backend: None,
+                actual_backend: Some(built_plot.resolved_backend_name().to_string()),
                 render_diagnostics: Some(render_only_diagnostics),
             },
         ),
@@ -375,27 +389,52 @@ fn benchmark_run(run: &ScenarioRun, args: &Args) -> Result<Vec<BenchmarkResult>>
                 boundary: "public_api_render",
                 byte_count: public_bytes,
                 iterations_ms: public_ms,
-                actual_backend: None,
+                actual_backend: Some(
+                    build_plot_with_options(run, &dataset, args.request_gpu, args.auto_optimize)
+                        .resolved_backend_name()
+                        .to_string(),
+                ),
                 render_diagnostics: Some(public_diagnostics),
             },
         ),
     ];
 
     if args.include_save_path {
-        let built_save_plot = build_plot_with_options(run, &dataset, args.request_gpu);
+        let built_save_plot =
+            build_plot_with_options(run, &dataset, args.request_gpu, args.auto_optimize);
         let (save_only_ms, save_only_bytes, save_backend, save_diagnostics) =
-            measure_with_backend_and_diagnostics(
-                run.warmup_iterations,
-                run.measured_iterations,
-                || Ok(built_save_plot.benchmark_save_png_bytes_with_diagnostics()?),
-            )?;
+            if built_save_plot.resolved_backend_name() == "skia" {
+                let prepared_save_plot = built_save_plot.prepare();
+                measure_with_backend_and_diagnostics(
+                    run.warmup_iterations,
+                    run.measured_iterations,
+                    || {
+                        let (bytes, diagnostics) =
+                            prepared_save_plot.render_png_bytes_uncached_with_diagnostics()?;
+                        Ok((bytes, "skia", diagnostics))
+                    },
+                )?
+            } else {
+                measure_with_backend_and_diagnostics(
+                    run.warmup_iterations,
+                    run.measured_iterations,
+                    || Ok(built_save_plot.benchmark_save_png_bytes_with_diagnostics()?),
+                )?
+            };
         let (public_save_ms, public_save_bytes, public_save_backend, public_save_diagnostics) =
             measure_with_backend_and_diagnostics(
                 run.warmup_iterations,
                 run.measured_iterations,
                 || {
-                    Ok(build_plot_with_options(run, &dataset, args.request_gpu)
-                        .benchmark_save_png_bytes_with_diagnostics()?)
+                    Ok(
+                        build_plot_with_options(
+                            run,
+                            &dataset,
+                            args.request_gpu,
+                            args.auto_optimize,
+                        )
+                        .benchmark_save_png_bytes_with_diagnostics()?,
+                    )
                 },
             )?;
 
@@ -510,11 +549,7 @@ where
 {
     let mut diagnostics = None;
     for _ in 0..warmup_iterations {
-        let (_, current_diagnostics) = f()?;
-        record_diagnostics(
-            &mut diagnostics,
-            RenderDiagnosticsRecord::from(current_diagnostics),
-        )?;
+        let _ = f()?;
     }
 
     let mut iterations_ms = Vec::with_capacity(measured_iterations);
@@ -563,12 +598,7 @@ where
     let mut backend = None;
     let mut diagnostics = None;
     for _ in 0..warmup_iterations {
-        let (_, current_backend, current_diagnostics) = f()?;
-        record_backend(&mut backend, current_backend)?;
-        record_diagnostics(
-            &mut diagnostics,
-            RenderDiagnosticsRecord::from(current_diagnostics),
-        )?;
+        let _ = f()?;
     }
 
     let mut iterations_ms = Vec::with_capacity(measured_iterations);
@@ -658,21 +688,28 @@ impl From<ruviz::core::plot::RenderDiagnostics> for RenderDiagnosticsRecord {
     }
 }
 
-fn build_plot(run: &ScenarioRun, dataset: &Dataset) -> Plot {
-    build_plot_with_options(run, dataset, false)
-}
-
-fn build_plot_with_options(run: &ScenarioRun, dataset: &Dataset, request_gpu: bool) -> Plot {
+fn build_plot_with_options(
+    run: &ScenarioRun,
+    dataset: &Dataset,
+    request_gpu: bool,
+    auto_optimize: bool,
+) -> Plot {
     let base = Plot::new()
         .size_px(run.canvas.width, run.canvas.height)
         .dpi(run.canvas.dpi);
     let base = maybe_enable_gpu(base, request_gpu);
 
-    match dataset {
+    let plot = match dataset {
         Dataset::Line { x, y, .. } => base.line(x, y).into_plot(),
         Dataset::Scatter { x, y, .. } => base.scatter(x, y).into_plot(),
         Dataset::Histogram { values, .. } => base.histogram(values, None).into_plot(),
         Dataset::Heatmap { matrix, .. } => base.heatmap(matrix, None).into_plot(),
+    };
+
+    if auto_optimize {
+        plot.auto_optimize()
+    } else {
+        plot
     }
 }
 

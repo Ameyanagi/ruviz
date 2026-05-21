@@ -295,6 +295,13 @@ pub enum PlotInput {
         categories: Vec<String>,
         values: super::PlotData,
     },
+    /// Vector field data for quiver plots.
+    Quiver {
+        x: Vec<f64>,
+        y: Vec<f64>,
+        u: Vec<f64>,
+        v: Vec<f64>,
+    },
 }
 
 impl PlotInput {
@@ -307,8 +314,37 @@ impl PlotInput {
             PlotInput::Grid2D { x, y, .. } => x.len() * y.len(),
             PlotInput::Categorical { values, .. } => values.len(),
             PlotInput::CategoricalSource { values, .. } => values.len(),
+            PlotInput::Quiver { x, .. } => x.len(),
         }
     }
+}
+
+fn quiver_length_mismatch(
+    x: &[f64],
+    y: &[f64],
+    u: &[f64],
+    v: &[f64],
+) -> Option<crate::core::PlottingError> {
+    [y.len(), u.len(), v.len()]
+        .into_iter()
+        .find(|&len| len != x.len())
+        .map(|len| crate::core::PlottingError::DataLengthMismatch {
+            x_len: x.len(),
+            y_len: len,
+            series_index: None,
+        })
+}
+
+fn validate_quiver_input(x: &[f64], y: &[f64], u: &[f64], v: &[f64]) -> crate::core::Result<()> {
+    if let Some(err) = quiver_length_mismatch(x, y, u, v) {
+        return Err(err);
+    }
+
+    crate::core::PlottingError::validate_data(x)?;
+    crate::core::PlottingError::validate_data(y)?;
+    crate::core::PlottingError::validate_data(u)?;
+    crate::core::PlottingError::validate_data(v)?;
+    Ok(())
 }
 
 /// Style options for a series
@@ -2084,6 +2120,156 @@ impl PlotBuilder<crate::plots::ViolinConfig> {
 
 // Generate terminal methods (save, render, render_to_svg) for ViolinConfig
 impl_terminal_methods!(crate::plots::ViolinConfig);
+
+// =============================================================================
+// Boxen Plot Builder
+// =============================================================================
+
+impl PlotBuilder<crate::plots::BoxenConfig> {
+    /// Set the maximum number of letter-value levels to draw.
+    pub fn k_depth(mut self, k: usize) -> Self {
+        self.config.k_depth = Some(k.max(1));
+        self
+    }
+
+    /// Set the box width as a fraction of category spacing.
+    pub fn width(mut self, width: f64) -> Self {
+        self.config.width = width.clamp(0.1, 1.0);
+        self
+    }
+
+    /// Set the saturation gradient used across nested boxes.
+    pub fn saturation(mut self, saturation: f32) -> Self {
+        self.config.saturation = saturation.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Show or hide outlier markers outside the outermost box.
+    pub fn show_outliers(mut self, show: bool) -> Self {
+        self.config.show_outliers = show;
+        self
+    }
+
+    /// Set the outlier marker size in points.
+    pub fn outlier_size(mut self, size: f32) -> Self {
+        self.config.outlier_size = size.max(0.0);
+        self
+    }
+
+    /// Set the box edge line width in points.
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.config.line_width = width.max(0.0);
+        self
+    }
+
+    /// Set horizontal orientation.
+    pub fn horizontal(mut self) -> Self {
+        self.config.orient = crate::plots::distribution::BoxenOrientation::Horizontal;
+        self
+    }
+
+    /// Set vertical orientation.
+    pub fn vertical(mut self) -> Self {
+        self.config.orient = crate::plots::distribution::BoxenOrientation::Vertical;
+        self
+    }
+
+    /// Finalize the boxen series and add it to the plot.
+    fn finalize(self) -> super::Plot {
+        let data = match &self.input {
+            PlotInput::Single(data) => data.clone(),
+            _ => Vec::new(),
+        };
+
+        let boxen_data = crate::plots::compute_boxen(&data, &self.config);
+        if boxen_data.boxes.is_empty() {
+            let mut plot = self.plot;
+            plot.set_pending_ingestion_error(crate::core::PlottingError::EmptyDataSet);
+            plot
+        } else {
+            self.plot.add_boxen_series(boxen_data, self.style)
+        }
+    }
+}
+
+impl_terminal_methods!(crate::plots::BoxenConfig);
+
+// =============================================================================
+// Quiver Plot Builder
+// =============================================================================
+
+impl PlotBuilder<crate::plots::QuiverConfig> {
+    /// Set the scale factor applied to arrow lengths.
+    pub fn scale(mut self, scale: f64) -> Self {
+        self.config.scale = scale.max(0.0);
+        self
+    }
+
+    /// Set the arrow stroke width in points.
+    pub fn width(mut self, width: f32) -> Self {
+        self.config.width = width.max(0.1);
+        self
+    }
+
+    /// Set the arrow head length as a fraction of arrow length.
+    pub fn headlength(mut self, headlength: f64) -> Self {
+        self.config.headlength = headlength.max(0.0);
+        self
+    }
+
+    /// Set the arrow head width as a fraction of arrow length.
+    pub fn headwidth(mut self, headwidth: f64) -> Self {
+        self.config.headwidth = headwidth.max(0.0);
+        self
+    }
+
+    /// Interpret `u` as angles in radians and `v` as magnitudes.
+    pub fn angles_mode(mut self, enabled: bool) -> Self {
+        self.config.angles_mode = enabled;
+        self
+    }
+
+    /// Set the point on each arrow anchored at `(x, y)`.
+    pub fn pivot(mut self, pivot: crate::plots::QuiverPivot) -> Self {
+        self.config.pivot = pivot;
+        self
+    }
+
+    /// Color arrows by vector magnitude using the configured colormap.
+    pub fn color_by_magnitude(mut self, enabled: bool) -> Self {
+        self.config.color_by_magnitude = enabled;
+        self
+    }
+
+    /// Set the colormap used when coloring arrows by magnitude.
+    pub fn cmap<S: Into<String>>(mut self, cmap: S) -> Self {
+        self.config.cmap = cmap.into();
+        self
+    }
+
+    /// Finalize the quiver series and add it to the plot.
+    fn finalize(self) -> super::Plot {
+        if self.plot.pending_ingestion_error().is_some() {
+            return self.plot;
+        }
+
+        let (x, y, u, v) = match &self.input {
+            PlotInput::Quiver { x, y, u, v } => (x.clone(), y.clone(), u.clone(), v.clone()),
+            _ => return self.plot,
+        };
+
+        if let Err(err) = validate_quiver_input(&x, &y, &u, &v) {
+            let mut plot = self.plot;
+            plot.set_pending_ingestion_error(err);
+            return plot;
+        }
+
+        let quiver_data = crate::plots::compute_quiver(&x, &y, &u, &v, &self.config);
+        self.plot.add_quiver_series(quiver_data, self.style)
+    }
+}
+
+impl_terminal_methods!(crate::plots::QuiverConfig);
 
 // ============================================================================
 // LineConfig PlotBuilder Implementation

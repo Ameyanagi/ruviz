@@ -1,5 +1,13 @@
 use super::*;
 
+fn adjust_boxen_saturation_svg(color: Color, factor: f32) -> Color {
+    let gray = ((color.r as f32 + color.g as f32 + color.b as f32) / 3.0) as u8;
+    let blend = |channel: u8| -> u8 {
+        (channel as f32 * factor + gray as f32 * (1.0 - factor)).clamp(0.0, 255.0) as u8
+    };
+    Color::new_rgba(blend(color.r), blend(color.g), blend(color.b), color.a)
+}
+
 impl Plot {
     pub(super) fn calculate_total_points(&self) -> usize {
         Self::calculate_total_points_for_series(&self.series_mgr.series)
@@ -25,6 +33,7 @@ impl Plot {
                 SeriesType::Pie { data } => data.values.len(),
                 SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
                 SeriesType::Polar { data } => data.points.len(),
+                SeriesType::Quiver { data } => data.arrows.len(),
             })
             .sum()
     }
@@ -93,7 +102,7 @@ impl Plot {
         }
 
         let total_points = Self::calculate_total_points_for_series(series_list);
-        if !Self::should_auto_use_datashader(series_list, total_points) {
+        if !self.should_use_datashader_for_render(series_list, total_points) {
             return Ok(false);
         }
 
@@ -471,11 +480,263 @@ impl Plot {
                     svg, data, plot_area, x_min, x_max, y_min, y_max, color,
                 )?;
             }
+            SeriesType::Boxen { data } => {
+                self.render_boxen_series_svg(
+                    svg, data, plot_area, x_min, x_max, y_min, y_max, color,
+                );
+            }
+            SeriesType::Quiver { data } => {
+                self.render_quiver_series_svg(
+                    svg, data, plot_area, x_min, x_max, y_min, y_max, color,
+                );
+            }
             SeriesType::Histogram { .. } => {}
             _ => {}
         }
 
         Ok(())
+    }
+
+    fn render_boxen_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        data: &crate::plots::BoxenData,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        default_color: Color,
+    ) {
+        if data.boxes.is_empty() {
+            return;
+        }
+
+        let center = 0.5;
+        let base_color = data.config.color.unwrap_or(default_color);
+        let edge_width = self.render_scale().points_to_pixels(data.config.line_width);
+
+        for (index, boxen_box) in data.boxes.iter().enumerate() {
+            let saturation_factor =
+                1.0 - (index as f32 / data.boxes.len() as f32) * data.config.saturation;
+            let fill_color = adjust_boxen_saturation_svg(base_color, saturation_factor);
+            let points: Vec<(f32, f32)> =
+                crate::plots::distribution::boxen_rect(boxen_box, center, data.config.orient)
+                    .iter()
+                    .map(|&(x, y)| {
+                        crate::render::skia::map_data_to_pixels_scaled(
+                            x,
+                            y,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        )
+                    })
+                    .collect();
+
+            svg.draw_filled_polygon(&points, fill_color);
+            if edge_width > 0.0 {
+                svg.draw_polygon_outline(&points, base_color, edge_width);
+            }
+        }
+
+        let median_half = data.config.width / 4.0;
+        let median_width = self.render_scale().points_to_pixels(2.0);
+        match data.config.orient {
+            crate::plots::distribution::BoxenOrientation::Vertical => {
+                let (x1, y) = crate::render::skia::map_data_to_pixels_scaled(
+                    center - median_half,
+                    data.median,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                let (x2, _) = crate::render::skia::map_data_to_pixels_scaled(
+                    center + median_half,
+                    data.median,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                svg.draw_line(
+                    x1,
+                    y,
+                    x2,
+                    y,
+                    Color::new(255, 255, 255),
+                    median_width,
+                    LineStyle::Solid,
+                );
+            }
+            crate::plots::distribution::BoxenOrientation::Horizontal => {
+                let (x, y1) = crate::render::skia::map_data_to_pixels_scaled(
+                    data.median,
+                    center - median_half,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                let (_, y2) = crate::render::skia::map_data_to_pixels_scaled(
+                    data.median,
+                    center + median_half,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    plot_area,
+                    &self.layout.x_scale,
+                    &self.layout.y_scale,
+                );
+                svg.draw_line(
+                    x,
+                    y1,
+                    x,
+                    y2,
+                    Color::new(255, 255, 255),
+                    median_width,
+                    LineStyle::Solid,
+                );
+            }
+        }
+
+        if data.config.show_outliers {
+            let marker_size = self
+                .render_scale()
+                .points_to_pixels(data.config.outlier_size);
+            for &outlier in &data.outliers {
+                let (px, py) = match data.config.orient {
+                    crate::plots::distribution::BoxenOrientation::Vertical => {
+                        crate::render::skia::map_data_to_pixels_scaled(
+                            center,
+                            outlier,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        )
+                    }
+                    crate::plots::distribution::BoxenOrientation::Horizontal => {
+                        crate::render::skia::map_data_to_pixels_scaled(
+                            outlier,
+                            center,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        )
+                    }
+                };
+                svg.draw_marker(px, py, marker_size, MarkerStyle::Circle, base_color);
+            }
+        }
+    }
+
+    fn render_quiver_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        data: &crate::plots::QuiverPlotData,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        default_color: Color,
+    ) {
+        if data.arrows.is_empty() {
+            return;
+        }
+
+        let base_color = data.config.color.unwrap_or(default_color);
+        let cmap = data.config.color_by_magnitude.then(|| {
+            crate::render::ColorMap::by_name(&data.config.cmap)
+                .unwrap_or_else(crate::render::ColorMap::viridis)
+        });
+        let (min_mag, max_mag) = data.magnitude_range;
+        let mag_range = if (max_mag - min_mag).abs() < 1e-10 {
+            1.0
+        } else {
+            max_mag - min_mag
+        };
+        let arrow_width = self.render_scale().points_to_pixels(data.config.width);
+
+        for arrow in &data.arrows {
+            let arrow_color = cmap
+                .as_ref()
+                .map(|colormap| colormap.sample((arrow.magnitude - min_mag) / mag_range))
+                .unwrap_or(base_color);
+            let (sx1, sy1) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.start.0,
+                arrow.start.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            let (sx2, sy2) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.end.0,
+                arrow.end.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            svg.draw_line(
+                sx1,
+                sy1,
+                sx2,
+                sy2,
+                arrow_color,
+                arrow_width,
+                LineStyle::Solid,
+            );
+
+            let head: Vec<(f32, f32)> = arrow
+                .head
+                .iter()
+                .map(|&(x, y)| {
+                    crate::render::skia::map_data_to_pixels_scaled(
+                        x,
+                        y,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    )
+                })
+                .collect();
+            svg.draw_filled_polygon(&head, arrow_color);
+        }
     }
 
     pub(super) fn render_pie_series_svg(
@@ -828,7 +1089,9 @@ impl Plot {
         }
 
         self.calculate_data_bounds_for_series(series_list)
-            .map(|bounds| self.apply_manual_axis_limits(bounds))
+            .map(|bounds| {
+                self.apply_manual_axis_limits(self.expand_bounds_with_annotations(bounds))
+            })
     }
 
     pub(super) fn effective_data_bounds_from_resolved(
@@ -840,7 +1103,9 @@ impl Plot {
         }
 
         self.calculate_data_bounds_from_resolved(resolved_series)
-            .map(|bounds| self.apply_manual_axis_limits(bounds))
+            .map(|bounds| {
+                self.apply_manual_axis_limits(self.expand_bounds_with_annotations(bounds))
+            })
     }
 
     pub(super) fn apply_auto_padding_to_bounds(

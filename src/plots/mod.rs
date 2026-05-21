@@ -56,8 +56,8 @@ pub use basic::{BarConfig, BarOrientation, LineConfig, ScatterConfig};
 
 // Distribution plot exports
 pub use distribution::{
-    Boxen, BoxenConfig, BoxenData, Ecdf, EcdfConfig, EcdfData, EcdfStat, Kde, KdeConfig, KdeData,
-    Violin, ViolinConfig, ViolinData, compute_boxen, compute_ecdf, compute_kde,
+    Boxen, BoxenConfig, BoxenData, BoxenOrientation, Ecdf, EcdfConfig, EcdfData, EcdfStat, Kde,
+    KdeConfig, KdeData, Violin, ViolinConfig, ViolinData, compute_boxen, compute_ecdf, compute_kde,
 };
 
 pub use boxplot::{BoxPlotConfig, BoxPlotData, calculate_box_plot};
@@ -71,6 +71,7 @@ pub use statistics::{iqr, mean, median, percentile, std_dev};
 pub use continuous::contour::{
     ContourConfig, ContourInterpolation, ContourPlotData, compute_contour_plot,
 };
+pub use discrete::{StemConfig, StemMarker, StemOrientation, StepConfig, StepWhere};
 
 // Pie chart exports
 pub use composition::pie::{PieConfig, PieData};
@@ -79,4 +80,8 @@ pub use composition::pie::{PieConfig, PieData};
 pub use polar::polar_plot::{PolarPlotConfig, PolarPlotData, compute_polar_plot};
 pub use polar::radar::{
     RadarConfig, RadarPlotData, compute_radar_chart, compute_radar_chart_with_labels,
+};
+pub use vector::{
+    Quiver, QuiverArrow, QuiverConfig, QuiverInput, QuiverPivot, QuiverPlotData, compute_quiver,
+    quiver_range,
 };

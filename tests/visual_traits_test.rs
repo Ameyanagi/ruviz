@@ -128,7 +128,7 @@ fn test_ecdf_visual() {
         // TODO: When Plot::ecdf() is implemented, use it here
         // For now, use sorted line plot as placeholder
         let mut sorted = data.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(f64::total_cmp);
         let y: Vec<f64> = (1..=sorted.len())
             .map(|i| i as f64 / sorted.len() as f64)
             .collect();
@@ -159,13 +159,11 @@ fn test_step_visual() {
     let (x, y) = generate_xy_data(50);
 
     let result = visual::run_visual_test("step", &config, |path| {
-        // TODO: When Plot::step() is implemented, use it here
-        // For now, use line plot as placeholder
         Plot::new()
-            .title("Step Plot (placeholder)")
+            .title("Step Plot")
             .xlabel("X")
             .ylabel("Y")
-            .line(&x, &y)
+            .step(&x, &y, StepWhere::Post)
             .grid(true)
             .save(path)?;
         Ok(())

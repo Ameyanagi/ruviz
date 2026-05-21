@@ -307,6 +307,53 @@ impl Plot {
         self
     }
 
+    /// Internal method to add a Boxen series
+    pub(crate) fn add_boxen_series(
+        mut self,
+        mut boxen_data: crate::plots::BoxenData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        if let Some(line_width) = style.line_width {
+            boxen_data.config.line_width = line_width.max(0.0);
+        }
+        if let Some(marker_size) = style.marker_size {
+            boxen_data.config.outlier_size = marker_size.max(0.0);
+        }
+
+        let series = PlotSeries {
+            series_type: SeriesType::Boxen { data: boxen_data },
+            streaming_source: None,
+            label: style.label,
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
+            color_source: style.color_source,
+            line_width: style.line_width,
+            line_width_source: style.line_width_source,
+            line_style: style.line_style,
+            line_style_source: style.line_style_source,
+            marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
+            marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
+            alpha: style.alpha,
+            alpha_source: style.alpha_source,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            inset_layout: None,
+            group_id: None,
+        };
+
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
+        self
+    }
+
     /// Internal method to add a Polar series
     pub(crate) fn add_polar_series(
         mut self,
@@ -339,6 +386,53 @@ impl Plot {
             x_errors: None,
             error_config: None,
             inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
+            group_id: None,
+        };
+
+        self.series_mgr.series.push(series);
+        self.series_mgr.auto_color_index += 1;
+        self
+    }
+
+    /// Internal method to add a Quiver series
+    pub(crate) fn add_quiver_series(
+        mut self,
+        mut quiver_data: crate::plots::QuiverPlotData,
+        style: crate::core::plot::builder::SeriesStyle,
+    ) -> Self {
+        if let Some(color) = style.color {
+            quiver_data.config.color = Some(color);
+        }
+        if let Some(line_width) = style.line_width {
+            quiver_data.config.width = line_width.max(0.1);
+        }
+
+        let series = PlotSeries {
+            series_type: SeriesType::Quiver { data: quiver_data },
+            streaming_source: None,
+            label: style.label,
+            color: style.color.or_else(|| {
+                Some(
+                    self.display
+                        .theme
+                        .get_color(self.series_mgr.auto_color_index),
+                )
+            }),
+            color_source: style.color_source,
+            line_width: style.line_width,
+            line_width_source: style.line_width_source,
+            line_style: style.line_style,
+            line_style_source: style.line_style_source,
+            marker_style: style.marker_style,
+            marker_style_source: style.marker_style_source,
+            marker_size: style.marker_size,
+            marker_size_source: style.marker_size_source,
+            alpha: style.alpha,
+            alpha_source: style.alpha_source,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            inset_layout: None,
             group_id: None,
         };
 
@@ -715,6 +809,94 @@ impl Plot {
                 }
             }
             _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn render_quiver_series_scaled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        data: &crate::plots::QuiverPlotData,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        default_color: Color,
+    ) -> Result<()> {
+        if data.arrows.is_empty() {
+            return Ok(());
+        }
+
+        let base_color = data.config.color.unwrap_or(default_color);
+        let cmap = data.config.color_by_magnitude.then(|| {
+            crate::render::ColorMap::by_name(&data.config.cmap)
+                .unwrap_or_else(crate::render::ColorMap::viridis)
+        });
+        let (min_mag, max_mag) = data.magnitude_range;
+        let mag_range = if (max_mag - min_mag).abs() < 1e-10 {
+            1.0
+        } else {
+            max_mag - min_mag
+        };
+        let arrow_width = self.render_scale().points_to_pixels(data.config.width);
+
+        for arrow in &data.arrows {
+            let arrow_color = cmap
+                .as_ref()
+                .map(|colormap| colormap.sample((arrow.magnitude - min_mag) / mag_range))
+                .unwrap_or(base_color);
+            let (sx1, sy1) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.start.0,
+                arrow.start.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            let (sx2, sy2) = crate::render::skia::map_data_to_pixels_scaled(
+                arrow.end.0,
+                arrow.end.1,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                plot_area,
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
+            renderer.draw_line(
+                sx1,
+                sy1,
+                sx2,
+                sy2,
+                arrow_color,
+                arrow_width,
+                LineStyle::Solid,
+            )?;
+
+            let head: Vec<(f32, f32)> = arrow
+                .head
+                .iter()
+                .map(|&(x, y)| {
+                    crate::render::skia::map_data_to_pixels_scaled(
+                        x,
+                        y,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    )
+                })
+                .collect();
+            renderer.draw_filled_polygon(&head, arrow_color)?;
         }
 
         Ok(())
@@ -1165,6 +1347,11 @@ impl Plot {
                 );
                 data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
+            SeriesType::Quiver { data } => {
+                self.render_quiver_series_scaled(
+                    renderer, data, plot_area, x_min, x_max, y_min, y_max, color,
+                )?;
+            }
             SeriesType::Contour { data } => {
                 // Use PlotRender trait to render Contour
                 let contour_plot_area = crate::plots::PlotArea::new(
@@ -1500,6 +1687,33 @@ impl Plot {
                 SeriesType::Boxen { data } => {
                     if data.boxes.is_empty() {
                         return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                SeriesType::Quiver { data } => {
+                    if data.arrows.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    for (index, arrow) in data.arrows.iter().enumerate() {
+                        let all_values = [
+                            arrow.start.0,
+                            arrow.start.1,
+                            arrow.end.0,
+                            arrow.end.1,
+                            arrow.magnitude,
+                            arrow.angle,
+                            arrow.head[0].0,
+                            arrow.head[0].1,
+                            arrow.head[1].0,
+                            arrow.head[1].1,
+                            arrow.head[2].0,
+                            arrow.head[2].1,
+                        ];
+                        if let Some(value) = all_values.iter().find(|value| !value.is_finite()) {
+                            return Err(PlottingError::InvalidData {
+                                message: format!("Non-finite quiver arrow value ({value}) found"),
+                                position: Some(index),
+                            });
+                        }
                     }
                 }
                 SeriesType::Contour { data } => {

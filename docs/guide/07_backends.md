@@ -9,8 +9,9 @@ current codebase.
 |------|-------------------|
 | Small or medium PNG export | `Plot::save()` with default settings |
 | In-memory render | `Plot::render()` with the public reference raster path |
-| PNG export | `Plot::save()` with the public reference raster path |
-| Backend metadata | `.backend(...)`, `.auto_optimize()`, `.get_backend_name()` |
+| PNG export | `Plot::save()` with Skia reference output by default |
+| Backend preference metadata | `.backend(...)`, `.auto_optimize()`, `.get_backend_name()` |
+| Actual public PNG backend | `.resolved_backend_name()` |
 | Experimental optimized paths | Internal/test-only paths and lower-level renderer code |
 | Interactive window | Enable `interactive` or `interactive-gpu` and use `show_interactive()` |
 | Embedded GPUI interactive plot | Use the `ruviz-gpui` crate and `plot_builder(...).interactive()` |
@@ -20,18 +21,22 @@ current codebase.
 
 There are two separate concepts in the current implementation:
 
-1. **Stored backend selection**
+1. **Stored backend preference**
    - `.backend(...)`
    - `.auto_optimize()`
    - `.get_backend_name()`
 
 2. **Actual execution path**
    - `render()`
+   - `render_png_bytes()`
    - `save()`
+   - `.resolved_backend_name()`
 
-The stored backend selection is metadata today. It is visible through
-`get_backend_name()`, but the current public `render()`, `render_png_bytes()`,
-and `save()` implementations do not directly dispatch on `self.render.backend`.
+The stored backend preference is visible through `get_backend_name()`.
+`resolved_backend_name()` reports the backend that the public PNG path will use
+for the current plot. `auto_optimize()` preserves the normal visual path for
+public PNG output; explicit DataShader remains available for density-rendered
+scatter output.
 
 ## GPUI Embedded Interactive Backend
 
@@ -107,6 +112,7 @@ ruviz = { version = "0.4.16", features = ["parallel"] }
 ```
 
 ```rust
+use ruviz::core::plot::BackendType;
 use ruviz::prelude::*;
 
 let x: Vec<f64> = (0..50_000).map(|i| i as f64 * 0.001).collect();
@@ -136,8 +142,10 @@ ruviz = { version = "0.4.16", features = ["parallel", "simd"] }
 
 ## What `save()` actually does
 
-`save()` renders PNG bytes through the same public reference raster path and
-writes them to the requested file.
+`save()` renders PNG bytes through the public PNG path and writes them to the
+requested file. Most plots use the Skia reference path. Supported scatter-only
+large-data plots can resolve to the DataShader path only when that backend is
+explicitly configured.
 
 Reactive snapshotting works the same as `render()`: temporal `Signal` sources are
 sampled at `0.0`, while push-based `Observable` and streaming sources use their
@@ -146,13 +154,15 @@ latest values before output.
 Two important details:
 
 - `save()` does **not** currently call the dedicated `render_with_parallel()` path
-- `save()` does **not** currently dispatch on `.gpu(true)` or stored backend metadata
+- `save()` does **not** currently dispatch to a GPU raster path
 
 ## DataShader
 
 DataShader support exists in the crate, and `.auto_optimize()` may store
-`BackendType::DataShader` metadata for large datasets. The current public
-`render()` and `save()` paths do not automatically switch to DataShader output.
+`BackendType::DataShader` metadata for large datasets. Public PNG output keeps
+the normal visual path for `.auto_optimize()`. The DataShader PNG path is an
+explicit opt-in for supported scatter-only workloads. Mixed coordinate plots,
+lines, histograms, heatmaps, and other unsupported series fall back to Skia.
 
 ```rust
 use ruviz::prelude::*;
@@ -162,8 +172,24 @@ let x: Vec<f64> = (0..points).map(|i| i as f64 * 0.001).collect();
 let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
 Plot::new()
+    .backend(BackendType::DataShader)
     .scatter(&x, &y)
     .save("datashader_plot.png")?;
+```
+
+Check actual public PNG execution with:
+
+```rust
+use ruviz::core::plot::BackendType;
+use ruviz::prelude::*;
+
+let plot = Plot::new()
+    .backend(BackendType::DataShader)
+    .scatter(&x, &y)
+    .into_plot();
+
+assert_eq!(plot.get_backend_name(), "datashader");
+assert_eq!(plot.resolved_backend_name(), "datashader");
 ```
 
 ## GPU
@@ -331,9 +357,8 @@ Plot::new()
 
 ## Recommendations
 
-- Start with plain `save()` or `render()` before setting backend metadata.
+- Start with plain `save()` or `render()` before setting backend preferences.
 - Add `parallel`/`simd` only after benchmarking a path that uses them.
 - Use `.gpu(true)` for GPU metadata or GPU-capable interactive work, not as a
   static PNG export guarantee.
-- Treat `.backend(...)` and `.auto_optimize()` as stored selection helpers, not
-  hard execution guarantees.
+- Use `.resolved_backend_name()` to verify the actual public PNG backend.

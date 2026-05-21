@@ -70,6 +70,12 @@ pub(crate) struct PendingIngestionError {
 
 #[derive(Clone, Debug)]
 enum PendingIngestionErrorKind {
+    EmptyDataSet,
+    DataLengthMismatch {
+        x_len: usize,
+        y_len: usize,
+        series_index: Option<usize>,
+    },
     DataTypeUnsupported {
         source: String,
         dtype: String,
@@ -84,12 +90,26 @@ enum PendingIngestionErrorKind {
         source: String,
         message: String,
     },
+    InvalidData {
+        message: String,
+        position: Option<usize>,
+    },
     InvalidInput(String),
 }
 
 impl PendingIngestionError {
     pub(super) fn from_plotting_error(err: PlottingError) -> Self {
         let kind = match err {
+            PlottingError::EmptyDataSet => PendingIngestionErrorKind::EmptyDataSet,
+            PlottingError::DataLengthMismatch {
+                x_len,
+                y_len,
+                series_index,
+            } => PendingIngestionErrorKind::DataLengthMismatch {
+                x_len,
+                y_len,
+                series_index,
+            },
             PlottingError::DataTypeUnsupported {
                 source,
                 dtype,
@@ -110,6 +130,9 @@ impl PendingIngestionError {
             },
             PlottingError::DataExtractionFailed { source, message } => {
                 PendingIngestionErrorKind::DataExtractionFailed { source, message }
+            }
+            PlottingError::InvalidData { message, position } => {
+                PendingIngestionErrorKind::InvalidData { message, position }
             }
             PlottingError::InvalidInput(message) => {
                 PendingIngestionErrorKind::InvalidInput(message)
@@ -132,6 +155,16 @@ impl PendingIngestionError {
 
     pub(super) fn to_plotting_error(&self) -> PlottingError {
         let primary_error = match &self.kind {
+            PendingIngestionErrorKind::EmptyDataSet => PlottingError::EmptyDataSet,
+            PendingIngestionErrorKind::DataLengthMismatch {
+                x_len,
+                y_len,
+                series_index,
+            } => PlottingError::DataLengthMismatch {
+                x_len: *x_len,
+                y_len: *y_len,
+                series_index: *series_index,
+            },
             PendingIngestionErrorKind::DataTypeUnsupported {
                 source,
                 dtype,
@@ -154,6 +187,12 @@ impl PendingIngestionError {
                 PlottingError::DataExtractionFailed {
                     source: source.clone(),
                     message: message.clone(),
+                }
+            }
+            PendingIngestionErrorKind::InvalidData { message, position } => {
+                PlottingError::InvalidData {
+                    message: message.clone(),
+                    position: *position,
                 }
             }
             PendingIngestionErrorKind::InvalidInput(message) => {
@@ -415,12 +454,13 @@ impl PlotSeries {
             SeriesType::Histogram { .. } => LegendItemType::Histogram,
             SeriesType::BoxPlot { .. } => LegendItemType::Bar,
             SeriesType::Heatmap { .. } => return None,
-            SeriesType::Kde { .. } | SeriesType::Ecdf { .. } | SeriesType::Polar { .. } => {
-                LegendItemType::Line {
-                    style: line_style,
-                    width: line_width,
-                }
-            }
+            SeriesType::Kde { .. }
+            | SeriesType::Ecdf { .. }
+            | SeriesType::Polar { .. }
+            | SeriesType::Quiver { .. } => LegendItemType::Line {
+                style: line_style,
+                width: line_width,
+            },
             SeriesType::Violin { .. } | SeriesType::Boxen { .. } | SeriesType::Pie { .. } => {
                 LegendItemType::Bar
             }
@@ -804,6 +844,10 @@ pub(crate) enum SeriesType {
     /// Polar plot
     Polar {
         data: crate::plots::polar::polar_plot::PolarPlotData,
+    },
+    /// Quiver vector field plot
+    Quiver {
+        data: crate::plots::QuiverPlotData,
     },
 }
 
