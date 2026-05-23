@@ -6,6 +6,26 @@ All notable changes to this project will be documented in this file.
 
 - _None yet._
 
+## [0.4.17] - 2026-05-24
+
+### Added
+
+- Added benchmark comparison tooling for plotting performance runs, including missing-row detection so incomplete candidate results fail the regression gate.
+- Added non-breaking high-level plot APIs and rendering coverage for area, stem, boxen, step, and quiver workflows across PNG/SVG where supported.
+- Added generated benchmark output examples for line, scatter, histogram, boxplot, multi-series, throughput, and memory scenarios.
+
+### Changed
+
+- Improved large line and scatter rendering performance while preserving the reference-quality public image output contract.
+- Refined backend resolution so explicit backend selection and auto-optimization behave predictably, including safe fallbacks for non-linear axes.
+- Updated plotting docs and performance guidance for non-degrading optimization behavior and backend choices.
+
+### Fixed
+
+- Fixed visual regressions in area, stem, boxen, quiver, annotation, and DataShader-related paths found during review.
+- Fixed quiver validation, bounds, DPI scaling, axis-scale mapping, and diagnostic preservation across public render paths.
+- Fixed benchmark comparison reporting so output targets are compared explicitly and omitted candidate rows are treated as failures.
+
 ## [0.4.16] - 2026-05-04
 
 ### Added
@@ -421,7 +441,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.16...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.17...HEAD
+[0.4.17]: https://github.com/Ameyanagi/ruviz/compare/v0.4.16...v0.4.17
 [0.4.16]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...v0.4.16
 [0.4.13]: https://github.com/Ameyanagi/ruviz/compare/v0.4.12...v0.4.13
 [0.4.12]: https://github.com/Ameyanagi/ruviz/compare/v0.4.11...v0.4.12
