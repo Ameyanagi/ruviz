@@ -4,7 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- _None yet._
+### Fixed
+
+- Fixed heatmap and contour colorbar DPI scaling so tick labels, rotated labels, width, margin, and border stroke use the documented point/logical-pixel units consistently. Existing colorbar font sizes that were tuned as raw pixels may render larger because they are now honored as typographic points.
 
 ## [0.4.17] - 2026-05-24
 

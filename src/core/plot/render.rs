@@ -979,6 +979,11 @@ impl Plot {
         renderer: &SkiaRenderer,
         spec: &ColorbarMeasurementSpec,
     ) -> Result<f32> {
+        let render_scale = renderer.render_scale();
+        let colorbar_width = render_scale.logical_pixels_to_pixels(COLORBAR_WIDTH_PX);
+        let colorbar_margin = render_scale.logical_pixels_to_pixels(COLORBAR_MARGIN_PX);
+        let tick_font_size = render_scale.points_to_pixels(spec.tick_font_size);
+        let label_font_size = render_scale.points_to_pixels(spec.label_font_size);
         let ticks = crate::render::skia::compute_colorbar_ticks(
             spec.vmin,
             spec.vmax,
@@ -986,23 +991,23 @@ impl Plot {
             spec.show_log_subticks,
         );
         let max_label_width =
-            Self::measure_tick_label_extent(renderer, &ticks.major_labels, spec.tick_font_size)?
+            Self::measure_tick_label_extent(renderer, &ticks.major_labels, tick_font_size)?
                 .map(|(width, _)| width)
                 .unwrap_or(0.0);
         let rotated_label_width = if let Some(label) = spec.label.as_deref() {
-            renderer.measure_text(label, spec.label_font_size)?.1
+            renderer.measure_text(label, label_font_size)?.1
         } else {
             0.0
         };
         let layout = crate::render::skia::compute_colorbar_layout_metrics(
-            COLORBAR_WIDTH_PX,
-            spec.tick_font_size,
+            colorbar_width,
+            tick_font_size,
             max_label_width,
             spec.label.as_ref().map(|_| rotated_label_width),
         );
-        let outer_padding = spec.tick_font_size.max(4.0) * 0.5;
+        let outer_padding = tick_font_size.max(4.0) * 0.5;
 
-        Ok(COLORBAR_MARGIN_PX + layout.total_extent + outer_padding)
+        Ok(colorbar_margin + layout.total_extent + outer_padding)
     }
 
     /// Pre-measure title/xlabel/ylabel for Typst layout parity.

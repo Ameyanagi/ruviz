@@ -787,7 +787,10 @@ impl Plot {
                 }
 
                 if data.config.colorbar {
-                    let colorbar_x = plot_area.right() + COLORBAR_MARGIN_PX;
+                    let render_scale = self.render_scale();
+                    let colorbar_margin = render_scale.logical_pixels_to_pixels(COLORBAR_MARGIN_PX);
+                    let colorbar_width = render_scale.logical_pixels_to_pixels(COLORBAR_WIDTH_PX);
+                    let colorbar_x = plot_area.right() + colorbar_margin;
                     let colorbar_y = plot_area.y();
                     let colorbar_height = plot_area.height();
 
@@ -797,7 +800,7 @@ impl Plot {
                         data.vmax,
                         colorbar_x,
                         colorbar_y,
-                        COLORBAR_WIDTH_PX,
+                        colorbar_width,
                         colorbar_height,
                         &data.config.value_scale,
                         data.config.colorbar_label.as_deref(),
@@ -1368,7 +1371,10 @@ impl Plot {
 
                 // Draw colorbar if enabled
                 if data.config.colorbar {
-                    let colorbar_x = plot_area.right() + COLORBAR_MARGIN_PX;
+                    let render_scale = self.render_scale();
+                    let colorbar_margin = render_scale.logical_pixels_to_pixels(COLORBAR_MARGIN_PX);
+                    let colorbar_width = render_scale.logical_pixels_to_pixels(COLORBAR_WIDTH_PX);
+                    let colorbar_x = plot_area.right() + colorbar_margin;
                     let colorbar_y = plot_area.y();
                     let colorbar_height = plot_area.height();
 
@@ -1392,7 +1398,7 @@ impl Plot {
                         vmax,
                         colorbar_x,
                         colorbar_y,
-                        COLORBAR_WIDTH_PX,
+                        colorbar_width,
                         colorbar_height,
                         &crate::axes::AxisScale::Linear,
                         data.config.colorbar_label.as_deref(),

@@ -923,6 +923,98 @@ fn test_draw_legend_full_scales_font_with_render_dpi() {
     );
 }
 
+const TEST_COLORBAR_X: f32 = 20.0;
+const TEST_COLORBAR_Y: f32 = 20.0;
+const TEST_COLORBAR_WIDTH: f32 = 20.0;
+const TEST_COLORBAR_HEIGHT: f32 = 200.0;
+
+fn test_colorbar_width(dpi: f32) -> f32 {
+    RenderScale::new(dpi).logical_pixels_to_pixels(TEST_COLORBAR_WIDTH)
+}
+
+fn render_test_colorbar(dpi: f32, colormap: crate::render::ColorMap) -> Image {
+    let mut renderer = SkiaRenderer::new(360, 260, Theme::light()).unwrap();
+    renderer.clear();
+    renderer.set_render_scale(RenderScale::new(dpi));
+    renderer
+        .draw_colorbar(
+            &colormap,
+            0.0,
+            1.0,
+            TEST_COLORBAR_X,
+            TEST_COLORBAR_Y,
+            test_colorbar_width(dpi),
+            TEST_COLORBAR_HEIGHT,
+            &crate::axes::AxisScale::Linear,
+            Some("corrected"),
+            Color::BLACK,
+            12.0,
+            Some(14.0),
+            false,
+        )
+        .unwrap();
+    renderer.into_image()
+}
+
+fn darkness_score_in_band(
+    image: &Image,
+    x_start: u32,
+    x_end: u32,
+    y_start: u32,
+    y_end: u32,
+) -> f32 {
+    (y_start..=y_end)
+        .flat_map(|y| (x_start..=x_end).map(move |x| (x, y)))
+        .filter(|&(x, y)| x < image.width && y < image.height)
+        .map(|y| {
+            let (x, y) = y;
+            let pixel = image_pixel_rgba(image, x, y);
+            let max_channel = pixel[0].max(pixel[1]).max(pixel[2]) as f32;
+            (255.0 - max_channel).max(0.0)
+        })
+        .sum()
+}
+
+fn top_colorbar_border_darkness(image: &Image, dpi: f32) -> f32 {
+    let center_x = TEST_COLORBAR_X + test_colorbar_width(dpi) / 2.0;
+    let x_start = (center_x - 5.0).round().max(0.0) as u32;
+    let x_end = (center_x + 5.0).round().max(0.0) as u32;
+    darkness_score_in_band(image, x_start, x_end, 17, 25)
+}
+
+#[test]
+fn test_draw_colorbar_scales_text_with_render_dpi() {
+    let low_dpi = render_test_colorbar(100.0, crate::render::ColorMap::viridis());
+    let high_dpi = render_test_colorbar(200.0, crate::render::ColorMap::viridis());
+    let low_bounds = dark_pixel_bounds(&low_dpi).expect("low-dpi colorbar should draw");
+    let high_bounds = dark_pixel_bounds(&high_dpi).expect("high-dpi colorbar should draw");
+    let low_width = low_bounds.2 - low_bounds.0 + 1;
+    let high_width = high_bounds.2 - high_bounds.0 + 1;
+
+    assert!(
+        high_width as f32 > low_width as f32 * 1.5,
+        "colorbar text extent should scale with DPI: low={low_width}, high={high_width}"
+    );
+}
+
+#[test]
+fn test_draw_colorbar_scales_border_width_with_render_dpi() {
+    let white_map = || crate::render::ColorMap::from_colors(&[Color::WHITE, Color::WHITE]);
+    let low_dpi = render_test_colorbar(100.0, white_map());
+    let high_dpi = render_test_colorbar(200.0, white_map());
+    let low_darkness = top_colorbar_border_darkness(&low_dpi, 100.0);
+    let high_darkness = top_colorbar_border_darkness(&high_dpi, 200.0);
+
+    assert!(
+        low_darkness > 0.0,
+        "low-DPI colorbar border should draw dark pixels"
+    );
+    assert!(
+        high_darkness > low_darkness * 1.2,
+        "colorbar border width should scale with DPI: low_darkness={low_darkness}, high_darkness={high_darkness}"
+    );
+}
+
 #[test]
 fn test_renderer_dimensions() {
     let theme = Theme::default();
