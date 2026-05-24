@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+_None yet._
+
+## [0.4.18] - 2026-05-24
+
 ### Fixed
 
 - Fixed heatmap and contour colorbar DPI scaling so tick labels, rotated labels, width, margin, and border stroke use the documented point/logical-pixel units consistently. Existing colorbar font sizes that were tuned as raw pixels may render larger because they are now honored as typographic points.
@@ -443,7 +447,8 @@ All notable changes to this project will be documented in this file.
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.17...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.18...HEAD
+[0.4.18]: https://github.com/Ameyanagi/ruviz/compare/v0.4.17...v0.4.18
 [0.4.17]: https://github.com/Ameyanagi/ruviz/compare/v0.4.16...v0.4.17
 [0.4.16]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...v0.4.16
 [0.4.13]: https://github.com/Ameyanagi/ruviz/compare/v0.4.12...v0.4.13
