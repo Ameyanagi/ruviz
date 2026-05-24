@@ -1160,6 +1160,35 @@ fn test_heatmap_log_colorbar_layout_reserves_right_margin() {
 }
 
 #[test]
+fn test_heatmap_colorbar_layout_scales_with_dpi() {
+    let values = vec![vec![0.0, 0.5], vec![1.0, 1.5]];
+    let config = || {
+        crate::plots::heatmap::HeatmapConfig::new()
+            .colorbar(true)
+            .colorbar_label("corrected")
+    };
+
+    let low_dpi = Plot::new()
+        .dpi(100)
+        .heatmap(&values, Some(config()))
+        .end_series();
+    let high_dpi = Plot::new()
+        .dpi(200)
+        .heatmap(&values, Some(config()))
+        .end_series();
+
+    let low_layout = compute_render_layout(&low_dpi);
+    let high_layout = compute_render_layout(&high_dpi);
+
+    assert!(
+        high_layout.margins.right > low_layout.margins.right * 1.8,
+        "colorbar right margin should scale with DPI: low={} high={}",
+        low_layout.margins.right,
+        high_layout.margins.right
+    );
+}
+
+#[test]
 fn test_plot_preserves_reversed_manual_limits() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 4.0], &[0.0, 4.0])

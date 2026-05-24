@@ -2755,8 +2755,10 @@ impl SkiaRenderer {
         label_font_size: Option<f32>,
         show_log_subticks: bool,
     ) -> Result<()> {
-        // Use tick font size for label if not specified separately
-        let label_font_size = label_font_size.unwrap_or(tick_font_size * 1.1);
+        let tick_font_size_px = self.points_to_pixels(tick_font_size);
+        let label_font_size_px = label_font_size
+            .map(|size| self.points_to_pixels(size))
+            .unwrap_or(tick_font_size_px * 1.1);
 
         // Draw the colorbar gradient (vertical, from vmax at top to vmin at bottom)
         // Use one segment per pixel row to eliminate anti-aliasing artifacts
@@ -2775,32 +2777,32 @@ impl SkiaRenderer {
         }
 
         // Draw border around colorbar
-        let stroke_width = 1.0;
-        self.draw_rectangle(x, y, width, height, foreground_color, false)?;
+        let stroke_width = self.logical_pixels_to_pixels(1.0);
+        self.draw_rectangle_outline(x, y, width, height, foreground_color, stroke_width)?;
 
         let ticks = compute_colorbar_ticks(vmin, vmax, value_scale, show_log_subticks);
         let mut measured_major_labels = Vec::with_capacity(ticks.major_labels.len());
         let mut max_label_width: f32 = 0.0;
         for label_text in &ticks.major_labels {
             let label_snippet = self.generated_label(label_text);
-            let (text_width, _) = self.measure_text(&label_snippet, tick_font_size)?;
+            let (text_width, _) = self.measure_text(&label_snippet, tick_font_size_px)?;
             let ink_center_from_top =
-                self.measure_text_ink_center_from_top(&label_snippet, tick_font_size)?;
+                self.measure_text_ink_center_from_top(&label_snippet, tick_font_size_px)?;
             max_label_width = max_label_width.max(text_width);
             measured_major_labels.push((label_snippet, ink_center_from_top));
         }
 
         let rotated_label_width = if let Some(label_text) = label {
-            Some(self.measure_text(label_text, label_font_size)?.1)
+            Some(self.measure_text(label_text, label_font_size_px)?.1)
         } else {
             None
         };
         let log_decade_base_center = matches!(value_scale, crate::axes::AxisScale::Log)
-            .then(|| self.measure_text_ink_center_from_top("10", tick_font_size))
+            .then(|| self.measure_text_ink_center_from_top("10", tick_font_size_px))
             .transpose()?;
         let layout = compute_colorbar_layout_metrics(
             width,
-            tick_font_size,
+            tick_font_size_px,
             max_label_width,
             rotated_label_width,
         );
@@ -2856,7 +2858,7 @@ impl SkiaRenderer {
                 label_text,
                 x + layout.tick_label_x_offset,
                 label_y,
-                tick_font_size,
+                tick_font_size_px,
                 foreground_color,
             )?;
         }
@@ -2867,7 +2869,13 @@ impl SkiaRenderer {
         {
             let label_x = x + label_center_x_offset;
             let label_y = y + height / 2.0;
-            self.draw_text_rotated(label, label_x, label_y, label_font_size, foreground_color)?;
+            self.draw_text_rotated(
+                label,
+                label_x,
+                label_y,
+                label_font_size_px,
+                foreground_color,
+            )?;
         }
 
         Ok(())
