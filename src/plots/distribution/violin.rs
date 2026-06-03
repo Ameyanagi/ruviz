@@ -448,6 +448,11 @@ impl PlotRender for ViolinData {
 
         let config = &self.config;
         let half_width = config.width / 2.0;
+        let render_scale = renderer.render_scale();
+        let line_width_px = render_scale.points_to_pixels(config.line_width);
+        let min_box_width_px = render_scale.points_to_pixels(4.0);
+        let inner_line_width_px = render_scale.points_to_pixels(1.0);
+        let median_marker_size_px = render_scale.points_to_pixels(4.0);
 
         // Generate polygon vertices (center at 0.5 for single violin)
         let (left, right) = violin_polygon(self, 0.5, half_width, config);
@@ -483,7 +488,7 @@ impl PlotRender for ViolinData {
             renderer.draw_polyline_clipped(
                 &outline,
                 line_color,
-                config.line_width,
+                line_width_px,
                 LineStyle::Solid,
                 clip_rect,
             )?;
@@ -501,7 +506,7 @@ impl PlotRender for ViolinData {
             // Use abs() for dimensions and min() for origin to handle y-axis inversion
             let box_x = x1.min(x2);
             let box_y = y1.min(y2);
-            let box_width = (x2 - x1).abs().max(4.0); // Minimum 4px width for visibility
+            let box_width = (x2 - x1).abs().max(min_box_width_px);
             let box_height = (y2 - y1).abs();
             renderer.draw_rectangle(
                 box_x,
@@ -524,7 +529,7 @@ impl PlotRender for ViolinData {
                 q1_x2,
                 q1_y,
                 config.inner_color,
-                1.0,
+                inner_line_width_px,
                 LineStyle::Solid,
             )?;
 
@@ -536,7 +541,7 @@ impl PlotRender for ViolinData {
                 q3_x2,
                 q3_y,
                 config.inner_color,
-                1.0,
+                inner_line_width_px,
                 LineStyle::Solid,
             )?;
         }
@@ -547,7 +552,7 @@ impl PlotRender for ViolinData {
             renderer.draw_marker(
                 mx,
                 my,
-                4.0,
+                median_marker_size_px,
                 crate::render::MarkerStyle::Circle,
                 Color::new(255, 255, 255),
             )?;
@@ -572,6 +577,10 @@ impl PlotRender for ViolinData {
         let config = &self.config;
         let resolver = StyleResolver::new(theme);
         let half_width = config.width / 2.0;
+        let render_scale = renderer.render_scale();
+        let min_box_width_px = render_scale.points_to_pixels(4.0);
+        let inner_line_width_px = render_scale.points_to_pixels(1.0);
+        let median_marker_size_px = render_scale.points_to_pixels(4.0);
 
         // Generate polygon vertices (center at 0.5 for single violin)
         let (left, right) = violin_polygon(self, 0.5, half_width, config);
@@ -604,8 +613,9 @@ impl PlotRender for ViolinData {
         }
 
         // Use StyleResolver for edge/line styling
-        let actual_line_width =
-            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
+        let actual_line_width = render_scale.points_to_pixels(
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
+        );
         let line_color = resolver.edge_color(color, config.line_color);
 
         // Draw outline with clipping
@@ -633,7 +643,7 @@ impl PlotRender for ViolinData {
             // Use abs() for dimensions and min() for origin to handle y-axis inversion
             let box_x = x1.min(x2);
             let box_y = y1.min(y2);
-            let box_width = (x2 - x1).abs().max(4.0); // Minimum 4px width for visibility
+            let box_width = (x2 - x1).abs().max(min_box_width_px);
             let box_height = (y2 - y1).abs();
             renderer.draw_rectangle(
                 box_x,
@@ -656,7 +666,7 @@ impl PlotRender for ViolinData {
                 q1_x2,
                 q1_y,
                 config.inner_color,
-                1.0,
+                inner_line_width_px,
                 LineStyle::Solid,
             )?;
 
@@ -668,7 +678,7 @@ impl PlotRender for ViolinData {
                 q3_x2,
                 q3_y,
                 config.inner_color,
-                1.0,
+                inner_line_width_px,
                 LineStyle::Solid,
             )?;
         }
@@ -679,7 +689,7 @@ impl PlotRender for ViolinData {
             renderer.draw_marker(
                 mx,
                 my,
-                4.0,
+                median_marker_size_px,
                 crate::render::MarkerStyle::Circle,
                 Color::new(255, 255, 255),
             )?;

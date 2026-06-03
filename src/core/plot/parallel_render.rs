@@ -300,7 +300,9 @@ impl Plot {
         );
 
         // Draw axes (sequential - UI elements) - only for Cartesian plots
-        if self.needs_cartesian_axes() && self.layout.tick_config.enabled {
+        let draw_axes = self.needs_cartesian_axes();
+        let draw_ticks = draw_axes && self.layout.tick_config.enabled;
+        if draw_ticks {
             let x_axis_ticks = categorical_x_tick_pixels
                 .as_deref()
                 .unwrap_or(x_tick_pixels.as_slice());
@@ -309,7 +311,9 @@ impl Plot {
             } else {
                 x_minor_tick_pixels.as_slice()
             };
-            renderer.draw_axes_with_minor_ticks(
+            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
+                self.axis_tick_metrics_px();
+            renderer.draw_axes_with_minor_ticks_styled(
                 plot_area,
                 x_axis_ticks,
                 &y_tick_pixels,
@@ -317,7 +321,32 @@ impl Plot {
                 &y_minor_tick_pixels,
                 &self.layout.tick_config.direction,
                 &self.layout.tick_config.sides,
+                &self.display.config.spines,
                 self.display.theme.foreground,
+                axis_width,
+                major_tick_size,
+                minor_tick_size,
+                major_tick_width,
+                minor_tick_width,
+            )?;
+        } else if draw_axes {
+            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
+                self.axis_tick_metrics_px();
+            renderer.draw_axes_with_minor_ticks_styled(
+                plot_area,
+                &[],
+                &[],
+                &[],
+                &[],
+                &self.layout.tick_config.direction,
+                &TickSides::none(),
+                &self.display.config.spines,
+                self.display.theme.foreground,
+                axis_width,
+                major_tick_size,
+                minor_tick_size,
+                major_tick_width,
+                minor_tick_width,
             )?;
         }
 
@@ -1233,7 +1262,7 @@ impl Plot {
         )?;
 
         // Draw tick labels (only for Cartesian plots)
-        if self.needs_cartesian_axes() {
+        if draw_axes {
             let tick_size_px = pt_to_px(self.display.config.typography.tick_size(), dpi);
             if let Some(ref categories) = bar_categories {
                 renderer.draw_axis_labels_at_categorical(
@@ -1250,7 +1279,7 @@ impl Plot {
                     self.display.theme.foreground,
                     dpi,
                     self.layout.tick_config.enabled,
-                    !self.layout.tick_config.enabled,
+                    false,
                 )?;
             } else {
                 renderer.draw_axis_labels_at_scaled(
@@ -1267,7 +1296,7 @@ impl Plot {
                     self.display.theme.foreground,
                     dpi,
                     self.layout.tick_config.enabled,
-                    !self.layout.tick_config.enabled,
+                    false,
                     &self.layout.x_scale,
                     &self.layout.y_scale,
                 )?;

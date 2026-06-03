@@ -2,7 +2,7 @@ use crate::{
     core::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
         LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
-        SpacingConfig, TextPosition, TickFormatter, find_best_position,
+        SpacingConfig, SpineConfig, TextPosition, TickFormatter, find_best_position,
         plot::{Image, RenderDiagnostics, TextEngineMode, TickDirection, TickSides},
         pt_to_px,
     },
@@ -752,45 +752,116 @@ impl SkiaRenderer {
         let major_tick_width = self.logical_pixels_to_pixels(1.0);
         let minor_tick_width = self.logical_pixels_to_pixels(0.8);
 
-        self.draw_line(
-            plot_area.left(),
-            plot_area.bottom(),
-            plot_area.right(),
-            plot_area.bottom(),
+        self.draw_axes_with_minor_ticks_styled(
+            plot_area,
+            x_major_ticks,
+            y_major_ticks,
+            x_minor_ticks,
+            y_minor_ticks,
+            tick_direction,
+            tick_sides,
+            &SpineConfig::default(),
             color,
             axis_width,
-            LineStyle::Solid,
-        )?;
+            major_tick_size,
+            minor_tick_size,
+            major_tick_width,
+            minor_tick_width,
+        )
+    }
 
-        self.draw_line(
-            plot_area.left(),
-            plot_area.top(),
-            plot_area.left(),
-            plot_area.bottom(),
-            color,
-            axis_width,
-            LineStyle::Solid,
-        )?;
+    /// Draw axis lines with caller-supplied axis and tick metrics in pixels.
+    pub fn draw_axes_with_minor_ticks_styled(
+        &mut self,
+        plot_area: Rect,
+        x_major_ticks: &[f32],
+        y_major_ticks: &[f32],
+        x_minor_ticks: &[f32],
+        y_minor_ticks: &[f32],
+        tick_direction: &TickDirection,
+        tick_sides: &TickSides,
+        spines: &SpineConfig,
+        color: Color,
+        axis_width: f32,
+        major_tick_size: f32,
+        minor_tick_size: f32,
+        major_tick_width: f32,
+        minor_tick_width: f32,
+    ) -> Result<()> {
+        fn snap_stroke_coord(coord: f32, width: f32) -> f32 {
+            if !coord.is_finite() || !width.is_finite() {
+                return coord;
+            }
+            let rounded_width = width.round().max(1.0) as i32;
+            let offset = if rounded_width % 2 == 0 { 0.0 } else { 0.5 };
+            (coord - offset).round() + offset
+        }
 
-        self.draw_line(
-            plot_area.left(),
-            plot_area.top(),
-            plot_area.right(),
-            plot_area.top(),
-            color,
-            axis_width,
-            LineStyle::Solid,
-        )?;
+        fn snap_endpoint(coord: f32) -> f32 {
+            if coord.is_finite() {
+                coord.round()
+            } else {
+                coord
+            }
+        }
 
-        self.draw_line(
-            plot_area.right(),
-            plot_area.top(),
-            plot_area.right(),
-            plot_area.bottom(),
-            color,
-            axis_width,
-            LineStyle::Solid,
-        )?;
+        let spine_offset = self.render_scale.points_to_pixels(spines.offset.max(0.0));
+        let plot_left = snap_endpoint(plot_area.left());
+        let plot_right = snap_endpoint(plot_area.right());
+        let plot_top = snap_endpoint(plot_area.top());
+        let plot_bottom = snap_endpoint(plot_area.bottom());
+        let bottom_spine_y = snap_stroke_coord(plot_area.bottom() + spine_offset, axis_width);
+        let top_spine_y = snap_stroke_coord(plot_area.top() - spine_offset, axis_width);
+        let left_spine_x = snap_stroke_coord(plot_area.left() - spine_offset, axis_width);
+        let right_spine_x = snap_stroke_coord(plot_area.right() + spine_offset, axis_width);
+
+        if spines.bottom {
+            self.draw_line(
+                plot_left,
+                bottom_spine_y,
+                plot_right,
+                bottom_spine_y,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            )?;
+        }
+
+        if spines.left {
+            self.draw_line(
+                left_spine_x,
+                plot_top,
+                left_spine_x,
+                plot_bottom,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            )?;
+        }
+
+        if spines.top {
+            self.draw_line(
+                plot_left,
+                top_spine_y,
+                plot_right,
+                top_spine_y,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            )?;
+        }
+
+        if spines.right {
+            self.draw_line(
+                right_spine_x,
+                plot_top,
+                right_spine_x,
+                plot_bottom,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            )?;
+        }
 
         for (tick_size, tick_width, ticks) in [
             (major_tick_size, major_tick_width, x_major_ticks),
@@ -798,9 +869,10 @@ impl SkiaRenderer {
         ] {
             for &x in ticks {
                 if x >= plot_area.left() && x <= plot_area.right() {
-                    if tick_sides.bottom {
+                    let x = snap_stroke_coord(x, tick_width);
+                    if tick_sides.bottom && spines.bottom {
                         let (tick_start, tick_end) = Self::vertical_tick_span(
-                            plot_area.bottom(),
+                            bottom_spine_y,
                             tick_size,
                             tick_direction,
                             false,
@@ -815,13 +887,9 @@ impl SkiaRenderer {
                             LineStyle::Solid,
                         )?;
                     }
-                    if tick_sides.top {
-                        let (tick_start, tick_end) = Self::vertical_tick_span(
-                            plot_area.top(),
-                            tick_size,
-                            tick_direction,
-                            true,
-                        );
+                    if tick_sides.top && spines.top {
+                        let (tick_start, tick_end) =
+                            Self::vertical_tick_span(top_spine_y, tick_size, tick_direction, true);
                         self.draw_line(
                             x,
                             tick_start,
@@ -842,9 +910,10 @@ impl SkiaRenderer {
         ] {
             for &y in ticks {
                 if y >= plot_area.top() && y <= plot_area.bottom() {
-                    if tick_sides.left {
+                    let y = snap_stroke_coord(y, tick_width);
+                    if tick_sides.left && spines.left {
                         let (tick_start, tick_end) = Self::horizontal_tick_span(
-                            plot_area.left(),
+                            left_spine_x,
                             tick_size,
                             tick_direction,
                             false,
@@ -859,9 +928,9 @@ impl SkiaRenderer {
                             LineStyle::Solid,
                         )?;
                     }
-                    if tick_sides.right {
+                    if tick_sides.right && spines.right {
                         let (tick_start, tick_end) = Self::horizontal_tick_span(
-                            plot_area.right(),
+                            right_spine_x,
                             tick_size,
                             tick_direction,
                             true,

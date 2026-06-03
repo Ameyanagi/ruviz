@@ -405,11 +405,12 @@ impl PlotRender for RadarPlotData {
         }
 
         let config = &self.config;
+        let render_scale = renderer.render_scale();
+        let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
 
         // Draw grid rings
         if config.show_grid {
             let grid_color = theme.grid_color;
-            let render_scale = renderer.render_scale();
             let grid_line_width = render_scale.logical_pixels_to_pixels(0.5);
             for ring in &self.grid_rings {
                 if ring.len() < 2 {
@@ -454,12 +455,11 @@ impl PlotRender for RadarPlotData {
             let label_color = theme.foreground;
             for (label, x, y) in &self.axis_labels {
                 let (sx, sy) = area.data_to_screen(*x, *y);
-                renderer.draw_text_centered(label, sx, sy, config.label_font_size, label_color)?;
+                renderer.draw_text_centered(label, sx, sy, label_font_size_px, label_color)?;
             }
         }
 
         // Scale line width and marker size by DPI
-        let render_scale = renderer.render_scale();
         let scaled_line_width = render_scale.points_to_pixels(config.line_width);
         let scaled_marker_size = render_scale.points_to_pixels(config.marker_size);
 
@@ -538,6 +538,7 @@ impl PlotRender for RadarPlotData {
         let resolver = StyleResolver::new(theme);
 
         let render_scale = renderer.render_scale();
+        let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
         let effective_line_width = render_scale.points_to_pixels(
             line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
         );
@@ -590,7 +591,7 @@ impl PlotRender for RadarPlotData {
             let label_color = theme.foreground;
             for (label, x, y) in &self.axis_labels {
                 let (sx, sy) = area.data_to_screen(*x, *y);
-                renderer.draw_text_centered(label, sx, sy, config.label_font_size, label_color)?;
+                renderer.draw_text_centered(label, sx, sy, label_font_size_px, label_color)?;
             }
         }
 

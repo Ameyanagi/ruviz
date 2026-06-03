@@ -730,6 +730,13 @@ impl InteractivePlotSession {
         self.mark_dirty(DirtyDomain::Interaction);
     }
 
+    pub fn fitted_frame_size_px(&self, max_size_px: (u32, u32)) -> (u32, u32) {
+        self.inner
+            .prepared
+            .plot()
+            .fitted_output_size_for_max_pixels(max_size_px)
+    }
+
     pub fn resize(&self, size_px: (u32, u32), scale_factor: f32) {
         let mut state = self
             .inner
@@ -1288,8 +1295,15 @@ impl InteractivePlotSession {
 
         let geometry = self.ensure_geometry(&base_key)?;
         self.refresh_overlay_state(&geometry, dirty_before_render)?;
+        let frame_size_px = {
+            self.inner
+                .state
+                .lock()
+                .expect("InteractivePlotSession state lock poisoned")
+                .size_px
+        };
         let base_result = self.ensure_base_image(&base_key, &geometry, dirty_before_render)?;
-        let overlay_result = self.ensure_overlay_image(size_px, dirty_before_render)?;
+        let overlay_result = self.ensure_overlay_image(frame_size_px, dirty_before_render)?;
         let composed = if target == RenderTargetKind::Image {
             if let Some(overlay_image) = overlay_result.image.as_ref() {
                 Arc::new(compose_images(&base_result.image, overlay_image))

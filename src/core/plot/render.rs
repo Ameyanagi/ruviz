@@ -18,6 +18,22 @@ enum AnnotationRenderLayer {
 }
 
 impl Plot {
+    pub(crate) fn axis_tick_metrics_px(&self) -> (f32, f32, f32, f32, f32) {
+        let lines = &self.display.config.lines;
+        let axis_width = self.line_width_px(lines.axis_width);
+        let major_tick_size = self.line_width_px(lines.tick_length);
+        let minor_tick_size = self.line_width_px((lines.tick_length * 0.6).max(0.1));
+        let major_tick_width = self.line_width_px(lines.tick_width);
+        let minor_tick_width = self.line_width_px((lines.tick_width * 0.75).max(0.1));
+        (
+            axis_width,
+            major_tick_size,
+            minor_tick_size,
+            major_tick_width,
+            minor_tick_width,
+        )
+    }
+
     fn annotation_render_layer(annotation: &Annotation) -> AnnotationRenderLayer {
         match annotation {
             Annotation::FillBetween { .. }
@@ -347,7 +363,9 @@ impl Plot {
             } else {
                 x_minor_tick_pixels.as_slice()
             };
-            renderer.draw_axes_with_minor_ticks(
+            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
+                self.axis_tick_metrics_px();
+            renderer.draw_axes_with_minor_ticks_styled(
                 plot_area,
                 x_axis_ticks,
                 &y_tick_pixels,
@@ -355,7 +373,32 @@ impl Plot {
                 &y_minor_tick_pixels,
                 &self.layout.tick_config.direction,
                 &self.layout.tick_config.sides,
+                &self.display.config.spines,
                 self.display.theme.foreground,
+                axis_width,
+                major_tick_size,
+                minor_tick_size,
+                major_tick_width,
+                minor_tick_width,
+            )?;
+        } else if draw_axes {
+            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
+                self.axis_tick_metrics_px();
+            renderer.draw_axes_with_minor_ticks_styled(
+                plot_area,
+                &[],
+                &[],
+                &[],
+                &[],
+                &self.layout.tick_config.direction,
+                &TickSides::none(),
+                &self.display.config.spines,
+                self.display.theme.foreground,
+                axis_width,
+                major_tick_size,
+                minor_tick_size,
+                major_tick_width,
+                minor_tick_width,
             )?;
         }
 
@@ -377,7 +420,7 @@ impl Plot {
                 self.display.theme.foreground,
                 dpi,
                 self.layout.tick_config.enabled,
-                !draw_ticks,
+                false,
             )?;
         } else if draw_axes {
             if let Some(ref categories) = bar_categories {
@@ -395,7 +438,7 @@ impl Plot {
                     self.display.theme.foreground,
                     dpi,
                     self.layout.tick_config.enabled,
-                    !draw_ticks,
+                    false,
                 )?;
             } else {
                 renderer.draw_axis_labels_at_scaled(
@@ -412,7 +455,7 @@ impl Plot {
                     self.display.theme.foreground,
                     dpi,
                     self.layout.tick_config.enabled,
-                    !draw_ticks,
+                    false,
                     &self.layout.x_scale,
                     &self.layout.y_scale,
                 )?;
@@ -2285,17 +2328,26 @@ impl Plot {
         }
 
         if draw_axes && !self.layout.tick_config.enabled {
-            // Keep frame stroke width consistent with the tick-enabled path.
-            svg.draw_axes(
+            let (axis_width, major_tick_size, minor_tick_size, major_tick_width, minor_tick_width) =
+                self.axis_tick_metrics_px();
+            svg.draw_axes_with_minor_ticks_styled(
                 plot_left,
                 plot_right,
                 plot_top,
                 plot_bottom,
                 &[],
                 &[],
+                &[],
+                &[],
                 &self.layout.tick_config.direction,
                 &TickSides::none(),
+                &self.display.config.spines,
                 self.display.theme.foreground,
+                axis_width,
+                major_tick_size,
+                minor_tick_size,
+                major_tick_width,
+                minor_tick_width,
             );
         }
 
@@ -2320,7 +2372,14 @@ impl Plot {
 
                 // Bar chart: draw axes with category labels
                 if self.layout.tick_config.enabled {
-                    svg.draw_axes_with_minor_ticks(
+                    let (
+                        axis_width,
+                        major_tick_size,
+                        minor_tick_size,
+                        major_tick_width,
+                        minor_tick_width,
+                    ) = self.axis_tick_metrics_px();
+                    svg.draw_axes_with_minor_ticks_styled(
                         plot_left,
                         plot_right,
                         plot_top,
@@ -2331,7 +2390,13 @@ impl Plot {
                         &y_minor_tick_pixels,
                         &self.layout.tick_config.direction,
                         &self.layout.tick_config.sides,
+                        &self.display.config.spines,
                         self.display.theme.foreground,
+                        axis_width,
+                        major_tick_size,
+                        minor_tick_size,
+                        major_tick_width,
+                        minor_tick_width,
                     );
 
                     // Draw Y-axis tick labels
@@ -2369,7 +2434,14 @@ impl Plot {
                     )
                 })?;
                 if self.layout.tick_config.enabled {
-                    svg.draw_axes_with_minor_ticks(
+                    let (
+                        axis_width,
+                        major_tick_size,
+                        minor_tick_size,
+                        major_tick_width,
+                        minor_tick_width,
+                    ) = self.axis_tick_metrics_px();
+                    svg.draw_axes_with_minor_ticks_styled(
                         plot_left,
                         plot_right,
                         plot_top,
@@ -2380,7 +2452,13 @@ impl Plot {
                         &y_minor_tick_pixels,
                         &self.layout.tick_config.direction,
                         &self.layout.tick_config.sides,
+                        &self.display.config.spines,
                         self.display.theme.foreground,
+                        axis_width,
+                        major_tick_size,
+                        minor_tick_size,
+                        major_tick_width,
+                        minor_tick_width,
                     );
                     svg.draw_tick_labels(
                         &x_tick_layout.pixel_positions,

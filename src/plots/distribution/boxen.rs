@@ -324,6 +324,10 @@ impl PlotRender for BoxenData {
         }
 
         let config = &self.config;
+        let render_scale = renderer.render_scale();
+        let line_width_px = render_scale.points_to_pixels(config.line_width);
+        let median_line_width_px = render_scale.points_to_pixels(2.0);
+        let outlier_size_px = render_scale.points_to_pixels(config.outlier_size);
         let center = 0.5; // Centered position for single boxen
 
         // Draw boxes from outermost to innermost (so inner boxes overlay outer)
@@ -351,7 +355,7 @@ impl PlotRender for BoxenData {
             if config.line_width > 0.0 {
                 let mut outline = screen_points.clone();
                 outline.push(screen_points[0]); // Close the path
-                renderer.draw_polyline(&outline, color, config.line_width, LineStyle::Solid)?;
+                renderer.draw_polyline(&outline, color, line_width_px, LineStyle::Solid)?;
             }
         }
 
@@ -367,7 +371,7 @@ impl PlotRender for BoxenData {
                     x2,
                     y,
                     Color::new(255, 255, 255),
-                    2.0,
+                    median_line_width_px,
                     LineStyle::Solid,
                 )?;
             }
@@ -380,7 +384,7 @@ impl PlotRender for BoxenData {
                     x,
                     y2,
                     Color::new(255, 255, 255),
-                    2.0,
+                    median_line_width_px,
                     LineStyle::Solid,
                 )?;
             }
@@ -396,7 +400,7 @@ impl PlotRender for BoxenData {
                 renderer.draw_marker(
                     px,
                     py,
-                    config.outlier_size,
+                    outlier_size_px,
                     crate::render::MarkerStyle::Circle,
                     color,
                 )?;

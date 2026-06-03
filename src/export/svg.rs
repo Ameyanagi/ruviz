@@ -5,7 +5,7 @@
 
 use crate::core::{
     Legend, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels, LegendStyle,
-    PlottingError, RenderScale, Result, find_best_position,
+    PlottingError, RenderScale, Result, SpineConfig, find_best_position,
     plot::{TextEngineMode, TickDirection, TickSides},
 };
 use crate::render::{
@@ -917,45 +917,101 @@ impl SvgRenderer {
         let tick_width = self.logical_pixels_to_pixels(1.0);
         let minor_tick_width = self.logical_pixels_to_pixels(0.8);
 
-        self.draw_line(
+        self.draw_axes_with_minor_ticks_styled(
             plot_left,
-            plot_bottom,
             plot_right,
+            plot_top,
             plot_bottom,
+            x_major_ticks,
+            y_major_ticks,
+            x_minor_ticks,
+            y_minor_ticks,
+            tick_direction,
+            tick_sides,
+            &SpineConfig::default(),
             color,
             axis_width,
-            LineStyle::Solid,
+            major_tick_size,
+            minor_tick_size,
+            tick_width,
+            minor_tick_width,
         );
+    }
 
-        self.draw_line(
-            plot_left,
-            plot_top,
-            plot_left,
-            plot_bottom,
-            color,
-            axis_width,
-            LineStyle::Solid,
-        );
+    /// Draw axis lines with caller-supplied axis and tick metrics in pixels.
+    pub fn draw_axes_with_minor_ticks_styled(
+        &mut self,
+        plot_left: f32,
+        plot_right: f32,
+        plot_top: f32,
+        plot_bottom: f32,
+        x_major_ticks: &[f32],
+        y_major_ticks: &[f32],
+        x_minor_ticks: &[f32],
+        y_minor_ticks: &[f32],
+        tick_direction: &TickDirection,
+        tick_sides: &TickSides,
+        spines: &SpineConfig,
+        color: Color,
+        axis_width: f32,
+        major_tick_size: f32,
+        minor_tick_size: f32,
+        tick_width: f32,
+        minor_tick_width: f32,
+    ) {
+        let spine_offset = self.render_scale.points_to_pixels(spines.offset.max(0.0));
+        let bottom_spine_y = plot_bottom + spine_offset;
+        let top_spine_y = plot_top - spine_offset;
+        let left_spine_x = plot_left - spine_offset;
+        let right_spine_x = plot_right + spine_offset;
 
-        self.draw_line(
-            plot_left,
-            plot_top,
-            plot_right,
-            plot_top,
-            color,
-            axis_width,
-            LineStyle::Solid,
-        );
+        if spines.bottom {
+            self.draw_line(
+                plot_left,
+                bottom_spine_y,
+                plot_right,
+                bottom_spine_y,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            );
+        }
 
-        self.draw_line(
-            plot_right,
-            plot_top,
-            plot_right,
-            plot_bottom,
-            color,
-            axis_width,
-            LineStyle::Solid,
-        );
+        if spines.left {
+            self.draw_line(
+                left_spine_x,
+                plot_top,
+                left_spine_x,
+                plot_bottom,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            );
+        }
+
+        if spines.top {
+            self.draw_line(
+                plot_left,
+                top_spine_y,
+                plot_right,
+                top_spine_y,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            );
+        }
+
+        if spines.right {
+            self.draw_line(
+                right_spine_x,
+                plot_top,
+                right_spine_x,
+                plot_bottom,
+                color,
+                axis_width,
+                LineStyle::Solid,
+            );
+        }
 
         for (tick_size, tick_width, ticks) in [
             (major_tick_size, tick_width, x_major_ticks),
@@ -963,9 +1019,13 @@ impl SvgRenderer {
         ] {
             for &x in ticks {
                 if x >= plot_left && x <= plot_right {
-                    if tick_sides.bottom {
-                        let (tick_start, tick_end) =
-                            Self::vertical_tick_span(plot_bottom, tick_size, tick_direction, false);
+                    if tick_sides.bottom && spines.bottom {
+                        let (tick_start, tick_end) = Self::vertical_tick_span(
+                            bottom_spine_y,
+                            tick_size,
+                            tick_direction,
+                            false,
+                        );
                         self.draw_line(
                             x,
                             tick_start,
@@ -976,9 +1036,9 @@ impl SvgRenderer {
                             LineStyle::Solid,
                         );
                     }
-                    if tick_sides.top {
+                    if tick_sides.top && spines.top {
                         let (tick_start, tick_end) =
-                            Self::vertical_tick_span(plot_top, tick_size, tick_direction, true);
+                            Self::vertical_tick_span(top_spine_y, tick_size, tick_direction, true);
                         self.draw_line(
                             x,
                             tick_start,
@@ -999,9 +1059,13 @@ impl SvgRenderer {
         ] {
             for &y in ticks {
                 if y >= plot_top && y <= plot_bottom {
-                    if tick_sides.left {
-                        let (tick_start, tick_end) =
-                            Self::horizontal_tick_span(plot_left, tick_size, tick_direction, false);
+                    if tick_sides.left && spines.left {
+                        let (tick_start, tick_end) = Self::horizontal_tick_span(
+                            left_spine_x,
+                            tick_size,
+                            tick_direction,
+                            false,
+                        );
                         self.draw_line(
                             tick_start,
                             y,
@@ -1012,9 +1076,13 @@ impl SvgRenderer {
                             LineStyle::Solid,
                         );
                     }
-                    if tick_sides.right {
-                        let (tick_start, tick_end) =
-                            Self::horizontal_tick_span(plot_right, tick_size, tick_direction, true);
+                    if tick_sides.right && spines.right {
+                        let (tick_start, tick_end) = Self::horizontal_tick_span(
+                            right_spine_x,
+                            tick_size,
+                            tick_direction,
+                            true,
+                        );
                         self.draw_line(
                             tick_start,
                             y,

@@ -117,11 +117,15 @@ impl RuvizPlot {
     }
 
     fn current_request(&self, bounds: Bounds<Pixels>, window: &Window) -> Option<RenderRequest> {
+        let scale_factor = window.scale_factor();
         let size_px = match self.options.sizing_policy {
             SizingPolicy::Fill => {
                 let width = u32::from(bounds.size.width.ceil());
                 let height = u32::from(bounds.size.height.ceil());
-                (width, height)
+                (
+                    fill_backing_dimension_px(width, scale_factor),
+                    fill_backing_dimension_px(height, scale_factor),
+                )
             }
             SizingPolicy::FixedPixels { width, height } => (width, height),
         };
@@ -130,9 +134,11 @@ impl RuvizPlot {
             return None;
         }
 
+        let frame_size_px = self.session.fitted_frame_size_px(size_px);
+
         Some(RenderRequest::new(
-            size_px,
-            window.scale_factor(),
+            frame_size_px,
+            scale_factor,
             self.options.interaction.time_seconds,
             self.effective_presentation_mode(),
         ))

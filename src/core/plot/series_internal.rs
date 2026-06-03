@@ -762,6 +762,9 @@ impl Plot {
             }
             SeriesType::Heatmap { data } => {
                 let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
+                let render_scale = self.render_scale();
+                let min_annotation_font_px = render_scale.points_to_pixels(8.0);
+                let max_annotation_font_px = render_scale.points_to_pixels(20.0);
                 for (row_idx, row) in data.values.iter().enumerate() {
                     for (col_idx, &value) in row.iter().enumerate() {
                         if !data.config.annotate || data.should_mask_value(value) {
@@ -779,7 +782,8 @@ impl Plot {
                         let text = format!("{:.2}", value);
                         let text_color = data.get_text_color(cell_color);
                         let text_x = cell_x + cell_width / 2.0;
-                        let font_size = (cell_height * 0.3).clamp(8.0, 20.0);
+                        let font_size = (cell_height * 0.3)
+                            .clamp(min_annotation_font_px, max_annotation_font_px);
                         let text_y = cell_y + cell_height / 2.0 + font_size / 3.0;
                         renderer
                             .draw_text_centered(&text, text_x, text_y, font_size, text_color)?;
@@ -787,7 +791,6 @@ impl Plot {
                 }
 
                 if data.config.colorbar {
-                    let render_scale = self.render_scale();
                     let colorbar_margin = render_scale.logical_pixels_to_pixels(COLORBAR_MARGIN_PX);
                     let colorbar_width = render_scale.logical_pixels_to_pixels(COLORBAR_WIDTH_PX);
                     let colorbar_x = plot_area.right() + colorbar_margin;
@@ -1165,6 +1168,7 @@ impl Plot {
                 }
 
                 // Draw outliers - validate coordinates
+                let outlier_marker_size = self.render_scale().points_to_pixels(4.0);
                 for &outlier in &box_data.outliers {
                     let (_, outlier_y) = crate::render::skia::map_data_to_pixels(
                         0.0, outlier, x_min, x_max, y_min, y_max, plot_area,
@@ -1173,7 +1177,7 @@ impl Plot {
                         renderer.draw_marker_clipped(
                             x_center_px,
                             outlier_y,
-                            4.0, // outlier marker size
+                            outlier_marker_size,
                             MarkerStyle::Circle,
                             color,
                             clip_rect,
@@ -1805,13 +1809,6 @@ impl Plot {
         if figure.dpi <= 0.0 {
             return Err(PlottingError::InvalidInput(format!(
                 "Figure DPI must be positive (dpi={})",
-                figure.dpi
-            )));
-        }
-        if figure.dpi < crate::core::constants::dpi::MIN as f32 {
-            return Err(PlottingError::InvalidInput(format!(
-                "Figure DPI must be at least {} (dpi={})",
-                crate::core::constants::dpi::MIN,
                 figure.dpi
             )));
         }

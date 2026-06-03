@@ -511,6 +511,7 @@ impl PlotRender for ContourPlotData {
 
         let config = &self.config;
         let n_levels = self.levels.len();
+        let line_width_px = renderer.render_scale().points_to_pixels(config.line_width);
 
         // Get colormap for level coloring
         let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
@@ -560,7 +561,7 @@ impl PlotRender for ContourPlotData {
                         sx2,
                         sy2,
                         line_color,
-                        config.line_width,
+                        line_width_px,
                         LineStyle::Solid,
                     )?;
                 }
@@ -592,8 +593,9 @@ impl PlotRender for ContourPlotData {
 
         // Use provided alpha or config alpha
         let effective_alpha = if alpha != 1.0 { alpha } else { config.alpha };
-        let effective_line_width =
-            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width)));
+        let effective_line_width = renderer.render_scale().points_to_pixels(
+            line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
+        );
 
         // Draw filled regions if enabled
         if config.filled {

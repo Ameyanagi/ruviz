@@ -454,6 +454,14 @@ mod platform_impl {
         }
     }
 
+    fn fill_backing_dimension_px(logical_px: u32, scale_factor: f32) -> u32 {
+        if logical_px == 0 {
+            return 0;
+        }
+        let backing_scale = sanitize_scale_factor(scale_factor).max(1.0);
+        ((logical_px as f32) * backing_scale).ceil().max(1.0) as u32
+    }
+
     #[derive(Clone)]
     enum PrimaryFrame {
         Image(Arc<RenderImage>),
@@ -1294,6 +1302,15 @@ mod platform_impl {
                 })
                 .expect("interactive session should render");
             assert!(!request.is_dirty(&session));
+        }
+
+        #[test]
+        fn test_fill_backing_dimension_uses_display_scale_without_shrinking() {
+            assert_eq!(fill_backing_dimension_px(320, 1.0), 320);
+            assert_eq!(fill_backing_dimension_px(320, 2.0), 640);
+            assert_eq!(fill_backing_dimension_px(320, 1.5), 480);
+            assert_eq!(fill_backing_dimension_px(320, 0.5), 320);
+            assert_eq!(fill_backing_dimension_px(0, 2.0), 0);
         }
 
         #[test]

@@ -432,6 +432,10 @@ impl PlotRender for PolarPlotData {
 
         let config = &self.config;
         let line_color = config.color.unwrap_or(color);
+        let render_scale = renderer.render_scale();
+        let line_width_px = render_scale.points_to_pixels(config.line_width);
+        let marker_size_px = render_scale.points_to_pixels(config.marker_size);
+        let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
 
         // Draw fill if enabled
         if config.fill && !self.fill_polygon.is_empty() {
@@ -457,7 +461,7 @@ impl PlotRender for PolarPlotData {
                     sx2,
                     sy2,
                     line_color,
-                    config.line_width,
+                    line_width_px,
                     LineStyle::Solid,
                 )?;
             }
@@ -467,13 +471,7 @@ impl PlotRender for PolarPlotData {
         if config.marker_size > 0.0 {
             for point in &self.points {
                 let (sx, sy) = area.data_to_screen(point.x, point.y);
-                renderer.draw_marker(
-                    sx,
-                    sy,
-                    config.marker_size,
-                    MarkerStyle::Circle,
-                    line_color,
-                )?;
+                renderer.draw_marker(sx, sy, marker_size_px, MarkerStyle::Circle, line_color)?;
             }
         }
 
@@ -481,25 +479,13 @@ impl PlotRender for PolarPlotData {
         let label_color = theme.foreground;
         for label in &self.theta_labels {
             let (sx, sy) = area.data_to_screen(label.x, label.y);
-            renderer.draw_text_centered(
-                &label.text,
-                sx,
-                sy,
-                config.label_font_size,
-                label_color,
-            )?;
+            renderer.draw_text_centered(&label.text, sx, sy, label_font_size_px, label_color)?;
         }
 
         // Draw radial labels
         for label in &self.r_labels {
             let (sx, sy) = area.data_to_screen(label.x, label.y);
-            renderer.draw_text_centered(
-                &label.text,
-                sx,
-                sy,
-                config.label_font_size,
-                label_color,
-            )?;
+            renderer.draw_text_centered(&label.text, sx, sy, label_font_size_px, label_color)?;
         }
 
         Ok(())
