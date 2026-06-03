@@ -1314,6 +1314,35 @@ mod platform_impl {
         }
 
         #[test]
+        fn test_fill_sizing_fits_backing_size_to_figure_aspect() {
+            let plot = Plot::new().size(4.0, 3.0);
+            let session = plot.prepare_interactive();
+
+            let frame_size =
+                frame_size_px_for_policy(&session, &SizingPolicy::Fill, (400, 250), 2.0);
+
+            assert_eq!(frame_size, Some((667, 500)));
+        }
+
+        #[test]
+        fn test_fixed_pixels_sizing_preserves_exact_requested_size() {
+            let plot = Plot::new().size(4.0, 3.0);
+            let session = plot.prepare_interactive();
+
+            let frame_size = frame_size_px_for_policy(
+                &session,
+                &SizingPolicy::FixedPixels {
+                    width: 800,
+                    height: 500,
+                },
+                (400, 250),
+                2.0,
+            );
+
+            assert_eq!(frame_size, Some((800, 500)));
+        }
+
+        #[test]
         fn test_render_request_becomes_dirty_after_observable_update() {
             let y = Observable::new(vec![0.0, 1.0, 4.0]);
             let plot: Plot = Plot::new()

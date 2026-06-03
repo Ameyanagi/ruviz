@@ -1812,6 +1812,14 @@ impl Plot {
                 figure.dpi
             )));
         }
+        if figure.dpi < crate::core::constants::dpi::MIN as f32 && !self.render.allow_subminimum_dpi
+        {
+            return Err(PlottingError::InvalidInput(format!(
+                "Figure DPI must be at least {} (dpi={})",
+                crate::core::constants::dpi::MIN,
+                figure.dpi
+            )));
+        }
         if figure.dpi > crate::core::constants::dpi::MAX as f32 {
             return Err(PlottingError::PerformanceLimit {
                 limit_type: "DPI".to_string(),

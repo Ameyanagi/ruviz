@@ -38,6 +38,8 @@ pub struct RenderPipeline {
     pub(crate) backend: Option<BackendType>,
     /// Whether auto-optimization has been applied
     pub(crate) auto_optimized: bool,
+    /// Allow internally prepared interactive frames below the public minimum DPI.
+    pub(crate) allow_subminimum_dpi: bool,
     /// Enable GPU acceleration for coordinate transformations
     #[cfg(feature = "gpu")]
     pub(crate) enable_gpu: bool,
@@ -59,6 +61,7 @@ impl RenderPipeline {
             enable_pooled_rendering: false,
             backend: None,
             auto_optimized: false,
+            allow_subminimum_dpi: false,
             #[cfg(feature = "gpu")]
             enable_gpu: false,
         }

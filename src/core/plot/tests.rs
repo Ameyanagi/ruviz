@@ -1350,6 +1350,38 @@ fn test_fitted_prepared_frame_round_trips_rounded_canvas_size() {
 }
 
 #[test]
+fn test_fitted_prepared_frame_round_trips_difficult_canvas_ratios() {
+    for (width_in, height_in, max_size) in [
+        (7.3, 4.1, (997, 719)),
+        (std::f32::consts::SQRT_2, 1.0, (1000, 1000)),
+        (10.0, 3.0, (1234, 567)),
+        (4.7, 3.2, (853, 991)),
+    ] {
+        let plot = Plot::new().size(width_in, height_in).dpi(100);
+        let fitted_size = plot.fitted_output_size_for_max_pixels(max_size);
+        let prepared = plot.prepared_frame_plot(fitted_size, 1.0, 0.0);
+
+        assert_eq!(
+            prepared.display.dimensions, fitted_size,
+            "display dimensions should match fitted size for {width_in}x{height_in}"
+        );
+        assert_eq!(
+            prepared.config_canvas_size(),
+            fitted_size,
+            "config canvas should round-trip fitted size for {width_in}x{height_in}"
+        );
+        assert!(
+            (prepared.display.config.figure.width - width_in).abs() < 0.0001,
+            "fitted render should preserve figure width for {width_in}x{height_in}"
+        );
+        assert!(
+            (prepared.display.config.figure.height - height_in).abs() < 0.0001,
+            "fitted render should preserve figure height for {width_in}x{height_in}"
+        );
+    }
+}
+
+#[test]
 fn test_prepared_frame_style_metrics_scale_with_output_dimensions() {
     let plot = Plot::new().size(4.0, 3.0).dpi(100);
     let small = plot.prepared_frame_plot((400, 300), 1.0, 0.0);
@@ -1379,6 +1411,22 @@ fn test_prepared_frame_style_metrics_scale_with_output_dimensions() {
     ] {
         assert!((large_value / small_value - 2.0).abs() < 0.001);
     }
+}
+
+#[test]
+fn test_public_render_rejects_configured_subminimum_dpi() {
+    let err = Plot::with_config(PlotConfig {
+        figure: FigureConfig::new(6.4, 4.8, 50.0),
+        ..PlotConfig::default()
+    })
+    .line(&[0.0, 1.0], &[0.0, 1.0])
+    .render()
+    .expect_err("public render path should reject configured subminimum DPI");
+
+    assert!(
+        format!("{err}").contains("Figure DPI must be at least"),
+        "unexpected low-DPI error: {err}"
+    );
 }
 
 #[test]
