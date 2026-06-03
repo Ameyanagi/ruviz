@@ -1321,7 +1321,7 @@ mod platform_impl {
             let frame_size =
                 frame_size_px_for_policy(&session, &SizingPolicy::Fill, (400, 250), 2.0);
 
-            assert_eq!(frame_size, Some((667, 500)));
+            assert_eq!(frame_size, Some((666, 500)));
         }
 
         #[test]

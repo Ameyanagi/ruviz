@@ -35,7 +35,7 @@ fn test_render_to_image_preserves_requested_surface_size() {
         .into();
     let session = plot.prepare_interactive();
 
-    assert_eq!(session.fitted_frame_size_px((800, 500)), (667, 500));
+    assert_eq!(session.fitted_frame_size_px((800, 500)), (666, 500));
 
     let frame = session
         .render_to_image(ImageTarget {
@@ -70,7 +70,7 @@ fn test_render_to_image_uses_fitted_size_when_requested() {
     let session = plot.prepare_interactive();
     let fitted_size = session.fitted_frame_size_px((800, 500));
 
-    assert_eq!(fitted_size, (667, 500));
+    assert_eq!(fitted_size, (666, 500));
 
     let frame = session
         .render_to_image(ImageTarget {

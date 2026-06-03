@@ -1319,10 +1319,10 @@ fn test_prepared_frame_preserves_fitted_figure_and_ignores_device_scale_for_styl
     let fitted_size = plot.fitted_output_size_for_max_pixels((800, 500));
     let prepared = plot.prepared_frame_plot(fitted_size, 2.0, 0.0);
 
-    assert_eq!(fitted_size, (667, 500));
+    assert_eq!(fitted_size, (666, 500));
     assert_eq!(prepared.display.dimensions, fitted_size);
     assert_eq!(prepared.config_canvas_size(), fitted_size);
-    assert!((prepared.display.config.figure.dpi - 166.75).abs() < 0.001);
+    assert!((prepared.display.config.figure.dpi - 500.0 / 3.0).abs() < 0.001);
     assert!((prepared.display.config.figure.width - 4.0).abs() < f32::EPSILON);
     assert!((prepared.display.config.figure.height - 3.0).abs() < f32::EPSILON);
 
@@ -1343,8 +1343,8 @@ fn test_fitted_prepared_frame_round_trips_rounded_canvas_size() {
     let (fitted_size, dpi) = plot.fitted_output_for_max_pixels((1000, 1000));
     let prepared = plot.prepared_frame_plot(fitted_size, 1.0, 0.0);
 
-    assert_eq!(fitted_size, (1000, 563));
-    assert!((dpi - 62.555).abs() < 0.001);
+    assert_eq!(fitted_size, (1000, 562));
+    assert!((dpi - 62.5).abs() < 0.001);
     assert_eq!(prepared.display.dimensions, fitted_size);
     assert_eq!(prepared.config_canvas_size(), fitted_size);
 }

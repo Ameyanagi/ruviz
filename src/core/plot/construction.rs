@@ -894,14 +894,8 @@ impl Plot {
         }
 
         let aspect = figure.width / figure.height;
-        let by_width = (
-            max_width,
-            (max_width as f32 / aspect).round().max(1.0) as u32,
-        );
-        let by_height = (
-            (max_height as f32 * aspect).round().max(1.0) as u32,
-            max_height,
-        );
+        let by_width = (max_width, (max_width as f32 / aspect).max(1.0) as u32);
+        let by_height = ((max_height as f32 * aspect).max(1.0) as u32, max_height);
         let (fitted_size, constrained_dpi) = if by_width.1 <= max_height {
             (by_width, max_width as f32 / figure.width)
         } else {
