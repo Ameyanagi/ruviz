@@ -1468,7 +1468,10 @@ fn test_incremental_line_render_preserves_markers() {
 
     assert!(incremental_pixels > 0);
     let marker_pixel_delta = (incremental_pixels as i32 - full_pixels as i32).abs();
-    let marker_pixel_tolerance = 12.max((full_pixels as f32 * 0.35).ceil() as i32);
+    // Incremental markers are composited over the retained line layer, while a
+    // full render repaints both together. Allow limited antialiasing variance
+    // without masking a substantial marker drop.
+    let marker_pixel_tolerance = 12.max((full_pixels as f32 * 0.25).ceil() as i32);
     assert!(
         marker_pixel_delta <= marker_pixel_tolerance,
         "incremental marker pixel count {incremental_pixels} differed from full render count {full_pixels}"
