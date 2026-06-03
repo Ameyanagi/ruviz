@@ -951,14 +951,28 @@ impl Plot {
             return None;
         }
 
-        let next = Self::next_positive_f32(dpi);
-        let next_next = Self::next_positive_f32(next);
-        let previous = Self::previous_positive_f32(dpi);
-        let previous_previous = Self::previous_positive_f32(previous);
+        let mut next = dpi;
+        let mut previous = dpi;
+        for step in 0..=32 {
+            if step == 0 {
+                if Self::canvas_size_for_figure_dpi(figure, dpi) == size_px {
+                    return Some(dpi);
+                }
+                continue;
+            }
 
-        [dpi, next, next_next, previous, previous_previous]
-            .into_iter()
-            .find(|&candidate| Self::canvas_size_for_figure_dpi(figure, candidate) == size_px)
+            next = Self::next_positive_f32(next);
+            if Self::canvas_size_for_figure_dpi(figure, next) == size_px {
+                return Some(next);
+            }
+
+            previous = Self::previous_positive_f32(previous);
+            if Self::canvas_size_for_figure_dpi(figure, previous) == size_px {
+                return Some(previous);
+            }
+        }
+
+        None
     }
 
     fn exact_canvas_dpi_for_figure(
@@ -989,8 +1003,15 @@ impl Plot {
         }
 
         let span = upper - lower;
+        let width_lower = f64::from(size_px.0) / figure_width;
+        let height_lower = f64::from(size_px.1) / figure_height;
+        let width_upper = f64::from(size_px.0.saturating_add(1)) / figure_width;
+        let height_upper = f64::from(size_px.1.saturating_add(1)) / figure_height;
+
         [
             lower,
+            width_lower,
+            height_lower,
             lower + span * 0.125,
             lower + span * 0.25,
             lower + span * 0.5,
@@ -998,6 +1019,9 @@ impl Plot {
             lower + span * 0.875,
             (f64::from(size_px.0) + 0.5) / figure_width,
             (f64::from(size_px.1) + 0.5) / figure_height,
+            width_upper,
+            height_upper,
+            upper,
         ]
         .into_iter()
         .find_map(|dpi| Self::exact_canvas_dpi_near(figure, size_px, dpi as f32))
@@ -1108,7 +1132,7 @@ impl Plot {
         );
 
         if let Some(dpi) = dpi {
-            plot.render.allow_subminimum_dpi = true;
+            plot.render.allow_subminimum_dpi = dpi < crate::core::constants::dpi::MIN as f32;
             plot.display.config.figure.dpi = dpi;
             plot.display.dpi = dpi.round().max(1.0) as u32;
             plot.display.dimensions = size_px;

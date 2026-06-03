@@ -161,8 +161,8 @@ impl Plot {
             SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
         renderer.set_text_engine_mode(self.display.text_engine);
         renderer.note_parallel_render();
-        let dpi = self.display.dpi as f32;
         let render_scale = self.render_scale();
+        let dpi = render_scale.dpi();
         renderer.set_render_scale(render_scale);
 
         let resolved_series = self.resolved_series(0.0)?;

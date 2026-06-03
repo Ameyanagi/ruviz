@@ -1356,6 +1356,8 @@ fn test_fitted_prepared_frame_round_trips_difficult_canvas_ratios() {
         (std::f32::consts::SQRT_2, 1.0, (1000, 1000)),
         (10.0, 3.0, (1234, 567)),
         (4.7, 3.2, (853, 991)),
+        (1024.0001, 1.9999, (4096, 31)),
+        (1.9999, 1024.0001, (31, 4096)),
     ] {
         let plot = Plot::new().size(width_in, height_in).dpi(100);
         let fitted_size = plot.fitted_output_size_for_max_pixels(max_size);
@@ -1427,6 +1429,19 @@ fn test_public_render_rejects_configured_subminimum_dpi() {
         format!("{err}").contains("Figure DPI must be at least"),
         "unexpected low-DPI error: {err}"
     );
+}
+
+#[test]
+fn test_prepared_frame_subminimum_dpi_bypass_is_scoped_to_low_output() {
+    let plot = Plot::new().size(4.0, 3.0).dpi(100);
+
+    let normal = plot.prepared_frame_plot((667, 500), 1.0, 0.0);
+    assert!((normal.display.config.figure.dpi - 166.75).abs() < 0.001);
+    assert!(!normal.render.allow_subminimum_dpi);
+
+    let low = plot.prepared_frame_plot((200, 150), 1.0, 0.0);
+    assert!((low.display.config.figure.dpi - 50.0).abs() < f32::EPSILON);
+    assert!(low.render.allow_subminimum_dpi);
 }
 
 #[test]
