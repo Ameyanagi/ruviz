@@ -2,14 +2,14 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.4.18
+## What's New in v0.4.19
 
-- Heatmap and contour colorbars now scale consistently at high DPI.
-- Colorbar labels, tick labels, margins, widths, and border strokes use the same sizing model as the rest of the plot.
-- Existing data rendering is unchanged; this release focuses on colorbar layout and stroke fidelity.
+- GPUI interactive plots now scale typography, ticks, borders, and series styling with requested output dimensions.
+- `FixedPixels` stays exact while `Fill` uses aspect-fitted output sizing for resizable panes.
+- Fitted interactive canvases now keep base layers, overlays, and advertised dimensions aligned.
 
 See full details:
-- [Release notes for v0.4.18](releases/v0.4.18.md)
+- [Release notes for v0.4.19](releases/v0.4.19.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -23,7 +23,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.4.18"
+ruviz = "0.4.19"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -62,8 +62,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.4.18"
-ruviz-gpui = "0.4.18"
+ruviz = "0.4.19"
+ruviz-gpui = "0.4.19"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -91,7 +91,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.18", features = ["typst-math"] }
+ruviz = { version = "0.4.19", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
@@ -104,7 +104,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.18", default-features = false }
+ruviz = { version = "0.4.19", default-features = false }
 
 [features]
 default = []
@@ -355,7 +355,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.4.18", features = ["polars_support"] }
+ruviz = { version = "0.4.19", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -383,7 +383,7 @@ The default feature set already includes `parallel`. Add `performance` only
 when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.18", features = ["performance"] }
+ruviz = { version = "0.4.19", features = ["performance"] }
 ```
 
 ### Large Dataset Export
