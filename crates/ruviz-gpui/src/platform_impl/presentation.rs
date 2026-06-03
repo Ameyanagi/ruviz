@@ -117,22 +117,21 @@ impl RuvizPlot {
     }
 
     fn current_request(&self, bounds: Bounds<Pixels>, window: &Window) -> Option<RenderRequest> {
-        let size_px = match self.options.sizing_policy {
-            SizingPolicy::Fill => {
-                let width = u32::from(bounds.size.width.ceil());
-                let height = u32::from(bounds.size.height.ceil());
-                (width, height)
-            }
-            SizingPolicy::FixedPixels { width, height } => (width, height),
-        };
-
-        if size_px.0 == 0 || size_px.1 == 0 {
-            return None;
-        }
+        let scale_factor = window.scale_factor();
+        let logical_size_px = (
+            u32::from(bounds.size.width.ceil()),
+            u32::from(bounds.size.height.ceil()),
+        );
+        let frame_size_px = frame_size_px_for_policy(
+            &self.session,
+            &self.options.sizing_policy,
+            logical_size_px,
+            scale_factor,
+        )?;
 
         Some(RenderRequest::new(
-            size_px,
-            window.scale_factor(),
+            frame_size_px,
+            scale_factor,
             self.options.interaction.time_seconds,
             self.effective_presentation_mode(),
         ))
@@ -428,6 +427,30 @@ impl RuvizPlot {
             .map_err(|err| {
                 PlottingError::SystemError(format!("failed to spawn GPUI PNG export worker: {err}"))
             })
+    }
+}
+
+pub(super) fn frame_size_px_for_policy(
+    session: &InteractivePlotSession,
+    sizing_policy: &SizingPolicy,
+    logical_size_px: (u32, u32),
+    scale_factor: f32,
+) -> Option<(u32, u32)> {
+    let size_px = match sizing_policy {
+        SizingPolicy::Fill => (
+            fill_backing_dimension_px(logical_size_px.0, scale_factor),
+            fill_backing_dimension_px(logical_size_px.1, scale_factor),
+        ),
+        SizingPolicy::FixedPixels { width, height } => (*width, *height),
+    };
+
+    if size_px.0 == 0 || size_px.1 == 0 {
+        return None;
+    }
+
+    match sizing_policy {
+        SizingPolicy::Fill => Some(session.fitted_frame_size_px(size_px)),
+        SizingPolicy::FixedPixels { .. } => Some(size_px),
     }
 }
 

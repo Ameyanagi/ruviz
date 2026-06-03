@@ -277,17 +277,26 @@ pub fn render_pie(
     // Number of segments per arc for smooth curves
     let segments = 64;
 
+    let render_scale = renderer.render_scale();
+    let edge_width_px = render_scale.points_to_pixels(config.edge_width);
+    let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
+    let shadow_offset_px = render_scale.points_to_pixels(config.shadow as f32) as f64;
+
     // Draw shadow if configured
     if config.shadow > 0.0 {
         let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
-        let offset = config.shadow;
         for wedge in &pie_data.wedges {
             let mut shadow_wedge = *wedge;
             // Offset shadow
             let polygon = shadow_wedge.as_polygon(segments);
             let shadow_polygon: Vec<(f32, f32)> = polygon
                 .iter()
-                .map(|(x, y)| ((x + offset) as f32, (y + offset) as f32))
+                .map(|(x, y)| {
+                    (
+                        (*x + shadow_offset_px) as f32,
+                        (*y + shadow_offset_px) as f32,
+                    )
+                })
                 .collect();
             renderer.draw_filled_polygon(&shadow_polygon, shadow_color)?;
         }
@@ -307,7 +316,7 @@ pub fn render_pie(
 
         // Draw edge if configured
         if let Some(edge_color) = config.edge_color {
-            renderer.draw_polygon_outline(&polygon_f32, edge_color, config.edge_width)?;
+            renderer.draw_polygon_outline(&polygon_f32, edge_color, edge_width_px)?;
         }
     }
 
@@ -354,7 +363,7 @@ pub fn render_pie(
                     &label,
                     label_x as f32,
                     label_y as f32,
-                    config.label_font_size,
+                    label_font_size_px,
                     config.text_color,
                 )?;
             }
@@ -430,16 +439,24 @@ impl PlotRender for PieData {
 
         // Number of segments per arc for smooth curves
         let segments = 64;
+        let render_scale = renderer.render_scale();
+        let edge_width_px = render_scale.points_to_pixels(config.edge_width);
+        let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
+        let shadow_offset_px = render_scale.points_to_pixels(config.shadow as f32) as f64;
 
         // Draw shadow if configured
         if config.shadow > 0.0 {
             let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
-            let offset = config.shadow;
             for wedge in &screen_data.wedges {
                 let polygon = wedge.as_polygon(segments);
                 let shadow_polygon: Vec<(f32, f32)> = polygon
                     .iter()
-                    .map(|(x, y)| ((x + offset) as f32, (y + offset) as f32))
+                    .map(|(x, y)| {
+                        (
+                            (*x + shadow_offset_px) as f32,
+                            (*y + shadow_offset_px) as f32,
+                        )
+                    })
                     .collect();
                 renderer.draw_filled_polygon(&shadow_polygon, shadow_color)?;
             }
@@ -459,7 +476,7 @@ impl PlotRender for PieData {
 
             // Draw edge if configured
             if let Some(edge_color) = config.edge_color {
-                renderer.draw_polygon_outline(&polygon_f32, edge_color, config.edge_width)?;
+                renderer.draw_polygon_outline(&polygon_f32, edge_color, edge_width_px)?;
             }
         }
 
@@ -505,7 +522,7 @@ impl PlotRender for PieData {
                         &label,
                         label_x as f32,
                         label_y as f32,
-                        config.label_font_size,
+                        label_font_size_px,
                         config.text_color,
                     )?;
                 }

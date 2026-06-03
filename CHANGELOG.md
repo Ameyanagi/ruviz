@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 _None yet._
 
+## [0.4.19] - 2026-06-03
+
+### Fixed
+
+- Fixed GPUI interactive output-dimension rendering so typography, ticks, borders, and series style metrics scale with requested render pixels while preserving the configured figure size model.
+- Kept `ruviz-gpui` `FixedPixels` sizing exact and applied aspect fitting only to `Fill`, preventing mismatched backing surfaces in non-GPUI interactive render paths.
+- Tightened prepared-frame DPI fitting so advertised fitted dimensions round-trip to the actual render canvas, including difficult aspect-ratio cases and low-resolution interactive panes.
+
 ## [0.4.18] - 2026-05-24
 
 ### Fixed
@@ -447,7 +455,8 @@ _None yet._
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.18...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.19...HEAD
+[0.4.19]: https://github.com/Ameyanagi/ruviz/compare/v0.4.18...v0.4.19
 [0.4.18]: https://github.com/Ameyanagi/ruviz/compare/v0.4.17...v0.4.18
 [0.4.17]: https://github.com/Ameyanagi/ruviz/compare/v0.4.16...v0.4.17
 [0.4.16]: https://github.com/Ameyanagi/ruviz/compare/v0.4.13...v0.4.16

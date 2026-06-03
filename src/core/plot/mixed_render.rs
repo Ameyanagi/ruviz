@@ -769,15 +769,17 @@ impl Plot {
                 .collect()
         };
         let segments = 64;
+        let render_scale = svg.render_scale();
+        let shadow_offset = render_scale.points_to_pixels(data.config.shadow as f32) as f64;
+        let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
         if data.config.shadow > 0.0 {
             let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
-            let offset = data.config.shadow;
             for wedge in &screen_data.wedges {
                 let polygon: Vec<(f32, f32)> = wedge
                     .as_polygon(segments)
                     .iter()
-                    .map(|(x, y)| ((x + offset) as f32, (y + offset) as f32))
+                    .map(|(x, y)| ((*x + shadow_offset) as f32, (*y + shadow_offset) as f32))
                     .collect();
                 svg.draw_filled_polygon(&polygon, shadow_color);
             }
@@ -834,7 +836,7 @@ impl Plot {
                         &label,
                         label_x as f32,
                         label_y as f32,
-                        data.config.label_font_size,
+                        label_font_size,
                         data.config.text_color,
                     )?;
                 }
@@ -855,10 +857,12 @@ impl Plot {
         }
 
         let area = Self::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
+        let render_scale = svg.render_scale();
+        let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
         if data.config.show_grid {
             let grid_color = self.display.theme.grid_color;
-            let grid_line_width = svg.render_scale().logical_pixels_to_pixels(0.5);
+            let grid_line_width = render_scale.logical_pixels_to_pixels(0.5);
             for ring in &data.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -902,14 +906,14 @@ impl Plot {
                     label,
                     sx,
                     sy,
-                    data.config.label_font_size,
+                    label_font_size,
                     self.display.theme.foreground,
                 )?;
             }
         }
 
-        let scaled_line_width = svg.render_scale().points_to_pixels(data.config.line_width);
-        let scaled_marker_size = svg.render_scale().points_to_pixels(data.config.marker_size);
+        let scaled_line_width = render_scale.points_to_pixels(data.config.line_width);
+        let scaled_marker_size = render_scale.points_to_pixels(data.config.marker_size);
         for (series_idx, series_data) in data.series.iter().enumerate() {
             let series_color = data
                 .config
@@ -982,6 +986,8 @@ impl Plot {
             y_max,
         );
         let line_color = data.config.color.unwrap_or(default_color);
+        let render_scale = svg.render_scale();
+        let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
         if data.config.fill && !data.fill_polygon.is_empty() {
             let polygon: Vec<(f32, f32)> = data
@@ -998,12 +1004,12 @@ impl Plot {
                 .iter()
                 .map(|point| area.data_to_screen(point.x, point.y))
                 .collect();
-            let scaled_line_width = svg.render_scale().points_to_pixels(data.config.line_width);
+            let scaled_line_width = render_scale.points_to_pixels(data.config.line_width);
             svg.draw_polyline(&points, line_color, scaled_line_width, LineStyle::Solid);
         }
 
         if data.config.marker_size > 0.0 {
-            let scaled_marker_size = svg.render_scale().points_to_pixels(data.config.marker_size);
+            let scaled_marker_size = render_scale.points_to_pixels(data.config.marker_size);
             for point in &data.points {
                 let (sx, sy) = area.data_to_screen(point.x, point.y);
                 svg.draw_marker(sx, sy, scaled_marker_size, MarkerStyle::Circle, line_color);
@@ -1016,7 +1022,7 @@ impl Plot {
                 &label.text,
                 sx,
                 sy,
-                data.config.label_font_size,
+                label_font_size,
                 self.display.theme.foreground,
             )?;
         }
@@ -1027,7 +1033,7 @@ impl Plot {
                 &label.text,
                 sx,
                 sy,
-                data.config.label_font_size,
+                label_font_size,
                 self.display.theme.foreground,
             )?;
         }

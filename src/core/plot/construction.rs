@@ -868,6 +868,159 @@ impl Plot {
         self.display.config.figure.canvas_size()
     }
 
+    pub(crate) fn fitted_output_size_for_max_pixels(&self, max_size_px: (u32, u32)) -> (u32, u32) {
+        self.fitted_output_for_max_pixels(max_size_px).0
+    }
+
+    pub(crate) fn fitted_output_for_max_pixels(
+        &self,
+        max_size_px: (u32, u32),
+    ) -> ((u32, u32), f32) {
+        let max_width = max_size_px.0.max(1);
+        let max_height = max_size_px.1.max(1);
+        let figure = &self.display.config.figure;
+
+        if !figure.width.is_finite()
+            || !figure.height.is_finite()
+            || figure.width <= 0.0
+            || figure.height <= 0.0
+        {
+            let dpi = if figure.dpi.is_finite() && figure.dpi > 0.0 {
+                figure.dpi
+            } else {
+                REFERENCE_DPI
+            };
+            return ((max_width, max_height), dpi);
+        }
+
+        let aspect = figure.width / figure.height;
+        let by_width = (max_width, (max_width as f32 / aspect).max(1.0) as u32);
+        let by_height = ((max_height as f32 * aspect).max(1.0) as u32, max_height);
+        let (fitted_size, constrained_dpi) = if by_width.1 <= max_height {
+            (by_width, max_width as f32 / figure.width)
+        } else {
+            (by_height, max_height as f32 / figure.height)
+        };
+        let fitted_size = (
+            fitted_size.0.clamp(1, max_width),
+            fitted_size.1.clamp(1, max_height),
+        );
+        let dpi =
+            Self::exact_canvas_dpi_for_figure(figure, fitted_size, None).unwrap_or(constrained_dpi);
+
+        (fitted_size, dpi.max(f32::MIN_POSITIVE))
+    }
+
+    fn figure_has_valid_size(figure: &crate::core::FigureConfig) -> bool {
+        figure.width.is_finite()
+            && figure.height.is_finite()
+            && figure.width > 0.0
+            && figure.height > 0.0
+    }
+
+    fn canvas_size_for_figure_dpi(figure: &crate::core::FigureConfig, dpi: f32) -> (u32, u32) {
+        ((figure.width * dpi) as u32, (figure.height * dpi) as u32)
+    }
+
+    fn next_positive_f32(value: f32) -> f32 {
+        if !value.is_finite() || value < 0.0 {
+            return value;
+        }
+        f32::from_bits(value.to_bits().saturating_add(1))
+    }
+
+    fn previous_positive_f32(value: f32) -> f32 {
+        if !value.is_finite() || value <= 0.0 {
+            return value;
+        }
+        f32::from_bits(value.to_bits().saturating_sub(1))
+    }
+
+    fn exact_canvas_dpi_near(
+        figure: &crate::core::FigureConfig,
+        size_px: (u32, u32),
+        dpi: f32,
+    ) -> Option<f32> {
+        if !dpi.is_finite() || dpi <= 0.0 {
+            return None;
+        }
+
+        let mut next = dpi;
+        let mut previous = dpi;
+        for step in 0..=32 {
+            if step == 0 {
+                if Self::canvas_size_for_figure_dpi(figure, dpi) == size_px {
+                    return Some(dpi);
+                }
+                continue;
+            }
+
+            next = Self::next_positive_f32(next);
+            if Self::canvas_size_for_figure_dpi(figure, next) == size_px {
+                return Some(next);
+            }
+
+            previous = Self::previous_positive_f32(previous);
+            if Self::canvas_size_for_figure_dpi(figure, previous) == size_px {
+                return Some(previous);
+            }
+        }
+
+        None
+    }
+
+    fn exact_canvas_dpi_for_figure(
+        figure: &crate::core::FigureConfig,
+        size_px: (u32, u32),
+        preferred_dpi: Option<f32>,
+    ) -> Option<f32> {
+        if !Self::figure_has_valid_size(figure) {
+            return None;
+        }
+
+        let size_px = (size_px.0.max(1), size_px.1.max(1));
+
+        if let Some(dpi) = preferred_dpi.filter(|dpi| dpi.is_finite() && *dpi > 0.0) {
+            if Self::canvas_size_for_figure_dpi(figure, dpi) == size_px {
+                return Some(dpi);
+            }
+        }
+
+        let figure_width = f64::from(figure.width);
+        let figure_height = f64::from(figure.height);
+        let lower = (f64::from(size_px.0) / figure_width).max(f64::from(size_px.1) / figure_height);
+        let upper = (f64::from(size_px.0.saturating_add(1)) / figure_width)
+            .min(f64::from(size_px.1.saturating_add(1)) / figure_height);
+
+        if !lower.is_finite() || !upper.is_finite() || lower <= 0.0 || lower >= upper {
+            return None;
+        }
+
+        let span = upper - lower;
+        let width_lower = f64::from(size_px.0) / figure_width;
+        let height_lower = f64::from(size_px.1) / figure_height;
+        let width_upper = f64::from(size_px.0.saturating_add(1)) / figure_width;
+        let height_upper = f64::from(size_px.1.saturating_add(1)) / figure_height;
+
+        [
+            lower,
+            width_lower,
+            height_lower,
+            lower + span * 0.125,
+            lower + span * 0.25,
+            lower + span * 0.5,
+            lower + span * 0.75,
+            lower + span * 0.875,
+            (f64::from(size_px.0) + 0.5) / figure_width,
+            (f64::from(size_px.1) + 0.5) / figure_height,
+            width_upper,
+            height_upper,
+            upper,
+        ]
+        .into_iter()
+        .find_map(|dpi| Self::exact_canvas_dpi_near(figure, size_px, dpi as f32))
+    }
+
     pub(super) fn render_scale(&self) -> RenderScale {
         self.display.config.figure.render_scale()
     }
@@ -964,11 +1117,24 @@ impl Plot {
         time: f64,
     ) -> Plot {
         let device_scale = Self::sanitize_prepared_scale_factor(scale_factor);
-        let dpi = (crate::core::REFERENCE_DPI * device_scale).round() as u32;
+        let size_px = (size_px.0.max(1), size_px.1.max(1));
+        let mut plot = self.resolved_plot(time);
+        let dpi = Self::exact_canvas_dpi_for_figure(
+            &plot.display.config.figure,
+            size_px,
+            Some(plot.display.config.figure.dpi),
+        );
 
-        self.resolved_plot(time)
-            .dpi(dpi)
-            .set_output_pixels(size_px.0, size_px.1)
+        if let Some(dpi) = dpi {
+            plot.render.allow_subminimum_dpi = dpi < crate::core::constants::dpi::MIN as f32;
+            plot.display.config.figure.dpi = dpi;
+            plot.display.dpi = dpi.round().max(1.0) as u32;
+            plot.display.dimensions = size_px;
+            plot
+        } else {
+            let dpi = (crate::core::REFERENCE_DPI * device_scale).round().max(1.0) as u32;
+            plot.dpi(dpi).set_output_pixels(size_px.0, size_px.1)
+        }
     }
 
     pub(crate) fn sanitize_prepared_scale_factor(scale_factor: f32) -> f32 {

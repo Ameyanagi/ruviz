@@ -348,22 +348,23 @@ impl PlotRender for EcdfData {
             .collect();
 
         if line_points.len() >= 2 {
-            renderer.draw_polyline(
-                &line_points,
-                color,
-                self.config.line_width,
-                LineStyle::Solid,
-            )?;
+            let line_width = renderer
+                .render_scale()
+                .points_to_pixels(self.config.line_width);
+            renderer.draw_polyline(&line_points, color, line_width, LineStyle::Solid)?;
         }
 
         // Draw markers at data points if enabled
         if self.config.show_markers {
+            let marker_size = renderer
+                .render_scale()
+                .points_to_pixels(self.config.marker_size);
             for i in 0..self.x.len() {
                 let (px, py) = area.data_to_screen(self.x[i], self.y[i]);
                 renderer.draw_marker(
                     px,
                     py,
-                    self.config.marker_size,
+                    marker_size,
                     crate::render::MarkerStyle::Circle,
                     color,
                 )?;

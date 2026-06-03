@@ -23,8 +23,8 @@
 //!
 //! ```toml
 //! [dependencies]
-//! ruviz = "0.4.18"
-//! ruviz-gpui = "0.4.18"
+//! ruviz = "0.4.19"
+//! ruviz-gpui = "0.4.19"
 //! ```
 //!
 //! Then build a normal `ruviz::Plot` or `PreparedPlot` and hand it to the GPUI
@@ -452,6 +452,14 @@ mod platform_impl {
             let dirty = session.dirty_domains();
             dirty.layout || dirty.data || dirty.overlay || dirty.temporal || dirty.interaction
         }
+    }
+
+    fn fill_backing_dimension_px(logical_px: u32, scale_factor: f32) -> u32 {
+        if logical_px == 0 {
+            return 0;
+        }
+        let backing_scale = sanitize_scale_factor(scale_factor).max(1.0);
+        ((logical_px as f32) * backing_scale).ceil().max(1.0) as u32
     }
 
     #[derive(Clone)]
@@ -1294,6 +1302,44 @@ mod platform_impl {
                 })
                 .expect("interactive session should render");
             assert!(!request.is_dirty(&session));
+        }
+
+        #[test]
+        fn test_fill_backing_dimension_uses_display_scale_without_shrinking() {
+            assert_eq!(fill_backing_dimension_px(320, 1.0), 320);
+            assert_eq!(fill_backing_dimension_px(320, 2.0), 640);
+            assert_eq!(fill_backing_dimension_px(320, 1.5), 480);
+            assert_eq!(fill_backing_dimension_px(320, 0.5), 320);
+            assert_eq!(fill_backing_dimension_px(0, 2.0), 0);
+        }
+
+        #[test]
+        fn test_fill_sizing_fits_backing_size_to_figure_aspect() {
+            let plot = Plot::new().size(4.0, 3.0);
+            let session = plot.prepare_interactive();
+
+            let frame_size =
+                frame_size_px_for_policy(&session, &SizingPolicy::Fill, (400, 250), 2.0);
+
+            assert_eq!(frame_size, Some((666, 500)));
+        }
+
+        #[test]
+        fn test_fixed_pixels_sizing_preserves_exact_requested_size() {
+            let plot = Plot::new().size(4.0, 3.0);
+            let session = plot.prepare_interactive();
+
+            let frame_size = frame_size_px_for_policy(
+                &session,
+                &SizingPolicy::FixedPixels {
+                    width: 800,
+                    height: 500,
+                },
+                (400, 250),
+                2.0,
+            );
+
+            assert_eq!(frame_size, Some((800, 500)));
         }
 
         #[test]

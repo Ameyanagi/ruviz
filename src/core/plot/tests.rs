@@ -1,7 +1,7 @@
 #![allow(clippy::useless_conversion)]
 
 use super::*;
-use crate::core::FigureConfig;
+use crate::core::{FigureConfig, LineConfig as CoreLineConfig, SpineConfig as CoreSpineConfig};
 use tempfile::tempdir;
 
 #[derive(Debug)]
@@ -582,6 +582,30 @@ fn longest_dark_pixel_run_at_y(image: &Image, y: u32) -> usize {
     }
 
     longest
+}
+
+fn dark_pixel_run_right_from(image: &Image, x: u32, y: u32) -> usize {
+    let mut current = 0;
+    for sample_x in x..image.width {
+        if image_pixel_is_dark(image, sample_x, y) {
+            current += 1;
+        } else if current > 0 {
+            break;
+        }
+    }
+    current
+}
+
+fn dark_pixel_run_down_from(image: &Image, x: u32, y: u32) -> usize {
+    let mut current = 0;
+    for sample_y in y..image.height {
+        if image_pixel_is_dark(image, x, sample_y) {
+            current += 1;
+        } else if current > 0 {
+            break;
+        }
+    }
+    current
 }
 
 fn mean_normalized_channel_diff(lhs: &Image, rhs: &Image) -> f64 {
@@ -1260,6 +1284,181 @@ fn test_prepared_frame_large_line_stays_off_auto_datashader() {
         &snapshot_series,
         total_points
     ));
+}
+
+#[test]
+fn test_prepared_frame_preserves_configured_dpi_for_matching_fixed_size() {
+    let plot = Plot::new().size(4.0, 3.0).dpi(250);
+    let configured_size = plot.config_canvas_size();
+    let prepared = plot.prepared_frame_plot(configured_size, 1.0, 0.0);
+
+    assert_eq!(prepared.display.dimensions, configured_size);
+    assert_eq!(prepared.config_canvas_size(), configured_size);
+    assert!((prepared.display.config.figure.dpi - 250.0).abs() < f32::EPSILON);
+    assert!(
+        (prepared.display.config.figure.width - 4.0).abs() < f32::EPSILON,
+        "fixed-size interactive frames should keep the authored figure geometry"
+    );
+}
+
+#[test]
+fn test_prepared_frame_preserves_exact_non_fitted_surface_size() {
+    let plot = Plot::new().size(4.0, 3.0).dpi(250);
+    let prepared = plot.prepared_frame_plot((800, 500), 2.0, 0.0);
+
+    assert_eq!(prepared.display.dimensions, (800, 500));
+    assert_eq!(prepared.config_canvas_size(), (800, 500));
+    assert!((prepared.display.config.figure.dpi - 200.0).abs() < f32::EPSILON);
+    assert!((prepared.display.config.figure.width - 4.0).abs() < f32::EPSILON);
+    assert!((prepared.display.config.figure.height - 2.5).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_prepared_frame_preserves_fitted_figure_and_ignores_device_scale_for_style() {
+    let plot = Plot::new().size(4.0, 3.0).dpi(250);
+    let fitted_size = plot.fitted_output_size_for_max_pixels((800, 500));
+    let prepared = plot.prepared_frame_plot(fitted_size, 2.0, 0.0);
+
+    assert_eq!(fitted_size, (666, 500));
+    assert_eq!(prepared.display.dimensions, fitted_size);
+    assert_eq!(prepared.config_canvas_size(), fitted_size);
+    assert!((prepared.display.config.figure.dpi - 500.0 / 3.0).abs() < 0.001);
+    assert!((prepared.display.config.figure.width - 4.0).abs() < f32::EPSILON);
+    assert!((prepared.display.config.figure.height - 3.0).abs() < f32::EPSILON);
+
+    let same_output_at_1x = plot.prepared_frame_plot(fitted_size, 1.0, 0.0);
+    assert_eq!(
+        same_output_at_1x.display.dimensions,
+        prepared.display.dimensions
+    );
+    assert!(
+        (same_output_at_1x.display.config.figure.dpi - prepared.display.config.figure.dpi).abs()
+            < f32::EPSILON
+    );
+}
+
+#[test]
+fn test_fitted_prepared_frame_round_trips_rounded_canvas_size() {
+    let plot = Plot::new().size(16.0, 9.0).dpi(100);
+    let (fitted_size, dpi) = plot.fitted_output_for_max_pixels((1000, 1000));
+    let prepared = plot.prepared_frame_plot(fitted_size, 1.0, 0.0);
+
+    assert_eq!(fitted_size, (1000, 562));
+    assert!((dpi - 62.5).abs() < 0.001);
+    assert_eq!(prepared.display.dimensions, fitted_size);
+    assert_eq!(prepared.config_canvas_size(), fitted_size);
+}
+
+#[test]
+fn test_fitted_prepared_frame_round_trips_difficult_canvas_ratios() {
+    for (width_in, height_in, max_size) in [
+        (7.3, 4.1, (997, 719)),
+        (std::f32::consts::SQRT_2, 1.0, (1000, 1000)),
+        (10.0, 3.0, (1234, 567)),
+        (4.7, 3.2, (853, 991)),
+        (1024.0001, 1.9999, (4096, 31)),
+        (1.9999, 1024.0001, (31, 4096)),
+    ] {
+        let plot = Plot::new().size(width_in, height_in).dpi(100);
+        let fitted_size = plot.fitted_output_size_for_max_pixels(max_size);
+        let prepared = plot.prepared_frame_plot(fitted_size, 1.0, 0.0);
+
+        assert_eq!(
+            prepared.display.dimensions, fitted_size,
+            "display dimensions should match fitted size for {width_in}x{height_in}"
+        );
+        assert_eq!(
+            prepared.config_canvas_size(),
+            fitted_size,
+            "config canvas should round-trip fitted size for {width_in}x{height_in}"
+        );
+        assert!(
+            (prepared.display.config.figure.width - width_in).abs() < 0.0001,
+            "fitted render should preserve figure width for {width_in}x{height_in}"
+        );
+        assert!(
+            (prepared.display.config.figure.height - height_in).abs() < 0.0001,
+            "fitted render should preserve figure height for {width_in}x{height_in}"
+        );
+    }
+}
+
+#[test]
+fn test_prepared_frame_style_metrics_scale_with_output_dimensions() {
+    let plot = Plot::new().size(4.0, 3.0).dpi(100);
+    let small = plot.prepared_frame_plot((400, 300), 1.0, 0.0);
+    let large = plot.prepared_frame_plot((800, 600), 1.0, 0.0);
+
+    assert_eq!(small.display.dimensions, (400, 300));
+    assert_eq!(large.display.dimensions, (800, 600));
+    assert!((small.display.config.figure.dpi - 100.0).abs() < f32::EPSILON);
+    assert!((large.display.config.figure.dpi - 200.0).abs() < f32::EPSILON);
+
+    let small_tick_font = small
+        .render_scale()
+        .points_to_pixels(small.display.config.typography.tick_size());
+    let large_tick_font = large
+        .render_scale()
+        .points_to_pixels(large.display.config.typography.tick_size());
+    assert!((large_tick_font / small_tick_font - 2.0).abs() < 0.001);
+
+    let small_metrics = small.axis_tick_metrics_px();
+    let large_metrics = large.axis_tick_metrics_px();
+    for (small_value, large_value) in [
+        (small_metrics.0, large_metrics.0),
+        (small_metrics.1, large_metrics.1),
+        (small_metrics.2, large_metrics.2),
+        (small_metrics.3, large_metrics.3),
+        (small_metrics.4, large_metrics.4),
+    ] {
+        assert!((large_value / small_value - 2.0).abs() < 0.001);
+    }
+}
+
+#[test]
+fn test_public_render_rejects_configured_subminimum_dpi() {
+    let err = Plot::with_config(PlotConfig {
+        figure: FigureConfig::new(6.4, 4.8, 50.0),
+        ..PlotConfig::default()
+    })
+    .line(&[0.0, 1.0], &[0.0, 1.0])
+    .render()
+    .expect_err("public render path should reject configured subminimum DPI");
+
+    assert!(
+        format!("{err}").contains("Figure DPI must be at least"),
+        "unexpected low-DPI error: {err}"
+    );
+}
+
+#[test]
+fn test_prepared_frame_subminimum_dpi_bypass_is_scoped_to_low_output() {
+    let plot = Plot::new().size(4.0, 3.0).dpi(100);
+
+    let normal = plot.prepared_frame_plot((667, 500), 1.0, 0.0);
+    assert!((normal.display.config.figure.dpi - 166.75).abs() < 0.001);
+    assert!(!normal.render.allow_subminimum_dpi);
+
+    let low = plot.prepared_frame_plot((200, 150), 1.0, 0.0);
+    assert!((low.display.config.figure.dpi - 50.0).abs() < f32::EPSILON);
+    assert!(low.render.allow_subminimum_dpi);
+}
+
+#[test]
+fn test_prepared_frame_low_output_dpi_can_render() {
+    let plot = Plot::new()
+        .size(6.4, 4.8)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .end_series();
+    let prepared = plot.prepared_frame_plot((320, 240), 1.0, 0.0);
+
+    assert_eq!(prepared.display.dimensions, (320, 240));
+    assert!((prepared.display.config.figure.dpi - 50.0).abs() < f32::EPSILON);
+
+    let image = prepared
+        .render()
+        .expect("interactive output below 72 DPI should still render");
+    assert_eq!((image.width, image.height), (320, 240));
 }
 
 #[test]
@@ -2204,17 +2403,187 @@ fn test_render_to_svg_ticks_false_omits_tick_artifacts_but_keeps_axis_labels() {
 }
 
 #[test]
-fn test_render_to_svg_ticks_false_keeps_dpi_scaled_frame_stroke() {
+fn test_render_to_svg_ticks_false_uses_configured_frame_stroke() {
+    let config = PlotConfig {
+        figure: FigureConfig::new(6.4, 4.8, 200.0),
+        lines: CoreLineConfig {
+            axis_width: 1.2,
+            ..CoreLineConfig::default()
+        },
+        ..PlotConfig::default()
+    };
+
     let svg = Plot::new()
-        .dpi(200)
+        .plot_config(config)
         .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
         .ticks(false)
         .render_to_svg()
         .expect("SVG render should succeed");
 
     assert!(
-        svg.contains(r#"stroke-width="3.00""#),
-        "ticks(false) should keep the DPI-scaled 1.5 logical px frame width"
+        svg.contains(r#"stroke-width="3.33""#),
+        "ticks(false) should use PlotConfig.lines.axis_width for the frame"
+    );
+}
+
+#[test]
+fn test_render_to_svg_ticks_false_honors_despine_config() {
+    let config = PlotConfig {
+        spines: CoreSpineConfig::despine(),
+        ..PlotConfig::default()
+    };
+
+    let svg = Plot::new()
+        .plot_config(config)
+        .grid(false)
+        .ticks(false)
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .render_to_svg()
+        .expect("SVG render should succeed");
+
+    assert_eq!(
+        svg.matches("<line ").count(),
+        2,
+        "despine should draw only left and bottom frame lines when ticks are hidden"
+    );
+}
+
+#[test]
+fn test_render_ticks_false_uses_configured_frame_width() {
+    let test_config = |axis_width| PlotConfig {
+        figure: FigureConfig::new(360.0 / 200.0, 260.0 / 200.0, 200.0),
+        lines: CoreLineConfig {
+            axis_width,
+            ..CoreLineConfig::default()
+        },
+        ..PlotConfig::default()
+    };
+
+    let thin_config = test_config(0.3);
+    let thick_config = test_config(6.0);
+
+    let make_plot = |config| -> Plot {
+        Plot::new()
+            .plot_config(config)
+            .grid(false)
+            .ticks(false)
+            .line(&[0.0, 1.0], &[10.0, 11.0])
+            .into()
+    };
+
+    let thin_plot = make_plot(thin_config);
+    let thick_plot = make_plot(thick_config);
+    let thin_image = thin_plot.render().expect("thin frame render");
+    let thick_image = thick_plot.render().expect("thick frame render");
+    let thin_area = compute_render_plot_area(&thin_plot);
+    let thick_area = compute_render_plot_area(&thick_plot);
+
+    let thin_y = (thin_area.top() + thin_area.height() * 0.5).round() as u32;
+    let thick_y = (thick_area.top() + thick_area.height() * 0.5).round() as u32;
+    let thin_x = (thin_area.left().round() as u32).saturating_sub(1);
+    let thick_x = (thick_area.left().round() as u32).saturating_sub(1);
+
+    let thin_run = dark_pixel_run_right_from(&thin_image, thin_x, thin_y);
+    let thick_run = dark_pixel_run_right_from(&thick_image, thick_x, thick_y);
+
+    assert!(
+        thick_run > thin_run + 4,
+        "configured thick frame should render visibly wider than thin frame: thin={thin_run}, thick={thick_run}"
+    );
+}
+
+#[test]
+fn test_axis_tick_metrics_follow_line_config() {
+    let test_config = |axis_width, tick_width, tick_length| PlotConfig {
+        figure: FigureConfig::new(4.0, 3.0, 144.0),
+        lines: CoreLineConfig {
+            axis_width,
+            tick_width,
+            tick_length,
+            ..CoreLineConfig::default()
+        },
+        ..PlotConfig::default()
+    };
+
+    let thin = Plot::new()
+        .plot_config(test_config(0.3, 0.2, 2.0))
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .end_series();
+    let thick = Plot::new()
+        .plot_config(test_config(2.4, 1.6, 7.0))
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .end_series();
+
+    let (thin_axis, thin_tick_len, _, thin_tick_width, _) = thin.axis_tick_metrics_px();
+    let (thick_axis, thick_tick_len, _, thick_tick_width, _) = thick.axis_tick_metrics_px();
+
+    assert!(
+        thick_axis > thin_axis * 4.0,
+        "axis width should follow PlotConfig.lines.axis_width: thin={thin_axis}, thick={thick_axis}"
+    );
+    assert!(
+        thick_tick_len > thin_tick_len * 3.0,
+        "tick length should follow PlotConfig.lines.tick_length: thin={thin_tick_len}, thick={thick_tick_len}"
+    );
+    assert!(
+        thick_tick_width > thin_tick_width * 4.0,
+        "tick width should follow PlotConfig.lines.tick_width: thin={thin_tick_width}, thick={thick_tick_width}"
+    );
+}
+
+#[test]
+fn test_rendered_axis_and_tick_geometry_follow_line_config() {
+    let test_config = |axis_width, tick_width, tick_length| PlotConfig {
+        figure: FigureConfig::new(360.0 / 200.0, 260.0 / 200.0, 200.0),
+        lines: CoreLineConfig {
+            axis_width,
+            tick_width,
+            tick_length,
+            ..CoreLineConfig::default()
+        },
+        ..PlotConfig::default()
+    };
+
+    let make_plot = |config| -> Plot {
+        Plot::new()
+            .plot_config(config)
+            .grid(false)
+            .ticks_bottom_left()
+            .tick_direction_outside()
+            .major_ticks_x(3)
+            .major_ticks_y(3)
+            .line(&[0.0, 10.0], &[2.0, 8.0])
+            .into()
+    };
+
+    let thin_plot = make_plot(test_config(0.25, 0.20, 2.0));
+    let thick_plot = make_plot(test_config(2.4, 1.6, 7.0));
+    let thin_image = thin_plot.render().expect("thin axis render");
+    let thick_image = thick_plot.render().expect("thick axis render");
+    let thin_area = compute_render_plot_area(&thin_plot);
+    let thick_area = compute_render_plot_area(&thick_plot);
+
+    let thin_axis_y = (thin_area.top() + thin_area.height() * 0.5).round() as u32;
+    let thick_axis_y = (thick_area.top() + thick_area.height() * 0.5).round() as u32;
+    let thin_axis_x = (thin_area.left().round() as u32).saturating_sub(1);
+    let thick_axis_x = (thick_area.left().round() as u32).saturating_sub(1);
+    let thin_axis_run = dark_pixel_run_right_from(&thin_image, thin_axis_x, thin_axis_y);
+    let thick_axis_run = dark_pixel_run_right_from(&thick_image, thick_axis_x, thick_axis_y);
+
+    let thin_tick_x = (thin_area.left() + thin_area.width() * 0.5).round() as u32;
+    let thick_tick_x = (thick_area.left() + thick_area.width() * 0.5).round() as u32;
+    let thin_tick_y = thin_area.bottom().round() as u32;
+    let thick_tick_y = thick_area.bottom().round() as u32;
+    let thin_tick_run = dark_pixel_run_down_from(&thin_image, thin_tick_x, thin_tick_y);
+    let thick_tick_run = dark_pixel_run_down_from(&thick_image, thick_tick_x, thick_tick_y);
+
+    assert!(
+        thick_axis_run >= thin_axis_run + 3,
+        "rendered border width should follow PlotConfig.lines.axis_width: thin={thin_axis_run}, thick={thick_axis_run}"
+    );
+    assert!(
+        thick_tick_run > thin_tick_run + 8,
+        "rendered tick length should follow PlotConfig.lines.tick_length: thin={thin_tick_run}, thick={thick_tick_run}"
     );
 }
 

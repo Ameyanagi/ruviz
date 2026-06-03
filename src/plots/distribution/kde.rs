@@ -390,7 +390,9 @@ impl PlotRender for KdeData {
         }
 
         // Draw the line
-        let line_width = self.config.line_width;
+        let line_width = renderer
+            .render_scale()
+            .points_to_pixels(self.config.line_width);
         renderer.draw_polyline(&points, color, line_width, LineStyle::Solid)?;
 
         Ok(())
@@ -410,8 +412,9 @@ impl PlotRender for KdeData {
         }
 
         let resolver = StyleResolver::new(theme);
-        let actual_line_width =
-            line_width.unwrap_or_else(|| resolver.line_width(Some(self.config.line_width)));
+        let actual_line_width = renderer.render_scale().points_to_pixels(
+            line_width.unwrap_or_else(|| resolver.line_width(Some(self.config.line_width))),
+        );
 
         // Transform data to screen coordinates
         let points: Vec<(f32, f32)> = self
