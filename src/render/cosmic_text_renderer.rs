@@ -10,11 +10,14 @@ use crate::{
     core::error::{PlottingError, Result},
     render::{
         Color,
-        text::{FontConfig, FontFamily, TextRenderer, get_font_system, get_swash_cache},
+        text::{
+            FontConfig, FontFamily, TextRenderer, blend_premultiplied_source_over, get_font_system,
+            get_swash_cache, with_premultiplied_glyph_pixels,
+        },
     },
 };
-use cosmic_text::{Attrs, Buffer, Color as CosmicColor, Family, Metrics, Shaping};
-use tiny_skia::{Pixmap, PremultipliedColorU8};
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping};
+use tiny_skia::Pixmap;
 
 /// High-quality text renderer using cosmic-text for professional typography
 ///
@@ -42,6 +45,10 @@ impl CosmicTextRenderer {
         font_size: f32,
         color: Color,
     ) -> Result<()> {
+        if color.a == 0 {
+            return Ok(());
+        }
+
         let mut font_system = get_font_system()
             .lock()
             .map_err(|e| PlottingError::RenderError(format!("Failed to lock FontSystem: {}", e)))?;
@@ -70,19 +77,17 @@ impl CosmicTextRenderer {
         buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
-        // Convert color to cosmic-text format
-        let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
-
         // Render each glyph
         for run in buffer.layout_runs() {
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((x, y), 1.0);
 
-                swash_cache.with_pixels(
+                with_premultiplied_glyph_pixels(
+                    &mut swash_cache,
                     &mut font_system,
                     physical_glyph.cache_key,
-                    cosmic_color,
-                    |glyph_x, glyph_y, glyph_color| {
+                    color,
+                    |glyph_x, glyph_y, source| {
                         let pixel_x = physical_glyph.x + glyph_x;
                         let pixel_y = physical_glyph.y + glyph_y;
 
@@ -91,32 +96,12 @@ impl CosmicTextRenderer {
                             && (pixel_x as u32) < pixmap.width()
                             && (pixel_y as u32) < pixmap.height()
                         {
-                            let alpha = glyph_color.a();
-                            if alpha > 0 {
-                                let pixmap_idx =
-                                    (pixel_y as u32 * pixmap.width() + pixel_x as u32) as usize;
-                                let background = pixmap.pixels()[pixmap_idx];
-
-                                // Alpha blend
-                                let alpha_f = alpha as f32 / 255.0;
-                                let inv_alpha = 1.0 - alpha_f;
-
-                                let blended_r = (glyph_color.r() as f32 * alpha_f
-                                    + background.red() as f32 * inv_alpha)
-                                    as u8;
-                                let blended_g = (glyph_color.g() as f32 * alpha_f
-                                    + background.green() as f32 * inv_alpha)
-                                    as u8;
-                                let blended_b = (glyph_color.b() as f32 * alpha_f
-                                    + background.blue() as f32 * inv_alpha)
-                                    as u8;
-
-                                if let Some(blended) = PremultipliedColorU8::from_rgba(
-                                    blended_r, blended_g, blended_b, 255,
-                                ) {
-                                    pixmap.pixels_mut()[pixmap_idx] = blended;
-                                }
-                            }
+                            let pixmap_idx =
+                                (pixel_y as u32 * pixmap.width() + pixel_x as u32) as usize;
+                            blend_premultiplied_source_over(
+                                &mut pixmap.pixels_mut()[pixmap_idx],
+                                source,
+                            );
                         }
                     },
                 );
@@ -177,5 +162,58 @@ impl CosmicTextRenderer {
 impl Default for CosmicTextRenderer {
     fn default() -> Self {
         Self::new().expect("Failed to create CosmicTextRenderer")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::register_font_bytes;
+
+    #[test]
+    fn legacy_renderer_preserves_destination_alpha() {
+        register_font_bytes(include_bytes!("../../assets/NotoSans-Regular.ttf").to_vec()).unwrap();
+
+        let mut renderer = CosmicTextRenderer::new().unwrap();
+        let color = Color::new_rgba(180, 90, 30, 96);
+
+        let mut transparent = Pixmap::new(128, 96).unwrap();
+        renderer
+            .render_text(&mut transparent, "A", 24.0, 64.0, 32.0, color)
+            .unwrap();
+        let transparent_ink: Vec<_> = transparent
+            .pixels()
+            .iter()
+            .copied()
+            .filter(|pixel| pixel.alpha() > 0)
+            .collect();
+        assert!(!transparent_ink.is_empty());
+        assert!(transparent_ink.iter().all(|pixel| pixel.alpha() <= color.a));
+        assert!(transparent_ink.iter().any(|pixel| pixel.alpha() < color.a));
+        assert!(transparent_ink.iter().all(|pixel| {
+            pixel.red() <= pixel.alpha()
+                && pixel.green() <= pixel.alpha()
+                && pixel.blue() <= pixel.alpha()
+        }));
+
+        let mut translucent = Pixmap::new(128, 96).unwrap();
+        translucent.fill(tiny_skia::Color::from_rgba8(40, 80, 120, 128));
+        let before = translucent.pixels().to_vec();
+        renderer
+            .render_text(&mut translucent, "A", 24.0, 64.0, 32.0, color)
+            .unwrap();
+        let changed: Vec<_> = translucent
+            .pixels()
+            .iter()
+            .zip(before.iter())
+            .filter_map(|(after, before)| (after != before).then_some(*after))
+            .collect();
+        assert!(!changed.is_empty());
+        assert!(
+            changed
+                .iter()
+                .all(|pixel| pixel.alpha() >= 128 && pixel.alpha() < 255)
+        );
+        assert!(changed.iter().any(|pixel| pixel.alpha() > 128));
     }
 }

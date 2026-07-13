@@ -52,6 +52,7 @@ palette = "0.7"
 
 # Text rendering - unified on cosmic-text (pure Rust)
 cosmic-text = "0.16"  # Professional text layout, shaping, and font discovery
+swash = "0.2"  # Distinguish premultiplied color outlines from straight color bitmaps
 unicode-width = "0.2"
 typst = { version = "0.13.1", optional = true }
 typst-svg = { version = "0.13.1", optional = true }

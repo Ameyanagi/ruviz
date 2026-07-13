@@ -8161,6 +8161,7 @@ dependencies = [
  "sha2",
  "softbuffer",
  "svg2pdf",
+ "swash",
  "tempfile",
  "thiserror 2.0.18",
  "tiny-skia 0.12.0",

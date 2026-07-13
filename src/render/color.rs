@@ -442,6 +442,49 @@ impl Color {
     };
 }
 
+#[inline]
+pub(crate) fn mul_div_255(value: u8, alpha: u8) -> u8 {
+    (((value as u32 * alpha as u32) + 127) / 255) as u8
+}
+
+#[inline]
+pub(crate) fn premultiply_rgba(r: u8, g: u8, b: u8, alpha: u8) -> [u8; 4] {
+    [
+        mul_div_255(r, alpha),
+        mul_div_255(g, alpha),
+        mul_div_255(b, alpha),
+        alpha,
+    ]
+}
+
+#[inline]
+pub(crate) fn scale_premultiplied_rgba(src: [u8; 4], alpha: u8) -> [u8; 4] {
+    [
+        mul_div_255(src[0], alpha),
+        mul_div_255(src[1], alpha),
+        mul_div_255(src[2], alpha),
+        mul_div_255(src[3], alpha),
+    ]
+}
+
+#[inline]
+pub(crate) fn source_over_premultiplied_rgba(dst: [u8; 4], src: [u8; 4]) -> [u8; 4] {
+    if src[3] == 0 {
+        return dst;
+    }
+    if src[3] == u8::MAX {
+        return src;
+    }
+
+    let inv_alpha = u8::MAX - src[3];
+    [
+        src[0].saturating_add(mul_div_255(dst[0], inv_alpha)),
+        src[1].saturating_add(mul_div_255(dst[1], inv_alpha)),
+        src[2].saturating_add(mul_div_255(dst[2], inv_alpha)),
+        src[3].saturating_add(mul_div_255(dst[3], inv_alpha)),
+    ]
+}
+
 /// Default color palette for automatic color cycling
 impl Color {
     /// Get the default color palette (matplotlib-inspired)
@@ -1070,5 +1113,33 @@ mod tests {
         // Alpha preserved
         let with_alpha = Color::new_rgba(100, 150, 200, 128).lighten(0.5);
         assert_eq!(with_alpha.a, 128);
+    }
+
+    #[test]
+    fn premultiplied_source_over_preserves_destination_alpha() {
+        let coverage = 64;
+        let requested_alpha = 128;
+        let effective_alpha = mul_div_255(coverage, requested_alpha);
+        let source = premultiply_rgba(200, 100, 50, effective_alpha);
+        let destination = [20, 40, 60, 128];
+
+        assert_eq!(source, [25, 13, 6, 32]);
+        assert_eq!(
+            source_over_premultiplied_rgba(destination, source),
+            [42, 48, 58, 144]
+        );
+    }
+
+    #[test]
+    fn premultiplied_source_over_handles_transparent_and_opaque_sources() {
+        let destination = [20, 40, 60, 128];
+        assert_eq!(
+            source_over_premultiplied_rgba(destination, [0, 0, 0, 0]),
+            destination
+        );
+        assert_eq!(
+            source_over_premultiplied_rgba(destination, [10, 20, 30, 255]),
+            [10, 20, 30, 255]
+        );
     }
 }
