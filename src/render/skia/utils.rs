@@ -168,9 +168,8 @@ pub fn map_data_to_pixels(
 
 /// Map data coordinates to pixel coordinates with axis scale transformations
 ///
-/// This version applies logarithmic or symlog transformations to the data
-/// before mapping to pixel coordinates. The base coordinate transformation
-/// is delegated to [`CoordinateTransform`].
+/// The scale-aware coordinate transformation is delegated to
+/// [`CoordinateTransform`].
 pub fn map_data_to_pixels_scaled(
     data_x: f64,
     data_y: f64,
@@ -182,13 +181,17 @@ pub fn map_data_to_pixels_scaled(
     x_scale: &crate::axes::AxisScale,
     y_scale: &crate::axes::AxisScale,
 ) -> (f32, f32) {
-    let normalized_x = x_scale.normalized_position(data_x, data_x_min, data_x_max);
-    let normalized_y = y_scale.normalized_position(data_y, data_y_min, data_y_max);
-
-    let pixel_x = plot_area.left() + normalized_x as f32 * plot_area.width();
-    let pixel_y = plot_area.bottom() - normalized_y as f32 * plot_area.height();
-
-    (pixel_x, pixel_y)
+    let transform = CoordinateTransform::from_plot_area(
+        plot_area.left(),
+        plot_area.top(),
+        plot_area.width(),
+        plot_area.height(),
+        data_x_min,
+        data_x_max,
+        data_y_min,
+        data_y_max,
+    );
+    transform.data_to_screen_scaled(data_x, data_y, x_scale, y_scale)
 }
 
 /// Generate intelligent ticks using matplotlib's MaxNLocator algorithm

@@ -281,8 +281,8 @@ fn project_linear_xy_points(
 ) -> Arc<[Point2f]> {
     let x_range = x_max - x_min;
     let y_range = y_max - y_min;
-    let x_is_degenerate = x_range.abs() < f64::EPSILON;
-    let y_is_degenerate = y_range.abs() < f64::EPSILON;
+    let x_is_degenerate = crate::axes::scale::linear_range_is_degenerate(x_range);
+    let y_is_degenerate = crate::axes::scale::linear_range_is_degenerate(y_range);
     let left = plot_area.left();
     let bottom = plot_area.bottom();
     let width = plot_area.width();
@@ -295,12 +295,12 @@ fn project_linear_xy_points(
             let normalized_x = if x_is_degenerate {
                 0.5
             } else {
-                (x - x_min) / x_range
+                crate::axes::scale::linear_normalized_position_with_range(x, x_min, x_max, x_range)
             };
             let normalized_y = if y_is_degenerate {
                 0.5
             } else {
-                (y - y_min) / y_range
+                crate::axes::scale::linear_normalized_position_with_range(y, y_min, y_max, y_range)
             };
             Point2f::new(
                 left + normalized_x as f32 * width,
@@ -322,13 +322,22 @@ fn project_scaled_xy_points(
     x_scale: &crate::axes::AxisScale,
     y_scale: &crate::axes::AxisScale,
 ) -> Arc<[Point2f]> {
+    let transform = crate::core::CoordinateTransform::from_plot_area(
+        plot_area.left(),
+        plot_area.top(),
+        plot_area.width(),
+        plot_area.height(),
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+    );
+
     x_data
         .iter()
         .zip(y_data.iter())
         .map(|(&x, &y)| {
-            let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
-                x, y, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
-            );
+            let (px, py) = transform.data_to_screen_scaled(x, y, x_scale, y_scale);
             Point2f::new(px, py)
         })
         .collect::<Vec<_>>()
@@ -444,6 +453,66 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
+        assert_eq!(points.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_scaled_projection_uses_core_transform_with_reversed_ranges() {
+        let plot_area = tiny_skia::Rect::from_xywh(20.0, 30.0, 600.0, 400.0);
+        assert!(plot_area.is_some(), "test rectangle should be valid");
+        let Some(plot_area) = plot_area else {
+            return;
+        };
+        let x_data = [100.0, 10.0, 1.0];
+        let y_data = [100.0, 0.0, -100.0];
+
+        let points = project_xy_points(
+            &x_data,
+            &y_data,
+            100.0,
+            1.0,
+            100.0,
+            -100.0,
+            plot_area,
+            &AxisScale::Log,
+            &AxisScale::symlog(1.0),
+        );
+
+        let expected = [
+            Point2f::new(20.0, 430.0),
+            Point2f::new(320.0, 230.0),
+            Point2f::new(620.0, 30.0),
+        ];
+        assert_eq!(points.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn test_linear_projection_fast_path_uses_shared_epsilon_and_extreme_range_rules() {
+        let plot_area = tiny_skia::Rect::from_xywh(10.0, 20.0, 200.0, 100.0);
+        assert!(plot_area.is_some(), "test rectangle should be valid");
+        let Some(plot_area) = plot_area else {
+            return;
+        };
+        let x_data = [0.0, f64::EPSILON / 2.0, f64::EPSILON];
+        let y_data = [-f64::MAX, 0.0, f64::MAX];
+
+        let points = project_xy_points(
+            &x_data,
+            &y_data,
+            0.0,
+            f64::EPSILON,
+            -f64::MAX,
+            f64::MAX,
+            plot_area,
+            &AxisScale::Linear,
+            &AxisScale::Linear,
+        );
+
+        let expected = [
+            Point2f::new(10.0, 120.0),
+            Point2f::new(110.0, 70.0),
+            Point2f::new(210.0, 20.0),
+        ];
         assert_eq!(points.as_ref(), expected.as_slice());
     }
 }

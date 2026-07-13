@@ -26,6 +26,7 @@
 //! let (data_x, data_y) = transform.screen_to_data(screen_x, screen_y);
 //! ```
 
+use crate::axes::AxisScale;
 use std::ops::Range;
 
 /// Unified coordinate transformation between data space and screen space.
@@ -145,32 +146,44 @@ impl CoordinateTransform {
     pub fn data_to_screen(&self, data_x: f64, data_y: f64) -> (f32, f32) {
         let x_range = self.data_x.end - self.data_x.start;
         let y_range = self.data_y.end - self.data_y.start;
-
-        // Normalize to [0, 1], handling division by zero
-        let norm_x = if x_range.abs() > f64::EPSILON {
-            (data_x - self.data_x.start) / x_range
+        let normalized_x = if x_range.abs() > f64::EPSILON {
+            crate::axes::scale::linear_normalized_position_with_range(
+                data_x,
+                self.data_x.start,
+                self.data_x.end,
+                x_range,
+            )
         } else {
             0.5
         };
-
-        let norm_y = if y_range.abs() > f64::EPSILON {
-            (data_y - self.data_y.start) / y_range
+        let normalized_y = if y_range.abs() > f64::EPSILON {
+            crate::axes::scale::linear_normalized_position_with_range(
+                data_y,
+                self.data_y.start,
+                self.data_y.end,
+                y_range,
+            )
         } else {
             0.5
         };
+        self.normalized_to_screen(normalized_x, normalized_y)
+    }
 
-        let screen_width = self.screen_x.end - self.screen_x.start;
-        let screen_height = self.screen_y.end - self.screen_y.start;
-
-        let screen_x = self.screen_x.start + (norm_x as f32) * screen_width;
-        let screen_y = if self.y_inverted {
-            // Y is inverted in screen coordinates (0 at top)
-            self.screen_y.start + (1.0 - norm_y as f32) * screen_height
-        } else {
-            self.screen_y.start + (norm_y as f32) * screen_height
-        };
-
-        (screen_x, screen_y)
+    /// Transform data coordinates to screen coordinates using axis scales.
+    ///
+    /// This is the core scale-aware forward transform. It preserves the direction
+    /// of both data and screen ranges and applies the configured Y-axis inversion.
+    #[inline]
+    pub fn data_to_screen_scaled(
+        &self,
+        data_x: f64,
+        data_y: f64,
+        x_scale: &AxisScale,
+        y_scale: &AxisScale,
+    ) -> (f32, f32) {
+        let normalized_x = x_scale.normalized_position(data_x, self.data_x.start, self.data_x.end);
+        let normalized_y = y_scale.normalized_position(data_y, self.data_y.start, self.data_y.end);
+        self.normalized_to_screen(normalized_x, normalized_y)
     }
 
     /// Transform screen coordinates to data coordinates.
@@ -185,20 +198,53 @@ impl CoordinateTransform {
     /// A tuple of (data_x, data_y) in data space
     #[inline]
     pub fn screen_to_data(&self, screen_x: f32, screen_y: f32) -> (f64, f64) {
+        self.screen_to_data_scaled(screen_x, screen_y, &AxisScale::Linear, &AxisScale::Linear)
+    }
+
+    /// Transform screen coordinates to data coordinates using axis scales.
+    ///
+    /// This is the core scale-aware inverse transform and is the inverse of
+    /// [`Self::data_to_screen_scaled`] for valid, non-degenerate ranges.
+    #[inline]
+    pub fn screen_to_data_scaled(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        x_scale: &AxisScale,
+        y_scale: &AxisScale,
+    ) -> (f64, f64) {
+        let (normalized_x, normalized_y) = self.screen_to_normalized(screen_x, screen_y);
+        let data_x =
+            x_scale.inverse_normalized_position(normalized_x, self.data_x.start, self.data_x.end);
+        let data_y =
+            y_scale.inverse_normalized_position(normalized_y, self.data_y.start, self.data_y.end);
+        (data_x, data_y)
+    }
+
+    #[inline]
+    fn normalized_to_screen(&self, normalized_x: f64, normalized_y: f64) -> (f32, f32) {
         let screen_width = self.screen_x.end - self.screen_x.start;
         let screen_height = self.screen_y.end - self.screen_y.start;
+        let screen_x = self.screen_x.start + normalized_x as f32 * screen_width;
+        let screen_y = if self.y_inverted {
+            self.screen_y.start + (1.0 - normalized_y as f32) * screen_height
+        } else {
+            self.screen_y.start + normalized_y as f32 * screen_height
+        };
+        (screen_x, screen_y)
+    }
 
-        let norm_x = (screen_x - self.screen_x.start) / screen_width;
-        let norm_y = if self.y_inverted {
+    #[inline]
+    fn screen_to_normalized(&self, screen_x: f32, screen_y: f32) -> (f64, f64) {
+        let screen_width = self.screen_x.end - self.screen_x.start;
+        let screen_height = self.screen_y.end - self.screen_y.start;
+        let normalized_x = (screen_x - self.screen_x.start) / screen_width;
+        let normalized_y = if self.y_inverted {
             1.0 - (screen_y - self.screen_y.start) / screen_height
         } else {
             (screen_y - self.screen_y.start) / screen_height
         };
-
-        let data_x = self.data_x.start + (norm_x as f64) * (self.data_x.end - self.data_x.start);
-        let data_y = self.data_y.start + (norm_y as f64) * (self.data_y.end - self.data_y.start);
-
-        (data_x, data_y)
+        (normalized_x as f64, normalized_y as f64)
     }
 
     /// Check if a data point is within the data bounds.
@@ -420,5 +466,80 @@ mod tests {
         let (sx, sy) = transform.screen_center();
         assert!((sx - 450.0).abs() < f32::EPSILON);
         assert!((sy - 350.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_scaled_transform_endpoints_midpoints_and_reversed_screen_ranges() {
+        let transform =
+            CoordinateTransform::new(1.0..100.0, -100.0..100.0, 700.0..100.0, 500.0..50.0);
+        let x_scale = AxisScale::Log;
+        let y_scale = AxisScale::symlog(1.0);
+
+        let (start_x, start_y) = transform.data_to_screen_scaled(1.0, -100.0, &x_scale, &y_scale);
+        assert!((start_x - 700.0).abs() < f32::EPSILON);
+        assert!((start_y - 50.0).abs() < f32::EPSILON);
+
+        let (mid_x, mid_y) = transform.data_to_screen_scaled(10.0, 0.0, &x_scale, &y_scale);
+        assert!((mid_x - 400.0).abs() < f32::EPSILON);
+        assert!((mid_y - 275.0).abs() < f32::EPSILON);
+
+        let (end_x, end_y) = transform.data_to_screen_scaled(100.0, 100.0, &x_scale, &y_scale);
+        assert!((end_x - 100.0).abs() < f32::EPSILON);
+        assert!((end_y - 500.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_scaled_transform_roundtrips_reversed_data_and_screen_ranges() {
+        let transform =
+            CoordinateTransform::new(1000.0..1.0, 100.0..-100.0, 900.0..75.0, 40.0..640.0);
+        let x_scale = AxisScale::Log;
+        let y_scale = AxisScale::symlog(2.0);
+        let points = [(1000.0, 100.0), (100.0, 10.0), (10.0, 0.0), (1.0, -100.0)];
+
+        for (data_x, data_y) in points {
+            let (screen_x, screen_y) =
+                transform.data_to_screen_scaled(data_x, data_y, &x_scale, &y_scale);
+            let (recovered_x, recovered_y) =
+                transform.screen_to_data_scaled(screen_x, screen_y, &x_scale, &y_scale);
+            let x_tolerance = data_x.abs().max(1.0) * 1e-5;
+            let y_tolerance = data_y.abs().max(1.0) * 1e-5;
+            assert!((recovered_x - data_x).abs() <= x_tolerance);
+            assert!((recovered_y - data_y).abs() <= y_tolerance);
+        }
+    }
+
+    #[test]
+    fn test_scaled_linear_transform_uses_exact_epsilon_and_extreme_range_rules() {
+        let min = 1.0;
+        let max = min + f64::EPSILON;
+        let transform =
+            CoordinateTransform::new(min..max, -f64::MAX..f64::MAX, 10.0..210.0, 20.0..120.0);
+        let linear = AxisScale::Linear;
+
+        assert_eq!(
+            transform.data_to_screen_scaled(min, -f64::MAX, &linear, &linear),
+            (10.0, 120.0)
+        );
+        assert_eq!(
+            transform.data_to_screen_scaled(max, f64::MAX, &linear, &linear),
+            (210.0, 20.0)
+        );
+        assert_eq!(
+            transform.screen_to_data_scaled(10.0, 120.0, &linear, &linear),
+            (min, -f64::MAX)
+        );
+        assert_eq!(
+            transform.screen_to_data_scaled(210.0, 20.0, &linear, &linear),
+            (max, f64::MAX)
+        );
+    }
+
+    #[test]
+    fn test_linear_transform_preserves_exact_epsilon_degeneracy_semantics() {
+        let transform =
+            CoordinateTransform::new(1.0..1.0 + f64::EPSILON, 0.0..1.0, 10.0..210.0, 20.0..120.0);
+
+        assert_eq!(transform.data_to_screen(1.0, 0.5).0, 110.0);
+        assert_eq!(transform.data_to_screen(1.0 + f64::EPSILON, 0.5).0, 110.0);
     }
 }
