@@ -3,12 +3,21 @@
 //! Provides `AnimatedObservable<T>` for smooth value transitions and
 //! reactive recording utilities.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use super::easing;
 use super::interpolation::Interpolate;
 use crate::data::observable::{Observable, SubscriberId};
+
+struct AnimationState<T> {
+    target: Option<Arc<T>>,
+    start_value: Option<Arc<T>>,
+    progress: f64,
+    duration_secs: f64,
+    easing_fn: fn(f64) -> f64,
+    animating: bool,
+    generation: u64,
+}
 
 /// An observable value that can animate smoothly between states
 ///
@@ -34,34 +43,19 @@ use crate::data::observable::{Observable, SubscriberId};
 ///     // Use current value...
 /// }
 /// ```
-#[allow(clippy::type_complexity)]
 pub struct AnimatedObservable<T> {
     /// Current interpolated value
     current: Observable<T>,
-    /// Target value we're animating towards
-    target: Arc<RwLock<Option<T>>>,
-    /// Starting value of the animation
-    start_value: Arc<RwLock<Option<T>>>,
-    /// Animation progress (0.0 to 1.0)
-    progress: Arc<RwLock<f64>>,
-    /// Total animation duration in seconds
-    duration_secs: Arc<RwLock<f64>>,
-    /// Easing function
-    easing_fn: Arc<RwLock<fn(f64) -> f64>>,
-    /// Whether an animation is currently in progress
-    animating: Arc<AtomicBool>,
+    // Animation metadata is updated atomically under this lock. Value installation
+    // happens while this state is committed, but subscribers run after its release.
+    state: Arc<RwLock<AnimationState<T>>>,
 }
 
 impl<T: Clone> Clone for AnimatedObservable<T> {
     fn clone(&self) -> Self {
         Self {
             current: self.current.clone(),
-            target: Arc::clone(&self.target),
-            start_value: Arc::clone(&self.start_value),
-            progress: Arc::clone(&self.progress),
-            duration_secs: Arc::clone(&self.duration_secs),
-            easing_fn: Arc::clone(&self.easing_fn),
-            animating: Arc::clone(&self.animating),
+            state: Arc::clone(&self.state),
         }
     }
 }
@@ -71,13 +65,41 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
     pub fn new(value: T) -> Self {
         Self {
             current: Observable::new(value),
-            target: Arc::new(RwLock::new(None)),
-            start_value: Arc::new(RwLock::new(None)),
-            progress: Arc::new(RwLock::new(0.0)),
-            duration_secs: Arc::new(RwLock::new(0.0)),
-            easing_fn: Arc::new(RwLock::new(easing::ease_in_out_quad)),
-            animating: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(RwLock::new(AnimationState {
+                target: None,
+                start_value: None,
+                progress: 0.0,
+                duration_secs: 0.0,
+                easing_fn: easing::ease_in_out_quad,
+                animating: false,
+                generation: 0,
+            })),
         }
+    }
+
+    fn install_value<F>(&self, value: T, update_state: F) -> bool
+    where
+        F: FnOnce(&mut AnimationState<T>) -> bool,
+    {
+        let mut value = Some(value);
+        let changed = self.current.update_if(|current| {
+            let mut state = self.state.write().expect("Animation state lock poisoned");
+            if !update_state(&mut state) {
+                return false;
+            }
+
+            let old_value = std::mem::replace(
+                current,
+                value
+                    .take()
+                    .expect("Animation value installed more than once"),
+            );
+            drop(state);
+            drop(old_value);
+            true
+        });
+        drop(value);
+        changed
     }
 
     /// Start animating to a new target value
@@ -98,38 +120,40 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
     /// * `duration_ms` - Animation duration in milliseconds
     /// * `easing` - Easing function (t -> t')
     pub fn animate_to_with_easing(&self, target: T, duration_ms: u64, easing: fn(f64) -> f64) {
-        // Store start value (current value)
-        {
-            let mut start = self.start_value.write().expect("Lock poisoned");
-            *start = Some(self.current.get());
+        let duration_secs = duration_ms as f64 / 1000.0;
+
+        if duration_secs <= 0.0 {
+            self.install_value(target, |state| {
+                state.generation = state.generation.wrapping_add(1);
+                state.progress = 1.0;
+                state.duration_secs = duration_secs;
+                state.easing_fn = easing;
+                state.animating = false;
+                true
+            });
+            return;
         }
 
-        // Store target
-        {
-            let mut tgt = self.target.write().expect("Lock poisoned");
-            *tgt = Some(target);
-        }
-
-        // Reset progress
-        {
-            let mut prog = self.progress.write().expect("Lock poisoned");
-            *prog = 0.0;
-        }
-
-        // Set duration
-        {
-            let mut dur = self.duration_secs.write().expect("Lock poisoned");
-            *dur = duration_ms as f64 / 1000.0;
-        }
-
-        // Set easing
-        {
-            let mut ease = self.easing_fn.write().expect("Lock poisoned");
-            *ease = easing;
-        }
-
-        // Start animation
-        self.animating.store(true, Ordering::Release);
+        // Hold the current-value read guard until the new state is installed so a
+        // concurrent tick cannot publish between the start snapshot and generation
+        // change. `T::clone` still runs before the animation-state guard is acquired.
+        let current = self.current.read();
+        let start_value = Arc::new(current.clone());
+        let target = Arc::new(target);
+        let (old_start, old_target) = {
+            let mut state = self.state.write().expect("Animation state lock poisoned");
+            state.generation = state.generation.wrapping_add(1);
+            let old_start = state.start_value.replace(start_value);
+            let old_target = state.target.replace(target);
+            state.progress = 0.0;
+            state.duration_secs = duration_secs;
+            state.easing_fn = easing;
+            state.animating = true;
+            (old_start, old_target)
+        };
+        drop(current);
+        // Replacing the last `Arc` may run user-defined `Drop` code.
+        drop((old_start, old_target));
     }
 
     /// Advance the animation by the given time delta
@@ -142,46 +166,49 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
     ///
     /// `true` if the animation is still in progress, `false` if complete
     pub fn tick(&self, delta_time: f64) -> bool {
-        if !self.animating.load(Ordering::Acquire) {
-            return false;
-        }
-
-        let duration = *self.duration_secs.read().expect("Lock poisoned");
-        if duration <= 0.0 {
-            self.animating.store(false, Ordering::Release);
-            return false;
-        }
-
-        // Update progress
-        let new_progress = {
-            let mut prog = self.progress.write().expect("Lock poisoned");
-            *prog += delta_time / duration;
-            if *prog >= 1.0 {
-                *prog = 1.0;
+        let snapshot = {
+            let mut state = self.state.write().expect("Animation state lock poisoned");
+            if !state.animating {
+                return false;
             }
-            *prog
+
+            let (Some(start), Some(target)) = (&state.start_value, &state.target) else {
+                return state.animating;
+            };
+
+            let start = Arc::clone(start);
+            let target = Arc::clone(target);
+            let progress = (state.progress + delta_time / state.duration_secs).min(1.0);
+            state.generation = state.generation.wrapping_add(1);
+
+            (start, target, state.easing_fn, progress, state.generation)
         };
 
-        // Get easing function and compute eased progress
-        let easing_fn = *self.easing_fn.read().expect("Lock poisoned");
-        let eased_t = easing_fn(new_progress);
+        let (start, target, easing_fn, progress, generation) = snapshot;
+        // Easing and interpolation are user-defined code. Compute before taking
+        // any guard that protects animation state or value publication.
+        let value = start.interpolate(&target, easing_fn(progress));
 
-        // Interpolate value
-        let start = self.start_value.read().expect("Lock poisoned");
-        let target = self.target.read().expect("Lock poisoned");
-
-        if let (Some(start_val), Some(target_val)) = (&*start, &*target) {
-            let interpolated = start_val.interpolate(target_val, eased_t);
-            self.current.set(interpolated);
+        // Avoid entering Observable mutation for operations already superseded
+        // while interpolation ran. `install_value` validates again atomically.
+        {
+            let state = self.state.read().expect("Animation state lock poisoned");
+            if state.generation != generation || !state.animating {
+                return state.animating;
+            }
         }
 
-        // Check if complete
-        if new_progress >= 1.0 {
-            self.animating.store(false, Ordering::Release);
-            return false;
-        }
+        self.install_value(value, |state| {
+            if state.generation != generation || !state.animating {
+                return false;
+            }
+            state.progress = progress;
+            state.animating = progress < 1.0;
+            true
+        });
 
-        true
+        // Re-entrant callbacks may have started or stopped an animation.
+        self.is_animating()
     }
 
     /// Get the current value
@@ -191,23 +218,34 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
 
     /// Set the value immediately without animation
     pub fn set_immediate(&self, value: T) {
-        self.stop();
-        self.current.set(value);
+        self.install_value(value, |state| {
+            state.generation = state.generation.wrapping_add(1);
+            state.animating = false;
+            true
+        });
     }
 
     /// Check if an animation is currently in progress
     pub fn is_animating(&self) -> bool {
-        self.animating.load(Ordering::Acquire)
+        self.state
+            .read()
+            .expect("Animation state lock poisoned")
+            .animating
     }
 
     /// Stop any current animation
     pub fn stop(&self) {
-        self.animating.store(false, Ordering::Release);
+        let mut state = self.state.write().expect("Animation state lock poisoned");
+        state.generation = state.generation.wrapping_add(1);
+        state.animating = false;
     }
 
     /// Get the current animation progress (0.0 to 1.0)
     pub fn progress(&self) -> f64 {
-        *self.progress.read().expect("Lock poisoned")
+        self.state
+            .read()
+            .expect("Animation state lock poisoned")
+            .progress
     }
 
     /// Subscribe to value changes
@@ -304,13 +342,12 @@ impl<'a> AnimationGroup<'a> {
     ///
     /// Returns `true` if any animation is still in progress
     pub fn tick(&self, delta_time: f64) -> bool {
-        let mut any_animating = false;
         for anim in &self.animations {
-            if anim.tick(delta_time) {
-                any_animating = true;
-            }
+            anim.tick(delta_time);
         }
-        any_animating
+        // A later member's callback may have started an earlier member after it
+        // was ticked, so determine the result from the post-callback group state.
+        self.is_animating()
     }
 
     /// Check if any animation in the group is still animating
@@ -338,6 +375,70 @@ impl<'a> Default for AnimationGroup<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[derive(Clone)]
+    struct BlockingValue {
+        value: f64,
+        block_next_interpolation: Arc<AtomicBool>,
+        interpolation_started: Arc<Barrier>,
+        continue_interpolation: Arc<Barrier>,
+    }
+
+    impl BlockingValue {
+        fn new(value: f64) -> Self {
+            Self {
+                value,
+                block_next_interpolation: Arc::new(AtomicBool::new(true)),
+                interpolation_started: Arc::new(Barrier::new(2)),
+                continue_interpolation: Arc::new(Barrier::new(2)),
+            }
+        }
+
+        fn with_value(&self, value: f64) -> Self {
+            Self {
+                value,
+                block_next_interpolation: Arc::clone(&self.block_next_interpolation),
+                interpolation_started: Arc::clone(&self.interpolation_started),
+                continue_interpolation: Arc::clone(&self.continue_interpolation),
+            }
+        }
+    }
+
+    impl Interpolate for BlockingValue {
+        fn interpolate(&self, target: &Self, t: f64) -> Self {
+            if self.block_next_interpolation.swap(false, Ordering::AcqRel) {
+                self.interpolation_started.wait();
+                self.continue_interpolation.wait();
+            }
+            self.with_value(self.value + (target.value - self.value) * t)
+        }
+    }
+
+    struct CloneCountingValue {
+        value: f64,
+        clones: Arc<AtomicUsize>,
+    }
+
+    impl Clone for CloneCountingValue {
+        fn clone(&self) -> Self {
+            self.clones.fetch_add(1, Ordering::Relaxed);
+            Self {
+                value: self.value,
+                clones: Arc::clone(&self.clones),
+            }
+        }
+    }
+
+    impl Interpolate for CloneCountingValue {
+        fn interpolate(&self, target: &Self, t: f64) -> Self {
+            Self {
+                value: self.value + (target.value - self.value) * t,
+                clones: Arc::clone(&self.clones),
+            }
+        }
+    }
 
     #[test]
     fn test_animated_observable_new() {
@@ -502,14 +603,250 @@ mod tests {
     }
 
     #[test]
-    fn test_animated_observable_zero_duration() {
+    fn test_animated_observable_zero_duration_installs_target_once() {
         let anim = AnimatedObservable::new(0.0);
+        let change_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_clone = std::sync::Arc::clone(&change_count);
+        anim.subscribe(move || {
+            count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
 
-        // Zero duration should jump immediately
         anim.animate_to(100.0, 0);
-        anim.tick(0.016);
 
-        // Animation should complete immediately
+        assert_eq!(anim.get(), 100.0);
+        assert_eq!(anim.progress(), 1.0);
         assert!(!anim.is_animating());
+        assert_eq!(change_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(!anim.tick(0.016));
+        assert_eq!(change_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_zero_duration_subscriber_observes_completion() {
+        let anim = AnimatedObservable::new(0.0);
+        let observed = Arc::new(std::sync::Mutex::new(None));
+        let callback_anim = anim.clone();
+        let callback_observed = Arc::clone(&observed);
+        anim.subscribe(move || {
+            *callback_observed.lock().expect("observation lock poisoned") =
+                Some((callback_anim.get(), callback_anim.is_animating()));
+        });
+
+        anim.animate_to(100.0, 0);
+        assert_eq!(
+            *observed.lock().expect("observation lock poisoned"),
+            Some((100.0, false))
+        );
+    }
+
+    #[test]
+    fn test_final_tick_preserves_animation_started_by_subscriber() {
+        let anim = AnimatedObservable::new(0.0);
+        let callback_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let callback_count_clone = std::sync::Arc::clone(&callback_count);
+        let callback_anim = anim.clone();
+        anim.subscribe(move || {
+            if callback_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
+                callback_anim.animate_to_with_easing(200.0, 1000, easing::linear);
+            }
+        });
+
+        anim.animate_to_with_easing(100.0, 1000, easing::linear);
+        assert!(anim.tick(1.0));
+
+        assert_eq!(anim.get(), 100.0);
+        assert_eq!(anim.progress(), 0.0);
+        assert!(anim.is_animating());
+
+        assert!(anim.tick(0.5));
+        assert_eq!(anim.get(), 150.0);
+    }
+
+    #[test]
+    fn test_stale_tick_cannot_overwrite_concurrent_immediate_value() {
+        let initial = BlockingValue::new(0.0);
+        let anim = AnimatedObservable::new(initial.clone());
+        anim.animate_to_with_easing(initial.with_value(100.0), 1000, easing::linear);
+
+        let tick_anim = anim.clone();
+        let tick = std::thread::spawn(move || tick_anim.tick(0.5));
+        initial.interpolation_started.wait();
+
+        anim.set_immediate(initial.with_value(500.0));
+        initial.continue_interpolation.wait();
+
+        assert!(!tick.join().expect("tick thread panicked"));
+        assert_eq!(anim.get().value, 500.0);
+        assert!(!anim.is_animating());
+    }
+
+    #[test]
+    fn test_stale_tick_cannot_overwrite_concurrent_animation() {
+        let initial = BlockingValue::new(0.0);
+        let anim = AnimatedObservable::new(initial.clone());
+        anim.animate_to_with_easing(initial.with_value(100.0), 1000, easing::linear);
+
+        let tick_anim = anim.clone();
+        let tick = std::thread::spawn(move || tick_anim.tick(0.5));
+        initial.interpolation_started.wait();
+
+        anim.animate_to_with_easing(initial.with_value(200.0), 1000, easing::linear);
+        initial.continue_interpolation.wait();
+
+        assert!(tick.join().expect("tick thread panicked"));
+        assert_eq!(anim.get().value, 0.0);
+        assert_eq!(anim.progress(), 0.0);
+        assert!(anim.tick(0.5));
+        assert_eq!(anim.get().value, 100.0);
+    }
+
+    #[test]
+    fn test_final_completion_is_not_visible_before_value_installation() {
+        let initial = BlockingValue::new(0.0);
+        let anim = AnimatedObservable::new(initial.clone());
+        anim.animate_to_with_easing(initial.with_value(100.0), 1000, easing::linear);
+
+        let tick_anim = anim.clone();
+        let tick = std::thread::spawn(move || tick_anim.tick(1.0));
+        initial.interpolation_started.wait();
+
+        assert!(anim.is_animating());
+        assert_eq!(anim.get().value, 0.0);
+
+        initial.continue_interpolation.wait();
+        assert!(!tick.join().expect("tick thread panicked"));
+        assert_eq!(anim.get().value, 100.0);
+        assert!(!anim.is_animating());
+    }
+
+    #[test]
+    fn test_final_subscriber_observes_installed_value_and_completion() {
+        let anim = AnimatedObservable::new(0.0);
+        let observed = Arc::new(std::sync::Mutex::new(None));
+        let callback_anim = anim.clone();
+        let callback_observed = Arc::clone(&observed);
+        anim.subscribe(move || {
+            *callback_observed.lock().expect("observation lock poisoned") =
+                Some((callback_anim.get(), callback_anim.is_animating()));
+        });
+
+        anim.animate_to_with_easing(100.0, 1000, easing::linear);
+        assert!(!anim.tick(1.0));
+        assert_eq!(
+            *observed.lock().expect("observation lock poisoned"),
+            Some((100.0, false))
+        );
+    }
+
+    #[test]
+    fn test_tick_does_not_clone_animation_endpoints() {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let anim = AnimatedObservable::new(CloneCountingValue {
+            value: 0.0,
+            clones: Arc::clone(&clones),
+        });
+        anim.animate_to_with_easing(
+            CloneCountingValue {
+                value: 100.0,
+                clones: Arc::clone(&clones),
+            },
+            1000,
+            easing::linear,
+        );
+        clones.store(0, Ordering::Relaxed);
+
+        assert!(anim.tick(0.5));
+        assert_eq!(clones.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_final_tick_preserves_immediate_value_set_by_subscriber() {
+        let anim = AnimatedObservable::new(0.0);
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let callback_anim = anim.clone();
+        let callback_count_clone = Arc::clone(&callback_count);
+        anim.subscribe(move || {
+            if callback_count_clone.fetch_add(1, Ordering::Relaxed) == 0 {
+                callback_anim.set_immediate(250.0);
+            }
+        });
+
+        anim.animate_to_with_easing(100.0, 1000, easing::linear);
+        assert!(!anim.tick(1.0));
+        assert_eq!(anim.get(), 250.0);
+        assert!(!anim.is_animating());
+    }
+
+    #[test]
+    fn test_final_tick_allows_subscriber_to_stop() {
+        let anim = AnimatedObservable::new(0.0);
+        let callback_anim = anim.clone();
+        anim.subscribe(move || callback_anim.stop());
+
+        anim.animate_to_with_easing(100.0, 1000, easing::linear);
+        assert!(!anim.tick(1.0));
+        assert_eq!(anim.get(), 100.0);
+        assert!(!anim.is_animating());
+    }
+
+    #[test]
+    fn test_subscriber_can_recursively_tick() {
+        let anim = AnimatedObservable::new(0.0);
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let callback_anim = anim.clone();
+        let callback_count_clone = Arc::clone(&callback_count);
+        anim.subscribe(move || {
+            if callback_count_clone.fetch_add(1, Ordering::Relaxed) == 0 {
+                callback_anim.tick(0.5);
+            }
+        });
+
+        anim.animate_to_with_easing(100.0, 1000, easing::linear);
+        assert!(!anim.tick(0.5));
+        assert_eq!(anim.get(), 100.0);
+        assert!(!anim.is_animating());
+    }
+
+    #[test]
+    fn test_zero_duration_preserves_animation_started_by_subscriber() {
+        let anim = AnimatedObservable::new(0.0);
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let callback_anim = anim.clone();
+        let callback_count_clone = Arc::clone(&callback_count);
+        anim.subscribe(move || {
+            if callback_count_clone.fetch_add(1, Ordering::Relaxed) == 0 {
+                callback_anim.animate_to_with_easing(200.0, 1000, easing::linear);
+            }
+        });
+
+        anim.animate_to_with_easing(100.0, 0, easing::linear);
+        assert_eq!(anim.get(), 100.0);
+        assert_eq!(anim.progress(), 0.0);
+        assert!(anim.is_animating());
+        assert!(anim.tick(0.5));
+        assert_eq!(anim.get(), 150.0);
+    }
+
+    #[test]
+    fn test_animation_group_reports_animation_started_in_later_callback() {
+        let earlier = AnimatedObservable::new(0.0);
+        let later = AnimatedObservable::new(0.0);
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let callback_earlier = earlier.clone();
+        let callback_count_clone = Arc::clone(&callback_count);
+        later.subscribe(move || {
+            if callback_count_clone.fetch_add(1, Ordering::Relaxed) == 0 {
+                callback_earlier.animate_to_with_easing(100.0, 1000, easing::linear);
+            }
+        });
+
+        let mut group = AnimationGroup::new();
+        group.add(&earlier);
+        group.add(&later);
+        later.animate_to_with_easing(50.0, 1000, easing::linear);
+
+        assert!(group.tick(1.0));
+        assert!(earlier.is_animating());
+        assert!(!later.is_animating());
     }
 }
