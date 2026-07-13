@@ -30,6 +30,7 @@ use swash::scale::Source as SwashSource;
 use tiny_skia::{Pixmap, PixmapMut, PremultipliedColorU8};
 
 use crate::core::error::{PlottingError, Result};
+use crate::render::font_registry::{self, Registration};
 use crate::render::text_anchor::TextPlacementMetrics;
 use crate::render::{
     Color,
@@ -228,6 +229,14 @@ static FONT_SYSTEM: OnceLock<Mutex<FontSystem>> = OnceLock::new();
 /// Global SwashCache singleton - caches rasterized glyphs
 static SWASH_CACHE: OnceLock<Mutex<SwashCache>> = OnceLock::new();
 
+fn font_system_with_registered_fonts(snapshot: &font_registry::RegistrySnapshot) -> FontSystem {
+    let baseline = FontSystem::new();
+    let locale = baseline.locale().to_string();
+    let mut database = baseline.db().clone();
+    font_registry::load_with_registered_precedence(&mut database, snapshot);
+    FontSystem::new_with_locale_and_db(locale, database)
+}
+
 /// Get or initialize the global FontSystem
 ///
 /// The FontSystem is created lazily on first access and reused for all
@@ -236,7 +245,14 @@ static SWASH_CACHE: OnceLock<Mutex<SwashCache>> = OnceLock::new();
 pub fn get_font_system() -> &'static Mutex<FontSystem> {
     FONT_SYSTEM.get_or_init(|| {
         log::debug!("Initializing global FontSystem with system font discovery");
-        Mutex::new(FontSystem::new())
+        let font_system = match font_registry::snapshot() {
+            Ok(snapshot) => font_system_with_registered_fonts(&snapshot),
+            Err(err) => {
+                log::error!("Failed to seed FontSystem from font registry: {err}");
+                FontSystem::new()
+            }
+        };
+        Mutex::new(font_system)
     })
 }
 
@@ -289,8 +305,23 @@ pub fn initialize_text_system() {
 
 /// Register a font from raw bytes with the global text system.
 pub fn register_font_bytes(bytes: Vec<u8>) -> Result<()> {
+    // Preserve the historical successful no-op for malformed or unnamed data.
+    let font = match font_registry::validate(bytes) {
+        Ok(font) => font,
+        Err(err) => {
+            log::warn!("Ignoring font registration: {err}");
+            return Ok(());
+        }
+    };
+
+    // Text rendering always acquires these locks in this order. Holding both
+    // keeps the rebuilt FontSystem and its glyph cache generation consistent.
     let mut font_system = lock_font_system()?;
-    font_system.db_mut().load_font_data(bytes);
+    let mut swash_cache = lock_swash_cache()?;
+    if let Registration::Added(snapshot) = font_registry::register(font)? {
+        *font_system = font_system_with_registered_fonts(&snapshot);
+        *swash_cache = SwashCache::new();
+    }
     Ok(())
 }
 
@@ -1157,6 +1188,48 @@ mod tests {
     }
 
     #[test]
+    fn registered_family_is_available_to_cosmic_text_rendering() {
+        let Some(bytes) = crate::render::font_registry::renamed_test_font(b"PCos") else {
+            return;
+        };
+        let family = "PCos Sans";
+        register_font_bytes(bytes).unwrap();
+
+        let font_system = lock_font_system().unwrap();
+        assert!(font_system.db().faces().any(|face| {
+            face.families
+                .iter()
+                .any(|(registered, _)| registered == family)
+        }));
+        drop(font_system);
+
+        let renderer = TextRenderer::new();
+        let config = FontConfig::new(FontFamily::Name(family.to_string()), 24.0);
+        let mut pixmap = Pixmap::new(96, 64).unwrap();
+        renderer
+            .render_text(&mut pixmap, "P12", 8.0, 8.0, &config, Color::BLACK)
+            .unwrap();
+        assert!(pixmap.pixels().iter().any(|pixel| pixel.alpha() > 0));
+    }
+
+    #[test]
+    fn invalid_registration_remains_a_successful_no_op() {
+        // All successful registrations take this lock before committing to the
+        // registry, so these before/after observations are parallel-test safe.
+        let font_system = lock_font_system().unwrap();
+        let faces_before = font_system.db().len();
+        let generation_before = crate::render::font_registry::snapshot().unwrap().generation;
+
+        assert!(register_font_bytes(b"not a font".to_vec()).is_ok());
+
+        assert_eq!(font_system.db().len(), faces_before);
+        assert_eq!(
+            crate::render::font_registry::snapshot().unwrap().generation,
+            generation_before
+        );
+    }
+
+    #[test]
     fn poisoned_text_lock_returns_error() {
         let mutex = Mutex::new(0_u8);
         let _ = std::panic::catch_unwind(|| {
@@ -1327,10 +1400,8 @@ mod tests {
 
     #[test]
     fn rotated_text_is_pixel_exact_counterclockwise_parity() {
-        register_font_bytes(include_bytes!("../../assets/NotoSans-Regular.ttf").to_vec()).unwrap();
-
         let renderer = TextRenderer::new();
-        let config = FontConfig::new(FontFamily::Name("Noto Sans".to_string()), 32.0);
+        let config = FontConfig::new(FontFamily::SansSerif, 32.0);
         let color = Color::new_rgba(180, 90, 30, 128);
         let mut normal = Pixmap::new(128, 128).unwrap();
         let mut rotated = Pixmap::new(128, 128).unwrap();
