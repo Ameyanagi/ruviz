@@ -1834,7 +1834,12 @@ impl Plot {
             )));
         }
         let (width, height) = self.config_canvas_size();
-        PlottingError::validate_dimensions(width, height)?;
+        if self.render.allow_subplot_dimensions {
+            PlottingError::validate_subplot_dimensions(width, height)?;
+        } else {
+            PlottingError::validate_dimensions(width, height)?;
+        }
+        self.display.config.margins.validate_for_figure(figure)?;
         Ok(())
     }
 

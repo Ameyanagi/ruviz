@@ -484,9 +484,19 @@ impl PlottingError {
     /// Validate dimensions are reasonable
     pub fn validate_dimensions(width: u32, height: u32) -> Result<()> {
         const MIN_DIMENSION: u32 = 100;
-        const MAX_DIMENSION: u32 = 16384; // 16K pixels max
 
         if width < MIN_DIMENSION || height < MIN_DIMENSION {
+            return Err(PlottingError::InvalidDimensions { width, height });
+        }
+
+        Self::validate_subplot_dimensions(width, height)
+    }
+
+    /// Validate child subplot dimensions without the top-level 100-pixel minimum.
+    pub(crate) fn validate_subplot_dimensions(width: u32, height: u32) -> Result<()> {
+        const MAX_DIMENSION: u32 = 16384; // 16K pixels max
+
+        if width == 0 || height == 0 {
             return Err(PlottingError::InvalidDimensions { width, height });
         }
 
@@ -582,6 +592,11 @@ mod tests {
 
         // Too large
         assert!(PlottingError::validate_dimensions(20000, 20000).is_err());
+
+        // Child subplots accept any positive size but retain the maximum.
+        assert!(PlottingError::validate_subplot_dimensions(1, 1).is_ok());
+        assert!(PlottingError::validate_subplot_dimensions(0, 1).is_err());
+        assert!(PlottingError::validate_subplot_dimensions(20000, 1).is_err());
     }
 
     #[test]

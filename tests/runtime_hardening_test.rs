@@ -1,4 +1,4 @@
-use ruviz::core::{FigureConfig, PlotConfig, PlottingError};
+use ruviz::core::{FigureConfig, MarginConfig, PlotConfig, PlottingError};
 use ruviz::prelude::*;
 
 #[test]
@@ -112,4 +112,32 @@ fn render_rejects_non_finite_output_configuration_with_context() {
         .expect_err("non-finite figure dimensions should fail validation");
 
     assert!(matches!(err, PlottingError::InvalidInput(message) if message.contains("width")));
+}
+
+#[test]
+#[allow(clippy::field_reassign_with_default)]
+fn render_rejects_every_malformed_public_margin_shape() {
+    let malformed = [
+        MarginConfig::proportional_custom(f32::NAN, 0.1, 0.1, 0.1),
+        MarginConfig::auto_with_bounds(1.0, 0.5),
+        MarginConfig::fixed(-0.1, 0.2, 0.2, 0.2),
+        MarginConfig::content_driven_custom(f32::INFINITY, true),
+        MarginConfig::content_driven_custom(f32::MAX, true),
+        MarginConfig::Fixed {
+            left: 4.0,
+            right: 3.0,
+            top: 0.2,
+            bottom: 0.2,
+        },
+    ];
+
+    for margins in malformed {
+        let mut config = PlotConfig::default();
+        config.margins = margins;
+        let err = Plot::with_config(config)
+            .render()
+            .expect_err("malformed public margins should fail validation");
+
+        assert!(matches!(err, PlottingError::InvalidInput(_)));
+    }
 }

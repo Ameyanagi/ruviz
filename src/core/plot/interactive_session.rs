@@ -2134,6 +2134,7 @@ fn compute_plot_layout(
     visible: DataBounds,
 ) -> Result<ComputedSessionLayout> {
     let layout_plot = plot.prepared_frame_plot(size_px, scale_factor, time_seconds);
+    layout_plot.validate_runtime_environment()?;
     let dpi = layout_plot.display.config.figure.dpi;
 
     let mut renderer = SkiaRenderer::with_font_family(

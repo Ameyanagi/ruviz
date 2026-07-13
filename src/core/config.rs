@@ -27,6 +27,7 @@
 //! ```
 
 use crate::core::units::{REFERENCE_DPI, RenderScale, in_to_px, pt_to_px, px_to_in};
+use crate::core::{PlottingError, Result};
 use crate::render::{FontFamily, FontWeight};
 
 // =============================================================================
@@ -498,6 +499,108 @@ impl MarginConfig {
             center_plot,
         }
     }
+
+    /// Validate margin values against the configured figure dimensions.
+    pub(crate) fn validate_for_figure(&self, figure: &FigureConfig) -> Result<()> {
+        fn invalid(message: impl Into<String>) -> PlottingError {
+            PlottingError::InvalidInput(message.into())
+        }
+
+        fn validate_non_negative(values: &[(&str, f32)], mode: &str) -> Result<()> {
+            for (name, value) in values {
+                if !value.is_finite() || *value < 0.0 {
+                    return Err(invalid(format!(
+                        "{mode} margin {name} must be a finite, non-negative value ({name}={value})"
+                    )));
+                }
+            }
+            Ok(())
+        }
+
+        match self {
+            MarginConfig::Proportional {
+                left,
+                right,
+                top,
+                bottom,
+            } => {
+                validate_non_negative(
+                    &[
+                        ("left", *left),
+                        ("right", *right),
+                        ("top", *top),
+                        ("bottom", *bottom),
+                    ],
+                    "Proportional",
+                )?;
+                if left + right >= 1.0 || top + bottom >= 1.0 {
+                    return Err(invalid(format!(
+                        "Opposing proportional margins must sum to less than 1 (left+right={}, top+bottom={})",
+                        left + right,
+                        top + bottom
+                    )));
+                }
+            }
+            MarginConfig::Auto { min, max } => {
+                validate_non_negative(&[("min", *min), ("max", *max)], "Auto")?;
+                if min > max {
+                    return Err(invalid(format!(
+                        "Auto margin minimum must not exceed maximum (min={min}, max={max})"
+                    )));
+                }
+                if 2.0 * min >= figure.width || 2.0 * min >= figure.height {
+                    return Err(invalid(format!(
+                        "Auto margin minimum must leave positive figure space (min={min}, width={}, height={})",
+                        figure.width, figure.height
+                    )));
+                }
+            }
+            MarginConfig::Fixed {
+                left,
+                right,
+                top,
+                bottom,
+            } => {
+                validate_non_negative(
+                    &[
+                        ("left", *left),
+                        ("right", *right),
+                        ("top", *top),
+                        ("bottom", *bottom),
+                    ],
+                    "Fixed",
+                )?;
+                if left + right >= figure.width || top + bottom >= figure.height {
+                    return Err(invalid(format!(
+                        "Opposing fixed margins must leave positive figure space (left+right={}, top+bottom={}, width={}, height={})",
+                        left + right,
+                        top + bottom,
+                        figure.width,
+                        figure.height
+                    )));
+                }
+            }
+            MarginConfig::ContentDriven { edge_buffer, .. } => {
+                validate_non_negative(&[("edge_buffer", *edge_buffer)], "Content-driven")?;
+                let edge_buffer_px = pt_to_px(*edge_buffer, figure.dpi);
+                if !edge_buffer_px.is_finite() {
+                    return Err(invalid(format!(
+                        "Content-driven margin edge_buffer is out of pixel range (edge_buffer={edge_buffer}, dpi={})",
+                        figure.dpi
+                    )));
+                }
+                let edge_buffer_in = *edge_buffer / crate::core::POINTS_PER_INCH;
+                if edge_buffer_in >= figure.width / 2.0 || edge_buffer_in >= figure.height / 2.0 {
+                    return Err(invalid(format!(
+                        "Content-driven margin edge_buffer must leave positive figure space (edge_buffer={edge_buffer}, width={}, height={})",
+                        figure.width, figure.height
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for MarginConfig {
@@ -795,14 +898,20 @@ impl PlotConfig {
                 }
             }
             MarginConfig::Auto { min, max } => {
+                let (min, max) =
+                    if min.is_finite() && max.is_finite() && *min >= 0.0 && *min <= *max {
+                        (*min, *max)
+                    } else {
+                        (0.3, 1.0)
+                    };
                 // Estimate top margin based on title
                 let top = if has_title {
                     (crate::core::pt_to_in(self.typography.title_size())
                         + crate::core::pt_to_in(self.spacing.title_pad)
                         + 0.15)
-                        .clamp(*min, *max)
+                        .clamp(min, max)
                 } else {
-                    *min
+                    min
                 };
 
                 // Estimate bottom margin based on xlabel and tick labels
@@ -812,12 +921,12 @@ impl PlotConfig {
                         + crate::core::pt_to_in(self.spacing.label_pad)
                         + crate::core::pt_to_in(self.spacing.tick_pad)
                         + 0.1)
-                        .clamp(*min, *max)
+                        .clamp(min, max)
                 } else {
                     (crate::core::pt_to_in(self.typography.tick_size())
                         + crate::core::pt_to_in(self.spacing.tick_pad)
                         + 0.1)
-                        .clamp(*min, *max)
+                        .clamp(min, max)
                 };
 
                 // Estimate left margin based on ylabel and y-tick labels
@@ -827,14 +936,14 @@ impl PlotConfig {
                         + crate::core::pt_to_in(self.typography.tick_size()) * 4.0
                         + crate::core::pt_to_in(self.spacing.label_pad)
                         + 0.2)
-                        .clamp(*min, *max)
+                        .clamp(min, max)
                 } else {
                     (crate::core::pt_to_in(self.typography.tick_size()) * 4.0 + 0.15)
-                        .clamp(*min, *max)
+                        .clamp(min, max)
                 };
 
                 // Right margin is typically smaller
-                let right = (*min).max(0.2);
+                let right = min.max(0.2);
 
                 ComputedMargins {
                     left,
@@ -1100,6 +1209,28 @@ mod tests {
 
         // Left should be larger than right (for y-axis labels)
         assert!(margins.left > margins.right);
+    }
+
+    #[test]
+    fn test_compute_margins_invalid_auto_bounds_use_fallback() {
+        for margins in [
+            MarginConfig::Auto { min: 1.0, max: 0.5 },
+            MarginConfig::Auto {
+                min: f32::NAN,
+                max: 1.0,
+            },
+        ] {
+            let config = PlotConfig {
+                margins,
+                ..PlotConfig::default()
+            };
+            let computed = config.compute_margins(true, true, true);
+
+            assert!(computed.left.is_finite());
+            assert!(computed.right.is_finite());
+            assert!(computed.top.is_finite());
+            assert!(computed.bottom.is_finite());
+        }
     }
 
     #[test]
