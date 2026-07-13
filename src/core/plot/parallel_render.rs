@@ -150,7 +150,19 @@ impl Plot {
     /// Render plot using parallel processing for multiple series
     #[cfg(feature = "parallel")]
     pub(super) fn render_with_parallel(&self) -> Result<Image> {
+        let frame = self.resolve_frame(0.0)?;
+        let result = self.render_with_parallel_resolved(&frame);
+        if result.is_ok() {
+            frame.acknowledge_rendered(self);
+        }
+        result
+    }
+
+    #[cfg(feature = "parallel")]
+    pub(super) fn render_with_parallel_resolved(&self, frame: &ResolvedFrame<'_>) -> Result<Image> {
         use crate::render::parallel::{DataBounds, PlotArea, RenderSeriesType};
+
+        let resolved_series = &frame.series;
 
         // Start timing for performance measurement
         let start_time = std::time::Instant::now();
@@ -169,15 +181,7 @@ impl Plot {
         let dpi = render_scale.dpi();
         renderer.set_render_scale(render_scale);
 
-        let resolved_series = self.resolved_series(0.0)?;
-        let bounds = if resolved_series
-            .iter()
-            .all(|series| !matches!(series, ResolvedSeries::Other(_)))
-        {
-            self.effective_data_bounds_from_resolved(&resolved_series)?
-        } else {
-            self.effective_data_bounds()?
-        };
+        let bounds = self.effective_data_bounds_from_resolved(resolved_series)?;
         self.validate_axis_scale_ranges_for_render(
             &self.series_mgr.series,
             bounds.0,
@@ -195,7 +199,7 @@ impl Plot {
         });
 
         // Compute content-driven layout FIRST for consistent positioning
-        let content = self.create_plot_content(bounds.2, bounds.3);
+        let content = self.create_plot_content_from_resolved_text(bounds.2, bounds.3, frame);
         let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
             &renderer,
             (scaled_width, scaled_height),
@@ -370,17 +374,11 @@ impl Plot {
 
                 // Process each series type
                 let render_series_type = match &series.series_type {
-                    SeriesType::Line { x_data, y_data } => {
-                        let x_storage;
-                        let y_storage;
-                        let (x_data, y_data) = match resolved {
-                            ResolvedSeries::Line { x, y } => (x.as_ref(), y.as_ref()),
-                            _ => {
-                                x_storage = x_data.resolve(0.0);
-                                y_storage = y_data.resolve(0.0);
-                                (x_storage.as_slice(), y_storage.as_slice())
-                            }
+                    SeriesType::Line { .. } => {
+                        let ResolvedSeries::Line { x, y } = resolved else {
+                            unreachable!("resolved line must match its declarative series");
                         };
+                        let (x_data, y_data) = (x.as_ref(), y.as_ref());
                         // Transform coordinates in parallel
                         let points = self
                             .render
@@ -423,17 +421,11 @@ impl Plot {
                             width: line_width,
                         }
                     }
-                    SeriesType::Scatter { x_data, y_data } => {
-                        let x_storage;
-                        let y_storage;
-                        let (x_data, y_data) = match resolved {
-                            ResolvedSeries::Scatter { x, y } => (x.as_ref(), y.as_ref()),
-                            _ => {
-                                x_storage = x_data.resolve(0.0);
-                                y_storage = y_data.resolve(0.0);
-                                (x_storage.as_slice(), y_storage.as_slice())
-                            }
+                    SeriesType::Scatter { .. } => {
+                        let ResolvedSeries::Scatter { x, y } = resolved else {
+                            unreachable!("resolved scatter must match its declarative series");
                         };
+                        let (x_data, y_data) = (x.as_ref(), y.as_ref());
                         // Transform coordinates in parallel
                         let points = self
                             .render
@@ -457,15 +449,11 @@ impl Plot {
 
                         RenderSeriesType::Scatter { markers }
                     }
-                    SeriesType::Bar { categories, values } => {
-                        let values_storage;
-                        let values = match resolved {
-                            ResolvedSeries::Bar { values, .. } => values.as_ref(),
-                            _ => {
-                                values_storage = values.resolve(0.0);
-                                values_storage.as_slice()
-                            }
+                    SeriesType::Bar { categories, .. } => {
+                        let ResolvedSeries::Bar { values, .. } = resolved else {
+                            unreachable!("resolved bars must match their declarative series");
                         };
+                        let values = values.as_ref();
                         // Convert categories to x-coordinates
                         let x_data: Vec<f64> = (0..categories.len()).map(|i| i as f64).collect();
 
@@ -522,18 +510,13 @@ impl Plot {
 
                         RenderSeriesType::Bar { bars }
                     }
-                    SeriesType::ErrorBars { x_data, y_data, .. }
-                    | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                        let x_storage;
-                        let y_storage;
+                    SeriesType::ErrorBars { .. } | SeriesType::ErrorBarsXY { .. } => {
                         let (x_data, y_data) = match resolved {
                             ResolvedSeries::ErrorBars { x, y, .. }
                             | ResolvedSeries::ErrorBarsXY { x, y, .. } => (x.as_ref(), y.as_ref()),
-                            _ => {
-                                x_storage = x_data.resolve(0.0);
-                                y_storage = y_data.resolve(0.0);
-                                (x_storage.as_slice(), y_storage.as_slice())
-                            }
+                            _ => unreachable!(
+                                "resolved error bars must match their declarative series"
+                            ),
                         };
                         // For now, render error bars as scatter points
                         // Full error bar implementation would be added here
@@ -561,7 +544,9 @@ impl Plot {
                     SeriesType::Histogram { .. } => {
                         let hist_data = match resolved {
                             ResolvedSeries::Histogram { data } => data.clone(),
-                            _ => series.series_type.histogram_data_at(0.0)?,
+                            _ => {
+                                unreachable!("resolved histogram must match its declarative series")
+                            }
                         };
 
                         // Convert histogram to bar format for parallel rendering
@@ -616,15 +601,11 @@ impl Plot {
 
                         RenderSeriesType::Bar { bars }
                     }
-                    SeriesType::BoxPlot { data, config } => {
-                        let data_storage;
-                        let data = match resolved {
-                            ResolvedSeries::BoxPlot { data, .. } => data.as_ref(),
-                            _ => {
-                                data_storage = data.resolve(0.0);
-                                data_storage.as_slice()
-                            }
+                    SeriesType::BoxPlot { config, .. } => {
+                        let ResolvedSeries::BoxPlot { data, .. } = resolved else {
+                            unreachable!("resolved box plot must match its declarative series");
                         };
+                        let data = data.as_ref();
                         // Calculate box plot statistics
                         let box_data = crate::plots::boxplot::calculate_box_plot(&data, config)
                             .map_err(|e| {
@@ -1309,26 +1290,23 @@ impl Plot {
 
         // Draw title if present
         if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.display.title {
-                let title_str = title.resolve(0.0);
-                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
+            if let Some(title) = frame.title.as_deref() {
+                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
             }
         }
 
         // Draw xlabel if present (only for Cartesian plots)
         if self.needs_cartesian_axes() {
             if let Some(ref pos) = layout.xlabel_pos {
-                if let Some(ref xlabel) = self.display.xlabel {
-                    let xlabel_str = xlabel.resolve(0.0);
-                    renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
+                if let Some(xlabel) = frame.xlabel.as_deref() {
+                    renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
                 }
             }
 
             // Draw ylabel if present
             if let Some(ref pos) = layout.ylabel_pos {
-                if let Some(ref ylabel) = self.display.ylabel {
-                    let ylabel_str = ylabel.resolve(0.0);
-                    renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
+                if let Some(ylabel) = frame.ylabel.as_deref() {
+                    renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
                 }
             }
         }
@@ -1653,10 +1631,13 @@ impl Plot {
         Ok((x_min, x_max, y_min, y_max))
     }
 
-    pub(super) fn calculate_data_bounds_from_resolved(
+    pub(super) fn calculate_data_bounds_from_resolved<'frame, 'data>(
         &self,
-        resolved_series: &[ResolvedSeries<'_>],
-    ) -> Result<(f64, f64, f64, f64)> {
+        resolved_series: impl IntoIterator<Item = &'frame ResolvedSeries<'data>>,
+    ) -> Result<(f64, f64, f64, f64)>
+    where
+        'data: 'frame,
+    {
         if let Some(err) = self.pending_ingestion_error() {
             return Err(err);
         }
@@ -1749,7 +1730,102 @@ impl Plot {
                         }
                     }
                 }
-                ResolvedSeries::Other(_) => {}
+                ResolvedSeries::Other(series) => match series {
+                    SeriesType::Heatmap { data } => {
+                        let ((sx_min, sx_max), (sy_min, sy_max)) =
+                            crate::plots::traits::PlotData::data_bounds(data);
+                        x_min = x_min.min(sx_min);
+                        x_max = x_max.max(sx_max);
+                        y_min = y_min.min(sy_min);
+                        y_max = y_max.max(sy_max);
+                    }
+                    SeriesType::Kde { data } => {
+                        for (&x_val, &y_val) in data.x.iter().zip(&data.y) {
+                            if x_val.is_finite() {
+                                x_min = x_min.min(x_val);
+                                x_max = x_max.max(x_val);
+                            }
+                            if y_val.is_finite() {
+                                y_min = y_min.min(y_val);
+                                y_max = y_max.max(y_val);
+                            }
+                        }
+                        y_min = y_min.min(0.0);
+                    }
+                    SeriesType::Ecdf { data } => {
+                        for (&x_val, &y_val) in data.x.iter().zip(&data.y) {
+                            if x_val.is_finite() {
+                                x_min = x_min.min(x_val);
+                                x_max = x_max.max(x_val);
+                            }
+                            if y_val.is_finite() {
+                                y_min = y_min.min(y_val);
+                                y_max = y_max.max(y_val);
+                            }
+                        }
+                        y_min = y_min.min(0.0);
+                    }
+                    SeriesType::Violin { data } => {
+                        let (kde_min, kde_max) = if data.kde.x.is_empty() {
+                            data.range
+                        } else {
+                            (
+                                data.kde.x.first().copied().unwrap_or(data.range.0),
+                                data.kde.x.last().copied().unwrap_or(data.range.1),
+                            )
+                        };
+                        y_min = y_min.min(kde_min);
+                        y_max = y_max.max(kde_max);
+                        x_min = x_min.min(0.0);
+                        x_max = x_max.max(1.0);
+                    }
+                    SeriesType::Boxen { data } => include_plot_data_bounds(
+                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
+                    ),
+                    SeriesType::Quiver { data } => include_quiver_data_bounds(
+                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
+                    ),
+                    SeriesType::Contour { data } => {
+                        for &value in &data.x {
+                            if value.is_finite() {
+                                x_min = x_min.min(value);
+                                x_max = x_max.max(value);
+                            }
+                        }
+                        for &value in &data.y {
+                            if value.is_finite() {
+                                y_min = y_min.min(value);
+                                y_max = y_max.max(value);
+                            }
+                        }
+                    }
+                    SeriesType::Pie { .. } => {
+                        x_min = x_min.min(0.0);
+                        x_max = x_max.max(1.0);
+                        y_min = y_min.min(0.0);
+                        y_max = y_max.max(1.0);
+                    }
+                    SeriesType::Radar { data } => {
+                        for point in data.series.iter().flat_map(|series| &series.polygon) {
+                            if point.0.is_finite() {
+                                x_min = x_min.min(point.0);
+                                x_max = x_max.max(point.0);
+                            }
+                            if point.1.is_finite() {
+                                y_min = y_min.min(point.1);
+                                y_max = y_max.max(point.1);
+                            }
+                        }
+                    }
+                    SeriesType::Polar { data } => {
+                        let label_margin = data.r_max * 1.5;
+                        x_min = -label_margin;
+                        x_max = label_margin;
+                        y_min = -label_margin;
+                        y_max = label_margin;
+                    }
+                    _ => unreachable!("PlotData-backed series resolve to dedicated variants"),
+                },
             }
         }
 

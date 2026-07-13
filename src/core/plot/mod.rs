@@ -47,6 +47,33 @@
 pub(super) const COLORBAR_MARGIN_PX: f32 = 10.0;
 pub(super) const COLORBAR_WIDTH_PX: f32 = 20.0;
 
+#[derive(Clone, Copy)]
+pub(super) enum ErrorValuesRef<'a> {
+    Symmetric(&'a [f64]),
+    Asymmetric(&'a [f64], &'a [f64]),
+}
+
+impl ErrorValuesRef<'_> {
+    fn bounds_at(self, index: usize) -> Option<(f64, f64)> {
+        match self {
+            Self::Symmetric(errors) => errors.get(index).map(|&error| (error, error)),
+            Self::Asymmetric(lower, upper) => match (lower.get(index), upper.get(index)) {
+                (Some(&lower), Some(&upper)) => Some((lower, upper)),
+                _ => None,
+            },
+        }
+    }
+}
+
+impl<'a> From<&'a ErrorValues> for ErrorValuesRef<'a> {
+    fn from(values: &'a ErrorValues) -> Self {
+        match values {
+            ErrorValues::Symmetric(errors) => Self::Symmetric(errors),
+            ErrorValues::Asymmetric(lower, upper) => Self::Asymmetric(lower, upper),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RenderExecutionMode {
     Reference,
@@ -494,8 +521,8 @@ use std::{
 
 use self::data::{ReactiveTeardown, SharedReactiveCallback};
 pub(crate) use self::types::{
-    LegendConfig, PendingIngestionError, PlotSeries, ResolvedSeries, SeriesGroupMeta, SeriesType,
-    TickConfig,
+    LegendConfig, PendingIngestionError, PlotSeries, ResolvedData, ResolvedFrame, ResolvedSeries,
+    ResolvedStreamingPair, SeriesGroupMeta, SeriesType, TickConfig,
 };
 
 #[cfg(feature = "parallel")]

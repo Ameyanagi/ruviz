@@ -1,5 +1,129 @@
 use super::*;
 
+struct CachedResolvedData {
+    source: PlotData,
+    values: Arc<[f64]>,
+}
+
+fn resolve_plot_data<'a>(
+    source: &'a PlotData,
+    time: f64,
+    cache: &mut Vec<CachedResolvedData>,
+    acknowledgements: &mut Vec<crate::data::StreamingBuffer<f64>>,
+) -> ResolvedData<'a> {
+    if let PlotData::Static(values) = source {
+        return ResolvedData::Cow(Cow::Borrowed(values));
+    }
+
+    if let Some(cached) = cache
+        .iter()
+        .find(|cached| cached.source.shares_source(source))
+    {
+        return ResolvedData::shared(Arc::clone(&cached.values));
+    }
+
+    let values = match source {
+        PlotData::Static(_) => unreachable!("static data returned before cache lookup"),
+        PlotData::Temporal(signal) => signal.at(time),
+        PlotData::Reactive(observable) => observable.get(),
+        PlotData::Streaming(stream) => {
+            let (values, captured) = stream.snapshot_for_render();
+            acknowledgements.push(captured);
+            values
+        }
+    };
+    let values = Arc::<[f64]>::from(values);
+    cache.push(CachedResolvedData {
+        source: source.clone(),
+        values: Arc::clone(&values),
+    });
+    ResolvedData::shared(values)
+}
+
+fn resolve_plot_text(source: &PlotText, time: f64, cache: &mut Vec<(PlotText, String)>) -> String {
+    if let ReactiveValue::Static(value) = source {
+        return value.clone();
+    }
+    if let Some((_, value)) = cache
+        .iter()
+        .find(|(cached, _)| cached.shares_source(source))
+    {
+        return value.clone();
+    }
+
+    let value = source.resolve(time);
+    cache.push((source.clone(), value.clone()));
+    value
+}
+
+fn resolve_series_for_frame<'a>(
+    series: &'a SeriesType,
+    time: f64,
+    cache: &mut Vec<CachedResolvedData>,
+    acknowledgements: &mut Vec<crate::data::StreamingBuffer<f64>>,
+) -> Result<ResolvedSeries<'a>> {
+    Ok(match series {
+        SeriesType::Line { x_data, y_data } => ResolvedSeries::Line {
+            x: resolve_plot_data(x_data, time, cache, acknowledgements),
+            y: resolve_plot_data(y_data, time, cache, acknowledgements),
+        },
+        SeriesType::Scatter { x_data, y_data } => ResolvedSeries::Scatter {
+            x: resolve_plot_data(x_data, time, cache, acknowledgements),
+            y: resolve_plot_data(y_data, time, cache, acknowledgements),
+        },
+        SeriesType::Bar { categories, values } => ResolvedSeries::Bar {
+            categories,
+            values: resolve_plot_data(values, time, cache, acknowledgements),
+        },
+        SeriesType::ErrorBars {
+            x_data,
+            y_data,
+            y_errors,
+        } => ResolvedSeries::ErrorBars {
+            x: resolve_plot_data(x_data, time, cache, acknowledgements),
+            y: resolve_plot_data(y_data, time, cache, acknowledgements),
+            y_errors: resolve_plot_data(y_errors, time, cache, acknowledgements),
+        },
+        SeriesType::ErrorBarsXY {
+            x_data,
+            y_data,
+            x_errors,
+            y_errors,
+        } => ResolvedSeries::ErrorBarsXY {
+            x: resolve_plot_data(x_data, time, cache, acknowledgements),
+            y: resolve_plot_data(y_data, time, cache, acknowledgements),
+            x_errors: resolve_plot_data(x_errors, time, cache, acknowledgements),
+            y_errors: resolve_plot_data(y_errors, time, cache, acknowledgements),
+        },
+        SeriesType::Histogram {
+            data,
+            config,
+            prepared,
+        } => {
+            let resolved = resolve_plot_data(data, time, cache, acknowledgements);
+            if resolved.is_empty() {
+                return Err(PlottingError::EmptyDataSet);
+            }
+            PlottingError::validate_data(resolved.as_ref())?;
+            let data = if let Some(prepared) = prepared {
+                prepared.clone()
+            } else {
+                crate::plots::histogram::calculate_histogram(&resolved.as_ref(), config).map_err(
+                    |error| {
+                        PlottingError::RenderError(format!("Histogram calculation failed: {error}"))
+                    },
+                )?
+            };
+            ResolvedSeries::Histogram { data }
+        }
+        SeriesType::BoxPlot { data, config } => ResolvedSeries::BoxPlot {
+            data: resolve_plot_data(data, time, cache, acknowledgements),
+            config: config.clone(),
+        },
+        other => ResolvedSeries::Other(other),
+    })
+}
+
 impl Plot {
     /// Create a new Plot with default settings
     ///
@@ -1099,12 +1223,79 @@ impl Plot {
         }
     }
 
-    pub(super) fn resolved_series(&self, time: f64) -> Result<Vec<ResolvedSeries<'_>>> {
-        self.series_mgr
-            .series
-            .iter()
-            .map(|series| series.resolve_for_render(time))
-            .collect()
+    pub(super) fn resolve_frame(&self, time: f64) -> Result<ResolvedFrame<'_>> {
+        let mut data_cache = Vec::new();
+        let mut streaming_acknowledgements = Vec::new();
+        let mut paired_acknowledgements: Vec<ResolvedStreamingPair> = Vec::new();
+        let mut resolved = Vec::with_capacity(self.series_mgr.series.len());
+
+        for series in &self.series_mgr.series {
+            if series.has_live_streaming_pair() {
+                let stream = series
+                    .streaming_source
+                    .as_ref()
+                    .expect("live streaming pair must retain its source");
+                let snapshot_index = paired_acknowledgements
+                    .iter()
+                    .position(|snapshot| snapshot.source.shares_source(stream));
+                let snapshot_index = if let Some(index) = snapshot_index {
+                    index
+                } else {
+                    let (x, y, sequence, render_state) = stream.snapshot().into_parts();
+                    paired_acknowledgements.push(ResolvedStreamingPair {
+                        source: stream.clone(),
+                        x: Arc::from(x),
+                        y: Arc::from(y),
+                        sequence,
+                        render_state,
+                    });
+                    paired_acknowledgements.len() - 1
+                };
+                let snapshot = &paired_acknowledgements[snapshot_index];
+                let x = Arc::clone(&snapshot.x);
+                let y = Arc::clone(&snapshot.y);
+                resolved.push(match &series.series_type {
+                    SeriesType::Line { .. } => ResolvedSeries::Line {
+                        x: ResolvedData::shared(x),
+                        y: ResolvedData::shared(y),
+                    },
+                    SeriesType::Scatter { .. } => ResolvedSeries::Scatter {
+                        x: ResolvedData::shared(x),
+                        y: ResolvedData::shared(y),
+                    },
+                    _ => unreachable!("live paired source is only used by line/scatter"),
+                });
+            } else {
+                resolved.push(resolve_series_for_frame(
+                    &series.series_type,
+                    time,
+                    &mut data_cache,
+                    &mut streaming_acknowledgements,
+                )?);
+            }
+        }
+
+        let mut text_cache = Vec::new();
+        Ok(ResolvedFrame {
+            series: resolved,
+            title: self
+                .display
+                .title
+                .as_ref()
+                .map(|title| resolve_plot_text(title, time, &mut text_cache)),
+            xlabel: self
+                .display
+                .xlabel
+                .as_ref()
+                .map(|label| resolve_plot_text(label, time, &mut text_cache)),
+            ylabel: self
+                .display
+                .ylabel
+                .as_ref()
+                .map(|label| resolve_plot_text(label, time, &mut text_cache)),
+            streaming_acknowledgements,
+            paired_acknowledgements,
+        })
     }
 
     pub(super) fn snapshot_series(&self, time: f64) -> Vec<PlotSeries> {
@@ -1176,15 +1367,90 @@ impl Plot {
         resolved
     }
 
+    pub(super) fn resolved_style_shell(&self, time: f64) -> Plot {
+        let mut resolved = self.clone_for_resolved_frame();
+        for series in &mut resolved.series_mgr.series {
+            series.resolve_style_sources(time);
+        }
+        resolved
+    }
+
+    pub(super) fn clone_for_resolved_frame(&self) -> Plot {
+        Plot {
+            display: self.display.clone(),
+            series_mgr: SeriesManager {
+                series: self
+                    .series_mgr
+                    .series
+                    .iter()
+                    .map(PlotSeries::clone_for_resolved_frame)
+                    .collect(),
+                auto_color_index: self.series_mgr.auto_color_index,
+            },
+            layout: self.layout.clone(),
+            render: self.render.clone(),
+            annotations: self.annotations.clone(),
+            null_policy: self.null_policy,
+            pending_ingestion_error: self.pending_ingestion_error.clone(),
+            series_groups: self.series_groups.clone(),
+            next_group_id: self.next_group_id,
+        }
+    }
+
     pub(crate) fn prepared_frame_plot(
         &self,
         size_px: (u32, u32),
         scale_factor: f32,
         time: f64,
     ) -> Plot {
+        self.configure_prepared_frame_plot(self.clone(), size_px, scale_factor, time, true)
+    }
+
+    pub(crate) fn prepared_frame_shell(
+        &self,
+        size_px: (u32, u32),
+        scale_factor: f32,
+        time: f64,
+    ) -> Plot {
+        self.configure_prepared_frame_plot(
+            self.clone_for_resolved_frame(),
+            size_px,
+            scale_factor,
+            time,
+            false,
+        )
+    }
+
+    fn configure_prepared_frame_plot(
+        &self,
+        mut plot: Plot,
+        size_px: (u32, u32),
+        scale_factor: f32,
+        time: f64,
+        resolve_text: bool,
+    ) -> Plot {
         let device_scale = Self::sanitize_prepared_scale_factor(scale_factor);
         let size_px = (size_px.0.max(1), size_px.1.max(1));
-        let mut plot = self.resolved_plot(time);
+        for series in &mut plot.series_mgr.series {
+            series.resolve_style_sources(time);
+        }
+        if resolve_text {
+            plot.display.title = self
+                .display
+                .title
+                .as_ref()
+                .map(|title| data::PlotText::Static(title.resolve(time)));
+            plot.display.xlabel = self
+                .display
+                .xlabel
+                .as_ref()
+                .map(|label| data::PlotText::Static(label.resolve(time)));
+            plot.display.ylabel = self
+                .display
+                .ylabel
+                .as_ref()
+                .map(|label| data::PlotText::Static(label.resolve(time)));
+        }
         plot.render.allow_subplot_dimensions = true;
         let dpi = Self::exact_canvas_dpi_for_figure(
             &plot.display.config.figure,
@@ -1233,6 +1499,17 @@ impl Plot {
                 .series
                 .iter()
                 .any(PlotSeries::has_temporal_sources)
+    }
+
+    pub(super) fn has_dynamic_style_sources(&self) -> bool {
+        self.series_mgr.series.iter().any(|series| {
+            series.color_source.is_some()
+                || series.line_width_source.is_some()
+                || series.line_style_source.is_some()
+                || series.marker_style_source.is_some()
+                || series.marker_size_source.is_some()
+                || series.alpha_source.is_some()
+        })
     }
 
     pub(crate) fn collect_reactive_versions(&self) -> Vec<u64> {

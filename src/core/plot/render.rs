@@ -55,9 +55,35 @@ impl Plot {
         Self::annotation_render_layer(annotation) == AnnotationRenderLayer::Overlay
     }
 
+    pub(super) fn validate_before_frame_resolution(&self) -> Result<()> {
+        self.validate_runtime_environment()?;
+        if let Some(error) = self.pending_ingestion_error() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn render_image_with_mode(&self, mode: RenderExecutionMode) -> Result<Image> {
-        self.render_image_with_mode_and_diagnostics(mode)
+        self.render_image_with_mode_at(mode, 0.0)
+    }
+
+    fn render_image_with_mode_at(&self, mode: RenderExecutionMode, time: f64) -> Result<Image> {
+        self.render_image_with_mode_and_diagnostics_at(mode, time)
             .map(|(image, _)| image)
+    }
+
+    fn render_dynamic_style_frame(
+        &self,
+        mode: RenderExecutionMode,
+        time: f64,
+    ) -> Result<(Image, RenderDiagnostics)> {
+        let frame = self.resolve_frame(time)?;
+        let style_shell = self.resolved_style_shell(time);
+        let result = style_shell.render_image_with_resolved_frame(mode, &frame);
+        if result.is_ok() {
+            frame.acknowledge_rendered(self);
+        }
+        result
     }
 
     pub(crate) fn validate_axis_scale_ranges_for_render(
@@ -187,15 +213,17 @@ impl Plot {
         }
     }
 
-    fn render_renderer_with_mode_and_series_renderer<F>(
+    pub(super) fn render_renderer_with_resolved_frame<F>(
         &self,
         mode: RenderExecutionMode,
+        frame: &ResolvedFrame<'_>,
         draw_series: F,
     ) -> Result<(SkiaRenderer, RenderDiagnostics)>
     where
         F: FnOnce(
             &Plot,
             &[PlotSeries],
+            &[ResolvedSeries<'_>],
             &mut SkiaRenderer,
             tiny_skia::Rect,
             f64,
@@ -211,12 +239,11 @@ impl Plot {
             return Err(err);
         }
 
-        let snapshot_series = self.snapshot_series(0.0);
-        if !snapshot_series.is_empty() {
-            Self::validate_series_list(&snapshot_series)?;
+        if !frame.series.is_empty() {
+            Self::validate_resolved_series(&frame.series)?;
         }
 
-        let total_points = Self::calculate_total_points_for_series(&snapshot_series);
+        let total_points = Self::calculate_total_points_from_resolved(&frame.series);
         const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
         if total_points > LARGE_DATASET_THRESHOLD {
             log::warn!(
@@ -242,16 +269,23 @@ impl Plot {
         renderer.set_render_scale(render_scale);
 
         let (x_min, x_max, y_min, y_max) =
-            self.effective_main_panel_bounds_for_series(&snapshot_series)?;
-        self.validate_axis_scale_ranges_for_render(&snapshot_series, x_min, x_max, y_min, y_max)?;
+            self.effective_main_panel_bounds_from_resolved(&self.series_mgr.series, &frame.series)?;
+        self.validate_axis_scale_ranges_for_render(
+            &self.series_mgr.series,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
 
-        let bar_categories: Option<Vec<String>> = self.series_mgr.series.iter().find_map(|s| {
-            if let SeriesType::Bar { categories, .. } = &s.series_type {
-                Some(categories.clone())
-            } else {
-                None
-            }
-        });
+        let bar_categories: Option<Cow<'_, [String]>> =
+            self.series_mgr.series.iter().find_map(|s| {
+                if let SeriesType::Bar { categories, .. } = &s.series_type {
+                    Some(Cow::Borrowed(categories.as_slice()))
+                } else {
+                    None
+                }
+            });
 
         let violin_data: Vec<(String, f64)> = self
             .series_mgr
@@ -274,14 +308,12 @@ impl Plot {
 
         let is_violin_categorical = !violin_categories.is_empty();
 
-        let bar_categories = bar_categories.or_else(|| {
-            if is_violin_categorical {
-                Some(violin_categories.clone())
-            } else {
-                None
-            }
+        let bar_categories = bar_categories.or(if is_violin_categorical {
+            Some(Cow::Borrowed(violin_categories.as_slice()))
+        } else {
+            None
         });
-        let content = self.create_plot_content(y_min, y_max);
+        let content = self.create_plot_content_from_resolved_text(y_min, y_max, frame);
         let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
             &renderer,
             (scaled_width, scaled_height),
@@ -325,7 +357,7 @@ impl Plot {
             .map(|&tick| Self::scaled_y_pixel(tick, y_min, y_max, plot_area, &self.layout.y_scale))
             .collect();
 
-        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
+        let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
         if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
@@ -353,7 +385,7 @@ impl Plot {
             plot_area,
             x_min,
             x_max,
-            bar_categories.as_ref().map(Vec::len),
+            bar_categories.as_ref().map(|categories| categories.len()),
             &violin_positions,
         );
 
@@ -467,23 +499,20 @@ impl Plot {
         }
 
         if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.display.title {
-                let title_str = title.resolve(0.0);
-                renderer.draw_title_at(pos, &title_str, self.display.theme.foreground)?;
+            if let Some(title) = frame.title.as_deref() {
+                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
             }
         }
 
         if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(ref xlabel) = self.display.xlabel {
-                let xlabel_str = xlabel.resolve(0.0);
-                renderer.draw_xlabel_at(pos, &xlabel_str, self.display.theme.foreground)?;
+            if let Some(xlabel) = frame.xlabel.as_deref() {
+                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
             }
         }
 
         if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ref ylabel) = self.display.ylabel {
-                let ylabel_str = ylabel.resolve(0.0);
-                renderer.draw_ylabel_at(pos, &ylabel_str, self.display.theme.foreground)?;
+            if let Some(ylabel) = frame.ylabel.as_deref() {
+                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
             }
         }
 
@@ -502,7 +531,8 @@ impl Plot {
 
         draw_series(
             self,
-            &snapshot_series,
+            &self.series_mgr.series,
+            &frame.series,
             &mut renderer,
             plot_area,
             x_min,
@@ -543,6 +573,7 @@ impl Plot {
     fn try_render_parallel_image_with_diagnostics(
         &self,
         mode: RenderExecutionMode,
+        frame: &ResolvedFrame<'_>,
     ) -> Result<Option<(Image, RenderDiagnostics)>> {
         if !mode.allows_parallel() {
             return Ok(None);
@@ -553,16 +584,16 @@ impl Plot {
             return Err(err);
         }
 
-        let snapshot_series = self.snapshot_series(0.0);
-        if !snapshot_series.is_empty() {
-            Self::validate_series_list(&snapshot_series)?;
+        if !frame.series.is_empty() {
+            Self::validate_resolved_series(&frame.series)?;
         }
 
-        let total_points = Self::calculate_total_points_for_series(&snapshot_series);
-        let series_count = snapshot_series.len();
-        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&snapshot_series);
+        let total_points = Self::calculate_total_points_from_resolved(&frame.series);
+        let series_count = frame.series.len();
+        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&self.series_mgr.series);
         let parallel_safe_for_markers =
-            snapshot_series
+            self.series_mgr
+                .series
                 .iter()
                 .all(|series| match &series.series_type {
                     SeriesType::Line { .. } => {
@@ -584,7 +615,7 @@ impl Plot {
             return Ok(None);
         }
 
-        let image = self.render_with_parallel()?;
+        let image = self.render_with_parallel_resolved(frame)?;
         let diagnostics = RenderDiagnostics {
             render_mode: match mode {
                 RenderExecutionMode::Reference => "reference",
@@ -599,12 +630,14 @@ impl Plot {
     pub(super) fn render_image_with_mode_and_series_renderer<F>(
         &self,
         mode: RenderExecutionMode,
+        time: f64,
         draw_series: F,
     ) -> Result<(Image, RenderDiagnostics)>
     where
         F: FnOnce(
             &Plot,
             &[PlotSeries],
+            &[ResolvedSeries<'_>],
             &mut SkiaRenderer,
             tiny_skia::Rect,
             f64,
@@ -615,23 +648,45 @@ impl Plot {
             RenderExecutionMode,
         ) -> Result<()>,
     {
+        self.validate_before_frame_resolution()?;
+        let frame = self.resolve_frame(time)?;
         #[cfg(feature = "parallel")]
-        if let Some(parallel_render) = self.try_render_parallel_image_with_diagnostics(mode)? {
+        if let Some(parallel_render) =
+            self.try_render_parallel_image_with_diagnostics(mode, &frame)?
+        {
+            frame.acknowledge_rendered(self);
             return Ok(parallel_render);
         }
 
-        self.render_renderer_with_mode_and_series_renderer(mode, draw_series)
+        let result = self
+            .render_renderer_with_resolved_frame(mode, &frame, draw_series)
+            .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics));
+        if result.is_ok() {
+            frame.acknowledge_rendered(self);
+        }
+        result
+    }
+
+    pub(super) fn render_image_with_resolved_frame(
+        &self,
+        mode: RenderExecutionMode,
+        frame: &ResolvedFrame<'_>,
+    ) -> Result<(Image, RenderDiagnostics)> {
+        self.render_renderer_with_frame_and_diagnostics(mode, frame)
             .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics))
     }
 
-    fn render_renderer_with_mode_and_diagnostics(
+    pub(super) fn render_renderer_with_frame_and_diagnostics(
         &self,
         mode: RenderExecutionMode,
+        frame: &ResolvedFrame<'_>,
     ) -> Result<(SkiaRenderer, RenderDiagnostics)> {
-        self.render_renderer_with_mode_and_series_renderer(
+        self.render_renderer_with_resolved_frame(
             mode,
+            frame,
             |plot,
              snapshot_series,
+             resolved_series,
              renderer,
              plot_area,
              x_min,
@@ -642,6 +697,7 @@ impl Plot {
              mode| {
                 if !plot.render_series_collection_auto_datashader(
                     snapshot_series,
+                    resolved_series,
                     renderer,
                     plot_area,
                     x_min,
@@ -653,6 +709,7 @@ impl Plot {
                 )? {
                     plot.render_series_collection_normal(
                         snapshot_series,
+                        resolved_series,
                         renderer,
                         plot_area,
                         x_min,
@@ -672,10 +729,20 @@ impl Plot {
         &self,
         mode: RenderExecutionMode,
     ) -> Result<(Image, RenderDiagnostics)> {
+        self.render_image_with_mode_and_diagnostics_at(mode, 0.0)
+    }
+
+    fn render_image_with_mode_and_diagnostics_at(
+        &self,
+        mode: RenderExecutionMode,
+        time: f64,
+    ) -> Result<(Image, RenderDiagnostics)> {
         self.render_image_with_mode_and_series_renderer(
             mode,
+            time,
             |plot,
              snapshot_series,
+             resolved_series,
              renderer,
              plot_area,
              x_min,
@@ -686,6 +753,7 @@ impl Plot {
              mode| {
                 if !plot.render_series_collection_auto_datashader(
                     snapshot_series,
+                    resolved_series,
                     renderer,
                     plot_area,
                     x_min,
@@ -697,6 +765,7 @@ impl Plot {
                 )? {
                     plot.render_series_collection_normal(
                         snapshot_series,
+                        resolved_series,
                         renderer,
                         plot_area,
                         x_min,
@@ -712,14 +781,6 @@ impl Plot {
         )
     }
 
-    fn render_png_bytes_with_mode_and_diagnostics(
-        &self,
-        mode: RenderExecutionMode,
-    ) -> Result<(Vec<u8>, RenderDiagnostics)> {
-        let (renderer, diagnostics) = self.render_renderer_with_mode_and_diagnostics(mode)?;
-        Ok((renderer.encode_png_bytes()?, diagnostics))
-    }
-
     fn public_png_render_mode_for_series(&self, series_list: &[PlotSeries]) -> RenderExecutionMode {
         let total_points = Self::calculate_total_points_for_series(series_list);
         if self.should_use_configured_datashader_for_public_png(series_list, total_points) {
@@ -730,8 +791,24 @@ impl Plot {
     }
 
     fn public_png_render_mode(&self) -> RenderExecutionMode {
-        let snapshot_series = self.snapshot_series(0.0);
-        self.public_png_render_mode_for_series(&snapshot_series)
+        self.resolve_frame(0.0)
+            .map_or(RenderExecutionMode::Reference, |frame| {
+                self.public_png_render_mode_from_resolved(&frame.series)
+            })
+    }
+
+    fn public_png_render_mode_from_resolved(
+        &self,
+        resolved_series: &[ResolvedSeries<'_>],
+    ) -> RenderExecutionMode {
+        let total_points = Self::calculate_total_points_from_resolved(resolved_series);
+        if self
+            .should_use_configured_datashader_for_public_png(&self.series_mgr.series, total_points)
+        {
+            RenderExecutionMode::Optimized
+        } else {
+            RenderExecutionMode::Reference
+        }
     }
 
     fn should_use_configured_datashader_for_public_png(
@@ -782,25 +859,17 @@ impl Plot {
     /// streaming sources use their latest values. Use `render_at()` to sample
     /// temporal sources at a different time.
     pub fn render(&self) -> Result<Image> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let image = resolved.render()?;
-            resolved.acknowledge_rendered_snapshot(self);
-            return Ok(image);
-        }
-
-        self.render_image_with_mode(RenderExecutionMode::Reference)
+        self.render_at(0.0)
     }
 
     #[cfg(test)]
     pub(super) fn render_optimized_for_test(&self) -> Result<Image> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let image = resolved.render_optimized_for_test()?;
-            resolved.acknowledge_rendered_snapshot(self);
-            return Ok(image);
+        self.validate_before_frame_resolution()?;
+        if self.has_dynamic_style_sources() {
+            return self
+                .render_dynamic_style_frame(RenderExecutionMode::Optimized, 0.0)
+                .map(|(image, _)| image);
         }
-
         self.render_image_with_mode(RenderExecutionMode::Optimized)
     }
 
@@ -808,13 +877,10 @@ impl Plot {
     pub(super) fn render_optimized_for_test_with_diagnostics(
         &self,
     ) -> Result<(Image, RenderDiagnostics)> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let result = resolved.render_optimized_for_test_with_diagnostics()?;
-            resolved.acknowledge_rendered_snapshot(self);
-            return Ok(result);
+        self.validate_before_frame_resolution()?;
+        if self.has_dynamic_style_sources() {
+            return self.render_dynamic_style_frame(RenderExecutionMode::Optimized, 0.0);
         }
-
         self.render_image_with_mode_and_diagnostics(RenderExecutionMode::Optimized)
     }
 
@@ -847,14 +913,13 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn render_at(&self, time: f64) -> Result<Image> {
-        if !self.is_reactive() {
-            return self.render();
+        self.validate_before_frame_resolution()?;
+        if self.has_dynamic_style_sources() {
+            return self
+                .render_dynamic_style_frame(RenderExecutionMode::Reference, time)
+                .map(|(image, _)| image);
         }
-
-        let resolved = self.resolved_plot(time);
-        let image = resolved.render()?;
-        resolved.acknowledge_rendered_snapshot(self);
-        Ok(image)
+        self.render_image_with_mode_at(RenderExecutionMode::Reference, time)
     }
 
     /// Render the plot and encode it as PNG bytes.
@@ -921,21 +986,20 @@ impl Plot {
 
     /// Render the plot to an external renderer (used for subplots)
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            resolved.render_to_renderer(renderer, dpi)?;
-            resolved.acknowledge_rendered_snapshot(self);
-            return Ok(());
-        }
-        if let Some(err) = self.pending_ingestion_error() {
-            return Err(err);
-        }
-        let mut plot = self.clone();
+        self.validate_before_frame_resolution()?;
+        let frame = self.resolve_frame(0.0)?;
+        let mut plot = if self.has_dynamic_style_sources() {
+            self.resolved_style_shell(0.0)
+        } else {
+            self.clone_for_resolved_frame()
+        };
         plot.display.config.figure.dpi = dpi;
-        let image = plot
-            .set_subplot_output_pixels(renderer.width(), renderer.height())
-            .render_image_with_mode(RenderExecutionMode::Reference)?;
-        renderer.draw_subplot(image, 0, 0)
+        let plot = plot.set_subplot_output_pixels(renderer.width(), renderer.height());
+        let (subplot_renderer, _) = plot
+            .render_renderer_with_frame_and_diagnostics(RenderExecutionMode::Reference, &frame)?;
+        renderer.draw_subplot(subplot_renderer.into_image(), 0, 0)?;
+        frame.acknowledge_rendered(self);
+        Ok(())
     }
 
     /// Calculate total number of data points across all series
@@ -944,6 +1008,44 @@ impl Plot {
         y_min: f64,
         y_max: f64,
         time: f64,
+    ) -> PlotContent {
+        self.create_plot_content_with_text(
+            y_min,
+            y_max,
+            self.display.title.as_ref().map(|title| title.resolve(time)),
+            self.display
+                .xlabel
+                .as_ref()
+                .map(|label| label.resolve(time)),
+            self.display
+                .ylabel
+                .as_ref()
+                .map(|label| label.resolve(time)),
+        )
+    }
+
+    pub(super) fn create_plot_content_from_resolved_text(
+        &self,
+        y_min: f64,
+        y_max: f64,
+        frame: &ResolvedFrame<'_>,
+    ) -> PlotContent {
+        self.create_plot_content_with_text(
+            y_min,
+            y_max,
+            frame.title.clone(),
+            frame.xlabel.clone(),
+            frame.ylabel.clone(),
+        )
+    }
+
+    fn create_plot_content_with_text(
+        &self,
+        y_min: f64,
+        y_max: f64,
+        title: Option<String>,
+        xlabel: Option<String>,
+        ylabel: Option<String>,
     ) -> PlotContent {
         // Estimate max characters in y-tick labels
         let y_ticks = generate_ticks(y_min, y_max, 6);
@@ -962,9 +1064,9 @@ impl Plot {
             .unwrap_or(5);
 
         PlotContent {
-            title: self.display.title.as_ref().map(|t| t.resolve(time)),
-            xlabel: self.display.xlabel.as_ref().map(|t| t.resolve(time)),
-            ylabel: self.display.ylabel.as_ref().map(|t| t.resolve(time)),
+            title,
+            xlabel,
+            ylabel,
             show_tick_labels: self.layout.tick_config.enabled && self.needs_cartesian_axes(),
             max_ytick_chars,
             max_xtick_chars: 0, // Compatibility-only field; current layout ignores it.
@@ -1723,16 +1825,11 @@ impl Plot {
     /// ```
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let (png_bytes, _, _) = resolved.save_png_bytes_with_backend()?;
-            crate::export::write_bytes_atomic(path, &png_bytes)?;
-            resolved.acknowledge_rendered_snapshot(&self);
-            return Ok(());
-        }
-
-        let (png_bytes, _, _) = self.save_png_bytes_with_backend()?;
-        crate::export::write_bytes_atomic(path, &png_bytes)
+        self.validate_before_frame_resolution()?;
+        let (png_bytes, _, _, frame) = self.save_png_bytes_with_backend_unacknowledged()?;
+        crate::export::write_bytes_atomic(path, &png_bytes)?;
+        frame.acknowledge_rendered(&self);
+        Ok(())
     }
 
     /// Render PNG bytes through the same backend-selection path used by `save()`.
@@ -1758,21 +1855,32 @@ impl Plot {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn save_png_bytes_with_backend(&self) -> Result<(Vec<u8>, &'static str, RenderDiagnostics)> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let result = resolved.save_png_bytes_with_backend()?;
-            resolved.acknowledge_rendered_snapshot(self);
-            return Ok(result);
-        }
+        self.validate_before_frame_resolution()?;
+        let (png_bytes, backend, diagnostics, frame) =
+            self.save_png_bytes_with_backend_unacknowledged()?;
+        frame.acknowledge_rendered(self);
+        Ok((png_bytes, backend, diagnostics))
+    }
 
-        let mode = self.public_png_render_mode();
-        let (png_bytes, diagnostics) = self.render_png_bytes_with_mode_and_diagnostics(mode)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_png_bytes_with_backend_unacknowledged(
+        &self,
+    ) -> Result<(Vec<u8>, &'static str, RenderDiagnostics, ResolvedFrame<'_>)> {
+        let frame = self.resolve_frame(0.0)?;
+        let mode = self.public_png_render_mode_from_resolved(&frame.series);
+        let style_shell = self
+            .has_dynamic_style_sources()
+            .then(|| self.resolved_style_shell(0.0));
+        let render_plot = style_shell.as_ref().unwrap_or(self);
+        let (renderer, diagnostics) =
+            render_plot.render_renderer_with_frame_and_diagnostics(mode, &frame)?;
+        let png_bytes = renderer.encode_png_bytes()?;
         let backend = if diagnostics.used_auto_datashader {
             BackendType::DataShader.as_str()
         } else {
             BackendType::Skia.as_str()
         };
-        Ok((png_bytes, backend, diagnostics))
+        Ok((png_bytes, backend, diagnostics, frame))
     }
 
     /// Save the plot to a PNG file with custom dimensions
@@ -1793,16 +1901,16 @@ impl Plot {
     /// Includes axes, grid, tick marks, labels, legend, and all data series.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let svg_content = resolved.render_to_svg()?;
-            crate::export::write_bytes_atomic(path, svg_content.as_bytes())?;
-            resolved.acknowledge_rendered_snapshot(&self);
-            return Ok(());
-        }
-
-        let svg_content = self.render_to_svg()?;
-        crate::export::write_bytes_atomic(path, svg_content.as_bytes())
+        self.validate_before_frame_resolution()?;
+        let frame = self.resolve_frame(0.0)?;
+        let style_shell = self
+            .has_dynamic_style_sources()
+            .then(|| self.resolved_style_shell(0.0));
+        let render_plot = style_shell.as_ref().unwrap_or(&self);
+        let svg_content = render_plot.render_to_svg_with_frame(&frame)?;
+        crate::export::write_bytes_atomic(path, svg_content.as_bytes())?;
+        frame.acknowledge_rendered(&self);
+        Ok(())
     }
 
     fn render_svg_annotations(
@@ -2146,20 +2254,26 @@ impl Plot {
     /// Returns the complete SVG content as a string. This can be saved to a file
     /// or converted to other formats like PDF.
     pub fn render_to_svg(&self) -> Result<String> {
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let svg = resolved.render_to_svg()?;
-            resolved.acknowledge_rendered_snapshot(self);
-            return Ok(svg);
+        self.validate_before_frame_resolution()?;
+        let frame = self.resolve_frame(0.0)?;
+        let style_shell = self
+            .has_dynamic_style_sources()
+            .then(|| self.resolved_style_shell(0.0));
+        let render_plot = style_shell.as_ref().unwrap_or(self);
+        let result = render_plot.render_to_svg_with_frame(&frame);
+        if result.is_ok() {
+            frame.acknowledge_rendered(self);
         }
+        result
+    }
 
+    fn render_to_svg_with_frame(&self, frame: &ResolvedFrame<'_>) -> Result<String> {
         use crate::axes::TickLayout;
         use crate::export::SvgRenderer;
 
         self.validate_runtime_environment()?;
-        let snapshot_series = self.snapshot_series(0.0);
-        if !snapshot_series.is_empty() {
-            Self::validate_series_list(&snapshot_series)?;
+        if !frame.series.is_empty() {
+            Self::validate_resolved_series(&frame.series)?;
         }
 
         let (width_px, height_px) = self.config_canvas_size();
@@ -2176,11 +2290,17 @@ impl Plot {
         svg.set_text_engine_mode(self.display.text_engine);
 
         let (x_min, x_max, y_min, y_max) =
-            self.effective_main_panel_bounds_for_series(&snapshot_series)?;
-        self.validate_axis_scale_ranges_for_render(&snapshot_series, x_min, x_max, y_min, y_max)?;
+            self.effective_main_panel_bounds_from_resolved(&self.series_mgr.series, &frame.series)?;
+        self.validate_axis_scale_ranges_for_render(
+            &self.series_mgr.series,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )?;
 
         // Use the same content-driven layout path as PNG rendering.
-        let content = self.create_plot_content(y_min, y_max);
+        let content = self.create_plot_content_from_resolved_text(y_min, y_max, frame);
         let mut measurement_renderer = SkiaRenderer::with_font_family(
             width_px,
             height_px,
@@ -2296,7 +2416,7 @@ impl Plot {
 
         // Draw grid lines (only horizontal for bar charts) - using unified GridStyle
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
-        let draw_axes = Self::needs_cartesian_axes_for_series(&snapshot_series);
+        let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
         if self.layout.grid_style.visible && draw_axes {
             let grid_color = self.layout.grid_style.effective_color();
             let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
@@ -2512,14 +2632,20 @@ impl Plot {
         let legend_items = self.collect_legend_items();
         let render_scale = self.render_scale();
 
-        let inset_rects = self.inset_rects_for_series(&snapshot_series, plot_area, render_scale)?;
+        let inset_rects =
+            self.inset_rects_for_series(&self.series_mgr.series, plot_area, render_scale)?;
 
         // Render each series
-        for (idx, series) in snapshot_series.iter().enumerate() {
+        for (idx, (series, resolved)) in
+            self.series_mgr.series.iter().zip(&frame.series).enumerate()
+        {
             let default_color = self.display.theme.get_color(idx);
             let inset_rect = inset_rects[idx];
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rect {
-                (inset_rect, self.raw_bounds_for_single_series(series)?)
+                (
+                    inset_rect,
+                    self.calculate_data_bounds_from_resolved(std::slice::from_ref(resolved))?,
+                )
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
@@ -2535,6 +2661,7 @@ impl Plot {
                 self.render_series_svg(
                     &mut svg,
                     series,
+                    resolved,
                     default_color,
                     series_area,
                     series_bounds.0,
@@ -2547,6 +2674,7 @@ impl Plot {
                 self.render_series_svg(
                     &mut svg,
                     series,
+                    resolved,
                     default_color,
                     series_area,
                     series_bounds.0,
@@ -2570,10 +2698,9 @@ impl Plot {
 
         // Draw title/xlabel/ylabel using layout-computed positions.
         if let Some(ref pos) = layout.title_pos {
-            if let Some(ref title) = self.display.title {
-                let title_str = title.resolve(0.0);
+            if let Some(title) = frame.title.as_deref() {
                 svg.draw_text_centered(
-                    &title_str,
+                    title,
                     pos.x,
                     pos.y,
                     pos.size,
@@ -2582,10 +2709,9 @@ impl Plot {
             }
         }
         if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(ref xlabel) = self.display.xlabel {
-                let xlabel_str = xlabel.resolve(0.0);
+            if let Some(xlabel) = frame.xlabel.as_deref() {
                 svg.draw_text_centered(
-                    &xlabel_str,
+                    xlabel,
                     pos.x,
                     pos.y,
                     pos.size,
@@ -2594,10 +2720,9 @@ impl Plot {
             }
         }
         if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ref ylabel) = self.display.ylabel {
-                let ylabel_str = ylabel.resolve(0.0);
+            if let Some(ylabel) = frame.ylabel.as_deref() {
                 svg.draw_text_rotated(
-                    &ylabel_str,
+                    ylabel,
                     pos.x,
                     pos.y,
                     pos.size,
@@ -2658,6 +2783,8 @@ impl Plot {
     ) -> Result<()> {
         use crate::export::svg_to_pdf::page_sizes;
 
+        self.validate_before_frame_resolution()?;
+
         // Calculate pixel dimensions from mm (at 96 DPI)
         let (width_mm, height_mm) = size.unwrap_or(page_sizes::PLOT_DEFAULT);
         let width_px = page_sizes::mm_to_px(width_mm) as u32;
@@ -2665,18 +2792,16 @@ impl Plot {
 
         self = self.set_output_pixels(width_px, height_px);
 
-        if self.is_reactive() {
-            let resolved = self.resolved_plot(0.0);
-            let svg_content = resolved.render_to_svg()?;
-            let pdf_data = crate::export::svg_to_pdf(&svg_content)?;
-            crate::export::write_bytes_atomic(path, &pdf_data)?;
-            resolved.acknowledge_rendered_snapshot(&self);
-            return Ok(());
-        }
-
-        let svg_content = self.render_to_svg()?;
+        let frame = self.resolve_frame(0.0)?;
+        let style_shell = self
+            .has_dynamic_style_sources()
+            .then(|| self.resolved_style_shell(0.0));
+        let render_plot = style_shell.as_ref().unwrap_or(&self);
+        let svg_content = render_plot.render_to_svg_with_frame(&frame)?;
         let pdf_data = crate::export::svg_to_pdf(&svg_content)?;
-        crate::export::write_bytes_atomic(path, &pdf_data)
+        crate::export::write_bytes_atomic(path, &pdf_data)?;
+        frame.acknowledge_rendered(&self);
+        Ok(())
     }
 
     // ==========================================================================

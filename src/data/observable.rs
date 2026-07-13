@@ -381,6 +381,10 @@ impl<T> Observable<T> {
         self.version.load(Ordering::Acquire)
     }
 
+    pub(crate) fn shares_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
+    }
+
     /// Increment the version and notify all subscribers
     fn bump_version(&self) {
         self.version.fetch_add(1, Ordering::Release);
@@ -1301,6 +1305,10 @@ pub struct StreamingBuffer<T> {
     version: Arc<AtomicU64>,
     /// Append count since last mark_rendered()
     appended_since_render: Arc<std::sync::atomic::AtomicUsize>,
+    /// Highest total-written watermark acknowledged in the current clear generation.
+    rendered_through: Arc<AtomicU64>,
+    /// Exact watermark captured by a frame-scoped clone.
+    acknowledge_through: Option<(u64, u64)>,
     /// Subscribers for change notifications
     subscribers: Arc<RwLock<Vec<Subscriber>>>,
     /// Subscriber ID counter
@@ -1336,6 +1344,8 @@ impl<T: Clone> StreamingBuffer<T> {
             clear_generation: Arc::new(AtomicU64::new(0)),
             version: Arc::new(AtomicU64::new(0)),
             appended_since_render: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            rendered_through: Arc::new(AtomicU64::new(0)),
+            acknowledge_through: None,
             subscribers: Arc::new(RwLock::new(Vec::new())),
             next_subscriber_id: Arc::new(AtomicU64::new(0)),
         }
@@ -1402,7 +1412,10 @@ impl<T: Clone> StreamingBuffer<T> {
         let data = self.data.read().expect("Lock poisoned");
         let total = self.total_written.load(Ordering::Acquire);
         let write_pos = self.write_pos.load(Ordering::Acquire);
+        self.ordered_values(&data, total, write_pos)
+    }
 
+    fn ordered_values(&self, data: &[Option<T>], total: u64, write_pos: usize) -> Vec<T> {
         if total == 0 {
             return Vec::new();
         }
@@ -1411,14 +1424,10 @@ impl<T: Clone> StreamingBuffer<T> {
         let mut result = Vec::with_capacity(len);
 
         if total <= self.capacity as u64 {
-            // Buffer not yet full - data is in order from 0 to write_pos
-            for i in 0..len {
-                if let Some(ref value) = data[i] {
-                    result.push(value.clone());
-                }
+            for value in data.iter().take(len).flatten() {
+                result.push(value.clone());
             }
         } else {
-            // Buffer wrapped - oldest is at write_pos, newest is at write_pos-1
             let start = write_pos % self.capacity;
             for i in 0..self.capacity {
                 let idx = (start + i) % self.capacity;
@@ -1429,6 +1438,17 @@ impl<T: Clone> StreamingBuffer<T> {
         }
 
         result
+    }
+
+    pub(crate) fn snapshot_for_render(&self) -> (Vec<T>, Self) {
+        let data = self.data.read().expect("Lock poisoned");
+        let generation = self.clear_generation.load(Ordering::Acquire);
+        let total = self.total_written.load(Ordering::Acquire);
+        let write_pos = self.write_pos.load(Ordering::Acquire);
+        let values = self.ordered_values(&data, total, write_pos);
+        let mut captured = self.clone();
+        captured.acknowledge_through = Some((generation, total));
+        (values, captured)
     }
 
     /// Zero-copy view into the buffer data
@@ -1495,7 +1515,37 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Mark the buffer as rendered (resets appended count)
     pub fn mark_rendered(&self) {
+        if let Some((generation, total)) = self.acknowledge_through {
+            self.mark_rendered_through(generation, total);
+            return;
+        }
+
+        let _data = self.data.read().expect("Lock poisoned");
+        let total = self.total_written.load(Ordering::Acquire);
+        self.rendered_through.store(total, Ordering::Release);
         self.appended_since_render.store(0, Ordering::Release);
+    }
+
+    fn mark_rendered_through(&self, generation: u64, total: u64) {
+        let _data = self.data.read().expect("Lock poisoned");
+        if self.clear_generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+
+        let current_total = self.total_written.load(Ordering::Acquire);
+        let acknowledged = self
+            .rendered_through
+            .fetch_max(total, Ordering::AcqRel)
+            .max(total);
+        let pending = current_total.saturating_sub(acknowledged.min(current_total));
+        self.appended_since_render.store(
+            usize::try_from(pending).unwrap_or(usize::MAX),
+            Ordering::Release,
+        );
+    }
+
+    pub(crate) fn shares_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.data, &other.data)
     }
 
     /// Describe whether the current buffer changes can be rendered incrementally.
@@ -1578,6 +1628,7 @@ impl<T: Clone> StreamingBuffer<T> {
         self.write_pos.store(0, Ordering::Release);
         self.total_written.store(0, Ordering::Release);
         self.appended_since_render.store(0, Ordering::Release);
+        self.rendered_through.store(0, Ordering::Release);
         self.clear_generation.fetch_add(1, Ordering::Release);
     }
 
@@ -1637,6 +1688,8 @@ impl<T: Clone> Clone for StreamingBuffer<T> {
             clear_generation: Arc::clone(&self.clear_generation),
             version: Arc::clone(&self.version),
             appended_since_render: Arc::clone(&self.appended_since_render),
+            rendered_through: Arc::clone(&self.rendered_through),
+            acknowledge_through: self.acknowledge_through,
             subscribers: Arc::clone(&self.subscribers),
             next_subscriber_id: Arc::clone(&self.next_subscriber_id),
         }
@@ -1688,6 +1741,10 @@ impl StreamingXYSnapshot {
     /// Aligned visible Y tail that may be appended incrementally.
     pub fn appended_y(&self) -> &[f64] {
         &self.y[self.appended_start..]
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<f64>, Vec<f64>, u64, StreamingRenderState) {
+        (self.x, self.y, self.sequence, self.render_state)
     }
 }
 
@@ -1825,14 +1882,21 @@ impl StreamingXY {
     }
 
     fn sync_lane_watermarks(&self, progress: &StreamingXYProgress) {
-        let pending =
-            usize::try_from(Self::pending_sample_count_locked(progress)).unwrap_or(usize::MAX);
+        let pending_samples = Self::pending_sample_count_locked(progress);
+        let pending = usize::try_from(pending_samples).unwrap_or(usize::MAX);
         self.x
             .appended_since_render
             .store(pending, Ordering::Release);
         self.y
             .appended_since_render
             .store(pending, Ordering::Release);
+        let rendered_total = progress.total_written.saturating_sub(pending_samples);
+        self.x
+            .rendered_through
+            .store(rendered_total, Ordering::Release);
+        self.y
+            .rendered_through
+            .store(rendered_total, Ordering::Release);
     }
 
     /// Get the X buffer

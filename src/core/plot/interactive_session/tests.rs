@@ -403,6 +403,53 @@ fn test_inflight_dirty_marks_survive_render_clear() {
 }
 
 #[test]
+fn test_overlapping_render_requests_cannot_commit_stale_base_cache() {
+    let first_resolution = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    let first_resolution_for_signal = Arc::clone(&first_resolution);
+    let entered_for_signal = Arc::clone(&entered);
+    let release_for_signal = Arc::clone(&release);
+    let color = signal::of(move |_| {
+        if first_resolution_for_signal.swap(false, Ordering::AcqRel) {
+            entered_for_signal.wait();
+            release_for_signal.wait();
+        }
+        Color::RED
+    });
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .color_source(color)
+        .into();
+    let session = plot.prepare_interactive();
+
+    let first_session = session.clone();
+    let first_render = std::thread::spawn(move || first_session.render_to_surface(render_target()));
+    entered.wait();
+
+    let second_session = session.clone();
+    let second_target = SurfaceTarget {
+        size_px: (400, 300),
+        ..render_target()
+    };
+    let second_render = std::thread::spawn(move || second_session.render_to_surface(second_target));
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    release.wait();
+
+    first_render
+        .join()
+        .expect("first render thread should not panic")
+        .expect("first render should succeed");
+    second_render
+        .join()
+        .expect("second render thread should not panic")
+        .expect("second render should succeed");
+    session
+        .render_to_surface(second_target)
+        .expect("latest render target should retain a coherent cache");
+}
+
+#[test]
 fn test_session_invalidate_forces_base_rerender() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
@@ -1057,6 +1104,111 @@ fn test_hover_refreshes_after_time_change() {
 }
 
 #[test]
+fn test_interactive_render_resolves_each_temporal_source_once() {
+    let resolutions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let resolutions_for_signal = Arc::clone(&resolutions);
+    let data = signal::of(move |_| {
+        resolutions_for_signal.fetch_add(1, Ordering::Relaxed);
+        vec![0.0, 1.0, 2.0]
+    });
+    let text_resolutions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let text_resolutions_for_signal = Arc::clone(&text_resolutions);
+    let title = signal::of(move |_| {
+        text_resolutions_for_signal.fetch_add(1, Ordering::Relaxed);
+        "frame title".to_string()
+    });
+    let plot: Plot = Plot::new()
+        .line_source(data.clone(), data)
+        .title(title)
+        .xlim(0.0, 2.0)
+        .ylim(0.0, 2.0)
+        .into();
+    let session = plot.prepare_interactive();
+    resolutions.store(0, Ordering::Relaxed);
+    text_resolutions.store(0, Ordering::Relaxed);
+
+    session
+        .render_to_surface(render_target())
+        .expect("interactive temporal frame should render");
+
+    assert_eq!(resolutions.load(Ordering::Relaxed), 1);
+    assert_eq!(text_resolutions.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn test_hit_test_uses_displayed_reactive_frame() {
+    let y = Observable::new(vec![0.0, 1.0, 2.0]);
+    let plot: Plot = Plot::new()
+        .line_source(vec![0.0, 1.0, 2.0], y.clone())
+        .xlim(0.0, 2.0)
+        .ylim(0.0, 2.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial reactive frame should render");
+
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available after render");
+    let (screen_x, screen_y) = map_data_to_pixels(
+        1.0,
+        1.0,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    y.set(vec![100.0, 100.0, 100.0]);
+
+    let hit = session.hit_test(ViewportPoint::new(screen_x as f64, screen_y as f64));
+    match hit {
+        HitResult::SeriesPoint {
+            point_index,
+            data_position,
+            ..
+        } => {
+            assert_eq!(point_index, 1);
+            assert_eq!(data_position, ViewportPoint::new(1.0, 1.0));
+        }
+        other => panic!("expected displayed series point, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_hit_test_uses_displayed_geometry_until_next_render() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 2.0])
+        .xlim(0.0, 2.0)
+        .ylim(0.0, 2.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial frame should render");
+
+    let geometry = session
+        .geometry_snapshot()
+        .expect("geometry should be available after render");
+    let (screen_x, screen_y) = map_data_to_pixels(
+        1.0,
+        1.0,
+        geometry.x_bounds.0,
+        geometry.x_bounds.1,
+        geometry.y_bounds.0,
+        geometry.y_bounds.1,
+        geometry.plot_area,
+    );
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: ViewportPoint::new(80.0, 0.0),
+    });
+
+    let hit = session.hit_test(ViewportPoint::new(screen_x as f64, screen_y as f64));
+    assert!(matches!(hit, HitResult::SeriesPoint { point_index: 1, .. }));
+}
+
+#[test]
 fn test_heatmap_hover_skips_masked_log_cells() {
     let values = vec![vec![0.0, 1.0, 10.0]];
     let plot: Plot = Plot::new()
@@ -1152,7 +1304,10 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
     let geometry = session
         .geometry_snapshot()
         .expect("geometry should be available after log heatmap render");
-    let snapshot = session.prepared_plot().plot().snapshot_series(0.0);
+    let source_plot = session.prepared_plot().plot();
+    let frame = source_plot
+        .resolve_frame(0.0)
+        .expect("heatmap frame should resolve");
 
     let masked = HitResult::HeatmapCell {
         series_index: 0,
@@ -1164,7 +1319,7 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
             ViewportPoint::new(1.0, 1.0),
         ),
     };
-    assert!(refresh_hit_result(&masked, &snapshot, &geometry).is_none());
+    assert!(refresh_hit_result(&masked, source_plot, &frame.series, &geometry).is_none());
 
     let valid = HitResult::HeatmapCell {
         series_index: 0,
@@ -1176,7 +1331,7 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
             ViewportPoint::new(1.0, 1.0),
         ),
     };
-    match refresh_hit_result(&valid, &snapshot, &geometry) {
+    match refresh_hit_result(&valid, source_plot, &frame.series, &geometry) {
         Some(HitResult::HeatmapCell {
             row, col, value, ..
         }) => {

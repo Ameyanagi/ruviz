@@ -660,6 +660,31 @@ impl PlotSeries {
                 .is_some_and(ReactiveValue::is_reactive)
     }
 
+    pub(super) fn clone_for_resolved_frame(&self) -> Self {
+        Self {
+            series_type: self.series_type.clone_without_static_values(),
+            streaming_source: self.streaming_source.clone(),
+            label: self.label.clone(),
+            color: self.color,
+            color_source: self.color_source.clone(),
+            line_width: self.line_width,
+            line_width_source: self.line_width_source.clone(),
+            line_style: self.line_style.clone(),
+            line_style_source: self.line_style_source.clone(),
+            marker_style: self.marker_style,
+            marker_style_source: self.marker_style_source.clone(),
+            marker_size: self.marker_size,
+            marker_size_source: self.marker_size_source.clone(),
+            alpha: self.alpha,
+            alpha_source: self.alpha_source.clone(),
+            y_errors: self.y_errors.clone(),
+            x_errors: self.x_errors.clone(),
+            error_config: self.error_config.clone(),
+            inset_layout: self.inset_layout,
+            group_id: self.group_id,
+        }
+    }
+
     pub(super) fn mark_rendered_sources(&self) {
         if let Some(stream) = &self.streaming_source {
             stream.mark_rendered();
@@ -694,12 +719,12 @@ impl PlotSeries {
                 .snapshot();
             return Ok(match &self.series_type {
                 SeriesType::Line { .. } => ResolvedSeries::Line {
-                    x: Cow::Owned(snapshot.x().to_vec()),
-                    y: Cow::Owned(snapshot.y().to_vec()),
+                    x: ResolvedData::shared(Arc::from(snapshot.x())),
+                    y: ResolvedData::shared(Arc::from(snapshot.y())),
                 },
                 SeriesType::Scatter { .. } => ResolvedSeries::Scatter {
-                    x: Cow::Owned(snapshot.x().to_vec()),
-                    y: Cow::Owned(snapshot.y().to_vec()),
+                    x: ResolvedData::shared(Arc::from(snapshot.x())),
+                    y: ResolvedData::shared(Arc::from(snapshot.y())),
                 },
                 _ => unreachable!("live paired source is only used by line/scatter"),
             });
@@ -1111,6 +1136,57 @@ impl SeriesType {
         }
     }
 
+    pub(super) fn clone_without_static_values(&self) -> SeriesType {
+        match self {
+            SeriesType::Line { x_data, y_data } => SeriesType::Line {
+                x_data: x_data.clone_without_static_values(),
+                y_data: y_data.clone_without_static_values(),
+            },
+            SeriesType::Scatter { x_data, y_data } => SeriesType::Scatter {
+                x_data: x_data.clone_without_static_values(),
+                y_data: y_data.clone_without_static_values(),
+            },
+            SeriesType::Bar { categories, values } => SeriesType::Bar {
+                categories: categories.clone(),
+                values: values.clone_without_static_values(),
+            },
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => SeriesType::ErrorBars {
+                x_data: x_data.clone_without_static_values(),
+                y_data: y_data.clone_without_static_values(),
+                y_errors: y_errors.clone_without_static_values(),
+            },
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => SeriesType::ErrorBarsXY {
+                x_data: x_data.clone_without_static_values(),
+                y_data: y_data.clone_without_static_values(),
+                x_errors: x_errors.clone_without_static_values(),
+                y_errors: y_errors.clone_without_static_values(),
+            },
+            SeriesType::Histogram {
+                data,
+                config,
+                prepared,
+            } => SeriesType::Histogram {
+                data: data.clone_without_static_values(),
+                config: config.clone(),
+                prepared: prepared.clone(),
+            },
+            SeriesType::BoxPlot { data, config } => SeriesType::BoxPlot {
+                data: data.clone_without_static_values(),
+                config: config.clone(),
+            },
+            other => other.clone(),
+        }
+    }
+
     /// Resolve all PlotData in this series to static Vec<f64> at the given time
     ///
     /// Returns a new SeriesType with all PlotData converted to PlotData::Static
@@ -1222,14 +1298,21 @@ impl SeriesType {
                 config,
                 prepared,
             } => {
+                let resolved = data.resolve_cow(time);
+                if resolved.is_empty() {
+                    return Err(PlottingError::EmptyDataSet);
+                }
+                PlottingError::validate_data(resolved.as_ref())?;
+
                 if let Some(prepared) = prepared {
                     return Ok(prepared.clone());
                 }
 
-                let resolved = data.resolve(time);
-                crate::plots::histogram::calculate_histogram(&resolved, config).map_err(|error| {
-                    PlottingError::RenderError(format!("Histogram calculation failed: {error}"))
-                })
+                crate::plots::histogram::calculate_histogram(&resolved.as_ref(), config).map_err(
+                    |error| {
+                        PlottingError::RenderError(format!("Histogram calculation failed: {error}"))
+                    },
+                )
             }
             _ => Err(PlottingError::RenderError(
                 "histogram_data_at called for non-histogram series".to_string(),
@@ -1239,63 +1322,135 @@ impl SeriesType {
 }
 
 #[derive(Clone)]
+pub(crate) enum ResolvedData<'a> {
+    Cow(Cow<'a, [f64]>),
+    Shared(Arc<[f64]>),
+}
+
+impl<'a> ResolvedData<'a> {
+    fn from_cow(data: Cow<'a, [f64]>) -> Self {
+        match data {
+            Cow::Borrowed(data) => Self::Cow(Cow::Borrowed(data)),
+            Cow::Owned(data) => Self::Shared(Arc::from(data)),
+        }
+    }
+
+    pub(super) fn shared(data: Arc<[f64]>) -> Self {
+        Self::Shared(data)
+    }
+
+    pub(super) fn shared_arc(&self) -> Option<Arc<[f64]>> {
+        match self {
+            Self::Cow(Cow::Borrowed(_)) => None,
+            Self::Cow(Cow::Owned(data)) => Some(Arc::from(data.clone())),
+            Self::Shared(data) => Some(Arc::clone(data)),
+        }
+    }
+}
+
+impl AsRef<[f64]> for ResolvedData<'_> {
+    fn as_ref(&self) -> &[f64] {
+        match self {
+            Self::Cow(data) => data.as_ref(),
+            Self::Shared(data) => data.as_ref(),
+        }
+    }
+}
+
+impl std::ops::Deref for ResolvedData<'_> {
+    type Target = [f64];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+#[derive(Clone)]
 pub(crate) enum ResolvedSeries<'a> {
     Line {
-        x: Cow<'a, [f64]>,
-        y: Cow<'a, [f64]>,
+        x: ResolvedData<'a>,
+        y: ResolvedData<'a>,
     },
     Scatter {
-        x: Cow<'a, [f64]>,
-        y: Cow<'a, [f64]>,
+        x: ResolvedData<'a>,
+        y: ResolvedData<'a>,
     },
     Bar {
         categories: &'a [String],
-        values: Cow<'a, [f64]>,
+        values: ResolvedData<'a>,
     },
     ErrorBars {
-        x: Cow<'a, [f64]>,
-        y: Cow<'a, [f64]>,
-        y_errors: Cow<'a, [f64]>,
+        x: ResolvedData<'a>,
+        y: ResolvedData<'a>,
+        y_errors: ResolvedData<'a>,
     },
     ErrorBarsXY {
-        x: Cow<'a, [f64]>,
-        y: Cow<'a, [f64]>,
-        x_errors: Cow<'a, [f64]>,
-        y_errors: Cow<'a, [f64]>,
+        x: ResolvedData<'a>,
+        y: ResolvedData<'a>,
+        x_errors: ResolvedData<'a>,
+        y_errors: ResolvedData<'a>,
     },
     Histogram {
         data: crate::plots::histogram::HistogramData,
     },
     BoxPlot {
-        data: Cow<'a, [f64]>,
+        data: ResolvedData<'a>,
         config: BoxPlotConfig,
     },
     Other(&'a SeriesType),
+}
+
+pub(crate) struct ResolvedStreamingPair {
+    pub(super) source: StreamingXY,
+    pub(super) x: Arc<[f64]>,
+    pub(super) y: Arc<[f64]>,
+    pub(super) sequence: u64,
+    pub(super) render_state: crate::data::StreamingRenderState,
+}
+
+pub(crate) struct ResolvedFrame<'a> {
+    pub(super) series: Vec<ResolvedSeries<'a>>,
+    pub(super) title: Option<String>,
+    pub(super) xlabel: Option<String>,
+    pub(super) ylabel: Option<String>,
+    pub(super) streaming_acknowledgements: Vec<crate::data::StreamingBuffer<f64>>,
+    pub(super) paired_acknowledgements: Vec<ResolvedStreamingPair>,
+}
+
+impl ResolvedFrame<'_> {
+    pub(super) fn acknowledge_rendered(&self, _live_plot: &Plot) {
+        for stream in &self.streaming_acknowledgements {
+            stream.mark_rendered();
+        }
+        for stream in &self.paired_acknowledgements {
+            stream.source.mark_rendered_through(stream.sequence);
+        }
+    }
 }
 
 impl SeriesType {
     pub(super) fn resolve_for_render(&self, time: f64) -> Result<ResolvedSeries<'_>> {
         Ok(match self {
             SeriesType::Line { x_data, y_data } => ResolvedSeries::Line {
-                x: x_data.resolve_cow(time),
-                y: y_data.resolve_cow(time),
+                x: ResolvedData::from_cow(x_data.resolve_cow(time)),
+                y: ResolvedData::from_cow(y_data.resolve_cow(time)),
             },
             SeriesType::Scatter { x_data, y_data } => ResolvedSeries::Scatter {
-                x: x_data.resolve_cow(time),
-                y: y_data.resolve_cow(time),
+                x: ResolvedData::from_cow(x_data.resolve_cow(time)),
+                y: ResolvedData::from_cow(y_data.resolve_cow(time)),
             },
             SeriesType::Bar { categories, values } => ResolvedSeries::Bar {
                 categories,
-                values: values.resolve_cow(time),
+                values: ResolvedData::from_cow(values.resolve_cow(time)),
             },
             SeriesType::ErrorBars {
                 x_data,
                 y_data,
                 y_errors,
             } => ResolvedSeries::ErrorBars {
-                x: x_data.resolve_cow(time),
-                y: y_data.resolve_cow(time),
-                y_errors: y_errors.resolve_cow(time),
+                x: ResolvedData::from_cow(x_data.resolve_cow(time)),
+                y: ResolvedData::from_cow(y_data.resolve_cow(time)),
+                y_errors: ResolvedData::from_cow(y_errors.resolve_cow(time)),
             },
             SeriesType::ErrorBarsXY {
                 x_data,
@@ -1303,16 +1458,16 @@ impl SeriesType {
                 x_errors,
                 y_errors,
             } => ResolvedSeries::ErrorBarsXY {
-                x: x_data.resolve_cow(time),
-                y: y_data.resolve_cow(time),
-                x_errors: x_errors.resolve_cow(time),
-                y_errors: y_errors.resolve_cow(time),
+                x: ResolvedData::from_cow(x_data.resolve_cow(time)),
+                y: ResolvedData::from_cow(y_data.resolve_cow(time)),
+                x_errors: ResolvedData::from_cow(x_errors.resolve_cow(time)),
+                y_errors: ResolvedData::from_cow(y_errors.resolve_cow(time)),
             },
             SeriesType::Histogram { .. } => ResolvedSeries::Histogram {
                 data: self.histogram_data_at(time)?,
             },
             SeriesType::BoxPlot { data, config } => ResolvedSeries::BoxPlot {
-                data: data.resolve_cow(time),
+                data: ResolvedData::from_cow(data.resolve_cow(time)),
                 config: config.clone(),
             },
             other => ResolvedSeries::Other(other),

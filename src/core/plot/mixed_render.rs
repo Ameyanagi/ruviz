@@ -38,6 +38,38 @@ impl Plot {
             .sum()
     }
 
+    pub(super) fn calculate_total_points_from_resolved(
+        series_list: &[ResolvedSeries<'_>],
+    ) -> usize {
+        series_list
+            .iter()
+            .map(|series| match series {
+                ResolvedSeries::Line { x, .. }
+                | ResolvedSeries::Scatter { x, .. }
+                | ResolvedSeries::ErrorBars { x, .. }
+                | ResolvedSeries::ErrorBarsXY { x, .. } => x.len(),
+                ResolvedSeries::Bar { categories, .. } => categories.len(),
+                ResolvedSeries::Histogram { data } => data.counts.len(),
+                ResolvedSeries::BoxPlot { data, .. } => data.len(),
+                ResolvedSeries::Other(series) => match series {
+                    SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
+                    SeriesType::Kde { data } => data.x.len(),
+                    SeriesType::Ecdf { data } => data.x.len(),
+                    SeriesType::Violin { data } => data.data.len(),
+                    SeriesType::Boxen { data } => data.boxes.len() * 4,
+                    SeriesType::Contour { data } => data.x.len() * data.y.len(),
+                    SeriesType::Pie { data } => data.values.len(),
+                    SeriesType::Radar { data } => {
+                        data.series.iter().map(|series| series.values.len()).sum()
+                    }
+                    SeriesType::Polar { data } => data.points.len(),
+                    SeriesType::Quiver { data } => data.arrows.len(),
+                    _ => unreachable!("PlotData-backed series resolve to dedicated variants"),
+                },
+            })
+            .sum()
+    }
+
     pub(super) fn should_auto_use_datashader(
         series_list: &[PlotSeries],
         total_points: usize,
@@ -84,6 +116,7 @@ impl Plot {
     pub(super) fn render_series_collection_auto_datashader(
         &self,
         series_list: &[PlotSeries],
+        resolved_series: &[ResolvedSeries<'_>],
         renderer: &mut SkiaRenderer,
         plot_area: tiny_skia::Rect,
         x_min: f64,
@@ -101,7 +134,7 @@ impl Plot {
             return Ok(false);
         }
 
-        let total_points = Self::calculate_total_points_for_series(series_list);
+        let total_points = Self::calculate_total_points_from_resolved(resolved_series);
         if !self.should_use_datashader_for_render(series_list, total_points) {
             return Ok(false);
         }
@@ -110,25 +143,26 @@ impl Plot {
 
         let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
 
-        for (idx, series) in series_list.iter().enumerate() {
+        for (idx, (series, resolved)) in series_list.iter().zip(resolved_series).enumerate() {
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
-                (inset_rect, self.raw_bounds_for_single_series(series)?)
+                (
+                    inset_rect,
+                    self.calculate_data_bounds_from_resolved(std::slice::from_ref(resolved))?,
+                )
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
 
-            match &series.series_type {
-                SeriesType::Scatter { x_data, y_data } => {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
+            match (&series.series_type, resolved) {
+                (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
                     let mut datashader = DataShader::with_canvas_size(
                         series_area.width() as usize,
                         series_area.height() as usize,
                     );
 
                     datashader.aggregate_with_bounds(
-                        &x_data,
-                        &y_data,
+                        x,
+                        y,
                         series_bounds.0,
                         series_bounds.1,
                         series_bounds.2,
@@ -140,6 +174,7 @@ impl Plot {
                 _ => {
                     self.render_series_normal(
                         series,
+                        resolved,
                         renderer,
                         series_area,
                         series_bounds.0,
@@ -176,6 +211,29 @@ impl Plot {
             self.effective_data_bounds_for_series(&cartesian_series)
         } else {
             self.effective_data_bounds_for_series(series_list)
+        }
+    }
+
+    pub(super) fn effective_main_panel_bounds_from_resolved(
+        &self,
+        series_list: &[PlotSeries],
+        resolved_series: &[ResolvedSeries<'_>],
+    ) -> Result<(f64, f64, f64, f64)> {
+        if resolved_series.is_empty() {
+            return Ok(self.empty_cartesian_bounds());
+        }
+
+        if Self::has_mixed_coordinate_series(series_list) {
+            let bounds = self.calculate_data_bounds_from_resolved(
+                series_list
+                    .iter()
+                    .zip(resolved_series)
+                    .filter(|(series, _)| Self::is_cartesian_series(series))
+                    .map(|(_, resolved)| resolved),
+            )?;
+            Ok(self.apply_manual_axis_limits(self.expand_bounds_with_annotations(bounds)))
+        } else {
+            self.effective_data_bounds_from_resolved(resolved_series)
         }
     }
 
@@ -347,6 +405,7 @@ impl Plot {
     pub(super) fn render_series_collection_normal(
         &self,
         series_list: &[PlotSeries],
+        resolved_series: &[ResolvedSeries<'_>],
         renderer: &mut SkiaRenderer,
         plot_area: tiny_skia::Rect,
         x_min: f64,
@@ -358,15 +417,19 @@ impl Plot {
     ) -> Result<()> {
         let inset_rects = self.inset_rects_for_series(series_list, plot_area, render_scale)?;
 
-        for (idx, series) in series_list.iter().enumerate() {
+        for (idx, (series, resolved)) in series_list.iter().zip(resolved_series).enumerate() {
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rects[idx] {
-                (inset_rect, self.raw_bounds_for_single_series(series)?)
+                (
+                    inset_rect,
+                    self.calculate_data_bounds_from_resolved(std::slice::from_ref(resolved))?,
+                )
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
 
             self.render_series_normal(
                 series,
+                resolved,
                 renderer,
                 series_area,
                 series_bounds.0,
@@ -384,6 +447,7 @@ impl Plot {
         &self,
         svg: &mut crate::export::SvgRenderer,
         series: &PlotSeries,
+        resolved: &ResolvedSeries<'_>,
         default_color: Color,
         plot_area: tiny_skia::Rect,
         x_min: f64,
@@ -397,13 +461,11 @@ impl Plot {
             .points_to_pixels(series.line_width.unwrap_or(self.display.theme.line_width));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
 
-        match &series.series_type {
-            SeriesType::Line { x_data, y_data } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
-                let points: Vec<(f32, f32)> = x_data
+        match (&series.series_type, resolved) {
+            (SeriesType::Line { .. }, ResolvedSeries::Line { x, y }) => {
+                let points: Vec<(f32, f32)> = x
                     .iter()
-                    .zip(y_data.iter())
+                    .zip(y.iter())
                     .map(|(&x, &y)| {
                         crate::render::skia::map_data_to_pixels_scaled(
                             x,
@@ -428,12 +490,10 @@ impl Plot {
                     }
                 }
             }
-            SeriesType::Scatter { x_data, y_data } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
+            (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                 let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
-                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
+                for (&x, &y) in x.iter().zip(y.iter()) {
                     let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
                         x,
                         y,
@@ -448,8 +508,7 @@ impl Plot {
                     svg.draw_marker(px, py, marker_size, marker_style, color);
                 }
             }
-            SeriesType::Bar { categories, values } => {
-                let values = values.resolve(0.0);
+            (SeriesType::Bar { categories, .. }, ResolvedSeries::Bar { values, .. }) => {
                 let num_bars = categories.len();
                 let bar_width = plot_area.width() / num_bars as f32 * 0.7;
 
@@ -469,31 +528,329 @@ impl Plot {
                     svg.draw_rectangle(bar_x, bar_y, bar_width, bar_height, color, true);
                 }
             }
-            SeriesType::Pie { data } => {
+            (SeriesType::Pie { data }, ResolvedSeries::Other(_)) => {
                 self.render_pie_series_svg(svg, data, plot_area)?;
             }
-            SeriesType::Radar { data } => {
+            (SeriesType::Radar { data }, ResolvedSeries::Other(_)) => {
                 self.render_radar_series_svg(svg, data, plot_area)?;
             }
-            SeriesType::Polar { data } => {
+            (SeriesType::Polar { data }, ResolvedSeries::Other(_)) => {
                 self.render_polar_series_svg(
                     svg, data, plot_area, x_min, x_max, y_min, y_max, color,
                 )?;
             }
-            SeriesType::Boxen { data } => {
+            (SeriesType::Boxen { data }, ResolvedSeries::Other(_)) => {
                 self.render_boxen_series_svg(
                     svg, data, plot_area, x_min, x_max, y_min, y_max, color,
                 );
             }
-            SeriesType::Quiver { data } => {
+            (SeriesType::Quiver { data }, ResolvedSeries::Other(_)) => {
                 self.render_quiver_series_svg(
                     svg, data, plot_area, x_min, x_max, y_min, y_max, color,
                 );
             }
-            SeriesType::Histogram { .. } => {}
-            _ => {}
+            (SeriesType::Histogram { .. }, ResolvedSeries::Histogram { data }) => {
+                for (index, &count) in data.counts.iter().enumerate() {
+                    if count <= 0.0 {
+                        continue;
+                    }
+                    let x_left = data.bin_edges[index];
+                    let x_right = data.bin_edges[index + 1];
+                    let (px_left, py) = crate::render::skia::map_data_to_pixels(
+                        x_left, count, x_min, x_max, y_min, y_max, plot_area,
+                    );
+                    let (px_right, py_zero) = crate::render::skia::map_data_to_pixels(
+                        x_right, 0.0, x_min, x_max, y_min, y_max, plot_area,
+                    );
+                    svg.draw_rectangle(
+                        px_left.min(px_right),
+                        py.min(py_zero),
+                        (px_right - px_left).abs(),
+                        (py_zero - py).abs(),
+                        color,
+                        true,
+                    );
+                }
+            }
+            (SeriesType::ErrorBars { .. }, ResolvedSeries::ErrorBars { x, y, y_errors }) => self
+                .render_error_bars_series_svg(
+                    svg,
+                    series,
+                    x,
+                    y,
+                    Some(ErrorValuesRef::Symmetric(y_errors)),
+                    None,
+                    color,
+                    line_width,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                ),
+            (
+                SeriesType::ErrorBarsXY { .. },
+                ResolvedSeries::ErrorBarsXY {
+                    x,
+                    y,
+                    x_errors,
+                    y_errors,
+                },
+            ) => self.render_error_bars_series_svg(
+                svg,
+                series,
+                x,
+                y,
+                Some(ErrorValuesRef::Symmetric(y_errors)),
+                Some(ErrorValuesRef::Symmetric(x_errors)),
+                color,
+                line_width,
+                plot_area,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+            ),
+            (SeriesType::BoxPlot { .. }, ResolvedSeries::BoxPlot { data, config }) => {
+                self.render_box_plot_series_svg(
+                    svg, data, config, color, line_width, line_style, plot_area, x_min, x_max,
+                    y_min, y_max,
+                )?;
+            }
+            (_, ResolvedSeries::Other(_)) => {}
+            _ => unreachable!("resolved series variant must match its declarative series"),
         }
 
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_error_bars_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        series: &PlotSeries,
+        x: &[f64],
+        y: &[f64],
+        y_errors: Option<ErrorValuesRef<'_>>,
+        x_errors: Option<ErrorValuesRef<'_>>,
+        color: Color,
+        default_line_width: f32,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) {
+        let config = series.error_config.clone().unwrap_or_default();
+        let bar_color = config.color.unwrap_or(color).with_alpha(config.alpha);
+        let render_scale = self.render_scale();
+        let line_width = render_scale
+            .logical_pixels_to_pixels(config.line_width)
+            .max(default_line_width * 0.75);
+        let half_cap = render_scale.logical_pixels_to_pixels(config.cap_size) * 0.5;
+        let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+        let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(8.0));
+
+        for (index, (&x_value, &y_value)) in x.iter().zip(y).enumerate() {
+            if !x_value.is_finite() || !y_value.is_finite() {
+                continue;
+            }
+            let (px, py) = crate::render::skia::map_data_to_pixels(
+                x_value, y_value, x_min, x_max, y_min, y_max, plot_area,
+            );
+            svg.draw_marker(px, py, marker_size, marker_style, color);
+
+            if let Some((lower, upper)) = y_errors.and_then(|errors| errors.bounds_at(index)) {
+                let lower = lower.abs();
+                let upper = upper.abs();
+                if lower.is_finite() && upper.is_finite() && (lower > 0.0 || upper > 0.0) {
+                    let (_, top) = crate::render::skia::map_data_to_pixels(
+                        x_value,
+                        y_value + upper,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                    );
+                    let (_, bottom) = crate::render::skia::map_data_to_pixels(
+                        x_value,
+                        y_value - lower,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                    );
+                    svg.draw_line(px, top, px, bottom, bar_color, line_width, LineStyle::Solid);
+                    svg.draw_line(
+                        px - half_cap,
+                        top,
+                        px + half_cap,
+                        top,
+                        bar_color,
+                        line_width,
+                        LineStyle::Solid,
+                    );
+                    svg.draw_line(
+                        px - half_cap,
+                        bottom,
+                        px + half_cap,
+                        bottom,
+                        bar_color,
+                        line_width,
+                        LineStyle::Solid,
+                    );
+                }
+            }
+
+            if let Some((lower, upper)) = x_errors.and_then(|errors| errors.bounds_at(index)) {
+                let lower = lower.abs();
+                let upper = upper.abs();
+                if lower.is_finite() && upper.is_finite() && (lower > 0.0 || upper > 0.0) {
+                    let (left, _) = crate::render::skia::map_data_to_pixels(
+                        x_value - lower,
+                        y_value,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                    );
+                    let (right, _) = crate::render::skia::map_data_to_pixels(
+                        x_value + upper,
+                        y_value,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                    );
+                    svg.draw_line(left, py, right, py, bar_color, line_width, LineStyle::Solid);
+                    svg.draw_line(
+                        left,
+                        py - half_cap,
+                        left,
+                        py + half_cap,
+                        bar_color,
+                        line_width,
+                        LineStyle::Solid,
+                    );
+                    svg.draw_line(
+                        right,
+                        py - half_cap,
+                        right,
+                        py + half_cap,
+                        bar_color,
+                        line_width,
+                        LineStyle::Solid,
+                    );
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_box_plot_series_svg(
+        &self,
+        svg: &mut crate::export::SvgRenderer,
+        data: &[f64],
+        config: &BoxPlotConfig,
+        color: Color,
+        line_width: f32,
+        line_style: LineStyle,
+        plot_area: tiny_skia::Rect,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<()> {
+        let box_data =
+            crate::plots::boxplot::calculate_box_plot(&data, config).map_err(|error| {
+                PlottingError::RenderError(format!("Box plot calculation failed: {error}"))
+            })?;
+        let (x_center, _) = crate::render::skia::map_data_to_pixels(
+            0.5, 0.0, x_min, x_max, y_min, y_max, plot_area,
+        );
+        let map_y = |value| {
+            crate::render::skia::map_data_to_pixels(
+                0.0, value, x_min, x_max, y_min, y_max, plot_area,
+            )
+            .1
+        };
+        let q1 = map_y(box_data.q1);
+        let median = map_y(box_data.median);
+        let q3 = map_y(box_data.q3);
+        let lower_whisker = map_y(box_data.min);
+        let upper_whisker = map_y(box_data.max);
+        let half_width = plot_area.width() * 0.15;
+        let left = x_center - half_width;
+        let right = x_center + half_width;
+        let cap_width = half_width * 0.6;
+
+        svg.draw_rectangle(
+            left,
+            q1.min(q3),
+            right - left,
+            (q1 - q3).abs(),
+            color,
+            false,
+        );
+        svg.draw_line(
+            left,
+            median,
+            right,
+            median,
+            color,
+            line_width * 1.5,
+            line_style.clone(),
+        );
+        svg.draw_line(
+            x_center,
+            q1,
+            x_center,
+            lower_whisker,
+            color,
+            line_width,
+            line_style.clone(),
+        );
+        svg.draw_line(
+            x_center,
+            q3,
+            x_center,
+            upper_whisker,
+            color,
+            line_width,
+            line_style.clone(),
+        );
+        svg.draw_line(
+            x_center - cap_width,
+            lower_whisker,
+            x_center + cap_width,
+            lower_whisker,
+            color,
+            line_width,
+            line_style.clone(),
+        );
+        svg.draw_line(
+            x_center - cap_width,
+            upper_whisker,
+            x_center + cap_width,
+            upper_whisker,
+            color,
+            line_width,
+            line_style,
+        );
+        let outlier_size = self.render_scale().points_to_pixels(4.0);
+        for &outlier in &box_data.outliers {
+            svg.draw_marker(
+                x_center,
+                map_y(outlier),
+                outlier_size,
+                MarkerStyle::Circle,
+                color,
+            );
+        }
         Ok(())
     }
 
@@ -1142,8 +1499,8 @@ impl Plot {
         renderer: &mut SkiaRenderer,
         x_data: &[f64],
         y_data: &[f64],
-        y_errors: Option<&ErrorValues>,
-        x_errors: Option<&ErrorValues>,
+        y_errors: Option<ErrorValuesRef<'_>>,
+        x_errors: Option<ErrorValuesRef<'_>>,
         error_config: Option<&ErrorBarConfig>,
         series_color: Color,
         x_min: f64,

@@ -802,6 +802,35 @@ fn test_pending_ingestion_error_preserves_single_error_shape() {
 }
 
 #[test]
+fn test_pending_ingestion_error_precedes_temporal_resolution() {
+    use crate::data::Signal;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let resolutions = Arc::new(AtomicUsize::new(0));
+    let resolutions_for_signal = Arc::clone(&resolutions);
+    let temporal = Signal::new(move |_| {
+        resolutions_for_signal.fetch_add(1, Ordering::Relaxed);
+        vec![0.0, 1.0, 2.0]
+    });
+    let bad = FailingIngestionData;
+    let valid = vec![0.0, 1.0, 2.0];
+    let plot: Plot = Plot::new()
+        .line_source(valid.clone(), temporal)
+        .end_series()
+        .line(&bad, &valid)
+        .into();
+
+    assert!(matches!(
+        plot.render(),
+        Err(PlottingError::DataExtractionFailed { .. })
+    ));
+    assert_eq!(resolutions.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn test_quiver_preserves_ingestion_error_before_length_validation() {
     let bad = FailingIngestionData;
     let valid = vec![1.0, 2.0, 3.0];
@@ -839,6 +868,206 @@ fn test_snapshot_validation_isolated_from_later_reactive_mutation() {
     ));
     plot.validate_runtime_inputs_for_series(&snapshot_series)
         .expect("snapshot validation should ignore later live mutations");
+}
+
+#[test]
+fn test_resolved_frame_borrows_static_series_data() {
+    let plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[1.0, 2.0, 3.0])
+        .end_series();
+
+    let frame = plot
+        .resolve_frame(0.0)
+        .expect("static frame should resolve");
+    let ResolvedSeries::Line { x, y } = &frame.series[0] else {
+        panic!("line series should resolve as a line");
+    };
+
+    assert!(matches!(
+        x,
+        ResolvedData::Cow(std::borrow::Cow::Borrowed(_))
+    ));
+    assert!(matches!(
+        y,
+        ResolvedData::Cow(std::borrow::Cow::Borrowed(_))
+    ));
+}
+
+#[test]
+fn test_render_resolves_temporal_series_once_for_bounds_and_drawing() {
+    use crate::data::Signal;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let resolutions = Arc::new(AtomicUsize::new(0));
+    let resolutions_for_signal = Arc::clone(&resolutions);
+    let y = Signal::new(move |time| {
+        resolutions_for_signal.fetch_add(1, Ordering::Relaxed);
+        vec![time, time + 1.0, time + 2.0]
+    });
+    let plot: Plot = Plot::new().line_source(vec![0.0, 1.0, 2.0], y).into();
+
+    plot.render_at(2.0)
+        .expect("temporal series should render successfully");
+
+    assert_eq!(resolutions.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn test_resolved_frame_deduplicates_shared_temporal_data_source() {
+    use crate::data::Signal;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let resolutions = Arc::new(AtomicUsize::new(0));
+    let resolutions_for_signal = Arc::clone(&resolutions);
+    let data = Signal::new(move |_| {
+        resolutions_for_signal.fetch_add(1, Ordering::Relaxed);
+        vec![0.0, 1.0, 2.0]
+    });
+    let plot: Plot = Plot::new().line_source(data.clone(), data).end_series();
+
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let ResolvedSeries::Line { x, y } = &frame.series[0] else {
+        panic!("line series should resolve as a line");
+    };
+
+    assert_eq!(resolutions.load(Ordering::Relaxed), 1);
+    let (ResolvedData::Shared(x), ResolvedData::Shared(y)) = (x, y) else {
+        panic!("temporal data should use shared owned frame storage");
+    };
+    assert!(Arc::ptr_eq(x, y));
+}
+
+#[test]
+fn test_resolved_frame_acknowledges_generic_stream_exactly() {
+    use crate::data::{StreamingBuffer, StreamingRenderState};
+
+    let stream = StreamingBuffer::new(16);
+    stream.push_many([0.0, 1.0]);
+    let plot: Plot = Plot::new()
+        .line_source(stream.clone(), stream.clone())
+        .end_series();
+
+    let older_frame = plot.resolve_frame(0.0).expect("older frame should resolve");
+    assert_eq!(older_frame.streaming_acknowledgements.len(), 1);
+    stream.push(2.0);
+    let newer_frame = plot.resolve_frame(0.0).expect("newer frame should resolve");
+    assert_eq!(newer_frame.streaming_acknowledgements.len(), 1);
+
+    newer_frame.acknowledge_rendered(&plot);
+    stream.push(3.0);
+    older_frame.acknowledge_rendered(&plot);
+
+    assert_eq!(stream.appended_since_mark(), 1);
+    assert_eq!(
+        stream.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+}
+
+#[test]
+fn test_generic_lane_acknowledgement_respects_newer_paired_watermark() {
+    use crate::data::StreamingXY;
+
+    let stream = StreamingXY::new(16);
+    stream.push_many([(0.0, 0.0), (1.0, 1.0)]);
+    let generic_plot: Plot = Plot::new()
+        .line_source(stream.x().clone(), vec![0.0, 1.0])
+        .end_series();
+    let paired_plot = Plot::new().line_streaming(&stream).end_series();
+
+    let older_generic_frame = generic_plot
+        .resolve_frame(0.0)
+        .expect("generic lane frame should resolve");
+    stream.push(2.0, 4.0);
+    let newer_paired_frame = paired_plot
+        .resolve_frame(0.0)
+        .expect("paired frame should resolve");
+    newer_paired_frame.acknowledge_rendered(&paired_plot);
+    stream.push(3.0, 9.0);
+    older_generic_frame.acknowledge_rendered(&generic_plot);
+
+    assert_eq!(stream.x().appended_since_mark(), 1);
+    assert_eq!(stream.y().appended_since_mark(), 1);
+}
+
+#[test]
+fn test_resolved_frame_deduplicates_paired_snapshot_acknowledgement() {
+    use crate::data::{StreamingRenderState, StreamingXY};
+
+    let stream = StreamingXY::new(16);
+    stream.push_many([(0.0, 0.0), (1.0, 1.0)]);
+    let plot = Plot::new()
+        .line_streaming(&stream)
+        .end_series()
+        .scatter_streaming(&stream)
+        .end_series();
+
+    let frame = plot
+        .resolve_frame(0.0)
+        .expect("paired frame should resolve");
+    assert_eq!(frame.paired_acknowledgements.len(), 1);
+    stream.push(2.0, 4.0);
+    frame.acknowledge_rendered(&plot);
+
+    assert_eq!(stream.appended_count(), 1);
+    assert_eq!(
+        stream.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+}
+
+#[test]
+fn test_resolved_svg_accepts_dedicated_series_variants() {
+    let plots = [
+        Plot::new()
+            .error_bars(&[0.0, 1.0], &[1.0, 2.0], &[0.1, 0.2])
+            .color(Color::RED)
+            .into_plot(),
+        Plot::new()
+            .error_bars_xy(&[0.0, 1.0], &[1.0, 2.0], &[0.1, 0.1], &[0.2, 0.2])
+            .color(Color::RED)
+            .into_plot(),
+        Plot::new()
+            .boxplot(&[1.0, 2.0, 3.0], None)
+            .color(Color::RED)
+            .into_plot(),
+        Plot::new()
+            .histogram(&[1.0, 1.5, 2.0, 2.5], None)
+            .color(Color::RED)
+            .into_plot(),
+    ];
+
+    for plot in plots {
+        let svg = plot
+            .render_to_svg()
+            .expect("dedicated resolved series should preserve SVG export behavior");
+        assert!(
+            svg.contains("rgb(255,0,0)"),
+            "resolved SVG should contain the rendered series color"
+        );
+    }
+}
+
+#[test]
+fn test_resolved_histogram_preserves_raw_sample_validation() {
+    let plot = Plot::new()
+        .histogram(&[1.0, f64::NAN, 2.0], None)
+        .into_plot();
+
+    assert!(matches!(
+        plot.render(),
+        Err(PlottingError::InvalidData { .. })
+    ));
 }
 
 #[test]
