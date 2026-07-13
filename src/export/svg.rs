@@ -451,7 +451,12 @@ impl SvgRenderer {
         }
     }
 
-    fn draw_polygon_marker(&mut self, points: &[(f32, f32)], color: Color, filled: bool) {
+    fn draw_polygon_marker(
+        &mut self,
+        points: &[(f32, f32)],
+        color: Color,
+        stroke_width: Option<f32>,
+    ) {
         let color_str = self.color_to_svg(color);
         let points_str = points
             .iter()
@@ -459,21 +464,31 @@ impl SvgRenderer {
             .collect::<Vec<_>>()
             .join(" ");
 
-        if filled {
+        if let Some(stroke_width) = stroke_width {
+            writeln!(
+                self.content,
+                r#"  <polygon points="{}" fill="none" stroke="{}" stroke-width="{:.2}"/>"#,
+                points_str, color_str, stroke_width
+            )
+            .unwrap();
+        } else {
             writeln!(
                 self.content,
                 r#"  <polygon points="{}" fill="{}"/>"#,
                 points_str, color_str
             )
             .unwrap();
-        } else {
-            writeln!(
-                self.content,
-                r#"  <polygon points="{}" fill="none" stroke="{}" stroke-width="1"/>"#,
-                points_str, color_str
-            )
-            .unwrap();
         }
+    }
+
+    fn draw_marker_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, color: Color, width: f32) {
+        let color_str = self.color_to_svg(color);
+        writeln!(
+            self.content,
+            r#"  <line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{}" stroke-width="{:.2}" stroke-linecap="butt"/>"#,
+            x1, y1, x2, y2, color_str, width
+        )
+        .unwrap();
     }
 
     /// Draw a marker at a point, matching the raster marker semantics.
@@ -496,7 +511,7 @@ impl SvgRenderer {
                     (x + radius * 0.866, y + radius * 0.5),
                 ],
                 color,
-                true,
+                None,
             ),
             MarkerStyle::TriangleOpen => self.draw_polygon_marker(
                 &[
@@ -505,7 +520,16 @@ impl SvgRenderer {
                     (x + radius * 0.866, y + radius * 0.5),
                 ],
                 color,
-                false,
+                Some((size * 0.15).max(1.0)),
+            ),
+            MarkerStyle::TriangleDown => self.draw_polygon_marker(
+                &[
+                    (x, y + radius),
+                    (x - radius * 0.866, y - radius * 0.5),
+                    (x + radius * 0.866, y - radius * 0.5),
+                ],
+                color,
+                None,
             ),
             MarkerStyle::Diamond => self.draw_polygon_marker(
                 &[
@@ -515,7 +539,7 @@ impl SvgRenderer {
                     (x - radius, y),
                 ],
                 color,
-                true,
+                None,
             ),
             MarkerStyle::DiamondOpen => self.draw_polygon_marker(
                 &[
@@ -525,52 +549,45 @@ impl SvgRenderer {
                     (x - radius, y),
                 ],
                 color,
-                false,
+                Some((size * 0.15).max(1.0)),
             ),
             MarkerStyle::Plus => {
                 let line_width = (size * 0.25).max(1.0);
-                self.draw_line(
-                    x - radius,
-                    y,
-                    x + radius,
-                    y,
-                    color,
-                    line_width,
-                    LineStyle::Solid,
-                );
-                self.draw_line(
-                    x,
-                    y - radius,
-                    x,
-                    y + radius,
-                    color,
-                    line_width,
-                    LineStyle::Solid,
-                );
+                self.draw_marker_line(x - radius, y, x + radius, y, color, line_width);
+                self.draw_marker_line(x, y - radius, x, y + radius, color, line_width);
             }
             MarkerStyle::Cross => {
                 let line_width = (size * 0.25).max(1.0);
                 let offset = radius * 0.707;
-                self.draw_line(
+                self.draw_marker_line(
                     x - offset,
                     y - offset,
                     x + offset,
                     y + offset,
                     color,
                     line_width,
-                    LineStyle::Solid,
                 );
-                self.draw_line(
+                self.draw_marker_line(
                     x - offset,
                     y + offset,
                     x + offset,
                     y - offset,
                     color,
                     line_width,
-                    LineStyle::Solid,
                 );
             }
-            _ => self.draw_circle(x, y, radius, color, style.is_filled()),
+            MarkerStyle::Star => {
+                let line_width = (size * 0.22).max(1.0);
+                let offset = radius * 0.707;
+                for (x1, y1, x2, y2) in [
+                    (x - radius, y, x + radius, y),
+                    (x, y - radius, x, y + radius),
+                    (x - offset, y - offset, x + offset, y + offset),
+                    (x - offset, y + offset, x + offset, y - offset),
+                ] {
+                    self.draw_marker_line(x1, y1, x2, y2, color, line_width);
+                }
+            }
         }
     }
 
@@ -1341,10 +1358,19 @@ impl SvgRenderer {
 
         match &item.item_type {
             LegendItemType::Line { style, width } => {
-                self.draw_legend_line_handle(x, y, handle_length, item.color, style, *width);
+                let scaled_width = self.points_to_pixels(*width);
+                self.draw_legend_line_handle(x, y, handle_length, item.color, style, scaled_width);
             }
             LegendItemType::Scatter { marker, size } => {
-                self.draw_legend_scatter_handle(x, y, handle_length, item.color, marker, *size);
+                let scaled_size = self.points_to_pixels(*size);
+                self.draw_legend_scatter_handle(
+                    x,
+                    y,
+                    handle_length,
+                    item.color,
+                    marker,
+                    scaled_size,
+                );
             }
             LegendItemType::LineMarker {
                 line_style,
@@ -1352,15 +1378,17 @@ impl SvgRenderer {
                 marker,
                 marker_size,
             } => {
+                let scaled_line_width = self.points_to_pixels(*line_width);
+                let scaled_marker_size = self.points_to_pixels(*marker_size);
                 self.draw_legend_line_marker_handle(
                     x,
                     y,
                     handle_length,
                     item.color,
                     line_style,
-                    *line_width,
+                    scaled_line_width,
                     marker,
-                    *marker_size,
+                    scaled_marker_size,
                 );
             }
             LegendItemType::Bar | LegendItemType::Histogram => {
