@@ -1,6 +1,6 @@
 use super::*;
 
-fn parse_svg_attr(line: &str, attr: &str) -> f32 {
+fn svg_attr_value<'a>(line: &'a str, attr: &str) -> &'a str {
     let marker = format!(r#"{}=""#, attr);
     let start = line
         .find(&marker)
@@ -10,7 +10,11 @@ fn parse_svg_attr(line: &str, attr: &str) -> f32 {
         .find('"')
         .unwrap_or_else(|| panic!("unterminated {} in line: {}", attr, line))
         + start;
-    line[start..end]
+    &line[start..end]
+}
+
+fn parse_svg_attr(line: &str, attr: &str) -> f32 {
+    svg_attr_value(line, attr)
         .parse::<f32>()
         .unwrap_or_else(|_| panic!("invalid {} in line: {}", attr, line))
 }
@@ -70,6 +74,104 @@ fn test_svg_renderer_creation() {
     let renderer = SvgRenderer::new(800.0, 600.0);
     assert_eq!(renderer.width(), 800.0);
     assert_eq!(renderer.height(), 600.0);
+}
+
+#[test]
+fn test_plain_svg_generic_font_families_are_unquoted() {
+    let cases = [
+        (FontFamily::Serif, "serif"),
+        (FontFamily::SansSerif, "sans-serif"),
+        (FontFamily::Monospace, "monospace"),
+        (FontFamily::Cursive, "cursive"),
+        (FontFamily::Fantasy, "fantasy"),
+    ];
+
+    for (family, expected) in cases {
+        let mut renderer = SvgRenderer::with_font_family(100.0, 100.0, family);
+        renderer
+            .draw_text("Label", 10.0, 20.0, 12.0, Color::BLACK)
+            .unwrap();
+
+        let svg = renderer.to_svg_string();
+        assert!(
+            svg.contains(&format!(r#"font-family="{expected}""#)),
+            "unexpected SVG font family: {svg}"
+        );
+    }
+}
+
+#[test]
+fn test_plain_svg_named_font_family_is_css_quoted() {
+    let mut renderer = SvgRenderer::with_font_family(
+        100.0,
+        100.0,
+        FontFamily::Name("New Computer Modern Sans".to_string()),
+    );
+    renderer
+        .draw_text("Label", 10.0, 20.0, 12.0, Color::BLACK)
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    assert!(svg.contains(r#"font-family="&quot;New Computer Modern Sans&quot;""#));
+}
+
+#[test]
+fn test_plain_svg_named_generic_keyword_remains_quoted() {
+    let mut renderer =
+        SvgRenderer::with_font_family(100.0, 100.0, FontFamily::Name("serif".to_string()));
+    renderer
+        .draw_text("Label", 10.0, 20.0, 12.0, Color::BLACK)
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    assert!(svg.contains(r#"font-family="&quot;serif&quot;""#));
+}
+
+#[test]
+fn test_plain_svg_named_font_family_css_and_xml_escaping() {
+    let mut renderer = SvgRenderer::with_font_family(
+        100.0,
+        100.0,
+        FontFamily::Name(r#"Font, "A"\B & <C>"#.to_string()),
+    );
+    renderer
+        .draw_text("Label", 10.0, 20.0, 12.0, Color::BLACK)
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    assert!(svg.contains(r#"font-family="&quot;Font, \&quot;A\&quot;\\B &amp; &lt;C&gt;&quot;""#));
+}
+
+#[test]
+fn test_plain_svg_named_font_family_escapes_control_characters() {
+    let mut renderer = SvgRenderer::with_font_family(
+        100.0,
+        100.0,
+        FontFamily::Name(
+            "Line\nBreak\rReturn\tTab\u{000C}Form\0Null\u{0001}Unit\u{007F}Delete\u{FFFE}End"
+                .to_string(),
+        ),
+    );
+    renderer
+        .draw_text("Label", 10.0, 20.0, 12.0, Color::BLACK)
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    let text_line = svg
+        .lines()
+        .find(|line| line.contains(">Label</text>"))
+        .expect("missing SVG text element");
+    let family = svg_attr_value(text_line, "font-family");
+
+    assert_eq!(
+        family,
+        r#"&quot;Line\00000ABreak\00000DReturn\000009Tab\00000CForm�Null\000001Unit\00007FDelete\00FFFEEnd&quot;"#
+    );
+    assert!(
+        family
+            .chars()
+            .all(|character| character >= ' ' && character != '\u{007F}')
+    );
 }
 
 #[test]

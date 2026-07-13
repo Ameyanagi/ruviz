@@ -834,6 +834,17 @@ where
         self
     }
 
+    /// Set the font family used for plot text.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn font_family<F>(mut self, family: F) -> Self
+    where
+        F: Into<crate::render::FontFamily>,
+    {
+        self.plot = self.plot.font_family(family);
+        self
+    }
+
     /// Set maximum output resolution while preserving figure aspect ratio
     ///
     /// This method forwards to the inner Plot. See [`super::Plot::max_resolution`] for details.

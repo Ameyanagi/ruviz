@@ -948,6 +948,15 @@ impl PlotSeriesBuilder {
         self
     }
 
+    /// Set the font family used for plot text.
+    pub fn font_family<F>(mut self, family: F) -> Self
+    where
+        F: Into<crate::render::FontFamily>,
+    {
+        self.plot = self.plot.font_family(family);
+        self
+    }
+
     /// Set maximum output resolution while preserving figure aspect ratio
     ///
     /// See [`Plot::max_resolution`] for details.

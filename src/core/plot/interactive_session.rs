@@ -2136,7 +2136,12 @@ fn compute_plot_layout(
     let layout_plot = plot.prepared_frame_plot(size_px, scale_factor, time_seconds);
     let dpi = layout_plot.display.config.figure.dpi;
 
-    let mut renderer = SkiaRenderer::new(size_px.0, size_px.1, layout_plot.display.theme.clone())?;
+    let mut renderer = SkiaRenderer::with_font_family(
+        size_px.0,
+        size_px.1,
+        layout_plot.display.theme.clone(),
+        layout_plot.display.config.typography.family.clone(),
+    )?;
     renderer.set_text_engine_mode(layout_plot.display.text_engine);
     renderer.set_render_scale(layout_plot.render_scale());
 

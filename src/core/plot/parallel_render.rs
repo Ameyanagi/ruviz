@@ -157,8 +157,12 @@ impl Plot {
 
         // Create renderer with DPI scaling
         let (scaled_width, scaled_height) = self.dpi_scaled_dimensions();
-        let mut renderer =
-            SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
+        let mut renderer = SkiaRenderer::with_font_family(
+            scaled_width,
+            scaled_height,
+            self.display.theme.clone(),
+            self.display.config.typography.family.clone(),
+        )?;
         renderer.set_text_engine_mode(self.display.text_engine);
         renderer.note_parallel_render();
         let render_scale = self.render_scale();

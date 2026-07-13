@@ -30,11 +30,18 @@ pub struct SvgRenderer {
     text_engine_mode: TextEngineMode,
     /// Plain text metrics for anchor conversion.
     text_renderer: TextRenderer,
+    /// Font family for plain SVG text and Typst-rendered SVG text.
+    font_family: FontFamily,
 }
 
 impl SvgRenderer {
     /// Create a new SVG renderer with specified dimensions
     pub fn new(width: f32, height: f32) -> Self {
+        Self::with_font_family(width, height, FontFamily::SansSerif)
+    }
+
+    /// Create a new SVG renderer with a specified text font family.
+    pub fn with_font_family(width: f32, height: f32, font_family: FontFamily) -> Self {
         Self {
             width,
             height,
@@ -48,6 +55,7 @@ impl SvgRenderer {
             ),
             text_engine_mode: TextEngineMode::Plain,
             text_renderer: TextRenderer::new(),
+            font_family,
         }
     }
 
@@ -87,6 +95,19 @@ impl SvgRenderer {
     /// Get text rendering backend mode.
     pub fn text_engine_mode(&self) -> TextEngineMode {
         self.text_engine_mode
+    }
+
+    /// Set the font family used by plain and Typst text rendering.
+    pub fn set_font_family<F>(&mut self, family: F)
+    where
+        F: Into<FontFamily>,
+    {
+        self.font_family = family.into();
+    }
+
+    /// Get the configured font family.
+    pub fn font_family(&self) -> &FontFamily {
+        &self.font_family
     }
 
     /// Map renderer font size to Typst size units.
@@ -191,8 +212,39 @@ impl SvgRenderer {
     }
 
     fn plain_text_metrics(&self, text: &str, font_size: f32) -> Result<TextPlacementMetrics> {
-        let config = FontConfig::new(FontFamily::SansSerif, font_size);
+        let config = FontConfig::new(self.font_family.clone(), font_size);
         self.text_renderer.measure_text_placement(text, &config)
+    }
+
+    fn escape_css_string(value: &str) -> String {
+        let mut escaped = String::with_capacity(value.len());
+        for character in value.chars() {
+            match character {
+                '\0' => escaped.push('\u{FFFD}'),
+                '"' | '\\' => {
+                    escaped.push('\\');
+                    escaped.push(character);
+                }
+                '\u{0001}'..='\u{001F}' | '\u{007F}' | '\u{FFFE}' | '\u{FFFF}' => {
+                    write!(escaped, "\\{:06X}", character as u32)
+                        .expect("writing CSS escape to String cannot fail");
+                }
+                _ => escaped.push(character),
+            }
+        }
+        escaped
+    }
+
+    fn escaped_font_family(&self) -> String {
+        let css_value = match &self.font_family {
+            FontFamily::Serif
+            | FontFamily::SansSerif
+            | FontFamily::Monospace
+            | FontFamily::Cursive
+            | FontFamily::Fantasy => self.font_family.as_str().to_string(),
+            FontFamily::Name(name) => format!("\"{}\"", Self::escape_css_string(name)),
+        };
+        self.escape_xml(&css_value)
     }
 
     fn measure_text_for_layout(&self, text: &str, font_size: f32) -> Result<(f32, f32)> {
@@ -204,12 +256,13 @@ impl SvgRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(font_size);
-                typst_text::measure_text(
+                typst_text::measure_text_with_font_family(
                     text,
                     size_pt,
                     Color::BLACK,
                     0.0,
                     TypstBackendKind::Svg,
+                    &self.font_family,
                     "SVG text measurement",
                 )
             }
@@ -530,10 +583,11 @@ impl SvgRenderer {
                 let escaped_text = self.escape_xml(text);
                 let metrics = self.plain_text_metrics(text, size)?;
                 let baseline_y = top_anchor_to_baseline(y, metrics);
+                let font_family = self.escaped_font_family();
                 writeln!(
                     self.content,
-                    r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}">{}</text>"#,
-                    x, baseline_y, size, color_str, escaped_text
+                    r#"  <text x="{:.2}" y="{:.2}" font-family="{}" font-size="{:.1}" fill="{}">{}</text>"#,
+                    x, baseline_y, font_family, size, color_str, escaped_text
                 )
                 .unwrap();
                 Ok(())
@@ -541,8 +595,14 @@ impl SvgRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered =
-                    typst_text::render_svg(text, size_pt, color, 0.0, "SVG text rendering")?;
+                let rendered = typst_text::render_svg_with_font_family(
+                    text,
+                    size_pt,
+                    color,
+                    0.0,
+                    &self.font_family,
+                    "SVG text rendering",
+                )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
                     x,
                     y,
@@ -578,10 +638,11 @@ impl SvgRenderer {
                 let escaped_text = self.escape_xml(text);
                 let metrics = self.plain_text_metrics(text, size)?;
                 let baseline_y = top_anchor_to_baseline(y, metrics);
+                let font_family = self.escaped_font_family();
                 writeln!(
                     self.content,
-                    r#"  <text x="{:.2}" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text>"#,
-                    x, baseline_y, size, color_str, escaped_text
+                    r#"  <text x="{:.2}" y="{:.2}" font-family="{}" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text>"#,
+                    x, baseline_y, font_family, size, color_str, escaped_text
                 )
                 .unwrap();
                 Ok(())
@@ -589,11 +650,12 @@ impl SvgRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered = typst_text::render_svg(
+                let rendered = typst_text::render_svg_with_font_family(
                     text,
                     size_pt,
                     color,
                     0.0,
+                    &self.font_family,
                     "SVG centered text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(
@@ -631,10 +693,11 @@ impl SvgRenderer {
                 let escaped_text = self.escape_xml(text);
                 let metrics = self.plain_text_metrics(text, size)?;
                 let center_baseline_y = center_anchor_to_baseline(0.0, metrics);
+                let font_family = self.escaped_font_family();
                 writeln!(
                     self.content,
-                    r#"  <g transform="translate({:.2},{:.2}) rotate({:.1})"><text x="0" y="{:.2}" font-family="sans-serif" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text></g>"#,
-                    x, y, angle, center_baseline_y, size, color_str, escaped_text
+                    r#"  <g transform="translate({:.2},{:.2}) rotate({:.1})"><text x="0" y="{:.2}" font-family="{}" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text></g>"#,
+                    x, y, angle, center_baseline_y, font_family, size, color_str, escaped_text
                 )
                 .unwrap();
                 Ok(())
@@ -642,11 +705,12 @@ impl SvgRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
-                let rendered = typst_text::render_svg(
+                let rendered = typst_text::render_svg_with_font_family(
                     text,
                     size_pt,
                     color,
                     angle,
+                    &self.font_family,
                     "SVG rotated text rendering",
                 )?;
                 let (draw_x, draw_y) = typst_text::anchored_top_left(

@@ -4757,5 +4757,58 @@ fn test_quiver_rejects_non_finite_input_values() {
     assert!(matches!(err, PlottingError::InvalidData { .. }));
 }
 
+#[test]
+fn test_plot_font_family_api_updates_typography_config() {
+    let plot = Plot::new().font_family("New Computer Modern Sans");
+    assert_eq!(
+        plot.get_config().typography.family,
+        crate::render::FontFamily::Name("New Computer Modern Sans".to_string())
+    );
+}
+
+#[test]
+fn test_render_to_svg_propagates_named_font_family() {
+    let x = vec![0.0, 1.0];
+    let y = vec![0.0, 1.0];
+    let svg = Plot::new()
+        .line(&x, &y)
+        .title("Label")
+        .font_family(crate::render::FontFamily::Name("serif".to_string()))
+        .render_to_svg()
+        .expect("SVG render should succeed");
+
+    assert!(svg.contains(r#"font-family="&quot;serif&quot;""#));
+}
+
+#[test]
+fn test_theme_sets_plot_typography_font_family() {
+    let themed = Plot::new().theme(crate::render::Theme::publication());
+    assert_eq!(
+        themed.get_config().typography.family,
+        crate::render::FontFamily::Name("Times New Roman".to_string())
+    );
+
+    let constructed = Plot::with_theme(crate::render::Theme::minimal());
+    assert_eq!(
+        constructed.get_config().typography.family,
+        crate::render::FontFamily::Name("Helvetica".to_string())
+    );
+}
+
+#[test]
+fn test_plot_builder_font_family_forwards_to_plot() {
+    let x = vec![0.0, 1.0, 2.0];
+    let y = vec![0.0, 1.0, 4.0];
+    let plot: Plot = Plot::new()
+        .line(&x, &y)
+        .font_family("New Computer Modern Sans")
+        .into();
+
+    assert_eq!(
+        plot.get_config().typography.family,
+        crate::render::FontFamily::Name("New Computer Modern Sans".to_string())
+    );
+}
+
 #[cfg(feature = "typst-math")]
 mod typst;

@@ -309,6 +309,15 @@ fn test_renderer_creation() {
 }
 
 #[test]
+fn test_renderer_uses_theme_font_family() {
+    let renderer = SkiaRenderer::new(800, 600, Theme::publication()).unwrap();
+    assert_eq!(
+        renderer.font_family(),
+        &FontFamily::Name("Times New Roman".to_string())
+    );
+}
+
+#[test]
 fn test_set_dpi_scale_sanitizes_invalid_values() {
     let theme = Theme::default();
     let mut renderer = SkiaRenderer::new(100, 100, theme).unwrap();

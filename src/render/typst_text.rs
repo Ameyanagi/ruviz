@@ -1,7 +1,7 @@
 use crate::{
     core::{PlottingError, Result},
     render::{
-        Color,
+        Color, FontFamily,
         text_anchor::{TextAnchorKind, anchor_to_top_left},
     },
 };
@@ -85,11 +85,41 @@ pub fn render_raster(
 }
 
 #[cfg(not(feature = "typst-math"))]
+pub fn render_raster_with_font_family(
+    _snippet: &str,
+    _size_pt: f32,
+    _color: Color,
+    _rotation_deg: f32,
+    _font_family: &FontFamily,
+    operation: &str,
+) -> Result<TypstRasterOutput> {
+    Err(PlottingError::FeatureNotEnabled {
+        feature: "typst-math".to_string(),
+        operation: operation.to_string(),
+    })
+}
+
+#[cfg(not(feature = "typst-math"))]
 pub fn render_svg(
     _snippet: &str,
     _size_pt: f32,
     _color: Color,
     _rotation_deg: f32,
+    operation: &str,
+) -> Result<TypstSvgOutput> {
+    Err(PlottingError::FeatureNotEnabled {
+        feature: "typst-math".to_string(),
+        operation: operation.to_string(),
+    })
+}
+
+#[cfg(not(feature = "typst-math"))]
+pub fn render_svg_with_font_family(
+    _snippet: &str,
+    _size_pt: f32,
+    _color: Color,
+    _rotation_deg: f32,
+    _font_family: &FontFamily,
     operation: &str,
 ) -> Result<TypstSvgOutput> {
     Err(PlottingError::FeatureNotEnabled {
@@ -113,12 +143,28 @@ pub fn measure_text(
     })
 }
 
+#[cfg(not(feature = "typst-math"))]
+pub fn measure_text_with_font_family(
+    _snippet: &str,
+    _size_pt: f32,
+    _color: Color,
+    _rotation_deg: f32,
+    _backend: TypstBackendKind,
+    _font_family: &FontFamily,
+    operation: &str,
+) -> Result<(f32, f32)> {
+    Err(PlottingError::FeatureNotEnabled {
+        feature: "typst-math".to_string(),
+        operation: operation.to_string(),
+    })
+}
+
 #[cfg(feature = "typst-math")]
 mod imp {
     use super::{TypstBackendKind, TypstRasterOutput, TypstSvgOutput};
     use crate::{
         core::{PlottingError, Result},
-        render::Color,
+        render::{Color, FontFamily},
     };
     use std::{
         collections::HashMap,
@@ -149,6 +195,7 @@ mod imp {
         color: (u8, u8, u8, u8),
         rotation_bits: u32,
         backend: TypstBackendKind,
+        font_family: String,
     }
 
     #[derive(Debug, Clone)]
@@ -178,6 +225,8 @@ mod imp {
         book: LazyHash<FontBook>,
         fonts: Vec<FontSlot>,
         sans_family: String,
+        serif_family: String,
+        mono_family: String,
     }
 
     #[derive(Debug)]
@@ -233,29 +282,76 @@ mod imp {
         FONTS.get_or_init(|| {
             let mut searcher = FontSearcher::new();
             let found = searcher.search();
-            let sans_family = select_sans_family(&found.book);
+            let sans_family = select_family(
+                &found.book,
+                &[
+                    "noto sans",
+                    "dejavu sans",
+                    "liberation sans",
+                    "arial",
+                    "helvetica",
+                    "new computer modern sans",
+                    "latin modern sans",
+                ],
+                "sans",
+                "New Computer Modern Sans",
+            );
+            let serif_family = select_family(
+                &found.book,
+                &[
+                    "new computer modern",
+                    "latin modern roman",
+                    "times new roman",
+                    "noto serif",
+                    "dejavu serif",
+                    "liberation serif",
+                    "georgia",
+                ],
+                "serif",
+                "New Computer Modern",
+            );
+            let mono_family = select_family(
+                &found.book,
+                &[
+                    "new computer modern mono",
+                    "latin modern mono",
+                    "noto sans mono",
+                    "dejavu sans mono",
+                    "liberation mono",
+                    "courier new",
+                    "monaco",
+                ],
+                "mono",
+                "New Computer Modern Mono",
+            );
             FontContext {
                 book: LazyHash::new(found.book),
                 fonts: found.fonts,
                 sans_family,
+                serif_family,
+                mono_family,
             }
         })
     }
 
-    fn select_sans_family(book: &FontBook) -> String {
-        const PREFERRED: &[&str] = &[
-            "noto sans",
-            "dejavu sans",
-            "liberation sans",
-            "arial",
-            "helvetica",
-            "new computer modern sans",
-            "latin modern sans",
-        ];
+    fn canonical_family_name<'a>(book: &'a FontBook, requested: &str) -> Option<&'a str> {
+        let requested = requested.to_lowercase();
+        book.select_family(&requested)
+            .next()
+            .and_then(|index| book.info(index))
+            .map(|info| info.family.as_str())
+    }
 
-        for candidate in PREFERRED {
-            if book.contains_family(candidate) {
-                return (*candidate).to_string();
+    fn select_family(
+        book: &FontBook,
+        preferred: &[&str],
+        fallback_fragment: &str,
+        final_fallback: &str,
+    ) -> String {
+        let fallback_fragment = fallback_fragment.to_ascii_lowercase();
+        for candidate in preferred {
+            if let Some(family) = canonical_family_name(book, candidate) {
+                return family.to_string();
             }
         }
 
@@ -264,12 +360,64 @@ mod imp {
             if first_family.is_none() {
                 first_family = Some(family.to_string());
             }
-            if family.to_ascii_lowercase().contains("sans") {
+            if family.to_ascii_lowercase().contains(&fallback_fragment) {
                 return family.to_string();
             }
         }
 
-        first_family.unwrap_or_else(|| "New Computer Modern Sans".to_string())
+        first_family.unwrap_or_else(|| final_fallback.to_string())
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum GenericFontFamily {
+        SansSerif,
+        Serif,
+        Monospace,
+    }
+
+    fn inferred_generic_family_for_name(name: &str) -> GenericFontFamily {
+        let lowered = name.to_ascii_lowercase();
+        if lowered.contains("mono")
+            || lowered.contains("courier")
+            || lowered.contains("consolas")
+            || lowered.contains("menlo")
+        {
+            GenericFontFamily::Monospace
+        } else if lowered.contains("sans") {
+            GenericFontFamily::SansSerif
+        } else if lowered.contains("serif")
+            || lowered.contains("times")
+            || lowered.contains("georgia")
+            || lowered.contains("cambria")
+            || lowered.contains("garamond")
+        {
+            GenericFontFamily::Serif
+        } else {
+            GenericFontFamily::SansSerif
+        }
+    }
+
+    fn fallback_family(font_ctx: &FontContext, generic: GenericFontFamily) -> &str {
+        match generic {
+            GenericFontFamily::SansSerif => &font_ctx.sans_family,
+            GenericFontFamily::Serif => &font_ctx.serif_family,
+            GenericFontFamily::Monospace => &font_ctx.mono_family,
+        }
+    }
+
+    fn resolve_typst_font_family(font_ctx: &FontContext, family: &FontFamily) -> String {
+        match family {
+            FontFamily::Serif => font_ctx.serif_family.clone(),
+            FontFamily::Monospace => font_ctx.mono_family.clone(),
+            FontFamily::SansSerif | FontFamily::Cursive | FontFamily::Fantasy => {
+                font_ctx.sans_family.clone()
+            }
+            FontFamily::Name(name) => canonical_family_name(&font_ctx.book, name)
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    fallback_family(font_ctx, inferred_generic_family_for_name(name)).to_string()
+                }),
+        }
     }
 
     fn escape_typst_string(value: &str) -> String {
@@ -303,12 +451,24 @@ mod imp {
         rotation_deg: f32,
         backend: TypstBackendKind,
     ) -> CacheKey {
+        make_key_with_font_family(snippet, size_pt, color, rotation_deg, backend, "")
+    }
+
+    fn make_key_with_font_family(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        backend: TypstBackendKind,
+        font_family: &str,
+    ) -> CacheKey {
         CacheKey {
             snippet: snippet.to_string(),
             size_bits: size_pt.to_bits(),
             color: (color.r, color.g, color.b, color.a),
             rotation_bits: rotation_deg.to_bits(),
             backend,
+            font_family: font_family.to_string(),
         }
     }
 
@@ -434,11 +594,11 @@ mod imp {
         size_pt: f32,
         color: Color,
         rotation_deg: f32,
+        font_family: &str,
         operation: &str,
     ) -> Result<Page> {
         let font_ctx = fonts();
-        let source_text =
-            build_document_source(snippet, size_pt, color, rotation_deg, &font_ctx.sans_family);
+        let source_text = build_document_source(snippet, size_pt, color, rotation_deg, font_family);
         let main = FileId::new_fake(VirtualPath::new("/main.typ"));
         let source = Source::new(main, source_text);
         let world = TypstWorld {
@@ -480,6 +640,24 @@ mod imp {
         rotation_deg: f32,
         operation: &str,
     ) -> Result<TypstRasterOutput> {
+        render_raster_with_font_family(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            &FontFamily::SansSerif,
+            operation,
+        )
+    }
+
+    pub fn render_raster_with_font_family(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        font_family: &FontFamily,
+        operation: &str,
+    ) -> Result<TypstRasterOutput> {
         if snippet.trim().is_empty() {
             let pixmap = Pixmap::new(1, 1).ok_or_else(|| {
                 PlottingError::RenderError("Failed to allocate pixmap".to_string())
@@ -491,12 +669,15 @@ mod imp {
             });
         }
 
-        let key = make_key(
+        let font_ctx = fonts();
+        let resolved_font_family = resolve_typst_font_family(font_ctx, font_family);
+        let key = make_key_with_font_family(
             snippet,
             size_pt,
             color,
             rotation_deg,
             TypstBackendKind::Raster,
+            &resolved_font_family,
         );
 
         {
@@ -525,7 +706,14 @@ mod imp {
             }
         }
 
-        let page = compile_single_page(snippet, size_pt, color, rotation_deg, operation)?;
+        let page = compile_single_page(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            &resolved_font_family,
+            operation,
+        )?;
         let size = page.frame.size();
         let logical_width = size.x.to_pt() as f32;
         let logical_height = size.y.to_pt() as f32;
@@ -576,6 +764,24 @@ mod imp {
         rotation_deg: f32,
         operation: &str,
     ) -> Result<TypstSvgOutput> {
+        render_svg_with_font_family(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            &FontFamily::SansSerif,
+            operation,
+        )
+    }
+
+    pub fn render_svg_with_font_family(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        font_family: &FontFamily,
+        operation: &str,
+    ) -> Result<TypstSvgOutput> {
         if snippet.trim().is_empty() {
             return Ok(TypstSvgOutput {
                 svg: String::new(),
@@ -584,7 +790,16 @@ mod imp {
             });
         }
 
-        let key = make_key(snippet, size_pt, color, rotation_deg, TypstBackendKind::Svg);
+        let font_ctx = fonts();
+        let resolved_font_family = resolve_typst_font_family(font_ctx, font_family);
+        let key = make_key_with_font_family(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            TypstBackendKind::Svg,
+            &resolved_font_family,
+        );
         {
             let cache = lock_cache()?;
             if let Some(CachedValue::Svg { svg, width, height }) = cache.entries.get(&key) {
@@ -596,7 +811,14 @@ mod imp {
             }
         }
 
-        let page = compile_single_page(snippet, size_pt, color, rotation_deg, operation)?;
+        let page = compile_single_page(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            &resolved_font_family,
+            operation,
+        )?;
         let raw_svg = typst_svg::svg(&page);
         let size = page.frame.size();
         let width = size.x.to_pt() as f32;
@@ -632,13 +854,47 @@ mod imp {
         backend: TypstBackendKind,
         operation: &str,
     ) -> Result<(f32, f32)> {
+        measure_text_with_font_family(
+            snippet,
+            size_pt,
+            color,
+            rotation_deg,
+            backend,
+            &FontFamily::SansSerif,
+            operation,
+        )
+    }
+
+    pub fn measure_text_with_font_family(
+        snippet: &str,
+        size_pt: f32,
+        color: Color,
+        rotation_deg: f32,
+        backend: TypstBackendKind,
+        font_family: &FontFamily,
+        operation: &str,
+    ) -> Result<(f32, f32)> {
         match backend {
             TypstBackendKind::Raster => {
-                let rendered = render_raster(snippet, size_pt, color, rotation_deg, operation)?;
+                let rendered = render_raster_with_font_family(
+                    snippet,
+                    size_pt,
+                    color,
+                    rotation_deg,
+                    font_family,
+                    operation,
+                )?;
                 Ok((rendered.width, rendered.height))
             }
             TypstBackendKind::Svg => {
-                let rendered = render_svg(snippet, size_pt, color, rotation_deg, operation)?;
+                let rendered = render_svg_with_font_family(
+                    snippet,
+                    size_pt,
+                    color,
+                    rotation_deg,
+                    font_family,
+                    operation,
+                )?;
                 Ok((rendered.width, rendered.height))
             }
         }
@@ -659,6 +915,174 @@ mod imp {
             let err = lock_cache_resource(&mutex, "test cache").unwrap_err();
             assert!(matches!(err, PlottingError::TypstError(_)));
             assert!(err.to_string().contains("test cache lock is poisoned"));
+        }
+
+        fn swap_ascii_case(value: &str) -> String {
+            value
+                .chars()
+                .map(|character| {
+                    if character.is_ascii_lowercase() {
+                        character.to_ascii_uppercase()
+                    } else {
+                        character.to_ascii_lowercase()
+                    }
+                })
+                .collect()
+        }
+
+        #[test]
+        fn named_family_resolution_is_case_insensitive_and_canonical() {
+            let font_ctx = fonts();
+            let canonical = font_ctx
+                .book
+                .families()
+                .next()
+                .map(|(family, _)| family.to_string())
+                .expect("Typst font search should find at least one family");
+            let requested = swap_ascii_case(&canonical);
+
+            let resolved = resolve_typst_font_family(font_ctx, &FontFamily::Name(requested));
+
+            assert_eq!(resolved, canonical);
+        }
+
+        #[test]
+        fn supported_generic_families_resolve_to_selected_canonical_families() {
+            let font_ctx = fonts();
+
+            assert_eq!(
+                resolve_typst_font_family(font_ctx, &FontFamily::Serif),
+                font_ctx.serif_family
+            );
+            assert_eq!(
+                resolve_typst_font_family(font_ctx, &FontFamily::SansSerif),
+                font_ctx.sans_family
+            );
+            assert_eq!(
+                resolve_typst_font_family(font_ctx, &FontFamily::Monospace),
+                font_ctx.mono_family
+            );
+        }
+
+        #[test]
+        fn unsupported_typst_generic_families_use_sans_serif_fallback() {
+            let font_ctx = fonts();
+
+            for family in [FontFamily::Cursive, FontFamily::Fantasy] {
+                assert_eq!(
+                    resolve_typst_font_family(font_ctx, &family),
+                    font_ctx.sans_family
+                );
+            }
+        }
+
+        #[test]
+        fn typst_svg_render_applies_distinct_available_families() {
+            let snippet = "#text(\"iiiiiiiiWWWW\")";
+            let serif = render_svg_with_font_family(
+                snippet,
+                18.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::Name("Libertinus Serif".to_string()),
+                "serif test render",
+            )
+            .expect("embedded serif Typst render should succeed");
+            let mono = render_svg_with_font_family(
+                snippet,
+                18.0,
+                Color::BLACK,
+                0.0,
+                &FontFamily::Name("DejaVu Sans Mono".to_string()),
+                "monospace test render",
+            )
+            .expect("embedded monospace Typst render should succeed");
+
+            assert_ne!(serif.svg, mono.svg);
+        }
+
+        #[test]
+        fn canonical_family_spelling_produces_the_same_cache_key_and_source() {
+            let font_ctx = fonts();
+            let canonical = font_ctx.sans_family.clone();
+            let differently_cased = swap_ascii_case(&canonical);
+            let resolved_canonical =
+                resolve_typst_font_family(font_ctx, &FontFamily::Name(canonical.clone()));
+            let resolved_differently_cased =
+                resolve_typst_font_family(font_ctx, &FontFamily::Name(differently_cased));
+
+            let canonical_key = make_key_with_font_family(
+                "#text(\"a\")",
+                12.0,
+                Color::BLACK,
+                0.0,
+                TypstBackendKind::Svg,
+                &resolved_canonical,
+            );
+            let differently_cased_key = make_key_with_font_family(
+                "#text(\"a\")",
+                12.0,
+                Color::BLACK,
+                0.0,
+                TypstBackendKind::Svg,
+                &resolved_differently_cased,
+            );
+            let other_family_key = make_key_with_font_family(
+                "#text(\"a\")",
+                12.0,
+                Color::BLACK,
+                0.0,
+                TypstBackendKind::Svg,
+                "Definitely Different Family",
+            );
+            let source = build_document_source(
+                "#text(\"a\")",
+                12.0,
+                Color::BLACK,
+                0.0,
+                &resolved_differently_cased,
+            );
+
+            assert_eq!(resolved_canonical, canonical);
+            assert_eq!(resolved_differently_cased, canonical);
+            assert_eq!(canonical_key, differently_cased_key);
+            assert_ne!(canonical_key, other_family_key);
+            assert!(source.contains(&format!("font: \"{}\"", escape_typst_string(&canonical))));
+        }
+
+        #[test]
+        fn document_source_escapes_named_family_for_typst_string() {
+            let source = build_document_source(
+                "Label",
+                12.0,
+                Color::BLACK,
+                0.0,
+                r#"Family "Quoted" \ Path"#,
+            );
+
+            assert!(source.contains(r#"font: "Family \"Quoted\" \\ Path""#));
+        }
+
+        #[test]
+        fn missing_named_font_falls_back_by_family_hint() {
+            let font_ctx = fonts();
+
+            let serif = resolve_typst_font_family(
+                font_ctx,
+                &FontFamily::Name("Definitely Missing Serif".to_string()),
+            );
+            let sans = resolve_typst_font_family(
+                font_ctx,
+                &FontFamily::Name("Definitely Missing Sans-Serif".to_string()),
+            );
+            let mono = resolve_typst_font_family(
+                font_ctx,
+                &FontFamily::Name("Definitely Missing Mono".to_string()),
+            );
+
+            assert_eq!(serif, font_ctx.serif_family);
+            assert_eq!(sans, font_ctx.sans_family);
+            assert_eq!(mono, font_ctx.mono_family);
         }
 
         #[test]
@@ -771,4 +1195,7 @@ mod imp {
 }
 
 #[cfg(feature = "typst-math")]
-pub use imp::{measure_text, render_raster, render_svg};
+pub use imp::{
+    measure_text, measure_text_with_font_family, render_raster, render_raster_with_font_family,
+    render_svg, render_svg_with_font_family,
+};

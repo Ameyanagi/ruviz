@@ -1005,6 +1005,8 @@ mod tests {
         assert_eq!(FontFamily::from("sans"), FontFamily::SansSerif);
         assert_eq!(FontFamily::from("monospace"), FontFamily::Monospace);
         assert_eq!(FontFamily::from("mono"), FontFamily::Monospace);
+        assert_eq!(FontFamily::from("cursive"), FontFamily::Cursive);
+        assert_eq!(FontFamily::from("fantasy"), FontFamily::Fantasy);
         assert_eq!(
             FontFamily::from("Arial"),
             FontFamily::Name("Arial".to_string())
@@ -1016,7 +1018,21 @@ mod tests {
         assert_eq!(FontFamily::Serif.as_str(), "serif");
         assert_eq!(FontFamily::SansSerif.as_str(), "sans-serif");
         assert_eq!(FontFamily::Monospace.as_str(), "monospace");
+        assert_eq!(FontFamily::Cursive.as_str(), "cursive");
+        assert_eq!(FontFamily::Fantasy.as_str(), "fantasy");
         assert_eq!(FontFamily::Name("Roboto".to_string()).as_str(), "Roboto");
+    }
+
+    #[test]
+    fn test_font_family_to_cosmic_generic_mapping() {
+        assert!(matches!(
+            FontFamily::Cursive.to_cosmic_family(),
+            Family::Cursive
+        ));
+        assert!(matches!(
+            FontFamily::Fantasy.to_cosmic_family(),
+            Family::Fantasy
+        ));
     }
 
     #[test]

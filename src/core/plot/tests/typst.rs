@@ -48,3 +48,30 @@ fn test_invalid_typst_snippet_returns_typst_error() {
 
     assert!(matches!(result, Err(PlottingError::TypstError(_))));
 }
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn test_plot_to_typst_svg_applies_font_family() {
+    let x = vec![0.0, 1.0];
+    let y = vec![0.0, 1.0];
+    let render = |font_family| {
+        Plot::new()
+            .line(&x, &y)
+            .title("iiiiiiiiWWWW")
+            .font_family(font_family)
+            .typst(true)
+            .render_to_svg()
+            .expect("Typst SVG plot render should succeed")
+    };
+
+    let serif = render(crate::render::FontFamily::Name(
+        "Libertinus Serif".to_string(),
+    ));
+    let mono = render(crate::render::FontFamily::Name(
+        "DejaVu Sans Mono".to_string(),
+    ));
+
+    assert!(serif.contains(r#"data-ruviz-text-engine="typst""#));
+    assert!(mono.contains(r#"data-ruviz-text-engine="typst""#));
+    assert_ne!(serif, mono);
+}

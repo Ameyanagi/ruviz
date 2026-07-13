@@ -929,6 +929,15 @@ impl PlotConfigBuilder {
         self
     }
 
+    /// Set the font family used for text.
+    pub fn font_family<F>(mut self, family: F) -> Self
+    where
+        F: Into<FontFamily>,
+    {
+        self.config.typography.family = family.into();
+        self
+    }
+
     /// Configure line widths with a closure
     pub fn lines<F>(mut self, f: F) -> Self
     where
@@ -1054,6 +1063,7 @@ mod tests {
         let config = PlotConfig::builder()
             .figure(8.0, 6.0)
             .dpi(150.0)
+            .font_family("New Computer Modern Sans")
             .font_size(12.0)
             .line_width(2.0)
             .build();
@@ -1061,6 +1071,10 @@ mod tests {
         assert!((config.figure.width - 8.0).abs() < 0.001);
         assert!((config.figure.height - 6.0).abs() < 0.001);
         assert!((config.figure.dpi - 150.0).abs() < 0.001);
+        assert_eq!(
+            config.typography.family,
+            FontFamily::Name("New Computer Modern Sans".to_string())
+        );
         assert!((config.typography.base_size - 12.0).abs() < 0.001);
         assert!((config.lines.data_width - 2.0).abs() < 0.001);
     }
