@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: write
-  checks: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,29 +29,40 @@ jobs:
   check-ci:
     name: Wait for CI
     runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.release-target.outputs.release_sha }}
     steps:
       - name: Checkout workflow utilities
-        if: github.event_name != 'workflow_dispatch'
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
-      - name: Skip CI wait during manual recovery
+      - name: Manual recovery - skip tag-push CI gate
         if: github.event_name == 'workflow_dispatch'
-        run: echo "Manual release dispatch skips push-check waiting."
+        run: echo "Manual recovery for ${RELEASE_TAG} explicitly skips the tag-push CI gate."
 
-      - name: Wait for required CI checks to complete
-        if: github.event_name != 'workflow_dispatch'
+      - name: Resolve release target and enforce tag-push CI gate
+        id: release-target
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PUSHED_AT: ${{ github.event.repository.pushed_at }}
         run: |
-          python3 scripts/wait_for_github_checks.py \
-            --repo "${{ github.repository }}" \
-            --sha "${{ github.sha }}" \
-            --timeout 2400 \
-            --interval 15 \
-            --check "Test Fast Lane" \
-            --check "NPM Package" \
-            --check "Python" \
-            --check "Python Packaging"
+          args=(
+            --repo "${GITHUB_REPOSITORY}"
+            --workflow "ci.yml"
+            --tag "${RELEASE_TAG}"
+            --ref "${RELEASE_REF}"
+            --timeout 2400
+            --interval 15
+          )
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            args+=(--sha "${GITHUB_SHA}" --pushed-at "${RELEASE_PUSHED_AT}")
+          else
+            args+=(--skip-ci)
+          fi
+
+          python3 scripts/wait_for_github_checks.py "${args[@]}"
 
   build-release:
     name: Build Release
@@ -61,7 +72,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -196,12 +207,12 @@ jobs:
   build-python-sdist:
     name: Build Python sdist
     runs-on: ubuntu-latest
-    needs: [build-release, build-python-widget-bundle]
+    needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
         uses: actions/download-artifact@v4
@@ -232,12 +243,12 @@ jobs:
   build-python-wheel-macos-intel:
     name: Build Python wheel (macOS Intel)
     runs-on: macos-15-intel
-    needs: [build-release, build-python-widget-bundle]
+    needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
         uses: actions/download-artifact@v4
@@ -269,12 +280,12 @@ jobs:
   build-python-wheel-macos-arm:
     name: Build Python wheel (macOS Apple Silicon)
     runs-on: macos-14
-    needs: [build-release, build-python-widget-bundle]
+    needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
         uses: actions/download-artifact@v4
@@ -306,12 +317,12 @@ jobs:
   build-python-wheel-windows:
     name: Build Python wheel (Windows)
     runs-on: windows-latest
-    needs: [build-release, build-python-widget-bundle]
+    needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
         uses: actions/download-artifact@v4
@@ -343,12 +354,12 @@ jobs:
   build-python-wheel-linux:
     name: Build Python wheel (Linux)
     runs-on: ubuntu-latest
-    needs: [build-release, build-python-widget-bundle]
+    needs: [check-ci, build-release, build-python-widget-bundle]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Download canonical widget bundle
         uses: actions/download-artifact@v4
@@ -377,12 +388,12 @@ jobs:
   build-python-widget-bundle:
     name: Build canonical Python widget bundle
     runs-on: ubuntu-latest
-    needs: build-release
+    needs: [check-ci, build-release]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -430,14 +441,14 @@ jobs:
   publish-ruviz:
     name: Publish ruviz to crates.io
     runs-on: ubuntu-latest
-    needs: build-release
+    needs: [check-ci, build-release]
     # Only publish on non-prerelease tags
     if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -467,13 +478,13 @@ jobs:
   publish-ruviz-web:
     name: Publish ruviz-web to crates.io
     runs-on: ubuntu-latest
-    needs: publish-ruviz
+    needs: [check-ci, publish-ruviz]
     if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -525,13 +536,13 @@ jobs:
   publish-ruviz-gpui:
     name: Publish ruviz-gpui to crates.io
     runs-on: ubuntu-latest
-    needs: publish-ruviz
+    needs: [check-ci, publish-ruviz]
     if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -587,7 +598,7 @@ jobs:
   publish-npm-web:
     name: Publish ruviz JS SDK to npm
     runs-on: ubuntu-latest
-    needs: [publish-ruviz, publish-ruviz-web]
+    needs: [check-ci, publish-ruviz, publish-ruviz-web]
     if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     permissions:
       contents: read
@@ -596,7 +607,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -681,6 +692,7 @@ jobs:
     name: Publish Python package to PyPI
     runs-on: ubuntu-latest
     needs:
+      - check-ci
       - build-python-sdist
       - build-python-wheel-linux
       - build-python-wheel-macos-intel
@@ -696,7 +708,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -760,13 +772,13 @@ jobs:
   create-github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-release, publish-ruviz, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web, publish-python]
+    needs: [check-ci, build-release, publish-ruviz, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web, publish-python]
     if: ${{ always() && needs.build-release.result == 'success' && (needs.publish-ruviz.result == 'success' || needs.publish-ruviz.result == 'skipped') && (needs.publish-ruviz-web.result == 'success' || needs.publish-ruviz-web.result == 'skipped') && (needs.publish-ruviz-gpui.result == 'success' || needs.publish-ruviz-gpui.result == 'skipped') && (needs.publish-npm-web.result == 'success' || needs.publish-npm-web.result == 'skipped') && needs.publish-python.result == 'success' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_REF }}
+          ref: ${{ needs.check-ci.outputs.release_sha }}
 
       - name: Prepare release notes body
         run: |
