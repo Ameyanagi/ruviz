@@ -6,6 +6,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 ///
 /// Provides object pooling, pre-allocation strategies, and memory-efficient
 /// data structures optimized for repeated plotting operations.
+///
+/// # Locking policy
+///
+/// `buffer_pools`, `stats`, and the nested `BlockPool` mutex are never held
+/// simultaneously. Operations spanning them use separate critical sections.
 #[derive(Debug)]
 pub struct MemoryManager {
     /// Buffer pools for different data types
@@ -14,6 +19,15 @@ pub struct MemoryManager {
     stats: Arc<Mutex<MemoryStats>>,
     /// Configuration parameters
     config: MemoryConfig,
+    #[cfg(test)]
+    lock_test_hooks: Arc<Mutex<LockTestHooks>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct LockTestHooks {
+    after_buffer_pool_access: Option<(std::sync::mpsc::SyncSender<()>, Arc<std::sync::Barrier>)>,
+    after_stats_snapshot: Option<(std::sync::mpsc::SyncSender<()>, Arc<std::sync::Barrier>)>,
 }
 
 /// Buffer pools for different primitive types
@@ -163,6 +177,8 @@ impl MemoryManager {
             buffer_pools: Arc::new(Mutex::new(buffer_pools)),
             stats: Arc::new(Mutex::new(MemoryStats::new())),
             config,
+            #[cfg(test)]
+            lock_test_hooks: Arc::new(Mutex::new(LockTestHooks::default())),
         }
     }
 
@@ -172,21 +188,22 @@ impl MemoryManager {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
 
-        let mut pools = self.buffer_pools.lock().unwrap();
-        let mut stats = self.stats.lock().unwrap();
+        let (buffer, reused) = {
+            let mut pools = self.buffer_pools.lock().unwrap();
+            pools.f32_buffers.get_buffer(min_capacity)
+        };
+        #[cfg(test)]
+        self.wait_after_buffer_pool_access_for_test();
 
-        let (buffer, reused) = pools.f32_buffers.get_buffer(min_capacity);
-        let pool_arc = self.buffer_pools.clone();
-
-        // Update statistics
-        stats.active_allocations += 1;
-        if reused {
-            stats.update_pool_hit();
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.active_allocations += 1;
+            if reused {
+                stats.update_pool_hit();
+            }
         }
 
-        drop(stats);
-        drop(pools);
-
+        let pool_arc = self.buffer_pools.clone();
         ManagedBuffer {
             buffer: Some(buffer),
             recycler: Some(Arc::new(move |buffer: Vec<f32>| {
@@ -204,20 +221,22 @@ impl MemoryManager {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
 
-        let mut pools = self.buffer_pools.lock().unwrap();
-        let mut stats = self.stats.lock().unwrap();
+        let (buffer, reused) = {
+            let mut pools = self.buffer_pools.lock().unwrap();
+            pools.f64_buffers.get_buffer(min_capacity)
+        };
+        #[cfg(test)]
+        self.wait_after_buffer_pool_access_for_test();
 
-        let (buffer, reused) = pools.f64_buffers.get_buffer(min_capacity);
-        let pool_arc = self.buffer_pools.clone();
-
-        stats.active_allocations += 1;
-        if reused {
-            stats.update_pool_hit();
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.active_allocations += 1;
+            if reused {
+                stats.update_pool_hit();
+            }
         }
 
-        drop(stats);
-        drop(pools);
-
+        let pool_arc = self.buffer_pools.clone();
         ManagedBuffer {
             buffer: Some(buffer),
             recycler: Some(Arc::new(move |buffer: Vec<f64>| {
@@ -235,20 +254,22 @@ impl MemoryManager {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
 
-        let mut pools = self.buffer_pools.lock().unwrap();
-        let mut stats = self.stats.lock().unwrap();
+        let (buffer, reused) = {
+            let mut pools = self.buffer_pools.lock().unwrap();
+            pools.point_buffers.get_buffer(min_capacity)
+        };
+        #[cfg(test)]
+        self.wait_after_buffer_pool_access_for_test();
 
-        let (buffer, reused) = pools.point_buffers.get_buffer(min_capacity);
-        let pool_arc = self.buffer_pools.clone();
-
-        stats.active_allocations += 1;
-        if reused {
-            stats.update_pool_hit();
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.active_allocations += 1;
+            if reused {
+                stats.update_pool_hit();
+            }
         }
 
-        drop(stats);
-        drop(pools);
-
+        let pool_arc = self.buffer_pools.clone();
         ManagedBuffer {
             buffer: Some(buffer),
             recycler: Some(Arc::new(move |buffer: Vec<Point2f>| {
@@ -266,20 +287,22 @@ impl MemoryManager {
             return ManagedBuffer::new_unmanaged(Vec::with_capacity(min_capacity));
         }
 
-        let mut pools = self.buffer_pools.lock().unwrap();
-        let mut stats = self.stats.lock().unwrap();
+        let (buffer, reused) = {
+            let mut pools = self.buffer_pools.lock().unwrap();
+            pools.u8_buffers.get_buffer(min_capacity)
+        };
+        #[cfg(test)]
+        self.wait_after_buffer_pool_access_for_test();
 
-        let (buffer, reused) = pools.u8_buffers.get_buffer(min_capacity);
-        let pool_arc = self.buffer_pools.clone();
-
-        stats.active_allocations += 1;
-        if reused {
-            stats.update_pool_hit();
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.active_allocations += 1;
+            if reused {
+                stats.update_pool_hit();
+            }
         }
 
-        drop(stats);
-        drop(pools);
-
+        let pool_arc = self.buffer_pools.clone();
         ManagedBuffer {
             buffer: Some(buffer),
             recycler: Some(Arc::new(move |buffer: Vec<u8>| {
@@ -355,24 +378,97 @@ impl MemoryManager {
         }
     }
 
-    /// Get current memory statistics
+    /// Get current memory statistics.
+    ///
+    /// This is a best-effort telemetry snapshot, not an atomic transaction across
+    /// allocation counters and pools. Each component is internally consistent,
+    /// but concurrent allocation or recycling may occur between the snapshots.
     pub fn get_stats(&self) -> MemoryStats {
-        let stats = self.stats.lock().unwrap();
-        let pools = self.buffer_pools.lock().unwrap();
+        let mut stats_copy = {
+            let stats = self.stats.lock().unwrap();
+            stats.clone()
+        };
+        #[cfg(test)]
+        self.wait_after_stats_snapshot_for_test();
 
-        let mut stats_copy = stats.clone();
-        stats_copy.pool_stats = pools.get_pool_stats();
+        let (mut pool_stats, block_pool) = {
+            let pools = self.buffer_pools.lock().unwrap();
+            (pools.get_buffer_pool_stats(), pools.block_pool.clone())
+        };
+        let block_pool_stats = block_pool
+            .lock()
+            .map(|pool| (pool.blocks.len(), pool.memory_usage()))
+            .unwrap_or((0, 0));
+        pool_stats.block_pool_size = block_pool_stats.0;
+        pool_stats.total_pool_memory += block_pool_stats.1;
+        stats_copy.pool_stats = pool_stats;
 
         stats_copy
     }
 
-    /// Clear all pools and reset statistics
+    /// Clear all pools and reset statistics.
+    ///
+    /// Clearing is intentionally split into independent critical sections, so
+    /// concurrent snapshots may briefly observe either side of the reset.
     pub fn clear(&self) {
-        let mut pools = self.buffer_pools.lock().unwrap();
-        let mut stats = self.stats.lock().unwrap();
+        let block_pool = {
+            let mut pools = self.buffer_pools.lock().unwrap();
+            pools.clear_buffers();
+            pools.block_pool.clone()
+        };
+        if let Ok(mut block_pool) = block_pool.lock() {
+            block_pool.clear();
+        }
+        self.stats.lock().unwrap().reset();
+    }
 
-        pools.clear();
-        stats.reset();
+    #[cfg(test)]
+    fn set_after_buffer_pool_access_hook(
+        &self,
+        sender: std::sync::mpsc::SyncSender<()>,
+        barrier: Arc<std::sync::Barrier>,
+    ) {
+        self.lock_test_hooks
+            .lock()
+            .unwrap()
+            .after_buffer_pool_access = Some((sender, barrier));
+    }
+
+    #[cfg(test)]
+    fn wait_after_buffer_pool_access_for_test(&self) {
+        let hook = self
+            .lock_test_hooks
+            .lock()
+            .unwrap()
+            .after_buffer_pool_access
+            .take();
+        if let Some((sender, barrier)) = hook {
+            sender.send(()).unwrap();
+            barrier.wait();
+        }
+    }
+
+    #[cfg(test)]
+    fn set_after_stats_snapshot_hook(
+        &self,
+        sender: std::sync::mpsc::SyncSender<()>,
+        barrier: Arc<std::sync::Barrier>,
+    ) {
+        self.lock_test_hooks.lock().unwrap().after_stats_snapshot = Some((sender, barrier));
+    }
+
+    #[cfg(test)]
+    fn wait_after_stats_snapshot_for_test(&self) {
+        let hook = self
+            .lock_test_hooks
+            .lock()
+            .unwrap()
+            .after_stats_snapshot
+            .take();
+        if let Some((sender, barrier)) = hook {
+            sender.send(()).unwrap();
+            barrier.wait();
+        }
     }
 
     /// Get memory configuration
@@ -459,51 +555,28 @@ impl BufferPools {
         }
     }
 
-    fn clear(&mut self) {
+    fn clear_buffers(&mut self) {
         self.f32_buffers.clear();
         self.f64_buffers.clear();
         self.u8_buffers.clear();
         self.u32_buffers.clear();
         self.point_buffers.clear();
-        if let Ok(mut block_pool) = self.block_pool.lock() {
-            block_pool.clear();
-        }
     }
 
-    fn get_pool_stats(&self) -> PoolStats {
-        let block_pool_mem = self
-            .block_pool
-            .lock()
-            .map(|pool| (pool.blocks.len(), pool.memory_usage()))
-            .unwrap_or((0, 0));
+    fn get_buffer_pool_stats(&self) -> PoolStats {
         PoolStats {
             f32_pool_size: self.f32_buffers.available.len(),
             f64_pool_size: self.f64_buffers.available.len(),
             u8_pool_size: self.u8_buffers.available.len(),
             u32_pool_size: self.u32_buffers.available.len(),
             point_pool_size: self.point_buffers.available.len(),
-            block_pool_size: block_pool_mem.0,
+            block_pool_size: 0,
             total_pool_memory: self.f32_buffers.memory_usage()
                 + self.f64_buffers.memory_usage()
                 + self.u8_buffers.memory_usage()
                 + self.u32_buffers.memory_usage()
-                + self.point_buffers.memory_usage()
-                + block_pool_mem.1,
+                + self.point_buffers.memory_usage(),
         }
-    }
-
-    fn total_memory_usage(&self) -> usize {
-        let block_mem = self
-            .block_pool
-            .lock()
-            .map(|pool| pool.memory_usage())
-            .unwrap_or(0);
-        self.f32_buffers.memory_usage()
-            + self.f64_buffers.memory_usage()
-            + self.u8_buffers.memory_usage()
-            + self.u32_buffers.memory_usage()
-            + self.point_buffers.memory_usage()
-            + block_mem
     }
 }
 
@@ -744,6 +817,11 @@ pub fn initialize_memory_manager(config: MemoryConfig) -> Result<(), MemoryError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier, mpsc};
+    use std::thread;
+    use std::time::Duration;
+
+    const LOCK_TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
     #[test]
     fn test_memory_manager_creation() {
@@ -811,6 +889,62 @@ mod tests {
         let manager = MemoryManager::with_config(config);
         assert!(!manager.config().enable_pooling);
         assert_eq!(manager.config().max_pool_size, 5);
+    }
+
+    #[test]
+    fn test_buffer_acquisition_releases_pool_before_waiting_for_stats() {
+        let manager = Arc::new(MemoryManager::new());
+        let stats_guard = manager.stats.lock().unwrap();
+        let transition = Arc::new(Barrier::new(2));
+        let (reached_tx, reached_rx) = mpsc::sync_channel(0);
+        manager.set_after_buffer_pool_access_hook(reached_tx, transition.clone());
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker_manager = manager.clone();
+        let worker = thread::spawn(move || {
+            drop(worker_manager.get_f32_buffer(128));
+            done_tx.send(()).unwrap();
+        });
+
+        reached_rx.recv_timeout(LOCK_TEST_TIMEOUT).unwrap();
+        let pool_was_released = manager.buffer_pools.try_lock().is_ok();
+        transition.wait();
+        drop(stats_guard);
+
+        done_rx.recv_timeout(LOCK_TEST_TIMEOUT).unwrap();
+        worker.join().unwrap();
+        assert!(
+            pool_was_released,
+            "buffer acquisition held the pool mutex while waiting for stats"
+        );
+    }
+
+    #[test]
+    fn test_stats_snapshot_releases_stats_before_waiting_for_pool() {
+        let manager = Arc::new(MemoryManager::new());
+        let pools_guard = manager.buffer_pools.lock().unwrap();
+        let transition = Arc::new(Barrier::new(2));
+        let (reached_tx, reached_rx) = mpsc::sync_channel(0);
+        manager.set_after_stats_snapshot_hook(reached_tx, transition.clone());
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker_manager = manager.clone();
+        let worker = thread::spawn(move || {
+            worker_manager.get_stats();
+            done_tx.send(()).unwrap();
+        });
+
+        reached_rx.recv_timeout(LOCK_TEST_TIMEOUT).unwrap();
+        let stats_were_released = manager.stats.try_lock().is_ok();
+        transition.wait();
+        drop(pools_guard);
+
+        done_rx.recv_timeout(LOCK_TEST_TIMEOUT).unwrap();
+        worker.join().unwrap();
+        assert!(
+            stats_were_released,
+            "statistics snapshot held the stats mutex while waiting for pools"
+        );
     }
 
     #[test]
