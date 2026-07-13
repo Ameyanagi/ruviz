@@ -31,7 +31,9 @@
 //! ```
 
 use crate::core::{PlottingError, Result};
+use std::collections::VecDeque;
 use std::ops::Deref;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, Weak};
 
@@ -51,6 +53,151 @@ struct DropHookId(u64);
 struct Subscriber {
     id: SubscriberId,
     callback: SharedSubscriberCallback,
+}
+
+#[derive(Default)]
+struct NotificationStatus {
+    batch_depth: usize,
+    dirty: bool,
+    dispatching: bool,
+}
+
+#[derive(Default)]
+struct NotificationState {
+    status: Mutex<NotificationStatus>,
+}
+
+#[derive(Default)]
+struct PairNotificationStatus {
+    pending: usize,
+    dispatching: bool,
+}
+
+#[derive(Default)]
+struct PairNotificationState {
+    status: Mutex<PairNotificationStatus>,
+}
+
+impl PairNotificationState {
+    fn queue(&self) -> bool {
+        let mut status = self.status.lock().expect("Pair notification lock poisoned");
+        status.pending = status.pending.saturating_add(1);
+        if status.dispatching {
+            false
+        } else {
+            status.dispatching = true;
+            true
+        }
+    }
+
+    fn take_pending(&self) -> bool {
+        let mut status = self.status.lock().expect("Pair notification lock poisoned");
+        if status.pending > 0 {
+            status.pending -= 1;
+            true
+        } else {
+            status.dispatching = false;
+            false
+        }
+    }
+}
+
+struct DispatchReset<'a> {
+    notifications: &'a NotificationState,
+    armed: bool,
+}
+
+impl Drop for DispatchReset<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.notifications
+                .status
+                .lock()
+                .expect("Notification lock poisoned")
+                .dispatching = false;
+        }
+    }
+}
+
+impl NotificationState {
+    fn begin_batch(&self) {
+        let mut status = self.status.lock().expect("Notification lock poisoned");
+        status.batch_depth = status.batch_depth.saturating_add(1);
+    }
+
+    fn end_batch(&self) {
+        let mut status = self.status.lock().expect("Notification lock poisoned");
+        assert!(status.batch_depth > 0, "Unbalanced observable batch");
+        status.batch_depth -= 1;
+    }
+
+    fn flush(&self, subscribers: &RwLock<Vec<Subscriber>>, lock_error: &str) {
+        let should_dispatch = {
+            let mut status = self.status.lock().expect("Notification lock poisoned");
+            if status.batch_depth == 0 && status.dirty && !status.dispatching {
+                status.dispatching = true;
+                true
+            } else {
+                false
+            }
+        };
+        if should_dispatch {
+            self.drain(subscribers, lock_error);
+        }
+    }
+
+    fn request(&self, subscribers: &RwLock<Vec<Subscriber>>, lock_error: &str) {
+        let should_dispatch = {
+            let mut status = self.status.lock().expect("Notification lock poisoned");
+            status.dirty = true;
+            if status.batch_depth == 0 && !status.dispatching {
+                status.dispatching = true;
+                true
+            } else {
+                false
+            }
+        };
+        if should_dispatch {
+            self.drain(subscribers, lock_error);
+        }
+    }
+
+    fn drain(&self, subscribers: &RwLock<Vec<Subscriber>>, lock_error: &str) {
+        let mut reset = DispatchReset {
+            notifications: self,
+            armed: true,
+        };
+        let mut first_panic = None;
+        loop {
+            let should_notify = {
+                let mut status = self.status.lock().expect("Notification lock poisoned");
+                if status.batch_depth > 0 || !status.dirty {
+                    status.dispatching = false;
+                    reset.armed = false;
+                    false
+                } else {
+                    status.dirty = false;
+                    true
+                }
+            };
+            if !should_notify {
+                break;
+            }
+
+            let callbacks = collect_subscriber_callbacks(subscribers, lock_error);
+            for callback in callbacks {
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| callback())) {
+                    if first_panic.is_none() {
+                        first_panic = Some(payload);
+                    }
+                }
+            }
+        }
+
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
+        }
+    }
 }
 
 struct DropHookEntry {
@@ -148,6 +295,8 @@ pub struct Observable<T> {
     subscribers: Arc<RwLock<Vec<Subscriber>>>,
     /// Counter for generating unique subscriber IDs
     next_subscriber_id: Arc<AtomicU64>,
+    /// Shared batching and non-recursive dispatch state.
+    notifications: Arc<NotificationState>,
     /// Internal lifecycle hooks for derived subscriptions and cleanup.
     lifecycle: Arc<ObservableLifecycle>,
 }
@@ -159,6 +308,7 @@ impl<T> Clone for Observable<T> {
             version: Arc::clone(&self.version),
             subscribers: Arc::clone(&self.subscribers),
             next_subscriber_id: Arc::clone(&self.next_subscriber_id),
+            notifications: Arc::clone(&self.notifications),
             lifecycle: Arc::clone(&self.lifecycle),
         }
     }
@@ -206,6 +356,7 @@ impl<T> Observable<T> {
             version: Arc::new(AtomicU64::new(0)),
             subscribers: Arc::new(RwLock::new(Vec::new())),
             next_subscriber_id: Arc::new(AtomicU64::new(0)),
+            notifications: Arc::new(NotificationState::default()),
             lifecycle: Arc::new(ObservableLifecycle::new()),
         }
     }
@@ -402,11 +553,8 @@ impl<T> Observable<T> {
 
     /// Notify all subscribers of a change
     fn notify_subscribers(&self) {
-        let callbacks =
-            collect_subscriber_callbacks(&self.subscribers, "Subscribers lock poisoned");
-        for callback in callbacks {
-            callback();
-        }
+        self.notifications
+            .request(&self.subscribers, "Subscribers lock poisoned");
     }
 
     fn on_last_drop<F>(&self, hook: F) -> DropHookId
@@ -435,6 +583,7 @@ impl<T> Observable<T> {
             version: Arc::downgrade(&self.version),
             subscribers: Arc::downgrade(&self.subscribers),
             next_subscriber_id: Arc::downgrade(&self.next_subscriber_id),
+            notifications: Arc::downgrade(&self.notifications),
             lifecycle: Arc::downgrade(&self.lifecycle),
         }
     }
@@ -464,6 +613,7 @@ pub struct WeakObservable<T> {
     version: Weak<AtomicU64>,
     subscribers: Weak<RwLock<Vec<Subscriber>>>,
     next_subscriber_id: Weak<AtomicU64>,
+    notifications: Weak<NotificationState>,
     lifecycle: Weak<ObservableLifecycle>,
 }
 
@@ -474,6 +624,7 @@ impl<T> Clone for WeakObservable<T> {
             version: Weak::clone(&self.version),
             subscribers: Weak::clone(&self.subscribers),
             next_subscriber_id: Weak::clone(&self.next_subscriber_id),
+            notifications: Weak::clone(&self.notifications),
             lifecycle: Weak::clone(&self.lifecycle),
         }
     }
@@ -488,6 +639,7 @@ impl<T> WeakObservable<T> {
         let version = self.version.upgrade()?;
         let subscribers = self.subscribers.upgrade()?;
         let next_subscriber_id = self.next_subscriber_id.upgrade()?;
+        let notifications = self.notifications.upgrade()?;
         let lifecycle = self.lifecycle.upgrade()?;
 
         Some(Observable {
@@ -495,6 +647,7 @@ impl<T> WeakObservable<T> {
             version,
             subscribers,
             next_subscriber_id,
+            notifications,
             lifecycle,
         })
     }
@@ -531,16 +684,41 @@ impl<T> WeakObservable<T> {
 /// ```
 pub struct BatchUpdate<'a> {
     observables: Vec<&'a dyn BatchNotifier>,
+    notification_keys: Vec<*const NotificationState>,
 }
 
 /// Trait for types that can participate in batch updates
 pub trait BatchNotifier {
     fn notify(&self);
+
+    #[doc(hidden)]
+    fn begin_batch(&self) {}
+
+    #[doc(hidden)]
+    fn end_batch(&self) {}
+
+    #[doc(hidden)]
+    fn flush_batch(&self) {
+        self.notify();
+    }
 }
 
 impl<T> BatchNotifier for Observable<T> {
     fn notify(&self) {
         self.notify_subscribers();
+    }
+
+    fn begin_batch(&self) {
+        self.notifications.begin_batch();
+    }
+
+    fn end_batch(&self) {
+        self.notifications.end_batch();
+    }
+
+    fn flush_batch(&self) {
+        self.notifications
+            .flush(&self.subscribers, "Subscribers lock poisoned");
     }
 }
 
@@ -549,11 +727,18 @@ impl<'a> BatchUpdate<'a> {
     pub fn new() -> Self {
         Self {
             observables: Vec::new(),
+            notification_keys: Vec::new(),
         }
     }
 
     /// Add an observable to the batch
     pub fn add<T>(&mut self, observable: &'a Observable<T>) {
+        let key = Arc::as_ptr(&observable.notifications);
+        if self.notification_keys.contains(&key) {
+            return;
+        }
+        observable.begin_batch();
+        self.notification_keys.push(key);
         self.observables.push(observable);
     }
 }
@@ -567,7 +752,20 @@ impl<'a> Default for BatchUpdate<'a> {
 impl<'a> Drop for BatchUpdate<'a> {
     fn drop(&mut self) {
         for obs in &self.observables {
-            obs.notify();
+            obs.end_batch();
+        }
+        let mut first_panic = None;
+        for obs in &self.observables {
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| obs.flush_batch())) {
+                if first_panic.is_none() {
+                    first_panic = Some(payload);
+                }
+            }
+        }
+        if !std::thread::panicking() {
+            if let Some(payload) = first_panic {
+                resume_unwind(payload);
+            }
         }
     }
 }
@@ -1082,6 +1280,8 @@ pub struct StreamingBuffer<T> {
     write_pos: Arc<std::sync::atomic::AtomicUsize>,
     /// Total elements written (used to determine if full)
     total_written: Arc<AtomicU64>,
+    /// Number of explicit clears, used by paired legacy-lane reconciliation.
+    clear_generation: Arc<AtomicU64>,
     /// Version counter for change detection
     version: Arc<AtomicU64>,
     /// Append count since last mark_rendered()
@@ -1118,6 +1318,7 @@ impl<T: Clone> StreamingBuffer<T> {
             capacity,
             write_pos: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             total_written: Arc::new(AtomicU64::new(0)),
+            clear_generation: Arc::new(AtomicU64::new(0)),
             version: Arc::new(AtomicU64::new(0)),
             appended_since_render: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             subscribers: Arc::new(RwLock::new(Vec::new())),
@@ -1127,21 +1328,23 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Push a single value (O(1) operation)
     pub fn push(&self, value: T) {
-        {
-            let mut data = self.data.write().expect("Lock poisoned");
-            let write_pos = self.write_pos.load(Ordering::Relaxed);
-            let pos = write_pos % self.capacity;
-            data[pos] = Some(value);
-            self.write_pos
-                .store(write_pos.wrapping_add(1), Ordering::Release);
-            let total = self.total_written.load(Ordering::Relaxed);
-            self.total_written
-                .store(total.saturating_add(1), Ordering::Release);
-            let appended = self.appended_since_render.load(Ordering::Relaxed);
-            self.appended_since_render
-                .store(appended.saturating_add(1), Ordering::Release);
-        }
+        self.push_locked(value);
         self.bump_version();
+    }
+
+    fn push_locked(&self, value: T) {
+        let mut data = self.data.write().expect("Lock poisoned");
+        let write_pos = self.write_pos.load(Ordering::Relaxed);
+        let pos = write_pos % self.capacity;
+        data[pos] = Some(value);
+        self.write_pos
+            .store(write_pos.wrapping_add(1), Ordering::Release);
+        let total = self.total_written.load(Ordering::Relaxed);
+        self.total_written
+            .store(total.saturating_add(1), Ordering::Release);
+        let appended = self.appended_since_render.load(Ordering::Relaxed);
+        self.appended_since_render
+            .store(appended.saturating_add(1), Ordering::Release);
     }
 
     /// Push multiple values efficiently
@@ -1153,27 +1356,34 @@ impl<T: Clone> StreamingBuffer<T> {
             return;
         }
 
-        {
-            let mut data = self.data.write().expect("Lock poisoned");
-            let mut write_pos = self.write_pos.load(Ordering::Relaxed);
-            for value in values {
-                let pos = write_pos % self.capacity;
-                data[pos] = Some(value);
-                write_pos = write_pos.wrapping_add(1);
-            }
-            self.write_pos.store(write_pos, Ordering::Release);
-            let total = self.total_written.load(Ordering::Relaxed);
-            self.total_written
-                .store(total.saturating_add(count as u64), Ordering::Release);
-            let appended = self.appended_since_render.load(Ordering::Relaxed);
-            self.appended_since_render
-                .store(appended.saturating_add(count), Ordering::Release);
-        }
+        self.push_many_locked(values);
         self.bump_version();
+    }
+
+    fn push_many_locked(&self, values: Vec<T>) {
+        let count = values.len();
+        let mut data = self.data.write().expect("Lock poisoned");
+        let mut write_pos = self.write_pos.load(Ordering::Relaxed);
+        for value in values {
+            let pos = write_pos % self.capacity;
+            data[pos] = Some(value);
+            write_pos = write_pos.wrapping_add(1);
+        }
+        self.write_pos.store(write_pos, Ordering::Release);
+        let total = self.total_written.load(Ordering::Relaxed);
+        self.total_written
+            .store(total.saturating_add(count as u64), Ordering::Release);
+        let appended = self.appended_since_render.load(Ordering::Relaxed);
+        self.appended_since_render
+            .store(appended.saturating_add(count), Ordering::Release);
     }
 
     /// Get all valid data in order (oldest to newest)
     pub fn read(&self) -> Vec<T> {
+        self.read_locked()
+    }
+
+    fn read_locked(&self) -> Vec<T> {
         let data = self.data.read().expect("Lock poisoned");
         let total = self.total_written.load(Ordering::Acquire);
         let write_pos = self.write_pos.load(Ordering::Acquire);
@@ -1341,16 +1551,19 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Clear all data
     pub fn clear(&self) {
-        {
-            let mut data = self.data.write().expect("Lock poisoned");
-            for slot in data.iter_mut() {
-                *slot = None;
-            }
-            self.write_pos.store(0, Ordering::Release);
-            self.total_written.store(0, Ordering::Release);
-            self.appended_since_render.store(0, Ordering::Release);
-        }
+        self.clear_locked();
         self.bump_version();
+    }
+
+    fn clear_locked(&self) {
+        let mut data = self.data.write().expect("Lock poisoned");
+        for slot in data.iter_mut() {
+            *slot = None;
+        }
+        self.write_pos.store(0, Ordering::Release);
+        self.total_written.store(0, Ordering::Release);
+        self.appended_since_render.store(0, Ordering::Release);
+        self.clear_generation.fetch_add(1, Ordering::Release);
     }
 
     /// Subscribe to changes
@@ -1383,7 +1596,15 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Bump version and notify subscribers
     fn bump_version(&self) {
+        self.increment_version();
+        self.notify_subscribers();
+    }
+
+    fn increment_version(&self) {
         self.version.fetch_add(1, Ordering::Release);
+    }
+
+    fn notify_subscribers(&self) {
         let callbacks = collect_subscriber_callbacks(&self.subscribers, "Lock poisoned");
         for callback in callbacks {
             callback();
@@ -1398,6 +1619,7 @@ impl<T: Clone> Clone for StreamingBuffer<T> {
             capacity: self.capacity,
             write_pos: Arc::clone(&self.write_pos),
             total_written: Arc::clone(&self.total_written),
+            clear_generation: Arc::clone(&self.clear_generation),
             version: Arc::clone(&self.version),
             appended_since_render: Arc::clone(&self.appended_since_render),
             subscribers: Arc::clone(&self.subscribers),
@@ -1406,46 +1628,196 @@ impl<T: Clone> Clone for StreamingBuffer<T> {
     }
 }
 
-/// Paired streaming buffers for X/Y time-series data
+/// An owned, aligned capture of a [`StreamingXY`] pair.
+#[derive(Clone, Debug)]
+pub struct StreamingXYSnapshot {
+    x: Vec<f64>,
+    y: Vec<f64>,
+    sequence: u64,
+    rendered_through: u64,
+    render_state: StreamingRenderState,
+    appended_start: usize,
+}
+
+impl StreamingXYSnapshot {
+    /// Captured X values, aligned with [`StreamingXYSnapshot::y`].
+    pub fn x(&self) -> &[f64] {
+        &self.x
+    }
+
+    /// Captured Y values, aligned with [`StreamingXYSnapshot::x`].
+    pub fn y(&self) -> &[f64] {
+        &self.y
+    }
+
+    /// Pair sequence captured with the values.
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Highest pair sequence acknowledged when this snapshot was captured.
+    pub fn rendered_through(&self) -> u64 {
+        self.rendered_through
+    }
+
+    /// Rendering work pending at capture time.
+    pub fn render_state(&self) -> StreamingRenderState {
+        self.render_state
+    }
+
+    /// Aligned visible X tail that may be appended incrementally.
+    pub fn appended_x(&self) -> &[f64] {
+        &self.x[self.appended_start..]
+    }
+
+    /// Aligned visible Y tail that may be appended incrementally.
+    pub fn appended_y(&self) -> &[f64] {
+        &self.y[self.appended_start..]
+    }
+}
+
+#[derive(Debug)]
+struct StreamingXYProgress {
+    sequence: u64,
+    rendered_through: u64,
+    total_written: u64,
+    last_clear_sequence: Option<u64>,
+    synced_x_total: u64,
+    synced_y_total: u64,
+    synced_x_version: u64,
+    synced_y_version: u64,
+    synced_x_clear_generation: u64,
+    synced_y_clear_generation: u64,
+}
+
+/// Paired streaming buffers for X/Y time-series data.
 ///
-/// Provides synchronized updates and version tracking for plot integration
+/// Mutations through this type commit both lanes before any lane or pair
+/// subscriber is notified.
 pub struct StreamingXY {
     x: StreamingBuffer<f64>,
     y: StreamingBuffer<f64>,
+    mutation_gate: Arc<Mutex<()>>,
+    paired_data: Arc<Mutex<VecDeque<(f64, f64)>>>,
+    progress: Arc<Mutex<StreamingXYProgress>>,
     subscribers: Arc<RwLock<Vec<Subscriber>>>,
     next_subscriber_id: Arc<AtomicU64>,
+    notifications: Arc<NotificationState>,
+    pair_notifications: Arc<PairNotificationState>,
+    acknowledge_through: Option<u64>,
+    #[cfg(test)]
+    pair_commit_hook: Arc<Mutex<Option<SharedSubscriberCallback>>>,
 }
 
 impl StreamingXY {
     /// Create a new paired streaming buffer
     pub fn new(capacity: usize) -> Self {
+        let capacity = capacity.max(1);
         Self {
-            x: StreamingBuffer::new(capacity),
-            y: StreamingBuffer::new(capacity),
+            x: StreamingBuffer::with_capacity(capacity),
+            y: StreamingBuffer::with_capacity(capacity),
+            mutation_gate: Arc::new(Mutex::new(())),
+            paired_data: Arc::new(Mutex::new(VecDeque::with_capacity(capacity))),
+            progress: Arc::new(Mutex::new(StreamingXYProgress {
+                sequence: 0,
+                rendered_through: 0,
+                total_written: 0,
+                last_clear_sequence: None,
+                synced_x_total: 0,
+                synced_y_total: 0,
+                synced_x_version: 0,
+                synced_y_version: 0,
+                synced_x_clear_generation: 0,
+                synced_y_clear_generation: 0,
+            })),
             subscribers: Arc::new(RwLock::new(Vec::new())),
             next_subscriber_id: Arc::new(AtomicU64::new(0)),
+            notifications: Arc::new(NotificationState::default()),
+            pair_notifications: Arc::new(PairNotificationState::default()),
+            acknowledge_through: None,
+            #[cfg(test)]
+            pair_commit_hook: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Push a single X/Y point
     pub fn push(&self, x: f64, y: f64) {
-        self.x.push(x);
-        self.y.push(y);
-        self.notify_subscribers();
+        let should_dispatch = {
+            let _gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+            self.reconcile_legacy_lanes_locked();
+            self.x.push_locked(x);
+            self.run_pair_commit_hook();
+            self.y.push_locked(y);
+            self.x.increment_version();
+            self.y.increment_version();
+            let mut paired_data = self.paired_data.lock().expect("Paired data lock poisoned");
+            if paired_data.len() == self.x.capacity() {
+                paired_data.pop_front();
+            }
+            paired_data.push_back((x, y));
+            self.record_push_locked(1);
+            self.pair_notifications.queue()
+        };
+        if should_dispatch {
+            self.drain_pair_notifications();
+        }
     }
 
     /// Push multiple X/Y points
     pub fn push_many(&self, points: impl IntoIterator<Item = (f64, f64)>) {
-        let mut pushed_any = false;
-        for (x, y) in points {
-            self.x.push(x);
-            self.y.push(y);
-            pushed_any = true;
+        let points: Vec<_> = points.into_iter().collect();
+        if points.is_empty() {
+            return;
         }
 
-        if pushed_any {
-            self.notify_subscribers();
+        let count = points.len();
+        let x = points.iter().map(|(x, _)| *x).collect();
+        let y = points.iter().map(|(_, y)| *y).collect();
+        let should_dispatch = {
+            let _gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+            self.reconcile_legacy_lanes_locked();
+            self.x.push_many_locked(x);
+            self.run_pair_commit_hook();
+            self.y.push_many_locked(y);
+            self.x.increment_version();
+            self.y.increment_version();
+            let mut paired_data = self.paired_data.lock().expect("Paired data lock poisoned");
+            for point in points {
+                if paired_data.len() == self.x.capacity() {
+                    paired_data.pop_front();
+                }
+                paired_data.push_back(point);
+            }
+            self.record_push_locked(count);
+            self.pair_notifications.queue()
+        };
+        if should_dispatch {
+            self.drain_pair_notifications();
         }
+    }
+
+    fn record_push_locked(&self, count: usize) {
+        let mut progress = self.progress.lock().expect("StreamingXY progress poisoned");
+        progress.sequence = progress.sequence.wrapping_add(count as u64);
+        progress.total_written = progress.total_written.saturating_add(count as u64);
+        progress.synced_x_total = self.x.total_written();
+        progress.synced_y_total = self.y.total_written();
+        progress.synced_x_version = self.x.version();
+        progress.synced_y_version = self.y.version();
+        progress.synced_x_clear_generation = self.x.clear_generation.load(Ordering::Acquire);
+        progress.synced_y_clear_generation = self.y.clear_generation.load(Ordering::Acquire);
+        self.sync_lane_watermarks(&progress);
+    }
+
+    fn sync_lane_watermarks(&self, progress: &StreamingXYProgress) {
+        let pending =
+            usize::try_from(Self::pending_sample_count_locked(progress)).unwrap_or(usize::MAX);
+        self.x
+            .appended_since_render
+            .store(pending, Ordering::Release);
+        self.y
+            .appended_since_render
+            .store(pending, Ordering::Release);
     }
 
     /// Get the X buffer
@@ -1460,12 +1832,12 @@ impl StreamingXY {
 
     /// Read all X data
     pub fn read_x(&self) -> Vec<f64> {
-        self.x.read()
+        self.x.read_locked()
     }
 
     /// Read all Y data
     pub fn read_y(&self) -> Vec<f64> {
-        self.y.read()
+        self.y.read_locked()
     }
 
     /// Zero-copy view into X buffer
@@ -1487,29 +1859,50 @@ impl StreamingXY {
     /// Returns views for both buffers, useful for iterating over pairs.
     /// Note: Both locks are held until both views are dropped.
     pub fn read_view(&self) -> (StreamingBufferView<'_, f64>, StreamingBufferView<'_, f64>) {
-        (self.x.read_view(), self.y.read_view())
+        let gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+        let x = self.x.read_view();
+        let y = self.y.read_view();
+        drop(gate);
+        (x, y)
     }
 
     /// Read only appended X data since last render
     pub fn read_appended_x(&self) -> Vec<f64> {
-        self.x.read_appended()
+        self.snapshot().appended_x().to_vec()
     }
 
     /// Read only appended Y data since last render
     pub fn read_appended_y(&self) -> Vec<f64> {
-        self.y.read_appended()
+        self.snapshot().appended_y().to_vec()
     }
 
     /// Get the number of points appended since last render
     pub fn appended_count(&self) -> usize {
-        // Both buffers should have same count
-        self.x.appended_since_mark()
+        self.refresh_legacy_lanes();
+        let progress = self.progress.lock().expect("StreamingXY progress poisoned");
+        let appended = Self::pending_sample_count_locked(&progress);
+        usize::try_from(appended).unwrap_or(usize::MAX)
     }
 
     /// Mark both buffers as rendered
     pub fn mark_rendered(&self) {
-        self.x.mark_rendered();
-        self.y.mark_rendered();
+        let sequence = self
+            .acknowledge_through
+            .unwrap_or_else(|| self.snapshot().sequence());
+        self.mark_rendered_through(sequence);
+    }
+
+    /// Monotonically acknowledge rendering through an exact captured sequence.
+    pub fn mark_rendered_through(&self, sequence: u64) {
+        let _gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+        self.reconcile_legacy_lanes_locked();
+        let mut progress = self.progress.lock().expect("StreamingXY progress poisoned");
+        if Self::sequence_after(sequence, progress.rendered_through)
+            && !Self::sequence_after(sequence, progress.sequence)
+        {
+            progress.rendered_through = sequence;
+        }
+        self.sync_lane_watermarks(&progress);
     }
 
     /// Check if partial rendering is possible
@@ -1522,22 +1915,7 @@ impl StreamingXY {
 
     /// Describe whether the paired buffers can be rendered incrementally.
     pub fn render_state(&self) -> StreamingRenderState {
-        match (self.x.render_state(), self.y.render_state()) {
-            (StreamingRenderState::Unchanged, StreamingRenderState::Unchanged) => {
-                StreamingRenderState::Unchanged
-            }
-            (
-                StreamingRenderState::AppendOnly {
-                    visible_appended: x,
-                },
-                StreamingRenderState::AppendOnly {
-                    visible_appended: y,
-                },
-            ) => StreamingRenderState::AppendOnly {
-                visible_appended: x.min(y),
-            },
-            _ => StreamingRenderState::FullRedrawRequired,
-        }
+        self.snapshot().render_state()
     }
 
     /// Get the combined version (max of X and Y versions)
@@ -1552,15 +1930,256 @@ impl StreamingXY {
 
     /// Check if empty
     pub fn is_empty(&self) -> bool {
-        self.x.is_empty()
+        self.len() == 0
     }
 
     /// Clear both buffers
     pub fn clear(&self) {
-        self.x.clear();
-        self.y.clear();
-        self.notify_subscribers();
+        let should_dispatch = {
+            let _gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+            self.x.clear_locked();
+            self.y.clear_locked();
+            let mut paired_data = self.paired_data.lock().expect("Paired data lock poisoned");
+            paired_data.clear();
+            let mut progress = self.progress.lock().expect("StreamingXY progress poisoned");
+            self.x.increment_version();
+            self.y.increment_version();
+            progress.sequence = progress.sequence.wrapping_add(1);
+            progress.total_written = 0;
+            progress.last_clear_sequence = Some(progress.sequence);
+            progress.synced_x_total = 0;
+            progress.synced_y_total = 0;
+            progress.synced_x_version = self.x.version();
+            progress.synced_y_version = self.y.version();
+            progress.synced_x_clear_generation = self.x.clear_generation.load(Ordering::Acquire);
+            progress.synced_y_clear_generation = self.y.clear_generation.load(Ordering::Acquire);
+            self.sync_lane_watermarks(&progress);
+            self.pair_notifications.queue()
+        };
+        if should_dispatch {
+            self.drain_pair_notifications();
+        }
     }
+
+    /// Capture aligned owned values and the exact rendering watermark state.
+    pub fn snapshot(&self) -> StreamingXYSnapshot {
+        let _pair_gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+        let mut paired_data = self.paired_data.lock().expect("Paired data lock poisoned");
+        let mut progress = self.progress.lock().expect("StreamingXY progress poisoned");
+        self.reconcile_legacy_lanes(&mut paired_data, &mut progress);
+
+        let mut x = Vec::with_capacity(paired_data.len());
+        let mut y = Vec::with_capacity(paired_data.len());
+        for &(x_value, y_value) in paired_data.iter() {
+            x.push(x_value);
+            y.push(y_value);
+        }
+        let render_state = Self::render_state_locked(&progress, x.len(), self.x.capacity());
+        let visible_appended = usize::try_from(Self::pending_sample_count_locked(&progress))
+            .unwrap_or(usize::MAX)
+            .min(x.len());
+        let appended_start = x.len().saturating_sub(visible_appended);
+        StreamingXYSnapshot {
+            x,
+            y,
+            sequence: progress.sequence,
+            rendered_through: progress.rendered_through,
+            render_state,
+            appended_start,
+        }
+    }
+
+    fn reconcile_legacy_lanes(
+        &self,
+        paired_data: &mut VecDeque<(f64, f64)>,
+        progress: &mut StreamingXYProgress,
+    ) {
+        let x_version = self.x.version();
+        let y_version = self.y.version();
+        let x_total = self.x.total_written();
+        let y_total = self.y.total_written();
+        let x_clear_generation = self.x.clear_generation.load(Ordering::Acquire);
+        let y_clear_generation = self.y.clear_generation.load(Ordering::Acquire);
+
+        let x_changed = x_version != progress.synced_x_version
+            || x_total != progress.synced_x_total
+            || x_clear_generation != progress.synced_x_clear_generation;
+        let y_changed = y_version != progress.synced_y_version
+            || y_total != progress.synced_y_total
+            || y_clear_generation != progress.synced_y_clear_generation;
+        if !x_changed || !y_changed {
+            return;
+        }
+
+        let x_was_cleared = x_clear_generation != progress.synced_x_clear_generation;
+        let y_was_cleared = y_clear_generation != progress.synced_y_clear_generation;
+        if x_was_cleared != y_was_cleared {
+            return;
+        }
+
+        let x_appended = x_total.saturating_sub(progress.synced_x_total);
+        let y_appended = y_total.saturating_sub(progress.synced_y_total);
+        if !x_was_cleared && (x_appended == 0 || x_appended != y_appended) {
+            return;
+        }
+        if x_was_cleared && x_total != y_total {
+            return;
+        }
+
+        let x_values = self.x.read_locked();
+        let y_values = self.y.read_locked();
+        if self.x.version() != x_version
+            || self.y.version() != y_version
+            || self.x.total_written() != x_total
+            || self.y.total_written() != y_total
+            || self.x.clear_generation.load(Ordering::Acquire) != x_clear_generation
+            || self.y.clear_generation.load(Ordering::Acquire) != y_clear_generation
+        {
+            return;
+        }
+
+        if x_was_cleared {
+            paired_data.clear();
+            for (&x_value, &y_value) in x_values.iter().zip(&y_values) {
+                paired_data.push_back((x_value, y_value));
+            }
+            progress.sequence = progress.sequence.wrapping_add(1);
+            progress.total_written = x_total;
+            progress.last_clear_sequence = Some(progress.sequence);
+            progress.synced_x_total = x_total;
+            progress.synced_y_total = y_total;
+            progress.synced_x_version = x_version;
+            progress.synced_y_version = y_version;
+            progress.synced_x_clear_generation = x_clear_generation;
+            progress.synced_y_clear_generation = y_clear_generation;
+            self.sync_lane_watermarks(progress);
+            return;
+        }
+
+        let visible = usize::try_from(x_appended)
+            .unwrap_or(usize::MAX)
+            .min(x_values.len())
+            .min(y_values.len());
+        let x_start = x_values.len().saturating_sub(visible);
+        let y_start = y_values.len().saturating_sub(visible);
+        for (&x_value, &y_value) in x_values[x_start..].iter().zip(&y_values[y_start..]) {
+            if paired_data.len() == self.x.capacity() {
+                paired_data.pop_front();
+            }
+            paired_data.push_back((x_value, y_value));
+        }
+
+        progress.sequence = progress.sequence.wrapping_add(x_appended);
+        progress.total_written = progress.total_written.saturating_add(x_appended);
+        progress.synced_x_total = x_total;
+        progress.synced_y_total = y_total;
+        progress.synced_x_version = x_version;
+        progress.synced_y_version = y_version;
+        progress.synced_x_clear_generation = x_clear_generation;
+        progress.synced_y_clear_generation = y_clear_generation;
+        self.sync_lane_watermarks(progress);
+    }
+
+    fn reconcile_legacy_lanes_locked(&self) {
+        let mut paired_data = self.paired_data.lock().expect("Paired data lock poisoned");
+        let mut progress = self.progress.lock().expect("StreamingXY progress poisoned");
+        self.reconcile_legacy_lanes(&mut paired_data, &mut progress);
+    }
+
+    fn sequence_after(sequence: u64, reference: u64) -> bool {
+        let distance = sequence.wrapping_sub(reference);
+        distance != 0 && distance < (1_u64 << 63)
+    }
+
+    fn sequence_distance(sequence: u64, reference: u64) -> u64 {
+        sequence.wrapping_sub(reference)
+    }
+
+    fn render_state_locked(
+        progress: &StreamingXYProgress,
+        visible_after: usize,
+        capacity: usize,
+    ) -> StreamingRenderState {
+        if progress.sequence == progress.rendered_through {
+            return StreamingRenderState::Unchanged;
+        }
+        if progress
+            .last_clear_sequence
+            .is_some_and(|sequence| Self::sequence_after(sequence, progress.rendered_through))
+        {
+            return StreamingRenderState::FullRedrawRequired;
+        }
+
+        let appended = Self::sequence_distance(progress.sequence, progress.rendered_through);
+        let appended = usize::try_from(appended).unwrap_or(usize::MAX);
+        let total_before = progress.total_written.saturating_sub(appended as u64);
+        let visible_before = usize::try_from(total_before)
+            .unwrap_or(usize::MAX)
+            .min(capacity);
+        if visible_before == 0 {
+            return StreamingRenderState::AppendOnly {
+                visible_appended: visible_after,
+            };
+        }
+        if visible_before.saturating_add(appended) <= capacity {
+            return StreamingRenderState::AppendOnly {
+                visible_appended: appended.min(visible_after),
+            };
+        }
+        StreamingRenderState::FullRedrawRequired
+    }
+
+    fn pending_sample_count_locked(progress: &StreamingXYProgress) -> u64 {
+        if progress
+            .last_clear_sequence
+            .is_some_and(|sequence| Self::sequence_after(sequence, progress.rendered_through))
+        {
+            progress.total_written
+        } else {
+            Self::sequence_distance(progress.sequence, progress.rendered_through)
+        }
+    }
+
+    pub(crate) fn captured_through(&self, sequence: u64) -> Self {
+        let mut captured = self.clone();
+        captured.acknowledge_through = Some(sequence);
+        captured
+    }
+
+    pub(crate) fn shares_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.progress, &other.progress)
+    }
+
+    pub(crate) fn refresh_legacy_lanes(&self) {
+        let _pair_gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+        self.reconcile_legacy_lanes_locked();
+    }
+
+    #[cfg(test)]
+    fn set_pair_commit_hook<F>(&self, hook: F)
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        *self
+            .pair_commit_hook
+            .lock()
+            .expect("Pair commit hook lock poisoned") = Some(Arc::new(hook));
+    }
+
+    #[cfg(test)]
+    fn run_pair_commit_hook(&self) {
+        let hook = self
+            .pair_commit_hook
+            .lock()
+            .expect("Pair commit hook lock poisoned")
+            .clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    #[cfg(not(test))]
+    fn run_pair_commit_hook(&self) {}
 
     pub(crate) fn subscribe_paired<F>(&self, callback: F) -> SubscriberId
     where
@@ -1592,9 +2211,26 @@ impl StreamingXY {
     }
 
     fn notify_subscribers(&self) {
-        let callbacks = collect_subscriber_callbacks(&self.subscribers, "Lock poisoned");
-        for callback in callbacks {
-            callback();
+        self.notifications
+            .request(&self.subscribers, "Lock poisoned");
+    }
+
+    fn drain_pair_notifications(&self) {
+        let mut first_panic = None;
+        while self.pair_notifications.take_pending() {
+            let mut run = |notify: &dyn Fn()| {
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(notify)) {
+                    if first_panic.is_none() {
+                        first_panic = Some(payload);
+                    }
+                }
+            };
+            run(&|| self.x.notify_subscribers());
+            run(&|| self.y.notify_subscribers());
+            run(&|| self.notify_subscribers());
+        }
+        if let Some(payload) = first_panic {
+            resume_unwind(payload);
         }
     }
 }
@@ -1604,8 +2240,16 @@ impl Clone for StreamingXY {
         Self {
             x: self.x.clone(),
             y: self.y.clone(),
+            mutation_gate: Arc::clone(&self.mutation_gate),
+            paired_data: Arc::clone(&self.paired_data),
+            progress: Arc::clone(&self.progress),
             subscribers: Arc::clone(&self.subscribers),
             next_subscriber_id: Arc::clone(&self.next_subscriber_id),
+            notifications: Arc::clone(&self.notifications),
+            pair_notifications: Arc::clone(&self.pair_notifications),
+            acknowledge_through: self.acknowledge_through,
+            #[cfg(test)]
+            pair_commit_hook: Arc::clone(&self.pair_commit_hook),
         }
     }
 }

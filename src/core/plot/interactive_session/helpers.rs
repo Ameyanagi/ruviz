@@ -50,6 +50,8 @@ pub(super) fn collect_streaming_draw_ops(
 
     let prepared_plot = plot.prepared_frame_plot(size_px, scale_factor, time_seconds);
     let mut draw_ops = Vec::new();
+    let mut streaming_snapshots: Vec<(crate::data::StreamingXY, crate::data::StreamingXYSnapshot)> =
+        Vec::new();
     let mut saw_streaming_update = false;
 
     for (series_index, series) in plot.series_mgr.series.iter().enumerate() {
@@ -70,6 +72,7 @@ pub(super) fn collect_streaming_draw_ops(
                     series,
                     x_data,
                     y_data,
+                    &mut streaming_snapshots,
                     StreamingDrawKind::Line,
                     color,
                     line_width_px,
@@ -92,6 +95,7 @@ pub(super) fn collect_streaming_draw_ops(
                     series,
                     x_data,
                     y_data,
+                    &mut streaming_snapshots,
                     StreamingDrawKind::Scatter,
                     color,
                     line_width_px,
@@ -121,6 +125,7 @@ pub(super) fn streaming_draw_op(
     series: &PlotSeries,
     x_data: &PlotData,
     y_data: &PlotData,
+    streaming_snapshots: &mut Vec<(crate::data::StreamingXY, crate::data::StreamingXYSnapshot)>,
     kind: StreamingDrawKind,
     color: Color,
     line_width_px: f32,
@@ -132,26 +137,29 @@ pub(super) fn streaming_draw_op(
     if !matches!(x_data, PlotData::Streaming(_)) || !matches!(y_data, PlotData::Streaming(_)) {
         return Ok(None);
     }
-    let appended_count = match (
-        x_data.streaming_render_state(),
-        y_data.streaming_render_state(),
-    ) {
-        (
-            Some(crate::data::StreamingRenderState::AppendOnly {
-                visible_appended: x_count,
-            }),
-            Some(crate::data::StreamingRenderState::AppendOnly {
-                visible_appended: y_count,
-            }),
-        ) => x_count.min(y_count),
+    let Some(source) = series.streaming_source.as_ref() else {
+        return Ok(None);
+    };
+    let snapshot = if let Some((_, snapshot)) = streaming_snapshots
+        .iter()
+        .find(|(cached_source, _)| cached_source.shares_source(source))
+    {
+        snapshot.clone()
+    } else {
+        let snapshot = source.snapshot();
+        streaming_snapshots.push((source.clone(), snapshot.clone()));
+        snapshot
+    };
+    let appended_count = match snapshot.render_state() {
+        crate::data::StreamingRenderState::AppendOnly { visible_appended } => visible_appended,
         _ => return Ok(None),
     };
     if appended_count == 0 {
         return Ok(None);
     }
 
-    let x_values = x_data.resolve(time_seconds);
-    let y_values = y_data.resolve(time_seconds);
+    let x_values = snapshot.x();
+    let y_values = snapshot.y();
     let len = x_values.len().min(y_values.len());
     if len == 0 || appended_count > len {
         return Ok(None);
@@ -177,7 +185,7 @@ pub(super) fn streaming_draw_op(
         return Ok(None);
     }
 
-    let _ = series;
+    let _ = time_seconds;
     Ok(Some(StreamingDrawOp {
         kind,
         points,
@@ -188,6 +196,8 @@ pub(super) fn streaming_draw_op(
         marker_style,
         marker_size_px,
         draw_markers: kind == StreamingDrawKind::Scatter || series.marker_style.is_some(),
+        source: source.clone(),
+        sequence: snapshot.sequence(),
     }))
 }
 

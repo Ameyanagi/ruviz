@@ -3498,6 +3498,129 @@ fn test_streaming_marks_rendered() {
 }
 
 #[test]
+fn test_generic_streaming_buffers_are_acknowledged_after_render_and_svg() {
+    use crate::data::StreamingBuffer;
+
+    let x = StreamingBuffer::new(16);
+    let y = StreamingBuffer::new(16);
+    x.push_many(vec![0.0, 1.0]);
+    y.push_many(vec![0.0, 1.0]);
+    let plot: Plot = Plot::new().line_source(x.clone(), y.clone()).into();
+
+    plot.render().expect("generic streaming plot should render");
+    assert_eq!(x.appended_since_mark(), 0);
+    assert_eq!(y.appended_since_mark(), 0);
+
+    x.push(2.0);
+    y.push(4.0);
+    plot.render_to_svg()
+        .expect("generic streaming plot should render to SVG");
+    assert_eq!(x.appended_since_mark(), 0);
+    assert_eq!(y.appended_since_mark(), 0);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_generic_streaming_buffers_are_acknowledged_after_png_and_save() {
+    use crate::data::StreamingBuffer;
+
+    let x = StreamingBuffer::new(16);
+    let y = StreamingBuffer::new(16);
+    x.push_many(vec![0.0, 1.0]);
+    y.push_many(vec![0.0, 1.0]);
+    let plot: Plot = Plot::new().line_source(x.clone(), y.clone()).into();
+
+    plot.render_png_bytes()
+        .expect("generic streaming PNG bytes should render");
+    assert_eq!(x.appended_since_mark(), 0);
+    assert_eq!(y.appended_since_mark(), 0);
+
+    x.push(2.0);
+    y.push(4.0);
+    let path = std::env::temp_dir().join(format!(
+        "ruviz-generic-streaming-save-{}-{}.png",
+        std::process::id(),
+        x.version()
+    ));
+    plot.save(&path)
+        .expect("generic streaming plot should save successfully");
+    assert_eq!(x.appended_since_mark(), 0);
+    assert_eq!(y.appended_since_mark(), 0);
+    std::fs::remove_file(path).expect("temporary saved plot should be removable");
+}
+
+#[test]
+fn test_streaming_resolved_plot_acknowledges_exact_captured_sequence() {
+    use crate::data::{StreamingRenderState, StreamingXY};
+
+    let stream = StreamingXY::new(100);
+    stream.push_many(vec![(0.0, 0.0), (1.0, 1.0)]);
+    let plot = Plot::new().line_streaming(&stream).end_series();
+
+    let resolved = plot.resolved_plot(0.0);
+    stream.push(2.0, 4.0);
+    resolved.mark_reactive_sources_rendered();
+
+    assert_eq!(stream.appended_count(), 1);
+    assert_eq!(stream.read_appended_x(), vec![2.0]);
+    assert_eq!(stream.read_appended_y(), vec![4.0]);
+    assert_eq!(
+        stream.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_failed_streaming_save_does_not_acknowledge_snapshot() {
+    use crate::data::StreamingXY;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let stream = StreamingXY::new(100);
+    stream.push_many(vec![(0.0, 0.0), (1.0, 1.0)]);
+    let plot = Plot::new().line_streaming(&stream).end_series();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should follow the Unix epoch")
+        .as_nanos();
+    let invalid_parent =
+        std::env::temp_dir().join(format!("ruviz-file-parent-{}-{unique}", std::process::id()));
+    std::fs::write(&invalid_parent, b"not a directory")
+        .expect("temporary blocker file should be writable");
+    let path = invalid_parent.join("plot.png");
+
+    assert!(plot.save(path).is_err());
+    assert_eq!(stream.appended_count(), 2);
+    std::fs::remove_file(invalid_parent).expect("temporary blocker file should be removable");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_failed_streaming_svg_export_does_not_acknowledge_snapshot() {
+    use crate::data::StreamingXY;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let stream = StreamingXY::new(100);
+    stream.push_many(vec![(0.0, 0.0), (1.0, 1.0)]);
+    let plot = Plot::new().line_streaming(&stream).end_series();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should follow the Unix epoch")
+        .as_nanos();
+    let invalid_parent =
+        std::env::temp_dir().join(format!("ruviz-svg-parent-{}-{unique}", std::process::id()));
+    std::fs::write(&invalid_parent, b"not a directory")
+        .expect("temporary blocker file should be writable");
+    let path = invalid_parent.join("plot.svg");
+
+    assert!(plot.export_svg(path).is_err());
+    assert_eq!(stream.appended_count(), 2);
+    std::fs::remove_file(invalid_parent).expect("temporary blocker file should be removable");
+}
+
+#[test]
 fn test_line_streaming_reads_updates_after_build() {
     use crate::data::StreamingXY;
 

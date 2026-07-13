@@ -1090,17 +1090,50 @@ impl Plot {
         self.series_mgr
             .series
             .iter()
-            .map(|series| series.series_type.resolve_for_render(time))
+            .map(|series| series.resolve_for_render(time))
             .collect()
     }
 
     pub(super) fn snapshot_series(&self, time: f64) -> Vec<PlotSeries> {
+        let mut streaming_snapshots: Vec<(
+            crate::data::StreamingXY,
+            crate::data::StreamingXYSnapshot,
+        )> = Vec::new();
         self.series_mgr
             .series
             .iter()
             .cloned()
             .map(|mut series| {
-                series.series_type = series.series_type.resolve(time);
+                if series.has_live_streaming_pair() {
+                    let stream = series
+                        .streaming_source
+                        .as_ref()
+                        .expect("live streaming pair must retain its source");
+                    let snapshot = if let Some((_, snapshot)) = streaming_snapshots
+                        .iter()
+                        .find(|(source, _)| source.shares_source(stream))
+                    {
+                        snapshot.clone()
+                    } else {
+                        let snapshot = stream.snapshot();
+                        streaming_snapshots.push((stream.clone(), snapshot.clone()));
+                        snapshot
+                    };
+                    series.series_type = match &series.series_type {
+                        SeriesType::Line { .. } => SeriesType::Line {
+                            x_data: PlotData::Static(snapshot.x().to_vec()),
+                            y_data: PlotData::Static(snapshot.y().to_vec()),
+                        },
+                        SeriesType::Scatter { .. } => SeriesType::Scatter {
+                            x_data: PlotData::Static(snapshot.x().to_vec()),
+                            y_data: PlotData::Static(snapshot.y().to_vec()),
+                        },
+                        _ => unreachable!("live paired source is only used by line/scatter"),
+                    };
+                    series.streaming_source = Some(stream.captured_through(snapshot.sequence()));
+                } else {
+                    series.series_type = series.series_type.resolve(time);
+                }
                 series
             })
             .collect()
@@ -1234,6 +1267,13 @@ impl Plot {
     pub(super) fn mark_reactive_sources_rendered(&self) {
         for series in &self.series_mgr.series {
             series.mark_rendered_sources();
+        }
+    }
+
+    pub(super) fn acknowledge_rendered_snapshot(&self, live_plot: &Self) {
+        self.mark_reactive_sources_rendered();
+        for series in &live_plot.series_mgr.series {
+            series.mark_unpaired_streaming_sources_rendered();
         }
     }
 

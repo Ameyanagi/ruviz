@@ -785,7 +785,7 @@ impl Plot {
         if self.is_reactive() {
             let resolved = self.resolved_plot(0.0);
             let image = resolved.render()?;
-            self.mark_reactive_sources_rendered();
+            resolved.acknowledge_rendered_snapshot(self);
             return Ok(image);
         }
 
@@ -795,7 +795,10 @@ impl Plot {
     #[cfg(test)]
     pub(super) fn render_optimized_for_test(&self) -> Result<Image> {
         if self.is_reactive() {
-            return self.resolved_plot(0.0).render_optimized_for_test();
+            let resolved = self.resolved_plot(0.0);
+            let image = resolved.render_optimized_for_test()?;
+            resolved.acknowledge_rendered_snapshot(self);
+            return Ok(image);
         }
 
         self.render_image_with_mode(RenderExecutionMode::Optimized)
@@ -806,9 +809,10 @@ impl Plot {
         &self,
     ) -> Result<(Image, RenderDiagnostics)> {
         if self.is_reactive() {
-            return self
-                .resolved_plot(0.0)
-                .render_optimized_for_test_with_diagnostics();
+            let resolved = self.resolved_plot(0.0);
+            let result = resolved.render_optimized_for_test_with_diagnostics()?;
+            resolved.acknowledge_rendered_snapshot(self);
+            return Ok(result);
         }
 
         self.render_image_with_mode_and_diagnostics(RenderExecutionMode::Optimized)
@@ -849,7 +853,7 @@ impl Plot {
 
         let resolved = self.resolved_plot(time);
         let image = resolved.render()?;
-        self.mark_reactive_sources_rendered();
+        resolved.acknowledge_rendered_snapshot(self);
         Ok(image)
     }
 
@@ -857,14 +861,8 @@ impl Plot {
     pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let reactive = self.is_reactive();
-            let result = self
-                .save_png_bytes_with_backend()
-                .map(|(png_bytes, _, _)| png_bytes);
-            if result.is_ok() && reactive {
-                self.mark_reactive_sources_rendered();
-            }
-            result
+            self.save_png_bytes_with_backend()
+                .map(|(png_bytes, _, _)| png_bytes)
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -879,14 +877,8 @@ impl Plot {
     pub fn benchmark_render_png_bytes_with_diagnostics(
         &self,
     ) -> Result<(Vec<u8>, RenderDiagnostics)> {
-        let reactive = self.is_reactive();
-        let result = self
-            .save_png_bytes_with_backend()
-            .map(|(png_bytes, _, diagnostics)| (png_bytes, diagnostics));
-        if result.is_ok() && reactive {
-            self.mark_reactive_sources_rendered();
-        }
-        result
+        self.save_png_bytes_with_backend()
+            .map(|(png_bytes, _, diagnostics)| (png_bytes, diagnostics))
     }
 
     /// Check if this plot contains any reactive data (Signal or Observable).
@@ -930,7 +922,10 @@ impl Plot {
     /// Render the plot to an external renderer (used for subplots)
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
         if self.is_reactive() {
-            return self.resolved_plot(0.0).render_to_renderer(renderer, dpi);
+            let resolved = self.resolved_plot(0.0);
+            resolved.render_to_renderer(renderer, dpi)?;
+            resolved.acknowledge_rendered_snapshot(self);
+            return Ok(());
         }
         if let Some(err) = self.pending_ingestion_error() {
             return Err(err);
@@ -1728,13 +1723,16 @@ impl Plot {
     /// ```
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
-        let reactive = self.is_reactive();
-        let (png_bytes, _, _) = self.save_png_bytes_with_backend()?;
-        let result = crate::export::write_bytes_atomic(path, &png_bytes);
-        if result.is_ok() && reactive {
-            self.mark_reactive_sources_rendered();
+        if self.is_reactive() {
+            let resolved = self.resolved_plot(0.0);
+            let (png_bytes, _, _) = resolved.save_png_bytes_with_backend()?;
+            crate::export::write_bytes_atomic(path, &png_bytes)?;
+            resolved.acknowledge_rendered_snapshot(&self);
+            return Ok(());
         }
-        result
+
+        let (png_bytes, _, _) = self.save_png_bytes_with_backend()?;
+        crate::export::write_bytes_atomic(path, &png_bytes)
     }
 
     /// Render PNG bytes through the same backend-selection path used by `save()`.
@@ -1755,18 +1753,16 @@ impl Plot {
     pub fn benchmark_save_png_bytes_with_diagnostics(
         &self,
     ) -> Result<(Vec<u8>, &'static str, RenderDiagnostics)> {
-        let reactive = self.is_reactive();
-        let result = self.save_png_bytes_with_backend();
-        if result.is_ok() && reactive {
-            self.mark_reactive_sources_rendered();
-        }
-        result
+        self.save_png_bytes_with_backend()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn save_png_bytes_with_backend(&self) -> Result<(Vec<u8>, &'static str, RenderDiagnostics)> {
         if self.is_reactive() {
-            return self.resolved_plot(0.0).save_png_bytes_with_backend();
+            let resolved = self.resolved_plot(0.0);
+            let result = resolved.save_png_bytes_with_backend()?;
+            resolved.acknowledge_rendered_snapshot(self);
+            return Ok(result);
         }
 
         let mode = self.public_png_render_mode();
@@ -1797,6 +1793,14 @@ impl Plot {
     /// Includes axes, grid, tick marks, labels, legend, and all data series.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
+        if self.is_reactive() {
+            let resolved = self.resolved_plot(0.0);
+            let svg_content = resolved.render_to_svg()?;
+            crate::export::write_bytes_atomic(path, svg_content.as_bytes())?;
+            resolved.acknowledge_rendered_snapshot(&self);
+            return Ok(());
+        }
+
         let svg_content = self.render_to_svg()?;
         crate::export::write_bytes_atomic(path, svg_content.as_bytes())
     }
@@ -2143,8 +2147,9 @@ impl Plot {
     /// or converted to other formats like PDF.
     pub fn render_to_svg(&self) -> Result<String> {
         if self.is_reactive() {
-            let svg = self.resolved_plot(0.0).render_to_svg()?;
-            self.mark_reactive_sources_rendered();
+            let resolved = self.resolved_plot(0.0);
+            let svg = resolved.render_to_svg()?;
+            resolved.acknowledge_rendered_snapshot(self);
             return Ok(svg);
         }
 
@@ -2660,12 +2665,17 @@ impl Plot {
 
         self = self.set_output_pixels(width_px, height_px);
 
-        // Render to SVG
+        if self.is_reactive() {
+            let resolved = self.resolved_plot(0.0);
+            let svg_content = resolved.render_to_svg()?;
+            let pdf_data = crate::export::svg_to_pdf(&svg_content)?;
+            crate::export::write_bytes_atomic(path, &pdf_data)?;
+            resolved.acknowledge_rendered_snapshot(&self);
+            return Ok(());
+        }
+
         let svg_content = self.render_to_svg()?;
-
-        // Convert SVG to PDF
         let pdf_data = crate::export::svg_to_pdf(&svg_content)?;
-
         crate::export::write_bytes_atomic(path, &pdf_data)
     }
 

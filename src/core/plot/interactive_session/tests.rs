@@ -1,7 +1,7 @@
 #![allow(clippy::useless_conversion)]
 
 use super::*;
-use crate::data::{Observable, StreamingXY, signal};
+use crate::data::{Observable, StreamingBuffer, StreamingXY, signal};
 use crate::prelude::Plot;
 use crate::render::{Color, MarkerStyle};
 use std::sync::{Arc, atomic::Ordering};
@@ -833,6 +833,27 @@ fn test_streaming_surface_render_falls_back_after_wraparound() {
 
     assert!(!rerendered.layer_state.used_incremental_data);
     assert_eq!(stream.appended_count(), 0);
+}
+
+#[test]
+fn test_interactive_full_render_acknowledges_generic_streaming_buffers() {
+    let x = StreamingBuffer::new(16);
+    let y = StreamingBuffer::new(16);
+    x.push_many(vec![0.0, 1.0]);
+    y.push_many(vec![0.0, 1.0]);
+    let plot: Plot = Plot::new()
+        .line_source(x.clone(), y.clone())
+        .xlim(0.0, 2.0)
+        .ylim(0.0, 2.0)
+        .into();
+    let session = plot.prepare_interactive();
+
+    session
+        .render_to_surface(render_target())
+        .expect("interactive generic streaming frame should render");
+
+    assert_eq!(x.appended_since_mark(), 0);
+    assert_eq!(y.appended_since_mark(), 0);
 }
 
 #[test]

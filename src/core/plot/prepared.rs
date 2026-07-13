@@ -161,10 +161,9 @@ impl PreparedPlot {
             return Ok(image);
         }
 
-        let image = self
-            .prepared_render_plot(size_px, scale_factor, time)?
-            .render()?;
-        self.plot.mark_reactive_sources_rendered();
+        let prepared_plot = self.prepared_render_plot(size_px, scale_factor, time)?;
+        let image = prepared_plot.render()?;
+        prepared_plot.acknowledge_rendered_snapshot(&self.plot);
 
         *self.cache.lock().expect("PreparedPlot cache lock poisoned") = Some(PreparedFrameCache {
             key,
@@ -339,7 +338,7 @@ impl PreparedPlot {
         );
 
         if result.is_ok() {
-            self.plot.mark_reactive_sources_rendered();
+            prepared_plot.acknowledge_rendered_snapshot(&self.plot);
         }
 
         result
@@ -662,6 +661,53 @@ mod tests {
         stream.push(1.0, 1.0);
 
         assert_eq!(hits.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_prepared_plot_acknowledges_generic_streaming_buffers() {
+        let x = crate::data::StreamingBuffer::new(16);
+        let y = crate::data::StreamingBuffer::new(16);
+        x.push_many(vec![0.0, 1.0]);
+        y.push_many(vec![0.0, 1.0]);
+        let plot: Plot = Plot::new().line_source(x.clone(), y.clone()).into();
+        let prepared = plot.prepare();
+
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("prepared generic streaming frame should render");
+
+        assert_eq!(x.appended_since_mark(), 0);
+        assert_eq!(y.appended_since_mark(), 0);
+    }
+
+    #[test]
+    fn test_prepared_plot_observes_legacy_lane_writes_without_pair_duplicates() {
+        let stream = StreamingXY::new(32);
+        stream.push(1.0, 10.0);
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .xlim(0.0, 3.0)
+            .ylim(0.0, 30.0)
+            .into();
+        let prepared = plot.prepare();
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("initial streaming frame should render");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_callback = Arc::clone(&hits);
+        let _subscription = prepared.subscribe_reactive(move || {
+            hits_for_callback.fetch_add(1, Ordering::Relaxed);
+        });
+
+        stream.x().push(2.0);
+        stream.y().push(20.0);
+
+        assert_eq!(hits.load(Ordering::Relaxed), 2);
+        assert!(prepared.is_dirty((320, 240), 1.0, 0.0));
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("legacy lane writes should render as an aligned pair");
+        assert!(!prepared.is_dirty((320, 240), 1.0, 0.0));
     }
 
     #[test]
