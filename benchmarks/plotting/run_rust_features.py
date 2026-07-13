@@ -19,7 +19,7 @@ FEATURE_MATRIX = [
     },
     {
         "label": "default",
-        "cargoFeatures": ["ndarray", "parallel", "serde"],
+        "cargoFeatures": ["ndarray_support", "parallel", "serde"],
         "cargoArgs": ["--features", "serde"],
         "requestGpu": False,
     },

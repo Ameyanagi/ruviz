@@ -79,18 +79,19 @@ ruviz uses feature flags to enable optional functionality. Choose based on your 
 ### Default Features
 
 ```toml
-ruviz = "0.4.19"  # Includes: ndarray, parallel
+ruviz = "0.4.19"  # Includes: ndarray_support, parallel
 ```
 
 **Enabled by default**:
-- `ndarray` - ndarray support for scientific computing
+- `ndarray_support` - ndarray support for scientific computing
 - `parallel` - internal parallel renderer support and backend metadata
 
 ### Core Features
 
 | Feature | Description | Use Case |
 |---------|-------------|----------|
-| `ndarray_support` | ndarray integration | Scientific computing, numpy-like arrays |
+| `ndarray_support` | ndarray integration (canonical) | Scientific computing, numpy-like arrays |
+| `ndarray` | Compatibility alias for `ndarray_support` | Existing manifests using the historical name |
 | `nalgebra_support` | nalgebra integration | Dense vectors/matrices, linear algebra |
 | `polars_support` | polars integration | Data analysis, DataFrame support |
 | `parallel` | Internal parallel renderer support | Opt-in renderer experiments, metadata |
@@ -230,7 +231,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 **Settings** (`.vscode/settings.json`):
 ```json
 {
-  "rust-analyzer.cargo.features": ["ndarray", "parallel"],
+  "rust-analyzer.cargo.features": ["ndarray_support", "parallel"],
   "rust-analyzer.checkOnSave.command": "clippy"
 }
 ```
@@ -252,7 +253,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 **Configuration** (with coc.nvim):
 ```json
 {
-  "rust-analyzer.cargo.features": ["ndarray", "parallel"]
+  "rust-analyzer.cargo.features": ["ndarray_support", "parallel"]
 }
 ```
 

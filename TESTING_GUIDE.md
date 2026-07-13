@@ -9,16 +9,39 @@ Use this lane for PR gating and quick local iteration.
 
 ```bash
 # 1) Unit tests
-cargo test --lib
+cargo test --lib --verbose
 
 # 2) Integration compile gate
-cargo test --tests --no-run
+cargo test --tests --no-run --verbose
 
 # 3) Fast deterministic integration suites
-cargo test --test simple_api_test --test data_format_compatibility_test --test backend_parity_test
+cargo test --test simple_api_test --test data_format_compatibility_test --test backend_parity_test --verbose
 
 # 4) Doctests
-cargo test --doc
+cargo test --doc --verbose
+```
+
+The fast integration command proves the default `ndarray_support` + `parallel`
+configuration, including the `test_ndarray_data` runtime test.
+
+### Feature-contract matrix (default CI)
+
+Use these focused rows when changing Cargo feature gates. The matrix avoids
+rerunning the full default suite, which is already covered by the fast lane.
+
+```bash
+# No default features; Typst APIs must remain gated off
+cargo test --test typst_feature_gate_ui --no-default-features typst_requires_feature -- --exact
+
+# Canonical ndarray feature
+cargo test --test data_format_compatibility_test --no-default-features --features ndarray_support test_ndarray_data -- --exact
+
+# Backward-compatible ndarray feature alias
+cargo test --test data_format_compatibility_test --no-default-features --features ndarray test_ndarray_data -- --exact
+
+# Typst APIs enabled and a runtime error path exercised
+cargo test --test typst_feature_gate_ui --no-default-features --features typst-math typst_with_feature_compiles -- --exact
+cargo test --lib --no-default-features --features typst-math core::plot::tests::typst::test_invalid_typst_snippet_returns_typst_error -- --exact
 ```
 
 ### Visual/heavy lane (manual or scheduled)

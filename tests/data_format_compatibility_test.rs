@@ -76,7 +76,7 @@ fn test_integer_data() {
 }
 
 #[test]
-#[cfg(feature = "ndarray_support")]
+#[cfg(any(feature = "ndarray_support", feature = "ndarray"))]
 fn test_ndarray_data() {
     use ndarray::Array1;
 
