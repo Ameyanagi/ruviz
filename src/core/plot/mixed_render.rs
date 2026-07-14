@@ -84,6 +84,8 @@ impl Plot {
 
     pub(super) fn series_supports_auto_datashader(series: &PlotSeries) -> bool {
         matches!(series.series_type, SeriesType::Scatter { .. })
+            && series.x_errors.is_none()
+            && series.y_errors.is_none()
     }
 
     pub(super) fn is_non_cartesian_series(series: &PlotSeries) -> bool {

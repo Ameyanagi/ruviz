@@ -1023,9 +1023,10 @@ where
         self
     }
 
-    /// Enable GPU acceleration for coordinate transformations
+    /// Store a GPU backend preference.
     ///
-    /// This method forwards to the inner Plot.
+    /// This method forwards to the inner Plot. Public raster operations currently
+    /// resolve the preference to Skia with an inspectable fallback reason.
     #[cfg(feature = "gpu")]
     pub fn gpu(mut self, enabled: bool) -> Self {
         self.plot = self.plot.gpu(enabled);

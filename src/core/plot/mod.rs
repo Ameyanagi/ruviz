@@ -127,6 +127,24 @@ pub struct RenderDiagnostics {
     pub rebuilt_prepared_geometry_cache: bool,
 }
 
+impl RenderDiagnostics {
+    /// Backend that actually produced the diagnosed raster frame.
+    pub const fn actual_backend(&self) -> BackendType {
+        if self.used_parallel {
+            BackendType::Parallel
+        } else if self.used_auto_datashader {
+            BackendType::DataShader
+        } else {
+            BackendType::Skia
+        }
+    }
+
+    /// Stable lowercase name of the backend that actually ran.
+    pub const fn actual_backend_name(&self) -> &'static str {
+        self.actual_backend().as_str()
+    }
+}
+
 macro_rules! impl_series_continuation_methods {
     ($self_:ident.$finalize:ident()) => {
         /// Continue with a new line series.
@@ -483,7 +501,10 @@ mod tests;
 mod types;
 
 pub use builder::{IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
-pub use config::{BackendType, GridMode, TickDirection, TickSides};
+pub use config::{
+    BackendFallbackReason, BackendOperation, BackendResolution, BackendType, GridMode,
+    TickDirection, TickSides,
+};
 pub use configuration::{PlotConfiguration, TextEngineMode};
 pub use data::{IntoPlotData, PlotData, PlotSource, PlotText, ReactiveValue};
 pub use image::Image;

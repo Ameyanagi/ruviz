@@ -1,3 +1,4 @@
+use ruviz::core::{BackendFallbackReason, BackendOperation};
 use ruviz::prelude::*;
 
 #[test]
@@ -204,6 +205,18 @@ fn resolved_backend_reports_actual_public_png_path() {
         .into_plot();
     assert_eq!(plot.get_backend_name(), "datashader");
     assert_eq!(plot.resolved_backend_name(), "skia");
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_eq!(
+        plot.backend_resolution(BackendOperation::Png)
+            .fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedSeries)
+    );
+    #[cfg(target_arch = "wasm32")]
+    assert_eq!(
+        plot.backend_resolution(BackendOperation::Png)
+            .fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedTarget)
+    );
 }
 
 #[test]
@@ -219,6 +232,11 @@ fn wasm_resolved_backend_reports_skia_for_explicit_datashader_scatter() {
 
     assert_eq!(plot.get_backend_name(), "datashader");
     assert_eq!(plot.resolved_backend_name(), "skia");
+    assert_eq!(
+        plot.backend_resolution(BackendOperation::Png)
+            .fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedTarget)
+    );
 }
 
 #[test]
@@ -256,4 +274,283 @@ fn explicit_datashader_backend_falls_back_on_non_linear_axes() {
 
     assert_eq!(plot.get_backend_name(), "datashader");
     assert_eq!(plot.resolved_backend_name(), "skia");
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+    assert_eq!(resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(
+        resolution.fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedAxisScale)
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn explicit_datashader_reversed_manual_limits_fall_back_and_save_png() {
+    let output_dir = tempfile::tempdir().expect("temporary output directory should exist");
+    let output = output_dir.path().join("reversed-datashader.png");
+    let plot = Plot::new()
+        .backend(BackendType::DataShader)
+        .xlim(4.0, 0.0)
+        .ylim(4.0, 0.0)
+        .scatter(&[0.0, 1.0, 2.0, 3.0, 4.0], &[0.0, 1.0, 4.0, 2.0, 3.0])
+        .into_plot();
+
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+    assert_eq!(resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(
+        resolution.fallback_reason(),
+        Some(BackendFallbackReason::ReversedAxisLimits)
+    );
+
+    let (_, backend, diagnostics, executed_resolution) = plot
+        .benchmark_save_png_bytes_with_backend_resolution()
+        .expect("reversed axes should execute through the Skia PNG path");
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.actual_backend(), BackendType::Skia);
+    assert_eq!(diagnostics.render_mode, "reference");
+    assert!(!diagnostics.used_auto_datashader);
+    assert_eq!(executed_resolution, resolution);
+
+    plot.save(&output)
+        .expect("reversed-axis fallback should save a PNG successfully");
+    let png = std::fs::read(output).expect("saved PNG should be readable");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    image::load_from_memory(&png).expect("saved output should decode as PNG");
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn explicit_datashader_scatter_error_variants_fall_back_with_full_skia_output() {
+    let x = [0.0, 1.0, 2.0, 3.0];
+    let y = [1.0, 3.0, 2.0, 4.0];
+    let symmetric_x = [0.1, 0.2, 0.15, 0.25];
+    let symmetric_y = [0.3, 0.4, 0.2, 0.35];
+    let lower = [0.1, 0.2, 0.1, 0.15];
+    let upper = [0.2, 0.3, 0.25, 0.4];
+
+    let cases = [
+        (
+            "symmetric y errors",
+            Plot::new()
+                .backend(BackendType::DataShader)
+                .scatter(&x, &y)
+                .with_yerr(&symmetric_y)
+                .into_plot(),
+            Plot::new()
+                .scatter(&x, &y)
+                .with_yerr(&symmetric_y)
+                .into_plot(),
+        ),
+        (
+            "symmetric x errors",
+            Plot::new()
+                .backend(BackendType::DataShader)
+                .scatter(&x, &y)
+                .with_xerr(&symmetric_x)
+                .into_plot(),
+            Plot::new()
+                .scatter(&x, &y)
+                .with_xerr(&symmetric_x)
+                .into_plot(),
+        ),
+        (
+            "combined x and y errors",
+            Plot::new()
+                .backend(BackendType::DataShader)
+                .scatter(&x, &y)
+                .with_xerr(&symmetric_x)
+                .with_yerr(&symmetric_y)
+                .into_plot(),
+            Plot::new()
+                .scatter(&x, &y)
+                .with_xerr(&symmetric_x)
+                .with_yerr(&symmetric_y)
+                .into_plot(),
+        ),
+        (
+            "asymmetric y errors",
+            Plot::new()
+                .backend(BackendType::DataShader)
+                .scatter(&x, &y)
+                .with_yerr_asymmetric(&lower, &upper)
+                .into_plot(),
+            Plot::new()
+                .scatter(&x, &y)
+                .with_yerr_asymmetric(&lower, &upper)
+                .into_plot(),
+        ),
+        (
+            "asymmetric x errors",
+            Plot::new()
+                .backend(BackendType::DataShader)
+                .scatter(&x, &y)
+                .with_xerr_asymmetric(&lower, &upper)
+                .into_plot(),
+            Plot::new()
+                .scatter(&x, &y)
+                .with_xerr_asymmetric(&lower, &upper)
+                .into_plot(),
+        ),
+    ];
+
+    for (name, fallback_plot, reference_plot) in cases {
+        let resolution = fallback_plot.backend_resolution(BackendOperation::Png);
+        assert_eq!(resolution.actual_backend(), BackendType::Skia, "{name}");
+        assert_eq!(
+            resolution.fallback_reason(),
+            Some(BackendFallbackReason::UnsupportedSeries),
+            "{name}"
+        );
+
+        let (fallback_png, backend, diagnostics, executed_resolution) = fallback_plot
+            .benchmark_save_png_bytes_with_backend_resolution()
+            .unwrap_or_else(|error| panic!("{name} fallback should render: {error}"));
+        let (reference_png, reference_backend, reference_diagnostics) = reference_plot
+            .benchmark_save_png_bytes_with_diagnostics()
+            .unwrap_or_else(|error| panic!("{name} reference should render: {error}"));
+
+        assert_eq!(backend, "skia", "{name}");
+        assert_eq!(reference_backend, "skia", "{name}");
+        assert_eq!(diagnostics.actual_backend(), BackendType::Skia, "{name}");
+        assert_eq!(diagnostics.render_mode, "reference", "{name}");
+        assert!(!diagnostics.used_auto_datashader, "{name}");
+        assert_eq!(executed_resolution, resolution, "{name}");
+        assert_eq!(
+            reference_diagnostics.actual_backend(),
+            BackendType::Skia,
+            "{name}"
+        );
+        assert_eq!(
+            fallback_png, reference_png,
+            "{name} should preserve error bars"
+        );
+    }
+}
+
+#[test]
+fn explicit_parallel_backend_reports_truthful_fallback() {
+    let plot = Plot::new()
+        .backend(BackendType::Parallel)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .into_plot();
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+
+    assert_eq!(resolution.requested_backend(), Some(BackendType::Parallel));
+    assert_eq!(resolution.actual_backend(), BackendType::Skia);
+    #[cfg(feature = "parallel")]
+    assert_eq!(
+        resolution.fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedOperation)
+    );
+    #[cfg(not(feature = "parallel"))]
+    assert_eq!(
+        resolution.fallback_reason(),
+        Some(BackendFallbackReason::FeatureDisabled)
+    );
+}
+
+#[test]
+fn explicit_gpu_backend_reports_truthful_fallback() {
+    let plot = Plot::new()
+        .backend(BackendType::GPU)
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .into_plot();
+    for operation in [
+        BackendOperation::RasterImage,
+        BackendOperation::Png,
+        BackendOperation::Interactive,
+    ] {
+        let resolution = plot.backend_resolution(operation);
+        assert_eq!(resolution.requested_backend(), Some(BackendType::GPU));
+        assert_eq!(resolution.actual_backend(), BackendType::Skia);
+        #[cfg(feature = "gpu")]
+        assert_eq!(
+            resolution.fallback_reason(),
+            Some(BackendFallbackReason::UnsupportedOperation)
+        );
+        #[cfg(not(feature = "gpu"))]
+        assert_eq!(
+            resolution.fallback_reason(),
+            Some(BackendFallbackReason::FeatureDisabled)
+        );
+    }
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn explicit_datashader_reports_operation_and_series_fallbacks() {
+    let scatter = Plot::new()
+        .backend(BackendType::DataShader)
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .into_plot();
+    let raster_resolution = scatter.backend_resolution(BackendOperation::RasterImage);
+    assert_eq!(raster_resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(
+        raster_resolution.fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedOperation)
+    );
+
+    let line = Plot::new()
+        .backend(BackendType::DataShader)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .into_plot();
+    let png_resolution = line.backend_resolution(BackendOperation::Png);
+    assert_eq!(png_resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(
+        png_resolution.fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedSeries)
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn explicit_datashader_reports_mixed_coordinate_fallback() {
+    let plot = Plot::new()
+        .backend(BackendType::DataShader)
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .polar_line(&[1.0, 2.0], &[0.0, std::f64::consts::PI])
+        .into_plot();
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+
+    assert_eq!(resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(
+        resolution.fallback_reason(),
+        Some(BackendFallbackReason::MixedCoordinateSystems)
+    );
+}
+
+#[test]
+fn prepared_plot_diagnostics_match_raster_image_resolution() {
+    let plot = Plot::new()
+        .backend(BackendType::DataShader)
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .into_plot();
+    let resolution = plot.backend_resolution(BackendOperation::RasterImage);
+    let (_, diagnostics) = plot
+        .prepare()
+        .render_png_bytes_uncached_with_diagnostics()
+        .expect("prepared PNG bytes should use the raster-image policy");
+
+    assert_eq!(resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(
+        resolution.fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedOperation)
+    );
+    assert_eq!(diagnostics.actual_backend(), resolution.actual_backend());
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn backend_resolution_and_diagnostics_agree_on_executed_renderer() {
+    let plot = Plot::new()
+        .backend(BackendType::Parallel)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .into_plot();
+    let (_, backend, diagnostics, resolution) = plot
+        .benchmark_save_png_bytes_with_backend_resolution()
+        .expect("explicit parallel preference should fall back to a Skia PNG");
+
+    assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.actual_backend(), BackendType::Skia);
+    assert_eq!(resolution.actual_backend(), diagnostics.actual_backend());
+    assert!(resolution.used_fallback());
 }

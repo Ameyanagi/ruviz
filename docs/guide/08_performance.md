@@ -34,10 +34,11 @@ The public static-output APIs are conservative today:
 
 For PNG/image output, the current public path uses the reference raster pipeline
 for output parity unless `BackendType::DataShader` is explicitly configured for
-a supported scatter workload. `.backend(...)` and `.auto_optimize()` store
-backend preference metadata; `.resolved_backend_name()` reports the backend that
-public PNG render/save will actually use for the current plot. `auto_optimize()`
-keeps public PNG output on the normal visual path.
+a supported native `Plot` PNG scatter workload. `.backend(...)` stores an
+explicit preference; `.auto_optimize()` conservatively stores Skia instead of
+advertising a backend that cannot execute across all public raster operations.
+`.resolved_backend_name()` reports the backend that native `Plot` PNG
+render/save will actually use for the current plot.
 
 Reactive plots are resolved to a static snapshot first. Plain `render()` and
 `save()` sample temporal `Signal` sources at `0.0`; `render_at(t)` samples them
@@ -79,8 +80,8 @@ Plot::new()
 For dense plots where many data points map to the same pixels, downsampling or
 aggregating before plotting is often more useful than enabling a backend flag.
 
-For large scatter plots, `.auto_optimize()` may store DataShader metadata, but
-public PNG output still uses the normal visual path:
+For large scatter plots, `.auto_optimize()` keeps the executable Skia backend
+instead of selecting a backend from point count alone:
 
 ```rust
 use ruviz::prelude::*;

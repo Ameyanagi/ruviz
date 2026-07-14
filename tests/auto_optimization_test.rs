@@ -16,19 +16,25 @@ fn test_small_dataset_uses_skia() {
 }
 
 #[test]
-fn test_medium_dataset_uses_parallel() {
-    // GIVEN: Plot with 10K-100K points
+fn test_medium_dataset_keeps_executable_skia_backend() {
     let x: Vec<f64> = (0..50_000).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
 
-    let plot = Plot::new().line(&x, &y).auto_optimize();
+    let plot = Plot::new().line(&x, &y).auto_optimize().into_plot();
 
-    // THEN: Should select Parallel backend (if available) or Skia (fallback)
-    #[cfg(feature = "parallel")]
-    assert_eq!(plot.get_backend_name(), "parallel");
-
-    #[cfg(not(feature = "parallel"))]
     assert_eq!(plot.get_backend_name(), "skia");
+    assert_eq!(plot.resolved_backend_name(), "skia");
+}
+
+#[test]
+fn test_large_dataset_does_not_advertise_an_unroutable_backend() {
+    let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
+    let y: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
+
+    let plot = Plot::new().line(&x, &y).auto_optimize().into_plot();
+
+    assert_eq!(plot.get_backend_name(), "skia");
+    assert_eq!(plot.resolved_backend_name(), "skia");
 }
 
 #[test]

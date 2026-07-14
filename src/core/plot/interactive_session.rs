@@ -1,5 +1,5 @@
 use super::{
-    Image, Plot, PlotData, PlotSeries, PreparedPlot, ReactiveSubscription, RenderExecutionMode,
+    BackendOperation, Image, Plot, PlotData, PlotSeries, PreparedPlot, ReactiveSubscription,
     ResolvedData, ResolvedFrame, ResolvedSeries, SeriesType,
 };
 use crate::{
@@ -1548,8 +1548,8 @@ impl InteractivePlotSession {
                 plot = plot.gpu(true);
             }
         }
-        let (renderer, _) =
-            plot.render_renderer_with_frame_and_diagnostics(RenderExecutionMode::Reference, frame)?;
+        let mode = plot.render_execution_mode(BackendOperation::Interactive);
+        let (renderer, _) = plot.render_renderer_with_frame_and_diagnostics(mode, frame)?;
         let image = Arc::new(renderer.into_image());
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
 
