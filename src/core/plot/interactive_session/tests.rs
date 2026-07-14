@@ -15,6 +15,76 @@ fn render_target() -> SurfaceTarget {
     }
 }
 
+fn assert_index_matches_brute_force(
+    session: &InteractivePlotSession,
+    data_probes: &[ViewportPoint],
+) {
+    assert!(
+        session.indexed_point_series_count() > 0,
+        "test fixture must exercise the indexed path"
+    );
+    let plot_area = session.viewport_snapshot().unwrap().plot_area;
+    let mut queries = vec![
+        plot_area.min,
+        plot_area.max,
+        ViewportPoint::new(plot_area.min.x, plot_area.max.y),
+        ViewportPoint::new(plot_area.max.x, plot_area.min.y),
+        ViewportPoint::new(
+            (plot_area.min.x + plot_area.max.x) * 0.5,
+            (plot_area.min.y + plot_area.max.y) * 0.5,
+        ),
+    ];
+    queries.extend(
+        data_probes
+            .iter()
+            .filter_map(|&point| session.data_to_screen(point).unwrap()),
+    );
+
+    let mut random_state = 0x9e37_79b9_7f4a_7c15_u64;
+    for _ in 0..64 {
+        random_state = random_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let x_fraction = (random_state >> 11) as f64 / (1_u64 << 53) as f64;
+        random_state = random_state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let y_fraction = (random_state >> 11) as f64 / (1_u64 << 53) as f64;
+        queries.push(ViewportPoint::new(
+            plot_area.min.x + x_fraction * plot_area.width(),
+            plot_area.min.y + y_fraction * plot_area.height(),
+        ));
+    }
+
+    for tolerance_px in [0.0, 0.25, 3.0, 8.0, 17.0, 64.0, 1.0e9] {
+        for &query in &queries {
+            assert_eq!(
+                session.hit_test_with_tolerance_px(query, tolerance_px),
+                session.hit_test_brute_force_with_tolerance_px(query, tolerance_px),
+                "indexed and brute-force hit tests differed at {query:?} with radius {tolerance_px}"
+            );
+        }
+    }
+    for tolerance_px in [f64::NAN, f64::INFINITY, -1.0] {
+        let query = queries[queries.len() / 2];
+        assert_eq!(
+            session.hit_test_with_tolerance_px(query, tolerance_px),
+            session.hit_test_brute_force_with_tolerance_px(query, tolerance_px)
+        );
+    }
+}
+
+fn dense_series(count: usize, x_value: impl Fn(f64) -> f64, phase: f64) -> (Vec<f64>, Vec<f64>) {
+    let mut x = Vec::with_capacity(count);
+    let mut y = Vec::with_capacity(count);
+    for index in 0..count {
+        let fraction = index as f64 / (count.saturating_sub(1).max(1)) as f64;
+        x.push(x_value(fraction));
+        y.push(((fraction * std::f64::consts::TAU) + phase).sin());
+    }
+    (x, y)
+}
+
 fn derived_y_ticks(session: &InteractivePlotSession) -> Vec<f64> {
     let geometry = session
         .geometry_snapshot()
@@ -252,6 +322,7 @@ fn test_high_dpi_conversion_uses_backing_pixels_and_logical_hit_tolerance() {
             time_seconds: 0.0,
         })
         .expect("high-DPI frame should render");
+    assert_eq!(session.indexed_point_series_count(), 0);
 
     let data_position = ViewportPoint::new(10.0, 0.0);
     let screen_position = session
@@ -266,13 +337,365 @@ fn test_high_dpi_conversion_uses_backing_pixels_and_logical_hit_tolerance() {
     assert!((round_trip.y - data_position.y).abs() < 1e-6);
 
     let six_logical_pixels_away = ViewportPoint::new(screen_position.x + 12.0, screen_position.y);
+    let fallback_hit = session.hit_test(six_logical_pixels_away);
+    assert_eq!(
+        fallback_hit,
+        session.hit_test_brute_force_with_tolerance_px(six_logical_pixels_away, 16.0)
+    );
     assert!(matches!(
-        session.hit_test(six_logical_pixels_away),
+        fallback_hit,
         HitResult::SeriesPoint { point_index: 0, .. }
     ));
 
     let nine_logical_pixels_away = ViewportPoint::new(screen_position.x + 18.0, screen_position.y);
     assert_eq!(session.hit_test(nine_logical_pixels_away), HitResult::None);
+}
+
+#[test]
+fn test_indexed_hit_test_matches_brute_force_across_scales_reversal_and_radii() {
+    let (linear_x, linear_y) = dense_series(640, |fraction| fraction * 20.0 - 10.0, 0.0);
+    let (_, linear_y_second) = dense_series(640, |fraction| fraction, 0.7);
+    let linear_plot: Plot = Plot::new()
+        .scatter(&linear_x, &linear_y)
+        .line(&linear_x, &linear_y_second)
+        .xlim(-10.0, 10.0)
+        .ylim(-1.2, 1.2)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let linear_session = linear_plot.prepare_interactive();
+    linear_session
+        .render_to_surface(render_target())
+        .expect("linear indexed frame should render");
+    assert_index_matches_brute_force(
+        &linear_session,
+        &[
+            ViewportPoint::new(-10.0, 0.0),
+            ViewportPoint::new(0.0, 0.0),
+            ViewportPoint::new(10.0, 0.0),
+        ],
+    );
+
+    let (scaled_x, mut scaled_y) = dense_series(640, |fraction| 10_f64.powf(3.0 * fraction), 0.0);
+    let (_, mut scaled_y_second) = dense_series(640, |fraction| fraction, 0.9);
+    for value in &mut scaled_y {
+        *value *= 100.0;
+    }
+    for value in &mut scaled_y_second {
+        *value *= 100.0;
+    }
+    let scaled_plot: Plot = Plot::new()
+        .line(&scaled_x, &scaled_y)
+        .scatter(&scaled_x, &scaled_y_second)
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::symlog(1.0))
+        .xlim(1000.0, 1.0)
+        .ylim(100.0, -100.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let scaled_session = scaled_plot.prepare_interactive();
+    scaled_session
+        .render_to_surface(SurfaceTarget {
+            size_px: (640, 480),
+            scale_factor: 2.0,
+            time_seconds: 0.0,
+        })
+        .expect("scaled reversed indexed frame should render");
+    assert_index_matches_brute_force(
+        &scaled_session,
+        &[
+            ViewportPoint::new(1.0, -100.0),
+            ViewportPoint::new(10.0, 0.0),
+            ViewportPoint::new(1000.0, 100.0),
+        ],
+    );
+
+    let errors = vec![0.05; linear_x.len()];
+    let error_plot: Plot = Plot::new()
+        .error_bars(&linear_x, &linear_y, &errors)
+        .error_bars_xy(&linear_x, &linear_y_second, &errors, &errors)
+        .into_plot()
+        .xlim(-10.0, 10.0)
+        .ylim(-1.2, 1.2)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let error_session = error_plot.prepare_interactive();
+    error_session
+        .render_to_surface(render_target())
+        .expect("indexed error-bar frame should render");
+    assert_eq!(error_session.indexed_point_series_count(), 2);
+    assert_index_matches_brute_force(
+        &error_session,
+        &[ViewportPoint::new(0.0, 0.0), ViewportPoint::new(5.0, 0.5)],
+    );
+}
+
+#[test]
+fn test_symlog_infinite_linthresh_hits_rendered_center_point() {
+    let x = (0..320)
+        .map(|index| index as f64 / 159.5 - 1.0)
+        .collect::<Vec<_>>();
+    let y = vec![0.0; x.len()];
+    let plot: Plot = Plot::new()
+        .scatter(&x, &y)
+        .xscale(crate::axes::AxisScale::symlog(f64::INFINITY))
+        .xlim(-1.0, 1.0)
+        .ylim(-1.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("infinite-linthresh SymLog frame should render");
+
+    let expected_data_position = ViewportPoint::new(-1.0, 0.0);
+    let expected_screen_position = session
+        .data_to_screen(expected_data_position)
+        .expect("displayed conversion should succeed")
+        .expect("finite SymLog point should map to the displayed plot area");
+    let plot_area = session.viewport_snapshot().unwrap().plot_area;
+    assert!((expected_screen_position.x - (plot_area.min.x + plot_area.max.x) * 0.5).abs() < 1e-5);
+    assert_eq!(session.indexed_point_series_count(), 1);
+
+    for hit in [
+        session.hit_test(expected_screen_position),
+        session.hit_test_brute_force_with_tolerance_px(
+            expected_screen_position,
+            HIT_TEST_TOLERANCE_LOGICAL_PX,
+        ),
+    ] {
+        match hit {
+            HitResult::SeriesPoint {
+                series_index,
+                point_index,
+                screen_position,
+                data_position,
+                distance_px,
+            } => {
+                assert_eq!(series_index, 0);
+                assert_eq!(point_index, 0);
+                assert_eq!(screen_position, expected_screen_position);
+                assert_eq!(data_position, expected_data_position);
+                assert_eq!(distance_px, 0.0);
+            }
+            other => panic!("expected the rendered center point, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn test_screen_space_grid_safely_rejects_invalid_points_and_huge_queries() {
+    let plot: Plot = Plot::new()
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("grid edge-case frame should render");
+    let geometry = session.displayed_geometry().unwrap();
+    let mut x = (0..320)
+        .map(|index| index as f64 / 319.0)
+        .collect::<Vec<_>>();
+    let mut y = x.clone();
+    x[3] = f64::NAN;
+    y[4] = f64::INFINITY;
+    let cell_size_px = geometry.logical_pixels_to_pixels(HIT_TEST_TOLERANCE_LOGICAL_PX);
+    let grid = ScreenSpacePointGrid::build(&x, &y, &geometry, cell_size_px)
+        .expect("remaining finite points should still be indexed");
+    let center = session
+        .data_to_screen(ViewportPoint::new(0.5, 0.5))
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        grid.nearest(center, 1.0e300),
+        GridQueryResult::Fallback
+    ));
+    assert!(ScreenSpacePointGrid::build(&[], &[], &geometry, cell_size_px).is_none());
+}
+
+#[test]
+fn test_indexed_hit_test_preserves_point_and_heatmap_tie_ordering() {
+    let mut first_x = vec![0.0; 320];
+    let mut first_y = vec![0.0; 320];
+    let mut second_x = vec![0.0; 320];
+    let mut second_y = vec![0.0; 320];
+    for index in 1..320 {
+        let value = 0.6 + index as f64 / 1000.0;
+        first_x[index] = value;
+        first_y[index] = value;
+        second_x[index] = value;
+        second_y[index] = -value;
+    }
+
+    let point_tie_plot: Plot = Plot::new()
+        .scatter(&first_x, &first_y)
+        .scatter(&second_x, &second_y)
+        .xlim(-1.0, 1.0)
+        .ylim(-1.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let point_tie_session = point_tie_plot.prepare_interactive();
+    point_tie_session
+        .render_to_surface(render_target())
+        .expect("point tie frame should render");
+    assert_eq!(point_tie_session.indexed_point_series_count(), 2);
+    let center = point_tie_session
+        .data_to_screen(ViewportPoint::new(0.0, 0.0))
+        .unwrap()
+        .unwrap();
+    let indexed = point_tie_session.hit_test(center);
+    assert_eq!(
+        indexed,
+        point_tie_session.hit_test_brute_force_with_tolerance_px(center, 8.0)
+    );
+    assert!(matches!(
+        indexed,
+        HitResult::SeriesPoint {
+            series_index: 0,
+            point_index: 0,
+            ..
+        }
+    ));
+
+    let heatmap_values = vec![vec![1.0]];
+    let mixed_plot: Plot = Plot::new()
+        .scatter(&first_x, &first_y)
+        .heatmap(
+            &heatmap_values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .extent(-1.0, 1.0, -1.0, 1.0)
+                    .colorbar(false),
+            ),
+        )
+        .scatter(&second_x, &second_y)
+        .xlim(-1.0, 1.0)
+        .ylim(-1.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let mixed_session = mixed_plot.prepare_interactive();
+    mixed_session
+        .render_to_surface(render_target())
+        .expect("mixed tie frame should render");
+    assert_eq!(mixed_session.indexed_point_series_count(), 2);
+    let center = mixed_session
+        .data_to_screen(ViewportPoint::new(0.0, 0.0))
+        .unwrap()
+        .unwrap();
+    let indexed = mixed_session.hit_test(center);
+    assert_eq!(
+        indexed,
+        mixed_session.hit_test_brute_force_with_tolerance_px(center, 8.0)
+    );
+    assert!(matches!(
+        indexed,
+        HitResult::HeatmapCell {
+            series_index: 1,
+            row: 0,
+            col: 0,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn test_indexed_hit_test_tracks_displayed_reactive_viewport_and_time_frames() {
+    let x = (0..640)
+        .map(|index| index as f64 / 639.0)
+        .collect::<Vec<_>>();
+    let y = Observable::new(x.clone());
+    let plot: Plot = Plot::new()
+        .scatter_source(x.clone(), y.clone())
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(SurfaceTarget {
+            size_px: (640, 480),
+            scale_factor: 2.0,
+            time_seconds: 0.0,
+        })
+        .expect("initial reactive indexed frame should render");
+    assert_index_matches_brute_force(
+        &session,
+        &[
+            ViewportPoint::new(0.25, 0.25),
+            ViewportPoint::new(0.75, 0.75),
+        ],
+    );
+
+    y.set(x.iter().map(|value| 1.0 - value).collect());
+    assert_index_matches_brute_force(
+        &session,
+        &[
+            ViewportPoint::new(0.25, 0.25),
+            ViewportPoint::new(0.75, 0.75),
+        ],
+    );
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: ViewportPoint::new(40.0, -20.0),
+    });
+    assert_index_matches_brute_force(
+        &session,
+        &[
+            ViewportPoint::new(0.25, 0.25),
+            ViewportPoint::new(0.75, 0.75),
+        ],
+    );
+    session
+        .render_to_surface(SurfaceTarget {
+            size_px: (640, 480),
+            scale_factor: 2.0,
+            time_seconds: 0.0,
+        })
+        .expect("updated reactive viewport frame should render");
+    assert_index_matches_brute_force(
+        &session,
+        &[
+            ViewportPoint::new(0.25, 0.75),
+            ViewportPoint::new(0.75, 0.25),
+        ],
+    );
+
+    let temporal_y = signal::of(|time| {
+        (0..640)
+            .map(|index| (index as f64 / 639.0 + time).fract())
+            .collect::<Vec<_>>()
+    });
+    let temporal_plot: Plot = Plot::new()
+        .scatter_source(x, temporal_y)
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let temporal_session = temporal_plot.prepare_interactive();
+    temporal_session
+        .render_to_surface(SurfaceTarget {
+            time_seconds: 0.0,
+            ..render_target()
+        })
+        .expect("initial temporal indexed frame should render");
+    assert_index_matches_brute_force(&temporal_session, &[ViewportPoint::new(0.25, 0.25)]);
+    temporal_session
+        .render_to_surface(SurfaceTarget {
+            time_seconds: 0.25,
+            ..render_target()
+        })
+        .expect("updated temporal indexed frame should render");
+    assert_index_matches_brute_force(&temporal_session, &[ViewportPoint::new(0.25, 0.5)]);
 }
 
 #[test]
@@ -725,6 +1148,54 @@ fn test_incremental_streaming_uses_scaled_geometry_and_displayed_hit_data() {
     assert!(matches!(
         session.hit_test(screen_position),
         HitResult::SeriesPoint { point_index: 2, .. }
+    ));
+}
+#[test]
+fn test_incremental_streaming_replaces_index_with_displayed_frame_data() {
+    let stream = StreamingXY::new(1024);
+    stream.push_many((0..320).map(|index| {
+        let value = index as f64 / 400.0;
+        (value, value)
+    }));
+    let plot: Plot = Plot::new()
+        .scatter_streaming(&stream)
+        .into_plot()
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial indexed streaming frame should render");
+    assert!(!session.point_hit_index_initialized());
+    assert_eq!(session.indexed_point_series_count(), 1);
+    assert!(session.point_hit_index_initialized());
+    assert_index_matches_brute_force(&session, &[ViewportPoint::new(0.5, 0.5)]);
+
+    stream.push(0.9, 0.1);
+    let frame = session
+        .render_to_surface(render_target())
+        .expect("incremental indexed streaming frame should render");
+    assert!(frame.layer_state.used_incremental_data);
+    assert!(!session.point_hit_index_initialized());
+    assert_eq!(session.indexed_point_series_count(), 1);
+    assert!(session.point_hit_index_initialized());
+    assert_index_matches_brute_force(
+        &session,
+        &[ViewportPoint::new(0.5, 0.5), ViewportPoint::new(0.9, 0.1)],
+    );
+    let new_point = session
+        .data_to_screen(ViewportPoint::new(0.9, 0.1))
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        session.hit_test(new_point),
+        HitResult::SeriesPoint {
+            point_index: 320,
+            ..
+        }
     ));
 }
 fn color_centroid<F>(image: &Image, predicate: F) -> Option<ViewportPoint>

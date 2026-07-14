@@ -14,9 +14,9 @@ use crate::{
 };
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -116,6 +116,8 @@ const MIN_ZOOM_LEVEL: f64 = 0.1;
 const MAX_ZOOM_LEVEL: f64 = 100.0;
 const VIEWPORT_EPSILON: f64 = 1e-9;
 const HIT_TEST_TOLERANCE_LOGICAL_PX: f64 = 8.0;
+const MIN_INDEXED_POINT_COUNT: usize = 256;
+const MAX_INDEX_QUERY_CELLS: u64 = 4096;
 
 #[cfg(not(target_arch = "wasm32"))]
 type FrameTimer = Instant;
@@ -568,12 +570,272 @@ impl DisplayedFrameData {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AxisScaleIdentity {
+    Linear,
+    Log,
+    SymLog { linthresh_bits: u64 },
+}
+
+impl From<&AxisScale> for AxisScaleIdentity {
+    fn from(scale: &AxisScale) -> Self {
+        match scale {
+            AxisScale::Linear => Self::Linear,
+            AxisScale::Log => Self::Log,
+            AxisScale::SymLog { linthresh } => Self::SymLog {
+                linthresh_bits: linthresh.to_bits(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PointHitIndexKey {
+    frame_key: InteractiveFrameKey,
+    plot_area_bits: [u32; 4],
+    x_scale: AxisScaleIdentity,
+    y_scale: AxisScaleIdentity,
+    cell_size_bits: u64,
+}
+
+impl PointHitIndexKey {
+    fn from_geometry(geometry: &GeometrySnapshot, cell_size_px: f64) -> Self {
+        Self {
+            frame_key: geometry.key.clone(),
+            plot_area_bits: [
+                geometry.plot_area.left().to_bits(),
+                geometry.plot_area.top().to_bits(),
+                geometry.plot_area.right().to_bits(),
+                geometry.plot_area.bottom().to_bits(),
+            ],
+            x_scale: AxisScaleIdentity::from(&geometry.x_scale),
+            y_scale: AxisScaleIdentity::from(&geometry.y_scale),
+            cell_size_bits: cell_size_px.to_bits(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IndexedPoint {
+    point_index: usize,
+    screen_position: ViewportPoint,
+    data_position: ViewportPoint,
+}
+
+#[derive(Clone, Debug)]
+struct ScreenSpacePointGrid {
+    origin: ViewportPoint,
+    cell_size_px: f64,
+    cells: HashMap<(i64, i64), Vec<usize>>,
+    points: Vec<IndexedPoint>,
+}
+
+impl ScreenSpacePointGrid {
+    fn build(x: &[f64], y: &[f64], geometry: &GeometrySnapshot, cell_size_px: f64) -> Option<Self> {
+        if x.len().min(y.len()) < MIN_INDEXED_POINT_COUNT
+            || !cell_size_px.is_finite()
+            || cell_size_px <= 0.0
+            || !geometry.plot_area.width().is_finite()
+            || !geometry.plot_area.height().is_finite()
+            || geometry.plot_area.width() <= 0.0
+            || geometry.plot_area.height() <= 0.0
+        {
+            return None;
+        }
+
+        let origin = ViewportPoint::new(
+            geometry.plot_area.left() as f64,
+            geometry.plot_area.top() as f64,
+        );
+        let mut cells = HashMap::<(i64, i64), Vec<usize>>::new();
+        let mut points = Vec::with_capacity(x.len().min(y.len()));
+        for (point_index, (&x_val, &y_val)) in x.iter().zip(y.iter()).enumerate() {
+            let data_position = ViewportPoint::new(x_val, y_val);
+            if !geometry.contains_transformable_data(data_position) {
+                continue;
+            }
+            let screen_position = geometry.data_to_screen(data_position);
+            if !screen_position.x.is_finite() || !screen_position.y.is_finite() {
+                continue;
+            }
+            let Some(cell) = grid_cell(screen_position, origin, cell_size_px) else {
+                continue;
+            };
+            let indexed_position = points.len();
+            points.push(IndexedPoint {
+                point_index,
+                screen_position,
+                data_position,
+            });
+            cells.entry(cell).or_default().push(indexed_position);
+        }
+
+        (points.len() >= MIN_INDEXED_POINT_COUNT).then_some(Self {
+            origin,
+            cell_size_px,
+            cells,
+            points,
+        })
+    }
+
+    fn nearest(&self, position_px: ViewportPoint, tolerance_px: f64) -> GridQueryResult {
+        let Some((min_col, min_row)) = grid_cell(
+            ViewportPoint::new(position_px.x - tolerance_px, position_px.y - tolerance_px),
+            self.origin,
+            self.cell_size_px,
+        ) else {
+            return GridQueryResult::Fallback;
+        };
+        let Some((max_col, max_row)) = grid_cell(
+            ViewportPoint::new(position_px.x + tolerance_px, position_px.y + tolerance_px),
+            self.origin,
+            self.cell_size_px,
+        ) else {
+            return GridQueryResult::Fallback;
+        };
+        let Some(min_col) = min_col.checked_sub(1) else {
+            return GridQueryResult::Fallback;
+        };
+        let Some(min_row) = min_row.checked_sub(1) else {
+            return GridQueryResult::Fallback;
+        };
+        let Some(max_col) = max_col.checked_add(1) else {
+            return GridQueryResult::Fallback;
+        };
+        let Some(max_row) = max_row.checked_add(1) else {
+            return GridQueryResult::Fallback;
+        };
+        let Some(column_count) = inclusive_cell_count(min_col, max_col) else {
+            return GridQueryResult::Fallback;
+        };
+        let Some(row_count) = inclusive_cell_count(min_row, max_row) else {
+            return GridQueryResult::Fallback;
+        };
+        if column_count.saturating_mul(row_count) > MAX_INDEX_QUERY_CELLS {
+            return GridQueryResult::Fallback;
+        }
+
+        let mut best = None::<PointHitCandidate>;
+        for row in min_row..=max_row {
+            for col in min_col..=max_col {
+                let Some(indexed_positions) = self.cells.get(&(col, row)) else {
+                    continue;
+                };
+                for &indexed_position in indexed_positions {
+                    let point = self.points[indexed_position];
+                    let distance = screen_distance(position_px, point.screen_position);
+                    if distance > tolerance_px {
+                        continue;
+                    }
+                    let should_replace = best.as_ref().is_none_or(|current| {
+                        distance < current.distance_px
+                            || (distance == current.distance_px
+                                && point.point_index < current.point_index)
+                    });
+                    if should_replace {
+                        best = Some(PointHitCandidate {
+                            point_index: point.point_index,
+                            screen_position: point.screen_position,
+                            data_position: point.data_position,
+                            distance_px: distance,
+                        });
+                    }
+                }
+            }
+        }
+        GridQueryResult::Indexed(best)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PointHitIndex {
+    key: PointHitIndexKey,
+    series: Vec<Option<ScreenSpacePointGrid>>,
+}
+
+type LazyPointHitIndex = Arc<OnceLock<Arc<PointHitIndex>>>;
+
+impl PointHitIndex {
+    fn build(
+        plot: &Plot,
+        displayed_data: &DisplayedFrameData,
+        geometry: &GeometrySnapshot,
+    ) -> Self {
+        let cell_size_px = geometry.logical_pixels_to_pixels(HIT_TEST_TOLERANCE_LOGICAL_PX);
+        let series = plot
+            .series_mgr
+            .series
+            .iter()
+            .enumerate()
+            .map(|(series_index, series)| match &series.series_type {
+                SeriesType::Line { .. }
+                | SeriesType::Scatter { .. }
+                | SeriesType::ErrorBars { .. }
+                | SeriesType::ErrorBarsXY { .. } => displayed_data
+                    .xy(plot, series_index)
+                    .and_then(|(x, y)| ScreenSpacePointGrid::build(x, y, geometry, cell_size_px)),
+                _ => None,
+            })
+            .collect();
+        Self {
+            key: PointHitIndexKey::from_geometry(geometry, cell_size_px),
+            series,
+        }
+    }
+
+    fn matches_geometry(&self, geometry: &GeometrySnapshot) -> bool {
+        self.key
+            == PointHitIndexKey::from_geometry(geometry, f64::from_bits(self.key.cell_size_bits))
+    }
+
+    fn series_grid(&self, series_index: usize) -> Option<&ScreenSpacePointGrid> {
+        self.series.get(series_index)?.as_ref()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PointHitCandidate {
+    point_index: usize,
+    screen_position: ViewportPoint,
+    data_position: ViewportPoint,
+    distance_px: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GridQueryResult {
+    Indexed(Option<PointHitCandidate>),
+    Fallback,
+}
+
+fn grid_cell(point: ViewportPoint, origin: ViewportPoint, cell_size_px: f64) -> Option<(i64, i64)> {
+    let col = ((point.x - origin.x) / cell_size_px).floor();
+    let row = ((point.y - origin.y) / cell_size_px).floor();
+    if !col.is_finite()
+        || !row.is_finite()
+        || col < i64::MIN as f64
+        || col > i64::MAX as f64
+        || row < i64::MIN as f64
+        || row > i64::MAX as f64
+    {
+        return None;
+    }
+    Some((col as i64, row as i64))
+}
+
+fn inclusive_cell_count(min: i64, max: i64) -> Option<u64> {
+    if min > max {
+        return None;
+    }
+    u64::try_from(i128::from(max) - i128::from(min) + 1).ok()
+}
+
 #[derive(Clone, Debug)]
 struct InteractiveFrameCache {
     key: InteractiveFrameKey,
     image: Arc<Image>,
     geometry: GeometrySnapshot,
     displayed_data: DisplayedFrameData,
+    point_hit_index: LazyPointHitIndex,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -631,6 +893,12 @@ impl GeometrySnapshot {
             && point.y.is_finite()
             && value_in_bounds(point.x, self.x_bounds)
             && value_in_bounds(point.y, self.y_bounds)
+    }
+
+    fn contains_transformable_data(&self, point: ViewportPoint) -> bool {
+        self.contains_data(point)
+            && axis_accepts_value(&self.x_scale, point.x)
+            && axis_accepts_value(&self.y_scale, point.y)
     }
 
     fn screen_to_data(&self, point: ViewportPoint) -> ViewportPoint {
@@ -1223,111 +1491,102 @@ impl InteractivePlotSession {
     }
 
     pub fn hit_test(&self, position_px: ViewportPoint) -> HitResult {
-        let Some((geometry, displayed_data)) = self
-            .inner
+        let Some((geometry, displayed_data, point_hit_index)) = self.displayed_hit_test_data()
+        else {
+            return HitResult::None;
+        };
+        let tolerance_px = geometry.logical_pixels_to_pixels(HIT_TEST_TOLERANCE_LOGICAL_PX);
+        hit_test_displayed_frame(
+            self.inner.prepared.plot(),
+            &displayed_data,
+            &geometry,
+            Some(&point_hit_index),
+            position_px,
+            tolerance_px,
+        )
+    }
+
+    fn displayed_frame_data(
+        &self,
+    ) -> Option<(GeometrySnapshot, DisplayedFrameData, LazyPointHitIndex)> {
+        self.inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
             .base_cache
             .as_ref()
-            .map(|cache| (cache.geometry.clone(), cache.displayed_data.clone()))
+            .map(|cache| {
+                (
+                    cache.geometry.clone(),
+                    cache.displayed_data.clone(),
+                    Arc::clone(&cache.point_hit_index),
+                )
+            })
+    }
+
+    fn displayed_hit_test_data(
+        &self,
+    ) -> Option<(GeometrySnapshot, DisplayedFrameData, Arc<PointHitIndex>)> {
+        let (geometry, displayed_data, point_hit_index) = self.displayed_frame_data()?;
+        let point_hit_index = Arc::clone(point_hit_index.get_or_init(|| {
+            Arc::new(PointHitIndex::build(
+                self.inner.prepared.plot(),
+                &displayed_data,
+                &geometry,
+            ))
+        }));
+        Some((geometry, displayed_data, point_hit_index))
+    }
+
+    #[cfg(test)]
+    fn hit_test_with_tolerance_px(
+        &self,
+        position_px: ViewportPoint,
+        tolerance_px: f64,
+    ) -> HitResult {
+        let Some((geometry, displayed_data, point_hit_index)) = self.displayed_hit_test_data()
         else {
             return HitResult::None;
         };
-        if !geometry.contains_screen(position_px) {
+        hit_test_displayed_frame(
+            self.inner.prepared.plot(),
+            &displayed_data,
+            &geometry,
+            Some(&point_hit_index),
+            position_px,
+            tolerance_px,
+        )
+    }
+
+    #[cfg(test)]
+    fn hit_test_brute_force_with_tolerance_px(
+        &self,
+        position_px: ViewportPoint,
+        tolerance_px: f64,
+    ) -> HitResult {
+        let Some((geometry, displayed_data, _)) = self.displayed_frame_data() else {
             return HitResult::None;
-        }
-        let plot = self.inner.prepared.plot();
-        let hit_tolerance_px = geometry.logical_pixels_to_pixels(HIT_TEST_TOLERANCE_LOGICAL_PX);
-        let mut best_hit = HitResult::None;
-        let mut best_distance = f64::INFINITY;
+        };
+        hit_test_displayed_frame_brute_force(
+            self.inner.prepared.plot(),
+            &displayed_data,
+            &geometry,
+            position_px,
+            tolerance_px,
+        )
+    }
 
-        for (series_index, series) in plot.series_mgr.series.iter().enumerate() {
-            match &series.series_type {
-                SeriesType::Line { .. }
-                | SeriesType::Scatter { .. }
-                | SeriesType::ErrorBars { .. }
-                | SeriesType::ErrorBarsXY { .. } => {
-                    let Some((x, y)) = displayed_data.xy(plot, series_index) else {
-                        continue;
-                    };
-                    for (point_index, (&x_val, &y_val)) in x.iter().zip(y.iter()).enumerate() {
-                        if !x_val.is_finite() || !y_val.is_finite() {
-                            continue;
-                        }
-                        let data_position = ViewportPoint::new(x_val, y_val);
-                        if !geometry.contains_data(data_position) {
-                            continue;
-                        }
-                        let screen_position = geometry.data_to_screen(data_position);
-                        let dx = position_px.x - screen_position.x;
-                        let dy = position_px.y - screen_position.y;
-                        let distance = (dx * dx + dy * dy).sqrt();
-                        if distance <= hit_tolerance_px && distance < best_distance {
-                            best_distance = distance;
-                            best_hit = HitResult::SeriesPoint {
-                                series_index,
-                                point_index,
-                                screen_position,
-                                data_position,
-                                distance_px: distance,
-                            };
-                        }
-                    }
-                }
-                SeriesType::Heatmap { data } => {
-                    let rect = geometry.plot_area;
-                    if position_px.x < rect.left() as f64
-                        || position_px.x > rect.right() as f64
-                        || position_px.y < rect.top() as f64
-                        || position_px.y > rect.bottom() as f64
-                    {
-                        continue;
-                    }
-                    let data_position = geometry.screen_to_data(position_px);
-                    if data_position.x < data.x_extent.0
-                        || data_position.x > data.x_extent.1
-                        || data_position.y < data.y_extent.0
-                        || data_position.y > data.y_extent.1
-                    {
-                        continue;
-                    }
+    #[cfg(test)]
+    fn point_hit_index_initialized(&self) -> bool {
+        self.displayed_frame_data()
+            .is_some_and(|(_, _, index)| index.get().is_some())
+    }
 
-                    let cell_width =
-                        (data.x_extent.1 - data.x_extent.0) / data.n_cols.max(1) as f64;
-                    let cell_height =
-                        (data.y_extent.1 - data.y_extent.0) / data.n_rows.max(1) as f64;
-                    let col = ((data_position.x - data.x_extent.0) / cell_width)
-                        .floor()
-                        .clamp(0.0, data.n_cols.saturating_sub(1) as f64)
-                        as usize;
-                    let row = ((data.y_extent.1 - data_position.y) / cell_height)
-                        .floor()
-                        .clamp(0.0, data.n_rows.saturating_sub(1) as f64)
-                        as usize;
-                    let value = data.values[row][col];
-                    if data.should_mask_value(value) {
-                        continue;
-                    }
-                    let ((x1, x2), (y1, y2)) = data.cell_data_bounds(row, col);
-                    let first = geometry.data_to_screen(ViewportPoint::new(x1, y2));
-                    let second = geometry.data_to_screen(ViewportPoint::new(x2, y1));
-                    best_hit = HitResult::HeatmapCell {
-                        series_index,
-                        row,
-                        col,
-                        value,
-                        screen_rect: ViewportRect {
-                            min: ViewportPoint::new(first.x.min(second.x), first.y.min(second.y)),
-                            max: ViewportPoint::new(first.x.max(second.x), first.y.max(second.y)),
-                        },
-                    };
-                }
-                _ => {}
-            }
-        }
-
-        best_hit
+    #[cfg(test)]
+    fn indexed_point_series_count(&self) -> usize {
+        self.displayed_hit_test_data()
+            .map(|(_, _, index)| index.series.iter().flatten().count())
+            .unwrap_or(0)
     }
 
     /// Converts a displayed-frame screen position to data coordinates.
@@ -1771,6 +2030,7 @@ impl InteractivePlotSession {
         let (renderer, _) = plot.render_renderer_with_frame_and_diagnostics(mode, frame)?;
         let image = Arc::new(renderer.into_image());
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
+        let point_hit_index = Arc::new(OnceLock::new());
 
         let mut state = self
             .inner
@@ -1782,6 +2042,7 @@ impl InteractivePlotSession {
             image: Arc::clone(&image),
             geometry: geometry.clone(),
             displayed_data,
+            point_hit_index,
         });
         Ok(BaseLayerResult {
             image,
@@ -2095,6 +2356,7 @@ impl InteractivePlotSession {
             &draw_ops,
         )?);
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
+        let point_hit_index = Arc::new(OnceLock::new());
 
         let mut state = self
             .inner
@@ -2106,6 +2368,7 @@ impl InteractivePlotSession {
             image: Arc::clone(&image),
             geometry: geometry.clone(),
             displayed_data,
+            point_hit_index,
         });
 
         Ok(Some(BaseLayerResult {
@@ -2436,6 +2699,188 @@ fn require_finite_point(point: ViewportPoint, label: &str) -> Result<()> {
             "{label} must contain finite coordinates"
         )))
     }
+}
+
+fn axis_accepts_value(scale: &AxisScale, value: f64) -> bool {
+    match scale {
+        AxisScale::Linear | AxisScale::SymLog { .. } => true,
+        AxisScale::Log => value > 0.0,
+    }
+}
+
+fn screen_distance(first: ViewportPoint, second: ViewportPoint) -> f64 {
+    let dx = first.x - second.x;
+    let dy = first.y - second.y;
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn brute_force_point_candidate(
+    x: &[f64],
+    y: &[f64],
+    geometry: &GeometrySnapshot,
+    position_px: ViewportPoint,
+    tolerance_px: f64,
+) -> Option<PointHitCandidate> {
+    let mut best = None::<PointHitCandidate>;
+    for (point_index, (&x_val, &y_val)) in x.iter().zip(y.iter()).enumerate() {
+        let data_position = ViewportPoint::new(x_val, y_val);
+        if !geometry.contains_transformable_data(data_position) {
+            continue;
+        }
+        let screen_position = geometry.data_to_screen(data_position);
+        if !screen_position.x.is_finite() || !screen_position.y.is_finite() {
+            continue;
+        }
+        let distance = screen_distance(position_px, screen_position);
+        if distance <= tolerance_px
+            && best
+                .as_ref()
+                .is_none_or(|current| distance < current.distance_px)
+        {
+            best = Some(PointHitCandidate {
+                point_index,
+                screen_position,
+                data_position,
+                distance_px: distance,
+            });
+        }
+    }
+    best
+}
+
+fn hit_test_displayed_frame_brute_force(
+    plot: &Plot,
+    displayed_data: &DisplayedFrameData,
+    geometry: &GeometrySnapshot,
+    position_px: ViewportPoint,
+    tolerance_px: f64,
+) -> HitResult {
+    hit_test_displayed_frame(
+        plot,
+        displayed_data,
+        geometry,
+        None,
+        position_px,
+        tolerance_px,
+    )
+}
+
+fn hit_test_displayed_frame(
+    plot: &Plot,
+    displayed_data: &DisplayedFrameData,
+    geometry: &GeometrySnapshot,
+    point_hit_index: Option<&PointHitIndex>,
+    position_px: ViewportPoint,
+    tolerance_px: f64,
+) -> HitResult {
+    if !geometry.contains_screen(position_px) || !tolerance_px.is_finite() || tolerance_px < 0.0 {
+        return HitResult::None;
+    }
+    let point_hit_index = point_hit_index.filter(|index| index.matches_geometry(geometry));
+    let mut best_hit = HitResult::None;
+    let mut best_distance = f64::INFINITY;
+
+    for (series_index, series) in plot.series_mgr.series.iter().enumerate() {
+        match &series.series_type {
+            SeriesType::Line { .. }
+            | SeriesType::Scatter { .. }
+            | SeriesType::ErrorBars { .. }
+            | SeriesType::ErrorBarsXY { .. } => {
+                let Some((x, y)) = displayed_data.xy(plot, series_index) else {
+                    continue;
+                };
+                let candidate = match point_hit_index
+                    .and_then(|index| index.series_grid(series_index))
+                    .map(|grid| grid.nearest(position_px, tolerance_px))
+                {
+                    Some(GridQueryResult::Indexed(candidate)) => candidate,
+                    Some(GridQueryResult::Fallback) | None => {
+                        brute_force_point_candidate(x, y, geometry, position_px, tolerance_px)
+                    }
+                };
+                let Some(candidate) = candidate else {
+                    continue;
+                };
+                if candidate.distance_px < best_distance {
+                    best_distance = candidate.distance_px;
+                    best_hit = HitResult::SeriesPoint {
+                        series_index,
+                        point_index: candidate.point_index,
+                        screen_position: candidate.screen_position,
+                        data_position: candidate.data_position,
+                        distance_px: candidate.distance_px,
+                    };
+                }
+            }
+            SeriesType::Heatmap { data } => {
+                if data.n_rows == 0 || data.n_cols == 0 {
+                    continue;
+                }
+                let data_position = geometry.screen_to_data(position_px);
+                if !data_position.x.is_finite()
+                    || !data_position.y.is_finite()
+                    || data_position.x < data.x_extent.0
+                    || data_position.x > data.x_extent.1
+                    || data_position.y < data.y_extent.0
+                    || data_position.y > data.y_extent.1
+                {
+                    continue;
+                }
+
+                let cell_width = (data.x_extent.1 - data.x_extent.0) / data.n_cols as f64;
+                let cell_height = (data.y_extent.1 - data.y_extent.0) / data.n_rows as f64;
+                if !cell_width.is_finite()
+                    || !cell_height.is_finite()
+                    || cell_width <= 0.0
+                    || cell_height <= 0.0
+                {
+                    continue;
+                }
+                let col = ((data_position.x - data.x_extent.0) / cell_width)
+                    .floor()
+                    .clamp(0.0, data.n_cols.saturating_sub(1) as f64)
+                    as usize;
+                let row = ((data.y_extent.1 - data_position.y) / cell_height)
+                    .floor()
+                    .clamp(0.0, data.n_rows.saturating_sub(1) as f64)
+                    as usize;
+                let Some(value) = data
+                    .values
+                    .get(row)
+                    .and_then(|values| values.get(col))
+                    .copied()
+                else {
+                    continue;
+                };
+                if data.should_mask_value(value) {
+                    continue;
+                }
+                let ((x1, x2), (y1, y2)) = data.cell_data_bounds(row, col);
+                let first = geometry.data_to_screen(ViewportPoint::new(x1, y2));
+                let second = geometry.data_to_screen(ViewportPoint::new(x2, y1));
+                if !first.x.is_finite()
+                    || !first.y.is_finite()
+                    || !second.x.is_finite()
+                    || !second.y.is_finite()
+                {
+                    continue;
+                }
+                best_hit = HitResult::HeatmapCell {
+                    series_index,
+                    row,
+                    col,
+                    value,
+                    screen_rect: ViewportRect {
+                        min: ViewportPoint::new(first.x.min(second.x), first.y.min(second.y)),
+                        max: ViewportPoint::new(first.x.max(second.x), first.y.max(second.y)),
+                    },
+                };
+            }
+            _ => {}
+        }
+    }
+
+    best_hit
 }
 
 fn displayed_geometry_unavailable() -> PlottingError {
