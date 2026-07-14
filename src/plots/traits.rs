@@ -318,6 +318,20 @@ pub trait PlotRender: PlotData {
     ) -> Result<()> {
         self.render(renderer, area, theme, color)
     }
+
+    /// Render with resolved plot-level grid styling when the plot type owns its axes.
+    fn render_styled_with_grid(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+        _grid_style: Option<&crate::core::GridStyle>,
+    ) -> Result<()> {
+        self.render_styled(renderer, area, theme, color, alpha, line_width)
+    }
 }
 
 /// Trait for filled shapes with optional edge styling

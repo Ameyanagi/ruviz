@@ -147,11 +147,18 @@ fn include_annotation_data_bounds(
 }
 
 impl Plot {
+    #[cfg(feature = "parallel")]
+    pub(super) fn parallel_marker_size_px(&self, series: &PlotSeries, fallback_points: f32) -> f32 {
+        self.render_scale()
+            .points_to_pixels(series.marker_size.unwrap_or(fallback_points))
+    }
+
     /// Render plot using parallel processing for multiple series
     #[cfg(feature = "parallel")]
     pub(super) fn render_with_parallel(&self) -> Result<Image> {
         let frame = self.resolve_frame(0.0)?;
-        let result = self.render_with_parallel_resolved(&frame);
+        let style_shell = self.resolved_style_shell(&frame.style);
+        let result = style_shell.render_with_parallel_resolved(&frame);
         if result.is_ok() {
             frame.acknowledge_rendered(self);
         }
@@ -359,16 +366,13 @@ impl Plot {
         }
 
         // Process all series in parallel
+        let render_scale = self.render_scale();
         let processed_series = self.render.parallel_renderer.process_series_parallel(
             &self.series_mgr.series,
             |series, index| -> Result<SeriesRenderData> {
                 // Get series styling with defaults
-                let color = series
-                    .color
-                    .unwrap_or_else(|| self.display.theme.get_color(index));
-                let line_width = self.dpi_scaled_line_width(
-                    series.line_width.unwrap_or(self.display.theme.line_width),
-                );
+                let color = series.color_with_alpha(self.display.theme.get_color(index));
+                let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
                 let alpha = series.alpha.unwrap_or(1.0);
                 let resolved = &resolved_series[index];
 
@@ -444,7 +448,7 @@ impl Plot {
                             &points,
                             series.marker_style.unwrap_or(MarkerStyle::Circle),
                             color,
-                            8.0, // Default marker size
+                            self.parallel_marker_size_px(series, 10.0),
                         )?;
 
                         RenderSeriesType::Scatter { markers }
@@ -534,9 +538,9 @@ impl Plot {
 
                         let markers = self.render.parallel_renderer.process_markers_parallel(
                             &points,
-                            MarkerStyle::Circle,
+                            series.marker_style.unwrap_or(MarkerStyle::Circle),
                             color,
-                            6.0,
+                            self.parallel_marker_size_px(series, 8.0),
                         )?;
 
                         RenderSeriesType::Scatter { markers }
@@ -775,7 +779,7 @@ impl Plot {
                                     }
 
                                     let cell_color =
-                                        data.get_color(value).with_alpha(data.config.alpha);
+                                        data.get_color(value).with_alpha(data.config.alpha * alpha);
                                     Some(crate::render::parallel::HeatmapCell {
                                         x: left,
                                         y: top,
@@ -963,35 +967,43 @@ impl Plot {
                         RenderSeriesType::Line { segments: vec![] }
                     }
                     SeriesType::Radar { data: radar_data } => {
-                        // Radar plots use polygon rendering, not supported in parallel mode
-                        // Fall back to line rendering of radar polygon outlines
-                        let mut all_points = Vec::new();
-                        for series_data in &radar_data.series {
-                            for &(x, y) in &series_data.polygon {
-                                all_points.push((x, y));
+                        // Preserve each internal polygon's frame-resolved color instead of
+                        // joining all radar payloads into one top-level palette color.
+                        let mut segments = Vec::new();
+                        for (internal_index, series_data) in radar_data.series.iter().enumerate() {
+                            let mut polygon = series_data.polygon.clone();
+                            if let Some(&first) = polygon.first() {
+                                polygon.push(first);
                             }
+                            let poly_x: Vec<f64> = polygon.iter().map(|(x, _)| *x).collect();
+                            let poly_y: Vec<f64> = polygon.iter().map(|(_, y)| *y).collect();
+                            let points = self
+                                .render
+                                .parallel_renderer
+                                .transform_coordinates_parallel_scaled(
+                                    &poly_x,
+                                    &poly_y,
+                                    data_bounds.clone(),
+                                    parallel_plot_area.clone(),
+                                    &self.layout.x_scale,
+                                    &self.layout.y_scale,
+                                )?;
+                            let radar_color = series
+                                .resolved_radar_colors
+                                .as_ref()
+                                .and_then(|colors| colors.get(internal_index).copied())
+                                .unwrap_or(series.color.unwrap_or(color));
+                            let radar_color =
+                                radar_color.with_alpha((f32::from(radar_color.a) / 255.0) * alpha);
+                            segments.extend(
+                                self.render.parallel_renderer.process_polyline_parallel(
+                                    &points,
+                                    LineStyle::Solid,
+                                    radar_color,
+                                    line_width,
+                                )?,
+                            );
                         }
-
-                        let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
-                        let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
-                        let points = self
-                            .render
-                            .parallel_renderer
-                            .transform_coordinates_parallel_scaled(
-                                &poly_x,
-                                &poly_y,
-                                data_bounds.clone(),
-                                parallel_plot_area.clone(),
-                                &self.layout.x_scale,
-                                &self.layout.y_scale,
-                            )?;
-
-                        let segments = self.render.parallel_renderer.process_polyline_parallel(
-                            &points,
-                            LineStyle::Solid,
-                            color,
-                            line_width,
-                        )?;
 
                         RenderSeriesType::Line { segments }
                     }
@@ -1312,12 +1324,8 @@ impl Plot {
         }
 
         let legend_items = self.collect_legend_items();
-        if !legend_items.is_empty() && self.layout.legend.enabled {
-            let legend = self
-                .layout
-                .legend
-                .to_legend(self.display.config.typography.legend_size());
-            renderer.draw_legend_full(&legend_items, &legend, plot_area, None)?;
+        if !legend_items.is_empty() && frame.style.legend.enabled {
+            renderer.draw_legend_full(&legend_items, &frame.style.legend, plot_area, None)?;
         }
 
         // Record performance statistics
@@ -1488,7 +1496,7 @@ impl Plot {
                 }
                 SeriesType::Heatmap { data } => {
                     let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
-                        crate::plots::traits::PlotData::data_bounds(data);
+                        crate::plots::traits::PlotData::data_bounds(data.as_ref());
                     x_min = x_min.min(series_x_min);
                     x_max = x_max.max(series_x_max);
                     y_min = y_min.min(series_y_min);
@@ -1552,7 +1560,13 @@ impl Plot {
                     x_max = x_max.max(1.0);
                 }
                 SeriesType::Boxen { data } => {
-                    include_plot_data_bounds(data, &mut x_min, &mut x_max, &mut y_min, &mut y_max);
+                    include_plot_data_bounds(
+                        data.as_ref(),
+                        &mut x_min,
+                        &mut x_max,
+                        &mut y_min,
+                        &mut y_max,
+                    );
                 }
                 SeriesType::Quiver { data } => {
                     include_quiver_data_bounds(
@@ -1733,7 +1747,7 @@ impl Plot {
                 ResolvedSeries::Other(series) => match series {
                     SeriesType::Heatmap { data } => {
                         let ((sx_min, sx_max), (sy_min, sy_max)) =
-                            crate::plots::traits::PlotData::data_bounds(data);
+                            crate::plots::traits::PlotData::data_bounds(data.as_ref());
                         x_min = x_min.min(sx_min);
                         x_max = x_max.max(sx_max);
                         y_min = y_min.min(sy_min);
@@ -1780,7 +1794,11 @@ impl Plot {
                         x_max = x_max.max(1.0);
                     }
                     SeriesType::Boxen { data } => include_plot_data_bounds(
-                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
+                        data.as_ref(),
+                        &mut x_min,
+                        &mut x_max,
+                        &mut y_min,
+                        &mut y_max,
                     ),
                     SeriesType::Quiver { data } => include_quiver_data_bounds(
                         data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
@@ -1958,7 +1976,7 @@ impl Plot {
                 }
                 SeriesType::Heatmap { data } => {
                     let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
-                        crate::plots::traits::PlotData::data_bounds(data);
+                        crate::plots::traits::PlotData::data_bounds(data.as_ref());
                     x_min = x_min.min(series_x_min);
                     x_max = x_max.max(series_x_max);
                     y_min = y_min.min(series_y_min);
@@ -2009,7 +2027,13 @@ impl Plot {
                     x_max = x_max.max(1.0);
                 }
                 SeriesType::Boxen { data } => {
-                    include_plot_data_bounds(data, &mut x_min, &mut x_max, &mut y_min, &mut y_max);
+                    include_plot_data_bounds(
+                        data.as_ref(),
+                        &mut x_min,
+                        &mut x_max,
+                        &mut y_min,
+                        &mut y_max,
+                    );
                 }
                 SeriesType::Quiver { data } => {
                     include_quiver_data_bounds(

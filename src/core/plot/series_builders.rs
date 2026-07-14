@@ -15,7 +15,7 @@ pub struct SeriesGroupBuilder {
     plot: Plot,
     style: builder::SeriesStyle,
     group_id: usize,
-    resolved_auto_color: Option<Color>,
+    auto_palette_slot_consumed: bool,
 }
 
 impl SeriesGroupBuilder {
@@ -25,7 +25,7 @@ impl SeriesGroupBuilder {
             plot,
             style: builder::SeriesStyle::default(),
             group_id,
-            resolved_auto_color: None,
+            auto_palette_slot_consumed: false,
         }
     }
 
@@ -125,14 +125,9 @@ impl SeriesGroupBuilder {
             }
         };
 
-        let mut style = self.style.clone();
-        let mut consume_palette_index = true;
-        if self.style.color.is_none() && self.style.color_source.is_none() {
-            if let Some(color) = self.resolved_auto_color {
-                style.color = Some(color);
-                consume_palette_index = false;
-            }
-        }
+        let style = self.style.clone();
+        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_line_series_grouped(
             PlotData::Static(x_vec),
@@ -143,11 +138,8 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none()
-            && self.style.color_source.is_none()
-            && self.resolved_auto_color.is_none()
-        {
-            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        if uses_auto_color {
+            self.auto_palette_slot_consumed = true;
         }
         self
     }
@@ -158,14 +150,9 @@ impl SeriesGroupBuilder {
         X: IntoPlotData,
         Y: IntoPlotData,
     {
-        let mut style = self.style.clone();
-        let mut consume_palette_index = true;
-        if self.style.color.is_none() && self.style.color_source.is_none() {
-            if let Some(color) = self.resolved_auto_color {
-                style.color = Some(color);
-                consume_palette_index = false;
-            }
-        }
+        let style = self.style.clone();
+        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_line_series_grouped(
             x_data.into_plot_data(),
@@ -176,11 +163,8 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none()
-            && self.style.color_source.is_none()
-            && self.resolved_auto_color.is_none()
-        {
-            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        if uses_auto_color {
+            self.auto_palette_slot_consumed = true;
         }
         self
     }
@@ -206,14 +190,9 @@ impl SeriesGroupBuilder {
             }
         };
 
-        let mut style = self.style.clone();
-        let mut consume_palette_index = true;
-        if self.style.color.is_none() && self.style.color_source.is_none() {
-            if let Some(color) = self.resolved_auto_color {
-                style.color = Some(color);
-                consume_palette_index = false;
-            }
-        }
+        let style = self.style.clone();
+        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_scatter_series_grouped(
             PlotData::Static(x_vec),
@@ -224,11 +203,8 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none()
-            && self.style.color_source.is_none()
-            && self.resolved_auto_color.is_none()
-        {
-            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        if uses_auto_color {
+            self.auto_palette_slot_consumed = true;
         }
         self
     }
@@ -239,14 +215,9 @@ impl SeriesGroupBuilder {
         X: IntoPlotData,
         Y: IntoPlotData,
     {
-        let mut style = self.style.clone();
-        let mut consume_palette_index = true;
-        if self.style.color.is_none() && self.style.color_source.is_none() {
-            if let Some(color) = self.resolved_auto_color {
-                style.color = Some(color);
-                consume_palette_index = false;
-            }
-        }
+        let style = self.style.clone();
+        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_scatter_series_grouped(
             x_data.into_plot_data(),
@@ -257,11 +228,8 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none()
-            && self.style.color_source.is_none()
-            && self.resolved_auto_color.is_none()
-        {
-            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        if uses_auto_color {
+            self.auto_palette_slot_consumed = true;
         }
         self
     }
@@ -281,14 +249,9 @@ impl SeriesGroupBuilder {
             }
         };
 
-        let mut style = self.style.clone();
-        let mut consume_palette_index = true;
-        if self.style.color.is_none() && self.style.color_source.is_none() {
-            if let Some(color) = self.resolved_auto_color {
-                style.color = Some(color);
-                consume_palette_index = false;
-            }
-        }
+        let style = self.style.clone();
+        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_bar_series_grouped(
             cat_vec,
@@ -299,11 +262,8 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none()
-            && self.style.color_source.is_none()
-            && self.resolved_auto_color.is_none()
-        {
-            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        if uses_auto_color {
+            self.auto_palette_slot_consumed = true;
         }
         self
     }
@@ -314,14 +274,9 @@ impl SeriesGroupBuilder {
         S: ToString,
         V: IntoPlotData,
     {
-        let mut style = self.style.clone();
-        let mut consume_palette_index = true;
-        if self.style.color.is_none() && self.style.color_source.is_none() {
-            if let Some(color) = self.resolved_auto_color {
-                style.color = Some(color);
-                consume_palette_index = false;
-            }
-        }
+        let style = self.style.clone();
+        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_bar_series_grouped(
             categories.iter().map(ToString::to_string).collect(),
@@ -332,11 +287,8 @@ impl SeriesGroupBuilder {
             consume_palette_index,
         );
 
-        if self.style.color.is_none()
-            && self.style.color_source.is_none()
-            && self.resolved_auto_color.is_none()
-        {
-            self.resolved_auto_color = self.plot.series_mgr.series.last().and_then(|s| s.color);
+        if uses_auto_color {
+            self.auto_palette_slot_consumed = true;
         }
         self
     }
@@ -767,18 +719,17 @@ impl PlotSeriesBuilder {
         note = "Not needed - series finalize automatically. Use .save() directly or .into() for explicit conversion."
     )]
     pub fn end_series(mut self) -> Plot {
-        // Auto-assign color if none specified
-        if self.series.color.is_none() && self.series.color_source.is_none() {
-            self.series.color = Some(
-                self.plot
-                    .display
-                    .theme
-                    .get_color(self.plot.series_mgr.auto_color_index),
-            );
+        let auto_color_slot = if self.series.color.is_none() && self.series.color_source.is_none() {
+            let slot = self.plot.series_mgr.auto_color_index;
             self.plot.series_mgr.auto_color_index += 1;
-        }
+            Some(slot)
+        } else {
+            None
+        };
 
-        self.plot.series_mgr.series.push(self.series);
+        self.plot
+            .series_mgr
+            .push_with_auto_color_slot(self.series, auto_color_slot);
         self.plot
     }
 }

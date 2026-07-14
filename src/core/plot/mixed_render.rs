@@ -455,10 +455,9 @@ impl Plot {
         y_min: f64,
         y_max: f64,
     ) -> Result<()> {
-        let color = series.color.unwrap_or(default_color);
+        let color = series.color_with_alpha(default_color);
         let render_scale = self.render_scale();
-        let line_width = render_scale
-            .points_to_pixels(series.line_width.unwrap_or(self.display.theme.line_width));
+        let line_width = render_scale.points_to_pixels(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
 
         match (&series.series_type, resolved) {
@@ -484,7 +483,7 @@ impl Plot {
                 svg.draw_polyline(&points, color, line_width, line_style);
                 if let Some(marker_style) = series.marker_style {
                     let marker_size =
-                        render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
+                        render_scale.points_to_pixels(series.marker_size.unwrap_or(8.0));
                     for &(px, py) in &points {
                         svg.draw_marker(px, py, marker_size, marker_style, color);
                     }
@@ -492,7 +491,7 @@ impl Plot {
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-                let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(6.0));
+                let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(10.0));
                 for (&x, &y) in x.iter().zip(y.iter()) {
                     let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
                         x,
@@ -528,25 +527,212 @@ impl Plot {
                     svg.draw_rectangle(bar_x, bar_y, bar_width, bar_height, color, true);
                 }
             }
+            (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
+                let area = crate::plots::PlotArea::new(
+                    plot_area.x(),
+                    plot_area.y(),
+                    plot_area.width(),
+                    plot_area.height(),
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                );
+                let alpha = data.config.alpha * series.alpha.unwrap_or(1.0);
+                for (row, values) in data.values.iter().enumerate() {
+                    for (col, &value) in values.iter().enumerate() {
+                        if data.should_mask_value(value) {
+                            continue;
+                        }
+                        let (x, y, width, height) = data.cell_screen_rect(&area, row, col);
+                        let cell_color = data.get_color(value).with_alpha(alpha);
+                        svg.draw_rectangle(x, y, width, height, cell_color, true);
+                    }
+                }
+            }
+            (SeriesType::Kde { data }, ResolvedSeries::Other(_)) => {
+                let points: Vec<(f32, f32)> = data
+                    .x
+                    .iter()
+                    .zip(&data.y)
+                    .map(|(&x, &y)| {
+                        crate::render::skia::map_data_to_pixels_scaled(
+                            x,
+                            y,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        )
+                    })
+                    .collect();
+                if data.config.fill && !points.is_empty() {
+                    let (_, baseline) = crate::render::skia::map_data_to_pixels_scaled(
+                        x_min,
+                        0.0,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                        plot_area,
+                        &self.layout.x_scale,
+                        &self.layout.y_scale,
+                    );
+                    let mut polygon = Vec::with_capacity(points.len() + 2);
+                    polygon.push((points[0].0, baseline));
+                    polygon.extend_from_slice(&points);
+                    polygon.push((points[points.len() - 1].0, baseline));
+                    let fill_color =
+                        color.with_alpha((f32::from(color.a) / 255.0) * data.config.fill_alpha);
+                    svg.draw_filled_polygon(&polygon, fill_color);
+                }
+                let width = render_scale
+                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+                svg.draw_polyline(&points, color, width, line_style);
+            }
+            (SeriesType::Ecdf { data }, ResolvedSeries::Other(_)) => {
+                let points: Vec<(f32, f32)> = data
+                    .step_vertices
+                    .iter()
+                    .map(|&(x, y)| {
+                        crate::render::skia::map_data_to_pixels_scaled(
+                            x,
+                            y,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        )
+                    })
+                    .collect();
+                let width = render_scale
+                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+                svg.draw_polyline(&points, color, width, line_style);
+                if data.config.show_markers {
+                    let marker_size = render_scale
+                        .points_to_pixels(series.marker_size.unwrap_or(data.config.marker_size));
+                    for (&x, &y) in data.x.iter().zip(&data.y) {
+                        let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
+                            x,
+                            y,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        );
+                        svg.draw_marker(px, py, marker_size, MarkerStyle::Circle, color);
+                    }
+                }
+            }
+            (SeriesType::Violin { data }, ResolvedSeries::Other(_)) => {
+                let half_width = data.config.width / 2.0;
+                let (left, right) =
+                    crate::plots::distribution::violin_polygon(data, 0.5, half_width, &data.config);
+                let polygon = crate::plots::distribution::close_violin_polygon(&left, &right);
+                let points: Vec<(f32, f32)> = polygon
+                    .iter()
+                    .map(|&(x, y)| {
+                        crate::render::skia::map_data_to_pixels_scaled(
+                            x,
+                            y,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        )
+                    })
+                    .collect();
+                let alpha = series.alpha.unwrap_or(1.0);
+                let fill_base = data
+                    .config
+                    .fill_color
+                    .unwrap_or(series.color.unwrap_or(default_color));
+                let fill_color = fill_base
+                    .with_alpha((f32::from(fill_base.a) / 255.0) * data.config.fill_alpha * alpha);
+                svg.draw_filled_polygon(&points, fill_color);
+                let edge_color = data
+                    .config
+                    .line_color
+                    .unwrap_or(series.color.unwrap_or(default_color));
+                let edge_color = edge_color.with_alpha((f32::from(edge_color.a) / 255.0) * alpha);
+                let width = render_scale
+                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+                svg.draw_polygon_outline(&points, edge_color, width);
+            }
+            (SeriesType::Contour { data }, ResolvedSeries::Other(_)) => {
+                let alpha = data.config.alpha * series.alpha.unwrap_or(1.0);
+                let cmap = crate::render::ColorMap::by_name(&data.config.cmap)
+                    .unwrap_or_else(crate::render::ColorMap::viridis);
+                let width = render_scale
+                    .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+                for (index, level) in data.lines.iter().enumerate() {
+                    let line_color = data.config.line_color.unwrap_or_else(|| {
+                        if data.lines.len() > 1 {
+                            cmap.sample(index as f64 / (data.lines.len() - 1) as f64)
+                        } else {
+                            series.color.unwrap_or(default_color)
+                        }
+                    });
+                    let line_color =
+                        line_color.with_alpha((f32::from(line_color.a) / 255.0) * alpha);
+                    for &(x1, y1, x2, y2) in &level.segments {
+                        let (sx1, sy1) = crate::render::skia::map_data_to_pixels_scaled(
+                            x1,
+                            y1,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        );
+                        let (sx2, sy2) = crate::render::skia::map_data_to_pixels_scaled(
+                            x2,
+                            y2,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                            plot_area,
+                            &self.layout.x_scale,
+                            &self.layout.y_scale,
+                        );
+                        svg.draw_line(sx1, sy1, sx2, sy2, line_color, width, line_style.clone());
+                    }
+                }
+            }
             (SeriesType::Pie { data }, ResolvedSeries::Other(_)) => {
-                self.render_pie_series_svg(svg, data, plot_area)?;
+                self.render_pie_series_svg(svg, data, series, plot_area)?;
             }
             (SeriesType::Radar { data }, ResolvedSeries::Other(_)) => {
-                self.render_radar_series_svg(svg, data, plot_area)?;
+                self.render_radar_series_svg(svg, data, series, plot_area)?;
             }
             (SeriesType::Polar { data }, ResolvedSeries::Other(_)) => {
                 self.render_polar_series_svg(
-                    svg, data, plot_area, x_min, x_max, y_min, y_max, color,
+                    svg, data, series, plot_area, x_min, x_max, y_min, y_max, color,
                 )?;
             }
             (SeriesType::Boxen { data }, ResolvedSeries::Other(_)) => {
                 self.render_boxen_series_svg(
-                    svg, data, plot_area, x_min, x_max, y_min, y_max, color,
+                    svg, data, series, plot_area, x_min, x_max, y_min, y_max, color,
                 );
             }
             (SeriesType::Quiver { data }, ResolvedSeries::Other(_)) => {
                 self.render_quiver_series_svg(
-                    svg, data, plot_area, x_min, x_max, y_min, y_max, color,
+                    svg, data, series, plot_area, x_min, x_max, y_min, y_max, color,
                 );
             }
             (SeriesType::Histogram { .. }, ResolvedSeries::Histogram { data }) => {
@@ -642,7 +828,8 @@ impl Plot {
         y_max: f64,
     ) {
         let config = series.error_config.clone().unwrap_or_default();
-        let bar_color = config.color.unwrap_or(color).with_alpha(config.alpha);
+        let bar_color = config.color.unwrap_or(color);
+        let bar_color = bar_color.with_alpha((f32::from(bar_color.a) / 255.0) * config.alpha);
         let render_scale = self.render_scale();
         let line_width = render_scale
             .logical_pixels_to_pixels(config.line_width)
@@ -858,6 +1045,7 @@ impl Plot {
         &self,
         svg: &mut crate::export::SvgRenderer,
         data: &crate::plots::BoxenData,
+        series: &PlotSeries,
         plot_area: tiny_skia::Rect,
         x_min: f64,
         x_max: f64,
@@ -870,8 +1058,13 @@ impl Plot {
         }
 
         let center = 0.5;
-        let base_color = data.config.color.unwrap_or(default_color);
-        let edge_width = self.render_scale().points_to_pixels(data.config.line_width);
+        let alpha = series.alpha.unwrap_or(1.0);
+        let base_color = data.config.color.map_or(default_color, |color| {
+            color.with_alpha((f32::from(color.a) / 255.0) * alpha)
+        });
+        let edge_width = self
+            .render_scale()
+            .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
 
         for (index, boxen_box) in data.boxes.iter().enumerate() {
             let saturation_factor =
@@ -975,7 +1168,7 @@ impl Plot {
         if data.config.show_outliers {
             let marker_size = self
                 .render_scale()
-                .points_to_pixels(data.config.outlier_size);
+                .points_to_pixels(series.marker_size.unwrap_or(data.config.outlier_size));
             for &outlier in &data.outliers {
                 let (px, py) = match data.config.orient {
                     crate::plots::distribution::BoxenOrientation::Vertical => {
@@ -1014,6 +1207,7 @@ impl Plot {
         &self,
         svg: &mut crate::export::SvgRenderer,
         data: &crate::plots::QuiverPlotData,
+        series: &PlotSeries,
         plot_area: tiny_skia::Rect,
         x_min: f64,
         x_max: f64,
@@ -1025,7 +1219,10 @@ impl Plot {
             return;
         }
 
-        let base_color = data.config.color.unwrap_or(default_color);
+        let alpha = series.alpha.unwrap_or(1.0);
+        let base_color = data.config.color.map_or(default_color, |color| {
+            color.with_alpha((f32::from(color.a) / 255.0) * alpha)
+        });
         let cmap = data.config.color_by_magnitude.then(|| {
             crate::render::ColorMap::by_name(&data.config.cmap)
                 .unwrap_or_else(crate::render::ColorMap::viridis)
@@ -1036,12 +1233,18 @@ impl Plot {
         } else {
             max_mag - min_mag
         };
-        let arrow_width = self.render_scale().points_to_pixels(data.config.width);
+        let arrow_width = self
+            .render_scale()
+            .points_to_pixels(series.line_width.unwrap_or(data.config.width));
 
         for arrow in &data.arrows {
             let arrow_color = cmap
                 .as_ref()
-                .map(|colormap| colormap.sample((arrow.magnitude - min_mag) / mag_range))
+                .map(|colormap| {
+                    colormap
+                        .sample((arrow.magnitude - min_mag) / mag_range)
+                        .with_alpha(alpha)
+                })
                 .unwrap_or(base_color);
             let (sx1, sy1) = crate::render::skia::map_data_to_pixels_scaled(
                 arrow.start.0,
@@ -1100,6 +1303,7 @@ impl Plot {
         &self,
         svg: &mut crate::export::SvgRenderer,
         data: &crate::plots::composition::pie::PieData,
+        series: &PlotSeries,
         plot_area: tiny_skia::Rect,
     ) -> Result<()> {
         if data.wedges.is_empty() {
@@ -1117,6 +1321,7 @@ impl Plot {
             radius as f64,
             &data.config,
         );
+        let alpha = series.alpha.unwrap_or(1.0);
         let colors = if let Some(ref colors) = data.config.colors {
             colors.clone()
         } else {
@@ -1124,14 +1329,17 @@ impl Plot {
             (0..screen_data.wedges.len())
                 .map(|i| palette[i % palette.len()])
                 .collect()
-        };
+        }
+        .into_iter()
+        .map(|color| color.with_alpha((f32::from(color.a) / 255.0) * alpha))
+        .collect::<Vec<_>>();
         let segments = 64;
         let render_scale = svg.render_scale();
         let shadow_offset = render_scale.points_to_pixels(data.config.shadow as f32) as f64;
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
         if data.config.shadow > 0.0 {
-            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
+            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3 * alpha);
             for wedge in &screen_data.wedges {
                 let polygon: Vec<(f32, f32)> = wedge
                     .as_polygon(segments)
@@ -1150,7 +1358,10 @@ impl Plot {
                 .collect();
             svg.draw_filled_polygon(&polygon, colors[idx % colors.len()]);
             if let Some(edge_color) = data.config.edge_color {
-                let scaled_edge_width = svg.render_scale().points_to_pixels(data.config.edge_width);
+                let edge_color = edge_color.with_alpha((f32::from(edge_color.a) / 255.0) * alpha);
+                let scaled_edge_width = svg
+                    .render_scale()
+                    .points_to_pixels(series.line_width.unwrap_or(data.config.edge_width));
                 svg.draw_polygon_outline(&polygon, edge_color, scaled_edge_width);
             }
         }
@@ -1207,6 +1418,7 @@ impl Plot {
         &self,
         svg: &mut crate::export::SvgRenderer,
         data: &crate::plots::polar::radar::RadarPlotData,
+        plot_series: &PlotSeries,
         plot_area: tiny_skia::Rect,
     ) -> Result<()> {
         if data.series.is_empty() {
@@ -1217,9 +1429,13 @@ impl Plot {
         let render_scale = svg.render_scale();
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
-        if data.config.show_grid {
-            let grid_color = self.display.theme.grid_color;
-            let grid_line_width = render_scale.logical_pixels_to_pixels(0.5);
+        if data.config.show_grid && self.layout.grid_style.visible {
+            let grid_color = self
+                .layout
+                .grid_style
+                .color
+                .with_alpha(self.layout.grid_style.alpha);
+            let grid_line_width = render_scale.points_to_pixels(self.layout.grid_style.line_width);
             for ring in &data.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -1236,7 +1452,7 @@ impl Plot {
                         sy2,
                         grid_color,
                         grid_line_width,
-                        LineStyle::Solid,
+                        self.layout.grid_style.line_style.clone(),
                     );
                 }
             }
@@ -1251,7 +1467,7 @@ impl Plot {
                     sy2,
                     grid_color,
                     grid_line_width,
-                    LineStyle::Solid,
+                    self.layout.grid_style.line_style.clone(),
                 );
             }
         }
@@ -1269,15 +1485,26 @@ impl Plot {
             }
         }
 
-        let scaled_line_width = render_scale.points_to_pixels(data.config.line_width);
-        let scaled_marker_size = render_scale.points_to_pixels(data.config.marker_size);
+        let scaled_line_width =
+            render_scale.points_to_pixels(plot_series.line_width.unwrap_or(data.config.line_width));
+        let marker_size = plot_series.marker_size.unwrap_or(data.config.marker_size);
+        let scaled_marker_size = render_scale.points_to_pixels(marker_size);
+        let alpha = plot_series.alpha.unwrap_or(1.0);
         for (series_idx, series_data) in data.series.iter().enumerate() {
-            let series_color = data
-                .config
-                .colors
+            let series_color = plot_series
+                .resolved_radar_colors
                 .as_ref()
                 .and_then(|colors| colors.get(series_idx).copied())
+                .or_else(|| {
+                    data.config
+                        .colors
+                        .as_ref()
+                        .and_then(|colors| colors.get(series_idx).copied())
+                        .filter(|color| *color != Color::TRANSPARENT)
+                })
                 .unwrap_or_else(|| self.display.theme.get_color(series_idx));
+            let series_alpha = (f32::from(series_color.a) / 255.0) * alpha;
+            let stroke_color = series_color.with_alpha(series_alpha);
 
             if data.config.fill && !series_data.polygon.is_empty() {
                 let polygon: Vec<(f32, f32)> = series_data
@@ -1285,7 +1512,10 @@ impl Plot {
                     .iter()
                     .map(|(x, y)| area.data_to_screen(*x, *y))
                     .collect();
-                svg.draw_filled_polygon(&polygon, series_color.with_alpha(data.config.fill_alpha));
+                svg.draw_filled_polygon(
+                    &polygon,
+                    series_color.with_alpha(data.config.fill_alpha * series_alpha),
+                );
             }
 
             if series_data.polygon.len() > 1 {
@@ -1294,10 +1524,10 @@ impl Plot {
                     .iter()
                     .map(|(x, y)| area.data_to_screen(*x, *y))
                     .collect();
-                svg.draw_polygon_outline(&polygon, series_color, scaled_line_width);
+                svg.draw_polygon_outline(&polygon, stroke_color, scaled_line_width);
             }
 
-            if data.config.marker_size > 0.0 {
+            if marker_size > 0.0 {
                 for (x, y) in &series_data.markers {
                     let (sx, sy) = area.data_to_screen(*x, *y);
                     svg.draw_marker(
@@ -1305,7 +1535,7 @@ impl Plot {
                         sy,
                         scaled_marker_size,
                         MarkerStyle::Circle,
-                        series_color,
+                        stroke_color,
                     );
                 }
             }
@@ -1318,6 +1548,7 @@ impl Plot {
         &self,
         svg: &mut crate::export::SvgRenderer,
         data: &crate::plots::polar::polar_plot::PolarPlotData,
+        series: &PlotSeries,
         plot_area: tiny_skia::Rect,
         x_min: f64,
         x_max: f64,
@@ -1342,7 +1573,10 @@ impl Plot {
             y_min,
             y_max,
         );
-        let line_color = data.config.color.unwrap_or(default_color);
+        let alpha = series.alpha.unwrap_or(1.0);
+        let line_color = data.config.color.map_or(default_color, |color| {
+            color.with_alpha((f32::from(color.a) / 255.0) * alpha)
+        });
         let render_scale = svg.render_scale();
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
@@ -1352,7 +1586,10 @@ impl Plot {
                 .iter()
                 .map(|(x, y)| area.data_to_screen(*x, *y))
                 .collect();
-            svg.draw_filled_polygon(&polygon, line_color.with_alpha(data.config.fill_alpha));
+            svg.draw_filled_polygon(
+                &polygon,
+                line_color.with_alpha((f32::from(line_color.a) / 255.0) * data.config.fill_alpha),
+            );
         }
 
         if data.points.len() > 1 {
@@ -1361,12 +1598,14 @@ impl Plot {
                 .iter()
                 .map(|point| area.data_to_screen(point.x, point.y))
                 .collect();
-            let scaled_line_width = render_scale.points_to_pixels(data.config.line_width);
+            let scaled_line_width =
+                render_scale.points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
             svg.draw_polyline(&points, line_color, scaled_line_width, LineStyle::Solid);
         }
 
-        if data.config.marker_size > 0.0 {
-            let scaled_marker_size = render_scale.points_to_pixels(data.config.marker_size);
+        let marker_size = series.marker_size.unwrap_or(data.config.marker_size);
+        if marker_size > 0.0 {
+            let scaled_marker_size = render_scale.points_to_pixels(marker_size);
             for point in &data.points {
                 let (sx, sy) = area.data_to_screen(point.x, point.y);
                 svg.draw_marker(sx, sy, scaled_marker_size, MarkerStyle::Circle, line_color);
@@ -1512,10 +1751,8 @@ impl Plot {
         render_scale: RenderScale,
     ) -> Result<()> {
         let config = error_config.cloned().unwrap_or_default();
-        let bar_color = config
-            .color
-            .unwrap_or(series_color)
-            .with_alpha(config.alpha);
+        let bar_color = config.color.unwrap_or(series_color);
+        let bar_color = bar_color.with_alpha((f32::from(bar_color.a) / 255.0) * config.alpha);
         // Error-bar configuration is still authored in legacy logical pixels.
         let scaled_config_width = render_scale.logical_pixels_to_pixels(config.line_width);
         let line_width = scaled_config_width.max(default_line_width * 0.75); // Slightly thinner than data line

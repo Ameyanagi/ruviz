@@ -23,7 +23,7 @@ pub(super) fn collect_streaming_draw_ops(
     frame: &ResolvedFrame<'_>,
     size_px: (u32, u32),
     scale_factor: f32,
-    time_seconds: f64,
+    _time_seconds: f64,
 ) -> Result<Option<Vec<StreamingDrawOp>>> {
     if plot
         .display
@@ -49,21 +49,25 @@ pub(super) fn collect_streaming_draw_ops(
         return Ok(None);
     }
 
-    let prepared_plot = plot.prepared_frame_shell(size_px, scale_factor, time_seconds);
+    let prepared_plot = plot.prepared_frame_shell_with_style(size_px, scale_factor, &frame.style);
     let mut draw_ops = Vec::new();
     let mut saw_streaming_update = false;
 
     for (series_index, series) in plot.series_mgr.series.iter().enumerate() {
-        let color = series
+        let style = frame.style.series.get(series_index).ok_or_else(|| {
+            PlottingError::RenderError("resolved series style count mismatch".to_string())
+        })?;
+        let color = style
             .color
-            .unwrap_or_else(|| prepared_plot.display.theme.get_color(series_index));
-        let line_width_pt = series
-            .line_width
-            .unwrap_or(prepared_plot.display.config.lines.data_width);
-        let line_width_px = prepared_plot.line_width_px(line_width_pt);
-        let dash_pattern = series.line_style.clone().unwrap_or(LineStyle::Solid);
-        let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
-        let marker_size_px = prepared_plot.line_width_px(series.marker_size.unwrap_or(8.0));
+            .with_alpha((f32::from(style.color.a) / 255.0) * style.alpha);
+        let line_width_px = prepared_plot.line_width_px(style.line_width.unwrap_or(2.0));
+        let dash_pattern = style.line_style.clone();
+        let marker_style = style.marker_style.unwrap_or(MarkerStyle::Circle);
+        let marker_size = match series.series_type {
+            SeriesType::Scatter { .. } => style.marker_size.unwrap_or(10.0),
+            _ => style.marker_size.unwrap_or(8.0),
+        };
+        let marker_size_px = prepared_plot.line_width_px(marker_size);
 
         match &series.series_type {
             SeriesType::Line { x_data, y_data } => {

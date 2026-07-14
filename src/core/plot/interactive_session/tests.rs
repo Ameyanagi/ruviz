@@ -1679,6 +1679,24 @@ fn test_incremental_line_render_preserves_markers() {
 }
 
 #[test]
+fn test_incremental_stream_style_multiplies_intrinsic_and_series_alpha_once() {
+    let stream = StreamingXY::new(16);
+    stream.push_many(vec![(0.0, 0.0), (1.0, 1.0)]);
+    let plot: Plot = Plot::new()
+        .line_streaming(&stream)
+        .color(Color::RED.with_alpha(0.5))
+        .alpha(0.5)
+        .into();
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let ops = collect_streaming_draw_ops(&plot, &frame, (320, 240), 1.0, 0.0)
+        .expect("draw ops should resolve")
+        .expect("stream should support incremental rendering");
+
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].color.a, 63);
+}
+
+#[test]
 fn test_reactive_manual_ylim_stays_pinned_across_updates() {
     let y = Observable::new(vec![0.0, 0.5, 1.0, -0.25]);
     let plot: Plot = Plot::new()

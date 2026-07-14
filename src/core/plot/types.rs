@@ -313,6 +313,8 @@ pub(crate) struct PlotSeries {
     pub(super) inset_layout: Option<InsetLayout>,
     /// Optional group ID if this series was created inside `Plot::group(...)`.
     pub(super) group_id: Option<usize>,
+    /// Frame-resolved colors for multi-series radar payloads.
+    pub(super) resolved_radar_colors: Option<Arc<[Color]>>,
 }
 
 impl PlotSeries {
@@ -421,11 +423,11 @@ impl PlotSeries {
         default_color: Color,
         theme: &Theme,
     ) -> Option<LegendItem> {
-        let color = self.resolved_color(default_color, 0.0);
-        let line_width = self.resolved_line_width(theme.line_width, 0.0);
-        let line_style = self.resolved_line_style(LineStyle::Solid, 0.0);
-        let marker_style = self.resolved_marker_style(MarkerStyle::Circle, 0.0);
-        let marker_size = self.resolved_marker_size(6.0, 0.0);
+        let color = self.color_with_alpha(default_color);
+        let line_width = self.line_width.unwrap_or(theme.line_width);
+        let line_style = self.line_style.clone().unwrap_or(LineStyle::Solid);
+        let marker_style = self.marker_style.unwrap_or(MarkerStyle::Circle);
+        let marker_size = self.marker_size.unwrap_or(6.0);
 
         let item_type = match &self.series_type {
             SeriesType::Line { .. } => {
@@ -484,9 +486,6 @@ impl PlotSeries {
     ///
     /// Returns a Vec of legend items, expanding radar series into individual entries per data series.
     pub(super) fn to_legend_items(&self, base_color_idx: usize, theme: &Theme) -> Vec<LegendItem> {
-        let line_width = self.resolved_line_width(theme.line_width, 0.0);
-        let line_style = self.resolved_line_style(LineStyle::Solid, 0.0);
-
         match &self.series_type {
             SeriesType::Radar { data } => {
                 // For radar charts, create a legend item for each internal series
@@ -495,20 +494,29 @@ impl PlotSeries {
                     .iter()
                     .enumerate()
                     .map(|(idx, radar_series)| {
-                        let color = data
-                            .config
-                            .colors
+                        let color = self
+                            .resolved_radar_colors
                             .as_ref()
                             .and_then(|colors| colors.get(idx).copied())
+                            .or_else(|| {
+                                data.config
+                                    .colors
+                                    .as_ref()
+                                    .and_then(|colors| colors.get(idx).copied())
+                                    .filter(|color| *color != Color::TRANSPARENT)
+                            })
                             .unwrap_or_else(|| theme.get_color(base_color_idx + idx));
                         // Use a more visible alpha for legend swatches (0.6 instead of fill_alpha)
                         // This ensures legend items are clearly visible while still showing fill style
-                        let fill_color = color.with_alpha(0.6);
+                        let series_alpha = self.alpha.unwrap_or(1.0);
+                        let color_alpha = f32::from(color.a) / 255.0;
+                        let edge_color = color.with_alpha(color_alpha * series_alpha);
+                        let fill_color = color.with_alpha(color_alpha * 0.6 * series_alpha);
                         LegendItem {
                             label: radar_series.label.clone(),
                             color: fill_color,
                             item_type: LegendItemType::Area {
-                                edge_color: Some(color), // Use full-opacity color for edge
+                                edge_color: Some(edge_color),
                             },
                             has_error_bars: false,
                         }
@@ -682,6 +690,7 @@ impl PlotSeries {
             error_config: self.error_config.clone(),
             inset_layout: self.inset_layout,
             group_id: self.group_id,
+            resolved_radar_colors: self.resolved_radar_colors.clone(),
         }
     }
 
@@ -793,86 +802,10 @@ impl PlotSeries {
         }
     }
 
-    pub(super) fn resolved_color(&self, default_color: Color, time: f64) -> Color {
-        self.color_source
-            .as_ref()
-            .map(|source| source.resolve(time))
-            .or(self.color)
-            .unwrap_or(default_color)
-    }
-
-    pub(super) fn resolved_line_width(&self, default_width: f32, time: f64) -> f32 {
-        self.line_width_source
-            .as_ref()
-            .map(|source| source.resolve(time))
-            .or(self.line_width)
-            .unwrap_or(default_width)
-            .max(0.1)
-    }
-
-    pub(super) fn resolved_line_style(&self, default_style: LineStyle, time: f64) -> LineStyle {
-        self.line_style_source
-            .as_ref()
-            .map(|source| source.resolve(time))
-            .or_else(|| self.line_style.clone())
-            .unwrap_or(default_style)
-    }
-
-    pub(super) fn resolved_marker_style(
-        &self,
-        default_style: MarkerStyle,
-        time: f64,
-    ) -> MarkerStyle {
-        self.marker_style_source
-            .as_ref()
-            .map(|source| source.resolve(time))
-            .or(self.marker_style)
-            .unwrap_or(default_style)
-    }
-
-    pub(super) fn resolved_marker_size(&self, default_size: f32, time: f64) -> f32 {
-        self.marker_size_source
-            .as_ref()
-            .map(|source| source.resolve(time))
-            .or(self.marker_size)
-            .unwrap_or(default_size)
-            .max(0.1)
-    }
-
-    pub(super) fn resolved_alpha(&self, default_alpha: f32, time: f64) -> f32 {
-        self.alpha_source
-            .as_ref()
-            .map(|source| source.resolve(time))
-            .or(self.alpha)
-            .unwrap_or(default_alpha)
-            .clamp(0.0, 1.0)
-    }
-
-    pub(super) fn resolve_style_sources(&mut self, time: f64) {
-        if let Some(color_source) = &self.color_source {
-            self.color = Some(color_source.resolve(time));
-        }
-        self.color_source = None;
-        if let Some(line_width_source) = &self.line_width_source {
-            self.line_width = Some(line_width_source.resolve(time).max(0.1));
-        }
-        self.line_width_source = None;
-        if let Some(line_style_source) = &self.line_style_source {
-            self.line_style = Some(line_style_source.resolve(time));
-        }
-        self.line_style_source = None;
-        if let Some(marker_style_source) = &self.marker_style_source {
-            self.marker_style = Some(marker_style_source.resolve(time));
-        }
-        self.marker_style_source = None;
-        if let Some(marker_size_source) = &self.marker_size_source {
-            self.marker_size = Some(marker_size_source.resolve(time).max(0.1));
-        }
-        self.marker_size_source = None;
-        if let Some(alpha_source) = &self.alpha_source {
-            self.alpha = Some(alpha_source.resolve(time).clamp(0.0, 1.0));
-        }
-        self.alpha_source = None;
+    pub(super) fn color_with_alpha(&self, default_color: Color) -> Color {
+        let color = self.color.unwrap_or(default_color);
+        let alpha = self.alpha.unwrap_or(1.0).clamp(0.0, 1.0);
+        color.with_alpha((f32::from(color.a) / 255.0) * alpha)
     }
 }
 
@@ -912,43 +845,43 @@ pub(crate) enum SeriesType {
         config: crate::plots::boxplot::BoxPlotConfig,
     },
     Heatmap {
-        data: crate::plots::heatmap::HeatmapData,
+        data: Arc<crate::plots::heatmap::HeatmapData>,
     },
     /// KDE (Kernel Density Estimation) plot
     Kde {
-        data: crate::plots::KdeData,
+        data: Arc<crate::plots::KdeData>,
     },
     /// ECDF (Empirical Cumulative Distribution Function) plot
     Ecdf {
-        data: crate::plots::EcdfData,
+        data: Arc<crate::plots::EcdfData>,
     },
     /// Violin plot
     Violin {
-        data: crate::plots::ViolinData,
+        data: Arc<crate::plots::ViolinData>,
     },
     /// Boxen (Letter-Value) plot
     Boxen {
-        data: crate::plots::BoxenData,
+        data: Arc<crate::plots::BoxenData>,
     },
     /// Contour plot
     Contour {
-        data: crate::plots::continuous::contour::ContourPlotData,
+        data: Arc<crate::plots::continuous::contour::ContourPlotData>,
     },
     /// Pie chart
     Pie {
-        data: crate::plots::composition::pie::PieData,
+        data: Arc<crate::plots::composition::pie::PieData>,
     },
     /// Radar chart
     Radar {
-        data: crate::plots::polar::radar::RadarPlotData,
+        data: Arc<crate::plots::polar::radar::RadarPlotData>,
     },
     /// Polar plot
     Polar {
-        data: crate::plots::polar::polar_plot::PolarPlotData,
+        data: Arc<crate::plots::polar::polar_plot::PolarPlotData>,
     },
     /// Quiver vector field plot
     Quiver {
-        data: crate::plots::QuiverPlotData,
+        data: Arc<crate::plots::QuiverPlotData>,
     },
 }
 
@@ -1408,8 +1341,29 @@ pub(crate) struct ResolvedStreamingPair {
     pub(super) render_state: crate::data::StreamingRenderState,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedSeriesStyle {
+    pub(super) color: Color,
+    pub(super) line_width: Option<f32>,
+    pub(super) line_style: LineStyle,
+    pub(super) marker_style: Option<MarkerStyle>,
+    pub(super) marker_size: Option<f32>,
+    pub(super) alpha: f32,
+    pub(super) radar_colors: Option<Arc<[Color]>>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedStyle {
+    pub(super) theme: Theme,
+    pub(super) config: PlotConfig,
+    pub(super) grid_style: GridStyle,
+    pub(super) legend: Legend,
+    pub(super) series: Vec<ResolvedSeriesStyle>,
+}
+
 pub(crate) struct ResolvedFrame<'a> {
     pub(super) series: Vec<ResolvedSeries<'a>>,
+    pub(super) style: ResolvedStyle,
     pub(super) title: Option<String>,
     pub(super) xlabel: Option<String>,
     pub(super) ylabel: Option<String>,

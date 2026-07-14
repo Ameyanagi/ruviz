@@ -505,7 +505,7 @@ use crate::{
         Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig, Legend,
         LegendItem, LegendItemType, LegendPosition, MarginConfig, MeasuredDimensions, PlotConfig,
         PlotContent, PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, RenderScale,
-        Result, ShapeStyle, TextStyle, pt_to_px,
+        Result, ShapeStyle, StyleResolver, TextStyle, pt_to_px,
     },
     data::{
         Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,
@@ -531,7 +531,8 @@ use std::{
 use self::data::{ReactiveTeardown, SharedReactiveCallback};
 pub(crate) use self::types::{
     LegendConfig, PendingIngestionError, PlotSeries, ResolvedData, ResolvedFrame, ResolvedSeries,
-    ResolvedStreamingPair, SeriesGroupMeta, SeriesType, TickConfig,
+    ResolvedSeriesStyle, ResolvedStreamingPair, ResolvedStyle, SeriesGroupMeta, SeriesType,
+    TickConfig,
 };
 
 #[cfg(feature = "parallel")]

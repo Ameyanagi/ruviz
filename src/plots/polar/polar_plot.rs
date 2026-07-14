@@ -426,20 +426,36 @@ impl PlotRender for PolarPlotData {
         theme: &Theme,
         color: Color,
     ) -> Result<()> {
+        self.render_styled(renderer, area, theme, color, 1.0, None)
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
         if self.points.is_empty() {
             return Ok(());
         }
 
         let config = &self.config;
-        let line_color = config.color.unwrap_or(color);
+        let base_color = config.color.unwrap_or(color);
+        let line_color =
+            base_color.with_alpha((f32::from(base_color.a) / 255.0) * alpha.clamp(0.0, 1.0));
         let render_scale = renderer.render_scale();
-        let line_width_px = render_scale.points_to_pixels(config.line_width);
+        let line_width_px = render_scale.points_to_pixels(line_width.unwrap_or(config.line_width));
         let marker_size_px = render_scale.points_to_pixels(config.marker_size);
         let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
 
         // Draw fill if enabled
         if config.fill && !self.fill_polygon.is_empty() {
-            let fill_color = line_color.with_alpha(config.fill_alpha);
+            let fill_color = base_color.with_alpha(
+                (f32::from(base_color.a) / 255.0) * config.fill_alpha * alpha.clamp(0.0, 1.0),
+            );
             let screen_polygon: Vec<(f32, f32)> = self
                 .fill_polygon
                 .iter()

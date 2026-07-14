@@ -385,6 +385,10 @@ impl<T> Observable<T> {
         Arc::ptr_eq(&self.data, &other.data)
     }
 
+    pub(crate) fn source_id(&self) -> usize {
+        Arc::as_ptr(&self.data) as usize
+    }
+
     /// Increment the version and notify all subscribers
     fn bump_version(&self) {
         self.version.fetch_add(1, Ordering::Release);

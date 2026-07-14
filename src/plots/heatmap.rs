@@ -688,8 +688,7 @@ impl PlotRender for HeatmapData {
         let config = &self.config;
         let _resolver = StyleResolver::new(theme);
 
-        // Use provided alpha or config alpha
-        let effective_alpha = if alpha != 1.0 { alpha } else { config.alpha };
+        let effective_alpha = config.alpha * alpha.clamp(0.0, 1.0);
 
         self.draw_cells_batch(renderer, area, effective_alpha)
     }

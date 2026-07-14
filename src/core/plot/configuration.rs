@@ -154,7 +154,7 @@ impl PlotConfiguration {
 
     /// Set the plot theme
     pub fn with_theme(mut self, theme: Theme) -> Self {
-        self.theme = theme;
+        self.apply_theme(theme);
         self
     }
 
@@ -286,9 +286,15 @@ impl PlotConfiguration {
         self.dpi = dpi;
     }
 
+    pub(crate) fn apply_theme(&mut self, theme: Theme) {
+        self.config.typography = theme.to_typography_config();
+        self.config.lines = theme.to_line_config();
+        self.theme = theme;
+    }
+
     /// Set theme (mutable version)
     pub(crate) fn set_theme(&mut self, theme: Theme) {
-        self.theme = theme;
+        self.apply_theme(theme);
     }
 
     /// Set text rendering backend mode.

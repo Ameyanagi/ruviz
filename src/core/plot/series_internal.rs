@@ -36,11 +36,7 @@ impl Plot {
             },
             streaming_source: None,
             label: None,
-            color: Some(
-                self.display
-                    .theme
-                    .get_color(self.series_mgr.auto_color_index),
-            ),
+            color: None,
             color_source: None,
             line_width: None,
             line_width_source: None,
@@ -57,9 +53,13 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
 
         Ok(())
@@ -74,16 +74,12 @@ impl Plot {
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Kde { data: kde_data },
+            series_type: SeriesType::Kde {
+                data: Arc::new(kde_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -100,9 +96,13 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -114,16 +114,12 @@ impl Plot {
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Ecdf { data: ecdf_data },
+            series_type: SeriesType::Ecdf {
+                data: Arc::new(ecdf_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -140,9 +136,13 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -154,16 +154,12 @@ impl Plot {
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Contour { data: contour_data },
+            series_type: SeriesType::Contour {
+                data: Arc::new(contour_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -180,9 +176,13 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -194,16 +194,12 @@ impl Plot {
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Pie { data: pie_data },
+            series_type: SeriesType::Pie {
+                data: Arc::new(pie_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -220,9 +216,13 @@ impl Plot {
             error_config: None,
             inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -234,16 +234,12 @@ impl Plot {
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Radar { data: radar_data },
+            series_type: SeriesType::Radar {
+                data: Arc::new(radar_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -260,9 +256,13 @@ impl Plot {
             error_config: None,
             inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -274,16 +274,12 @@ impl Plot {
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Violin { data: violin_data },
+            series_type: SeriesType::Violin {
+                data: Arc::new(violin_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -300,9 +296,13 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -321,16 +321,12 @@ impl Plot {
         }
 
         let series = PlotSeries {
-            series_type: SeriesType::Boxen { data: boxen_data },
+            series_type: SeriesType::Boxen {
+                data: Arc::new(boxen_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -347,9 +343,13 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -361,16 +361,12 @@ impl Plot {
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Polar { data: polar_data },
+            series_type: SeriesType::Polar {
+                data: Arc::new(polar_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -387,9 +383,13 @@ impl Plot {
             error_config: None,
             inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -408,16 +408,12 @@ impl Plot {
         }
 
         let series = PlotSeries {
-            series_type: SeriesType::Quiver { data: quiver_data },
+            series_type: SeriesType::Quiver {
+                data: Arc::new(quiver_data),
+            },
             streaming_source: None,
             label: style.label,
-            color: style.color.or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
             line_width: style.line_width,
             line_width_source: style.line_width_source,
@@ -434,9 +430,13 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
+            .then_some(self.series_mgr.auto_color_index);
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
         self
     }
@@ -468,25 +468,15 @@ impl Plot {
             series_type: SeriesType::Line { x_data, y_data },
             streaming_source: None,
             label: style.label,
-            color: style.color.or(config.color).or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
-            line_width: style.line_width.or(config.line_width),
+            line_width: style.line_width,
             line_width_source: style.line_width_source,
             line_style: style.line_style.or(Some(config.line_style.clone())),
             line_style_source: style.line_style_source,
             marker_style: style.marker_style.or(config.marker),
             marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size.or(if config.show_markers {
-                Some(config.marker_size)
-            } else {
-                None
-            }),
+            marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
             alpha: style.alpha.or(Some(config.alpha)),
             alpha_source: style.alpha_source,
@@ -495,9 +485,20 @@ impl Plot {
             error_config: style.error_config,
             inset_layout: None,
             group_id,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
+            Some(if consume_palette_index {
+                self.series_mgr.auto_color_index
+            } else {
+                self.series_mgr.auto_color_index.saturating_sub(1)
+            })
+        } else {
+            None
+        };
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         if consume_palette_index {
             self.series_mgr.auto_color_index += 1;
         }
@@ -531,21 +532,15 @@ impl Plot {
             series_type: SeriesType::Scatter { x_data, y_data },
             streaming_source: None,
             label: style.label,
-            color: style.color.or(config.color).or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color,
             color_source: style.color_source,
-            line_width: style.line_width.or(Some(config.edge_width)),
+            line_width: style.line_width,
             line_width_source: style.line_width_source,
             line_style: style.line_style,
             line_style_source: style.line_style_source,
             marker_style: style.marker_style.or(Some(config.marker)),
             marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size.or(Some(config.size)),
+            marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
             alpha: style.alpha.or(Some(config.alpha)),
             alpha_source: style.alpha_source,
@@ -554,9 +549,20 @@ impl Plot {
             error_config: style.error_config,
             inset_layout: None,
             group_id,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
+            Some(if consume_palette_index {
+                self.series_mgr.auto_color_index
+            } else {
+                self.series_mgr.auto_color_index.saturating_sub(1)
+            })
+        } else {
+            None
+        };
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         if consume_palette_index {
             self.series_mgr.auto_color_index += 1;
         }
@@ -590,13 +596,7 @@ impl Plot {
             series_type: SeriesType::Bar { categories, values },
             streaming_source: None,
             label: style.label,
-            color: style.color.or(config.color).or_else(|| {
-                Some(
-                    self.display
-                        .theme
-                        .get_color(self.series_mgr.auto_color_index),
-                )
-            }),
+            color: style.color.or(config.color),
             color_source: style.color_source,
             line_width: style.line_width.or(Some(config.edge_width)),
             line_width_source: style.line_width_source,
@@ -613,9 +613,20 @@ impl Plot {
             error_config: style.error_config,
             inset_layout: None,
             group_id,
+            resolved_radar_colors: None,
         };
 
-        self.series_mgr.series.push(series);
+        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
+            Some(if consume_palette_index {
+                self.series_mgr.auto_color_index
+            } else {
+                self.series_mgr.auto_color_index.saturating_sub(1)
+            })
+        } else {
+            None
+        };
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
         if consume_palette_index {
             self.series_mgr.auto_color_index += 1;
         }
@@ -633,7 +644,7 @@ impl Plot {
         y_max: f64,
         mode: RenderExecutionMode,
     ) -> Result<Option<SeriesRasterPlan>> {
-        let color = series.color.unwrap_or(Color::new(0, 0, 0));
+        let color = series.color_with_alpha(Color::new(0, 0, 0));
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
@@ -707,13 +718,16 @@ impl Plot {
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
-                RectGridBatch::from_heatmap_data(data, heatmap_plot_area, data.config.alpha).map(
-                    |rect_grid| {
-                        let mut raster_plan = SeriesRasterPlan::default();
-                        raster_plan.push_rect_grid(rect_grid);
-                        raster_plan
-                    },
+                RectGridBatch::from_heatmap_data(
+                    data,
+                    heatmap_plot_area,
+                    data.config.alpha * series.alpha.unwrap_or(1.0),
                 )
+                .map(|rect_grid| {
+                    let mut raster_plan = SeriesRasterPlan::default();
+                    raster_plan.push_rect_grid(rect_grid);
+                    raster_plan
+                })
             }
             _ => None,
         };
@@ -770,8 +784,9 @@ impl Plot {
                             continue;
                         }
 
-                        let cell_color = if data.config.alpha < 1.0 {
-                            data.get_color(value).with_alpha(data.config.alpha)
+                        let alpha = data.config.alpha * series.alpha.unwrap_or(1.0);
+                        let cell_color = if alpha < 1.0 {
+                            data.get_color(value).with_alpha(alpha)
                         } else {
                             data.get_color(value)
                         };
@@ -829,12 +844,16 @@ impl Plot {
         y_min: f64,
         y_max: f64,
         default_color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
     ) -> Result<()> {
         if data.arrows.is_empty() {
             return Ok(());
         }
 
-        let base_color = data.config.color.unwrap_or(default_color);
+        let base_color = data.config.color.map_or(default_color, |color| {
+            color.with_alpha((f32::from(color.a) / 255.0) * alpha)
+        });
         let cmap = data.config.color_by_magnitude.then(|| {
             crate::render::ColorMap::by_name(&data.config.cmap)
                 .unwrap_or_else(crate::render::ColorMap::viridis)
@@ -845,12 +864,18 @@ impl Plot {
         } else {
             max_mag - min_mag
         };
-        let arrow_width = self.render_scale().points_to_pixels(data.config.width);
+        let arrow_width = self
+            .render_scale()
+            .points_to_pixels(line_width.unwrap_or(data.config.width));
 
         for arrow in &data.arrows {
             let arrow_color = cmap
                 .as_ref()
-                .map(|colormap| colormap.sample((arrow.magnitude - min_mag) / mag_range))
+                .map(|colormap| {
+                    colormap
+                        .sample((arrow.magnitude - min_mag) / mag_range)
+                        .with_alpha(alpha)
+                })
                 .unwrap_or(base_color);
             let (sx1, sy1) = crate::render::skia::map_data_to_pixels_scaled(
                 arrow.start.0,
@@ -920,7 +945,9 @@ impl Plot {
         y_max: f64,
         mode: RenderExecutionMode,
     ) -> Result<()> {
-        let color = series.color.unwrap_or(Color::new(0, 0, 0)); // Default black
+        let base_color = series.color.unwrap_or(Color::new(0, 0, 0));
+        let alpha = series.alpha.unwrap_or(1.0);
+        let color = series.color_with_alpha(Color::new(0, 0, 0)); // Default black
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
@@ -1185,7 +1212,7 @@ impl Plot {
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
-                data.draw_cells_batch(renderer, &heatmap_plot_area, data.config.alpha)?;
+                data.draw_cells_batch(renderer, &heatmap_plot_area, data.config.alpha * alpha)?;
                 self.render_series_overlays_after_raster(
                     series,
                     resolved,
@@ -1298,7 +1325,14 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.display.theme, color)?;
+                data.render_styled(
+                    renderer,
+                    &plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
             }
             (SeriesType::Ecdf { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render ECDF
@@ -1312,7 +1346,14 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.display.theme, color)?;
+                data.render_styled(
+                    renderer,
+                    &plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
             }
             (SeriesType::Violin { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Violin
@@ -1326,7 +1367,14 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.display.theme, color)?;
+                data.render_styled(
+                    renderer,
+                    &plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
             }
             (SeriesType::Boxen { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Boxen
@@ -1340,11 +1388,27 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &plot_area, &self.display.theme, color)?;
+                data.render_styled(
+                    renderer,
+                    &plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
             }
             (SeriesType::Quiver { data }, ResolvedSeries::Other(_)) => {
                 self.render_quiver_series_scaled(
-                    renderer, data, plot_area, x_min, x_max, y_min, y_max, color,
+                    renderer,
+                    data,
+                    plot_area,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                    color,
+                    alpha,
+                    series.line_width,
                 )?;
             }
             (SeriesType::Contour { data }, ResolvedSeries::Other(_)) => {
@@ -1359,7 +1423,14 @@ impl Plot {
                     y_min,
                     y_max,
                 );
-                data.render(renderer, &contour_plot_area, &self.display.theme, color)?;
+                data.render_styled(
+                    renderer,
+                    &contour_plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
 
                 // Draw colorbar if enabled
                 if data.config.colorbar {
@@ -1413,13 +1484,32 @@ impl Plot {
                 let pie_plot_area = crate::plots::PlotArea::new(
                     pie_x, pie_y, pie_size, pie_size, 0.0, 1.0, 0.0, 1.0,
                 );
-                data.render(renderer, &pie_plot_area, &self.display.theme, color)?;
+                data.render_styled(
+                    renderer,
+                    &pie_plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
             }
             (SeriesType::Radar { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Radar with 1:1 aspect ratio
                 // and extra top padding for title clearance
                 let radar_plot_area = Self::radar_plot_area(plot_area, x_min, x_max, y_min, y_max);
-                data.render(renderer, &radar_plot_area, &self.display.theme, color)?;
+                let mut radar_theme = self.display.theme.clone();
+                if let Some(colors) = &series.resolved_radar_colors {
+                    radar_theme.color_palette = colors.to_vec();
+                }
+                data.render_styled_with_grid(
+                    renderer,
+                    &radar_plot_area,
+                    &radar_theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                    Some(&self.layout.grid_style),
+                )?;
             }
             (SeriesType::Polar { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Polar with 1:1 aspect ratio
@@ -1433,7 +1523,14 @@ impl Plot {
                 let polar_plot_area = crate::plots::PlotArea::new(
                     polar_x, polar_y, polar_size, polar_size, x_min, x_max, y_min, y_max,
                 );
-                data.render(renderer, &polar_plot_area, &self.display.theme, color)?;
+                data.render_styled(
+                    renderer,
+                    &polar_plot_area,
+                    &self.display.theme,
+                    base_color,
+                    alpha,
+                    series.line_width,
+                )?;
             }
             _ => unreachable!("resolved series variant must match its declarative series"),
         }
@@ -1459,7 +1556,7 @@ impl Plot {
         y_max: f64,
         mode: RenderExecutionMode,
     ) -> Result<()> {
-        let color = series.color.unwrap_or(Color::new(0, 0, 0));
+        let color = series.color_with_alpha(Color::new(0, 0, 0));
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         let clip_rect = (

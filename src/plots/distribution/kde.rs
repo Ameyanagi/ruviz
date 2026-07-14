@@ -433,13 +433,14 @@ impl PlotRender for KdeData {
             polygon.extend_from_slice(&points);
             polygon.push((points[points.len() - 1].0, baseline_y));
 
-            let fill_alpha = self.config.fill_alpha * alpha.clamp(0.0, 1.0);
+            let fill_alpha =
+                (f32::from(color.a) / 255.0) * self.config.fill_alpha * alpha.clamp(0.0, 1.0);
             let fill_color = color.with_alpha(fill_alpha);
             renderer.draw_filled_polygon(&polygon, fill_color)?;
         }
 
         // Draw the line
-        let actual_color = color.with_alpha(alpha.clamp(0.0, 1.0));
+        let actual_color = color.with_alpha((f32::from(color.a) / 255.0) * alpha.clamp(0.0, 1.0));
         renderer.draw_polyline(&points, actual_color, actual_line_width, LineStyle::Solid)?;
 
         Ok(())

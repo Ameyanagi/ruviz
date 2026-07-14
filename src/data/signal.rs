@@ -95,6 +95,10 @@ impl<T> Signal<T> {
         Arc::ptr_eq(&self.eval, &other.eval)
     }
 
+    pub(crate) fn source_id(&self) -> usize {
+        Arc::as_ptr(&self.eval) as *const () as usize
+    }
+
     /// Transform the signal's output using a mapping function.
     ///
     /// # Arguments

@@ -78,7 +78,7 @@ impl Plot {
         time: f64,
     ) -> Result<(Image, RenderDiagnostics)> {
         let frame = self.resolve_frame(time)?;
-        let style_shell = self.resolved_style_shell(time);
+        let style_shell = self.resolved_style_shell(&frame.style);
         let result = style_shell.render_image_with_resolved_frame(mode, &frame);
         if result.is_ok() {
             frame.acknowledge_rendered(self);
@@ -557,12 +557,8 @@ impl Plot {
         )?;
 
         let legend_items = self.collect_legend_items();
-        if !legend_items.is_empty() && self.layout.legend.enabled {
-            let legend = self
-                .layout
-                .legend
-                .to_legend(self.display.config.typography.legend_size());
-            renderer.draw_legend_full(&legend_items, &legend, plot_area, None)?;
+        if !legend_items.is_empty() && frame.style.legend.enabled {
+            renderer.draw_legend_full(&legend_items, &frame.style.legend, plot_area, None)?;
         }
 
         let diagnostics = renderer.render_diagnostics().clone();
@@ -601,8 +597,22 @@ impl Plot {
                             && series.x_errors.is_none()
                             && series.y_errors.is_none()
                     }
-                    SeriesType::Heatmap { .. } | SeriesType::Quiver { .. } => false,
-                    _ => true,
+                    SeriesType::Scatter { .. }
+                    | SeriesType::Bar { .. }
+                    | SeriesType::ErrorBars { .. }
+                    | SeriesType::ErrorBarsXY { .. }
+                    | SeriesType::Histogram { .. }
+                    | SeriesType::BoxPlot { .. } => true,
+                    SeriesType::Heatmap { .. }
+                    | SeriesType::Kde { .. }
+                    | SeriesType::Ecdf { .. }
+                    | SeriesType::Violin { .. }
+                    | SeriesType::Boxen { .. }
+                    | SeriesType::Contour { .. }
+                    | SeriesType::Pie { .. }
+                    | SeriesType::Radar { .. }
+                    | SeriesType::Polar { .. }
+                    | SeriesType::Quiver { .. } => false,
                 });
 
         if has_mixed_coordinates
@@ -650,15 +660,16 @@ impl Plot {
     {
         self.validate_before_frame_resolution()?;
         let frame = self.resolve_frame(time)?;
+        let style_shell = self.resolved_style_shell(&frame.style);
         #[cfg(feature = "parallel")]
         if let Some(parallel_render) =
-            self.try_render_parallel_image_with_diagnostics(mode, &frame)?
+            style_shell.try_render_parallel_image_with_diagnostics(mode, &frame)?
         {
             frame.acknowledge_rendered(self);
             return Ok(parallel_render);
         }
 
-        let result = self
+        let result = style_shell
             .render_renderer_with_resolved_frame(mode, &frame, draw_series)
             .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics));
         if result.is_ok() {
@@ -791,10 +802,7 @@ impl Plot {
     }
 
     fn public_png_render_mode(&self) -> RenderExecutionMode {
-        self.resolve_frame(0.0)
-            .map_or(RenderExecutionMode::Reference, |frame| {
-                self.public_png_render_mode_from_resolved(&frame.series)
-            })
+        self.public_png_render_mode_for_series(&self.series_mgr.series)
     }
 
     fn public_png_render_mode_from_resolved(
@@ -988,11 +996,7 @@ impl Plot {
     pub fn render_to_renderer(&self, renderer: &mut SkiaRenderer, dpi: f32) -> Result<()> {
         self.validate_before_frame_resolution()?;
         let frame = self.resolve_frame(0.0)?;
-        let mut plot = if self.has_dynamic_style_sources() {
-            self.resolved_style_shell(0.0)
-        } else {
-            self.clone_for_resolved_frame()
-        };
+        let mut plot = self.resolved_style_shell(&frame.style);
         plot.display.config.figure.dpi = dpi;
         let plot = plot.set_subplot_output_pixels(renderer.width(), renderer.height());
         let (subplot_renderer, _) = plot
@@ -1868,10 +1872,7 @@ impl Plot {
     ) -> Result<(Vec<u8>, &'static str, RenderDiagnostics, ResolvedFrame<'_>)> {
         let frame = self.resolve_frame(0.0)?;
         let mode = self.public_png_render_mode_from_resolved(&frame.series);
-        let style_shell = self
-            .has_dynamic_style_sources()
-            .then(|| self.resolved_style_shell(0.0));
-        let render_plot = style_shell.as_ref().unwrap_or(self);
+        let render_plot = self.resolved_style_shell(&frame.style);
         let (renderer, diagnostics) =
             render_plot.render_renderer_with_frame_and_diagnostics(mode, &frame)?;
         let png_bytes = renderer.encode_png_bytes()?;
@@ -1903,10 +1904,7 @@ impl Plot {
     pub fn export_svg<P: AsRef<Path>>(self, path: P) -> Result<()> {
         self.validate_before_frame_resolution()?;
         let frame = self.resolve_frame(0.0)?;
-        let style_shell = self
-            .has_dynamic_style_sources()
-            .then(|| self.resolved_style_shell(0.0));
-        let render_plot = style_shell.as_ref().unwrap_or(&self);
+        let render_plot = self.resolved_style_shell(&frame.style);
         let svg_content = render_plot.render_to_svg_with_frame(&frame)?;
         crate::export::write_bytes_atomic(path, svg_content.as_bytes())?;
         frame.acknowledge_rendered(&self);
@@ -2256,10 +2254,7 @@ impl Plot {
     pub fn render_to_svg(&self) -> Result<String> {
         self.validate_before_frame_resolution()?;
         let frame = self.resolve_frame(0.0)?;
-        let style_shell = self
-            .has_dynamic_style_sources()
-            .then(|| self.resolved_style_shell(0.0));
-        let render_plot = style_shell.as_ref().unwrap_or(self);
+        let render_plot = self.resolved_style_shell(&frame.style);
         let result = render_plot.render_to_svg_with_frame(&frame);
         if result.is_ok() {
             frame.acknowledge_rendered(self);
@@ -2639,7 +2634,9 @@ impl Plot {
         for (idx, (series, resolved)) in
             self.series_mgr.series.iter().zip(&frame.series).enumerate()
         {
-            let default_color = self.display.theme.get_color(idx);
+            let default_color = series
+                .color
+                .unwrap_or_else(|| self.display.theme.get_color(idx));
             let inset_rect = inset_rects[idx];
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rect {
                 (
@@ -2733,15 +2730,9 @@ impl Plot {
         }
 
         // Draw legend if we have labeled series and legend is enabled
-        if !legend_items.is_empty() && self.layout.legend.enabled {
-            // Convert old LegendConfig to new Legend type
-            let legend = self
-                .layout
-                .legend
-                .to_legend(self.display.config.typography.legend_size());
-            // Use new legend rendering with proper handles
+        if !legend_items.is_empty() && frame.style.legend.enabled {
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
-            svg.draw_legend_full(&legend_items, &legend, plot_bounds, None)?;
+            svg.draw_legend_full(&legend_items, &frame.style.legend, plot_bounds, None)?;
         }
 
         Ok(svg.to_svg_string())
@@ -2793,10 +2784,7 @@ impl Plot {
         self = self.set_output_pixels(width_px, height_px);
 
         let frame = self.resolve_frame(0.0)?;
-        let style_shell = self
-            .has_dynamic_style_sources()
-            .then(|| self.resolved_style_shell(0.0));
-        let render_plot = style_shell.as_ref().unwrap_or(&self);
+        let render_plot = self.resolved_style_shell(&frame.style);
         let svg_content = render_plot.render_to_svg_with_frame(&frame)?;
         let pdf_data = crate::export::svg_to_pdf(&svg_content)?;
         crate::export::write_bytes_atomic(path, &pdf_data)?;

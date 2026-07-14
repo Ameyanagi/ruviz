@@ -502,16 +502,30 @@ impl Theme {
         use super::FontFamily;
         use crate::core::config::TypographyConfig;
 
+        let defaults = TypographyConfig::default();
+        let base_size = if self.font_size.is_finite() && self.font_size > 0.0 {
+            self.font_size
+        } else {
+            defaults.base_size
+        };
+        let scale = |size: f32, fallback: f32| {
+            if size.is_finite() && size > 0.0 {
+                size / base_size
+            } else {
+                fallback
+            }
+        };
+
         // Preserve exact font family names while keeping generic CSS family
         // names mapped to their corresponding portable family.
         let family = FontFamily::from(self.font_family.as_str());
 
         TypographyConfig {
-            base_size: self.font_size,
-            title_scale: self.title_font_size / self.font_size,
-            label_scale: self.axis_label_font_size / self.font_size,
-            tick_scale: self.tick_label_font_size / self.font_size,
-            legend_scale: self.legend_font_size / self.font_size,
+            base_size,
+            title_scale: scale(self.title_font_size, defaults.title_scale),
+            label_scale: scale(self.axis_label_font_size, defaults.label_scale),
+            tick_scale: scale(self.tick_label_font_size, defaults.tick_scale),
+            legend_scale: scale(self.legend_font_size, defaults.legend_scale),
             family,
             title_weight: super::FontWeight::Normal,
         }
@@ -524,11 +538,12 @@ impl Theme {
     pub fn to_line_config(&self) -> crate::core::config::LineConfig {
         use crate::core::config::LineConfig;
 
+        let scale = self.line_width / 1.5;
         LineConfig {
             data_width: self.line_width,
-            axis_width: self.line_width * 0.5,
-            grid_width: self.line_width * 0.3,
-            tick_width: self.line_width * 0.4,
+            axis_width: 0.8 * scale,
+            grid_width: 0.5 * scale,
+            tick_width: 0.6 * scale,
             tick_length: 4.0, // Standard tick length
         }
     }
