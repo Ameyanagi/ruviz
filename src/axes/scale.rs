@@ -203,6 +203,25 @@ pub(crate) fn linear_range_is_degenerate(range: f64) -> bool {
     range.abs() < f64::EPSILON
 }
 
+pub(crate) fn expand_degenerate_range(min: f64, max: f64, scale: &AxisScale) -> (f64, f64) {
+    match scale {
+        AxisScale::Log if min == max && min.is_finite() && min > 0.0 => {
+            let lower = min / 10.0;
+            let upper = min * 10.0;
+            if lower > 0.0 && lower < min {
+                (lower, if upper.is_finite() { upper } else { min })
+            } else if upper.is_finite() && upper > min {
+                (min, upper)
+            } else {
+                (min, max)
+            }
+        }
+        AxisScale::Log => (min, max),
+        _ if min == max || linear_range_is_degenerate(max - min) => (min - 1.0, max + 1.0),
+        _ => (min, max),
+    }
+}
+
 #[inline]
 pub(crate) fn linear_normalized_position_with_range(
     value: f64,
@@ -373,7 +392,10 @@ impl AxisScale {
     pub fn create_scale(&self, min: f64, max: f64) -> Box<dyn Scale> {
         match self {
             AxisScale::Linear => Box::new(LinearScale::new(min, max)),
-            AxisScale::Log => Box::new(LogScale::new(min.max(f64::EPSILON), max.max(f64::EPSILON))),
+            AxisScale::Log => {
+                let (min, max) = log_normalization_bounds(min, max);
+                Box::new(LogScale::new(min, max))
+            }
             AxisScale::SymLog { linthresh } => Box::new(SymLogScale::new(min, max, *linthresh)),
         }
     }
@@ -520,6 +542,30 @@ mod tests {
 
         let symlog = AxisScale::symlog(1.0).create_scale(-100.0, 100.0);
         assert!((symlog.transform(0.0) - 0.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_axis_scale_create_log_scale_preserves_positive_sub_epsilon_bounds() {
+        let min = f64::EPSILON / 16.0;
+        let max = f64::EPSILON / 2.0;
+        let scale = AxisScale::Log.create_scale(min, max);
+
+        assert_eq!(scale.range(), (min, max));
+        assert_eq!(scale.transform(min), 0.0);
+        assert_eq!(scale.transform(max), 1.0);
+        assert!((scale.inverse(0.5) - (min * max).sqrt()).abs() <= min * 1e-12);
+    }
+
+    #[test]
+    fn test_expand_equal_log_range_stays_positive_for_tiny_value() {
+        for value in [1.0, f64::EPSILON / 1024.0, f64::from_bits(1)] {
+            let (min, max) = expand_degenerate_range(value, value, &AxisScale::Log);
+
+            assert!(min > 0.0, "lower bound must stay positive for {value}");
+            assert!(min < value || max > value);
+            assert!(min < max, "expanded bounds must have extent for {value}");
+            assert!(max.is_finite());
+        }
     }
 
     #[test]

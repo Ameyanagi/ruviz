@@ -1351,14 +1351,8 @@ impl Plot {
             &mut y_max,
         );
 
-        if (x_max - x_min).abs() < f64::EPSILON {
-            x_min -= 1.0;
-            x_max += 1.0;
-        }
-        if (y_max - y_min).abs() < f64::EPSILON {
-            y_min -= 1.0;
-            y_max += 1.0;
-        }
+        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
+        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
 
         (x_min, x_max, y_min, y_max)
     }
@@ -1619,14 +1613,8 @@ impl Plot {
         );
 
         // Handle edge cases
-        if (x_max - x_min).abs() < f64::EPSILON {
-            x_min -= 1.0;
-            x_max += 1.0;
-        }
-        if (y_max - y_min).abs() < f64::EPSILON {
-            y_min -= 1.0;
-            y_max += 1.0;
-        }
+        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
+        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
 
         Ok((x_min, x_max, y_min, y_max))
     }
@@ -1829,14 +1817,8 @@ impl Plot {
             }
         }
 
-        if (x_max - x_min).abs() < f64::EPSILON {
-            x_min -= 1.0;
-            x_max += 1.0;
-        }
-        if (y_max - y_min).abs() < f64::EPSILON {
-            y_min -= 1.0;
-            y_max += 1.0;
-        }
+        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
+        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
 
         Ok((x_min, x_max, y_min, y_max))
     }
@@ -2060,14 +2042,8 @@ impl Plot {
             }
         }
 
-        if (x_max - x_min).abs() < f64::EPSILON {
-            x_min -= 1.0;
-            x_max += 1.0;
-        }
-        if (y_max - y_min).abs() < f64::EPSILON {
-            y_min -= 1.0;
-            y_max += 1.0;
-        }
+        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
+        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
 
         Ok((x_min, x_max, y_min, y_max))
     }

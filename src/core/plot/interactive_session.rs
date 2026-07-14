@@ -3,13 +3,13 @@ use super::{
     ResolvedData, ResolvedFrame, ResolvedSeries, SeriesType,
 };
 use crate::{
+    axes::{AxisScale, expand_degenerate_range},
     core::{
-        LayoutCalculator, LayoutConfig, MarginConfig, PlotLayout, PlottingError, REFERENCE_DPI,
-        Result,
+        CoordinateTransform, LayoutCalculator, LayoutConfig, MarginConfig, PlotLayout,
+        PlottingError, REFERENCE_DPI, Result,
     },
     render::{
-        Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer,
-        skia::{SkiaRenderer, map_data_to_pixels},
+        Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, skia::SkiaRenderer,
     },
 };
 use std::{
@@ -78,6 +78,7 @@ pub struct InteractiveViewportSnapshot {
 const MIN_ZOOM_LEVEL: f64 = 0.1;
 const MAX_ZOOM_LEVEL: f64 = 100.0;
 const VIEWPORT_EPSILON: f64 = 1e-9;
+const HIT_TEST_TOLERANCE_LOGICAL_PX: f64 = 8.0;
 
 #[cfg(not(target_arch = "wasm32"))]
 type FrameTimer = Instant;
@@ -364,23 +365,11 @@ impl DataBounds {
         self.y_max - self.y_min
     }
 
-    fn width_abs(&self) -> f64 {
-        self.width().abs()
-    }
-
-    fn height_abs(&self) -> f64 {
-        self.height().abs()
-    }
-
     fn center(&self) -> ViewportPoint {
         ViewportPoint::new(
             (self.x_min + self.x_max) * 0.5,
             (self.y_min + self.y_max) * 0.5,
         )
-    }
-
-    fn from_points(a: ViewportPoint, b: ViewportPoint) -> Self {
-        Self::from_limits(a.x.min(b.x), a.x.max(b.x), a.y.min(b.y), a.y.max(b.y))
     }
 
     fn from_screen_corners(top_left: ViewportPoint, bottom_right: ViewportPoint) -> Self {
@@ -389,24 +378,6 @@ impl DataBounds {
 
     fn from_viewport_rect(bounds: ViewportRect) -> Self {
         Self::from_limits(bounds.min.x, bounds.max.x, bounds.min.y, bounds.max.y)
-    }
-
-    fn with_center_size(center: ViewportPoint, width: f64, height: f64) -> Self {
-        Self::from_limits(
-            center.x - width * 0.5,
-            center.x + width * 0.5,
-            center.y - height * 0.5,
-            center.y + height * 0.5,
-        )
-    }
-
-    fn translated(self, dx: f64, dy: f64) -> Self {
-        Self::from_limits(
-            self.x_min + dx,
-            self.x_max + dx,
-            self.y_min + dy,
-            self.y_max + dy,
-        )
     }
 }
 
@@ -571,6 +542,7 @@ struct InteractiveFrameCache {
 #[derive(Clone, Debug, PartialEq)]
 struct OverlayFrameKey {
     size_px: (u32, u32),
+    plot_area: Option<ViewportRect>,
     hovered: Option<HitResult>,
     selected: Vec<HitResult>,
     brushed_region: Option<ViewportRect>,
@@ -589,12 +561,140 @@ struct GeometrySnapshot {
     plot_area: tiny_skia::Rect,
     x_bounds: (f64, f64),
     y_bounds: (f64, f64),
+    x_scale: AxisScale,
+    y_scale: AxisScale,
+    transform: CoordinateTransform,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+impl GeometrySnapshot {
+    fn with_bounds(&self, bounds: DataBounds) -> Self {
+        let mut geometry = self.clone();
+        geometry.x_bounds = (bounds.x_min, bounds.x_max);
+        geometry.y_bounds = (bounds.y_min, bounds.y_max);
+        geometry.transform.data_x = bounds.x_min..bounds.x_max;
+        geometry.transform.data_y = bounds.y_min..bounds.y_max;
+        geometry
+    }
+
+    fn logical_pixels_to_pixels(&self, logical_pixels: f64) -> f64 {
+        logical_pixels * f64::from(f32::from_bits(self.key.scale_bits))
+    }
+
+    fn contains_screen(&self, point: ViewportPoint) -> bool {
+        point.x.is_finite()
+            && point.y.is_finite()
+            && point.x >= self.plot_area.left() as f64
+            && point.x <= self.plot_area.right() as f64
+            && point.y >= self.plot_area.top() as f64
+            && point.y <= self.plot_area.bottom() as f64
+    }
+
+    fn contains_data(&self, point: ViewportPoint) -> bool {
+        point.x.is_finite()
+            && point.y.is_finite()
+            && value_in_bounds(point.x, self.x_bounds)
+            && value_in_bounds(point.y, self.y_bounds)
+    }
+
+    fn screen_to_data(&self, point: ViewportPoint) -> ViewportPoint {
+        let (x, y) = self.transform.screen_to_data_scaled(
+            point.x as f32,
+            point.y as f32,
+            &self.x_scale,
+            &self.y_scale,
+        );
+        ViewportPoint::new(x, y)
+    }
+
+    fn data_to_screen(&self, point: ViewportPoint) -> ViewportPoint {
+        let (x, y) =
+            self.transform
+                .data_to_screen_scaled(point.x, point.y, &self.x_scale, &self.y_scale);
+        ViewportPoint::new(x as f64, y as f64)
+    }
+
+    fn clamp_screen(&self, point: ViewportPoint) -> ViewportPoint {
+        ViewportPoint::new(
+            point
+                .x
+                .clamp(self.plot_area.left() as f64, self.plot_area.right() as f64),
+            point
+                .y
+                .clamp(self.plot_area.top() as f64, self.plot_area.bottom() as f64),
+        )
+    }
+
+    fn clamp_data(&self, point: ViewportPoint) -> ViewportPoint {
+        ViewportPoint::new(
+            clamp_to_bounds(point.x, self.x_bounds),
+            clamp_to_bounds(point.y, self.y_bounds),
+        )
+    }
+
+    fn screen_normalized(&self, point: ViewportPoint) -> (f64, f64) {
+        let data = self.screen_to_data(self.clamp_screen(point));
+        (
+            self.x_scale
+                .normalized_position(data.x, self.x_bounds.0, self.x_bounds.1)
+                .clamp(0.0, 1.0),
+            self.y_scale
+                .normalized_position(data.y, self.y_bounds.0, self.y_bounds.1)
+                .clamp(0.0, 1.0),
+        )
+    }
+
+    fn zoomed_bounds(
+        &self,
+        factor: f64,
+        anchor_px: ViewportPoint,
+        base_bounds: DataBounds,
+    ) -> DataBounds {
+        let (anchor_x, anchor_y) = self.screen_normalized(anchor_px);
+        let x = zoom_axis_bounds(
+            self.x_bounds,
+            (base_bounds.x_min, base_bounds.x_max),
+            &self.x_scale,
+            factor,
+            anchor_x,
+        );
+        let y = zoom_axis_bounds(
+            self.y_bounds,
+            (base_bounds.y_min, base_bounds.y_max),
+            &self.y_scale,
+            factor,
+            anchor_y,
+        );
+        DataBounds::from_limits(x.0, x.1, y.0, y.1)
+    }
+
+    fn panned_bounds(&self, delta_px: ViewportPoint) -> DataBounds {
+        let delta_x = delta_px.x / f64::from(self.plot_area.width()).max(1.0);
+        let delta_y = delta_px.y / f64::from(self.plot_area.height()).max(1.0);
+        DataBounds::from_limits(
+            self.x_scale
+                .inverse_normalized_position(-delta_x, self.x_bounds.0, self.x_bounds.1),
+            self.x_scale.inverse_normalized_position(
+                1.0 - delta_x,
+                self.x_bounds.0,
+                self.x_bounds.1,
+            ),
+            self.y_scale
+                .inverse_normalized_position(delta_y, self.y_bounds.0, self.y_bounds.1),
+            self.y_scale.inverse_normalized_position(
+                1.0 + delta_y,
+                self.y_bounds.0,
+                self.y_bounds.1,
+            ),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 struct AxisConstraints {
     x_limits: Option<(f64, f64)>,
     y_limits: Option<(f64, f64)>,
+    x_scale: AxisScale,
+    y_scale: AxisScale,
 }
 
 impl AxisConstraints {
@@ -602,6 +702,8 @@ impl AxisConstraints {
         Self {
             x_limits: plot.layout.x_limits,
             y_limits: plot.layout.y_limits,
+            x_scale: plot.layout.x_scale.clone(),
+            y_scale: plot.layout.y_scale.clone(),
         }
     }
 
@@ -613,14 +715,8 @@ impl AxisConstraints {
             .y_limits
             .unwrap_or((data_bounds.y_min, data_bounds.y_max));
 
-        if (x_max - x_min).abs() < f64::EPSILON {
-            x_min -= 1.0;
-            x_max += 1.0;
-        }
-        if (y_max - y_min).abs() < f64::EPSILON {
-            y_min -= 1.0;
-            y_max += 1.0;
-        }
+        (x_min, x_max) = expand_degenerate_range(x_min, x_max, &self.x_scale);
+        (y_min, y_max) = expand_degenerate_range(y_min, y_max, &self.y_scale);
 
         DataBounds::from_limits(x_min, x_max, y_min, y_max)
     }
@@ -703,7 +799,11 @@ impl InteractivePlotSession {
             visible_bounds: initial_bounds,
             ..SessionState::default()
         };
-        sync_legacy_viewport_fields(&mut state);
+        sync_legacy_viewport_fields(
+            &mut state,
+            &prepared.plot().layout.x_scale,
+            &prepared.plot().layout.y_scale,
+        );
 
         Self {
             inner: Arc::new(InteractivePlotSessionInner {
@@ -861,7 +961,7 @@ impl InteractivePlotSession {
             PlotInputEvent::Zoom { factor, center_px } => {
                 let state_snapshot = state.clone();
                 drop(state);
-                let current_geometry = match self.geometry_snapshot() {
+                let current_geometry = match self.interaction_geometry() {
                     Ok(geometry) => geometry,
                     Err(_) => return,
                 };
@@ -870,27 +970,11 @@ impl InteractivePlotSession {
                     return;
                 }
 
-                let anchor_before = screen_to_data(
-                    state_snapshot.visible_bounds,
-                    current_geometry.plot_area,
-                    center_px,
-                );
-                let (normalized_x, normalized_y) =
-                    screen_to_normalized(current_geometry.plot_area, center_px);
-                let width = clamp_visible_width(
-                    state_snapshot.visible_bounds.width() / factor,
-                    state_snapshot.base_bounds,
-                );
-                let height = clamp_visible_height(
-                    state_snapshot.visible_bounds.height() / factor,
-                    state_snapshot.base_bounds,
-                );
-                let next_visible = DataBounds::from_limits(
-                    anchor_before.x - width * normalized_x,
-                    anchor_before.x + width * (1.0 - normalized_x),
-                    anchor_before.y - height * (1.0 - normalized_y),
-                    anchor_before.y + height * normalized_y,
-                );
+                let next_visible =
+                    current_geometry.zoomed_bounds(factor, center_px, state_snapshot.base_bounds);
+                if !bounds_have_extent(next_visible) {
+                    return;
+                }
 
                 if bounds_close(state_snapshot.visible_bounds, next_visible) {
                     return;
@@ -901,13 +985,17 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                set_visible_bounds(&mut state, next_visible);
+                set_visible_bounds(
+                    &mut state,
+                    next_visible,
+                    &current_geometry.x_scale,
+                    &current_geometry.y_scale,
+                );
                 drop(state);
                 self.mark_dirty(DirtyDomain::Data);
                 self.mark_dirty(DirtyDomain::Overlay);
             }
             PlotInputEvent::ZoomRect { region_px } => {
-                let state_snapshot = state.clone();
                 let had_brush =
                     state.brush_anchor.take().is_some() || state.brushed_region.take().is_some();
                 drop(state);
@@ -919,24 +1007,16 @@ impl InteractivePlotSession {
                     return;
                 }
 
-                let current_geometry = match self.geometry_snapshot() {
+                let current_geometry = match self.interaction_geometry() {
                     Ok(geometry) => geometry,
                     Err(_) => return,
                 };
-                let data_min = screen_to_data(
-                    state_snapshot.visible_bounds,
-                    current_geometry.plot_area,
-                    region_px.min,
-                );
-                let data_max = screen_to_data(
-                    state_snapshot.visible_bounds,
-                    current_geometry.plot_area,
-                    region_px.max,
-                );
+                let data_min =
+                    current_geometry.screen_to_data(current_geometry.clamp_screen(region_px.min));
+                let data_max =
+                    current_geometry.screen_to_data(current_geometry.clamp_screen(region_px.max));
                 let next_visible = DataBounds::from_screen_corners(data_min, data_max);
-                if next_visible.width_abs() <= VIEWPORT_EPSILON
-                    || next_visible.height_abs() <= VIEWPORT_EPSILON
-                {
+                if !bounds_have_extent(next_visible) {
                     if had_brush {
                         self.mark_dirty(DirtyDomain::Overlay);
                     }
@@ -951,7 +1031,12 @@ impl InteractivePlotSession {
                 let viewport_changed = !bounds_close(state.visible_bounds, next_visible);
                 state.brush_anchor = None;
                 state.brushed_region = None;
-                set_visible_bounds(&mut state, next_visible);
+                set_visible_bounds(
+                    &mut state,
+                    next_visible,
+                    &current_geometry.x_scale,
+                    &current_geometry.y_scale,
+                );
                 drop(state);
                 if viewport_changed {
                     self.mark_dirty(DirtyDomain::Data);
@@ -959,32 +1044,29 @@ impl InteractivePlotSession {
                 self.mark_dirty(DirtyDomain::Overlay);
             }
             PlotInputEvent::Pan { delta_px } => {
-                let state_snapshot = state.clone();
                 drop(state);
-                let current_geometry = match self.geometry_snapshot() {
+                let current_geometry = match self.interaction_geometry() {
                     Ok(geometry) => geometry,
                     Err(_) => return,
                 };
-                let width = signed_span_with_min_magnitude(
-                    state_snapshot.visible_bounds.width(),
-                    f64::EPSILON,
-                );
-                let height = signed_span_with_min_magnitude(
-                    state_snapshot.visible_bounds.height(),
-                    f64::EPSILON,
-                );
-                let size_x = f64::from(current_geometry.plot_area.width()).max(1.0);
-                let size_y = f64::from(current_geometry.plot_area.height()).max(1.0);
-                let next_visible = state_snapshot.visible_bounds.translated(
-                    -(delta_px.x / size_x) * width,
-                    (delta_px.y / size_y) * height,
-                );
+                if !delta_px.x.is_finite() || !delta_px.y.is_finite() {
+                    return;
+                }
+                let next_visible = current_geometry.panned_bounds(delta_px);
+                if !bounds_have_extent(next_visible) {
+                    return;
+                }
                 let mut state = self
                     .inner
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
-                set_visible_bounds(&mut state, next_visible);
+                set_visible_bounds(
+                    &mut state,
+                    next_visible,
+                    &current_geometry.x_scale,
+                    &current_geometry.y_scale,
+                );
                 drop(state);
                 self.mark_dirty(DirtyDomain::Data);
                 self.mark_dirty(DirtyDomain::Overlay);
@@ -1030,7 +1112,11 @@ impl InteractivePlotSession {
                 state.brush_anchor = None;
                 state.brushed_region = None;
                 state.visible_bounds = state.base_bounds;
-                sync_legacy_viewport_fields(&mut state);
+                sync_legacy_viewport_fields(
+                    &mut state,
+                    &self.inner.prepared.plot().layout.x_scale,
+                    &self.inner.prepared.plot().layout.y_scale,
+                );
                 drop(state);
                 self.mark_dirty(DirtyDomain::Data);
                 self.mark_dirty(DirtyDomain::Overlay);
@@ -1111,7 +1197,11 @@ impl InteractivePlotSession {
         else {
             return HitResult::None;
         };
+        if !geometry.contains_screen(position_px) {
+            return HitResult::None;
+        }
         let plot = self.inner.prepared.plot();
+        let hit_tolerance_px = geometry.logical_pixels_to_pixels(HIT_TEST_TOLERANCE_LOGICAL_PX);
         let mut best_hit = HitResult::None;
         let mut best_distance = f64::INFINITY;
 
@@ -1128,28 +1218,21 @@ impl InteractivePlotSession {
                         if !x_val.is_finite() || !y_val.is_finite() {
                             continue;
                         }
-                        let (screen_x, screen_y) = map_data_to_pixels(
-                            x_val,
-                            y_val,
-                            geometry.x_bounds.0,
-                            geometry.x_bounds.1,
-                            geometry.y_bounds.0,
-                            geometry.y_bounds.1,
-                            geometry.plot_area,
-                        );
-                        let dx = position_px.x - screen_x as f64;
-                        let dy = position_px.y - screen_y as f64;
+                        let data_position = ViewportPoint::new(x_val, y_val);
+                        if !geometry.contains_data(data_position) {
+                            continue;
+                        }
+                        let screen_position = geometry.data_to_screen(data_position);
+                        let dx = position_px.x - screen_position.x;
+                        let dy = position_px.y - screen_position.y;
                         let distance = (dx * dx + dy * dy).sqrt();
-                        if distance <= 8.0 && distance < best_distance {
+                        if distance <= hit_tolerance_px && distance < best_distance {
                             best_distance = distance;
                             best_hit = HitResult::SeriesPoint {
                                 series_index,
                                 point_index,
-                                screen_position: ViewportPoint::new(
-                                    screen_x as f64,
-                                    screen_y as f64,
-                                ),
-                                data_position: ViewportPoint::new(x_val, y_val),
+                                screen_position,
+                                data_position,
                                 distance_px: distance,
                             };
                         }
@@ -1164,16 +1247,7 @@ impl InteractivePlotSession {
                     {
                         continue;
                     }
-                    let data_position = screen_to_data(
-                        DataBounds::from_limits(
-                            geometry.x_bounds.0,
-                            geometry.x_bounds.1,
-                            geometry.y_bounds.0,
-                            geometry.y_bounds.1,
-                        ),
-                        rect,
-                        position_px,
-                    );
+                    let data_position = geometry.screen_to_data(position_px);
                     if data_position.x < data.x_extent.0
                         || data_position.x > data.x_extent.1
                         || data_position.y < data.y_extent.0
@@ -1199,32 +1273,16 @@ impl InteractivePlotSession {
                         continue;
                     }
                     let ((x1, x2), (y1, y2)) = data.cell_data_bounds(row, col);
-                    let (sx1, sy1) = map_data_to_pixels(
-                        x1,
-                        y2,
-                        geometry.x_bounds.0,
-                        geometry.x_bounds.1,
-                        geometry.y_bounds.0,
-                        geometry.y_bounds.1,
-                        rect,
-                    );
-                    let (sx2, sy2) = map_data_to_pixels(
-                        x2,
-                        y1,
-                        geometry.x_bounds.0,
-                        geometry.x_bounds.1,
-                        geometry.y_bounds.0,
-                        geometry.y_bounds.1,
-                        rect,
-                    );
+                    let first = geometry.data_to_screen(ViewportPoint::new(x1, y2));
+                    let second = geometry.data_to_screen(ViewportPoint::new(x2, y1));
                     best_hit = HitResult::HeatmapCell {
                         series_index,
                         row,
                         col,
                         value,
                         screen_rect: ViewportRect {
-                            min: ViewportPoint::new(sx1.min(sx2) as f64, sy1.min(sy2) as f64),
-                            max: ViewportPoint::new(sx1.max(sx2) as f64, sy1.max(sy2) as f64),
+                            min: ViewportPoint::new(first.x.min(second.x), first.y.min(second.y)),
+                            max: ViewportPoint::new(first.x.max(second.x), first.y.max(second.y)),
                         },
                     };
                 }
@@ -1233,6 +1291,60 @@ impl InteractivePlotSession {
         }
 
         best_hit
+    }
+
+    /// Converts a displayed-frame screen position to data coordinates.
+    ///
+    /// Returns `Ok(None)` for non-finite positions or positions outside the
+    /// displayed plot area. An error is returned until a base frame has been
+    /// rendered and its geometry is available.
+    pub fn screen_to_data(&self, position_px: ViewportPoint) -> Result<Option<ViewportPoint>> {
+        let geometry = self.displayed_geometry()?;
+        if !geometry.contains_screen(position_px) {
+            return Ok(None);
+        }
+        let data = geometry.screen_to_data(position_px);
+        Ok((data.x.is_finite() && data.y.is_finite()).then_some(data))
+    }
+
+    /// Converts a screen position to data coordinates after clamping it to the
+    /// displayed plot area.
+    ///
+    /// An error is returned for non-finite input or until displayed geometry is
+    /// available.
+    pub fn screen_to_data_clamped(&self, position_px: ViewportPoint) -> Result<ViewportPoint> {
+        require_finite_point(position_px, "screen position")?;
+        let geometry = self.displayed_geometry()?;
+        let data = geometry.screen_to_data(geometry.clamp_screen(position_px));
+        require_finite_point(data, "converted data position")?;
+        Ok(data)
+    }
+
+    /// Converts a data position to screen coordinates for the displayed frame.
+    ///
+    /// Returns `Ok(None)` for non-finite positions or positions outside the
+    /// displayed data bounds. An error is returned until displayed geometry is
+    /// available.
+    pub fn data_to_screen(&self, data_position: ViewportPoint) -> Result<Option<ViewportPoint>> {
+        let geometry = self.displayed_geometry()?;
+        if !geometry.contains_data(data_position) {
+            return Ok(None);
+        }
+        let screen = geometry.data_to_screen(data_position);
+        Ok((screen.x.is_finite() && screen.y.is_finite()).then_some(screen))
+    }
+
+    /// Converts a data position to screen coordinates after clamping it to the
+    /// displayed data bounds.
+    ///
+    /// An error is returned for non-finite input or until displayed geometry is
+    /// available.
+    pub fn data_to_screen_clamped(&self, data_position: ViewportPoint) -> Result<ViewportPoint> {
+        require_finite_point(data_position, "data position")?;
+        let geometry = self.displayed_geometry()?;
+        let screen = geometry.data_to_screen(geometry.clamp_data(data_position));
+        require_finite_point(screen, "converted screen position")?;
+        Ok(screen)
     }
 
     pub fn render_to_image(&self, target: ImageTarget) -> Result<InteractiveFrame> {
@@ -1263,19 +1375,33 @@ impl InteractivePlotSession {
 
     /// Returns the current interactive viewport state.
     pub fn viewport_snapshot(&self) -> Result<InteractiveViewportSnapshot> {
-        let geometry = self.geometry_snapshot()?;
+        let geometry = self
+            .displayed_geometry()
+            .or_else(|_| self.geometry_snapshot())?;
         let state = self
             .inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
+        let displayed_bounds = DataBounds::from_limits(
+            geometry.x_bounds.0,
+            geometry.x_bounds.1,
+            geometry.y_bounds.0,
+            geometry.y_bounds.1,
+        );
+        let (zoom_level, pan_offset) = legacy_viewport_metrics(
+            state.base_bounds,
+            displayed_bounds,
+            &geometry.x_scale,
+            &geometry.y_scale,
+        );
 
         Ok(InteractiveViewportSnapshot {
-            zoom_level: state.zoom_level,
-            pan_offset: state.pan_offset,
+            zoom_level,
+            pan_offset,
             base_bounds: data_bounds_to_viewport_rect(state.base_bounds),
-            visible_bounds: data_bounds_to_viewport_rect(state.visible_bounds),
+            visible_bounds: data_bounds_to_viewport_rect(displayed_bounds),
             plot_area: plot_area_to_viewport_rect(geometry.plot_area),
             selected_count: state.selected.len(),
         })
@@ -1284,8 +1410,21 @@ impl InteractivePlotSession {
     /// Restores the visible bounds for the interactive viewport.
     pub fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
         let next_visible = DataBounds::from_viewport_rect(bounds);
-        if next_visible.width_abs() <= VIEWPORT_EPSILON
-            || next_visible.height_abs() <= VIEWPORT_EPSILON
+        if !bounds_have_extent(next_visible) {
+            return false;
+        }
+
+        let plot = self.inner.prepared.plot();
+        if plot
+            .layout
+            .x_scale
+            .validate_range(next_visible.x_min, next_visible.x_max)
+            .is_err()
+            || plot
+                .layout
+                .y_scale
+                .validate_range(next_visible.y_min, next_visible.y_max)
+                .is_err()
         {
             return false;
         }
@@ -1295,11 +1434,22 @@ impl InteractivePlotSession {
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
+        let next_visible = normalize_visible_bounds(
+            next_visible,
+            state.base_bounds,
+            &plot.layout.x_scale,
+            &plot.layout.y_scale,
+        );
         if bounds_close(state.visible_bounds, next_visible) {
             return false;
         }
 
-        set_visible_bounds(&mut state, next_visible);
+        set_visible_bounds(
+            &mut state,
+            next_visible,
+            &plot.layout.x_scale,
+            &plot.layout.y_scale,
+        );
         drop(state);
         self.mark_dirty(DirtyDomain::Data);
         self.mark_dirty(DirtyDomain::Overlay);
@@ -1322,128 +1472,159 @@ impl InteractivePlotSession {
         self.resize(size_px, scale_factor);
         self.apply_input(PlotInputEvent::SetTime { time_seconds });
 
-        let reactive_epoch = self.inner.reactive_epoch.load(Ordering::Acquire);
-        let mut mark_data_dirty = false;
-        {
-            let mut state = self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned");
-            if state.last_reactive_epoch != reactive_epoch {
-                state.last_reactive_epoch = reactive_epoch;
-                mark_data_dirty = true;
+        let state_before_render = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .clone();
+        let render_result = (|| -> Result<InteractiveFrame> {
+            let reactive_epoch = self.inner.reactive_epoch.load(Ordering::Acquire);
+            let mut mark_data_dirty = false;
+            {
+                let mut state = self
+                    .inner
+                    .state
+                    .lock()
+                    .expect("InteractivePlotSession state lock poisoned");
+                if state.last_reactive_epoch != reactive_epoch {
+                    state.last_reactive_epoch = reactive_epoch;
+                    mark_data_dirty = true;
+                }
             }
-        }
-        if mark_data_dirty {
-            self.mark_dirty(DirtyDomain::Data);
-            self.mark_dirty(DirtyDomain::Overlay);
-        }
-
-        let dirty_before_render = self.dirty_domains();
-        let dirty_epoch_before_render = self.inner.dirty_epoch.load(Ordering::Acquire);
-        let source_plot = self.inner.prepared.plot();
-        let resolved_frame = dirty_before_render
-            .needs_base_render()
-            .then(|| source_plot.resolve_frame(time_seconds))
-            .transpose()?;
-
-        if dirty_before_render.layout || dirty_before_render.data || dirty_before_render.temporal {
-            let constraints = AxisConstraints::from_plot(source_plot);
-            let mut state = self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned");
-            let previous_base = state.base_bounds;
-            let previous_visible = state.visible_bounds;
-            let next_data_bounds = resolved_frame
-                .as_ref()
-                .and_then(|frame| compute_data_bounds_from_frame(source_plot, frame).ok())
-                .unwrap_or(state.data_bounds);
-            state.data_bounds = next_data_bounds;
-            state.base_bounds = constraints.apply(next_data_bounds);
-            if bounds_close(previous_visible, previous_base) {
-                state.visible_bounds = state.base_bounds;
-            } else {
-                state.visible_bounds =
-                    normalize_visible_bounds(previous_visible, state.base_bounds);
+            if mark_data_dirty {
+                self.mark_dirty(DirtyDomain::Data);
+                self.mark_dirty(DirtyDomain::Overlay);
             }
-            sync_legacy_viewport_fields(&mut state);
-        }
 
-        let base_key = {
-            let state = self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned")
-                .clone();
-            build_frame_key(self.inner.prepared.plot(), &state)
-        };
+            let dirty_before_render = self.dirty_domains();
+            let dirty_epoch_before_render = self.inner.dirty_epoch.load(Ordering::Acquire);
+            let source_plot = self.inner.prepared.plot();
+            let resolved_frame = dirty_before_render
+                .needs_base_render()
+                .then(|| source_plot.resolve_frame(time_seconds))
+                .transpose()?;
 
-        let geometry = self.ensure_geometry(&base_key, resolved_frame.as_ref())?;
-        self.refresh_overlay_state(&geometry, dirty_before_render, resolved_frame.as_ref())?;
-        let frame_size_px = {
-            self.inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned")
-                .size_px
-        };
-        let base_result = self.ensure_base_image(
-            &base_key,
-            &geometry,
-            dirty_before_render,
-            resolved_frame.as_ref(),
-        )?;
-        let overlay_result = self.ensure_overlay_image(frame_size_px, dirty_before_render)?;
-        let composed = if target == RenderTargetKind::Image {
-            if let Some(overlay_image) = overlay_result.image.as_ref() {
-                Arc::new(compose_images(&base_result.image, overlay_image))
+            if dirty_before_render.layout
+                || dirty_before_render.data
+                || dirty_before_render.temporal
+            {
+                let constraints = AxisConstraints::from_plot(source_plot);
+                let mut state = self
+                    .inner
+                    .state
+                    .lock()
+                    .expect("InteractivePlotSession state lock poisoned");
+                let previous_base = state.base_bounds;
+                let previous_visible = state.visible_bounds;
+                let next_data_bounds = resolved_frame
+                    .as_ref()
+                    .and_then(|frame| compute_data_bounds_from_frame(source_plot, frame).ok())
+                    .unwrap_or(state.data_bounds);
+                state.data_bounds = next_data_bounds;
+                state.base_bounds = constraints.apply(next_data_bounds);
+                if bounds_close(previous_visible, previous_base) {
+                    state.visible_bounds = state.base_bounds;
+                } else {
+                    state.visible_bounds = normalize_visible_bounds(
+                        previous_visible,
+                        state.base_bounds,
+                        &source_plot.layout.x_scale,
+                        &source_plot.layout.y_scale,
+                    );
+                }
+                sync_legacy_viewport_fields(
+                    &mut state,
+                    &source_plot.layout.x_scale,
+                    &source_plot.layout.y_scale,
+                );
+            }
+
+            let base_key = {
+                let state = self
+                    .inner
+                    .state
+                    .lock()
+                    .expect("InteractivePlotSession state lock poisoned")
+                    .clone();
+                build_frame_key(self.inner.prepared.plot(), &state)
+            };
+
+            let geometry = self.ensure_geometry(&base_key, resolved_frame.as_ref())?;
+            let frame_size_px = {
+                self.inner
+                    .state
+                    .lock()
+                    .expect("InteractivePlotSession state lock poisoned")
+                    .size_px
+            };
+            let base_result = self.ensure_base_image(
+                &base_key,
+                &geometry,
+                dirty_before_render,
+                resolved_frame.as_ref(),
+            )?;
+            self.refresh_overlay_state(dirty_before_render)?;
+            let overlay_result = self.ensure_overlay_image(frame_size_px, dirty_before_render)?;
+            let composed = if target == RenderTargetKind::Image {
+                if let Some(overlay_image) = overlay_result.image.as_ref() {
+                    Arc::new(compose_images(&base_result.image, overlay_image))
+                } else {
+                    Arc::clone(&base_result.image)
+                }
             } else {
                 Arc::clone(&base_result.image)
-            }
-        } else {
-            Arc::clone(&base_result.image)
-        };
+            };
 
-        if base_result.updated {
-            if let Some(frame) = resolved_frame.as_ref() {
-                frame.acknowledge_rendered(source_plot);
+            if base_result.updated {
+                if let Some(frame) = resolved_frame.as_ref() {
+                    frame.acknowledge_rendered(source_plot);
+                }
             }
-        }
-        self.clear_dirty_after_render(dirty_epoch_before_render);
+            self.clear_dirty_after_render(dirty_epoch_before_render);
 
-        let surface_capability = if target == RenderTargetKind::Surface {
-            if base_result.used_incremental_data
-                || plot_supports_surface_fast_path(self.inner.prepared.plot())
-            {
-                SurfaceCapability::FastPath
+            let surface_capability = if target == RenderTargetKind::Surface {
+                if base_result.used_incremental_data
+                    || plot_supports_surface_fast_path(self.inner.prepared.plot())
+                {
+                    SurfaceCapability::FastPath
+                } else {
+                    SurfaceCapability::FallbackImage
+                }
             } else {
-                SurfaceCapability::FallbackImage
-            }
-        } else {
-            SurfaceCapability::Unsupported
-        };
-        let stats =
-            self.record_frame_stats(elapsed_frame_time(frame_start), target, surface_capability);
+                SurfaceCapability::Unsupported
+            };
+            let stats = self.record_frame_stats(
+                elapsed_frame_time(frame_start),
+                target,
+                surface_capability,
+            );
 
-        Ok(InteractiveFrame {
-            image: composed,
-            layers: LayerImages {
-                base: base_result.image,
-                overlay: overlay_result.image,
-            },
-            layer_state: LayerRenderState {
-                base_dirty: base_result.updated,
-                overlay_dirty: overlay_result.updated,
-                used_incremental_data: base_result.used_incremental_data,
-            },
-            stats,
-            target,
-            surface_capability,
-        })
+            Ok(InteractiveFrame {
+                image: composed,
+                layers: LayerImages {
+                    base: base_result.image,
+                    overlay: overlay_result.image,
+                },
+                layer_state: LayerRenderState {
+                    base_dirty: base_result.updated,
+                    overlay_dirty: overlay_result.updated,
+                    used_incremental_data: base_result.used_incremental_data,
+                },
+                stats,
+                target,
+                surface_capability,
+            })
+        })();
+
+        if render_result.is_err() {
+            *self
+                .inner
+                .state
+                .lock()
+                .expect("InteractivePlotSession state lock poisoned") = state_before_render;
+        }
+        render_result
     }
 
     fn ensure_geometry(
@@ -1584,6 +1765,10 @@ impl InteractivePlotSession {
             .clone();
         let overlay_key = OverlayFrameKey {
             size_px,
+            plot_area: state
+                .base_cache
+                .as_ref()
+                .map(|cache| plot_area_to_viewport_rect(cache.geometry.plot_area)),
             hovered: state.hovered.clone(),
             selected: state.selected.clone(),
             brushed_region: state.brushed_region,
@@ -1637,11 +1822,27 @@ impl InteractivePlotSession {
         }
 
         let mut pixels = vec![0u8; (size_px.0 * size_px.1 * 4) as usize];
+        let hit_clip = state
+            .base_cache
+            .as_ref()
+            .map(|cache| plot_area_to_viewport_rect(cache.geometry.plot_area));
         if let Some(hit) = state.hovered.as_ref() {
-            draw_hit(&mut pixels, size_px, hit, Color::new_rgba(255, 165, 0, 180));
+            draw_hit(
+                &mut pixels,
+                size_px,
+                hit,
+                Color::new_rgba(255, 165, 0, 180),
+                hit_clip,
+            );
         }
         for hit in &state.selected {
-            draw_hit(&mut pixels, size_px, hit, Color::new_rgba(255, 0, 0, 180));
+            draw_hit(
+                &mut pixels,
+                size_px,
+                hit,
+                Color::new_rgba(255, 0, 0, 180),
+                hit_clip,
+            );
         }
         if let Some(region) = state.brushed_region {
             draw_brush_rect(
@@ -1672,12 +1873,7 @@ impl InteractivePlotSession {
         })
     }
 
-    fn refresh_overlay_state(
-        &self,
-        geometry: &GeometrySnapshot,
-        dirty_before_render: DirtyDomains,
-        frame: Option<&ResolvedFrame<'_>>,
-    ) -> Result<()> {
+    fn refresh_overlay_state(&self, dirty_before_render: DirtyDomains) -> Result<()> {
         if !dirty_before_render.layout && !dirty_before_render.data && !dirty_before_render.temporal
         {
             return Ok(());
@@ -1697,16 +1893,20 @@ impl InteractivePlotSession {
             return Ok(());
         }
 
+        let (geometry, displayed_data) = state_snapshot
+            .base_cache
+            .as_ref()
+            .map(|cache| (cache.geometry.clone(), cache.displayed_data.clone()))
+            .ok_or_else(displayed_geometry_unavailable)?;
         let source_plot = self.inner.prepared.plot();
-        let frame = frame.expect("data/layout refresh must resolve a frame");
         let refreshed_hovered = state_snapshot
             .hovered
             .as_ref()
-            .and_then(|hit| refresh_hit_result(hit, source_plot, &frame.series, geometry));
+            .and_then(|hit| refresh_hit_result(hit, source_plot, &displayed_data, &geometry));
         let refreshed_selected = state_snapshot
             .selected
             .iter()
-            .filter_map(|hit| refresh_hit_result(hit, source_plot, &frame.series, geometry))
+            .filter_map(|hit| refresh_hit_result(hit, source_plot, &displayed_data, &geometry))
             .collect::<Vec<_>>();
         let (refreshed_tooltip, refreshed_tooltip_source) =
             if state_snapshot.tooltip_source == Some(TooltipSource::Hover) {
@@ -1742,6 +1942,30 @@ impl InteractivePlotSession {
             .clone();
         let key = build_frame_key(self.inner.prepared.plot(), &state);
         self.ensure_geometry(&key, None)
+    }
+
+    fn displayed_geometry(&self) -> Result<GeometrySnapshot> {
+        self.inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .base_cache
+            .as_ref()
+            .map(|cache| cache.geometry.clone())
+            .ok_or_else(displayed_geometry_unavailable)
+    }
+
+    fn interaction_geometry(&self) -> Result<GeometrySnapshot> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        state
+            .base_cache
+            .as_ref()
+            .map(|cache| cache.geometry.with_bounds(state.visible_bounds))
+            .ok_or_else(displayed_geometry_unavailable)
     }
 
     fn mark_dirty(&self, domain: DirtyDomain) {
@@ -1895,22 +2119,42 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
         let zoom_level = zoom_level.clamp(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL);
-        let width = clamp_visible_width(state.base_bounds.width() / zoom_level, state.base_bounds);
-        let height =
-            clamp_visible_height(state.base_bounds.height() / zoom_level, state.base_bounds);
-        let center = ViewportPoint::new(
-            state.base_bounds.center().x + pan_x,
-            state.base_bounds.center().y + pan_y,
+        let plot = self.inner.prepared.plot();
+        let normalized_half_span = 0.5 / zoom_level;
+        let next_visible = DataBounds::from_limits(
+            plot.layout.x_scale.inverse_normalized_position(
+                0.5 - normalized_half_span,
+                state.base_bounds.x_min,
+                state.base_bounds.x_max,
+            ) + pan_x,
+            plot.layout.x_scale.inverse_normalized_position(
+                0.5 + normalized_half_span,
+                state.base_bounds.x_min,
+                state.base_bounds.x_max,
+            ) + pan_x,
+            plot.layout.y_scale.inverse_normalized_position(
+                0.5 - normalized_half_span,
+                state.base_bounds.y_min,
+                state.base_bounds.y_max,
+            ) + pan_y,
+            plot.layout.y_scale.inverse_normalized_position(
+                0.5 + normalized_half_span,
+                state.base_bounds.y_min,
+                state.base_bounds.y_max,
+            ) + pan_y,
         );
-        let next_visible = DataBounds::with_center_size(center, width, height);
         if (state.zoom_level - zoom_level).abs() < f64::EPSILON
             && (state.pan_offset.x - pan_x).abs() < f64::EPSILON
             && (state.pan_offset.y - pan_y).abs() < f64::EPSILON
         {
             return;
         }
-        state.visible_bounds = next_visible;
-        sync_legacy_viewport_fields(&mut state);
+        set_visible_bounds(
+            &mut state,
+            next_visible,
+            &plot.layout.x_scale,
+            &plot.layout.y_scale,
+        );
         drop(state);
         self.mark_dirty(DirtyDomain::Data);
         self.mark_dirty(DirtyDomain::Overlay);
@@ -1952,14 +2196,8 @@ fn compute_data_bounds_from_frame(plot: &Plot, frame: &ResolvedFrame<'_>) -> Res
     let (mut x_min, mut x_max, mut y_min, mut y_max) =
         plot.calculate_data_bounds_from_resolved(&frame.series)?;
 
-    if (x_max - x_min).abs() < f64::EPSILON {
-        x_min -= 1.0;
-        x_max += 1.0;
-    }
-    if (y_max - y_min).abs() < f64::EPSILON {
-        y_min -= 1.0;
-        y_max += 1.0;
-    }
+    (x_min, x_max) = expand_degenerate_range(x_min, x_max, &plot.layout.x_scale);
+    (y_min, y_max) = expand_degenerate_range(y_min, y_max, &plot.layout.y_scale);
 
     Ok(DataBounds::from_limits(x_min, x_max, y_min, y_max))
 }
@@ -1978,49 +2216,112 @@ fn visible_bounds(state: &SessionState) -> DataBounds {
 }
 
 fn bounds_close(a: DataBounds, b: DataBounds) -> bool {
-    (a.x_min - b.x_min).abs() <= VIEWPORT_EPSILON
-        && (a.x_max - b.x_max).abs() <= VIEWPORT_EPSILON
-        && (a.y_min - b.y_min).abs() <= VIEWPORT_EPSILON
-        && (a.y_max - b.y_max).abs() <= VIEWPORT_EPSILON
+    axis_bounds_close((a.x_min, a.x_max), (b.x_min, b.x_max))
+        && axis_bounds_close((a.y_min, a.y_max), (b.y_min, b.y_max))
 }
 
-fn clamp_visible_width(width: f64, base_bounds: DataBounds) -> f64 {
-    let direction = direction_for_span(width, base_bounds.width());
-    let base_width = base_bounds.width_abs().max(VIEWPORT_EPSILON);
-    width
+fn axis_bounds_close(a: (f64, f64), b: (f64, f64)) -> bool {
+    let tolerance = (a.1 - a.0).abs().max((b.1 - b.0).abs()) * 1e-12;
+    (a.0 == b.0 || (a.0 - b.0).abs() <= tolerance) && (a.1 == b.1 || (a.1 - b.1).abs() <= tolerance)
+}
+
+fn bounds_have_extent(bounds: DataBounds) -> bool {
+    bounds.x_min.is_finite()
+        && bounds.x_max.is_finite()
+        && bounds.y_min.is_finite()
+        && bounds.y_max.is_finite()
+        && bounds.x_min != bounds.x_max
+        && bounds.y_min != bounds.y_max
+}
+
+fn normalize_axis_bounds(
+    bounds: (f64, f64),
+    base_bounds: (f64, f64),
+    scale: &AxisScale,
+) -> (f64, f64) {
+    let start = scale.normalized_position(bounds.0, base_bounds.0, base_bounds.1);
+    let end = scale.normalized_position(bounds.1, base_bounds.0, base_bounds.1);
+    let center = (start + end) * 0.5;
+    let direction = direction_for_span(end - start, 1.0);
+    let span = (end - start)
         .abs()
-        .clamp(base_width / MAX_ZOOM_LEVEL, base_width / MIN_ZOOM_LEVEL)
-        * direction
+        .clamp(1.0 / MAX_ZOOM_LEVEL, 1.0 / MIN_ZOOM_LEVEL)
+        * direction;
+    (
+        scale.inverse_normalized_position(center - span * 0.5, base_bounds.0, base_bounds.1),
+        scale.inverse_normalized_position(center + span * 0.5, base_bounds.0, base_bounds.1),
+    )
 }
 
-fn clamp_visible_height(height: f64, base_bounds: DataBounds) -> f64 {
-    let direction = direction_for_span(height, base_bounds.height());
-    let base_height = base_bounds.height_abs().max(VIEWPORT_EPSILON);
-    height
-        .abs()
-        .clamp(base_height / MAX_ZOOM_LEVEL, base_height / MIN_ZOOM_LEVEL)
-        * direction
+fn zoom_axis_bounds(
+    bounds: (f64, f64),
+    base_bounds: (f64, f64),
+    scale: &AxisScale,
+    factor: f64,
+    anchor: f64,
+) -> (f64, f64) {
+    let start = scale.normalized_position(bounds.0, base_bounds.0, base_bounds.1);
+    let end = scale.normalized_position(bounds.1, base_bounds.0, base_bounds.1);
+    let current_span = end - start;
+    let direction = direction_for_span(current_span, 1.0);
+    let next_span =
+        (current_span.abs() / factor).clamp(1.0 / MAX_ZOOM_LEVEL, 1.0 / MIN_ZOOM_LEVEL) * direction;
+    let anchor_position = start + anchor * current_span;
+    (
+        scale.inverse_normalized_position(
+            anchor_position - anchor * next_span,
+            base_bounds.0,
+            base_bounds.1,
+        ),
+        scale.inverse_normalized_position(
+            anchor_position + (1.0 - anchor) * next_span,
+            base_bounds.0,
+            base_bounds.1,
+        ),
+    )
 }
 
-fn normalize_visible_bounds(bounds: DataBounds, base_bounds: DataBounds) -> DataBounds {
-    let center = bounds.center();
-    let width = clamp_visible_width(
-        signed_span_with_min_magnitude(bounds.width(), VIEWPORT_EPSILON),
-        base_bounds,
+fn normalize_visible_bounds(
+    bounds: DataBounds,
+    base_bounds: DataBounds,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> DataBounds {
+    let x = normalize_axis_bounds(
+        (bounds.x_min, bounds.x_max),
+        (base_bounds.x_min, base_bounds.x_max),
+        x_scale,
     );
-    let height = clamp_visible_height(
-        signed_span_with_min_magnitude(bounds.height(), VIEWPORT_EPSILON),
-        base_bounds,
+    let y = normalize_axis_bounds(
+        (bounds.y_min, bounds.y_max),
+        (base_bounds.y_min, base_bounds.y_max),
+        y_scale,
     );
-    DataBounds::with_center_size(center, width, height)
+    DataBounds::from_limits(x.0, x.1, y.0, y.1)
 }
 
 fn legacy_viewport_metrics(
     base_bounds: DataBounds,
     visible_bounds: DataBounds,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
 ) -> (f64, ViewportPoint) {
-    let zoom_x = base_bounds.width_abs() / visible_bounds.width_abs().max(VIEWPORT_EPSILON);
-    let zoom_y = base_bounds.height_abs() / visible_bounds.height_abs().max(VIEWPORT_EPSILON);
+    let x_span =
+        x_scale.normalized_position(visible_bounds.x_max, base_bounds.x_min, base_bounds.x_max)
+            - x_scale.normalized_position(
+                visible_bounds.x_min,
+                base_bounds.x_min,
+                base_bounds.x_max,
+            );
+    let y_span =
+        y_scale.normalized_position(visible_bounds.y_max, base_bounds.y_min, base_bounds.y_max)
+            - y_scale.normalized_position(
+                visible_bounds.y_min,
+                base_bounds.y_min,
+                base_bounds.y_max,
+            );
+    let zoom_x = x_span.abs().max(VIEWPORT_EPSILON).recip();
+    let zoom_y = y_span.abs().max(VIEWPORT_EPSILON).recip();
     let zoom_level = (zoom_x * zoom_y)
         .abs()
         .sqrt()
@@ -2034,15 +2335,21 @@ fn legacy_viewport_metrics(
     )
 }
 
-fn sync_legacy_viewport_fields(state: &mut SessionState) {
-    let (zoom_level, pan_offset) = legacy_viewport_metrics(state.base_bounds, state.visible_bounds);
+fn sync_legacy_viewport_fields(state: &mut SessionState, x_scale: &AxisScale, y_scale: &AxisScale) {
+    let (zoom_level, pan_offset) =
+        legacy_viewport_metrics(state.base_bounds, state.visible_bounds, x_scale, y_scale);
     state.zoom_level = zoom_level;
     state.pan_offset = pan_offset;
 }
 
-fn set_visible_bounds(state: &mut SessionState, bounds: DataBounds) {
-    state.visible_bounds = normalize_visible_bounds(bounds, state.base_bounds);
-    sync_legacy_viewport_fields(state);
+fn set_visible_bounds(
+    state: &mut SessionState,
+    bounds: DataBounds,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) {
+    state.visible_bounds = normalize_visible_bounds(bounds, state.base_bounds, x_scale, y_scale);
+    sync_legacy_viewport_fields(state, x_scale, y_scale);
 }
 
 fn direction_for_span(span: f64, fallback: f64) -> f64 {
@@ -2051,11 +2358,6 @@ fn direction_for_span(span: f64, fallback: f64) -> f64 {
     } else {
         1.0
     }
-}
-
-fn signed_span_with_min_magnitude(span: f64, min_magnitude: f64) -> f64 {
-    let direction = if span < 0.0 { -1.0 } else { 1.0 };
-    span.abs().max(min_magnitude) * direction
 }
 
 fn data_bounds_to_viewport_rect(bounds: DataBounds) -> ViewportRect {
@@ -2072,30 +2374,28 @@ fn plot_area_to_viewport_rect(plot_area: tiny_skia::Rect) -> ViewportRect {
     }
 }
 
-fn screen_to_data(
-    bounds: DataBounds,
-    plot_area: tiny_skia::Rect,
-    position_px: ViewportPoint,
-) -> ViewportPoint {
-    let (normalized_x, normalized_y) = screen_to_normalized(plot_area, position_px);
-    ViewportPoint::new(
-        bounds.x_min + bounds.width() * normalized_x,
-        bounds.y_max - bounds.height() * normalized_y,
-    )
+fn value_in_bounds(value: f64, bounds: (f64, f64)) -> bool {
+    value >= bounds.0.min(bounds.1) && value <= bounds.0.max(bounds.1)
 }
 
-fn screen_to_normalized(plot_area: tiny_skia::Rect, position_px: ViewportPoint) -> (f64, f64) {
-    let left = plot_area.left() as f64;
-    let right = plot_area.right() as f64;
-    let top = plot_area.top() as f64;
-    let bottom = plot_area.bottom() as f64;
-    let clamped_x = position_px.x.clamp(left, right);
-    let clamped_y = position_px.y.clamp(top, bottom);
-    let width = f64::from(plot_area.width()).max(1.0);
-    let height = f64::from(plot_area.height()).max(1.0);
-    (
-        ((clamped_x - left) / width).clamp(0.0, 1.0),
-        ((clamped_y - top) / height).clamp(0.0, 1.0),
+fn clamp_to_bounds(value: f64, bounds: (f64, f64)) -> f64 {
+    value.clamp(bounds.0.min(bounds.1), bounds.0.max(bounds.1))
+}
+
+fn require_finite_point(point: ViewportPoint, label: &str) -> Result<()> {
+    if point.x.is_finite() && point.y.is_finite() {
+        Ok(())
+    } else {
+        Err(PlottingError::InvalidInput(format!(
+            "{label} must contain finite coordinates"
+        )))
+    }
+}
+
+fn displayed_geometry_unavailable() -> PlottingError {
+    PlottingError::InvalidInput(
+        "interactive coordinate conversion is unavailable before a base frame is displayed"
+            .to_string(),
     )
 }
 
@@ -2148,13 +2448,21 @@ fn geometry_snapshot_for_state(
         plot_area: layout.plot_area_rect,
         x_bounds: (visible.x_min, visible.x_max),
         y_bounds: (visible.y_min, visible.y_max),
+        x_scale: plot.layout.x_scale.clone(),
+        y_scale: plot.layout.y_scale.clone(),
+        transform: CoordinateTransform::new(
+            visible.x_min..visible.x_max,
+            visible.y_min..visible.y_max,
+            layout.plot_area_rect.left()..layout.plot_area_rect.right(),
+            layout.plot_area_rect.top()..layout.plot_area_rect.bottom(),
+        ),
     })
 }
 
 fn refresh_hit_result(
     hit: &HitResult,
     plot: &Plot,
-    resolved_series: &[ResolvedSeries<'_>],
+    displayed_data: &DisplayedFrameData,
     geometry: &GeometrySnapshot,
 ) -> Option<HitResult> {
     match hit {
@@ -2164,38 +2472,17 @@ fn refresh_hit_result(
             distance_px,
             ..
         } => {
-            let series = plot.series_mgr.series.get(*series_index)?;
-            let resolved = resolved_series.get(*series_index)?;
-            let (x_val, y_val) = match (&series.series_type, resolved) {
-                (
-                    SeriesType::Line { .. }
-                    | SeriesType::Scatter { .. }
-                    | SeriesType::ErrorBars { .. }
-                    | SeriesType::ErrorBarsXY { .. },
-                    ResolvedSeries::Line { x, y }
-                    | ResolvedSeries::Scatter { x, y }
-                    | ResolvedSeries::ErrorBars { x, y, .. }
-                    | ResolvedSeries::ErrorBarsXY { x, y, .. },
-                ) => (*x.get(*point_index)?, *y.get(*point_index)?),
-                _ => return None,
-            };
+            let (x, y) = displayed_data.xy(plot, *series_index)?;
+            let (x_val, y_val) = (*x.get(*point_index)?, *y.get(*point_index)?);
             if !x_val.is_finite() || !y_val.is_finite() {
                 return None;
             }
-            let (screen_x, screen_y) = map_data_to_pixels(
-                x_val,
-                y_val,
-                geometry.x_bounds.0,
-                geometry.x_bounds.1,
-                geometry.y_bounds.0,
-                geometry.y_bounds.1,
-                geometry.plot_area,
-            );
+            let screen_position = geometry.data_to_screen(ViewportPoint::new(x_val, y_val));
 
             Some(HitResult::SeriesPoint {
                 series_index: *series_index,
                 point_index: *point_index,
-                screen_position: ViewportPoint::new(screen_x as f64, screen_y as f64),
+                screen_position,
                 data_position: ViewportPoint::new(x_val, y_val),
                 distance_px: *distance_px,
             })
@@ -2219,32 +2506,16 @@ fn refresh_hit_result(
             }
 
             let ((x1, x2), (y1, y2)) = data.cell_data_bounds(*row, *col);
-            let (sx1, sy1) = map_data_to_pixels(
-                x1,
-                y2,
-                geometry.x_bounds.0,
-                geometry.x_bounds.1,
-                geometry.y_bounds.0,
-                geometry.y_bounds.1,
-                geometry.plot_area,
-            );
-            let (sx2, sy2) = map_data_to_pixels(
-                x2,
-                y1,
-                geometry.x_bounds.0,
-                geometry.x_bounds.1,
-                geometry.y_bounds.0,
-                geometry.y_bounds.1,
-                geometry.plot_area,
-            );
+            let first = geometry.data_to_screen(ViewportPoint::new(x1, y2));
+            let second = geometry.data_to_screen(ViewportPoint::new(x2, y1));
             Some(HitResult::HeatmapCell {
                 series_index: *series_index,
                 row: *row,
                 col: *col,
                 value,
                 screen_rect: ViewportRect {
-                    min: ViewportPoint::new(sx1.min(sx2) as f64, sy1.min(sy2) as f64),
-                    max: ViewportPoint::new(sx1.max(sx2) as f64, sy1.max(sy2) as f64),
+                    min: ViewportPoint::new(first.x.min(second.x), first.y.min(second.y)),
+                    max: ViewportPoint::new(first.x.max(second.x), first.y.max(second.y)),
                 },
             })
         }
@@ -2324,3 +2595,30 @@ mod helpers;
 #[cfg(test)]
 mod tests;
 use self::helpers::*;
+
+#[cfg(test)]
+use crate::render::skia::map_data_to_pixels;
+
+#[cfg(test)]
+fn screen_to_data(
+    bounds: DataBounds,
+    plot_area: tiny_skia::Rect,
+    position_px: ViewportPoint,
+) -> ViewportPoint {
+    let position_px = ViewportPoint::new(
+        position_px
+            .x
+            .clamp(plot_area.left() as f64, plot_area.right() as f64),
+        position_px
+            .y
+            .clamp(plot_area.top() as f64, plot_area.bottom() as f64),
+    );
+    let transform = CoordinateTransform::new(
+        bounds.x_min..bounds.x_max,
+        bounds.y_min..bounds.y_max,
+        plot_area.left()..plot_area.right(),
+        plot_area.top()..plot_area.bottom(),
+    );
+    let (x, y) = transform.screen_to_data(position_px.x as f32, position_px.y as f32);
+    ViewportPoint::new(x, y)
+}

@@ -893,15 +893,14 @@ mod platform_impl {
             &self,
             cursor_position_px: ViewportPoint,
         ) -> Result<()> {
-            let snapshot = self.session.viewport_snapshot()?;
-            let cursor_data_position = cursor_data_position(
-                snapshot.visible_bounds,
-                snapshot.plot_area,
-                cursor_position_px,
-            )
-            .ok_or_else(|| {
-                PlottingError::InvalidInput("cursor is outside the plotted data area".to_string())
-            })?;
+            let cursor_data_position = self
+                .session
+                .screen_to_data(cursor_position_px)?
+                .ok_or_else(|| {
+                    PlottingError::InvalidInput(
+                        "cursor is outside the plotted data area".to_string(),
+                    )
+                })?;
             self.copy_text_to_clipboard(&format!(
                 "x={:.6}, y={:.6}",
                 cursor_data_position.x, cursor_data_position.y
@@ -1195,7 +1194,7 @@ mod platform_impl {
     mod tests {
         use super::*;
         use gpui::{Modifiers, MouseButton, TestAppContext};
-        use ruviz::{data::Observable, prelude::Plot};
+        use ruviz::{axes::AxisScale, data::Observable, prelude::Plot};
 
         #[test]
         fn test_rgba_to_bgra_conversion() {
@@ -1572,21 +1571,37 @@ mod platform_impl {
         }
 
         #[test]
-        fn test_cursor_data_position_maps_plot_area() {
-            let visible = ViewportRect::from_points(
-                ViewportPoint::new(0.0, 0.0),
-                ViewportPoint::new(10.0, 20.0),
+        fn test_cursor_data_position_uses_core_scaled_conversion() {
+            let plot: Plot = Plot::new()
+                .line(&[1.0, 100.0], &[-100.0, 100.0])
+                .xscale(AxisScale::Log)
+                .yscale(AxisScale::symlog(1.0))
+                .xlim(1.0, 100.0)
+                .ylim(-100.0, 100.0)
+                .into();
+            let session = plot.prepare_interactive();
+            session
+                .render_to_surface(SurfaceTarget {
+                    size_px: (320, 240),
+                    scale_factor: 1.0,
+                    time_seconds: 0.0,
+                })
+                .expect("cursor conversion frame should render");
+            let plot_area = session
+                .viewport_snapshot()
+                .expect("displayed viewport should be available")
+                .plot_area;
+            let cursor = ViewportPoint::new(
+                (plot_area.min.x + plot_area.max.x) * 0.5,
+                (plot_area.min.y + plot_area.max.y) * 0.5,
             );
-            let plot_area = ViewportRect::from_points(
-                ViewportPoint::new(100.0, 50.0),
-                ViewportPoint::new(300.0, 250.0),
-            );
-            let cursor = ViewportPoint::new(200.0, 150.0);
 
-            let data = cursor_data_position(visible, plot_area, cursor)
+            let data = session
+                .screen_to_data(cursor)
+                .expect("cursor conversion should succeed")
                 .expect("cursor inside plot area should map to data coordinates");
-            assert!((data.x - 5.0).abs() < 1e-6);
-            assert!((data.y - 10.0).abs() < 1e-6);
+            assert!((data.x - 10.0).abs() < 1e-6);
+            assert!(data.y.abs() < 1e-6);
         }
 
         #[test]

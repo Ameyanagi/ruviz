@@ -2099,6 +2099,19 @@ fn test_log_minor_ticks_are_generated_between_decades_by_default() {
 }
 
 #[test]
+fn test_sub_epsilon_log_minor_ticks_are_not_deduplicated_as_linear_values() {
+    let min = f64::EPSILON / 1024.0;
+    let max = f64::EPSILON / 8.0;
+    let major_ticks = crate::axes::generate_log_ticks(min, max, 6);
+    let minor_ticks =
+        Plot::minor_tick_values_for_scale(&major_ticks, min, max, &crate::axes::AxisScale::Log, 4);
+
+    assert!(!minor_ticks.is_empty());
+    assert!(minor_ticks.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(minor_ticks.iter().all(|tick| *tick >= min && *tick <= max));
+}
+
+#[test]
 fn test_log_axis_raster_draws_minor_tick_marks() {
     let plot: Plot = Plot::new()
         .size_px(480, 360)

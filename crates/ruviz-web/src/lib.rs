@@ -691,6 +691,16 @@ mod wasm {
             self.update_plot(|plot| plot.size_px(width, height));
         }
 
+        /// Sets the x-axis limits. Inverted bounds keep a descending axis.
+        pub fn xlim(&mut self, min: f64, max: f64) {
+            self.update_plot(|plot| plot.xlim(min, max));
+        }
+
+        /// Sets the y-axis limits. Inverted bounds keep a descending axis.
+        pub fn ylim(&mut self, min: f64, max: f64) {
+            self.update_plot(|plot| plot.ylim(min, max));
+        }
+
         pub fn ticks(&mut self, enabled: bool) {
             self.update_plot(|plot| plot.ticks(enabled));
         }
@@ -894,6 +904,15 @@ mod wasm {
             self.drag = None;
             self.mark_frame_dirty();
             Ok(())
+        }
+
+        /// Maps a backing-surface pixel to displayed data coordinates.
+        fn data_at(&self, x: f64, y: f64) -> Result<(f64, f64), JsValue> {
+            let point = self
+                .session()?
+                .screen_to_data_clamped(ViewportPoint::new(x, y))
+                .map_err(js_err)?;
+            Ok((point.x, point.y))
         }
 
         fn pointer_down(&mut self, x: f64, y: f64, button: i16) -> Result<(), JsValue> {
@@ -1190,6 +1209,11 @@ mod wasm {
         pub fn reset_view(&mut self) -> Result<(), JsValue> {
             self.browser.reset_view()?;
             self.render()
+        }
+
+        /// Returns the data x-coordinate under a backing-surface pixel.
+        pub fn data_x_at(&self, x: f64, y: f64) -> Result<f64, JsValue> {
+            Ok(self.browser.data_at(x, y)?.0)
         }
 
         pub fn render(&mut self) -> Result<(), JsValue> {

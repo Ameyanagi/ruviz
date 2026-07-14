@@ -209,16 +209,8 @@ pub(super) fn apply_streaming_draw_ops(
     for op in draw_ops {
         let mut mapped_points: Vec<(f32, f32)> = Vec::with_capacity(op.points.len());
         for &(x, y) in &op.points {
-            let (px, py) = map_data_to_pixels(
-                x,
-                y,
-                geometry.x_bounds.0,
-                geometry.x_bounds.1,
-                geometry.y_bounds.0,
-                geometry.y_bounds.1,
-                geometry.plot_area,
-            );
-            mapped_points.push((px, py));
+            let point = geometry.data_to_screen(ViewportPoint::new(x, y));
+            mapped_points.push((point.x as f32, point.y as f32));
         }
 
         if op.kind == StreamingDrawKind::Line {
@@ -265,16 +257,8 @@ pub(super) fn draw_incremental_polyline(
     let mut path = tiny_skia::PathBuilder::new();
 
     if let Some((x, y)) = previous_point {
-        let (px, py) = map_data_to_pixels(
-            x,
-            y,
-            geometry.x_bounds.0,
-            geometry.x_bounds.1,
-            geometry.y_bounds.0,
-            geometry.y_bounds.1,
-            geometry.plot_area,
-        );
-        path.move_to(px, py);
+        let point = geometry.data_to_screen(ViewportPoint::new(x, y));
+        path.move_to(point.x as f32, point.y as f32);
     } else if let Some(&(px, py)) = points.first() {
         path.move_to(px, py);
     } else {
@@ -509,15 +493,21 @@ pub(super) fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
     ((bg * (1.0 - alpha) + fg * alpha) * 255.0) as u8
 }
 
-pub(super) fn draw_hit(pixels: &mut [u8], size_px: (u32, u32), hit: &HitResult, color: Color) {
+pub(super) fn draw_hit(
+    pixels: &mut [u8],
+    size_px: (u32, u32),
+    hit: &HitResult,
+    color: Color,
+    clip: Option<ViewportRect>,
+) {
     match hit {
         HitResult::SeriesPoint {
             screen_position, ..
         } => {
-            draw_circle(pixels, size_px, *screen_position, 6.0, color);
+            draw_circle_clipped(pixels, size_px, *screen_position, 6.0, color, clip);
         }
         HitResult::HeatmapCell { screen_rect, .. } => {
-            draw_rect(pixels, size_px, *screen_rect, color)
+            draw_rect_clipped(pixels, size_px, *screen_rect, color, clip)
         }
         HitResult::None => {}
     }
@@ -529,6 +519,17 @@ pub(super) fn draw_circle(
     center: ViewportPoint,
     radius: f64,
     color: Color,
+) {
+    draw_circle_clipped(pixels, size_px, center, radius, color, None);
+}
+
+fn draw_circle_clipped(
+    pixels: &mut [u8],
+    size_px: (u32, u32),
+    center: ViewportPoint,
+    radius: f64,
+    color: Color,
+    clip: Option<ViewportRect>,
 ) {
     let width = size_px.0 as i32;
     let height = size_px.1 as i32;
@@ -546,6 +547,14 @@ pub(super) fn draw_circle(
             if x < 0 || y < 0 || x >= width || y >= height {
                 continue;
             }
+            if clip.is_some_and(|clip| {
+                f64::from(x) < clip.min.x
+                    || f64::from(x) > clip.max.x
+                    || f64::from(y) < clip.min.y
+                    || f64::from(y) > clip.max.y
+            }) {
+                continue;
+            }
             let index = ((y * width + x) * 4) as usize;
             let alpha = color.a as f32 / 255.0;
             pixels[index] = blend_channel(pixels[index], color.r, alpha);
@@ -557,6 +566,16 @@ pub(super) fn draw_circle(
 }
 
 pub(super) fn draw_rect(pixels: &mut [u8], size_px: (u32, u32), rect: ViewportRect, color: Color) {
+    draw_rect_clipped(pixels, size_px, rect, color, None);
+}
+
+fn draw_rect_clipped(
+    pixels: &mut [u8],
+    size_px: (u32, u32),
+    rect: ViewportRect,
+    color: Color,
+    clip: Option<ViewportRect>,
+) {
     let width = size_px.0 as i32;
     let height = size_px.1 as i32;
     let x1 = rect.min.x.round() as i32;
@@ -565,8 +584,13 @@ pub(super) fn draw_rect(pixels: &mut [u8], size_px: (u32, u32), rect: ViewportRe
     let y2 = rect.max.y.round() as i32;
     let alpha = color.a as f32 / 255.0;
 
-    for y in y1.max(0)..y2.min(height) {
-        for x in x1.max(0)..x2.min(width) {
+    let clip_x1 = clip.map_or(0, |clip| clip.min.x.ceil() as i32);
+    let clip_y1 = clip.map_or(0, |clip| clip.min.y.ceil() as i32);
+    let clip_x2 = clip.map_or(width, |clip| clip.max.x.floor() as i32 + 1);
+    let clip_y2 = clip.map_or(height, |clip| clip.max.y.floor() as i32 + 1);
+
+    for y in y1.max(0).max(clip_y1)..y2.min(height).min(clip_y2) {
+        for x in x1.max(0).max(clip_x1)..x2.min(width).min(clip_x2) {
             let index = ((y * width + x) * 4) as usize;
             pixels[index] = blend_channel(pixels[index], color.r, alpha);
             pixels[index + 1] = blend_channel(pixels[index + 1], color.g, alpha);
