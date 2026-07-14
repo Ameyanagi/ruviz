@@ -1,5 +1,5 @@
 use super::*;
-use crate::axes::AxisScale;
+use crate::{axes::AxisScale, render::text_anchor::annotation_text_layout};
 
 struct AnnotationTransform<'a> {
     plot_area: Rect,
@@ -134,11 +134,13 @@ impl SkiaRenderer {
         dpi: f32,
         x_scale: &AxisScale,
         y_scale: &AxisScale,
-        mut should_draw: F,
+        should_draw: F,
     ) -> Result<()>
     where
         F: FnMut(&crate::core::Annotation) -> bool,
     {
+        let mut should_draw = should_draw;
+
         let transform = AnnotationTransform {
             plot_area,
             x_min,
@@ -214,7 +216,7 @@ impl SkiaRenderer {
         }
     }
 
-    /// Draw a text annotation at data coordinates
+    /// Draw a text annotation at data coordinates.
     fn draw_annotation_text(
         &mut self,
         x: f64,
@@ -225,12 +227,177 @@ impl SkiaRenderer {
         dpi: f32,
     ) -> Result<()> {
         let (px, py) = transform.point(x, y);
+        let render_scale = RenderScale::new(dpi);
+        let font_size_px = render_scale.points_to_pixels(style.font_size.max(0.1));
+        let padding_px = render_scale.points_to_pixels(style.padding.max(0.0));
+        let border_width_px = render_scale.points_to_pixels(style.border_width.max(0.0));
+        let text_visible = style.color.a > 0 && !text.trim().is_empty();
+        let background_visible = style.background.is_some_and(|color| color.a > 0);
+        let border_visible =
+            border_width_px > 0.0 && style.border_color.is_some_and(|color| color.a > 0);
+        if !text_visible && !background_visible && !border_visible {
+            return Ok(());
+        }
+        let font = FontConfig::new(self.font_config.family.clone(), font_size_px)
+            .weight(FontWeight::Normal);
 
-        // Convert font size from points to pixels
-        let font_size_px = pt_to_px(style.font_size, dpi);
+        #[cfg(feature = "typst-math")]
+        let mut typst_rendered = None;
+        let metrics = if text.trim().is_empty() {
+            crate::render::text_anchor::TextPlacementMetrics::new(0.0, font_size_px, font_size_px)
+        } else {
+            match self.text_engine_mode {
+                TextEngineMode::Plain => self.text_renderer.measure_text_placement(text, &font)?,
+                #[cfg(feature = "typst-math")]
+                TextEngineMode::Typst => {
+                    let multiline_text = typst_text::with_explicit_line_breaks(text);
+                    let weighted_text = typst_text::with_font_weight(&multiline_text, font.weight);
+                    let aligned_text =
+                        typst_text::with_horizontal_alignment(&weighted_text, style.align);
+                    let rendered = typst_text::render_raster_with_font_family(
+                        &aligned_text,
+                        self.typst_size_pt(font_size_px),
+                        style.color,
+                        0.0,
+                        &font.family,
+                        "Skia annotation text rendering",
+                    )?;
+                    let metrics = crate::render::text_anchor::TextPlacementMetrics::new(
+                        rendered.width,
+                        rendered.height,
+                        rendered.height,
+                    );
+                    typst_rendered = Some(rendered);
+                    metrics
+                }
+            }
+        };
+        let layout = annotation_text_layout(
+            metrics,
+            style.align,
+            style.valign,
+            padding_px,
+            style.rotation,
+        );
+        let local_to_canvas = Transform::from_rotate(layout.rotation).post_translate(px, py);
 
-        // Draw text at the position (could add background box and rotation in future)
-        self.draw_text(text, px, py, font_size_px, style.color)
+        if (background_visible || border_visible)
+            && let Some(rect) = Rect::from_xywh(
+                layout.box_x,
+                layout.box_y,
+                layout.box_width,
+                layout.box_height,
+            )
+        {
+            let mut path = PathBuilder::new();
+            path.push_rect(rect);
+            if let Some(path) = path.finish() {
+                if background_visible && let Some(background) = style.background {
+                    let mut paint = Paint::default();
+                    paint.set_color(background.to_tiny_skia_color());
+                    paint.anti_alias = true;
+                    self.fill_path_masked(&path, &paint, FillRule::Winding, local_to_canvas, None)?;
+                }
+                if border_visible && let Some(border_color) = style.border_color {
+                    let mut paint = Paint::default();
+                    paint.set_color(border_color.to_tiny_skia_color());
+                    paint.anti_alias = true;
+                    let stroke = Stroke {
+                        width: border_width_px,
+                        ..Stroke::default()
+                    };
+                    self.stroke_path_masked(&path, &paint, &stroke, local_to_canvas, None)?;
+                }
+            }
+        }
+
+        if !text_visible {
+            return Ok(());
+        }
+
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                if layout.rotation.abs() <= f32::EPSILON {
+                    return self.text_renderer.render_text_aligned(
+                        &mut self.pixmap,
+                        text,
+                        px + layout.text_x,
+                        py + layout.text_y,
+                        metrics.width,
+                        style.align,
+                        &font,
+                        style.color,
+                    );
+                }
+
+                let glyph_guard = font_size_px.ceil().max(2.0);
+                let layer_width = (metrics.width + 2.0 * glyph_guard).ceil().max(1.0) as u32;
+                let layer_height = (metrics.height + 2.0 * glyph_guard).ceil().max(1.0) as u32;
+                crate::render::text::validate_text_raster_size(
+                    layer_width,
+                    layer_height,
+                    "Rotated annotation text",
+                )?;
+                let mut layer =
+                    Pixmap::new(layer_width, layer_height).ok_or(PlottingError::RenderError(
+                        "Failed to allocate rotated annotation text layer".to_string(),
+                    ))?;
+                layer.fill(tiny_skia::Color::TRANSPARENT);
+                self.text_renderer.render_text_aligned(
+                    &mut layer,
+                    text,
+                    glyph_guard,
+                    glyph_guard,
+                    metrics.width,
+                    style.align,
+                    &font,
+                    style.color,
+                )?;
+                let text_transform = Transform::from_translate(
+                    layout.text_x - glyph_guard,
+                    layout.text_y - glyph_guard,
+                )
+                .post_rotate(layout.rotation)
+                .post_translate(px, py);
+                let paint = PixmapPaint {
+                    quality: FilterQuality::Bilinear,
+                    ..PixmapPaint::default()
+                };
+                self.pixmap
+                    .draw_pixmap(0, 0, layer.as_ref(), &paint, text_transform, None);
+                Ok(())
+            }
+            #[cfg(feature = "typst-math")]
+            TextEngineMode::Typst => {
+                let rendered = typst_rendered
+                    .take()
+                    .expect("Typst annotation rendering must produce a raster");
+                if layout.rotation.abs() <= f32::EPSILON {
+                    self.draw_typst_raster(&rendered, px + layout.text_x, py + layout.text_y);
+                    return Ok(());
+                }
+
+                let scale_x = rendered.pixmap.width().max(1) as f32 / rendered.width.max(1e-6);
+                let scale_y = rendered.pixmap.height().max(1) as f32 / rendered.height.max(1e-6);
+                let text_transform = Transform::from_scale(1.0 / scale_x, 1.0 / scale_y)
+                    .post_translate(layout.text_x, layout.text_y)
+                    .post_rotate(layout.rotation)
+                    .post_translate(px, py);
+                let paint = PixmapPaint {
+                    quality: FilterQuality::Bilinear,
+                    ..PixmapPaint::default()
+                };
+                self.pixmap.draw_pixmap(
+                    0,
+                    0,
+                    rendered.pixmap.as_ref(),
+                    &paint,
+                    text_transform,
+                    None,
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Draw an arrow annotation

@@ -266,7 +266,7 @@ impl SkiaRenderer {
         Ok(mask)
     }
 
-    fn fill_path_masked(
+    pub(super) fn fill_path_masked(
         &mut self,
         path: &tiny_skia::Path,
         paint: &Paint,
@@ -280,7 +280,7 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    fn stroke_path_masked(
+    pub(super) fn stroke_path_masked(
         &mut self,
         path: &tiny_skia::Path,
         paint: &Paint,

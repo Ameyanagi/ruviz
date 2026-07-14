@@ -47,6 +47,50 @@ fn dark_pixel_bounds(image: &Image) -> Option<(u32, u32, u32, u32)> {
     found.then_some((min_x, min_y, max_x, max_y))
 }
 
+fn red_pixel_positions(image: &Image) -> Vec<(f32, f32)> {
+    let mut positions = Vec::new();
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let pixel = image_pixel_rgba(image, x, y);
+            if pixel[0] > 200 && pixel[1] < 80 && pixel[2] < 80 && pixel[3] > 0 {
+                positions.push((x as f32, y as f32));
+            }
+        }
+    }
+    positions
+}
+
+fn red_dominant_pixel_positions(image: &Image) -> Vec<(f32, f32)> {
+    let mut positions = Vec::new();
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let pixel = image_pixel_rgba(image, x, y);
+            if pixel[3] > 0
+                && pixel[0] > 80
+                && pixel[0] > pixel[1].saturating_add(40)
+                && pixel[0] > pixel[2].saturating_add(40)
+            {
+                positions.push((x as f32, y as f32));
+            }
+        }
+    }
+    positions
+}
+
+fn position_bounds(positions: &[(f32, f32)]) -> (f32, f32, f32, f32) {
+    positions.iter().copied().fold(
+        (
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ),
+        |(min_x, min_y, max_x, max_y), (x, y)| {
+            (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+        },
+    )
+}
+
 fn assert_exact_rgba_pixels(name: &str, reference: &Image, candidate: &Image) {
     assert_eq!(reference.width, candidate.width, "{name} width changed");
     assert_eq!(reference.height, candidate.height, "{name} height changed");
@@ -1041,6 +1085,272 @@ fn test_draw_colorbar_scales_border_width_with_render_dpi() {
         high_darkness > low_darkness * 1.2,
         "colorbar border width should scale with DPI: low_darkness={low_darkness}, high_darkness={high_darkness}"
     );
+}
+
+fn render_text_annotation(text: &str, style: crate::core::TextStyle, dpi: f32) -> Image {
+    render_text_annotation_with_mode(text, style, dpi, TextEngineMode::Plain)
+}
+
+fn render_text_annotation_with_mode(
+    text: &str,
+    style: crate::core::TextStyle,
+    dpi: f32,
+    mode: TextEngineMode,
+) -> Image {
+    let mut renderer = SkiaRenderer::new(320, 320, Theme::light()).unwrap();
+    renderer.set_text_engine_mode(mode);
+    let plot_area = Rect::from_xywh(40.0, 40.0, 240.0, 240.0).unwrap();
+    let annotation = crate::core::Annotation::text_styled(0.5, 0.5, text, style);
+    renderer
+        .draw_annotations_where_scaled(
+            &[annotation],
+            plot_area,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            dpi,
+            &crate::axes::AxisScale::Linear,
+            &crate::axes::AxisScale::Linear,
+            |_| true,
+        )
+        .unwrap();
+    renderer.into_image()
+}
+
+fn multiline_local_x_bounds(image: &Image, rotation: f32) -> [(f32, f32); 2] {
+    let angle = rotation.to_radians();
+    let local: Vec<(f32, f32)> = red_dominant_pixel_positions(image)
+        .into_iter()
+        .map(|(x, y)| {
+            let dx = x - 160.0;
+            let dy = y - 160.0;
+            (
+                dx * angle.cos() - dy * angle.sin(),
+                dx * angle.sin() + dy * angle.cos(),
+            )
+        })
+        .collect();
+    assert!(
+        local.len() > 20,
+        "multiline annotation should render glyphs"
+    );
+    let (min_y, max_y) = local.iter().fold(
+        (f32::INFINITY, f32::NEG_INFINITY),
+        |(min_y, max_y), (_, y)| (min_y.min(*y), max_y.max(*y)),
+    );
+    let split_y = (min_y + max_y) / 2.0;
+    let bounds = |upper: bool| {
+        local.iter().filter(|(_, y)| (*y <= split_y) == upper).fold(
+            (f32::INFINITY, f32::NEG_INFINITY),
+            |(min_x, max_x), (x, _)| (min_x.min(*x), max_x.max(*x)),
+        )
+    };
+    [bounds(true), bounds(false)]
+}
+
+fn assert_multiline_annotation_alignment(
+    mode: TextEngineMode,
+    text: &str,
+    align: crate::core::TextAlign,
+    rotation: f32,
+) {
+    let style = crate::core::TextStyle::default()
+        .font_size(18.0)
+        .color(Color::RED)
+        .padding(0.0)
+        .align(align)
+        .rotation(rotation);
+    let image = render_text_annotation_with_mode(text, style, 72.0, mode);
+    let [wide, short] = multiline_local_x_bounds(&image, rotation);
+    match align {
+        crate::core::TextAlign::Center => assert!(
+            ((wide.0 + wide.1) / 2.0 - (short.0 + short.1) / 2.0).abs() <= 3.0,
+            "center-aligned line centers differ: wide={wide:?}, short={short:?}"
+        ),
+        crate::core::TextAlign::Right => assert!(
+            (wide.1 - short.1).abs() <= 3.0,
+            "right-aligned line edges differ: wide={wide:?}, short={short:?}"
+        ),
+        crate::core::TextAlign::Left => unreachable!("focused helper tests center/right only"),
+    }
+}
+
+#[test]
+fn text_annotation_default_anchor_is_center_middle_and_scales_with_dpi() {
+    let style = crate::core::TextStyle::default()
+        .font_size(12.0)
+        .color(Color::TRANSPARENT)
+        .background(Color::RED)
+        .padding(3.0);
+    let low = render_text_annotation("MMMMMMMM", style.clone(), 72.0);
+    let high = render_text_annotation("MMMMMMMM", style, 144.0);
+    let low_positions = red_pixel_positions(&low);
+    let high_positions = red_pixel_positions(&high);
+    assert!(!low_positions.is_empty());
+    assert!(!high_positions.is_empty());
+    let low_bounds = position_bounds(&low_positions);
+    let high_bounds = position_bounds(&high_positions);
+    let low_width = low_bounds.2 - low_bounds.0 + 1.0;
+    let low_height = low_bounds.3 - low_bounds.1 + 1.0;
+    let high_width = high_bounds.2 - high_bounds.0 + 1.0;
+    let high_height = high_bounds.3 - high_bounds.1 + 1.0;
+
+    assert!(((low_bounds.0 + low_bounds.2) / 2.0 - 160.0).abs() <= 1.0);
+    assert!(((low_bounds.1 + low_bounds.3) / 2.0 - 160.0).abs() <= 1.0);
+    assert!(high_width > low_width * 1.8);
+    assert!(high_height > low_height * 1.8);
+}
+
+#[test]
+fn positive_text_annotation_rotation_is_counter_clockwise() {
+    let style = crate::core::TextStyle::default()
+        .font_size(12.0)
+        .color(Color::TRANSPARENT)
+        .background(Color::RED)
+        .padding(0.0)
+        .rotation(35.0);
+    let image = render_text_annotation("MMMMMMMM", style, 72.0);
+    let positions = red_pixel_positions(&image);
+    assert!(positions.len() > 20);
+    let mean_x = positions.iter().map(|(x, _)| *x).sum::<f32>() / positions.len() as f32;
+    let mean_y = positions.iter().map(|(_, y)| *y).sum::<f32>() / positions.len() as f32;
+    let covariance = positions
+        .iter()
+        .map(|(x, y)| (*x - mean_x) * (*y - mean_y))
+        .sum::<f32>()
+        / positions.len() as f32;
+
+    assert!(
+        covariance < -20.0,
+        "positive counter-clockwise rotation should rise to the right: covariance={covariance}"
+    );
+}
+
+#[test]
+fn rotated_multiline_text_keeps_all_lines_and_decoration() {
+    let text = "first line\nsecond line\nthird line";
+    let base_style = crate::core::TextStyle::default()
+        .font_size(14.0)
+        .color(Color::RED)
+        .background(Color::GREEN)
+        .padding(2.0)
+        .border(Color::BLUE, 1.5);
+    let unrotated = render_text_annotation(text, base_style.clone(), 72.0);
+    let rotated = render_text_annotation(text, base_style.rotation(30.0), 72.0);
+    let unrotated_red = red_dominant_pixel_positions(&unrotated);
+    let rotated_red = red_dominant_pixel_positions(&rotated);
+    let unrotated_bounds = position_bounds(&unrotated_red);
+    let angle = 30.0_f32.to_radians();
+    let (rotated_min_y, rotated_max_y) = rotated_red.iter().fold(
+        (f32::INFINITY, f32::NEG_INFINITY),
+        |(min_y, max_y), (x, y)| {
+            let dx = *x - 160.0;
+            let dy = *y - 160.0;
+            let local_y = dx * angle.sin() + dy * angle.cos();
+            (min_y.min(local_y), max_y.max(local_y))
+        },
+    );
+    let rotated_green = rotated
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[1] > 120 && pixel[0] < 100 && pixel[2] < 100)
+        .count();
+    let rotated_blue = rotated
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[2] > 150 && pixel[0] < 100 && pixel[1] < 100)
+        .count();
+
+    assert!(unrotated_red.len() > 100);
+    assert!(rotated_red.len() > 100);
+    assert!(
+        rotated_max_y - rotated_min_y > (unrotated_bounds.3 - unrotated_bounds.1) * 0.8,
+        "rotated multiline text lost later lines"
+    );
+    assert!(rotated_green > 100);
+    assert!(rotated_blue > 20);
+}
+
+#[test]
+fn plain_multiline_annotation_aligns_each_unequal_width_line_when_rotated_or_unrotated() {
+    for rotation in [0.0, 27.0] {
+        for align in [
+            crate::core::TextAlign::Center,
+            crate::core::TextAlign::Right,
+        ] {
+            assert_multiline_annotation_alignment(
+                TextEngineMode::Plain,
+                "MMMMMMMM\nI",
+                align,
+                rotation,
+            );
+        }
+    }
+}
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn typst_multiline_annotation_aligns_each_unequal_width_line_when_rotated_or_unrotated() {
+    for rotation in [0.0, 27.0] {
+        for align in [
+            crate::core::TextAlign::Center,
+            crate::core::TextAlign::Right,
+        ] {
+            assert_multiline_annotation_alignment(
+                TextEngineMode::Typst,
+                "MMMMMMMM\nI",
+                align,
+                rotation,
+            );
+        }
+    }
+}
+
+#[test]
+fn decorated_empty_and_whitespace_annotations_share_one_line_geometry_without_glyphs() {
+    let style = crate::core::TextStyle::default()
+        .font_size(12.0)
+        .color(Color::TRANSPARENT)
+        .background(Color::RED)
+        .padding(2.0);
+    let empty = render_text_annotation("", style.clone(), 72.0);
+    let whitespace = render_text_annotation(" \t\n ", style, 72.0);
+    assert_exact_rgba_pixels("empty and whitespace decoration", &empty, &whitespace);
+
+    let bounds = position_bounds(&red_pixel_positions(&empty));
+    assert!((bounds.2 - bounds.0 + 1.0 - 4.0).abs() <= 1.0);
+    assert!((bounds.3 - bounds.1 + 1.0 - 16.0).abs() <= 1.0);
+}
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn typst_whitespace_annotation_skips_glyphs_and_matches_plain_decoration() {
+    let style = crate::core::TextStyle::default()
+        .font_size(12.0)
+        .color(Color::BLACK)
+        .background(Color::RED)
+        .padding(2.0);
+    let plain =
+        render_text_annotation_with_mode(" \t\n ", style.clone(), 72.0, TextEngineMode::Plain);
+    let typst = render_text_annotation_with_mode(" \t\n ", style, 72.0, TextEngineMode::Typst);
+    assert_exact_rgba_pixels("plain and Typst whitespace decoration", &plain, &typst);
+}
+
+#[test]
+fn translucent_text_annotation_background_uses_source_over_compositing() {
+    let style = crate::core::TextStyle::default()
+        .font_size(12.0)
+        .color(Color::TRANSPARENT)
+        .background(Color::new_rgba(255, 0, 0, 128))
+        .padding(4.0);
+    let image = render_text_annotation("MMMMMMMM", style, 72.0);
+    let pixel = image_pixel_rgba(&image, 160, 160);
+
+    assert!(pixel[0] >= 250);
+    assert!((120..=135).contains(&pixel[1]));
+    assert!((120..=135).contains(&pixel[2]));
+    assert_eq!(pixel[3], 255);
 }
 
 #[test]

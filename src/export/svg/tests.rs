@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::TextVAlign;
 
 fn svg_attr_value<'a>(line: &'a str, attr: &str) -> &'a str {
     let marker = format!(r#"{}=""#, attr);
@@ -687,6 +688,291 @@ fn test_typst_tick_labels_follow_plain_anchor_math() {
         (translates[1].0 - expected_y).abs() <= 0.6
             && (translates[1].1 - expected_y_top).abs() <= 0.6
     );
+}
+
+#[test]
+fn styled_text_defaults_to_center_middle_and_scales_decoration() {
+    let render = |dpi| {
+        let mut renderer = SvgRenderer::new(240.0, 160.0);
+        renderer.set_render_scale(RenderScale::new(dpi));
+        let style = TextStyle {
+            font_size: 12.0,
+            color: Color::BLACK,
+            align: TextAlign::Center,
+            valign: TextVAlign::Middle,
+            rotation: 0.0,
+            background: Some(Color::new_rgba(255, 0, 0, 128)),
+            padding: 3.0,
+            border_color: Some(Color::BLUE),
+            border_width: 1.5,
+        };
+        renderer
+            .draw_styled_text("Anchor", 120.0, 80.0, &FontFamily::SansSerif, &style)
+            .unwrap();
+        renderer.to_svg_string()
+    };
+
+    let low = render(72.0);
+    let high = render(144.0);
+    let low_rect = svg_element_lines(&low, "rect")
+        .into_iter()
+        .find(|line| line.contains("rgba(255,0,0,0.502)"))
+        .unwrap();
+    let high_rect = svg_element_lines(&high, "rect")
+        .into_iter()
+        .find(|line| line.contains("rgba(255,0,0,0.502)"))
+        .unwrap();
+
+    let low_x = parse_svg_attr(low_rect, "x");
+    let low_y = parse_svg_attr(low_rect, "y");
+    let low_width = parse_svg_attr(low_rect, "width");
+    let low_height = parse_svg_attr(low_rect, "height");
+    let high_width = parse_svg_attr(high_rect, "width");
+    let high_height = parse_svg_attr(high_rect, "height");
+    assert_approx_eq(low_x + low_width / 2.0, 0.0);
+    assert_approx_eq(low_y + low_height / 2.0, 0.0);
+    assert!(high_width > low_width * 1.8);
+    assert!(high_height > low_height * 1.8);
+    assert_eq!(svg_attr_value(low_rect, "stroke-width"), "1.50");
+    assert_eq!(svg_attr_value(high_rect, "stroke-width"), "3.00");
+    assert!(low.contains(r#"text-anchor="middle""#));
+}
+
+#[test]
+fn styled_text_honors_alignment_counter_clockwise_rotation_and_font_family() {
+    let mut renderer = SvgRenderer::new(240.0, 160.0);
+    renderer.set_render_scale(RenderScale::new(144.0));
+    let style = TextStyle {
+        font_size: 10.0,
+        color: Color::new_rgba(10, 20, 30, 200),
+        align: TextAlign::Right,
+        valign: TextVAlign::Bottom,
+        rotation: 30.0,
+        background: Some(Color::new(240, 230, 220)),
+        padding: 2.0,
+        border_color: Some(Color::new_rgba(40, 50, 60, 128)),
+        border_width: 2.0,
+    };
+    renderer
+        .draw_styled_text(
+            "Styled",
+            100.0,
+            70.0,
+            &FontFamily::Name("New Computer Modern Sans".to_string()),
+            &style,
+        )
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    assert!(svg.contains(r#"transform="translate(100.00,70.00) rotate(-30.00)""#));
+    assert!(svg.contains(r#"text-anchor="end""#));
+    assert!(svg.contains(r#"font-family="&quot;New Computer Modern Sans&quot;""#));
+    assert!(svg.contains(r#"font-weight="400""#));
+    assert!(svg.contains(r#"fill="rgba(10,20,30,0.784)""#));
+
+    let rect = svg_element_lines(&svg, "rect")
+        .into_iter()
+        .find(|line| line.contains("rgb(240,230,220)"))
+        .unwrap();
+    let rect_x = parse_svg_attr(rect, "x");
+    let rect_y = parse_svg_attr(rect, "y");
+    let rect_width = parse_svg_attr(rect, "width");
+    let rect_height = parse_svg_attr(rect, "height");
+    assert_approx_eq(rect_x + rect_width, 4.0);
+    assert_approx_eq(rect_y + rect_height, 4.0);
+    assert_eq!(svg_attr_value(rect, "stroke-width"), "4.00");
+}
+
+#[test]
+fn styled_multiline_text_uses_explicit_tspans_and_block_decoration() {
+    let mut renderer = SvgRenderer::new(240.0, 160.0);
+    renderer.set_render_scale(RenderScale::new(72.0));
+    let style = TextStyle::default()
+        .font_size(12.0)
+        .color(Color::BLACK)
+        .background(Color::new(240, 230, 220))
+        .padding(2.0)
+        .rotation(20.0);
+    renderer
+        .draw_styled_text(
+            "first\nsecond\nthird",
+            120.0,
+            80.0,
+            &FontFamily::SansSerif,
+            &style,
+        )
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    assert_eq!(svg.matches("<tspan ").count(), 3);
+    assert!(svg.contains(r#"rotate(-20.00)"#));
+    let rect = svg_element_lines(&svg, "rect")
+        .into_iter()
+        .find(|line| line.contains("rgb(240,230,220)"))
+        .unwrap();
+    assert!(parse_svg_attr(rect, "height") > 40.0);
+}
+
+#[test]
+fn styled_multiline_text_preserves_per_line_center_and_right_alignment() {
+    for (align, anchor) in [(TextAlign::Center, "middle"), (TextAlign::Right, "end")] {
+        let mut renderer = SvgRenderer::new(240.0, 160.0);
+        let style = TextStyle::default().align(align).font_size(12.0);
+        renderer
+            .draw_styled_text(
+                "a much wider line\nshort",
+                120.0,
+                80.0,
+                &FontFamily::SansSerif,
+                &style,
+            )
+            .unwrap();
+
+        let svg = renderer.to_svg_string();
+        let text = svg
+            .lines()
+            .find(|line| line.contains("a much wider line"))
+            .expect("multiline text element");
+        assert!(text.contains(&format!(r#"text-anchor="{anchor}""#)));
+        assert_eq!(text.matches(r#"<tspan x="0""#).count(), 2);
+    }
+}
+
+#[test]
+fn decorated_empty_and_whitespace_annotations_use_one_line_geometry_without_glyphs() {
+    let render = |text: &str| {
+        let mut renderer = SvgRenderer::new(200.0, 120.0);
+        renderer.set_render_scale(RenderScale::new(72.0));
+        let style = TextStyle::default()
+            .font_size(12.0)
+            .background(Color::RED)
+            .padding(2.0)
+            .border(Color::BLUE, 1.0);
+        renderer
+            .draw_styled_text(text, 100.0, 60.0, &FontFamily::SansSerif, &style)
+            .unwrap();
+        renderer.to_svg_string()
+    };
+
+    let empty = render("");
+    let whitespace = render(" \t\n  ");
+    assert_eq!(empty, whitespace);
+    let rect = svg_element_lines(&empty, "rect")
+        .into_iter()
+        .find(|line| line.contains("rgb(255,0,0)"))
+        .expect("decoration rectangle");
+    assert_approx_eq(parse_svg_attr(rect, "width"), 4.0);
+    assert_approx_eq(parse_svg_attr(rect, "height"), 16.0);
+    assert!(!empty.contains("<text "));
+    assert!(!empty.contains(r#"data-ruviz-text-engine="typst""#));
+}
+
+#[test]
+fn styled_annotation_preserves_authored_svg_whitespace_without_formatting_text_nodes() {
+    let mut renderer = SvgRenderer::new(200.0, 120.0);
+    let style = TextStyle::default().align(TextAlign::Right);
+    renderer
+        .draw_styled_text(
+            "  lead\t  gap\n \tsecond",
+            100.0,
+            60.0,
+            &FontFamily::SansSerif,
+            &style,
+        )
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    let text = svg
+        .lines()
+        .find(|line| line.contains("lead\t  gap"))
+        .expect("whitespace-preserving annotation text");
+    assert!(text.contains(r#"xml:space="preserve""#));
+    assert!(text.contains(">  lead\t  gap</tspan><tspan"));
+    assert!(text.ends_with("> \tsecond</tspan></text>"));
+    assert!(!text.contains("</tspan>      <tspan"));
+}
+
+#[test]
+fn weighted_multiline_title_uses_matching_metrics_tspans_and_svg_whitespace() {
+    let mut renderer = SvgRenderer::with_font_family(240.0, 160.0, FontFamily::Monospace);
+    let text = "  wide\tgap\n  x";
+    renderer
+        .draw_text_centered_with_weight(text, 120.0, 20.0, 12.0, Color::BLACK, FontWeight::Bold)
+        .unwrap();
+
+    let config = FontConfig::new(FontFamily::Monospace, 12.0).weight(FontWeight::Bold);
+    let metrics = renderer
+        .plain_text_metrics_with_config(text, &config)
+        .unwrap();
+    let svg = renderer.to_svg_string();
+    let title = svg
+        .lines()
+        .find(|line| line.contains("wide\tgap"))
+        .expect("multiline title element");
+    assert!(title.contains(r#"font-family="monospace""#));
+    assert!(title.contains(r#"font-weight="700""#));
+    assert!(title.contains(r#"text-anchor="middle""#));
+    assert!(title.contains(r#"xml:space="preserve""#));
+    assert!(title.contains(r#"><tspan x="120.00" y="#));
+    assert!(title.contains(">  wide\tgap</tspan><tspan"));
+    assert!(title.ends_with(">  x</tspan></text>"));
+    assert_eq!(title.matches("<tspan ").count(), 2);
+
+    let first_tspan = title.find("<tspan ").unwrap();
+    let first_y = parse_svg_attr(&title[first_tspan..], "y");
+    assert_approx_eq(first_y, top_anchor_to_baseline(20.0, metrics));
+    assert!(metrics.height >= 24.0);
+}
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn typst_decorated_whitespace_annotation_uses_plain_one_line_geometry() {
+    let mut renderer = SvgRenderer::new(200.0, 120.0);
+    renderer.set_render_scale(RenderScale::new(72.0));
+    renderer.set_text_engine_mode(TextEngineMode::Typst);
+    let style = TextStyle::default()
+        .font_size(12.0)
+        .background(Color::RED)
+        .padding(2.0);
+    renderer
+        .draw_styled_text(" \t\n ", 100.0, 60.0, &FontFamily::SansSerif, &style)
+        .unwrap();
+
+    let svg = renderer.to_svg_string();
+    let rect = svg_element_lines(&svg, "rect")
+        .into_iter()
+        .find(|line| line.contains("rgb(255,0,0)"))
+        .expect("Typst-mode decoration rectangle");
+    assert_approx_eq(parse_svg_attr(rect, "width"), 4.0);
+    assert_approx_eq(parse_svg_attr(rect, "height"), 16.0);
+    assert!(!svg.contains(r#"data-ruviz-text-engine="typst""#));
+}
+
+#[cfg(feature = "typst-math")]
+#[test]
+fn embedded_typst_svg_uses_outer_unitless_dimensions() {
+    let renderer = SvgRenderer::new(200.0, 150.0);
+    let rendered = typst_text::render_svg_with_font_family(
+        "Frame",
+        12.0,
+        Color::BLACK,
+        0.0,
+        &FontFamily::SansSerif,
+        "Typst SVG framing test",
+    )
+    .unwrap();
+    let embedded = renderer.embedded_typst_svg(&rendered);
+    let root = embedded
+        .lines()
+        .find(|line| line.contains("<svg"))
+        .expect("embedded Typst SVG root");
+    let width = svg_attr_value(root, "width");
+    let height = svg_attr_value(root, "height");
+
+    assert!(!width.ends_with("pt"));
+    assert!(!height.ends_with("pt"));
+    assert_approx_eq(width.parse().unwrap(), rendered.width);
+    assert_approx_eq(height.parse().unwrap(), rendered.height);
 }
 
 #[cfg(feature = "typst-math")]

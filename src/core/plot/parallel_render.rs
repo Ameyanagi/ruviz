@@ -1303,7 +1303,12 @@ impl Plot {
         // Draw title if present
         if let Some(ref pos) = layout.title_pos {
             if let Some(title) = frame.title.as_deref() {
-                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
+                renderer.draw_title_at_with_weight(
+                    pos,
+                    title,
+                    self.display.theme.foreground,
+                    self.display.config.typography.title_weight,
+                )?;
             }
         }
 

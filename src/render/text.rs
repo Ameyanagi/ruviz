@@ -74,7 +74,7 @@ impl PixmapTarget for PixmapMut<'_> {
     }
 }
 
-fn validate_text_raster_size(width: u32, height: u32, context: &str) -> Result<()> {
+pub(crate) fn validate_text_raster_size(width: u32, height: u32, context: &str) -> Result<()> {
     if width > MAX_TEXT_RASTER_DIMENSION || height > MAX_TEXT_RASTER_DIMENSION {
         return Err(PlottingError::PerformanceLimit {
             limit_type: format!("{context} raster dimension"),
@@ -197,10 +197,24 @@ fn is_renderable_text(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
+fn text_line_count(text: &str) -> usize {
+    text.split('\n').count().max(1)
+}
+
+fn text_buffer_height(text: &str, size: f32, minimum: f32) -> f32 {
+    let line_height = size * 1.2;
+    (text_line_count(text) as f32 * line_height + size * 2.0).max(minimum)
+}
+
 fn estimate_text_metrics(text: &str, config: &FontConfig) -> TextPlacementMetrics {
-    let char_count = text.chars().count() as f32;
-    let height = (config.size * 1.2).max(config.size);
-    let width = char_count * config.size * 0.6;
+    let max_char_count = text
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).chars().count())
+        .max()
+        .unwrap_or(0) as f32;
+    let line_height = (config.size * 1.2).max(config.size);
+    let height = text_line_count(text) as f32 * line_height;
+    let width = max_char_count * config.size * 0.6;
     TextPlacementMetrics::new(width, height, config.size)
 }
 
@@ -421,6 +435,21 @@ pub enum FontWeight {
 }
 
 impl FontWeight {
+    /// Numeric CSS/OpenType weight value.
+    pub(crate) const fn numeric(self) -> u16 {
+        match self {
+            FontWeight::Thin => 100,
+            FontWeight::ExtraLight => 200,
+            FontWeight::Light => 300,
+            FontWeight::Normal => 400,
+            FontWeight::Medium => 500,
+            FontWeight::SemiBold => 600,
+            FontWeight::Bold => 700,
+            FontWeight::ExtraBold => 800,
+            FontWeight::Black => 900,
+        }
+    }
+
     /// Convert to cosmic-text Weight type
     pub fn to_cosmic_weight(self) -> CosmicWeight {
         match self {
@@ -629,7 +658,7 @@ impl TextRenderer {
 
         // Calculate buffer dimensions
         let buffer_width = (text.len() as f32 * config.size * 2.0).max(800.0);
-        let buffer_height = (config.size * 4.0).max(100.0);
+        let buffer_height = text_buffer_height(text, config.size, 100.0);
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
         // Set text with font attributes
@@ -698,9 +727,54 @@ impl TextRenderer {
             return Ok(());
         }
 
-        let (width, _) = self.measure_text(text, config)?;
-        let x = center_x - width / 2.0;
-        self.render_text(pixmap, text, x, y, config, color)
+        let metrics = self.measure_text_placement(text, config)?;
+        self.render_text_aligned(
+            pixmap,
+            text,
+            center_x - metrics.width / 2.0,
+            y,
+            metrics.width,
+            crate::core::TextAlign::Center,
+            config,
+            color,
+        )
+    }
+
+    /// Render each line within a fixed-width block using the requested alignment.
+    pub(crate) fn render_text_aligned(
+        &self,
+        pixmap: &mut Pixmap,
+        text: &str,
+        block_x: f32,
+        y: f32,
+        block_width: f32,
+        align: crate::core::TextAlign,
+        config: &FontConfig,
+        color: Color,
+    ) -> Result<()> {
+        if !is_renderable_text(text) || color.a == 0 {
+            return Ok(());
+        }
+
+        let line_height = config.size * 1.2;
+        for (line_index, line) in text.split('\n').enumerate() {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            let line_width = self.measure_text_placement(line, config)?.width;
+            let offset = match align {
+                crate::core::TextAlign::Left => 0.0,
+                crate::core::TextAlign::Center => (block_width - line_width) / 2.0,
+                crate::core::TextAlign::Right => block_width - line_width,
+            };
+            self.render_text(
+                pixmap,
+                line,
+                block_x + offset,
+                y + line_index as f32 * line_height,
+                config,
+                color,
+            )?;
+        }
+        Ok(())
     }
 
     /// Render text rotated 90 degrees counterclockwise
@@ -741,7 +815,7 @@ impl TextRenderer {
         // Use a generous shaping buffer. Tight placement bounds are computed from
         // rasterized glyph pixels rather than heuristic constants.
         let buffer_width = (text.len() as f32 * config.size * 3.0).max(800.0);
-        let buffer_height = (config.size * 6.0).max(180.0);
+        let buffer_height = text_buffer_height(text, config.size, 180.0);
 
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
@@ -904,7 +978,7 @@ impl TextRenderer {
         let mut buffer = Buffer::new(&mut font_system, metrics);
 
         let buffer_width = (text.len() as f32 * config.size * 2.0).max(800.0);
-        let buffer_height = (config.size * 4.0).max(100.0);
+        let buffer_height = text_buffer_height(text, config.size, 100.0);
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
         let attrs = config.to_cosmic_attrs();
@@ -917,7 +991,7 @@ impl TextRenderer {
 
         for run in buffer.layout_runs() {
             width = width.max(run.line_w);
-            height = height.max(run.line_height);
+            height = height.max(run.line_top + run.line_height);
             if baseline_from_top.is_none() {
                 baseline_from_top = Some(run.line_y);
             }
@@ -961,7 +1035,7 @@ impl TextRenderer {
         let mut buffer = Buffer::new(&mut font_system, metrics);
 
         let buffer_width = (text.len() as f32 * config.size * 2.0).max(800.0);
-        let buffer_height = (config.size * 4.0).max(100.0);
+        let buffer_height = text_buffer_height(text, config.size, 100.0);
         buffer.set_size(&mut font_system, Some(buffer_width), Some(buffer_height));
 
         let attrs = config.to_cosmic_attrs();
@@ -1255,6 +1329,22 @@ mod tests {
         // Non-empty string should have positive width
         let (w, _h) = renderer.measure_text("Hello", &config).unwrap();
         assert!(w > 0.0);
+    }
+
+    #[test]
+    fn multiline_placement_height_includes_every_line() {
+        let renderer = TextRenderer::new();
+        let config = FontConfig::new(FontFamily::SansSerif, 12.0);
+        let single = renderer.measure_text_placement("first", &config).unwrap();
+        let multiline = renderer
+            .measure_text_placement(
+                "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve",
+                &config,
+            )
+            .unwrap();
+
+        assert!(multiline.height > single.height * 10.0);
+        assert_eq!(multiline.baseline_from_top, single.baseline_from_top);
     }
 
     #[test]

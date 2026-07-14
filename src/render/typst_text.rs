@@ -1,7 +1,7 @@
 use crate::{
-    core::{PlottingError, Result},
+    core::{PlottingError, Result, TextAlign},
     render::{
-        Color, FontFamily,
+        Color, FontFamily, FontWeight,
         text_anchor::{TextAnchorKind, anchor_to_top_left},
     },
 };
@@ -28,13 +28,109 @@ pub struct TypstSvgOutput {
 }
 
 pub fn literal_text_snippet(text: &str) -> String {
-    let escaped = text
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-    format!("#text(\"{}\")", escaped)
+    fn escaped_line(line: &str) -> String {
+        line.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    }
+
+    if !text.contains('\n') {
+        return format!("#text(\"{}\")", escaped_line(text));
+    }
+
+    text.split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line))
+        .map(|line| format!("#text(\"{}\")", escaped_line(line)))
+        .collect::<Vec<_>>()
+        .join("\\\n")
+}
+
+pub(crate) fn with_explicit_line_breaks(snippet: &str) -> String {
+    if snippet.trim().is_empty() || !snippet.contains('\n') {
+        return snippet.to_string();
+    }
+
+    let mut explicit = String::with_capacity(snippet.len() + snippet.matches('\n').count());
+    for segment in snippet.split_inclusive('\n') {
+        let has_newline = segment.ends_with('\n');
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        explicit.push_str(line);
+        if has_newline {
+            let trailing_backslashes = line.chars().rev().take_while(|ch| *ch == '\\').count();
+            if trailing_backslashes % 2 == 0 {
+                explicit.push('\\');
+            }
+            explicit.push('\n');
+        }
+    }
+    explicit
+}
+
+pub(crate) fn with_font_weight(snippet: &str, weight: FontWeight) -> String {
+    if snippet.trim().is_empty() {
+        return snippet.to_string();
+    }
+    format!("#set text(weight: {})\n{snippet}", weight.numeric())
+}
+
+pub(crate) fn with_horizontal_alignment(snippet: &str, align: TextAlign) -> String {
+    if snippet.trim().is_empty() || align == TextAlign::Left {
+        return snippet.to_string();
+    }
+    let typst_align = match align {
+        TextAlign::Left => unreachable!("left alignment returns before wrapping"),
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+    };
+    format!("#align({typst_align})[{snippet}]")
+}
+
+#[cfg(test)]
+mod weight_tests {
+    use super::*;
+
+    #[test]
+    fn font_weight_wrapper_preserves_empty_text_fast_path() {
+        assert_eq!(with_font_weight("", FontWeight::Bold), "");
+        assert_eq!(with_font_weight(" \n\t", FontWeight::Bold), " \n\t");
+    }
+
+    #[test]
+    fn horizontal_alignment_wrapper_preserves_empty_and_left_aligned_text() {
+        assert_eq!(
+            with_horizontal_alignment(" \n\t", TextAlign::Center),
+            " \n\t"
+        );
+        assert_eq!(with_horizontal_alignment("value", TextAlign::Left), "value");
+        assert_eq!(
+            with_horizontal_alignment("wide\nshort", TextAlign::Right),
+            "#align(right)[wide\nshort]"
+        );
+    }
+
+    #[test]
+    fn explicit_line_breaks_convert_authored_newlines_without_escaping_markup() {
+        assert_eq!(with_explicit_line_breaks("wide\nshort"), "wide\\\nshort");
+        assert_eq!(
+            with_explicit_line_breaks("#emph[wide]\n$ x + 1 $"),
+            "#emph[wide]\\\n$ x + 1 $"
+        );
+        assert_eq!(
+            with_explicit_line_breaks("already\\\nexplicit"),
+            "already\\\nexplicit"
+        );
+        assert_eq!(with_explicit_line_breaks(" \n\t"), " \n\t");
+    }
+
+    #[test]
+    fn literal_text_snippet_uses_explicit_breaks_between_escaped_lines() {
+        assert_eq!(
+            literal_text_snippet("a\\\"\n\tb"),
+            "#text(\"a\\\\\\\"\")\\\n#text(\"\\tb\")"
+        );
+    }
 }
 
 /// Text anchor semantics used when positioning rendered Typst output.

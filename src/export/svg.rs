@@ -5,12 +5,15 @@
 
 use crate::core::{
     Legend, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels, LegendStyle,
-    PlottingError, RenderScale, Result, SpineConfig, find_best_position,
+    PlottingError, RenderScale, Result, SpineConfig, TextAlign, TextStyle, find_best_position,
     plot::{TextEngineMode, TickDirection, TickSides},
 };
 use crate::render::{
-    Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer,
-    text_anchor::{TextPlacementMetrics, center_anchor_to_baseline, top_anchor_to_baseline},
+    Color, FontConfig, FontFamily, FontWeight, LineStyle, MarkerStyle, TextRenderer,
+    text_anchor::{
+        TextPlacementMetrics, annotation_text_layout, center_anchor_to_baseline,
+        top_anchor_to_baseline,
+    },
     typst_text::{self, TypstBackendKind, TypstTextAnchor},
 };
 use std::borrow::Cow;
@@ -202,6 +205,29 @@ impl SvgRenderer {
         }
     }
 
+    fn embedded_typst_svg(&self, rendered: &typst_text::TypstSvgOutput) -> String {
+        let mut svg = self.strip_xml_declaration(&rendered.svg).to_string();
+        Self::set_root_svg_dimension(&mut svg, "width", rendered.width);
+        Self::set_root_svg_dimension(&mut svg, "height", rendered.height);
+        svg
+    }
+
+    fn set_root_svg_dimension(svg: &mut String, attribute: &str, value: f32) {
+        let Some(tag_end) = svg.find('>') else {
+            return;
+        };
+        let marker = format!(r#"{attribute}=""#);
+        let Some(relative_start) = svg[..tag_end].find(&marker) else {
+            return;
+        };
+        let value_start = relative_start + marker.len();
+        let Some(relative_end) = svg[value_start..tag_end].find('"') else {
+            return;
+        };
+        let value_end = value_start + relative_end;
+        svg.replace_range(value_start..value_end, &format!("{value:.2}"));
+    }
+
     fn generated_label<'a>(&self, text: &'a str) -> Cow<'a, str> {
         #[cfg(feature = "typst-math")]
         if self.text_engine_mode.uses_typst() {
@@ -213,7 +239,15 @@ impl SvgRenderer {
 
     fn plain_text_metrics(&self, text: &str, font_size: f32) -> Result<TextPlacementMetrics> {
         let config = FontConfig::new(self.font_family.clone(), font_size);
-        self.text_renderer.measure_text_placement(text, &config)
+        self.plain_text_metrics_with_config(text, &config)
+    }
+
+    fn plain_text_metrics_with_config(
+        &self,
+        text: &str,
+        config: &FontConfig,
+    ) -> Result<TextPlacementMetrics> {
+        self.text_renderer.measure_text_placement(text, config)
     }
 
     fn escape_css_string(value: &str) -> String {
@@ -236,15 +270,27 @@ impl SvgRenderer {
     }
 
     fn escaped_font_family(&self) -> String {
-        let css_value = match &self.font_family {
+        self.escaped_font_family_for(&self.font_family)
+    }
+
+    fn escaped_font_family_for(&self, family: &FontFamily) -> String {
+        let css_value = match family {
             FontFamily::Serif
             | FontFamily::SansSerif
             | FontFamily::Monospace
             | FontFamily::Cursive
-            | FontFamily::Fantasy => self.font_family.as_str().to_string(),
+            | FontFamily::Fantasy => family.as_str().to_string(),
             FontFamily::Name(name) => format!("\"{}\"", Self::escape_css_string(name)),
         };
         self.escape_xml(&css_value)
+    }
+
+    fn svg_text_anchor(align: TextAlign) -> &'static str {
+        match align {
+            TextAlign::Left => "start",
+            TextAlign::Center => "middle",
+            TextAlign::Right => "end",
+        }
     }
 
     fn measure_text_for_layout(&self, text: &str, font_size: f32) -> Result<(f32, f32)> {
@@ -591,6 +637,156 @@ impl SvgRenderer {
         }
     }
 
+    pub(crate) fn draw_styled_text(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        family: &FontFamily,
+        style: &TextStyle,
+    ) -> Result<()> {
+        let font_size = self.points_to_pixels(style.font_size.max(0.1));
+        let padding = self.points_to_pixels(style.padding.max(0.0));
+        let border_width = self.points_to_pixels(style.border_width.max(0.0));
+        let text_visible = style.color.a > 0 && !text.trim().is_empty();
+        let background_visible = style.background.is_some_and(|color| color.a > 0);
+        let border_visible =
+            border_width > 0.0 && style.border_color.is_some_and(|color| color.a > 0);
+        if !text_visible && !background_visible && !border_visible {
+            return Ok(());
+        }
+
+        let weight = FontWeight::Normal;
+        let config = FontConfig::new(family.clone(), font_size).weight(weight);
+        #[cfg(feature = "typst-math")]
+        let mut typst_rendered = None;
+        let metrics = if text.trim().is_empty() {
+            TextPlacementMetrics::new(0.0, font_size, font_size)
+        } else {
+            match self.text_engine_mode {
+                TextEngineMode::Plain => self.plain_text_metrics_with_config(text, &config)?,
+                #[cfg(feature = "typst-math")]
+                TextEngineMode::Typst => {
+                    let multiline_text = typst_text::with_explicit_line_breaks(text);
+                    let weighted_text = typst_text::with_font_weight(&multiline_text, weight);
+                    let aligned_text =
+                        typst_text::with_horizontal_alignment(&weighted_text, style.align);
+                    let rendered = typst_text::render_svg_with_font_family(
+                        &aligned_text,
+                        self.typst_size_pt(font_size),
+                        style.color,
+                        0.0,
+                        family,
+                        "SVG annotation text rendering",
+                    )?;
+                    let metrics =
+                        TextPlacementMetrics::new(rendered.width, rendered.height, rendered.height);
+                    typst_rendered = Some(rendered);
+                    metrics
+                }
+            }
+        };
+        let layout =
+            annotation_text_layout(metrics, style.align, style.valign, padding, style.rotation);
+
+        writeln!(
+            self.content,
+            r#"  <g data-ruviz-text-style="annotation" transform="translate({:.2},{:.2}) rotate({:.2})">"#,
+            x, y, layout.rotation
+        )
+        .unwrap();
+
+        if background_visible || border_visible {
+            let fill = style
+                .background
+                .filter(|_| background_visible)
+                .map(|color| self.color_to_svg(color))
+                .unwrap_or_else(|| "none".to_string());
+            let stroke = style
+                .border_color
+                .filter(|_| border_visible)
+                .map(|color| self.color_to_svg(color))
+                .unwrap_or_else(|| "none".to_string());
+            writeln!(
+                self.content,
+                r#"    <rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{}" stroke="{}" stroke-width="{:.2}"/>"#,
+                layout.box_x,
+                layout.box_y,
+                layout.box_width,
+                layout.box_height,
+                fill,
+                stroke,
+                border_width
+            )
+            .unwrap();
+        }
+
+        if text_visible {
+            match self.text_engine_mode {
+                TextEngineMode::Plain => {
+                    let font_family = self.escaped_font_family_for(family);
+                    let color = self.color_to_svg(style.color);
+                    let text_anchor = Self::svg_text_anchor(style.align);
+                    let baseline_y = layout.text_y + metrics.baseline_from_top;
+                    if text.contains('\n') {
+                        write!(
+                            self.content,
+                            r#"    <text x="0" font-family="{}" font-size="{:.1}" font-weight="{}" fill="{}" text-anchor="{}" xml:space="preserve">"#,
+                            font_family,
+                            font_size,
+                            weight.numeric(),
+                            color,
+                            text_anchor
+                        )
+                        .unwrap();
+                        let line_height = font_size * 1.2;
+                        for (line_index, line) in text.split('\n').enumerate() {
+                            let line = line.strip_suffix('\r').unwrap_or(line);
+                            let line_y = baseline_y + line_index as f32 * line_height;
+                            write!(
+                                self.content,
+                                r#"<tspan x="0" y="{:.2}">{}</tspan>"#,
+                                line_y,
+                                self.escape_xml(line)
+                            )
+                            .unwrap();
+                        }
+                        writeln!(self.content, "</text>").unwrap();
+                    } else {
+                        writeln!(
+                            self.content,
+                            r#"    <text x="0" y="{:.2}" font-family="{}" font-size="{:.1}" font-weight="{}" fill="{}" text-anchor="{}" xml:space="preserve">{}</text>"#,
+                            baseline_y,
+                            font_family,
+                            font_size,
+                            weight.numeric(),
+                            color,
+                            text_anchor,
+                            self.escape_xml(text)
+                        )
+                        .unwrap();
+                    }
+                }
+                #[cfg(feature = "typst-math")]
+                TextEngineMode::Typst => {
+                    let rendered = typst_rendered
+                        .take()
+                        .expect("Typst annotation rendering must produce SVG output");
+                    let embedded_svg = self.embedded_typst_svg(&rendered);
+                    writeln!(
+                        self.content,
+                        r#"    <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
+                        layout.text_x, layout.text_y, embedded_svg
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
+        writeln!(self.content, "  </g>").unwrap();
+        Ok(())
+    }
+
     /// Draw text at specified position.
     /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
@@ -627,7 +823,7 @@ impl SvgRenderer {
                     rendered.height,
                     TypstTextAnchor::TopLeft,
                 );
-                let embedded_svg = self.strip_xml_declaration(&rendered.svg);
+                let embedded_svg = self.embedded_typst_svg(&rendered);
                 writeln!(
                     self.content,
                     r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
@@ -649,26 +845,91 @@ impl SvgRenderer {
         size: f32,
         color: Color,
     ) -> Result<()> {
+        self.draw_text_centered_impl(text, x, y, size, color, None)
+    }
+
+    pub(crate) fn draw_text_centered_with_weight(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+        weight: FontWeight,
+    ) -> Result<()> {
+        self.draw_text_centered_impl(text, x, y, size, color, Some(weight))
+    }
+
+    fn draw_text_centered_impl(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+        weight: Option<FontWeight>,
+    ) -> Result<()> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let color_str = self.color_to_svg(color);
-                let escaped_text = self.escape_xml(text);
-                let metrics = self.plain_text_metrics(text, size)?;
+                let resolved_weight = weight.unwrap_or(FontWeight::Normal);
+                let config =
+                    FontConfig::new(self.font_family.clone(), size).weight(resolved_weight);
+                let metrics = self.plain_text_metrics_with_config(text, &config)?;
                 let baseline_y = top_anchor_to_baseline(y, metrics);
                 let font_family = self.escaped_font_family();
-                writeln!(
-                    self.content,
-                    r#"  <text x="{:.2}" y="{:.2}" font-family="{}" font-size="{:.1}" fill="{}" text-anchor="middle">{}</text>"#,
-                    x, baseline_y, font_family, size, color_str, escaped_text
-                )
-                .unwrap();
+                let weight_attr = weight
+                    .map(|weight| format!(r#" font-weight="{}""#, weight.numeric()))
+                    .unwrap_or_default();
+                if text.contains('\n') {
+                    write!(
+                        self.content,
+                        r#"  <text x="{:.2}" font-family="{}" font-size="{:.1}"{} fill="{}" text-anchor="middle" xml:space="preserve">"#,
+                        x, font_family, size, weight_attr, color_str
+                    )
+                    .unwrap();
+                    let line_height = size * 1.2;
+                    for (line_index, line) in text.split('\n').enumerate() {
+                        let line = line.strip_suffix('\r').unwrap_or(line);
+                        let line_y = baseline_y + line_index as f32 * line_height;
+                        write!(
+                            self.content,
+                            r#"<tspan x="{:.2}" y="{:.2}">{}</tspan>"#,
+                            x,
+                            line_y,
+                            self.escape_xml(line)
+                        )
+                        .unwrap();
+                    }
+                    writeln!(self.content, "</text>").unwrap();
+                } else {
+                    writeln!(
+                        self.content,
+                        r#"  <text x="{:.2}" y="{:.2}" font-family="{}" font-size="{:.1}"{} fill="{}" text-anchor="middle" xml:space="preserve">{}</text>"#,
+                        x,
+                        baseline_y,
+                        font_family,
+                        size,
+                        weight_attr,
+                        color_str,
+                        self.escape_xml(text)
+                    )
+                    .unwrap();
+                }
                 Ok(())
             }
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
+                let multiline_text = typst_text::with_explicit_line_breaks(text);
+                let weighted_text =
+                    weight.map(|weight| typst_text::with_font_weight(&multiline_text, weight));
+                let aligned_text = typst_text::with_horizontal_alignment(
+                    weighted_text.as_deref().unwrap_or(&multiline_text),
+                    TextAlign::Center,
+                );
                 let rendered = typst_text::render_svg_with_font_family(
-                    text,
+                    &aligned_text,
                     size_pt,
                     color,
                     0.0,
@@ -682,7 +943,7 @@ impl SvgRenderer {
                     rendered.height,
                     TypstTextAnchor::TopCenter,
                 );
-                let embedded_svg = self.strip_xml_declaration(&rendered.svg);
+                let embedded_svg = self.embedded_typst_svg(&rendered);
                 writeln!(
                     self.content,
                     r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
@@ -737,7 +998,7 @@ impl SvgRenderer {
                     rendered.height,
                     TypstTextAnchor::Center,
                 );
-                let embedded_svg = self.strip_xml_declaration(&rendered.svg);
+                let embedded_svg = self.embedded_typst_svg(&rendered);
                 writeln!(
                     self.content,
                     r#"  <g data-ruviz-text-engine="typst" transform="translate({:.2},{:.2})">{}</g>"#,
