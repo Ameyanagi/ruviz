@@ -74,6 +74,15 @@ impl<'a> From<&'a ErrorValues> for ErrorValuesRef<'a> {
     }
 }
 
+fn effective_error_values<'a>(
+    configured: Option<&'a ErrorValues>,
+    resolved: &'a [f64],
+) -> ErrorValuesRef<'a> {
+    configured
+        .map(ErrorValuesRef::from)
+        .unwrap_or(ErrorValuesRef::Symmetric(resolved))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RenderExecutionMode {
     Reference,

@@ -1059,6 +1059,40 @@ fn test_resolved_svg_accepts_dedicated_series_variants() {
 }
 
 #[test]
+fn test_dedicated_error_bars_honor_asymmetric_overrides_in_svg_and_raster() {
+    let build = |override_errors: bool| {
+        let builder = Plot::new()
+            .size_px(300, 200)
+            .xlim(-2.0, 2.0)
+            .ylim(-2.0, 2.0)
+            .ticks(false)
+            .grid(false)
+            .error_bars_xy(&[0.0], &[0.0], &[0.25], &[0.5]);
+        if override_errors {
+            builder
+                .with_xerr_asymmetric(&[0.25], &[1.25])
+                .with_yerr_asymmetric(&[0.5], &[1.5])
+                .into_plot()
+        } else {
+            builder.into_plot()
+        }
+    };
+
+    let symmetric = build(false);
+    let asymmetric = build(true);
+    assert_ne!(
+        symmetric.render_to_svg().unwrap(),
+        asymmetric.render_to_svg().unwrap(),
+        "dedicated SVG error bars must use asymmetric series overrides"
+    );
+    assert_ne!(
+        symmetric.render().unwrap().pixels,
+        asymmetric.render().unwrap().pixels,
+        "dedicated raster error bars must use asymmetric series overrides"
+    );
+}
+
+#[test]
 fn test_resolved_histogram_preserves_raw_sample_validation() {
     let plot = Plot::new()
         .histogram(&[1.0, f64::NAN, 2.0], None)
