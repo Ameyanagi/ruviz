@@ -8168,6 +8168,7 @@ dependencies = [
  "tiny-skia-path 0.12.0",
  "tokio",
  "trybuild",
+ "ttf-parser 0.25.1",
  "typst",
  "typst-kit",
  "typst-render",

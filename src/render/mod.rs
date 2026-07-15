@@ -3,6 +3,7 @@
 pub mod backend;
 pub mod color;
 pub mod cosmic_text_renderer;
+pub(crate) mod font_registry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
 #[cfg(feature = "parallel")]

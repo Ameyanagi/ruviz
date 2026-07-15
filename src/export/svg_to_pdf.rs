@@ -4,7 +4,19 @@
 //! This provides publication-quality vector PDF output.
 
 use crate::core::{PlottingError, Result};
+#[cfg(feature = "pdf")]
+use crate::render::font_registry;
 use std::path::Path;
+
+#[cfg(feature = "pdf")]
+fn pdf_font_database() -> Result<svg2pdf::usvg::fontdb::Database> {
+    let mut database = svg2pdf::usvg::fontdb::Database::new();
+    #[cfg(not(target_arch = "wasm32"))]
+    database.load_system_fonts();
+    let registered_fonts = font_registry::snapshot()?;
+    font_registry::load_with_registered_precedence(&mut database, &registered_fonts);
+    Ok(database)
+}
 
 /// Convert SVG string to PDF bytes
 #[cfg(feature = "pdf")]
@@ -12,9 +24,9 @@ pub fn svg_to_pdf(svg_data: &str) -> Result<Vec<u8>> {
     // Use svg2pdf's re-exported usvg to ensure version compatibility
     use svg2pdf::usvg;
 
-    // Create font database with system fonts
-    let mut fontdb = usvg::fontdb::Database::new();
-    fontdb.load_system_fonts();
+    // Plain SVG stays portable-by-reference; registered bytes are supplied only
+    // to the PDF conversion database where glyph outlines can be embedded.
+    let fontdb = pdf_font_database()?;
 
     // Parse SVG with usvg
     let options = usvg::Options {
@@ -87,6 +99,26 @@ mod tests {
         let pdf_data = result.unwrap();
         // PDF files start with %PDF-
         assert!(pdf_data.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    #[cfg(feature = "pdf")]
+    fn registered_font_is_loaded_into_pdf_font_database() {
+        let Some(bytes) = crate::render::font_registry::renamed_test_font(b"PPdf") else {
+            return;
+        };
+        crate::render::register_font_bytes(bytes).unwrap();
+        let database = pdf_font_database().unwrap();
+        assert!(database.faces().any(|face| {
+            face.families
+                .iter()
+                .any(|(family, _)| family == "PPdf Sans")
+        }));
+
+        let svg = r#"<svg width="120" height="40" xmlns="http://www.w3.org/2000/svg">
+  <text x="2" y="28" font-family="PPdf Sans" font-size="20">P12 PDF</text>
+</svg>"#;
+        assert!(svg_to_pdf(svg).unwrap().starts_with(b"%PDF-"));
     }
 
     #[test]

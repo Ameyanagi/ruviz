@@ -168,12 +168,9 @@ impl Default for CosmicTextRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::register_font_bytes;
 
     #[test]
     fn legacy_renderer_preserves_destination_alpha() {
-        register_font_bytes(include_bytes!("../../assets/NotoSans-Regular.ttf").to_vec()).unwrap();
-
         let mut renderer = CosmicTextRenderer::new().unwrap();
         let color = Color::new_rgba(180, 90, 30, 96);
 
