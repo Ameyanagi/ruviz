@@ -475,6 +475,21 @@ impl<T> Observable<T> {
         result
     }
 
+    #[cfg(feature = "animation")]
+    pub(crate) fn update_if<F>(&self, f: F) -> bool
+    where
+        F: FnOnce(&mut T) -> bool,
+    {
+        let changed = {
+            let mut guard = self.data.write().expect("Observable lock poisoned");
+            f(&mut *guard)
+        };
+        if changed {
+            self.bump_version();
+        }
+        changed
+    }
+
     /// Replace the entire value
     ///
     /// # Example
