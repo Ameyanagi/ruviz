@@ -207,6 +207,205 @@ fn test_batch_update() {
 }
 
 #[test]
+fn test_batch_update_defers_and_deduplicates_notifications() {
+    let obs = Observable::new(0);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let notifications_for_callback = Arc::clone(&notifications);
+    obs.subscribe(move || {
+        notifications_for_callback.fetch_add(1, AtomicOrdering::Relaxed);
+    });
+
+    {
+        let mut batch = BatchUpdate::new();
+        batch.add(&obs);
+        batch.add(&obs);
+        obs.set(1);
+        obs.set(2);
+        assert_eq!(notifications.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    assert_eq!(notifications.load(AtomicOrdering::Relaxed), 1);
+    assert_eq!(obs.get(), 2);
+}
+
+#[test]
+fn test_batch_update_noop_and_nested_batches_notify_once_at_outer_drop() {
+    let obs = Observable::new(0);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let notifications_for_callback = Arc::clone(&notifications);
+    obs.subscribe(move || {
+        notifications_for_callback.fetch_add(1, AtomicOrdering::Relaxed);
+    });
+
+    {
+        let mut no_op = BatchUpdate::new();
+        no_op.add(&obs);
+    }
+    assert_eq!(notifications.load(AtomicOrdering::Relaxed), 0);
+
+    {
+        let mut outer = BatchUpdate::new();
+        outer.add(&obs);
+        obs.set(1);
+        {
+            let mut inner = BatchUpdate::new();
+            inner.add(&obs);
+            inner.add(&obs);
+            obs.set(2);
+        }
+        assert_eq!(notifications.load(AtomicOrdering::Relaxed), 0);
+    }
+
+    assert_eq!(notifications.load(AtomicOrdering::Relaxed), 1);
+}
+
+#[test]
+fn test_observable_reentrant_mutations_are_drained_without_recursive_dispatch() {
+    let obs = Observable::new(0);
+    let callback_depth = Arc::new(AtomicUsize::new(0));
+    let max_depth = Arc::new(AtomicUsize::new(0));
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let obs_for_callback = obs.clone();
+    let depth_for_callback = Arc::clone(&callback_depth);
+    let max_depth_for_callback = Arc::clone(&max_depth);
+    let notifications_for_callback = Arc::clone(&notifications);
+
+    obs.subscribe(move || {
+        let depth = depth_for_callback.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+        max_depth_for_callback.fetch_max(depth, AtomicOrdering::SeqCst);
+        let notification = notifications_for_callback.fetch_add(1, AtomicOrdering::SeqCst);
+        if notification == 0 {
+            obs_for_callback.set(2);
+        }
+        depth_for_callback.fetch_sub(1, AtomicOrdering::SeqCst);
+    });
+
+    obs.set(1);
+
+    assert_eq!(notifications.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(max_depth.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(obs.get(), 2);
+}
+
+#[test]
+fn test_observable_callback_runs_after_value_and_subscriber_locks_are_released() {
+    let obs = Observable::new(0);
+    let callback_id = Arc::new(Mutex::new(None));
+    let callback_id_for_callback = Arc::clone(&callback_id);
+    let obs_for_callback = obs.clone();
+
+    let id = obs.subscribe(move || {
+        assert_eq!(
+            *obs_for_callback
+                .try_read()
+                .expect("value lock must be free"),
+            1
+        );
+        let id = callback_id_for_callback
+            .lock()
+            .expect("callback id lock poisoned")
+            .expect("callback id should be installed");
+        assert!(obs_for_callback.unsubscribe(id));
+    });
+    *callback_id.lock().expect("callback id lock poisoned") = Some(id);
+
+    obs.set(1);
+    obs.set(2);
+}
+
+#[test]
+fn test_observable_notifications_recover_after_callback_panic() {
+    let obs = Observable::new(0);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let panic_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let notifications_for_callback = Arc::clone(&notifications);
+    let panic_once_for_callback = Arc::clone(&panic_once);
+    obs.subscribe(move || {
+        notifications_for_callback.fetch_add(1, AtomicOrdering::SeqCst);
+        assert!(
+            !panic_once_for_callback.swap(false, AtomicOrdering::SeqCst),
+            "intentional callback panic"
+        );
+    });
+
+    let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| obs.set(1)));
+    assert!(first.is_err());
+
+    obs.set(2);
+    assert_eq!(notifications.load(AtomicOrdering::SeqCst), 2);
+}
+
+#[test]
+fn test_observable_panic_drains_reentrant_dirty_notification_before_unwind() {
+    let obs = Observable::new(0);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let obs_for_callback = obs.clone();
+    let notifications_for_callback = Arc::clone(&notifications);
+    obs.subscribe(move || {
+        let notification = notifications_for_callback.fetch_add(1, AtomicOrdering::SeqCst);
+        if notification == 0 {
+            obs_for_callback.set(2);
+            panic!("intentional callback panic after reentrant mutation");
+        }
+    });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| obs.set(1)));
+
+    assert!(result.is_err());
+    assert_eq!(obs.get(), 2);
+    assert_eq!(notifications.load(AtomicOrdering::SeqCst), 2);
+}
+
+#[test]
+fn test_batch_update_releases_all_observables_before_callback_panic() {
+    let first = Observable::new(0);
+    let second = Observable::new(0);
+    let second_notifications = Arc::new(AtomicUsize::new(0));
+    let second_notifications_for_callback = Arc::clone(&second_notifications);
+    first.subscribe(|| panic!("intentional batch callback panic"));
+    second.subscribe(move || {
+        second_notifications_for_callback.fetch_add(1, AtomicOrdering::SeqCst);
+    });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut batch = BatchUpdate::new();
+        batch.add(&first);
+        batch.add(&second);
+        first.set(1);
+        second.set(1);
+    }));
+    assert!(result.is_err());
+    assert_eq!(second_notifications.load(AtomicOrdering::SeqCst), 1);
+
+    second.set(2);
+    assert_eq!(second_notifications.load(AtomicOrdering::SeqCst), 2);
+}
+
+#[test]
+fn test_batch_update_callback_panic_does_not_double_panic_during_unwind() {
+    let first = Observable::new(0);
+    let second = Observable::new(0);
+    let second_notifications = Arc::new(AtomicUsize::new(0));
+    let second_notifications_for_callback = Arc::clone(&second_notifications);
+    first.subscribe(|| panic!("intentional batch callback panic"));
+    second.subscribe(move || {
+        second_notifications_for_callback.fetch_add(1, AtomicOrdering::SeqCst);
+    });
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut batch = BatchUpdate::new();
+        batch.add(&first);
+        batch.add(&second);
+        first.set(1);
+        second.set(1);
+        panic!("outer panic must remain the active unwind");
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(second_notifications.load(AtomicOrdering::SeqCst), 1);
+}
+
+#[test]
 fn test_update_with() {
     let obs = Observable::new(vec![1, 2, 3]);
     let old_len = obs.update_with(|v| {
@@ -640,6 +839,415 @@ fn test_streaming_xy_clear() {
 
     xy.clear();
     assert!(xy.is_empty());
+}
+
+#[test]
+fn test_streaming_xy_snapshot_is_owned_aligned_and_atomic_for_lane_callbacks() {
+    let xy = StreamingXY::new(8);
+    let snapshots = Arc::new(Mutex::new(Vec::new()));
+
+    for lane in [xy.x(), xy.y()] {
+        let xy_for_callback = xy.clone();
+        let snapshots_for_callback = Arc::clone(&snapshots);
+        lane.subscribe(move || {
+            let snapshot = xy_for_callback.snapshot();
+            assert_eq!(snapshot.x().len(), snapshot.y().len());
+            assert_eq!(xy_for_callback.x().version(), xy_for_callback.y().version());
+            snapshots_for_callback
+                .lock()
+                .expect("snapshot lock poisoned")
+                .push((snapshot.x().to_vec(), snapshot.y().to_vec()));
+        });
+    }
+
+    xy.push_many(vec![(1.0, 10.0), (2.0, 20.0)]);
+    let snapshot = xy.snapshot();
+    xy.push(3.0, 30.0);
+
+    assert_eq!(snapshot.x(), &[1.0, 2.0]);
+    assert_eq!(snapshot.y(), &[10.0, 20.0]);
+    let snapshots = snapshots.lock().expect("snapshot lock poisoned");
+    assert_eq!(snapshots.len(), 4);
+    assert!(snapshots.iter().all(|(x, y)| x.len() == y.len()));
+    assert_eq!(snapshots[0], (vec![1.0, 2.0], vec![10.0, 20.0]));
+    assert_eq!(snapshots[1], (vec![1.0, 2.0], vec![10.0, 20.0]));
+}
+
+#[test]
+fn test_streaming_xy_snapshot_ignores_unpaired_lane_tail() {
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    xy.x().push(2.0);
+    xy.push(3.0, 30.0);
+
+    assert_eq!(xy.read_x(), vec![1.0, 2.0, 3.0]);
+    let snapshot = xy.snapshot();
+    assert_eq!(snapshot.x(), &[1.0, 3.0]);
+    assert_eq!(snapshot.y(), &[10.0, 30.0]);
+}
+
+#[test]
+fn test_streaming_xy_snapshot_reconciles_aligned_legacy_lane_writes() {
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    xy.mark_rendered();
+    xy.x().push(2.0);
+    xy.y().push(20.0);
+
+    let snapshot = xy.snapshot();
+    assert_eq!(snapshot.x(), &[1.0, 2.0]);
+    assert_eq!(snapshot.y(), &[10.0, 20.0]);
+    assert_eq!(
+        snapshot.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+}
+
+#[test]
+fn test_streaming_xy_paired_push_preserves_aligned_legacy_lane_writes() {
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    xy.x().push(2.0);
+    xy.y().push(20.0);
+
+    xy.push(3.0, 30.0);
+
+    let snapshot = xy.snapshot();
+    assert_eq!(snapshot.x(), &[1.0, 2.0, 3.0]);
+    assert_eq!(snapshot.y(), &[10.0, 20.0, 30.0]);
+}
+
+#[test]
+fn test_streaming_xy_legacy_clear_and_refill_same_count_replaces_paired_data() {
+    let xy = StreamingXY::new(8);
+    xy.push_many(vec![(1.0, 10.0), (2.0, 20.0)]);
+    xy.mark_rendered();
+
+    xy.x().clear();
+    xy.y().clear();
+    xy.x().push_many(vec![7.0, 8.0]);
+    xy.y().push_many(vec![70.0, 80.0]);
+
+    let snapshot = xy.snapshot();
+    assert_eq!(snapshot.x(), &[7.0, 8.0]);
+    assert_eq!(snapshot.y(), &[70.0, 80.0]);
+    assert_eq!(
+        snapshot.render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+}
+
+#[test]
+fn test_streaming_xy_mark_rendered_reconciles_direct_aligned_lane_writes() {
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    xy.mark_rendered();
+    let version = xy.version();
+
+    xy.x().push(2.0);
+    xy.y().push(20.0);
+    assert!(xy.version() != version);
+
+    xy.mark_rendered();
+
+    let snapshot = xy.snapshot();
+    assert_eq!(snapshot.x(), &[1.0, 2.0]);
+    assert_eq!(snapshot.y(), &[10.0, 20.0]);
+    assert_eq!(snapshot.render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
+fn test_streaming_xy_captured_ack_keeps_newer_direct_lane_pair_dirty() {
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    let captured = xy.snapshot();
+    xy.x().push(2.0);
+    xy.y().push(20.0);
+
+    xy.mark_rendered_through(captured.sequence());
+
+    assert_eq!(xy.appended_count(), 1);
+    assert_eq!(xy.x().appended_since_mark(), 1);
+    assert_eq!(xy.y().appended_since_mark(), 1);
+    assert_eq!(xy.read_appended_x(), vec![2.0]);
+    assert_eq!(xy.read_appended_y(), vec![20.0]);
+}
+
+#[test]
+fn test_streaming_xy_read_view_waits_for_atomic_pair_commit() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    let (mid_commit_tx, mid_commit_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    xy.set_pair_commit_hook({
+        let release_rx = Arc::clone(&release_rx);
+        move || {
+            mid_commit_tx
+                .send(())
+                .expect("mid-commit receiver should remain alive");
+            release_rx
+                .lock()
+                .expect("release receiver lock poisoned")
+                .recv()
+                .expect("pair commit should be released");
+        }
+    });
+
+    let writer_xy = xy.clone();
+    let writer = thread::spawn(move || writer_xy.push(2.0, 20.0));
+    mid_commit_rx
+        .recv()
+        .expect("writer should pause between lane mutations");
+
+    let (reader_started_tx, reader_started_rx) = mpsc::channel();
+    let (view_tx, view_rx) = mpsc::channel();
+    let reader_xy = xy.clone();
+    let reader = thread::spawn(move || {
+        reader_started_tx
+            .send(())
+            .expect("reader-start receiver should remain alive");
+        let (x, y) = reader_xy.read_view();
+        view_tx
+            .send((
+                x.iter().cloned().collect::<Vec<_>>(),
+                y.iter().cloned().collect::<Vec<_>>(),
+            ))
+            .expect("view receiver should remain alive");
+    });
+    reader_started_rx
+        .recv()
+        .expect("reader should start while the pair commit is paused");
+    assert!(
+        view_rx.recv_timeout(Duration::from_millis(250)).is_err(),
+        "paired read must block until both lanes commit"
+    );
+
+    release_tx.send(()).expect("writer should still be paused");
+    let (x, y) = view_rx
+        .recv()
+        .expect("paired view should finish after commit");
+    writer.join().expect("writer should finish");
+    reader.join().expect("reader should finish");
+    assert_eq!(
+        x,
+        vec![Some(1.0), Some(2.0), None, None, None, None, None, None]
+    );
+    assert_eq!(
+        y,
+        vec![Some(10.0), Some(20.0), None, None, None, None, None, None]
+    );
+}
+
+#[test]
+fn test_streaming_xy_old_and_out_of_order_acknowledgements_are_monotonic() {
+    let xy = StreamingXY::new(8);
+    xy.push_many(vec![(1.0, 10.0), (2.0, 20.0)]);
+    let older = xy.snapshot();
+    xy.push(3.0, 30.0);
+    let newer = xy.snapshot();
+
+    xy.mark_rendered_through(older.sequence());
+    assert_eq!(xy.appended_count(), 1);
+    assert_eq!(xy.read_appended_x(), vec![3.0]);
+    assert_eq!(xy.read_appended_y(), vec![30.0]);
+
+    xy.mark_rendered_through(newer.sequence());
+    assert_eq!(xy.appended_count(), 0);
+    let rendered_through = xy.snapshot().rendered_through();
+    xy.mark_rendered_through(older.sequence());
+    assert_eq!(xy.snapshot().rendered_through(), rendered_through);
+    assert_eq!(xy.render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
+fn test_streaming_xy_acknowledgement_updates_public_lane_watermarks() {
+    let xy = StreamingXY::new(8);
+    xy.push_many(vec![(1.0, 10.0), (2.0, 20.0)]);
+    let older = xy.snapshot();
+    xy.push(3.0, 30.0);
+
+    xy.mark_rendered_through(older.sequence());
+    assert_eq!(xy.x().appended_since_mark(), 1);
+    assert_eq!(xy.y().appended_since_mark(), 1);
+    assert_eq!(xy.x().read_appended(), vec![3.0]);
+    assert_eq!(xy.y().read_appended(), vec![30.0]);
+
+    xy.mark_rendered();
+    assert_eq!(xy.x().appended_since_mark(), 0);
+    assert_eq!(xy.y().appended_since_mark(), 0);
+}
+
+#[test]
+fn test_streaming_xy_wraparound_and_clear_require_full_redraw() {
+    let xy = StreamingXY::new(3);
+    xy.push_many(vec![(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)]);
+    xy.mark_rendered();
+
+    xy.push(4.0, 40.0);
+    let wrapped = xy.snapshot();
+    assert_eq!(wrapped.x(), &[2.0, 3.0, 4.0]);
+    assert_eq!(wrapped.y(), &[20.0, 30.0, 40.0]);
+    assert_eq!(
+        wrapped.render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    xy.mark_rendered_through(wrapped.sequence());
+
+    xy.clear();
+    let cleared = xy.snapshot();
+    assert!(cleared.x().is_empty());
+    assert!(cleared.y().is_empty());
+    assert_eq!(
+        cleared.render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+}
+
+#[test]
+fn test_streaming_xy_sequence_wrap_keeps_new_samples_dirty() {
+    let xy = StreamingXY::new(8);
+    {
+        let mut progress = xy.progress.lock().expect("progress lock poisoned");
+        progress.sequence = u64::MAX - 1;
+        progress.rendered_through = u64::MAX - 1;
+    }
+
+    xy.push(1.0, 10.0);
+    let before_wrap = xy.snapshot();
+    xy.push(2.0, 20.0);
+    let after_wrap = xy.snapshot();
+
+    assert_eq!(before_wrap.sequence(), u64::MAX);
+    assert_eq!(after_wrap.sequence(), 0);
+    assert_eq!(xy.appended_count(), 2);
+    xy.mark_rendered_through(before_wrap.sequence());
+    assert_eq!(xy.appended_count(), 1);
+    xy.mark_rendered_through(after_wrap.sequence());
+    assert_eq!(xy.render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
+fn test_streaming_xy_paired_callback_can_unsubscribe_and_push_reentrantly() {
+    let xy = StreamingXY::new(8);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let callback_id = Arc::new(Mutex::new(None));
+    let xy_for_callback = xy.clone();
+    let notifications_for_callback = Arc::clone(&notifications);
+    let callback_id_for_callback = Arc::clone(&callback_id);
+
+    let id = xy.subscribe_paired(move || {
+        notifications_for_callback.fetch_add(1, AtomicOrdering::SeqCst);
+        let id = callback_id_for_callback
+            .lock()
+            .expect("callback id lock poisoned")
+            .expect("callback id should be installed");
+        assert!(xy_for_callback.unsubscribe_paired(id));
+        xy_for_callback.push(2.0, 20.0);
+    });
+    *callback_id.lock().expect("callback id lock poisoned") = Some(id);
+
+    xy.push(1.0, 10.0);
+
+    assert_eq!(notifications.load(AtomicOrdering::SeqCst), 1);
+    let snapshot = xy.snapshot();
+    assert_eq!(snapshot.x(), &[1.0, 2.0]);
+    assert_eq!(snapshot.y(), &[10.0, 20.0]);
+}
+
+#[test]
+fn test_streaming_xy_paired_notifications_recover_after_callback_panic() {
+    let xy = StreamingXY::new(8);
+    let notifications = Arc::new(AtomicUsize::new(0));
+    let panic_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let notifications_for_callback = Arc::clone(&notifications);
+    let panic_once_for_callback = Arc::clone(&panic_once);
+    xy.subscribe_paired(move || {
+        notifications_for_callback.fetch_add(1, AtomicOrdering::SeqCst);
+        assert!(
+            !panic_once_for_callback.swap(false, AtomicOrdering::SeqCst),
+            "intentional paired callback panic"
+        );
+    });
+
+    let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| xy.push(1.0, 10.0)));
+    assert!(first.is_err());
+
+    xy.push(2.0, 20.0);
+    assert_eq!(notifications.load(AtomicOrdering::SeqCst), 2);
+}
+
+#[test]
+fn test_streaming_xy_direct_lane_versions_preserve_combined_max_semantics() {
+    let xy = StreamingXY::new(8);
+
+    xy.x().push(1.0);
+    assert_eq!(xy.x().version(), 1);
+    assert_eq!(xy.y().version(), 0);
+    assert_eq!(xy.version(), 1);
+
+    xy.y().push(10.0);
+    assert_eq!(xy.x().version(), 1);
+    assert_eq!(xy.y().version(), 1);
+    assert_eq!(xy.version(), 1);
+    assert_eq!(xy.appended_count(), 1);
+}
+
+#[test]
+fn test_streaming_xy_concurrent_pair_writers_publish_ordered_aligned_metadata() {
+    use std::sync::Barrier;
+
+    let xy = StreamingXY::new(256);
+    let observed_sequences = Arc::new(Mutex::new(Vec::new()));
+    let observed_sequences_for_callback = Arc::clone(&observed_sequences);
+    let xy_for_callback = xy.clone();
+    xy.subscribe_paired(move || {
+        let snapshot = xy_for_callback.snapshot();
+        assert_eq!(snapshot.x().len(), snapshot.y().len());
+        assert_eq!(xy_for_callback.x().version(), xy_for_callback.y().version());
+        assert!(
+            snapshot
+                .x()
+                .iter()
+                .zip(snapshot.y())
+                .all(|(&x, &y)| y == x * 10.0)
+        );
+        observed_sequences_for_callback
+            .lock()
+            .expect("sequence lock poisoned")
+            .push(snapshot.sequence());
+    });
+
+    let start = Arc::new(Barrier::new(3));
+    let mut writers = Vec::new();
+    for lane in 0..2 {
+        let writer_xy = xy.clone();
+        let writer_start = Arc::clone(&start);
+        writers.push(thread::spawn(move || {
+            writer_start.wait();
+            for index in 0..100 {
+                let x = f64::from(lane * 100 + index);
+                writer_xy.push(x, x * 10.0);
+            }
+        }));
+    }
+    start.wait();
+    for writer in writers {
+        writer.join().expect("pair writer should finish");
+    }
+
+    let snapshot = xy.snapshot();
+    assert_eq!(snapshot.x().len(), 200);
+    assert_eq!(snapshot.sequence(), 200);
+    assert_eq!(xy.x().version(), xy.y().version());
+    let observed_sequences = observed_sequences.lock().expect("sequence lock poisoned");
+    assert_eq!(observed_sequences.len(), 200);
+    assert!(observed_sequences.windows(2).all(|pair| pair[0] <= pair[1]));
 }
 
 // ========================================================================

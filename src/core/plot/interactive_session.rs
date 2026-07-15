@@ -568,6 +568,8 @@ struct StreamingDrawOp {
     marker_style: MarkerStyle,
     marker_size_px: f32,
     draw_markers: bool,
+    source: crate::data::StreamingXY,
+    sequence: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1439,7 +1441,7 @@ impl InteractivePlotSession {
             }
         }
         let image = plot.render_at(state.time_seconds)?;
-        self.inner.prepared.plot().mark_reactive_sources_rendered();
+        plot.acknowledge_rendered_snapshot(self.inner.prepared.plot());
         let image = Arc::new(image);
 
         let mut state = self
@@ -1718,7 +1720,9 @@ impl InteractivePlotSession {
             geometry,
             &draw_ops,
         )?);
-        self.inner.prepared.plot().mark_reactive_sources_rendered();
+        for op in &draw_ops {
+            op.source.mark_rendered_through(op.sequence);
+        }
 
         let mut state = self
             .inner

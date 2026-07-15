@@ -28,7 +28,8 @@ pub use memory_pool::{MemoryPool, PoolStatistics, PooledBuffer, SharedMemoryPool
 pub use observable::{
     BatchNotifier, BatchUpdate, IntoObservable, Observable, ReactiveDataHandle,
     SlidingWindowObservable, StreamingBuffer, StreamingBufferView, StreamingRenderState,
-    StreamingXY, SubscriberCallback, SubscriberId, WeakObservable, lift, lift2, map,
+    StreamingXY, StreamingXYSnapshot, SubscriberCallback, SubscriberId, WeakObservable, lift,
+    lift2, map,
 };
 pub use platform::{
     MemoryLimits, OptimizationConfig, PerformanceHints, PlatformInfo, PlatformOptimizer,

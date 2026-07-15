@@ -526,7 +526,14 @@ impl PlotSeries {
     }
 
     pub(super) fn collect_source_versions(&self, versions: &mut Vec<u64>) {
-        self.series_type.collect_source_versions(versions);
+        if let Some(stream) = &self.streaming_source {
+            stream.refresh_legacy_lanes();
+            versions.push(stream.version());
+            versions.push(stream.x().version());
+            versions.push(stream.y().version());
+        } else {
+            self.series_type.collect_source_versions(versions);
+        }
         if let Some(version) = self
             .color_source
             .as_ref()
@@ -654,7 +661,50 @@ impl PlotSeries {
     }
 
     pub(super) fn mark_rendered_sources(&self) {
-        self.series_type.mark_rendered_sources();
+        if let Some(stream) = &self.streaming_source {
+            stream.mark_rendered();
+        } else {
+            self.series_type.mark_rendered_sources();
+        }
+    }
+
+    pub(super) fn mark_unpaired_streaming_sources_rendered(&self) {
+        if self.streaming_source.is_none() {
+            self.series_type.mark_rendered_sources();
+        }
+    }
+
+    pub(super) fn has_live_streaming_pair(&self) -> bool {
+        self.streaming_source.is_some()
+            && matches!(
+                &self.series_type,
+                SeriesType::Line { x_data, y_data }
+                    | SeriesType::Scatter { x_data, y_data }
+                    if matches!(x_data, PlotData::Streaming(_))
+                        && matches!(y_data, PlotData::Streaming(_))
+            )
+    }
+
+    pub(super) fn resolve_for_render(&self, time: f64) -> Result<ResolvedSeries<'_>> {
+        if self.has_live_streaming_pair() {
+            let snapshot = self
+                .streaming_source
+                .as_ref()
+                .expect("live streaming pair must retain its source")
+                .snapshot();
+            return Ok(match &self.series_type {
+                SeriesType::Line { .. } => ResolvedSeries::Line {
+                    x: Cow::Owned(snapshot.x().to_vec()),
+                    y: Cow::Owned(snapshot.y().to_vec()),
+                },
+                SeriesType::Scatter { .. } => ResolvedSeries::Scatter {
+                    x: Cow::Owned(snapshot.x().to_vec()),
+                    y: Cow::Owned(snapshot.y().to_vec()),
+                },
+                _ => unreachable!("live paired source is only used by line/scatter"),
+            });
+        }
+        self.series_type.resolve_for_render(time)
     }
 
     pub(super) fn subscribe_push_updates(
@@ -665,9 +715,35 @@ impl PlotSeries {
         if let Some(stream) = &self.streaming_source {
             let stream = stream.clone();
             let callback = Arc::clone(callback);
-            let id = stream.subscribe_paired(move || callback());
+            stream.refresh_legacy_lanes();
+            let observed_versions = Arc::new(std::sync::Mutex::new((
+                stream.version(),
+                stream.x().version(),
+                stream.y().version(),
+            )));
+            let make_callback = |stream: crate::data::StreamingXY| {
+                let callback = Arc::clone(&callback);
+                let observed_versions = Arc::clone(&observed_versions);
+                move || {
+                    stream.refresh_legacy_lanes();
+                    let current = (stream.version(), stream.x().version(), stream.y().version());
+                    let mut observed = observed_versions
+                        .lock()
+                        .expect("Streaming subscription version lock poisoned");
+                    if *observed != current {
+                        *observed = current;
+                        drop(observed);
+                        callback();
+                    }
+                }
+            };
+            let paired_id = stream.subscribe_paired(make_callback(stream.clone()));
+            let x_id = stream.x().subscribe(make_callback(stream.clone()));
+            let y_id = stream.y().subscribe(make_callback(stream.clone()));
             teardowns.push(Box::new(move || {
-                stream.unsubscribe_paired(id);
+                stream.unsubscribe_paired(paired_id);
+                stream.x().unsubscribe(x_id);
+                stream.y().unsubscribe(y_id);
             }));
         } else {
             self.series_type.subscribe_push_updates(callback, teardowns);
