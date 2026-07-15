@@ -18,7 +18,8 @@ The checks are intentionally narrow and deterministic:
   - `rust,check,features=gpu+interactive` selects a deterministic feature profile.
   - `ts,check` / `typescript,check` fences are type-checked against the local Web SDK.
   - `python,check` fences are syntax-checked.
-- All shell fences are syntax-checked with `bash -n` and are never executed.
+- Shell fences are syntax-checked with their declared `sh` or Bash parser and
+  are never executed.
 - Ignored Rust/TypeScript/shell fences require an explicit `reason=...`.
 - Every runnable `examples/**/*.rs` and `gallery/**/*.rs` program must resolve
   to exactly one uniquely named Cargo example target.
