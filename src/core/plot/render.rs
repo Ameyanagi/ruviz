@@ -505,7 +505,12 @@ impl Plot {
 
         if let Some(ref pos) = layout.title_pos {
             if let Some(title) = frame.title.as_deref() {
-                renderer.draw_title_at(pos, title, self.display.theme.foreground)?;
+                renderer.draw_title_at_with_weight(
+                    pos,
+                    title,
+                    self.display.theme.foreground,
+                    self.display.config.typography.title_weight,
+                )?;
             }
         }
 
@@ -1279,7 +1284,11 @@ impl Plot {
         let mut measurements = MeasuredDimensions::default();
 
         if let Some(title) = content.title.as_deref() {
-            measurements.title = Some(renderer.measure_text(title, title_size_px)?);
+            measurements.title = Some(renderer.measure_text_with_weight(
+                title,
+                title_size_px,
+                self.display.config.typography.title_weight,
+            )?);
         }
         if let Some(xlabel) = content.xlabel.as_deref() {
             measurements.xlabel = Some(renderer.measure_text(xlabel, label_size_px)?);
@@ -1991,8 +2000,7 @@ impl Plot {
             Annotation::Text { x, y, text, style } => {
                 let (px, py) =
                     self.svg_annotation_point(*x, *y, plot_area, x_min, x_max, y_min, y_max);
-                let font_size = pt_to_px(style.font_size, self.display.config.figure.dpi);
-                svg.draw_text(text, px, py, font_size, style.color)?;
+                svg.draw_styled_text(text, px, py, &self.display.config.typography.family, style)?;
             }
             Annotation::Arrow {
                 x1,
@@ -2744,12 +2752,13 @@ impl Plot {
         // Draw title/xlabel/ylabel using layout-computed positions.
         if let Some(ref pos) = layout.title_pos {
             if let Some(title) = frame.title.as_deref() {
-                svg.draw_text_centered(
+                svg.draw_text_centered_with_weight(
                     title,
                     pos.x,
                     pos.y,
                     pos.size,
                     self.display.theme.foreground,
+                    self.display.config.typography.title_weight,
                 )?;
             }
         }

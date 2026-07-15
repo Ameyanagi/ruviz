@@ -5454,6 +5454,197 @@ fn test_render_to_svg_propagates_named_font_family() {
     assert!(svg.contains(r#"font-family="&quot;serif&quot;""#));
 }
 
+fn plot_with_weighted_title(weight: crate::render::FontWeight) -> Plot {
+    let config = PlotConfig::builder()
+        .typography(|typography| typography.title_weight(weight))
+        .build();
+    Plot::new()
+        .plot_config(config)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .color(Color::RED)
+        .title("Weighted raster title")
+        .text_styled(
+            0.5,
+            0.5,
+            "Normal annotation",
+            crate::core::TextStyle::default()
+                .font_size(18.0)
+                .color(Color::BLUE),
+        )
+        .end_series()
+        .set_output_pixels(360, 280)
+}
+
+fn blue_dominant_pixel_indices(image: &Image) -> Vec<usize> {
+    image
+        .pixels
+        .chunks_exact(4)
+        .enumerate()
+        .filter_map(|(index, pixel)| {
+            (pixel[3] > 0
+                && pixel[2] > 80
+                && pixel[2] > pixel[0].saturating_add(40)
+                && pixel[2] > pixel[1].saturating_add(40))
+            .then_some(index)
+        })
+        .collect()
+}
+
+fn differing_pixel_count(left: &Image, right: &Image) -> usize {
+    left.pixels
+        .chunks_exact(4)
+        .zip(right.pixels.chunks_exact(4))
+        .filter(|(left, right)| left != right)
+        .count()
+}
+
+#[test]
+fn plain_svg_multiline_title_uses_weighted_measurement_and_reserves_each_line() {
+    let build = |title: &str| {
+        let config = PlotConfig::builder()
+            .typography(|typography| {
+                typography
+                    .family(crate::render::FontFamily::Monospace)
+                    .title_weight(crate::render::FontWeight::Bold)
+            })
+            .build();
+        Plot::new()
+            .plot_config(config)
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .title(title)
+            .end_series()
+            .set_output_pixels(360, 280)
+    };
+    let inspect = |plot: &Plot| {
+        let (_, _, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+        let content = plot.create_plot_content(y_min, y_max);
+        let mut renderer = crate::render::SkiaRenderer::with_font_family(
+            plot.display.dimensions.0,
+            plot.display.dimensions.1,
+            plot.display.theme.clone(),
+            plot.display.config.typography.family.clone(),
+        )
+        .unwrap();
+        renderer.set_render_scale(plot.render_scale());
+        let measured = plot
+            .measure_layout_text(&renderer, &content, plot.display.config.figure.dpi)
+            .unwrap()
+            .unwrap();
+        let layout = plot.compute_layout_from_measurements(
+            plot.display.dimensions,
+            &content,
+            plot.display.config.figure.dpi,
+            Some(&measured),
+        );
+        (measured.title.unwrap(), layout.plot_area.top)
+    };
+
+    let single = build("wide title");
+    let multiline = build("wide title\nshort");
+    let (single_measurement, single_top) = inspect(&single);
+    let (multiline_measurement, multiline_top) = inspect(&multiline);
+    assert!(multiline_measurement.1 > single_measurement.1 * 1.8);
+    assert!(multiline_top > single_top + single_measurement.1 * 0.8);
+
+    let svg = multiline.render_to_svg().unwrap();
+    let title = svg
+        .lines()
+        .find(|line| line.contains("wide title"))
+        .expect("multiline plain-SVG title");
+    assert!(title.contains(r#"font-family="monospace""#));
+    assert!(title.contains(r#"font-weight="700""#));
+    assert!(title.contains(r#"text-anchor="middle""#));
+    assert_eq!(title.matches("<tspan ").count(), 2);
+}
+
+#[test]
+fn serial_raster_title_honors_weight_without_changing_annotation_weight() {
+    let normal = plot_with_weighted_title(crate::render::FontWeight::Normal)
+        .render()
+        .expect("normal-weight serial raster");
+    let bold = plot_with_weighted_title(crate::render::FontWeight::Bold)
+        .render()
+        .expect("bold serial raster");
+
+    assert!(differing_pixel_count(&normal, &bold) > 20);
+    assert_eq!(
+        blue_dominant_pixel_indices(&normal),
+        blue_dominant_pixel_indices(&bold),
+        "title weight must not leak into annotation text"
+    );
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_raster_title_honors_weight_without_changing_annotation_weight() {
+    let normal = plot_with_weighted_title(crate::render::FontWeight::Normal)
+        .render_with_parallel()
+        .expect("normal-weight parallel raster");
+    let bold = plot_with_weighted_title(crate::render::FontWeight::Bold)
+        .render_with_parallel()
+        .expect("bold parallel raster");
+
+    assert!(differing_pixel_count(&normal, &bold) > 20);
+    assert_eq!(
+        blue_dominant_pixel_indices(&normal),
+        blue_dominant_pixel_indices(&bold),
+        "title weight must not leak into parallel annotation text"
+    );
+}
+
+#[test]
+fn test_svg_text_annotation_uses_resolved_typography_and_full_text_style() {
+    let x = vec![0.0, 1.0];
+    let y = vec![0.0, 1.0];
+    let config = PlotConfig::builder()
+        .figure(2.0, 2.0)
+        .dpi(144.0)
+        .typography(|typography| {
+            typography
+                .family(crate::render::FontFamily::Name(
+                    "Annotation Font".to_string(),
+                ))
+                .title_weight(crate::render::FontWeight::Bold)
+        })
+        .build();
+    let style = crate::core::TextStyle {
+        font_size: 10.0,
+        color: Color::new_rgba(20, 30, 40, 200),
+        align: crate::core::TextAlign::Right,
+        valign: crate::core::TextVAlign::Bottom,
+        rotation: 25.0,
+        background: Some(Color::new_rgba(240, 230, 220, 128)),
+        padding: 3.0,
+        border_color: Some(Color::BLUE),
+        border_width: 2.0,
+    };
+
+    let svg = Plot::new()
+        .plot_config(config)
+        .line(&x, &y)
+        .title("Weighted title")
+        .text_styled(0.5, 0.5, "Styled annotation", style)
+        .render_to_svg()
+        .expect("SVG render should succeed");
+
+    assert!(svg.contains(r#"data-ruviz-text-style="annotation""#));
+    assert!(svg.contains("rotate(-25.00)"));
+    assert!(svg.contains(r#"font-family="&quot;Annotation Font&quot;""#));
+    let annotation_line = svg
+        .lines()
+        .find(|line| line.contains(">Styled annotation</text>"))
+        .expect("annotation text should be present");
+    let title_line = svg
+        .lines()
+        .find(|line| line.contains(">Weighted title</text>"))
+        .expect("title text should be present");
+    assert!(annotation_line.contains(r#"font-weight="400""#));
+    assert!(title_line.contains(r#"font-weight="700""#));
+    assert!(svg.contains(r#"text-anchor="end""#));
+    assert!(svg.contains(r#"fill="rgba(240,230,220,0.502)""#));
+    assert!(svg.contains(r#"stroke-width="4.00""#));
+}
+
 #[test]
 fn test_theme_sets_plot_typography_font_family() {
     let themed = Plot::new().theme(crate::render::Theme::publication());

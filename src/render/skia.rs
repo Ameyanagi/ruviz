@@ -7,7 +7,7 @@ use crate::{
         pt_to_px,
     },
     render::{
-        Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme,
+        Color, FontConfig, FontFamily, FontWeight, LineStyle, MarkerStyle, TextRenderer, Theme,
         typst_text::{self, TypstBackendKind, TypstTextAnchor},
     },
 };
@@ -1330,9 +1330,21 @@ impl SkiaRenderer {
         size: f32,
         color: Color,
     ) -> Result<()> {
+        self.draw_text_centered_with_weight(text, center_x, y, size, color, FontWeight::Normal)
+    }
+
+    pub(crate) fn draw_text_centered_with_weight(
+        &mut self,
+        text: &str,
+        center_x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+        weight: FontWeight,
+    ) -> Result<()> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_config.family.clone(), size);
+                let config = FontConfig::new(self.font_config.family.clone(), size).weight(weight);
                 self.text_renderer.render_text_centered(
                     &mut self.pixmap,
                     text,
@@ -1345,8 +1357,14 @@ impl SkiaRenderer {
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
+                let multiline_text = typst_text::with_explicit_line_breaks(text);
+                let weighted_text = typst_text::with_font_weight(&multiline_text, weight);
+                let aligned_text = typst_text::with_horizontal_alignment(
+                    &weighted_text,
+                    crate::core::TextAlign::Center,
+                );
                 let rendered = typst_text::render_raster_with_font_family(
-                    text,
+                    &aligned_text,
                     size_pt,
                     color,
                     0.0,
@@ -1368,16 +1386,31 @@ impl SkiaRenderer {
 
     /// Measure text dimensions
     pub fn measure_text(&self, text: &str, size: f32) -> Result<(f32, f32)> {
+        self.measure_text_with_weight(text, size, FontWeight::Normal)
+    }
+
+    pub(crate) fn measure_text_with_weight(
+        &self,
+        text: &str,
+        size: f32,
+        weight: FontWeight,
+    ) -> Result<(f32, f32)> {
         match self.text_engine_mode {
             TextEngineMode::Plain => {
-                let config = FontConfig::new(self.font_config.family.clone(), size);
+                let config = FontConfig::new(self.font_config.family.clone(), size).weight(weight);
                 self.text_renderer.measure_text(text, &config)
             }
             #[cfg(feature = "typst-math")]
             TextEngineMode::Typst => {
                 let size_pt = self.typst_size_pt(size);
+                let multiline_text = typst_text::with_explicit_line_breaks(text);
+                let weighted_text = typst_text::with_font_weight(&multiline_text, weight);
+                let aligned_text = typst_text::with_horizontal_alignment(
+                    &weighted_text,
+                    crate::core::TextAlign::Center,
+                );
                 typst_text::measure_text_with_font_family(
-                    text,
+                    &aligned_text,
                     size_pt,
                     self.theme.foreground,
                     0.0,
@@ -1812,7 +1845,17 @@ impl SkiaRenderer {
     ///
     /// This is the preferred method for content-driven layout.
     pub fn draw_title_at(&mut self, pos: &TextPosition, text: &str, color: Color) -> Result<()> {
-        self.draw_text_centered(text, pos.x, pos.y, pos.size, color)
+        self.draw_title_at_with_weight(pos, text, color, FontWeight::Normal)
+    }
+
+    pub(crate) fn draw_title_at_with_weight(
+        &mut self,
+        pos: &TextPosition,
+        text: &str,
+        color: Color,
+        weight: FontWeight,
+    ) -> Result<()> {
+        self.draw_text_centered_with_weight(text, pos.x, pos.y, pos.size, color, weight)
     }
 
     /// Draw X-axis label at a computed position from LayoutCalculator

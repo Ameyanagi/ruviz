@@ -678,6 +678,21 @@ mod tests {
     }
 
     #[test]
+    fn text_style_remains_constructible_with_the_public_fields() {
+        let _style = TextStyle {
+            font_size: 11.0,
+            color: Color::BLUE,
+            align: TextAlign::Right,
+            valign: TextVAlign::Bottom,
+            rotation: 17.5,
+            background: Some(Color::WHITE),
+            padding: 3.0,
+            border_color: Some(Color::BLACK),
+            border_width: 0.75,
+        };
+    }
+
+    #[test]
     fn test_arrow_style_builder() {
         let style = ArrowStyle::new()
             .color(Color::BLUE)
