@@ -232,6 +232,10 @@ impl Plot {
     /// | Default | Dark | Seaborn | Publication |
     /// |---------|------|---------|-------------|
     /// | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_publication.png) |
+    ///
+    /// Builder calls use last-call-wins precedence. Applying a theme replaces
+    /// the current typography settings, including the font family. Call
+    /// [`Plot::font_family`] after `theme` to override the theme's family.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.display.config.typography.family =
             crate::render::FontFamily::from(theme.font_family.as_str());

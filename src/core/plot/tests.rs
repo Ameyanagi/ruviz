@@ -4796,6 +4796,23 @@ fn test_theme_sets_plot_typography_font_family() {
 }
 
 #[test]
+fn test_theme_and_font_family_follow_last_call_precedence() {
+    let theme = crate::render::Theme::publication();
+    let theme_family = crate::render::FontFamily::from(theme.font_family.as_str());
+
+    let theme_last = Plot::new()
+        .font_family("Explicit Font")
+        .theme(theme.clone());
+    assert_eq!(theme_last.get_config().typography.family, theme_family);
+
+    let font_last = Plot::new().theme(theme).font_family("Explicit Font");
+    assert_eq!(
+        font_last.get_config().typography.family,
+        crate::render::FontFamily::Name("Explicit Font".to_string())
+    );
+}
+
+#[test]
 fn test_plot_builder_font_family_forwards_to_plot() {
     let x = vec![0.0, 1.0, 2.0];
     let y = vec![0.0, 1.0, 4.0];
