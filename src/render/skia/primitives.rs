@@ -1,5 +1,8 @@
 use super::*;
-use crate::core::types::Point2f;
+use crate::{
+    core::types::Point2f,
+    render::color::{scale_premultiplied_rgba, source_over_premultiplied_rgba},
+};
 
 impl SkiaRenderer {
     /// Map renderer font size to Typst size units.
@@ -1349,47 +1352,16 @@ impl SkiaRenderer {
     }
 
     fn blend_premultiplied_rgba(dst: &mut [u8], src: &[u8], mask_alpha: u8) {
-        let effective_alpha = Self::mul_div_255(src[3], mask_alpha);
-        if effective_alpha == 0 {
-            return;
-        }
-
-        if effective_alpha == u8::MAX && mask_alpha == u8::MAX {
-            dst.copy_from_slice(src);
-            return;
-        }
-
-        let src_r = Self::mul_div_255(src[0], mask_alpha);
-        let src_g = Self::mul_div_255(src[1], mask_alpha);
-        let src_b = Self::mul_div_255(src[2], mask_alpha);
-        let inv_alpha = u8::MAX - effective_alpha;
-
-        dst[0] = src_r.saturating_add(Self::mul_div_255(dst[0], inv_alpha));
-        dst[1] = src_g.saturating_add(Self::mul_div_255(dst[1], inv_alpha));
-        dst[2] = src_b.saturating_add(Self::mul_div_255(dst[2], inv_alpha));
-        dst[3] = effective_alpha.saturating_add(Self::mul_div_255(dst[3], inv_alpha));
+        let src = scale_premultiplied_rgba([src[0], src[1], src[2], src[3]], mask_alpha);
+        Self::blend_premultiplied_rgba_unmasked(dst, &src);
     }
 
     fn blend_premultiplied_rgba_unmasked(dst: &mut [u8], src: &[u8]) {
-        let src_alpha = src[3];
-        if src_alpha == 0 {
-            return;
-        }
-
-        if src_alpha == u8::MAX {
-            dst.copy_from_slice(src);
-            return;
-        }
-
-        let inv_alpha = u8::MAX - src_alpha;
-        dst[0] = src[0].saturating_add(Self::mul_div_255(dst[0], inv_alpha));
-        dst[1] = src[1].saturating_add(Self::mul_div_255(dst[1], inv_alpha));
-        dst[2] = src[2].saturating_add(Self::mul_div_255(dst[2], inv_alpha));
-        dst[3] = src_alpha.saturating_add(Self::mul_div_255(dst[3], inv_alpha));
-    }
-
-    fn mul_div_255(value: u8, alpha: u8) -> u8 {
-        (((value as u32 * alpha as u32) + 127) / 255) as u8
+        let blended = source_over_premultiplied_rgba(
+            [dst[0], dst[1], dst[2], dst[3]],
+            [src[0], src[1], src[2], src[3]],
+        );
+        dst.copy_from_slice(&blended);
     }
 
     /// Draw grid lines

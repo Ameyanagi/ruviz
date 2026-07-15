@@ -23,14 +23,18 @@
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use cosmic_text::{
-    Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping,
-    Style as CosmicStyle, SwashCache, Weight as CosmicWeight,
+    Attrs, Buffer, CacheKey, Color as CosmicColor, Family, FontSystem, Metrics, Shaping,
+    Style as CosmicStyle, SwashCache, SwashContent, Weight as CosmicWeight,
 };
+use swash::scale::Source as SwashSource;
 use tiny_skia::{Pixmap, PixmapMut, PremultipliedColorU8};
 
 use crate::core::error::{PlottingError, Result};
-use crate::render::Color;
 use crate::render::text_anchor::TextPlacementMetrics;
+use crate::render::{
+    Color,
+    color::{premultiply_rgba, scale_premultiplied_rgba, source_over_premultiplied_rgba},
+};
 
 const MAX_TEXT_RASTER_DIMENSION: u32 = 8_192;
 const MAX_TEXT_RASTER_BYTES: usize = 128 * 1024 * 1024;
@@ -96,6 +100,96 @@ fn validate_text_raster_size(width: u32, height: u32, context: &str) -> Result<(
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum GlyphPixel {
+    Straight([u8; 4]),
+    Premultiplied([u8; 4]),
+}
+
+fn premultiplied_glyph_pixel(
+    glyph_pixel: GlyphPixel,
+    requested_alpha: u8,
+) -> Option<PremultipliedColorU8> {
+    let [red, green, blue, alpha] = match glyph_pixel {
+        GlyphPixel::Straight([red, green, blue, alpha]) => {
+            let effective_alpha = crate::render::color::mul_div_255(alpha, requested_alpha);
+            premultiply_rgba(red, green, blue, effective_alpha)
+        }
+        GlyphPixel::Premultiplied(rgba) => scale_premultiplied_rgba(rgba, requested_alpha),
+    };
+
+    if alpha == 0 {
+        return None;
+    }
+
+    PremultipliedColorU8::from_rgba(red, green, blue, alpha)
+}
+
+pub(crate) fn with_premultiplied_glyph_pixels<F: FnMut(i32, i32, PremultipliedColorU8)>(
+    swash_cache: &mut SwashCache,
+    font_system: &mut FontSystem,
+    cache_key: CacheKey,
+    color: Color,
+    mut callback: F,
+) {
+    let Some(image) = swash_cache.get_image(font_system, cache_key) else {
+        return;
+    };
+
+    let origin_x = image.placement.left;
+    let origin_y = -image.placement.top;
+    match image.content {
+        SwashContent::Mask => {
+            for (index, coverage) in image.data.iter().copied().enumerate() {
+                let x = index as u32 % image.placement.width;
+                let y = index as u32 / image.placement.width;
+                let glyph_pixel = GlyphPixel::Straight([color.r, color.g, color.b, coverage]);
+                if let Some(source) = premultiplied_glyph_pixel(glyph_pixel, color.a) {
+                    callback(origin_x + x as i32, origin_y + y as i32, source);
+                }
+            }
+        }
+        SwashContent::Color => {
+            let is_premultiplied = matches!(image.source, SwashSource::ColorOutline(_));
+            for (index, rgba) in image.data.chunks_exact(4).enumerate() {
+                let x = index as u32 % image.placement.width;
+                let y = index as u32 / image.placement.width;
+                let rgba = [rgba[0], rgba[1], rgba[2], rgba[3]];
+                let glyph_pixel = if is_premultiplied {
+                    GlyphPixel::Premultiplied(rgba)
+                } else {
+                    GlyphPixel::Straight(rgba)
+                };
+                if let Some(source) = premultiplied_glyph_pixel(glyph_pixel, color.a) {
+                    callback(origin_x + x as i32, origin_y + y as i32, source);
+                }
+            }
+        }
+        SwashContent::SubpixelMask => {
+            log::warn!("Subpixel glyph masks are not supported");
+        }
+    }
+}
+
+pub(crate) fn blend_premultiplied_source_over(
+    destination: &mut PremultipliedColorU8,
+    source: PremultipliedColorU8,
+) {
+    let [red, green, blue, alpha] = source_over_premultiplied_rgba(
+        [
+            destination.red(),
+            destination.green(),
+            destination.blue(),
+            destination.alpha(),
+        ],
+        [source.red(), source.green(), source.blue(), source.alpha()],
+    );
+
+    if let Some(blended) = PremultipliedColorU8::from_rgba(red, green, blue, alpha) {
+        *destination = blended;
+    }
 }
 
 fn is_renderable_text(text: &str) -> bool {
@@ -485,7 +579,7 @@ impl TextRenderer {
         config: &FontConfig,
         color: Color,
     ) -> Result<()> {
-        if !is_renderable_text(text) {
+        if !is_renderable_text(text) || color.a == 0 {
             return Ok(());
         }
 
@@ -514,8 +608,6 @@ impl TextRenderer {
         // Shape the text
         buffer.shape_until_scroll(&mut font_system, false);
 
-        // Convert color
-        let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
         let width = pixmap.width();
         let height = pixmap.height();
         let pixels = pixmap.pixels_mut();
@@ -527,11 +619,12 @@ impl TextRenderer {
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((x, y + line_y), 1.0);
 
-                swash_cache.with_pixels(
+                with_premultiplied_glyph_pixels(
+                    &mut swash_cache,
                     &mut font_system,
                     physical_glyph.cache_key,
-                    cosmic_color,
-                    |glyph_x, glyph_y, glyph_color| {
+                    color,
+                    |glyph_x, glyph_y, source| {
                         let pixel_x = physical_glyph.x + glyph_x;
                         let pixel_y = physical_glyph.y + glyph_y;
 
@@ -540,31 +633,8 @@ impl TextRenderer {
                             && (pixel_x as u32) < width
                             && (pixel_y as u32) < height
                         {
-                            let alpha = glyph_color.a();
-                            if alpha > 0 {
-                                let idx = (pixel_y as u32 * width + pixel_x as u32) as usize;
-                                let background = pixels[idx];
-
-                                // Alpha blend
-                                let alpha_f = alpha as f32 / 255.0;
-                                let inv_alpha = 1.0 - alpha_f;
-
-                                let blended_r = (glyph_color.r() as f32 * alpha_f
-                                    + background.red() as f32 * inv_alpha)
-                                    as u8;
-                                let blended_g = (glyph_color.g() as f32 * alpha_f
-                                    + background.green() as f32 * inv_alpha)
-                                    as u8;
-                                let blended_b = (glyph_color.b() as f32 * alpha_f
-                                    + background.blue() as f32 * inv_alpha)
-                                    as u8;
-
-                                if let Some(blended) = PremultipliedColorU8::from_rgba(
-                                    blended_r, blended_g, blended_b, 255,
-                                ) {
-                                    pixels[idx] = blended;
-                                }
-                            }
+                            let idx = (pixel_y as u32 * width + pixel_x as u32) as usize;
+                            blend_premultiplied_source_over(&mut pixels[idx], source);
                         }
                     },
                 );
@@ -593,6 +663,10 @@ impl TextRenderer {
         config: &FontConfig,
         color: Color,
     ) -> Result<()> {
+        if !is_renderable_text(text) || color.a == 0 {
+            return Ok(());
+        }
+
         let (width, _) = self.measure_text(text, config)?;
         let x = center_x - width / 2.0;
         self.render_text(pixmap, text, x, y, config, color)
@@ -619,7 +693,7 @@ impl TextRenderer {
         config: &FontConfig,
         color: Color,
     ) -> Result<()> {
-        if !is_renderable_text(text) {
+        if !is_renderable_text(text) || color.a == 0 {
             return Ok(());
         }
 
@@ -644,8 +718,6 @@ impl TextRenderer {
         buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
-        let cosmic_color = CosmicColor::rgba(color.r, color.g, color.b, color.a);
-
         // Compute tight bounds from rasterized glyph pixels.
         let mut min_x = i32::MAX;
         let mut min_y = i32::MAX;
@@ -655,14 +727,12 @@ impl TextRenderer {
             let line_y = run.line_y;
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((0., line_y), 1.0);
-                swash_cache.with_pixels(
+                with_premultiplied_glyph_pixels(
+                    &mut swash_cache,
                     &mut font_system,
                     physical_glyph.cache_key,
-                    cosmic_color,
-                    |dx, dy, glyph_color| {
-                        if glyph_color.a() == 0 {
-                            return;
-                        }
+                    color,
+                    |dx, dy, _source| {
                         let px = physical_glyph.x + dx;
                         let py = physical_glyph.y + dy;
                         min_x = min_x.min(px);
@@ -694,29 +764,22 @@ impl TextRenderer {
             for glyph in run.glyphs.iter() {
                 let physical_glyph = glyph.physical((0., line_y), 1.0);
 
-                swash_cache.with_pixels(
+                with_premultiplied_glyph_pixels(
+                    &mut swash_cache,
                     &mut font_system,
                     physical_glyph.cache_key,
-                    cosmic_color,
-                    |dx, dy, glyph_color| {
-                        if glyph_color.a() == 0 {
-                            return;
-                        }
-
+                    color,
+                    |dx, dy, source| {
                         let glyph_x = (physical_glyph.x + dx - min_x) as u32;
                         let glyph_y = (physical_glyph.y + dy - min_y) as u32;
 
                         if glyph_x < text_width && glyph_y < text_height {
                             let idx = glyph_y as usize * text_width as usize + glyph_x as usize;
                             if idx < temp_pixmap.pixels().len() {
-                                if let Some(rgba_pixel) = PremultipliedColorU8::from_rgba(
-                                    glyph_color.r(),
-                                    glyph_color.g(),
-                                    glyph_color.b(),
-                                    glyph_color.a(),
-                                ) {
-                                    temp_pixmap.pixels_mut()[idx] = rgba_pixel;
-                                }
+                                blend_premultiplied_source_over(
+                                    &mut temp_pixmap.pixels_mut()[idx],
+                                    source,
+                                );
                             }
                         }
                     },
@@ -775,26 +838,10 @@ impl TextRenderer {
                     {
                         let pixmap_idx = (final_y as u32 * canvas_width + final_x as u32) as usize;
                         if pixmap_idx < pixmap.pixels().len() {
-                            let background = pixmap.pixels()[pixmap_idx];
-                            let alpha_f = src_pixel.alpha() as f32 / 255.0;
-                            let inv_alpha = 1.0 - alpha_f;
-
-                            // Proper alpha compositing
-                            let blended_r = (src_pixel.red() as f32
-                                + background.red() as f32 * inv_alpha)
-                                as u8;
-                            let blended_g = (src_pixel.green() as f32
-                                + background.green() as f32 * inv_alpha)
-                                as u8;
-                            let blended_b = (src_pixel.blue() as f32
-                                + background.blue() as f32 * inv_alpha)
-                                as u8;
-
-                            if let Some(blended) = PremultipliedColorU8::from_rgba(
-                                blended_r, blended_g, blended_b, 255,
-                            ) {
-                                pixmap.pixels_mut()[pixmap_idx] = blended;
-                            }
+                            blend_premultiplied_source_over(
+                                &mut pixmap.pixels_mut()[pixmap_idx],
+                                src_pixel,
+                            );
                         }
                     }
                 }
@@ -1145,5 +1192,182 @@ mod tests {
         let (w, h) = renderer.measure_text("   \n\t", &config).unwrap();
         assert_eq!(w, 0.0);
         assert_eq!(h, 12.0);
+    }
+
+    fn pixel_rgba(pixel: PremultipliedColorU8) -> [u8; 4] {
+        [pixel.red(), pixel.green(), pixel.blue(), pixel.alpha()]
+    }
+
+    fn composite_test_glyph(
+        destination: &mut PremultipliedColorU8,
+        glyph_pixel: GlyphPixel,
+        requested_alpha: u8,
+    ) {
+        if let Some(source) = premultiplied_glyph_pixel(glyph_pixel, requested_alpha) {
+            blend_premultiplied_source_over(destination, source);
+        }
+    }
+
+    #[test]
+    fn glyph_compositing_combines_coverage_and_requested_alpha() {
+        let glyph = GlyphPixel::Straight([200, 100, 50, 128]);
+        let mut destination = PremultipliedColorU8::TRANSPARENT;
+
+        composite_test_glyph(&mut destination, glyph, 128);
+
+        assert_eq!(pixel_rgba(destination), [50, 25, 13, 64]);
+    }
+
+    #[test]
+    fn premultiplied_color_glyphs_are_not_premultiplied_twice() {
+        let color_outline = GlyphPixel::Premultiplied([128, 0, 0, 128]);
+        let color_bitmap = GlyphPixel::Straight([255, 0, 0, 128]);
+
+        let outline_source = premultiplied_glyph_pixel(color_outline, 255).unwrap();
+        let bitmap_source = premultiplied_glyph_pixel(color_bitmap, 255).unwrap();
+        assert_eq!(pixel_rgba(outline_source), [128, 0, 0, 128]);
+        assert_eq!(outline_source, bitmap_source);
+
+        let translucent_outline = premultiplied_glyph_pixel(color_outline, 128).unwrap();
+        assert_eq!(pixel_rgba(translucent_outline), [64, 0, 0, 64]);
+    }
+
+    #[test]
+    fn glyph_source_over_preserves_transparent_translucent_and_opaque_alpha() {
+        let glyph = GlyphPixel::Straight([200, 100, 50, 128]);
+        let cases = [
+            ([0, 0, 0, 0], [50, 25, 13, 64]),
+            ([20, 40, 60, 128], [65, 55, 58, 160]),
+            ([10, 20, 30, 255], [57, 40, 35, 255]),
+        ];
+
+        for (destination, expected) in cases {
+            let mut destination = PremultipliedColorU8::from_rgba(
+                destination[0],
+                destination[1],
+                destination[2],
+                destination[3],
+            )
+            .unwrap();
+            composite_test_glyph(&mut destination, glyph, 128);
+            assert_eq!(pixel_rgba(destination), expected);
+        }
+    }
+
+    #[test]
+    fn transparent_requested_text_is_a_no_op_and_opaque_text_replaces() {
+        let original = PremultipliedColorU8::from_rgba(20, 40, 60, 128).unwrap();
+        let glyph = GlyphPixel::Straight([200, 100, 50, 255]);
+        let mut destination = original;
+
+        composite_test_glyph(&mut destination, glyph, 0);
+        assert_eq!(destination, original);
+
+        composite_test_glyph(&mut destination, glyph, 255);
+        assert_eq!(pixel_rgba(destination), [200, 100, 50, 255]);
+    }
+
+    #[test]
+    fn transparent_centered_text_is_a_no_op() {
+        let renderer = TextRenderer::new();
+        let config = FontConfig::new(FontFamily::SansSerif, 24.0);
+        let mut pixmap = Pixmap::new(32, 32).unwrap();
+        pixmap.fill(tiny_skia::Color::from_rgba8(40, 80, 120, 128));
+        let before = pixmap.data().to_vec();
+
+        renderer
+            .render_text_centered(
+                &mut pixmap,
+                "centered",
+                16.0,
+                8.0,
+                &config,
+                Color::new_rgba(200, 100, 50, 0),
+            )
+            .unwrap();
+
+        assert_eq!(pixmap.data(), before);
+    }
+
+    fn nontransparent_bounds(pixmap: &Pixmap) -> Option<(u32, u32, u32, u32)> {
+        let mut min_x = pixmap.width();
+        let mut min_y = pixmap.height();
+        let mut max_x = 0;
+        let mut max_y = 0;
+        let mut found = false;
+
+        for y in 0..pixmap.height() {
+            for x in 0..pixmap.width() {
+                let pixel = pixmap.pixels()[(y * pixmap.width() + x) as usize];
+                if pixel.alpha() > 0 {
+                    found = true;
+                    min_x = min_x.min(x);
+                    min_y = min_y.min(y);
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+            }
+        }
+
+        found.then_some((min_x, min_y, max_x, max_y))
+    }
+
+    fn cropped_pixels(pixmap: &Pixmap, bounds: (u32, u32, u32, u32)) -> Vec<[u8; 4]> {
+        let (min_x, min_y, max_x, max_y) = bounds;
+        let mut pixels = Vec::new();
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                pixels.push(pixel_rgba(
+                    pixmap.pixels()[(y * pixmap.width() + x) as usize],
+                ));
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn rotated_text_is_pixel_exact_counterclockwise_parity() {
+        register_font_bytes(include_bytes!("../../assets/NotoSans-Regular.ttf").to_vec()).unwrap();
+
+        let renderer = TextRenderer::new();
+        let config = FontConfig::new(FontFamily::Name("Noto Sans".to_string()), 32.0);
+        let color = Color::new_rgba(180, 90, 30, 128);
+        let mut normal = Pixmap::new(128, 128).unwrap();
+        let mut rotated = Pixmap::new(128, 128).unwrap();
+
+        renderer
+            .render_text(&mut normal, "A", 24.0, 24.0, &config, color)
+            .unwrap();
+        renderer
+            .render_text_rotated(&mut rotated, "A", 64.0, 64.0, &config, color)
+            .unwrap();
+
+        let normal_bounds = nontransparent_bounds(&normal).expect("normal text rendered no pixels");
+        let rotated_bounds =
+            nontransparent_bounds(&rotated).expect("rotated text rendered no pixels");
+        let normal_width = normal_bounds.2 - normal_bounds.0 + 1;
+        let normal_height = normal_bounds.3 - normal_bounds.1 + 1;
+        let rotated_width = rotated_bounds.2 - rotated_bounds.0 + 1;
+        let rotated_height = rotated_bounds.3 - rotated_bounds.1 + 1;
+        assert_eq!(
+            (rotated_width, rotated_height),
+            (normal_height, normal_width)
+        );
+
+        let normal_pixels = cropped_pixels(&normal, normal_bounds);
+        let rotated_pixels = cropped_pixels(&rotated, rotated_bounds);
+        for y in 0..normal_height {
+            for x in 0..normal_width {
+                let normal_index = (y * normal_width + x) as usize;
+                let rotated_x = y;
+                let rotated_y = normal_width - 1 - x;
+                let rotated_index = (rotated_y * rotated_width + rotated_x) as usize;
+                assert_eq!(rotated_pixels[rotated_index], normal_pixels[normal_index]);
+            }
+        }
+
+        let mut alphas = normal_pixels.iter().map(|pixel| pixel[3]);
+        assert!(alphas.clone().any(|alpha| alpha == color.a));
+        assert!(alphas.any(|alpha| alpha > 0 && alpha < color.a));
     }
 }
