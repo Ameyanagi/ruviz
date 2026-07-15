@@ -281,6 +281,15 @@ pub struct InteractiveFrame {
     pub surface_capability: SurfaceCapability,
 }
 
+/// Render result used by presentation integrations that must associate an image
+/// with the exact interactive geometry generation that produced it.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct InteractiveFrameWithGeneration {
+    pub frame: InteractiveFrame,
+    pub base_generation: u64,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ImageTarget {
     pub size_px: (u32, u32),
@@ -374,8 +383,33 @@ struct InteractivePlotSessionInner {
     state: Mutex<SessionState>,
     dirty: Arc<Mutex<DirtyDomains>>,
     dirty_epoch: Arc<AtomicU64>,
+    mutation_epoch: Arc<AtomicU64>,
     stats: Mutex<FrameStats>,
     reactive_epoch: Arc<AtomicU64>,
+    #[cfg(test)]
+    render_test_hook: Mutex<Option<RenderTestHook>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RenderEpoch {
+    mutation: u64,
+    dirty: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RenderTestPoint {
+    BeforeDirtyMark,
+    AfterBasePublication,
+    BeforeOverlayRefreshCommit,
+    BeforeFinalCommit,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct RenderTestHook {
+    point: RenderTestPoint,
+    entered: Arc<std::sync::Barrier>,
+    release: Arc<std::sync::Barrier>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -448,6 +482,7 @@ struct SessionState {
     brushed_region: Option<ViewportRect>,
     tooltip: Option<TooltipState>,
     tooltip_source: Option<TooltipSource>,
+    base_generation: u64,
     base_cache: Option<InteractiveFrameCache>,
     overlay_cache: Option<OverlayFrameCache>,
     geometry: Option<GeometrySnapshot>,
@@ -471,11 +506,24 @@ impl Default for SessionState {
             brushed_region: None,
             tooltip: None,
             tooltip_source: None,
+            base_generation: 0,
             base_cache: None,
             overlay_cache: None,
             geometry: None,
             last_reactive_epoch: 0,
         }
+    }
+}
+
+impl SessionState {
+    fn publish_base_cache(&mut self, mut cache: InteractiveFrameCache) -> Result<u64> {
+        let generation = self.base_generation.checked_add(1).ok_or_else(|| {
+            PlottingError::RenderError("interactive base frame generation exhausted".to_string())
+        })?;
+        cache.generation = generation;
+        self.base_cache = Some(cache);
+        self.base_generation = generation;
+        Ok(generation)
     }
 }
 
@@ -831,6 +879,7 @@ fn inclusive_cell_count(min: i64, max: i64) -> Option<u64> {
 
 #[derive(Clone, Debug)]
 struct InteractiveFrameCache {
+    generation: u64,
     key: InteractiveFrameKey,
     image: Arc<Image>,
     geometry: GeometrySnapshot,
@@ -1030,6 +1079,7 @@ impl AxisConstraints {
 #[derive(Clone, Debug)]
 struct BaseLayerResult {
     image: Arc<Image>,
+    generation: u64,
     updated: bool,
     used_incremental_data: bool,
 }
@@ -1085,16 +1135,19 @@ impl InteractivePlotSession {
         let initial_bounds = AxisConstraints::from_plot(prepared.plot()).apply(initial_data_bounds);
         let dirty = Arc::new(Mutex::new(DirtyDomains::with_all()));
         let dirty_epoch = Arc::new(AtomicU64::new(0));
+        let mutation_epoch = Arc::new(AtomicU64::new(0));
         let reactive_epoch = Arc::new(AtomicU64::new(0));
         let dirty_for_callback = Arc::clone(&dirty);
         let dirty_epoch_for_callback = Arc::clone(&dirty_epoch);
+        let mutation_epoch_for_callback = Arc::clone(&mutation_epoch);
         let epoch_for_callback = Arc::clone(&reactive_epoch);
         let reactive_subscription = prepared.subscribe_reactive(move || {
+            mutation_epoch_for_callback.fetch_add(1, Ordering::AcqRel);
             if let Ok(mut domains) = dirty_for_callback.lock() {
+                dirty_epoch_for_callback.fetch_add(1, Ordering::AcqRel);
                 domains.mark(DirtyDomain::Data);
                 domains.mark(DirtyDomain::Overlay);
             }
-            dirty_epoch_for_callback.fetch_add(1, Ordering::AcqRel);
             epoch_for_callback.fetch_add(1, Ordering::AcqRel);
         });
 
@@ -1121,8 +1174,11 @@ impl InteractivePlotSession {
                 state: Mutex::new(state),
                 dirty,
                 dirty_epoch,
+                mutation_epoch,
                 stats: Mutex::new(FrameStats::default()),
                 reactive_epoch,
+                #[cfg(test)]
+                render_test_hook: Mutex::new(None),
             }),
         }
     }
@@ -1146,25 +1202,41 @@ impl InteractivePlotSession {
             .clone()
     }
 
+    /// Returns the generation of the base image and geometry currently used for interaction.
+    ///
+    /// The generation changes whenever a newly rendered base frame is published and is `None`
+    /// until a base frame is available. Presentation layers can retain the generation returned
+    /// by [`InteractiveFrameWithGeneration`] and reject coordinate queries while it differs from
+    /// this value.
+    pub fn displayed_frame_generation(&self) -> Option<u64> {
+        self.inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .base_cache
+            .as_ref()
+            .map(|cache| cache.generation)
+    }
+
     /// Drop cached geometry and layer images so the next frame rebuilds them.
     pub fn invalidate(&self) {
+        self.begin_mutation();
         self.inner.prepared.invalidate();
-        {
-            let mut state = self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned");
-            state.base_cache = None;
-            state.overlay_cache = None;
-            state.geometry = None;
-        }
-        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
-        *self
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        let mut dirty = self
             .inner
             .dirty
             .lock()
-            .expect("InteractivePlotSession dirty lock poisoned") = DirtyDomains::with_all();
+            .expect("InteractivePlotSession dirty lock poisoned");
+        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
+        state.base_cache = None;
+        state.overlay_cache = None;
+        state.geometry = None;
+        *dirty = DirtyDomains::with_all();
     }
 
     pub fn frame_pacing(&self) -> FramePacing {
@@ -1193,6 +1265,7 @@ impl InteractivePlotSession {
     }
 
     pub fn set_quality_policy(&self, quality: QualityPolicy) {
+        self.begin_mutation();
         *self
             .inner
             .quality_policy
@@ -1210,6 +1283,7 @@ impl InteractivePlotSession {
     }
 
     pub fn set_prefer_gpu(&self, prefer_gpu: bool) {
+        self.begin_mutation();
         *self
             .inner
             .prefer_gpu
@@ -1231,6 +1305,7 @@ impl InteractivePlotSession {
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
+        self.begin_mutation();
         let changed = Self::update_resize_state(&mut state, size_px, scale_factor);
         drop(state);
         if changed {
@@ -1244,6 +1319,7 @@ impl InteractivePlotSession {
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
+        self.begin_mutation();
 
         match event {
             PlotInputEvent::Resize {
@@ -1290,6 +1366,7 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
+                self.begin_mutation();
                 set_visible_bounds(
                     &mut state,
                     next_visible,
@@ -1333,6 +1410,7 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
+                self.begin_mutation();
                 let viewport_changed = !bounds_close(state.visible_bounds, next_visible);
                 state.brush_anchor = None;
                 state.brushed_region = None;
@@ -1366,6 +1444,7 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
+                self.begin_mutation();
                 set_visible_bounds(
                     &mut state,
                     next_visible,
@@ -1384,6 +1463,7 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
+                self.begin_mutation();
                 let next_hovered = match hit {
                     HitResult::None => None,
                     other => Some(other),
@@ -1434,6 +1514,7 @@ impl InteractivePlotSession {
                     .state
                     .lock()
                     .expect("InteractivePlotSession state lock poisoned");
+                self.begin_mutation();
                 state.selected.clear();
                 if !matches!(hit, HitResult::None) {
                     state.selected.push(hit);
@@ -1644,6 +1725,15 @@ impl InteractivePlotSession {
     }
 
     pub fn render_to_image(&self, target: ImageTarget) -> Result<InteractiveFrame> {
+        self.render_to_image_with_generation(target)
+            .map(|result| result.frame)
+    }
+
+    #[doc(hidden)]
+    pub fn render_to_image_with_generation(
+        &self,
+        target: ImageTarget,
+    ) -> Result<InteractiveFrameWithGeneration> {
         self.render_to_target(
             RenderTargetKind::Image,
             target.size_px,
@@ -1653,6 +1743,15 @@ impl InteractivePlotSession {
     }
 
     pub fn render_to_surface(&self, target: SurfaceTarget) -> Result<InteractiveFrame> {
+        self.render_to_surface_with_generation(target)
+            .map(|result| result.frame)
+    }
+
+    #[doc(hidden)]
+    pub fn render_to_surface_with_generation(
+        &self,
+        target: SurfaceTarget,
+    ) -> Result<InteractiveFrameWithGeneration> {
         self.render_to_target(
             RenderTargetKind::Surface,
             target.size_px,
@@ -1667,6 +1766,27 @@ impl InteractivePlotSession {
             .dirty
             .lock()
             .expect("InteractivePlotSession dirty lock poisoned")
+    }
+
+    fn render_snapshot(&self) -> (SessionState, DirtyDomains, RenderEpoch) {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        let dirty = self
+            .inner
+            .dirty
+            .lock()
+            .expect("InteractivePlotSession dirty lock poisoned");
+        (
+            state.clone(),
+            *dirty,
+            RenderEpoch {
+                mutation: self.inner.mutation_epoch.load(Ordering::Acquire),
+                dirty: self.inner.dirty_epoch.load(Ordering::Acquire),
+            },
+        )
     }
 
     /// Returns the current interactive viewport state.
@@ -1730,6 +1850,7 @@ impl InteractivePlotSession {
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
+        self.begin_mutation();
         let next_visible = normalize_visible_bounds(
             next_visible,
             state.base_bounds,
@@ -1758,7 +1879,7 @@ impl InteractivePlotSession {
         size_px: (u32, u32),
         scale_factor: f32,
         time_seconds: f64,
-    ) -> Result<InteractiveFrame> {
+    ) -> Result<InteractiveFrameWithGeneration> {
         let _active_render = ActiveRenderGuard::enter(Arc::as_ptr(&self.inner) as usize)?;
         let _render_guard = self
             .inner
@@ -1769,13 +1890,9 @@ impl InteractivePlotSession {
         self.resize(size_px, scale_factor);
         self.apply_input(PlotInputEvent::SetTime { time_seconds });
 
-        let state_before_render = self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned")
-            .clone();
-        let render_result = (|| -> Result<InteractiveFrame> {
+        let mut state_before_render = None;
+        let mut render_epoch = None;
+        let render_result = (|| -> Result<InteractiveFrameWithGeneration> {
             let reactive_epoch = self.inner.reactive_epoch.load(Ordering::Acquire);
             let mut mark_data_dirty = false;
             {
@@ -1794,8 +1911,9 @@ impl InteractivePlotSession {
                 self.mark_dirty(DirtyDomain::Overlay);
             }
 
-            let dirty_before_render = self.dirty_domains();
-            let dirty_epoch_before_render = self.inner.dirty_epoch.load(Ordering::Acquire);
+            let (state_snapshot, dirty_before_render, epoch_before_render) = self.render_snapshot();
+            state_before_render = Some(state_snapshot);
+            render_epoch = Some(epoch_before_render);
             let source_plot = self.inner.prepared.plot();
             let resolved_frame = dirty_before_render
                 .needs_base_render()
@@ -1859,9 +1977,11 @@ impl InteractivePlotSession {
                 &base_key,
                 &geometry,
                 dirty_before_render,
+                epoch_before_render,
                 resolved_frame.as_ref(),
             )?;
-            self.refresh_overlay_state(dirty_before_render)?;
+            self.run_render_test_hook(RenderTestPoint::AfterBasePublication);
+            self.refresh_overlay_state(dirty_before_render, epoch_before_render)?;
             let overlay_result = self.ensure_overlay_image(frame_size_px, dirty_before_render)?;
             let composed = if target == RenderTargetKind::Image {
                 if let Some(overlay_image) = overlay_result.image.as_ref() {
@@ -1873,12 +1993,13 @@ impl InteractivePlotSession {
                 Arc::clone(&base_result.image)
             };
 
+            self.run_render_test_hook(RenderTestPoint::BeforeFinalCommit);
+            self.commit_frame_if_current(epoch_before_render, base_result.generation)?;
             if base_result.updated {
                 if let Some(frame) = resolved_frame.as_ref() {
                     frame.acknowledge_rendered(source_plot);
                 }
             }
-            self.clear_dirty_after_render(dirty_epoch_before_render);
 
             let surface_capability = if target == RenderTargetKind::Surface {
                 if base_result.used_incremental_data
@@ -1896,30 +2017,32 @@ impl InteractivePlotSession {
                 target,
                 surface_capability,
             );
-
-            Ok(InteractiveFrame {
-                image: composed,
-                layers: LayerImages {
-                    base: base_result.image,
-                    overlay: overlay_result.image,
+            Ok(InteractiveFrameWithGeneration {
+                base_generation: base_result.generation,
+                frame: InteractiveFrame {
+                    image: composed,
+                    layers: LayerImages {
+                        base: base_result.image,
+                        overlay: overlay_result.image,
+                    },
+                    layer_state: LayerRenderState {
+                        base_dirty: base_result.updated,
+                        overlay_dirty: overlay_result.updated,
+                        used_incremental_data: base_result.used_incremental_data,
+                    },
+                    stats,
+                    target,
+                    surface_capability,
                 },
-                layer_state: LayerRenderState {
-                    base_dirty: base_result.updated,
-                    overlay_dirty: overlay_result.updated,
-                    used_incremental_data: base_result.used_incremental_data,
-                },
-                stats,
-                target,
-                surface_capability,
             })
         })();
 
         if render_result.is_err() {
-            *self
-                .inner
-                .state
-                .lock()
-                .expect("InteractivePlotSession state lock poisoned") = state_before_render;
+            if let (Some(previous), Some(epoch)) = (state_before_render, render_epoch) {
+                if !self.restore_state_if_epoch(previous, epoch) {
+                    return Err(render_superseded_error());
+                }
+            }
         }
         render_result
     }
@@ -1970,6 +2093,7 @@ impl InteractivePlotSession {
         key: &InteractiveFrameKey,
         geometry: &GeometrySnapshot,
         dirty_before_render: DirtyDomains,
+        epoch_before_render: RenderEpoch,
         frame: Option<&ResolvedFrame<'_>>,
     ) -> Result<BaseLayerResult> {
         {
@@ -1988,6 +2112,7 @@ impl InteractivePlotSession {
                     if cached.key == *key {
                         return Ok(BaseLayerResult {
                             image: Arc::clone(&cached.image),
+                            generation: cached.generation,
                             updated: false,
                             used_incremental_data: false,
                         });
@@ -2001,9 +2126,12 @@ impl InteractivePlotSession {
             && !dirty_before_render.temporal
             && !dirty_before_render.interaction
         {
-            if let Some(incremental) =
-                self.try_incremental_stream_render(key, geometry, frame.expect("dirty base frame"))?
-            {
+            if let Some(incremental) = self.try_incremental_stream_render(
+                key,
+                geometry,
+                frame.ok_or_else(render_superseded_error)?,
+                epoch_before_render,
+            )? {
                 return Ok(incremental);
             }
         }
@@ -2015,7 +2143,7 @@ impl InteractivePlotSession {
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
         let source_plot = self.inner.prepared.plot();
-        let frame = frame.expect("dirty base render must resolve a frame");
+        let frame = frame.ok_or_else(render_superseded_error)?;
         let mut plot = source_plot
             .prepared_frame_shell_with_style(state.size_px, state.scale_factor, &frame.style)
             .xlim(geometry.x_bounds.0, geometry.x_bounds.1)
@@ -2032,20 +2160,20 @@ impl InteractivePlotSession {
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
         let point_hit_index = Arc::new(OnceLock::new());
 
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned");
-        state.base_cache = Some(InteractiveFrameCache {
-            key: key.clone(),
-            image: Arc::clone(&image),
-            geometry: geometry.clone(),
-            displayed_data,
-            point_hit_index,
-        });
+        let generation = self.publish_base_cache_if_epoch(
+            InteractiveFrameCache {
+                generation: 0,
+                key: key.clone(),
+                image: Arc::clone(&image),
+                geometry: geometry.clone(),
+                displayed_data,
+                point_hit_index,
+            },
+            epoch_before_render,
+        )?;
         Ok(BaseLayerResult {
             image,
+            generation,
             updated: true,
             used_incremental_data: false,
         })
@@ -2172,7 +2300,11 @@ impl InteractivePlotSession {
         })
     }
 
-    fn refresh_overlay_state(&self, dirty_before_render: DirtyDomains) -> Result<()> {
+    fn refresh_overlay_state(
+        &self,
+        dirty_before_render: DirtyDomains,
+        expected_epoch: RenderEpoch,
+    ) -> Result<()> {
         if !dirty_before_render.layout && !dirty_before_render.data && !dirty_before_render.temporal
         {
             return Ok(());
@@ -2220,11 +2352,20 @@ impl InteractivePlotSession {
                 )
             };
 
+        self.run_render_test_hook(RenderTestPoint::BeforeOverlayRefreshCommit);
         let mut state = self
             .inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
+        let _dirty = self
+            .inner
+            .dirty
+            .lock()
+            .expect("InteractivePlotSession dirty lock poisoned");
+        if !self.epochs_match(expected_epoch) {
+            return Err(render_superseded_error());
+        }
         state.hovered = refreshed_hovered;
         state.selected = refreshed_selected;
         state.tooltip = refreshed_tooltip;
@@ -2267,13 +2408,85 @@ impl InteractivePlotSession {
             .ok_or_else(displayed_geometry_unavailable)
     }
 
-    fn mark_dirty(&self, domain: DirtyDomain) {
-        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
-        self.inner
+    fn publish_base_cache_if_epoch(
+        &self,
+        cache: InteractiveFrameCache,
+        expected_epoch: RenderEpoch,
+    ) -> Result<u64> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        let _dirty = self
+            .inner
             .dirty
             .lock()
-            .expect("InteractivePlotSession dirty lock poisoned")
-            .mark(domain);
+            .expect("InteractivePlotSession dirty lock poisoned");
+        if !self.epochs_match(expected_epoch) {
+            return Err(render_superseded_error());
+        }
+        state.publish_base_cache(cache)
+    }
+
+    fn restore_state_if_epoch(&self, previous: SessionState, expected_epoch: RenderEpoch) -> bool {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        let _dirty = self
+            .inner
+            .dirty
+            .lock()
+            .expect("InteractivePlotSession dirty lock poisoned");
+        if self.epochs_match(expected_epoch) {
+            *state = previous;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn begin_mutation(&self) {
+        self.inner.mutation_epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn epochs_match(&self, expected: RenderEpoch) -> bool {
+        self.inner.mutation_epoch.load(Ordering::Acquire) == expected.mutation
+            && self.inner.dirty_epoch.load(Ordering::Acquire) == expected.dirty
+    }
+
+    #[cfg(test)]
+    fn run_render_test_hook(&self, point: RenderTestPoint) {
+        let hook = {
+            let mut slot = self
+                .inner
+                .render_test_hook
+                .lock()
+                .expect("InteractivePlotSession render test hook lock poisoned");
+            (slot.as_ref().is_some_and(|hook| hook.point == point))
+                .then(|| slot.take())
+                .flatten()
+        };
+        if let Some(hook) = hook {
+            hook.entered.wait();
+            hook.release.wait();
+        }
+    }
+
+    #[cfg(not(test))]
+    fn run_render_test_hook(&self, _point: RenderTestPoint) {}
+
+    fn mark_dirty(&self, domain: DirtyDomain) {
+        self.run_render_test_hook(RenderTestPoint::BeforeDirtyMark);
+        let mut dirty = self
+            .inner
+            .dirty
+            .lock()
+            .expect("InteractivePlotSession dirty lock poisoned");
+        self.inner.dirty_epoch.fetch_add(1, Ordering::AcqRel);
+        dirty.mark(domain);
     }
 
     fn update_resize_state(
@@ -2296,21 +2509,25 @@ impl InteractivePlotSession {
         size_changed || scale_changed
     }
 
-    fn clear_dirty_after_render(&self, dirty_epoch_before_render: u64) {
-        if self.inner.dirty_epoch.load(Ordering::Acquire) != dirty_epoch_before_render {
-            return;
-        }
-
+    fn commit_frame_if_current(&self, expected_epoch: RenderEpoch, generation: u64) -> Result<()> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
         let mut dirty = self
             .inner
             .dirty
             .lock()
             .expect("InteractivePlotSession dirty lock poisoned");
-        if self.inner.dirty_epoch.load(Ordering::Acquire) != dirty_epoch_before_render {
-            return;
+        if !self.epochs_match(expected_epoch)
+            || state.base_cache.as_ref().map(|cache| cache.generation) != Some(generation)
+        {
+            return Err(render_superseded_error());
         }
         dirty.clear_base();
         dirty.clear_overlay();
+        Ok(())
     }
 
     fn try_incremental_stream_render(
@@ -2318,6 +2535,7 @@ impl InteractivePlotSession {
         key: &InteractiveFrameKey,
         geometry: &GeometrySnapshot,
         frame: &ResolvedFrame<'_>,
+        epoch_before_render: RenderEpoch,
     ) -> Result<Option<BaseLayerResult>> {
         let (cached, state) = {
             let state = self
@@ -2358,21 +2576,21 @@ impl InteractivePlotSession {
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
         let point_hit_index = Arc::new(OnceLock::new());
 
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .expect("InteractivePlotSession state lock poisoned");
-        state.base_cache = Some(InteractiveFrameCache {
-            key: key.clone(),
-            image: Arc::clone(&image),
-            geometry: geometry.clone(),
-            displayed_data,
-            point_hit_index,
-        });
+        let generation = self.publish_base_cache_if_epoch(
+            InteractiveFrameCache {
+                generation: 0,
+                key: key.clone(),
+                image: Arc::clone(&image),
+                geometry: geometry.clone(),
+                displayed_data,
+                point_hit_index,
+            },
+            epoch_before_render,
+        )?;
 
         Ok(Some(BaseLayerResult {
             image,
+            generation,
             updated: true,
             used_incremental_data: true,
         }))
@@ -2886,6 +3104,13 @@ fn hit_test_displayed_frame(
 fn displayed_geometry_unavailable() -> PlottingError {
     PlottingError::InvalidInput(
         "interactive coordinate conversion is unavailable before a base frame is displayed"
+            .to_string(),
+    )
+}
+
+fn render_superseded_error() -> PlottingError {
+    PlottingError::RenderError(
+        "interactive render superseded by a newer mutation, invalidation, or dirty update"
             .to_string(),
     )
 }
