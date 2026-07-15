@@ -1,7 +1,9 @@
 #![allow(clippy::useless_conversion)]
 
 use super::*;
-use crate::core::{FigureConfig, LineConfig as CoreLineConfig, SpineConfig as CoreSpineConfig};
+use crate::core::{
+    FigureConfig, LineConfig as CoreLineConfig, MarginConfig, SpineConfig as CoreSpineConfig,
+};
 use tempfile::tempdir;
 
 #[derive(Debug)]
@@ -1432,6 +1434,96 @@ fn test_public_render_rejects_configured_subminimum_dpi() {
 }
 
 #[test]
+#[allow(clippy::field_reassign_with_default)]
+fn test_all_public_margin_shapes_fail_cleanly_across_render_paths() {
+    fn expect_error<T>(result: Result<T>, message: &str) -> PlottingError {
+        match result {
+            Ok(_) => panic!("{message}"),
+            Err(err) => err,
+        }
+    }
+
+    let malformed = [
+        (
+            "proportional constructor",
+            MarginConfig::proportional_custom(f32::NAN, 0.1, 0.1, 0.1),
+        ),
+        ("auto constructor", MarginConfig::auto_with_bounds(1.0, 0.5)),
+        (
+            "fixed constructor",
+            MarginConfig::fixed(-0.1, 0.2, 0.2, 0.2),
+        ),
+        (
+            "content-driven constructor",
+            MarginConfig::content_driven_custom(f32::INFINITY, true),
+        ),
+        (
+            "oversized content-driven constructor",
+            MarginConfig::content_driven_custom(f32::MAX, true),
+        ),
+        (
+            "direct variant construction",
+            MarginConfig::Proportional {
+                left: 0.6,
+                right: 0.5,
+                top: 0.1,
+                bottom: 0.1,
+            },
+        ),
+    ];
+
+    for (name, margins) in malformed {
+        let mut config = PlotConfig::default();
+        config.margins = margins;
+        let plot = Plot::with_config(config);
+
+        let raster_err = expect_error(
+            plot.clone().render(),
+            &format!("{name} should fail raster rendering"),
+        );
+        assert!(
+            matches!(raster_err, PlottingError::InvalidInput(_)),
+            "unexpected raster error for {name}: {raster_err}"
+        );
+
+        let svg_err = expect_error(
+            plot.clone().render_to_svg(),
+            &format!("{name} should fail SVG rendering"),
+        );
+        assert!(
+            matches!(svg_err, PlottingError::InvalidInput(_)),
+            "unexpected SVG error for {name}: {svg_err}"
+        );
+
+        let interactive_err = expect_error(
+            plot.prepare_interactive().render_to_image(ImageTarget {
+                size_px: (640, 480),
+                scale_factor: 1.0,
+                time_seconds: 0.0,
+            }),
+            &format!("{name} should fail interactive rendering"),
+        );
+        assert!(
+            matches!(interactive_err, PlottingError::InvalidInput(_)),
+            "unexpected interactive error for {name}: {interactive_err}"
+        );
+    }
+}
+
+#[test]
+fn test_auto_margin_maximum_may_exceed_half_the_figure() {
+    let config = PlotConfig {
+        figure: FigureConfig::new(1.0, 1.0, 100.0),
+        margins: MarginConfig::auto_with_bounds(0.1, 1.0),
+        ..PlotConfig::default()
+    };
+
+    Plot::with_config(config)
+        .render()
+        .expect("an auto-margin upper bound is not itself allocated on every side");
+}
+
+#[test]
 fn test_prepared_frame_subminimum_dpi_bypass_is_scoped_to_low_output() {
     let plot = Plot::new().size(4.0, 3.0).dpi(100);
 
@@ -1896,6 +1988,31 @@ fn test_render_to_renderer_basic() {
     // Should render without error
     let result = plot.render_to_renderer(&mut renderer, 96.0);
     assert!(result.is_ok());
+}
+
+#[test]
+fn test_render_to_renderer_preserves_fractional_dpi_output_pixels() {
+    use crate::render::{SkiaRenderer, Theme};
+
+    let plot = Plot::new();
+    let mut renderer = SkiaRenderer::new(101, 101, Theme::dark()).unwrap();
+
+    plot.render_to_renderer(&mut renderer, 100.5).unwrap();
+
+    let image = renderer.into_image();
+    assert_eq!((image.width, image.height), (101, 101));
+    let bottom_right = &image.pixels[image.pixels.len() - 4..];
+    assert_eq!(bottom_right, &[255, 255, 255, 255]);
+}
+
+#[test]
+fn test_explicit_top_level_output_retains_dimension_minimum() {
+    let err = Plot::new()
+        .set_output_pixels(99, 101)
+        .render()
+        .expect_err("top-level output below 100 pixels should still fail");
+
+    assert!(matches!(err, PlottingError::InvalidDimensions { .. }));
 }
 
 #[test]

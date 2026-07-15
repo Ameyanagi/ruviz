@@ -96,6 +96,30 @@ fn test_render_to_image_uses_fitted_size_when_requested() {
     assert!(snapshot.plot_area.max.y <= f64::from(fitted_size.1));
 }
 
+#[test]
+fn test_small_interactive_frame_renders() {
+    let plot: Plot = Plot::new()
+        .ticks(false)
+        .grid(false)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .into();
+    let session = plot.prepare_interactive();
+
+    let frame = session
+        .render_to_surface(SurfaceTarget {
+            size_px: (80, 80),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .expect("interactive frames may be smaller than the public figure minimum");
+
+    assert_eq!((frame.image.width, frame.image.height), (80, 80));
+    assert_eq!(
+        (frame.layers.base.width, frame.layers.base.height),
+        (80, 80)
+    );
+}
+
 fn color_centroid<F>(image: &Image, predicate: F) -> Option<ViewportPoint>
 where
     F: Fn(&[u8]) -> bool,

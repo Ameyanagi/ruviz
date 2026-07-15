@@ -40,6 +40,10 @@ pub struct RenderPipeline {
     pub(crate) auto_optimized: bool,
     /// Allow internally prepared interactive frames below the public minimum DPI.
     pub(crate) allow_subminimum_dpi: bool,
+    /// Exact output pixels requested by an internal rendering target.
+    pub(crate) explicit_output_pixels: Option<(u32, u32)>,
+    /// Allow positive child subplot canvases below the top-level dimension minimum.
+    pub(crate) allow_subplot_dimensions: bool,
     /// Enable GPU acceleration for coordinate transformations
     #[cfg(feature = "gpu")]
     pub(crate) enable_gpu: bool,
@@ -62,6 +66,8 @@ impl RenderPipeline {
             backend: None,
             auto_optimized: false,
             allow_subminimum_dpi: false,
+            explicit_output_pixels: None,
+            allow_subplot_dimensions: false,
             #[cfg(feature = "gpu")]
             enable_gpu: false,
         }

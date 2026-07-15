@@ -930,10 +930,10 @@ impl Plot {
         if let Some(err) = self.pending_ingestion_error() {
             return Err(err);
         }
-        let image = self
-            .clone()
-            .dpi(dpi.round().max(1.0) as u32)
-            .set_output_pixels(renderer.width(), renderer.height())
+        let mut plot = self.clone();
+        plot.display.config.figure.dpi = dpi;
+        let image = plot
+            .set_subplot_output_pixels(renderer.width(), renderer.height())
             .render_image_with_mode(RenderExecutionMode::Reference)?;
         renderer.draw_subplot(image, 0, 0)
     }

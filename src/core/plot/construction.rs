@@ -631,6 +631,13 @@ impl Plot {
             self.display.config.figure.height = height as f32 / dpi;
         }
         self.display.dimensions = (width, height);
+        self.render.explicit_output_pixels = Some((width, height));
+        self
+    }
+
+    pub(crate) fn set_subplot_output_pixels(mut self, width: u32, height: u32) -> Self {
+        self = self.set_output_pixels(width, height);
+        self.render.allow_subplot_dimensions = true;
         self
     }
 
@@ -885,7 +892,9 @@ impl Plot {
 
     /// Calculate canvas dimensions from config
     pub(super) fn config_canvas_size(&self) -> (u32, u32) {
-        self.display.config.figure.canvas_size()
+        self.render
+            .explicit_output_pixels
+            .unwrap_or_else(|| self.display.config.figure.canvas_size())
     }
 
     pub(crate) fn fitted_output_size_for_max_pixels(&self, max_size_px: (u32, u32)) -> (u32, u32) {
@@ -1042,7 +1051,11 @@ impl Plot {
     }
 
     pub(super) fn render_scale(&self) -> RenderScale {
-        self.display.config.figure.render_scale()
+        if let Some((width, height)) = self.render.explicit_output_pixels {
+            RenderScale::from_canvas_size(width, height, self.display.config.figure.dpi)
+        } else {
+            self.display.config.figure.render_scale()
+        }
     }
 
     pub(super) fn render_scale_with_device(&self, device_scale: f32) -> RenderScale {
@@ -1172,6 +1185,7 @@ impl Plot {
         let device_scale = Self::sanitize_prepared_scale_factor(scale_factor);
         let size_px = (size_px.0.max(1), size_px.1.max(1));
         let mut plot = self.resolved_plot(time);
+        plot.render.allow_subplot_dimensions = true;
         let dpi = Self::exact_canvas_dpi_for_figure(
             &plot.display.config.figure,
             size_px,

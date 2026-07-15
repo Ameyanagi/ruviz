@@ -2,7 +2,7 @@
 ///
 /// Provides grid-based layout system for arranging multiple plots
 /// within a single figure, similar to matplotlib's subplot functionality.
-use crate::core::{Plot, PlottingError, Result};
+use crate::core::{Plot, PlottingError, REFERENCE_DPI, Result};
 use crate::render::skia::SkiaRenderer;
 use tiny_skia::Rect;
 
@@ -182,6 +182,25 @@ pub struct SubplotFigure {
 }
 
 impl SubplotFigure {
+    fn scaled_dimension(value: u32, dpi: f32, name: &str) -> Result<u32> {
+        let scaled = f64::from(value) * f64::from(dpi) / f64::from(REFERENCE_DPI);
+        if !scaled.is_finite() || scaled < 1.0 || scaled > f64::from(u32::MAX) {
+            return Err(PlottingError::InvalidInput(format!(
+                "Scaled subplot figure {name} is out of range ({name}={value}, dpi={dpi})"
+            )));
+        }
+        Ok(scaled.round() as u32)
+    }
+
+    fn rect_pixel(value: f32, name: &str) -> Result<u32> {
+        if !value.is_finite() || value < 0.0 || value > u32::MAX as f32 {
+            return Err(PlottingError::InvalidInput(format!(
+                "Subplot {name} is out of pixel range ({name}={value})"
+            )));
+        }
+        Ok(value.floor() as u32)
+    }
+
     /// Create a new subplot figure
     ///
     /// # Example
@@ -335,31 +354,57 @@ impl SubplotFigure {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn save<P: AsRef<std::path::Path>>(self, path: P) -> Result<()> {
-        self.save_with_dpi(path, 96.0)
+        self.save_with_dpi(path, REFERENCE_DPI)
     }
 
     /// Render all subplots with specified DPI
     pub fn save_with_dpi<P: AsRef<std::path::Path>>(self, path: P, dpi: f32) -> Result<()> {
+        if !dpi.is_finite() || dpi <= 0.0 {
+            return Err(PlottingError::InvalidInput(format!(
+                "Subplot figure DPI must be a finite, positive value (dpi={dpi})"
+            )));
+        }
+        if dpi < crate::core::constants::dpi::MIN as f32 {
+            return Err(PlottingError::InvalidInput(format!(
+                "Subplot figure DPI must be at least {} (dpi={dpi})",
+                crate::core::constants::dpi::MIN
+            )));
+        }
+        if dpi > crate::core::constants::dpi::MAX as f32 {
+            return Err(PlottingError::PerformanceLimit {
+                limit_type: "DPI".to_string(),
+                actual: dpi.ceil() as usize,
+                maximum: crate::core::constants::dpi::MAX as usize,
+            });
+        }
+
+        let width = Self::scaled_dimension(self.width, dpi, "width")?;
+        let height = Self::scaled_dimension(self.height, dpi, "height")?;
+        PlottingError::validate_dimensions(width, height)?;
+        let dpi_scale = dpi / REFERENCE_DPI;
+
         // Create main renderer for the figure
         let theme = crate::render::Theme::default();
-        let mut renderer = SkiaRenderer::new(self.width, self.height, theme)?;
+        let mut renderer = SkiaRenderer::new(width, height, theme)?;
+        renderer.set_render_scale(crate::core::RenderScale::from_canvas_size(
+            width, height, dpi,
+        ));
 
         // Calculate suptitle height to reserve space for it
         let suptitle_height = if self.suptitle.is_some() {
-            45.0_f32 // Reserve space for title (30px position + 15px padding)
+            45.0_f32 * dpi_scale // Reserve space for title (30px position + 15px padding)
         } else {
             0.0_f32
         };
 
         // Render figure title if present
-        // Use fixed pixel sizes since main renderer uses figure dimensions (not DPI-scaled)
         if let Some(title) = &self.suptitle {
-            let title_y = 30.0_f32; // Fixed position in pixels
-            let title_size = 16.0_f32; // Fixed size in pixels
+            let title_y = 30.0_f32 * dpi_scale;
+            let title_size = 16.0_f32 * dpi_scale;
 
             renderer.draw_text_centered(
                 title,
-                self.width as f32 / 2.0,
+                width as f32 / 2.0,
                 title_y,
                 title_size,
                 crate::render::Color::new(0, 0, 0),
@@ -370,20 +415,15 @@ impl SubplotFigure {
         for (index, plot_opt) in self.plots.iter().enumerate() {
             if let Some(plot) = plot_opt {
                 // Calculate subplot area with suptitle offset
-                let subplot_rect = self.grid.subplot_rect(
-                    index,
-                    self.width,
-                    self.height,
-                    self.margin,
-                    suptitle_height,
-                )?;
+                let subplot_rect =
+                    self.grid
+                        .subplot_rect(index, width, height, self.margin, suptitle_height)?;
 
                 // Calculate typography scale factor based on subplot size and DPI
-                // Subplots are rendered to fixed-size canvases, so we need to:
-                // 1. Scale down for small subplot dimensions
-                // 2. Use a normalized DPI (96) to avoid giant fonts at high DPI
+                // Use reference-DPI dimensions so small subplots get the same
+                // typography adjustment at every requested output DPI.
                 let reference_dim = 300.0_f32;
-                let subplot_min_dim = subplot_rect.width().min(subplot_rect.height());
+                let subplot_min_dim = subplot_rect.width().min(subplot_rect.height()) / dpi_scale;
                 let size_scale = (subplot_min_dim / reference_dim).clamp(0.35, 1.0);
 
                 // Clone plot and scale typography for small subplots
@@ -391,22 +431,19 @@ impl SubplotFigure {
 
                 // Create a temporary renderer for this subplot
                 let subplot_theme = scaled_plot.get_theme();
-                let mut subplot_renderer = SkiaRenderer::new(
-                    subplot_rect.width() as u32,
-                    subplot_rect.height() as u32,
-                    subplot_theme,
-                )?;
+                let subplot_width = Self::rect_pixel(subplot_rect.width(), "width")?;
+                let subplot_height = Self::rect_pixel(subplot_rect.height(), "height")?;
+                PlottingError::validate_subplot_dimensions(subplot_width, subplot_height)?;
+                let mut subplot_renderer =
+                    SkiaRenderer::new(subplot_width, subplot_height, subplot_theme)?;
 
-                // Render subplot at normalized DPI (96) since canvas is already sized
-                // This prevents fonts from being scaled up with figure DPI
-                let subplot_dpi = 96.0_f32;
-                scaled_plot.render_to_renderer(&mut subplot_renderer, subplot_dpi)?;
+                scaled_plot.render_to_renderer(&mut subplot_renderer, dpi)?;
 
                 // Copy subplot renderer to main renderer at correct position
                 renderer.draw_subplot(
                     subplot_renderer.into_image(),
-                    subplot_rect.left() as u32,
-                    subplot_rect.top() as u32,
+                    Self::rect_pixel(subplot_rect.left(), "x position")?,
+                    Self::rect_pixel(subplot_rect.top(), "y position")?,
                 )?;
             }
         }
@@ -466,10 +503,18 @@ pub fn subplots(rows: usize, cols: usize, width: u32, height: u32) -> Result<Sub
 /// ```
 pub fn subplots_default(rows: usize, cols: usize) -> Result<SubplotFigure> {
     // Default figure size scales with subplot count
-    let base_width = 400;
-    let base_height = 300;
-    let width = (base_width * cols).min(1600) as u32;
-    let height = (base_height * rows).min(1200) as u32;
+    let width = 400_usize
+        .checked_mul(cols)
+        .ok_or_else(|| PlottingError::InvalidInput("Default subplot width overflow".to_string()))?
+        .min(1600);
+    let height = 300_usize
+        .checked_mul(rows)
+        .ok_or_else(|| PlottingError::InvalidInput("Default subplot height overflow".to_string()))?
+        .min(1200);
+    let width = u32::try_from(width)
+        .map_err(|_| PlottingError::InvalidInput("Default subplot width overflow".to_string()))?;
+    let height = u32::try_from(height)
+        .map_err(|_| PlottingError::InvalidInput("Default subplot height overflow".to_string()))?;
 
     SubplotFigure::new(rows, cols, width, height)
 }
@@ -660,6 +705,132 @@ mod tests {
             differing_pixels > 250,
             "legend should visibly change subplot output; differing pixels={differing_pixels}"
         );
+    }
+
+    #[test]
+    fn test_subplot_save_with_dpi_scales_canvas_and_composition() {
+        fn ink_bounds(image: &image::RgbaImage) -> (u32, u32, u32, u32) {
+            let mut bounds = (image.width(), image.height(), 0, 0);
+            for (x, y, pixel) in image.enumerate_pixels() {
+                if pixel.0[..3].iter().all(|channel| *channel > 245) {
+                    continue;
+                }
+                bounds.0 = bounds.0.min(x);
+                bounds.1 = bounds.1.min(y);
+                bounds.2 = bounds.2.max(x);
+                bounds.3 = bounds.3.max(y);
+            }
+            bounds
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path_100 = dir.path().join("subplot-100.png");
+        let path_200 = dir.path().join("subplot-200.png");
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.25])
+            .title("Child")
+            .into();
+        let figure = SubplotFigure::new(1, 1, 400, 300)
+            .unwrap()
+            .suptitle("Figure")
+            .subplot_at(0, plot)
+            .unwrap();
+
+        figure.clone().save(&path_100).unwrap();
+        figure.save_with_dpi(&path_200, 200.0).unwrap();
+
+        let image_100 = image::open(path_100).unwrap().to_rgba8();
+        let image_200 = image::open(path_200).unwrap().to_rgba8();
+        assert_eq!(image_100.dimensions(), (400, 300));
+        assert_eq!(image_200.dimensions(), (800, 600));
+
+        let bounds_100 = ink_bounds(&image_100);
+        let bounds_200 = ink_bounds(&image_200);
+        for (at_100, at_200) in [
+            (bounds_100.0, bounds_200.0),
+            (bounds_100.1, bounds_200.1),
+            (bounds_100.2, bounds_200.2),
+            (bounds_100.3, bounds_200.3),
+        ] {
+            assert!(
+                (i64::from(at_200) - 2 * i64::from(at_100)).abs() <= 5,
+                "subplot composition should scale with DPI: 100-DPI bounds={bounds_100:?}, 200-DPI bounds={bounds_200:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_subplot_children_may_be_smaller_than_top_level_minimum() {
+        let dir = tempfile::tempdir().unwrap();
+        let low_dpi_path = dir.path().join("low-dpi-rows.png");
+        let small_columns_path = dir.path().join("small-columns.png");
+        let plot = Plot::new();
+
+        SubplotFigure::new(2, 1, 400, 300)
+            .unwrap()
+            .subplot_at(0, plot.clone())
+            .unwrap()
+            .subplot_at(1, plot.clone())
+            .unwrap()
+            .save_with_dpi(&low_dpi_path, 72.0)
+            .unwrap();
+        SubplotFigure::new(1, 2, 200, 100)
+            .unwrap()
+            .subplot_at(0, plot.clone())
+            .unwrap()
+            .subplot_at(1, plot)
+            .unwrap()
+            .save(&small_columns_path)
+            .unwrap();
+
+        assert_eq!(image::image_dimensions(low_dpi_path).unwrap(), (288, 216));
+        assert_eq!(
+            image::image_dimensions(small_columns_path).unwrap(),
+            (200, 100)
+        );
+    }
+
+    #[test]
+    fn test_subplot_save_with_dpi_rejects_invalid_or_oversized_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("invalid.png");
+
+        for dpi in [f32::NAN, 0.0, 50.0, 3000.0] {
+            assert!(
+                SubplotFigure::new(1, 1, 400, 300)
+                    .unwrap()
+                    .save_with_dpi(&path, dpi)
+                    .is_err(),
+                "dpi={dpi} should fail"
+            );
+        }
+
+        assert!(
+            SubplotFigure::new(1, 1, u32::MAX, 300)
+                .unwrap()
+                .save(&path)
+                .is_err()
+        );
+        assert!(subplots_default(1, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn test_subplot_save_rejects_malformed_child_margins_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("invalid-child-margins.png");
+        let plot = Plot::with_config(crate::core::PlotConfig {
+            margins: crate::core::MarginConfig::content_driven_custom(f32::MAX, true),
+            ..crate::core::PlotConfig::default()
+        });
+
+        let err = SubplotFigure::new(1, 1, 400, 300)
+            .unwrap()
+            .subplot_at(0, plot)
+            .unwrap()
+            .save(path)
+            .expect_err("malformed child margins should return an error");
+
+        assert!(matches!(err, PlottingError::InvalidInput(_)));
     }
 
     #[test]
