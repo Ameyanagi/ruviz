@@ -715,7 +715,7 @@ impl PlotSeriesBuilder {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[deprecated(
-        since = "0.9.0",
+        since = "0.1.2",
         note = "Not needed - series finalize automatically. Use .save() directly or .into() for explicit conversion."
     )]
     pub fn end_series(mut self) -> Plot {

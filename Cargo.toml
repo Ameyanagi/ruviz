@@ -25,7 +25,6 @@ repository = "https://github.com/Ameyanagi/ruviz"
 readme = "README.md"
 include = [
     "/src/**",
-    "/assets/NotoSans-Regular.ttf",
     "/benches/*.rs",
     "/examples/**/*.rs",
     "/gallery/**/*.rs",
@@ -236,6 +235,66 @@ path = "gallery/publication/legend_features_example.rs"
 name = "scientific_plotting"
 path = "gallery/scientific/scientific_plotting.rs"
 
+# Every runnable gallery source is registered so `cargo check --examples`
+# covers it. Environment-sensitive programs may compile here without running.
+[[example]]
+name = "cosmic_text_rotation_demo"
+path = "gallery/advanced/cosmic_text_rotation_demo.rs"
+
+[[example]]
+name = "test_font_alignment"
+path = "gallery/advanced/test_font_alignment.rs"
+
+[[example]]
+name = "test_font_families"
+path = "gallery/advanced/test_font_families.rs"
+
+[[example]]
+name = "test_plotters_style_fonts"
+path = "gallery/advanced/test_plotters_style_fonts.rs"
+
+[[example]]
+name = "test_text_rotation"
+path = "gallery/advanced/test_text_rotation.rs"
+
+[[example]]
+name = "gallery_memory_optimization_demo"
+path = "gallery/performance/memory_optimization_demo.rs"
+
+[[example]]
+name = "gallery_parallel_demo"
+path = "gallery/performance/parallel_demo.rs"
+required-features = ["parallel"]
+
+[[example]]
+name = "simd_demo"
+path = "gallery/performance/simd_demo.rs"
+required-features = ["simd"]
+
+[[example]]
+name = "test_axis_labels"
+path = "gallery/publication/test_axis_labels.rs"
+
+[[example]]
+name = "generate_test_images"
+path = "gallery/utility/generate_test_images.rs"
+
+[[example]]
+name = "image_gallery_generator"
+path = "gallery/utility/image_gallery_generator.rs"
+
+[[example]]
+name = "save_image_example"
+path = "gallery/utility/save_image_example.rs"
+
+[[example]]
+name = "test_with_axes_and_grid"
+path = "gallery/utility/test_with_axes_and_grid.rs"
+
+[[example]]
+name = "verify_axes"
+path = "gallery/utility/verify_axes.rs"
+
 [[example]]
 name = "subplot_example"
 path = "examples/subplot_example.rs"
@@ -291,7 +350,6 @@ required-features = ["gpu"]
 [[example]]
 name = "gpu_memory_test"
 path = "examples/gpu_memory_test.rs"
-required-features = ["gpu"]
 
 [[example]]
 name = "gpu_performance_plot"

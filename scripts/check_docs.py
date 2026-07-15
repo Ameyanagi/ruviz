@@ -15,18 +15,26 @@ The checks are intentionally narrow and deterministic:
   instead of relying on the checker to wrap partial code.
 - Markdown code fences marked with `check` are validated:
   - `rust,check` fences are compiled against the local crate.
+  - `rust,check,features=gpu+interactive` selects a deterministic feature profile.
   - `ts,check` / `typescript,check` fences are type-checked against the local Web SDK.
   - `python,check` fences are syntax-checked.
+- All shell fences are syntax-checked with `bash -n` and are never executed.
+- Ignored Rust/TypeScript/shell fences require an explicit `reason=...`.
+- Every runnable `examples/**/*.rs` and `gallery/**/*.rs` program must resolve
+  to exactly one uniquely named Cargo example target.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
@@ -91,6 +99,9 @@ export function register_font_bytes_js(bytes: Uint8Array): void;
 export function web_runtime_capabilities(): Record<string, boolean>;
 """
 MAIN_RE = re.compile(r"\b(?:async\s+)?fn\s+main\s*\([^)]*\)\s*(?P<return>->)?")
+RUST_SNIPPET_ASSET_FIXTURES = {
+    "../assets/dejavu-sans.ttf": ROOT / "src" / "dejavu-sans.ttf",
+}
 
 
 @dataclass(frozen=True)
@@ -121,9 +132,7 @@ def markdown_files(roots: list[Path] | None = None) -> list[Path]:
             roots = MARKDOWN_ROOTS
         else:
             return sorted(
-                (ROOT / line).resolve()
-                for line in result.stdout.splitlines()
-                if line
+                (ROOT / line).resolve() for line in result.stdout.splitlines() if line
             )
 
     files: list[Path] = []
@@ -222,6 +231,134 @@ def checked_fences() -> list[CodeFence]:
     ]
 
 
+def fence_parameter(fence: CodeFence, name: str) -> str | None:
+    prefix = f"{name.lower()}="
+    return next(
+        (flag[len(prefix) :] for flag in fence.flags if flag.startswith(prefix)),
+        None,
+    )
+
+
+def rust_feature_profile(fence: CodeFence) -> tuple[str, ...]:
+    value = fence_parameter(fence, "features")
+    if value is None:
+        return ()
+    return tuple(sorted(feature for feature in value.split("+") if feature))
+
+
+def check_fence_classification(fences: list[CodeFence]) -> list[str]:
+    errors: list[str] = []
+    classified_languages = {"rust", "ts", "bash", "sh", "shell"}
+    for fence in fences:
+        if fence.lang not in classified_languages:
+            continue
+        checked = "check" in fence.flags or "compile" in fence.flags
+        ignored = "ignore" in fence.flags
+        if checked and ignored:
+            errors.append(f"{fence.label()} cannot be both checked and ignored")
+        reason = fence_parameter(fence, "reason")
+        if ignored and (reason is None or not reason.strip()):
+            errors.append(
+                f"{fence.label()} ignored {fence.lang or 'code'} fence requires a non-empty reason=..."
+            )
+        if (
+            fence.lang == "rust"
+            and MAIN_RE.search(fence.code)
+            and not (checked or ignored)
+        ):
+            errors.append(
+                f"{fence.label()} complete Rust program must be marked check or "
+                "ignore with reason=..."
+            )
+    return errors
+
+
+def runnable_example_sources() -> set[str]:
+    sources = {
+        path.relative_to(ROOT).as_posix()
+        for directory in (ROOT / "examples", ROOT / "gallery")
+        for path in directory.rglob("*.rs")
+        if path.name != "mod.rs"
+    }
+    return sources
+
+
+def cargo_example_targets(
+    manifest: dict | None = None,
+    sources: set[str] | None = None,
+) -> list[tuple[str, str]]:
+    if manifest is None:
+        manifest = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    if sources is None:
+        sources = runnable_example_sources()
+
+    declared = [
+        (example.get("name"), example.get("path"))
+        for example in manifest.get("example", [])
+        if isinstance(example, dict)
+    ]
+    targets = [
+        (name, path)
+        for name, path in declared
+        if isinstance(name, str) and isinstance(path, str)
+    ]
+    declared_paths = {path for _, path in targets}
+
+    package = manifest.get("package", {})
+    autoexamples = (
+        not isinstance(package, dict) or package.get("autoexamples") is not False
+    )
+    if autoexamples:
+        for source in sorted(sources):
+            parts = Path(source).parts
+            inferred_name: str | None = None
+            if len(parts) == 2 and parts[0] == "examples":
+                inferred_name = Path(parts[1]).stem
+            elif len(parts) == 3 and parts[0] == "examples" and parts[2] == "main.rs":
+                inferred_name = parts[1]
+
+            # A declaration for the same source customizes Cargo's inferred target.
+            if inferred_name is not None and source not in declared_paths:
+                targets.append((inferred_name, source))
+    return targets
+
+
+def check_example_target_coverage(
+    manifest: dict | None = None,
+    sources: set[str] | None = None,
+) -> list[str]:
+    if sources is None:
+        sources = runnable_example_sources()
+    targets = cargo_example_targets(manifest, sources)
+
+    names: dict[str, list[str]] = defaultdict(list)
+    paths: dict[str, list[str]] = defaultdict(list)
+    for name, path in targets:
+        names[name].append(path)
+        paths[path].append(name)
+
+    errors: list[str] = []
+    for name, target_paths in sorted(names.items()):
+        if len(target_paths) > 1:
+            errors.append(
+                f"Cargo example target name {name!r} resolves to multiple sources: "
+                + ", ".join(sorted(target_paths))
+            )
+    for path, target_names in sorted(paths.items()):
+        if len(target_names) > 1:
+            errors.append(
+                f"Cargo example source {path!r} is registered by multiple targets: "
+                + ", ".join(sorted(target_names))
+            )
+
+    covered_paths = set(paths)
+    errors.extend(
+        f"{source} is runnable Rust but is not covered by a Cargo example target"
+        for source in sorted(sources - covered_paths)
+    )
+    return errors
+
+
 def readme_quickstart_fence() -> CodeFence:
     rust_fences = [
         fence
@@ -236,22 +373,78 @@ def readme_quickstart_fence() -> CodeFence:
     return fence
 
 
-def cargo_project_manifest(crate_name: str) -> str:
-    return "\n".join(
-        [
-            "[package]",
-            f'name = "{crate_name}"',
-            'version = "0.0.0"',
-            'edition = "2024"',
-            "",
-            "[dependencies]",
-            f'ruviz = {{ path = "{ROOT}" }}',
-            "",
-        ]
-    )
+def cargo_project_manifest(
+    crate_name: str,
+    features: tuple[str, ...] = (),
+    binaries: tuple[tuple[str, str], ...] = (),
+) -> str:
+    dependencies = [f'ruviz = {{ path = "{ROOT}" }}']
+    if "ndarray_support" in features:
+        dependencies.append('ndarray = "0.17"')
+    if "interactive" in features or "interactive-gpu" in features:
+        dependencies.append('tokio = { version = "1", features = ["rt", "macros"] }')
+    if "serde" in features:
+        dependencies.extend(
+            [
+                'serde = { version = "1", features = ["derive"] }',
+                'serde_json = "1"',
+            ]
+        )
+    if "polars_support" in features:
+        dependencies.append(
+            'polars = { version = "0.50", features = ["lazy", "rolling_window"] }'
+        )
+
+    lines = [
+        "[package]",
+        f'name = "{crate_name}"',
+        'version = "0.0.0"',
+        'edition = "2024"',
+        "",
+        "[dependencies]",
+        *dependencies,
+        "",
+    ]
+    if features:
+        lines.extend(
+            [
+                "[features]",
+                "default = []",
+                *(f'{feature} = ["ruviz/{feature}"]' for feature in features),
+                "",
+            ]
+        )
+    for name, path in binaries:
+        lines.extend(
+            [
+                "[[bin]]",
+                f'name = "{name}"',
+                f'path = "{path}"',
+                "",
+            ]
+        )
+    return "\n".join(lines)
 
 
-def check_readme_quickstart(snippet_fences: list[CodeFence]) -> list[str]:
+def cargo_check_environment(cargo_target_dir: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["CARGO_TARGET_DIR"] = str(cargo_target_dir.resolve())
+    return environment
+
+
+def docs_cargo_target_dir(environment: dict[str, str] | None = None) -> Path:
+    if environment is None:
+        environment = os.environ
+    configured = environment.get("CARGO_TARGET_DIR")
+    if configured:
+        target = Path(configured).expanduser()
+        return target if target.is_absolute() else ROOT / target
+    return ROOT / "target"
+
+
+def check_readme_quickstart(
+    snippet_fences: list[CodeFence], cargo_target_dir: Path
+) -> list[str]:
     try:
         fence = readme_quickstart_fence()
     except RuntimeError as error:
@@ -282,6 +475,7 @@ def check_readme_quickstart(snippet_fences: list[CodeFence]) -> list[str]:
                 str(temp_path / "Cargo.toml"),
             ],
             cwd=ROOT,
+            env=cargo_check_environment(cargo_target_dir),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -383,59 +577,105 @@ def numbered_source(source: str) -> str:
     )
 
 
-def check_rust_snippets(fences: list[CodeFence]) -> list[str]:
-    if not fences:
+def stage_rust_snippet_asset(fence: CodeFence, source_directory: Path) -> list[str]:
+    asset = fence_parameter(fence, "asset")
+    if asset is None:
         return []
 
-    with tempfile.TemporaryDirectory(prefix="ruviz-rust-doc-snippets-") as temp:
-        temp_path = Path(temp)
-        src_bin = temp_path / "src" / "bin"
-        src_bin.mkdir(parents=True)
-        generated_snippets: list[tuple[int, CodeFence, str]] = []
-        for index, fence in enumerate(fences):
-            source = rust_snippet_source(fence.code)
-            (src_bin / f"snippet_{index}.rs").write_text(
-                source,
+    fixture = RUST_SNIPPET_ASSET_FIXTURES.get(asset)
+    if fixture is None:
+        return [f"{fence.label()} requests unsupported checked asset {asset!r}"]
+
+    project_directory = source_directory.parent
+    destination = (source_directory / asset).resolve()
+    if project_directory.resolve() not in destination.parents:
+        return [
+            f"{fence.label()} checked asset {asset!r} escapes its temporary project"
+        ]
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(fixture, destination)
+    return []
+
+
+def check_rust_snippets(fences: list[CodeFence], cargo_target_dir: Path) -> list[str]:
+    profiles: dict[tuple[str, ...], list[CodeFence]] = defaultdict(list)
+    for fence in fences:
+        profiles[rust_feature_profile(fence)].append(fence)
+
+    errors: list[str] = []
+    for profile_index, (features, profile_fences) in enumerate(
+        sorted(profiles.items())
+    ):
+        with tempfile.TemporaryDirectory(
+            prefix=f"ruviz-rust-doc-snippets-{profile_index}-"
+        ) as temp:
+            temp_path = Path(temp)
+            generated_snippets: list[tuple[int, CodeFence, str]] = []
+            binaries: list[tuple[str, str]] = []
+            asset_errors: list[str] = []
+            for index, fence in enumerate(profile_fences):
+                source = rust_snippet_source(fence.code)
+                snippet_directory = temp_path / f"snippet_{index}"
+                source_directory = snippet_directory / "src"
+                source_directory.mkdir(parents=True)
+                (source_directory / "main.rs").write_text(
+                    source,
+                    encoding="utf-8",
+                )
+                asset_errors.extend(stage_rust_snippet_asset(fence, source_directory))
+                binaries.append((f"snippet_{index}", f"snippet_{index}/src/main.rs"))
+                generated_snippets.append((index, fence, source))
+            (temp_path / "Cargo.toml").write_text(
+                cargo_project_manifest(
+                    "ruviz-rust-doc-snippets", features, tuple(binaries)
+                ),
                 encoding="utf-8",
             )
-            generated_snippets.append((index, fence, source))
-        (temp_path / "Cargo.toml").write_text(
-            cargo_project_manifest("ruviz-rust-doc-snippets"),
-            encoding="utf-8",
-        )
-        result = subprocess.run(
-            [
+            if asset_errors:
+                errors.extend(asset_errors)
+                continue
+            command = [
                 "cargo",
                 "check",
                 "--quiet",
                 "--bins",
                 "--manifest-path",
                 str(temp_path / "Cargo.toml"),
-            ],
-            cwd=ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if result.returncode != 0:
+            ]
+            if features:
+                command.extend(["--features", ",".join(features)])
+            result = subprocess.run(
+                command,
+                cwd=ROOT,
+                env=cargo_check_environment(cargo_target_dir),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if result.returncode == 0:
+                continue
+
             snippets = "\n\n".join(
                 "\n".join(
                     [
                         f"--- snippet_{index}: {fence.label()}",
-                        f"    generated as src/bin/snippet_{index}.rs ---",
+                        f"    generated as snippet_{index}/src/main.rs ---",
                         numbered_source(source),
                     ]
                 )
                 for index, fence, source in generated_snippets
             )
-            return [
-                "checked Rust Markdown snippets failed cargo check:\n"
+            profile_label = "+".join(features) if features else "default"
+            errors.append(
+                f"checked Rust Markdown snippets for profile {profile_label!r} "
+                "failed cargo check:\n"
                 + snippets
                 + "\n\ncargo output:\n"
                 + result.stdout
                 + result.stderr
-            ]
-    return []
+            )
+    return errors
 
 
 def check_python_snippets(fences: list[CodeFence]) -> list[str]:
@@ -445,6 +685,24 @@ def check_python_snippets(fences: list[CodeFence]) -> list[str]:
             compile(fence.code, fence.label(), "exec")
         except SyntaxError as error:
             errors.append(f"{fence.label()} Python snippet has invalid syntax: {error}")
+    return errors
+
+
+def check_shell_snippets(fences: list[CodeFence]) -> list[str]:
+    errors: list[str] = []
+    for fence in fences:
+        result = subprocess.run(
+            ["bash", "-n"],
+            input=fence.code,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if result.returncode != 0:
+            errors.append(
+                f"{fence.label()} shell snippet has invalid syntax:\n{result.stderr}"
+            )
     return errors
 
 
@@ -521,7 +779,10 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
             return ["bun is required to type-check TypeScript Markdown snippets"]
 
         if result.returncode != 0:
-            labels = "\n".join(f"  snippet_{index}: {fence.label()}" for index, fence in enumerate(fences))
+            labels = "\n".join(
+                f"  snippet_{index}: {fence.label()}"
+                for index, fence in enumerate(fences)
+            )
             return [
                 "checked TypeScript Markdown snippets failed tsc:\n"
                 + labels
@@ -532,15 +793,28 @@ def check_typescript_snippets(fences: list[CodeFence]) -> list[str]:
     return []
 
 
-def check_markdown_snippets(fences: list[CodeFence]) -> tuple[list[str], int]:
-    unsupported = sorted({fence.lang for fence in fences if fence.lang not in {"rust", "python", "ts"}})
+def check_markdown_snippets(
+    fences: list[CodeFence], cargo_target_dir: Path
+) -> tuple[list[str], int]:
+    supported = {"rust", "python", "ts", "bash", "sh", "shell"}
+    unsupported = sorted(
+        {fence.lang for fence in fences if fence.lang not in supported}
+    )
     errors = [
         f"unsupported checked Markdown code fence language: {lang!r}"
         for lang in unsupported
     ]
-    errors.extend(check_rust_snippets([fence for fence in fences if fence.lang == "rust"]))
-    errors.extend(check_python_snippets([fence for fence in fences if fence.lang == "python"]))
-    errors.extend(check_typescript_snippets([fence for fence in fences if fence.lang == "ts"]))
+    errors.extend(
+        check_rust_snippets(
+            [fence for fence in fences if fence.lang == "rust"], cargo_target_dir
+        )
+    )
+    errors.extend(
+        check_python_snippets([fence for fence in fences if fence.lang == "python"])
+    )
+    errors.extend(
+        check_typescript_snippets([fence for fence in fences if fence.lang == "ts"])
+    )
     return errors, len(fences)
 
 
@@ -554,10 +828,24 @@ def main() -> int:
     ]
     errors = check_fences(files)
     errors.extend(check_local_links(files))
-    errors.extend(check_readme_quickstart(snippet_fences))
+    errors.extend(check_fence_classification(all_snippet_fences))
+    errors.extend(check_example_target_coverage())
     errors.extend(check_readme_rust_snippets_are_complete())
     errors.extend(check_rust_fence_error_propagation(all_snippet_fences))
-    snippet_errors, checked_snippet_count = check_markdown_snippets(snippet_fences)
+    errors.extend(
+        check_shell_snippets(
+            [
+                fence
+                for fence in all_snippet_fences
+                if fence.lang in {"bash", "sh", "shell"} and "ignore" not in fence.flags
+            ]
+        )
+    )
+    cargo_target_dir = docs_cargo_target_dir()
+    errors.extend(check_readme_quickstart(snippet_fences, cargo_target_dir))
+    snippet_errors, checked_snippet_count = check_markdown_snippets(
+        snippet_fences, cargo_target_dir
+    )
     errors.extend(snippet_errors)
 
     if errors:

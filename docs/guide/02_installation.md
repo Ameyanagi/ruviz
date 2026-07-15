@@ -150,7 +150,7 @@ ruviz = { version = "0.4.19", features = ["parallel", "simd", "gpu"] }
 
 Create `src/main.rs`:
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -185,13 +185,19 @@ Expected output:
 Test specific features:
 
 **ndarray**:
-```rust
+```toml
+[dependencies]
+ruviz = { version = "0.4.19", features = ["ndarray_support"] }
+ndarray = "0.17"
+```
+
+```rust,check,features=ndarray_support
 use ruviz::prelude::*;
 use ndarray::Array1;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let x = Array1::linspace(0.0, 10.0, 100);
-    let y = x.mapv(|v| v.sin());
+    let x = Array1::<f64>::linspace(0.0, 10.0, 100);
+    let y = x.mapv(f64::sin);
 
     Plot::new()
         .line(&x, &y)
@@ -203,7 +209,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 ```
 
 **Performance smoke test**:
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {

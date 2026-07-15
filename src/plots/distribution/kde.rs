@@ -154,7 +154,7 @@ impl KdeConfig {
 }
 
 /// Deprecated alias for backward compatibility
-#[deprecated(since = "0.8.0", note = "Use KdeConfig instead")]
+#[deprecated(since = "0.1.0", note = "Use KdeConfig instead")]
 pub type KdePlotConfig = KdeConfig;
 
 // =============================================================================
@@ -193,7 +193,7 @@ pub struct KdeData {
 }
 
 /// Deprecated alias for backward compatibility
-#[deprecated(since = "0.8.0", note = "Use KdeData instead")]
+#[deprecated(since = "0.1.0", note = "Use KdeData instead")]
 pub type KdePlotData = KdeData;
 
 // =============================================================================
@@ -288,7 +288,7 @@ pub fn compute_kde(data: &[f64], config: &KdeConfig) -> KdeData {
 }
 
 /// Deprecated alias for backward compatibility
-#[deprecated(since = "0.8.0", note = "Use compute_kde instead")]
+#[deprecated(since = "0.1.0", note = "Use compute_kde instead")]
 pub fn compute_kde_plot(data: &[f64], config: &KdeConfig) -> KdeData {
     compute_kde(data, config)
 }

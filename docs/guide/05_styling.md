@@ -345,7 +345,7 @@ Plot::new()
 use ruviz::prelude::*;
 
 let custom_theme = Theme::builder()
-    .font("Arial")
+    .font("DejaVu Sans")
     .font_size(14.0)
     .title_font_size(18.0)
     .build();
@@ -375,12 +375,12 @@ Axis labels and tick labels scale from the base `font_size()`. Title size is con
 
 ### System Fonts
 
-**Common system fonts**:
-- **Arial** (Windows, macOS, Linux)
-- **Times New Roman** (Windows, macOS)
-- **Helvetica** (macOS)
-- **Liberation Sans** (Linux)
-- **DejaVu Sans** (Linux)
+**Common system fonts** vary by platform:
+- **Arial** (commonly Windows and macOS; not normally installed on Linux)
+- **Times New Roman** (commonly Windows and macOS)
+- **Helvetica** (commonly macOS)
+- **Liberation Sans** (commonly Linux)
+- **DejaVu Sans** (commonly Linux)
 
 ### Installed Open Fonts
 
@@ -400,7 +400,7 @@ Plot::new()
     .save("open_font.png")?;
 ```
 
-ruviz resolves fonts through the system font stack. Install the font on the target machine before selecting it by family name.
+ruviz requests the named family from each backend. Install the same family on every target, or register the same font bytes for supported raster, Typst, and PDF paths. A plain portable SVG stores only a family reference, so its viewer must also have that font.
 
 **Popular open fonts**:
 - **Open Sans** - Clean, professional
@@ -411,23 +411,37 @@ ruviz resolves fonts through the system font stack. Install the font on the targ
 
 ### Custom TTF Files
 
-```rust
+Place the application-owned font at `assets/dejavu-sans.ttf`. From a conventional
+Cargo binary at `src/main.rs`, the compile-time path is `../assets/dejavu-sans.ttf`:
+
+```rust,check,asset=../assets/dejavu-sans.ttf
 use ruviz::prelude::*;
 
-let custom_theme = Theme::builder()
-    .font("My Installed Font")
-    .font_size(14.0)
-    .title_font_size(16.0)
-    .build();
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let x = [0.0, 1.0, 2.0, 3.0];
+    let y = [0.0, 1.0, 4.0, 9.0];
 
-Plot::new()
-    .theme(custom_theme)
-    .line(&x, &y)
-    .title("Custom Font Title")
-    .save("custom_font.png")?;
+    ruviz::render::register_font_bytes(
+        include_bytes!("../assets/dejavu-sans.ttf").to_vec(),
+    )?;
+
+    let custom_theme = Theme::builder()
+        .font("DejaVu Sans")
+        .font_size(14.0)
+        .title_font_size(16.0)
+        .build();
+
+    Plot::new()
+        .theme(custom_theme)
+        .line(&x, &y)
+        .title("Custom Font Title")
+        .save("custom_font.png")?;
+
+    Ok(())
+}
 ```
 
-Custom font files are not loaded through a dedicated `Plot` API today. Install the font on the system, then select it by family name in the theme.
+Register application-owned bytes with `ruviz::render::register_font_bytes(...)`, then select the registered family. Registration is used by supported raster, Typst, and PDF paths. Plain SVG remains a CSS family reference and depends on the viewing environment.
 
 ## Grid
 
@@ -612,12 +626,14 @@ Plot::new()
 
 ### Publication Sizes
 
+Use physical inches with `.size(...)`, then choose DPI. `.size_px(...)` uses a 100-DPI reference and is not an exact-pixel lock if `.dpi(...)` is changed later.
+
 ```rust
 use ruviz::prelude::*;
 
 // Single column (IEEE)
 Plot::new()
-    .size_px(252, 189)  // 3.5" × 2.625" @ 72 DPI
+    .size(3.5, 2.625)  // Physical size in inches
     .dpi(300)              // High resolution
     .theme(Theme::publication())
     .line(&x, &y)
@@ -625,7 +641,7 @@ Plot::new()
 
 // Double column (IEEE)
 Plot::new()
-    .size_px(523, 392)  // 7.25" × 5.44" @ 72 DPI
+    .size(7.25, 5.44)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -680,17 +696,21 @@ Plot::new()
 
 ### Scientific Publication Plot
 
-```rust
+Place the application-owned font at `assets/dejavu-sans.ttf`, as in the custom-font example above.
+
+```rust,check,asset=../assets/dejavu-sans.ttf
 use ruviz::prelude::*;
-use std::f64::consts::PI;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate data
     let x: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y_exp: Vec<f64> = x.iter().map(|v| (-v).exp()).collect();
     let y_sin: Vec<f64> = x.iter().map(|v| v.sin() * (-v/5.0).exp()).collect();
+    ruviz::render::register_font_bytes(
+        include_bytes!("../assets/dejavu-sans.ttf").to_vec(),
+    )?;
     let publication_theme = Theme::builder()
-        .font("Arial")
+        .font("DejaVu Sans")
         .font_size(14.0)
         .title_font_size(16.0)
         .build();
@@ -698,7 +718,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create publication-quality plot
     Plot::new()
         // Figure setup
-        .size_px(1000, 700)
+        .size(7.25, 5.0)
         .dpi(300)
         .theme(publication_theme)
 
@@ -739,14 +759,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 use ruviz::prelude::*;
 
 let presentation_theme = Theme::builder()
-    .font("Arial")
+    .font("DejaVu Sans")
     .font_size(20.0)
     .title_font_size(24.0)
     .build();
 
 Plot::new()
-    .size_px(1920, 1080)  // Full HD
-    .dpi(150)
+    .size_px(1920, 1080)  // Exact Full HD output; do not change DPI afterward
     .theme(presentation_theme)
 
     .line(&x, &y)
@@ -775,7 +794,7 @@ Plot::new()
 1. **DPI**: Use 300 DPI minimum
 2. **Theme**: Use `Theme::publication()`
 3. **Colors**: Muted, professional palette
-4. **Fonts**: Standard fonts (Arial, Times New Roman)
+4. **Fonts**: Register the same font bytes and select that family; named system fonts alone are not reproducible
 5. **Size**: Match journal requirements
 
 ### Data Visualization Principles

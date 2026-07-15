@@ -114,7 +114,7 @@ pub struct Ecdf;
 /// Computed ECDF data
 ///
 /// Contains the computed step function data for rendering.
-/// Renamed from `EcdfPlotData` in v0.8.0 for consistency.
+/// The pre-v0.1.0 name `EcdfPlotData` remains as a deprecated alias.
 #[derive(Debug, Clone)]
 pub struct EcdfData {
     /// X coordinates (sorted data values)
@@ -133,7 +133,7 @@ pub struct EcdfData {
 }
 
 /// Deprecated alias for backward compatibility
-#[deprecated(since = "0.8.0", note = "Use EcdfData instead")]
+#[deprecated(since = "0.1.0", note = "Use EcdfData instead")]
 pub type EcdfPlotData = EcdfData;
 
 /// Compute ECDF

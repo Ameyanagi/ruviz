@@ -6,7 +6,7 @@ This document describes the internal architecture of ruviz.
 
 ### Plot Structure
 
-The `Plot` struct is the main entry point for creating visualizations. It has been decomposed into focused component managers:
+The `Plot` struct is the main entry point for creating visualizations. It has been decomposed into focused component managers. The Mermaid diagram is an abridged structural sketch: every identifier shown below exists in the implementation, while less relevant private fields and helper methods are intentionally omitted. Feature-gated members are labeled explicitly.
 
 ```mermaid
 classDiagram
@@ -16,27 +16,34 @@ classDiagram
         -LayoutManager layout
         -RenderPipeline render
         -Vec~Annotation~ annotations
+        -NullPolicy null_policy
+        -Option~PendingIngestionError~ pending_ingestion_error
+        -Vec~SeriesGroupMeta~ series_groups
+        -usize next_group_id
         +new() Plot
         +line() PlotBuilder
         +scatter() PlotBuilder
         +save() Result
         +render() Result
+        +backend_resolution(operation) BackendResolution
     }
 
     class PlotConfiguration {
-        -Option~String~ title
-        -Option~String~ xlabel
-        -Option~String~ ylabel
+        -Option~PlotText~ title
+        -Option~PlotText~ xlabel
+        -Option~PlotText~ ylabel
         -(u32, u32) dimensions
         -u32 dpi
         -Theme theme
+        -TextEngineMode text_engine
+        -PlotConfig config
     }
 
     class SeriesManager {
         -Vec~PlotSeries~ series
+        -Vec~Option~usize~~ auto_color_slots
         -usize auto_color_index
-        +push(PlotSeries)
-        +next_auto_color() Color
+        +next_auto_color(theme) Color
         +validate() Result
     }
 
@@ -45,6 +52,9 @@ classDiagram
         -GridStyle grid_style
         -TickConfig tick_config
         -Option~f32~ margin
+        -bool scientific_notation
+        -Option~tuple~ x_limits
+        -Option~tuple~ y_limits
         -AxisScale x_scale
         -AxisScale y_scale
     }
@@ -52,9 +62,23 @@ classDiagram
     class RenderPipeline {
         -ParallelRenderer parallel_renderer
         -Option~PooledRenderer~ pooled_renderer
+        -bool enable_pooled_rendering
         -Option~BackendType~ backend
+        -bool auto_optimized
+        -bool allow_subminimum_dpi
+        -Option~tuple~ explicit_output_pixels
+        -bool allow_subplot_dimensions
         -bool enable_gpu
+        +new() RenderPipeline
+        +set_backend(backend)
+        +backend() Option~BackendType~
+        +set_pooled_rendering(enabled)
+        +pooled_rendering_enabled() bool
+        +set_auto_optimized(optimized)
+        +is_auto_optimized() bool
     }
+
+    note for RenderPipeline "parallel_renderer and enable_gpu are feature-gated; operation-specific backend_resolution is implemented on Plot"
 
     Plot *-- PlotConfiguration
     Plot *-- SeriesManager
@@ -69,7 +93,7 @@ classDiagram
 | `PlotConfiguration` | `src/core/plot/configuration.rs` | Display settings (title, xlabel, ylabel, dimensions, dpi, theme) |
 | `SeriesManager` | `src/core/plot/series_manager.rs` | Stores data series, handles auto-color assignment |
 | `LayoutManager` | `src/core/plot/layout_manager.rs` | Legend config, grid style, tick marks, margins, axis limits/scales |
-| `RenderPipeline` | `src/core/plot/render_pipeline.rs` | Backend selection, parallel/pooled rendering, GPU settings |
+| `RenderPipeline` | `src/core/plot/render_pipeline.rs` | Backend preference and renderer configuration; operation-specific resolution diagnostics are methods on `Plot` |
 
 ## Builder Pattern
 
@@ -122,34 +146,29 @@ Generated methods: `save()`, `render()`, `render_to_svg()`, `export_svg()`, `sav
 
 ## Rendering Pipeline
 
-### Backend Selection
+### Backend Resolution
+
+Public raster routing distinguishes the configured preference from the backend that
+can execute a specific operation. Point count alone does not activate Parallel,
+GPU, or DataShader.
 
 ```mermaid
 flowchart TD
-    A[Data Size] --> B{< 10K?}
-    B --> |Yes| C[Skia Default]
-    B --> |No| D{< 100K?}
-    D --> |Yes| E[Parallel]
-    D --> |No| F{< 1M?}
-    F --> |Yes| G[Parallel + SIMD]
-    F --> |No| H[DataShader]
-
-    I[Interactive Mode?] --> |Yes| J[GPU Backend]
-
-    style C fill:#90EE90
-    style E fill:#87CEEB
-    style G fill:#DDA0DD
-    style H fill:#FFB6C1
-    style J fill:#FFD700
+    A[Plot configuration] --> B[Stored backend preference]
+    B --> C{Operation and series supported?}
+    C --> |Default / auto / Parallel / GPU| D[Skia reference raster path]
+    C --> |Explicit DataShader + compatible native scatter PNG| E[DataShader]
+    C --> |Unsupported explicit preference| F[Skia + fallback reason]
+    D --> G[Image / PNG output]
+    E --> G
+    F --> G
 ```
 
-| Data Size | Backend | Features Required |
-|-----------|---------|-------------------|
-| < 10K points | Skia (default) | none |
-| 10K - 100K | Parallel | `parallel` |
-| 100K - 1M | Parallel + SIMD | `parallel`, `simd` |
-| > 1M | DataShader | automatic |
-| Interactive | GPU | `gpu`, `interactive` |
+- `.auto_optimize()` stores Skia unless an explicit preference already exists.
+- Parallel and GPU preferences currently resolve to Skia for public raster operations.
+- Explicit DataShader can execute only for supported native scatter PNG workloads.
+- `get_backend_name()` reports the preference; `resolved_backend_name()` and
+  `backend_resolution(...)` report actual execution and any fallback reason.
 
 ### Coordinate Transforms
 
@@ -166,15 +185,23 @@ flowchart LR
     end
 ```
 
-```rust
+The following abridged signature sketch uses the real public field and method names; constructors and scale-aware helpers are omitted:
+
+```rust,ignore,reason=abridged-api-sketch
+use std::ops::Range;
+
 pub struct CoordinateTransform {
-    data_bounds: (f64, f64, f64, f64),   // x_min, x_max, y_min, y_max
-    screen_bounds: (f32, f32, f32, f32), // left, right, top, bottom
+    pub data_x: Range<f64>,
+    pub data_y: Range<f64>,
+    pub screen_x: Range<f32>,
+    pub screen_y: Range<f32>,
+    pub y_inverted: bool,
 }
 
 impl CoordinateTransform {
-    pub fn data_to_screen(&self, x: f64, y: f64) -> (f32, f32);
-    pub fn screen_to_data(&self, px: f32, py: f32) -> (f64, f64);
+    pub fn data_to_screen(&self, data_x: f64, data_y: f64) -> (f32, f32);
+    pub fn screen_to_data(&self, screen_x: f32, screen_y: f32) -> (f64, f64);
+    // Other real methods omitted from this abridged sketch.
 }
 ```
 
@@ -195,7 +222,7 @@ graph TD
 
         subgraph plots
             H[basic/<br/>Line, Scatter, Bar]
-            I[statistical/<br/>KDE, Violin, Box]
+            I[distribution/<br/>KDE, ECDF, Violin]
             J[polar/<br/>Polar, Radar]
         end
 
@@ -240,37 +267,36 @@ This re-exports from:
 ```mermaid
 flowchart TB
     A[User Data<br/>Vec, ndarray, polars] --> B[PlotBuilder&lt;C&gt;]
-    B --> |.finalize| C[Plot]
+    B --> |.into_plot / terminal method| C[Plot]
     B --> |Config methods| B
     C --> |.save / .render| D[RenderPipeline]
 
-    D --> E{Backend Selection}
-    E --> F[Skia Backend]
-    E --> G[Parallel Backend]
-    E --> H[GPU Backend]
-    E --> I[DataShader Backend]
+    D --> E[BackendResolution]
+    E --> |Reference path or fallback| F[Skia]
+    E --> |Explicit compatible native scatter PNG| G[DataShader]
 
-    F --> J[Image / File Output]
-    G --> J
-    H --> J
-    I --> J
+    F --> H[Image / File Output]
+    G --> H
 
     style A fill:#E8F5E9
-    style J fill:#E3F2FD
+    style H fill:#E3F2FD
 ```
 
 ## Error Handling
 
-All fallible operations return `Result<T, PlotError>`:
+Fallible plotting operations use `PlottingError` through the crate's `Result<T>` alias. The following is explicitly an abridged API sketch; see `src/core/error.rs` for the complete enum:
 
-```rust
-pub type Result<T> = std::result::Result<T, PlotError>;
+```rust,ignore,reason=abridged-api-sketch
+pub type Result<T> = std::result::Result<T, PlottingError>;
 
-pub enum PlotError {
-    InvalidData(String),
+pub enum PlottingError {
+    InvalidData {
+        message: String,
+        position: Option<usize>,
+    },
     RenderError(String),
     IoError(std::io::Error),
-    // ...
+    // Other real variants omitted from this abridged sketch.
 }
 ```
 
@@ -279,9 +305,9 @@ pub enum PlotError {
 ```mermaid
 graph LR
     subgraph Features
-        A[parallel] --> B[ParallelRenderer<br/>rayon]
-        C[simd] --> D[SIMD transforms]
-        E[gpu] --> F[GPU backend<br/>wgpu]
+        A[parallel] --> B[Parallel renderer types<br/>rayon]
+        C[simd] --> D[SIMD renderer utilities]
+        E[gpu] --> F[GPU types and preference metadata<br/>wgpu]
         G[interactive] --> H[winit window<br/>events]
         I[pdf] --> J[PDF export<br/>svg2pdf]
         K[ndarray_support] --> L[ndarray integration]
@@ -291,9 +317,9 @@ graph LR
 
 | Feature | Components Enabled |
 |---------|-------------------|
-| `parallel` | ParallelRenderer, rayon integration |
-| `simd` | SIMD coordinate transforms |
-| `gpu` | GPU backend, wgpu integration |
+| `parallel` | Parallel renderer types and rayon integration; not a public raster routing guarantee |
+| `simd` | SIMD renderer utilities; not a public raster routing guarantee |
+| `gpu` | GPU types and preference metadata; static public raster output currently resolves to Skia |
 | `interactive` | winit window, event handling |
 | `pdf` | PDF export via svg2pdf |
 | `ndarray_support` | ndarray data integration |

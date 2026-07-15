@@ -1,152 +1,56 @@
-//! GPU-accelerated plot example
+//! Backend-preference diagnostics for builds with the `gpu` feature.
 //!
-//! Demonstrates using GPU acceleration for large dataset rendering.
+//! Public `Plot::save()` and `Plot::render()` currently resolve a GPU preference
+//! to the Skia reference raster path. This example reports that decision instead
+//! of presenting the same path as a GPU/CPU performance comparison.
 //!
-//! Run with: cargo run --example gpu_plot_example --features gpu
+//! Run with: `cargo run --example gpu_plot_example --features gpu`
 
+use ruviz::core::{BackendOperation, BackendType};
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
-    println!("=== GPU Plot Example ===\n");
-    std::fs::create_dir_all("generated/examples").ok();
+fn report(label: &str, plot: &Plot) {
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+    println!("{label}");
+    println!("  requested: {}", plot.get_backend_name());
+    println!("  resolved: {}", plot.resolved_backend_name());
+    println!("  fallback: {:?}", resolution.fallback_reason());
+}
 
-    // Generate large dataset (GPU threshold is typically 5K+ points)
-    let point_count = 10_000;
-    let x: Vec<f64> = (0..point_count).map(|i| i as f64 * 0.001).collect();
+fn main() -> Result<()> {
+    std::fs::create_dir_all("generated/examples")?;
+
+    let x: Vec<f64> = (0..10_000).map(|i| i as f64 * 0.001).collect();
     let y: Vec<f64> = x
         .iter()
         .map(|&t| (t * 10.0).sin() * (t * 3.0).cos())
         .collect();
 
-    println!("Generated {} points", point_count);
-
-    // Example 1: GPU rendering (with GPU feature)
-    println!("\n--- Example 1: GPU Rendering ---");
-
-    #[cfg(feature = "gpu")]
-    {
-        let result = Plot::new()
-            .title("GPU-Accelerated Line Plot (10K points)")
-            .xlabel("X")
-            .ylabel("Y")
-            .gpu(true)
-            .line(&x, &y)
-            .color(Color::new(31, 119, 180))
-            .save("generated/examples/gpu_plot_explicit.png");
-
-        match result {
-            Ok(_) => println!("Saved: generated/examples/gpu_plot_explicit.png (GPU enabled)"),
-            Err(e) => println!("GPU render failed (expected if no GPU): {}", e),
-        }
-    }
-
-    #[cfg(not(feature = "gpu"))]
-    {
-        println!("GPU feature not enabled. Run with: --features gpu");
-        Plot::new()
-            .title("CPU Line Plot (10K points)")
-            .xlabel("X")
-            .ylabel("Y")
-            .line(&x, &y)
-            .color(Color::new(31, 119, 180))
-            .save("generated/examples/gpu_plot_explicit.png")?;
-        println!("Saved: generated/examples/gpu_plot_explicit.png (CPU fallback)");
-    }
-
-    // Example 2: Auto-optimized rendering
-    println!("\n--- Example 2: Auto-Optimized Rendering ---");
-
-    let plot: Plot = Plot::new()
-        .title("Auto-Optimized Plot (10K points)")
-        .xlabel("X")
-        .ylabel("Y")
+    let gpu_preference = Plot::new()
+        .gpu(true)
         .line(&x, &y)
-        .color(Color::new(255, 127, 14))
-        .into();
+        .title("GPU preference resolved through public PNG routing")
+        .into_plot();
+    report("GPU preference", &gpu_preference);
+    gpu_preference.save("generated/examples/gpu_preference_resolved.png")?;
 
-    let plot = plot.auto_optimize();
-    println!("Selected backend: {}", plot.get_backend_name());
-    plot.save("generated/examples/gpu_plot_auto.png")?;
-    println!("Saved: generated/examples/gpu_plot_auto.png");
+    let auto = Plot::new()
+        .line(&x, &y)
+        .title("Conservative automatic backend selection")
+        .into_plot()
+        .auto_optimize();
+    report("Automatic selection", &auto);
+    auto.save("generated/examples/backend_auto_resolved.png")?;
 
-    // Example 3: Very large dataset (100K points)
-    println!("\n--- Example 3: Very Large Dataset (100K points) ---");
-
-    let large_count = 100_000;
-    let large_x: Vec<f64> = (0..large_count).map(|i| i as f64 * 0.0001).collect();
-    let large_y: Vec<f64> = large_x
-        .iter()
-        .map(|&t| (t * 50.0).sin() + (t * 17.0).cos() * 0.5)
-        .collect();
-
-    println!("Generated {} points", large_count);
-
-    let large_plot: Plot = Plot::new()
-        .title(format!("Large Dataset ({} points)", large_count))
-        .line(&large_x, &large_y)
-        .color(Color::new(44, 160, 44))
-        .into();
-
-    let large_plot = large_plot.auto_optimize();
-    println!("Selected backend: {}", large_plot.get_backend_name());
-    large_plot.save("generated/examples/gpu_plot_large.png")?;
-    println!("Saved: generated/examples/gpu_plot_large.png");
-
-    // Example 4: GPU vs CPU comparison
-    println!("\n--- Example 4: GPU vs CPU Comparison ---");
-    compare_gpu_cpu(&x, &y)?;
-
-    println!("\n=== GPU Plot Examples Completed ===");
-    Ok(())
-}
-
-fn compare_gpu_cpu(x: &[f64], y: &[f64]) -> Result<()> {
-    let x_vec: Vec<f64> = x.to_vec();
-    let y_vec: Vec<f64> = y.to_vec();
-
-    // CPU rendering
-    let cpu_start = std::time::Instant::now();
-    Plot::new()
-        .title("CPU Rendered (Skia Backend)")
-        .backend(ruviz::core::plot::BackendType::Skia)
-        .line(&x_vec, &y_vec)
-        .color(Color::new(214, 39, 40))
-        .save("generated/examples/gpu_comparison_cpu.png")?;
-    let cpu_time = cpu_start.elapsed();
-    println!("CPU render time: {:?}", cpu_time);
-
-    #[cfg(feature = "gpu")]
-    {
-        let gpu_start = std::time::Instant::now();
-        let result = Plot::new()
-            .title("GPU Rendered")
-            .gpu(true)
-            .line(&x_vec, &y_vec)
-            .color(Color::new(44, 160, 44))
-            .save("generated/examples/gpu_comparison_gpu.png");
-
-        match result {
-            Ok(_) => {
-                let gpu_time = gpu_start.elapsed();
-                println!("GPU render time: {:?}", gpu_time);
-                if gpu_time < cpu_time {
-                    println!(
-                        "GPU was {:.1}x faster",
-                        cpu_time.as_secs_f64() / gpu_time.as_secs_f64()
-                    );
-                } else {
-                    println!(
-                        "CPU was {:.1}x faster (GPU overhead for small data)",
-                        gpu_time.as_secs_f64() / cpu_time.as_secs_f64()
-                    );
-                }
-            }
-            Err(e) => println!("GPU render failed: {} (using CPU fallback)", e),
-        }
-    }
-
-    #[cfg(not(feature = "gpu"))]
-    println!("GPU feature not enabled for comparison");
+    let scatter_x: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.0001).collect();
+    let scatter_y: Vec<f64> = scatter_x.iter().map(|&t| (t * 25.0).sin()).collect();
+    let datashader = Plot::new()
+        .backend(BackendType::DataShader)
+        .scatter(&scatter_x, &scatter_y)
+        .title("Explicit compatible DataShader PNG")
+        .into_plot();
+    report("Explicit DataShader", &datashader);
+    datashader.save("generated/examples/datashader_explicit.png")?;
 
     Ok(())
 }

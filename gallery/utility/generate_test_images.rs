@@ -8,13 +8,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("generated/examples/export/png")?;
     fs::create_dir_all("generated/examples/export/svg")?;
     fs::create_dir_all("generated/examples/export/raw")?;
-    
+
     println!("Generating test images...");
-    
+
     // Test data
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
-    
+
     // 1. Basic line plot - PNG
     println!("Creating basic line plot...");
     Plot::new()
@@ -67,17 +67,17 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("SVG Export Test")
         .line(&x_data, &y_data)
         .into();
-    
+
     let image = plot.render()?;
     let renderer = SkiaRenderer::new(800, 600, Theme::light())?;
     renderer.export_svg("generated/examples/export/svg/test_plot.svg", 800, 600)?;
-    
+
     // 6. Test raw data export
     println!("Testing raw data export...");
     let raw_data = image.pixels;
     fs::write("generated/examples/export/raw/test_plot.bin", &raw_data)?;
     println!("Raw data size: {} bytes", raw_data.len());
-    
+
     // 7. Performance test with larger dataset
     println!("Testing performance with 10K points...");
     let large_x: Vec<f64> = (0..10000).map(|i| i as f64 * 0.001).collect();
@@ -90,13 +90,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .save("generated/bench/04_performance_test.png")?;
     let duration = start.elapsed();
     println!("10K points rendered in: {:?}", duration);
-    
+
     println!("\n✅ All test images generated successfully!");
     println!("📁 Check these directories:");
     println!("  - generated/bench/           (4 PNG files)");
     println!("  - generated/examples/export/png/     (2 theme PNG files)");
     println!("  - generated/examples/export/svg/     (1 SVG file)");
     println!("  - generated/examples/export/raw/     (1 binary file)");
-    
+
     Ok(())
 }

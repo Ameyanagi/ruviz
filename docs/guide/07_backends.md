@@ -91,7 +91,7 @@ let y = vec![0.0, 1.0, 4.0];
 let plot = Plot::new()
     .backend(BackendType::DataShader)
     .line(&x, &y)
-    .end_series();
+    .into_plot();
 
 assert_eq!(plot.get_backend_name(), "datashader");
 ```
@@ -251,7 +251,8 @@ ruviz = { version = "0.4.19", features = ["interactive"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
-```rust
+```rust,check,features=interactive
+use ruviz::interactive::show_interactive;
 use ruviz::prelude::*;
 
 #[tokio::main(flavor = "current_thread")]
@@ -262,7 +263,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let plot = Plot::new()
         .line(&x, &y)
         .title("Interactive Plot")
-        .end_series();
+        .into_plot();
 
     show_interactive(plot).await?;
     Ok(())
@@ -316,7 +317,7 @@ use ruviz::prelude::*;
 let plot = Plot::new()
     .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
     .title("Interactive Plot")
-    .end_series();
+    .into_plot();
 
 let menu = InteractiveContextMenuConfig {
     custom_items: vec![InteractiveContextMenuItem::new("export-csv", "Export CSV")],

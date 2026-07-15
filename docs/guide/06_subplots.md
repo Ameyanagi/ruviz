@@ -14,7 +14,7 @@ Subplots allow you to combine multiple plots into a single figure, essential for
 
 ### 2×2 Grid
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -30,22 +30,22 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let plot1 = Plot::new()
         .line(&x, &y1)
         .title("Quadratic")
-        .end_series();
+        .into_plot();
 
     let plot2 = Plot::new()
         .scatter(&x, &y2)
         .title("Linear")
-        .end_series();
+        .into_plot();
 
     let plot3 = Plot::new()
         .bar(&categories, &values)
         .title("Categories")
-        .end_series();
+        .into_plot();
 
     let plot4 = Plot::new()
         .line(&x, &y1)
         .title("Combined")
-        .end_series();
+        .into_plot();
 
     // Compose into 2×2 grid
     subplots(2, 2, 800, 600)?
@@ -71,9 +71,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 ```rust
 use ruviz::prelude::*;
 
-let plot1 = Plot::new().line(&x, &y1).title("Plot 1").end_series();
-let plot2 = Plot::new().line(&x, &y2).title("Plot 2").end_series();
-let plot3 = Plot::new().line(&x, &y3).title("Plot 3").end_series();
+let plot1 = Plot::new().line(&x, &y1).title("Plot 1").into_plot();
+let plot2 = Plot::new().line(&x, &y2).title("Plot 2").into_plot();
+let plot3 = Plot::new().line(&x, &y3).title("Plot 3").into_plot();
 
 subplots(1, 3, 1200, 400)?
     .subplot(0, 0, plot1)?
@@ -87,9 +87,9 @@ subplots(1, 3, 1200, 400)?
 ```rust
 use ruviz::prelude::*;
 
-let plot1 = Plot::new().line(&x, &y1).title("Top").end_series();
-let plot2 = Plot::new().line(&x, &y2).title("Middle").end_series();
-let plot3 = Plot::new().line(&x, &y3).title("Bottom").end_series();
+let plot1 = Plot::new().line(&x, &y1).title("Top").into_plot();
+let plot2 = Plot::new().line(&x, &y2).title("Middle").into_plot();
+let plot3 = Plot::new().line(&x, &y3).title("Bottom").into_plot();
 
 subplots(3, 1, 600, 900)?
     .subplot(0, 0, plot1)?
@@ -166,7 +166,7 @@ subplots(2, 2, 1000, 1000)?
 
 ### Publication Figure (2×2)
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -197,7 +197,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Time (seconds)")
         .ylabel("Signal Amplitude")
         .line(&time, &signal)
-        .end_series()
+        .into_plot()
         .theme(Theme::seaborn());
 
     let panel_b = Plot::new()
@@ -205,7 +205,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Independent Variable")
         .ylabel("Dependent Variable")
         .scatter(&x_values, &y_values)
-        .end_series()
+        .into_plot()
         .theme(Theme::seaborn());
 
     let panel_c = Plot::new()
@@ -213,7 +213,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Value Bins")
         .ylabel("Frequency")
         .histogram(&distribution, None)
-        .end_series()
+        .into_plot()
         .theme(Theme::seaborn());
 
     let panel_d = Plot::new()
@@ -221,7 +221,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Groups")
         .ylabel("Values")
         .boxplot(&group_data, None)
-        .end_series()
+        .into_plot()
         .theme(Theme::seaborn());
 
     // Compose publication figure
@@ -256,7 +256,7 @@ let plot_before = Plot::new()
     .title("Before Optimization")
     .xlabel("Time")
     .ylabel("Performance")
-    .end_series();
+    .into_plot();
 
 // After optimization
 let plot_after = Plot::new()
@@ -264,7 +264,7 @@ let plot_after = Plot::new()
     .title("After Optimization")
     .xlabel("Time")
     .ylabel("Performance")
-    .end_series();
+    .into_plot();
 
 subplots(1, 2, 1200, 600)?
     .suptitle("Performance Optimization Results")
@@ -282,17 +282,17 @@ use ruviz::prelude::*;
 let group_a_plot = Plot::new()
     .histogram(&group_a_data, None)
     .title("Group A")
-    .end_series();
+    .into_plot();
 
 let group_b_plot = Plot::new()
     .histogram(&group_b_data, None)
     .title("Group B")
-    .end_series();
+    .into_plot();
 
 let group_c_plot = Plot::new()
     .histogram(&group_c_data, None)
     .title("Group C")
-    .end_series();
+    .into_plot();
 
 subplots(1, 3, 1500, 500)?
     .suptitle("Multi-Group Distribution Analysis")
@@ -315,7 +315,7 @@ let timeseries = Plot::new()
     .title("Time Series")
     .xlabel("Time (s)")
     .ylabel("Amplitude")
-    .end_series();
+    .into_plot();
 
 // Correlation (scatter)
 let correlation = Plot::new()
@@ -324,7 +324,7 @@ let correlation = Plot::new()
     .title("Correlation")
     .xlabel("X Variable")
     .ylabel("Y Variable")
-    .end_series();
+    .into_plot();
 
 // Categories (bar)
 let categories_plot = Plot::new()
@@ -332,7 +332,7 @@ let categories_plot = Plot::new()
     .title("Category Summary")
     .xlabel("Category")
     .ylabel("Count")
-    .end_series();
+    .into_plot();
 
 // Distribution (histogram)
 let distribution_plot = Plot::new()
@@ -340,7 +340,7 @@ let distribution_plot = Plot::new()
     .title("Distribution")
     .xlabel("Value")
     .ylabel("Frequency")
-    .end_series();
+    .into_plot();
 
 subplots(2, 2, 1200, 1000)?
     .suptitle("Comprehensive Data Analysis")
@@ -364,7 +364,7 @@ let plots: Vec<_> = (0..6).map(|i| {
     Plot::new()
         .line(&x, &data[i])
         .title(&format!("Condition {}", i + 1))
-        .end_series()
+        .into_plot()
 }).collect();
 
 let mut figure = subplots(3, 2, 1400, 1200)?
@@ -397,7 +397,7 @@ for row in 0..2 {
         let plot = Plot::new()
             .scatter(&x_data[row][col], &y_data[row][col])
             .title(&format!("Panel ({},{})", row, col))
-            .end_series();
+            .into_plot();
         figure = figure.subplot(row, col, plot)?;
     }
 }
@@ -419,25 +419,25 @@ let plot1 = Plot::new()
     .line(&x, &y1)
     .title("Panel 1")
     .theme(theme.clone())
-    .end_series();
+    .into_plot();
 
 let plot2 = Plot::new()
     .line(&x, &y2)
     .title("Panel 2")
     .theme(theme.clone())
-    .end_series();
+    .into_plot();
 
 let plot3 = Plot::new()
     .line(&x, &y3)
     .title("Panel 3")
     .theme(theme.clone())
-    .end_series();
+    .into_plot();
 
 let plot4 = Plot::new()
     .line(&x, &y4)
     .title("Panel 4")
     .theme(theme)
-    .end_series();
+    .into_plot();
 
 subplots(2, 2, 1000, 800)?
     .subplot(0, 0, plot1)?
@@ -464,7 +464,7 @@ let plots: Vec<_> = (0..4).map(|i| {
         .line(&x, &data[i])
         .color(colors[i])
         .title(&format!("Series {}", i + 1))
-        .end_series()
+        .into_plot()
 }).collect();
 
 let mut figure = subplots(2, 2, 1000, 800)?
@@ -493,7 +493,7 @@ let panel_a = Plot::new()
     .title("(a) Experimental Results")
     .xlabel("Input Parameter")
     .ylabel("Output Response")
-    .end_series()
+    .into_plot()
     .theme(Theme::publication());
 
 let panel_b = Plot::new()
@@ -501,7 +501,7 @@ let panel_b = Plot::new()
     .title("(b) Validation Data")
     .xlabel("Input Parameter")
     .ylabel("Output Response")
-    .end_series()
+    .into_plot()
     .theme(Theme::publication());
 
 subplots(1, 2, 2175, 1000)?
@@ -524,19 +524,19 @@ use ruviz::prelude::*;
 let panel_a = Plot::new()
     .line(&time, &data_a)
     .title("a")  // Nature uses lowercase letters
-    .end_series()
+    .into_plot()
     .theme(Theme::publication());
 
 let panel_b = Plot::new()
     .histogram(&data_b, None)
     .title("b")
-    .end_series()
+    .into_plot()
     .theme(Theme::publication());
 
 let panel_c = Plot::new()
     .boxplot(&data_c, None)
     .title("c")
-    .end_series()
+    .into_plot()
     .theme(Theme::publication());
 
 subplots(3, 1, 1050, 1575)?  // 3.5" × 5.25"
@@ -561,17 +561,17 @@ let mut figure = SubplotFigure::new(2, 2, 1200, 900)?
     .wspace(0.3);
 
 // Add plots progressively
-let plot1 = Plot::new().line(&x1, &y1).title("Panel 1").end_series();
+let plot1 = Plot::new().line(&x1, &y1).title("Panel 1").into_plot();
 figure = figure.subplot(0, 0, plot1)?;
 
-let plot2 = Plot::new().scatter(&x2, &y2).title("Panel 2").end_series();
+let plot2 = Plot::new().scatter(&x2, &y2).title("Panel 2").into_plot();
 figure = figure.subplot(0, 1, plot2)?;
 
 // Continue adding...
-let plot3 = Plot::new().bar(&cats, &vals).title("Panel 3").end_series();
+let plot3 = Plot::new().bar(&cats, &vals).title("Panel 3").into_plot();
 figure = figure.subplot(1, 0, plot3)?;
 
-let plot4 = Plot::new().histogram(&data, None).title("Panel 4").end_series();
+let plot4 = Plot::new().histogram(&data, None).title("Panel 4").into_plot();
 figure = figure.subplot(1, 1, plot4)?;
 
 // Save when complete
@@ -611,11 +611,11 @@ use ruviz::prelude::*;
 let overview = Plot::new()
     .line(&time, &overall_metric)
     .title("System Overview")
-    .end_series();
+    .into_plot();
 
-let detail1 = Plot::new().histogram(&metric1, None).title("Metric 1").end_series();
-let detail2 = Plot::new().histogram(&metric2, None).title("Metric 2").end_series();
-let detail3 = Plot::new().histogram(&metric3, None).title("Metric 3").end_series();
+let detail1 = Plot::new().histogram(&metric1, None).title("Metric 1").into_plot();
+let detail2 = Plot::new().histogram(&metric2, None).title("Metric 2").into_plot();
+let detail3 = Plot::new().histogram(&metric3, None).title("Metric 3").into_plot();
 
 // For now, use separate rows (future: subplot span support)
 subplots(2, 3, 1800, 900)?
@@ -642,7 +642,7 @@ let plots: Vec<_> = sensors.iter().enumerate().map(|(i, &name)| {
         .title(name)
         .xlabel("Time (s)")
         .ylabel("Reading")
-        .end_series()
+        .into_plot()
 }).collect();
 
 let mut figure = subplots(4, 1, 1200, 1600)?

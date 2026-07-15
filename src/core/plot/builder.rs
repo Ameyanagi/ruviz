@@ -198,7 +198,7 @@ macro_rules! impl_terminal_methods {
             /// Mixed Cartesian/non-Cartesian plots also render through normal
             /// fluent chaining, so this is not needed as a workaround.
             #[deprecated(
-                since = "0.8.0",
+                since = "0.1.0",
                 note = "Not needed - series finalize automatically. Use .save() directly."
             )]
             pub fn end_series(self) -> super::Plot {

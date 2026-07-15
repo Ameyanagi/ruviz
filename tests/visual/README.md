@@ -4,11 +4,12 @@ This directory contains infrastructure for visual regression testing of plot typ
 
 ## Overview
 
-Visual tests compare ruviz output against matplotlib reference images to catch visual regressions. These tests are not run in CI because:
+There are two separate visual-test categories:
 
-1. Font rendering varies between systems
-2. Reference images must be generated first
-3. Small pixel differences are expected and need manual review
+- `tests/visual_regression_test.rs` is the deterministic CI gate. It registers `src/dejavu-sans.ttf`, verifies that the bundled bytes are selected as `DejaVu Sans` for plot and figure-level text, and requires exact pixels for every committed ruviz golden fixture.
+- `tests/visual_traits_test.rs` and this `tests/visual/` infrastructure are manual, environment-sensitive comparisons against matplotlib references. They are not CI coverage because the external renderer, reference generation, and review thresholds vary by environment.
+
+Do not treat a passing manual visual-traits run as a substitute for the deterministic golden lane.
 
 ## Directory Structure
 
@@ -37,10 +38,10 @@ generated/tests/render/
 
 ```bash
 # Generate all reference images
-python scripts/generate_reference.py
+uv run python scripts/generate_reference.py
 
 # Generate specific plot type
-python scripts/generate_reference.py kde
+uv run python scripts/generate_reference.py kde
 ```
 
 ### 2. Run Visual Tests
@@ -64,7 +65,7 @@ cargo test --test visual_traits_test test_kde_visual -- --ignored
 
 1. Add reference image generation to `scripts/generate_reference.py`
 2. Add test function to `tests/visual_traits_test.rs`
-3. Generate new reference: `python scripts/generate_reference.py <plot_type>`
+3. Generate new reference: `uv run python scripts/generate_reference.py <plot_type>`
 4. Run test to verify: `cargo test --test visual_traits_test test_<plot_type>_visual -- --ignored`
 
 ## Test Template
