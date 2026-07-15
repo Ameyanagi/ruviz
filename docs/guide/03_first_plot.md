@@ -61,7 +61,7 @@ The `prelude` module includes all commonly used types and traits. This gives you
 
 ### Error Handling
 
-```rust
+```rust,ignore,reason=signature-only
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>>
 ```
 
@@ -376,7 +376,7 @@ Plot::new()
 
 ## Complete Example
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
@@ -388,8 +388,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Create plot
     Plot::new()
-        .size_px(1000, 600)
-        .dpi(150)
+        .size(6.667, 4.0)
+        .dpi(150) // Approximately 1000 x 600 output pixels
         .theme(Theme::light())
         // Sine wave
         .line(&x, &y_sin)

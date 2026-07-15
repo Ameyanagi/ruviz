@@ -1,4 +1,7 @@
-//! GPU vs CPU scaling benchmark with performance plotting
+//! Lower-level `GpuRenderer` coordinate-transform scaling benchmark.
+//!
+//! Results apply only to the renderer utilities called in this file, not to
+//! public `Plot::save()` or `Plot::render()` backend routing.
 
 use ruviz::core::*;
 use ruviz::data::*;
@@ -11,11 +14,32 @@ use std::time::Instant;
 struct BenchmarkResult {
     point_count: usize,
     cpu_time_us: f64,
-    gpu_time_us: f64,
     cpu_throughput: f64,
-    gpu_throughput: f64,
-    gpu_speedup: f64,
-    gpu_success: bool,
+    operation_time_us: Option<f64>,
+    operation_path: OperationPath,
+    gpu_throughput: Option<f64>,
+    gpu_speedup: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OperationPath {
+    Gpu,
+    CpuFallback,
+    Failed,
+    Unavailable,
+    Unverified,
+}
+
+impl OperationPath {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Gpu => "GPU",
+            Self::CpuFallback => "CPU fallback",
+            Self::Failed => "FAILED",
+            Self::Unavailable => "unavailable",
+            Self::Unverified => "unverified",
+        }
+    }
 }
 
 #[tokio::main]
@@ -86,43 +110,76 @@ async fn main() -> Result<()> {
         );
 
         // GPU Benchmark
-        let (gpu_time_us, gpu_throughput, gpu_speedup, gpu_success) = if let Some(ref mut gpu) =
-            gpu_renderer
+        let (operation_time_us, operation_path, gpu_throughput, gpu_speedup) = if let Some(
+            ref mut gpu,
+        ) = gpu_renderer
         {
-            print!("   GPU: ");
+            print!("   Accelerated path: ");
+            let gpu_operations_before = gpu.get_stats().gpu_operations;
+            let cpu_operations_before = gpu.get_stats().cpu_operations;
             let start = Instant::now();
 
             match gpu.transform_coordinates_optimal(&x_data, &y_data, x_range, y_range, viewport) {
                 Ok(_gpu_result) => {
-                    let gpu_time = start.elapsed();
-                    let gpu_time_us = gpu_time.as_micros() as f64;
-                    let gpu_throughput = point_count as f64 / gpu_time.as_secs_f64();
-                    let speedup = cpu_time.as_secs_f64() / gpu_time.as_secs_f64();
-
-                    println!(
-                        "{:>10.0} us ({:>12.0} pts/sec) [{:.2}x speedup]",
-                        gpu_time_us, gpu_throughput, speedup
-                    );
-                    (gpu_time_us, gpu_throughput, speedup, true)
+                    let operation_time = start.elapsed();
+                    let operation_time_us = operation_time.as_micros() as f64;
+                    let stats = gpu.get_stats();
+                    if stats.gpu_operations > gpu_operations_before {
+                        let gpu_throughput = point_count as f64 / operation_time.as_secs_f64();
+                        let speedup = cpu_time.as_secs_f64() / operation_time.as_secs_f64();
+                        println!(
+                            "GPU {:>10.0} us ({:>12.0} pts/sec) [{:.2}x speedup]",
+                            operation_time_us, gpu_throughput, speedup
+                        );
+                        (
+                            Some(operation_time_us),
+                            OperationPath::Gpu,
+                            Some(gpu_throughput),
+                            Some(speedup),
+                        )
+                    } else if stats.cpu_operations > cpu_operations_before {
+                        let fallback_throughput = point_count as f64 / operation_time.as_secs_f64();
+                        println!(
+                            "CPU fallback {:>10.0} us ({:>12.0} pts/sec); no GPU metric",
+                            operation_time_us, fallback_throughput
+                        );
+                        (
+                            Some(operation_time_us),
+                            OperationPath::CpuFallback,
+                            None,
+                            None,
+                        )
+                    } else {
+                        println!(
+                            "completed in {:>10.0} us, but renderer statistics did not identify the path",
+                            operation_time_us
+                        );
+                        (
+                            Some(operation_time_us),
+                            OperationPath::Unverified,
+                            None,
+                            None,
+                        )
+                    }
                 }
                 Err(e) => {
                     println!("FAILED: {}", e);
-                    (cpu_time_us, cpu_throughput, 1.0, false)
+                    (None, OperationPath::Failed, None, None)
                 }
             }
         } else {
-            println!("   GPU: Not available");
-            (cpu_time_us, cpu_throughput, 1.0, false)
+            println!("   Accelerated path: GPU unavailable");
+            (None, OperationPath::Unavailable, None, None)
         };
 
         results.push(BenchmarkResult {
             point_count,
             cpu_time_us,
-            gpu_time_us,
             cpu_throughput,
+            operation_time_us,
+            operation_path,
             gpu_throughput,
             gpu_speedup,
-            gpu_success,
         });
 
         let data_size = point_count * std::mem::size_of::<f64>() * 2;
@@ -138,36 +195,33 @@ async fn main() -> Result<()> {
     println!("\nPerformance Summary Table");
     println!("=========================");
     println!(
-        "{:>10} {:>12} {:>12} {:>12} {:>12} {:>10}",
-        "Points", "CPU (us)", "GPU (us)", "CPU (Mpts/s)", "GPU (Mpts/s)", "Speedup"
+        "{:>10} {:>12} {:>14} {:>12} {:>12} {:>12} {:>10}",
+        "Points", "CPU (us)", "Path", "Path (us)", "CPU (Mpts/s)", "GPU (Mpts/s)", "Speedup"
     );
-    println!("{}", "-".repeat(80));
+    println!("{}", "-".repeat(98));
 
     for result in &results {
         let cpu_mpts = result.cpu_throughput / 1_000_000.0;
-        let gpu_mpts = if result.gpu_success {
-            result.gpu_throughput / 1_000_000.0
-        } else {
-            0.0
-        };
-        let speedup_str = if result.gpu_success {
-            format!("{:.2}x", result.gpu_speedup)
-        } else {
-            "FAIL".to_string()
-        };
+        let operation_time = result
+            .operation_time_us
+            .map_or_else(|| "--".to_string(), |time| format!("{time:.0}"));
+        let gpu_mpts = result.gpu_throughput.map_or_else(
+            || "--".to_string(),
+            |throughput| format!("{:.1}", throughput / 1_000_000.0),
+        );
+        let speedup = result
+            .gpu_speedup
+            .map_or_else(|| "--".to_string(), |speedup| format!("{speedup:.2}x"));
 
         println!(
-            "{:>10} {:>12.0} {:>12.0} {:>12.1} {:>12.1} {:>10}",
+            "{:>10} {:>12.0} {:>14} {:>12} {:>12.1} {:>12} {:>10}",
             format_number(result.point_count as u64),
             result.cpu_time_us,
-            if result.gpu_success {
-                result.gpu_time_us
-            } else {
-                0.0
-            },
+            result.operation_path.label(),
+            operation_time,
             cpu_mpts,
             gpu_mpts,
-            speedup_str
+            speedup
         );
     }
 
@@ -198,18 +252,16 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         .iter()
         .map(|r| r.cpu_throughput / 1_000_000.0)
         .collect();
-    let gpu_throughput: Vec<f64> = results
+    let (gpu_point_counts, gpu_throughput): (Vec<f64>, Vec<f64>) = results
         .iter()
-        .map(|r| {
-            if r.gpu_success {
-                r.gpu_throughput / 1_000_000.0
-            } else {
-                0.0
-            }
+        .filter_map(|result| {
+            result
+                .gpu_throughput
+                .map(|throughput| (result.point_count as f64, throughput / 1_000_000.0))
         })
-        .collect();
+        .unzip();
 
-    Plot::new()
+    let throughput_plot = Plot::new()
         .title("GPU vs CPU Performance Scaling")
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
@@ -217,19 +269,30 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         .size(12.0, 6.0)
         .dpi(150)
         .line(&point_counts, &cpu_throughput)
-        .label("CPU")
-        .line(&point_counts, &gpu_throughput)
-        .label("GPU")
-        .save("generated/examples/gpu_throughput_scaling.png")?;
+        .label("CPU");
+    let throughput_plot = if gpu_point_counts.is_empty() {
+        throughput_plot
+    } else {
+        throughput_plot
+            .line(&gpu_point_counts, &gpu_throughput)
+            .label("GPU")
+    };
+    throughput_plot.save("generated/examples/gpu_throughput_scaling.png")?;
 
-    let valid_speedups: Vec<_> = results.iter().filter(|r| r.gpu_success).collect();
+    let valid_speedups: Vec<_> = results
+        .iter()
+        .filter(|result| result.gpu_speedup.is_some())
+        .collect();
 
     if !valid_speedups.is_empty() {
         let speedup_points: Vec<f64> = valid_speedups
             .iter()
             .map(|r| r.point_count as f64)
             .collect();
-        let speedup_values: Vec<f64> = valid_speedups.iter().map(|r| r.gpu_speedup).collect();
+        let speedup_values: Vec<f64> = valid_speedups
+            .iter()
+            .filter_map(|result| result.gpu_speedup)
+            .collect();
 
         Plot::new()
             .title("GPU Speedup vs Dataset Size")
@@ -243,7 +306,9 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
 
     println!("\nPerformance plots saved:");
     println!("  generated/examples/gpu_throughput_scaling.png");
-    println!("  generated/examples/gpu_speedup_scaling.png");
+    if !valid_speedups.is_empty() {
+        println!("  generated/examples/gpu_speedup_scaling.png");
+    }
 
     Ok(())
 }

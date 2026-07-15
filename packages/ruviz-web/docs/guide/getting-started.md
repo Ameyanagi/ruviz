@@ -4,7 +4,7 @@
 
 The simplest path is to build a plot and save it directly:
 
-```ts
+```ts,check
 import { createPlot } from "ruviz";
 
 const plot = createPlot()
@@ -29,8 +29,18 @@ you want bytes or markup for your own storage flow.
 
 Mount the same plot into a canvas:
 
-```ts
-const canvas = document.querySelector("canvas")!;
+```ts,check
+import { createPlot } from "ruviz";
+
+const canvas = document.querySelector<HTMLCanvasElement>("canvas");
+if (!canvas) {
+  throw new Error("Expected a <canvas> element");
+}
+
+const plot = createPlot()
+  .sizePx(800, 420)
+  .title("Interactive quadratic")
+  .line({ x: [0, 1, 2, 3], y: [0, 1, 4, 9] });
 const session = await plot.mount(canvas);
 ```
 
@@ -40,8 +50,13 @@ That sets the plot, sizes the session, and renders immediately.
 
 Use the direct constructors when you want tighter lifecycle control:
 
-```ts
+```ts,check
 import { createCanvasSession, createPlot } from "ruviz";
+
+const canvas = document.querySelector<HTMLCanvasElement>("canvas");
+if (!canvas) {
+  throw new Error("Expected a <canvas> element");
+}
 
 const session = await createCanvasSession(canvas, {
   autoResize: true,

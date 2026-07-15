@@ -119,7 +119,7 @@ typst-math = ["ruviz/typst-math"]
 
 Then guard the call:
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {
@@ -142,7 +142,7 @@ fn main() -> Result<()> {
 }
 ```
 
-```rust
+```rust,check,features=typst-math
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {
@@ -166,7 +166,7 @@ fn main() -> Result<()> {
 
 Let's create a more interesting plot with real data:
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {
@@ -330,11 +330,11 @@ Plot::new()
 ```rust
 use ruviz::prelude::*;
 
-// For print/publication (300 DPI)
+// Four by three inches at 300 DPI -> 1200 x 900 output pixels
 Plot::new()
     .line(&x, &y)
+    .size(4.0, 3.0)
     .dpi(300)
-    .size_px(1200, 900)  // Width x Height
     .save("high_res.png")?;
 
 // For web (96 DPI, default)
@@ -407,7 +407,7 @@ effective than relying on a backend feature flag.
 
 ruviz uses `Result` types for proper error handling:
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn create_plot() -> Result<()> {

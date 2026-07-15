@@ -113,10 +113,10 @@ plt.savefig('subplots.png')
 
 **ruviz**:
 ```rust
-let plot1 = Plot::new().line(&x, &y1).title("Plot 1").end_series();
-let plot2 = Plot::new().scatter(&x, &y2).title("Plot 2").end_series();
-let plot3 = Plot::new().bar(&cats, &vals).title("Plot 3").end_series();
-let plot4 = Plot::new().histogram(&data, None).title("Plot 4").end_series();
+let plot1 = Plot::new().line(&x, &y1).title("Plot 1").into_plot();
+let plot2 = Plot::new().scatter(&x, &y2).title("Plot 2").into_plot();
+let plot3 = Plot::new().bar(&cats, &vals).title("Plot 3").into_plot();
+let plot4 = Plot::new().histogram(&data, None).title("Plot 4").into_plot();
 
 subplots(2, 2, 1200, 900)?
     .subplot(0, 0, plot1)?
@@ -174,7 +174,7 @@ Plot::new()
 | Subplots | `subplots()` | `subplots()` |
 | Themes | `style.use()` | `.theme()` |
 | DPI control | `dpi=` | `.dpi()` |
-| Figure size | `figsize=` | `.size_px()` |
+| Figure size | `figsize=` | `.size()` in inches |
 | PNG export | `savefig()` | `.save()` |
 
 ### Support Snapshot ⚠️
@@ -245,7 +245,8 @@ plt.plot(df['x'], df['y'])
 ```rust
 use polars::prelude::*;
 
-let df = CsvReader::from_path("data.csv")?.finish()?;
+let file = std::fs::File::open("data.csv")?;
+let df = CsvReader::new(file).finish()?;
 let x = df.column("x")?.f64()?;
 let y = df.column("y")?.f64()?;
 
@@ -300,7 +301,7 @@ let y_sin: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 let y_cos: Vec<f64> = x.iter().map(|v| v.cos()).collect();
 
 Plot::new()
-    .size_px(1000, 600)
+    .size(10.0, 6.0)
     .dpi(300)
     .line(&x, &y_sin)
         .color(Color::new(0, 0, 255))
@@ -343,17 +344,18 @@ plt.savefig('analysis.png')
 use ruviz::prelude::*;
 use polars::prelude::*;
 
-let df = CsvReader::from_path("measurements.csv")?.finish()?;
+let file = std::fs::File::open("measurements.csv")?;
+let df = CsvReader::new(file).finish()?;
 
 let grouped = df
     .lazy()
-    .groupby([col("category")])
+    .group_by([col("category")])
     .agg([col("value").mean()])
     .collect()?;
 
 let categories: Vec<&str> = grouped
     .column("category")?
-    .utf8()?
+    .str()?
     .into_iter()
     .map(|opt| opt.unwrap_or(""))
     .collect();
@@ -376,10 +378,7 @@ Plot::new()
 ## FAQ
 
 ### Q: Can I use ruviz in Jupyter notebooks?
-**A**: Not directly (no Python bindings yet). However, you can:
-1. Save plots to files in Rust
-2. Display them in Jupyter using `IPython.display.Image()`
-3. Or use PyO3 to create Python bindings (community contribution welcome!)
+**A**: Yes. The repository includes the `ruviz` Python package and notebook support under `python/`. Rust users can also save images and display them with `IPython.display.Image()`.
 
 ### Q: How do I display plots interactively?
 **A**: Current focus is file output. For interactive:
@@ -409,15 +408,15 @@ let viridis_like = Theme::builder()
 
 ### Q: Performance tips for large datasets?
 **A**:
-1. Use `features = ["parallel"]` for >10K points
-2. Use `features = ["parallel", "simd"]` for >100K points
-3. DataShader automatically activates for >1M points
-4. See [Performance Guide](../guide/08_performance.md)
+1. Start with the default Skia path and measure your workload.
+2. Use a histogram or another aggregated plot when every point is not needed.
+3. Explicitly select DataShader only for supported native scatter PNG workloads, then verify `resolved_backend_name()`.
+4. See [Performance Guide](../guide/08_performance.md).
 
 ## Migration Checklist
 
 - [ ] Install Rust and cargo
-- [ ] Add `ruviz = "0.1"` to `Cargo.toml`
+- [ ] Add `ruviz = "0.4.19"` to `Cargo.toml`
 - [ ] Convert numpy arrays to `Vec<f64>` or `ndarray`
 - [ ] Replace `plt.plot()` with `Plot::new().line()`
 - [ ] Change `plt.savefig()` to `.save()?`

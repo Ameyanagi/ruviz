@@ -11,8 +11,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x_data: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     let y_data: Vec<f64> = x_data.iter().map(|&x| x.sin()).collect();
 
-    // Test basic plot with custom size
-    println!("📊 Testing save_with_size...");
+    // Exact-pixel export. This does not claim a physical size or DPI.
+    println!("Testing 1200x900 exact-pixel export...");
     Plot::new()
         .title("Publication Test - Sin Wave".to_string())
         .xlabel("Time".to_string())

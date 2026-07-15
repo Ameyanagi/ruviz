@@ -172,7 +172,7 @@ or substitution may occur. Typst resolves `serif`, `sans-serif`, and `monospace`
 to available concrete families. Because Typst has no generic cursive or fantasy
 selector, those two values use its selected sans-serif fallback:
 
-```rust
+```rust,check,features=typst-math
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {
@@ -204,7 +204,7 @@ default = []
 typst-math = ["ruviz/typst-math"]
 ```
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn main() -> Result<()> {

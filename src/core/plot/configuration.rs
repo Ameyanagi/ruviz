@@ -134,7 +134,7 @@ impl PlotConfiguration {
 
     /// Set canvas dimensions (width, height)
     #[deprecated(
-        since = "0.8.0",
+        since = "0.1.0",
         note = "Use with_config() and PlotConfig for DPI-independent sizing"
     )]
     pub fn with_dimensions(mut self, width: u32, height: u32) -> Self {
@@ -144,7 +144,7 @@ impl PlotConfiguration {
 
     /// Set DPI for export
     #[deprecated(
-        since = "0.8.0",
+        since = "0.1.0",
         note = "Use with_config() and PlotConfig for DPI-independent sizing"
     )]
     pub fn with_dpi(mut self, dpi: u32) -> Self {

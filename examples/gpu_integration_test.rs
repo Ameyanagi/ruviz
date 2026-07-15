@@ -1,7 +1,8 @@
-//! GPU integration test - validates GPU acceleration with memory pools
+//! Lower-level `GpuRenderer` coordinate-transform experiment.
 //!
-//! This example demonstrates the hybrid CPU/GPU rendering system with automatic
-//! threshold-based selection and seamless integration with memory pools.
+//! This exercises the GPU utility directly and does not describe public
+//! `Plot::save()` or `Plot::render()` routing, where a GPU preference currently
+//! resolves to Skia.
 
 use ruviz::{core::plot::Plot, data::Data1D, render::gpu::GpuRenderer};
 

@@ -32,7 +32,8 @@ and contour data must provide exactly `x.length * y.length` `z` values.
 
 `plot.toSnapshot()` returns a `PlotSnapshot`:
 
-```ts
+```ts,ignore,reason=abbreviated-public-type
+// Abbreviated shape; import PlotSnapshot from ruviz for executable code.
 type PlotSnapshot = {
   sizePx?: [number, number];
   theme?: "light" | "dark";

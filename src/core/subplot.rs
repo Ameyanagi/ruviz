@@ -3,7 +3,7 @@
 /// Provides grid-based layout system for arranging multiple plots
 /// within a single figure, similar to matplotlib's subplot functionality.
 use crate::core::{Plot, PlottingError, REFERENCE_DPI, Result};
-use crate::render::skia::SkiaRenderer;
+use crate::render::{Theme, skia::SkiaRenderer};
 use tiny_skia::Rect;
 
 /// Grid specification for subplot layout
@@ -177,6 +177,8 @@ pub struct SubplotFigure {
     height: u32,
     /// Overall figure title
     suptitle: Option<String>,
+    /// Figure-level styling used for the canvas and suptitle
+    theme: Theme,
     /// Figure margin (fraction of figure size)
     margin: f32,
 }
@@ -225,6 +227,7 @@ impl SubplotFigure {
             width,
             height,
             suptitle: None,
+            theme: Theme::default(),
             margin: 0.05, // 5% margin by default - tighter layout
         })
     }
@@ -255,6 +258,12 @@ impl SubplotFigure {
     /// ```
     pub fn suptitle<S: Into<String>>(mut self, title: S) -> Self {
         self.suptitle = Some(title.into());
+        self
+    }
+
+    /// Set figure-level styling for the canvas and suptitle.
+    pub fn theme(mut self, theme: Theme) -> Self {
+        self.theme = theme;
         self
     }
 
@@ -384,8 +393,7 @@ impl SubplotFigure {
         let dpi_scale = dpi / REFERENCE_DPI;
 
         // Create main renderer for the figure
-        let theme = crate::render::Theme::default();
-        let mut renderer = SkiaRenderer::new(width, height, theme)?;
+        let mut renderer = SkiaRenderer::new(width, height, self.theme.clone())?;
         renderer.set_render_scale(crate::core::RenderScale::from_canvas_size(
             width, height, dpi,
         ));
@@ -407,7 +415,7 @@ impl SubplotFigure {
                 width as f32 / 2.0,
                 title_y,
                 title_size,
-                crate::render::Color::new(0, 0, 0),
+                self.theme.foreground,
             )?;
         }
 

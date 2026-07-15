@@ -107,23 +107,23 @@ set those sizes explicitly instead of relying on DPI side effects.
 ```rust
 use ruviz::prelude::*;
 
-// DPI affects both resolution and file size
+// Keep the physical figure fixed while changing raster density.
 Plot::new()
     .line(&x, &y)
-    .size_px(800, 600)
-    .dpi(96)   // ~50KB
+    .size(8.0, 6.0)
+    .dpi(96)   // 768 x 576 output pixels
     .save("dpi_96.png")?;
 
 Plot::new()
     .line(&x, &y)
-    .size_px(800, 600)
-    .dpi(300)  // ~250KB (5x larger)
+    .size(8.0, 6.0)
+    .dpi(300)  // 2400 x 1800 output pixels
     .save("dpi_300.png")?;
 
 Plot::new()
     .line(&x, &y)
-    .size_px(800, 600)
-    .dpi(600)  // ~900KB (18x larger)
+    .size(8.0, 6.0)
+    .dpi(600)  // 4800 x 3600 output pixels
     .save("dpi_600.png")?;
 ```
 
@@ -196,6 +196,8 @@ Plot::new()
 
 ## Publication-Quality Export
 
+Publication dimensions are physical dimensions. Use `.size(width_inches, height_inches).dpi(dpi)`; output pixels are approximately the physical size multiplied by DPI because the physical dimensions are stored as floating-point values. `.size_px(...)` converts pixels to inches at the crate's 100-DPI reference, so changing DPI afterward scales those reference pixels. Use `save_with_size(...)` when exact output pixel dimensions matter more than physical size.
+
 ### IEEE Format
 
 **IEEE requires specific dimensions for publication figures**.
@@ -208,7 +210,7 @@ use ruviz::prelude::*;
 // IEEE single-column: 3.5 inches wide
 // At 300 DPI: 3.5" × 300 = 1050 pixels
 Plot::new()
-    .size_px(1050, 787)  // 3.5" × 2.625" @ 300 DPI
+    .size(3.5, 2.625)  // Physical size in inches
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -226,7 +228,7 @@ use ruviz::prelude::*;
 // IEEE double-column: 7.25 inches wide
 // At 300 DPI: 7.25" × 300 = 2175 pixels
 Plot::new()
-    .size_px(2175, 1631)  // 7.25" × 5.44" @ 300 DPI
+    .size(7.25, 5.44)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -244,7 +246,7 @@ use ruviz::prelude::*;
 // Nature single-column: 89mm = 3.5 inches
 // At 300 DPI: 1050 pixels
 Plot::new()
-    .size_px(1050, 1050)  // Square or custom height
+    .size(3.5, 3.5)  // Square physical figure
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -253,7 +255,7 @@ Plot::new()
 
 // Nature two-column: 183mm = 7.2 inches
 Plot::new()
-    .size_px(2160, 1440)
+    .size(7.2, 4.8)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -265,9 +267,9 @@ Plot::new()
 ```rust
 use ruviz::prelude::*;
 
-// Science single-column: 2.37 inches @ 300 DPI = 711 pixels
+// Science single-column: 2.37 inches @ 300 DPI (about 711 pixels wide)
 Plot::new()
-    .size_px(711, 533)
+    .size(2.37, 1.777)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -275,7 +277,7 @@ Plot::new()
 
 // Science double-column: 4.92 inches @ 300 DPI = 1476 pixels
 Plot::new()
-    .size_px(1476, 1107)
+    .size(4.92, 3.69)
     .dpi(300)
     .theme(Theme::publication())
     .line(&x, &y)
@@ -284,7 +286,7 @@ Plot::new()
 
 ## DPI Calculation Helper
 
-```rust
+```rust,check
 fn inches_to_pixels(inches: f64, dpi: u32) -> u32 {
     (inches * dpi as f64) as u32
 }
@@ -302,9 +304,10 @@ fn main() {
 
 ### Journal Article Figure
 
-```rust
+Place the application-owned font at `assets/dejavu-sans.ttf` next to the conventional Cargo `src` directory.
+
+```rust,check,asset=../assets/dejavu-sans.ttf
 use ruviz::prelude::*;
-use std::f64::consts::PI;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Generate publication-quality data
@@ -313,15 +316,19 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let y_decay: Vec<f64> = x.iter()
         .map(|v| (-v * 0.5).exp() * (v * 2.0).sin())
         .collect();
+    // Register the same application-owned bytes in every build.
+    ruviz::render::register_font_bytes(
+        include_bytes!("../assets/dejavu-sans.ttf").to_vec(),
+    )?;
     let publication_theme = Theme::builder()
-        .font("Arial")
+        .font("DejaVu Sans")
         .font_size(14.0)
         .title_font_size(16.0)
         .build();
 
     // IEEE double-column figure @ 300 DPI
     Plot::new()
-        .size_px(2175, 1500)
+        .size(7.25, 5.0)
         .dpi(300)
         .theme(publication_theme)
 
@@ -365,21 +372,21 @@ use ruviz::prelude::*;
 // 1. Quick draft (low DPI, fast iteration)
 Plot::new()
     .line(&x, &y)
-    .size_px(800, 600)
-    .dpi(72)  // Fast rendering
+    .size(8.0, 6.0)
+    .dpi(72)  // 576 x 432 draft
     .save("draft.png")?;
 
 // 2. Review version (screen quality)
 Plot::new()
     .line(&x, &y)
-    .size_px(1200, 800)
+    .size(12.5, 8.333)
     .dpi(96)
     .save("review.png")?;
 
 // 3. Final version (publication quality)
 Plot::new()
     .line(&x, &y)
-    .size_px(2175, 1500)
+    .size(7.25, 5.0)
     .dpi(300)
     .theme(Theme::publication())
     .save("final.png")?;
@@ -387,22 +394,26 @@ Plot::new()
 
 ### Batch Export
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
-fn export_plot(data: &[f64], filename: &str, quality: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn export_plot(
+    data: &[f64],
+    filename: &str,
+    quality: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let x: Vec<f64> = (0..data.len()).map(|i| i as f64).collect();
 
-    let (dpi, dimensions) = match quality {
-        "draft" => (72, (800, 600)),
-        "screen" => (96, (1200, 800)),
-        "print" => (300, (2175, 1500)),
-        _ => (96, (800, 600)),
+    let (dpi, size_inches): (u32, (f32, f32)) = match quality {
+        "draft" => (72, (8.0, 6.0)),
+        "screen" => (96, (12.5, 8.333)),
+        "print" => (300, (7.25, 5.0)),
+        _ => (96, (8.0, 6.0)),
     };
 
     Plot::new()
-        .line(&x, data)
-        .size_px(dimensions.0, dimensions.1)
+        .line(&x, &data)
+        .size(size_inches.0, size_inches.1)
         .dpi(dpi)
         .save(filename)?;
 
@@ -430,25 +441,24 @@ use ruviz::prelude::*;
 
 // Large file (high DPI + large dimensions)
 Plot::new()
-    .size_px(3000, 2000)
     .dpi(600)
     .line(&x, &y)
-    .save("large.png")?;  // ~2-5 MB
+    .save_with_size("large.png", 3000, 2000)?;  // ~2-5 MB
 
 // Optimized (balanced quality/size)
 Plot::new()
-    .size_px(1600, 1200)
     .dpi(300)
     .line(&x, &y)
-    .save("optimized.png")?;  // ~500 KB
+    .save_with_size("optimized.png", 1600, 1200)?;  // ~500 KB
 
 // Minimal (web-ready)
 Plot::new()
-    .size_px(800, 600)
     .dpi(96)
     .line(&x, &y)
-    .save("web.png")?;  // ~100 KB
+    .save_with_size("web.png", 800, 600)?;  // ~100 KB
 ```
+
+`save_with_size` fixes the pixel dimensions exactly. The byte-size estimates remain approximate and depend on plot content and PNG compression.
 
 ### File Size vs Quality Trade-offs
 
@@ -464,11 +474,14 @@ Plot::new()
 
 ### Robust Export
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 use std::path::Path;
 
-fn safe_export(plot: Plot, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn safe_export(
+    plot: Plot,
+    path: &str,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Check parent directory exists
     if let Some(parent) = Path::new(path).parent() {
         std::fs::create_dir_all(parent)?;
@@ -488,9 +501,12 @@ fn safe_export(plot: Plot, path: &str) -> Result<(), Box<dyn std::error::Error>>
 }
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let x = vec![0.0, 1.0, 2.0];
+    let y = vec![0.0, 1.0, 4.0];
     let plot = Plot::new()
         .line(&x, &y)
-        .title("Safe Export");
+        .title("Safe Export")
+        .into_plot();
 
     safe_export(plot, "output/plots/figure_1.png")?;
     Ok(())

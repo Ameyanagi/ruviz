@@ -15,7 +15,7 @@ This guide covers advanced topics for experienced users:
 
 ### Creating Color Palettes
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 // Define custom palette
@@ -47,7 +47,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     for (i, data) in datasets.iter().enumerate() {
         plot = plot.line(&x, data)
             .color(colors[i])
-            .label(&format!("Series {}", i + 1));
+            .label(&format!("Series {}", i + 1))
+            .into_plot();
     }
 
     plot.legend(Position::TopLeft)
@@ -59,13 +60,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Color Interpolation
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 
 fn interpolate_color(color1: Color, color2: Color, t: f64) -> Color {
     // Linear interpolation between two colors
-    let (r1, g1, b1) = color1.to_rgb();
-    let (r2, g2, b2) = color2.to_rgb();
+    let (r1, g1, b1) = (color1.r, color1.g, color1.b);
+    let (r2, g2, b2) = (color2.r, color2.g, color2.b);
 
     let r = (r1 as f64 * (1.0 - t) + r2 as f64 * t) as u8;
     let g = (g1 as f64 * (1.0 - t) + g2 as f64 * t) as u8;
@@ -95,7 +96,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Asymmetric Grids
 
-```rust
+```rust,ignore,reason=illustrative-application-scaffold
 use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -103,22 +104,22 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let overview = Plot::new()
         .line(&time, &overall_signal)
         .title("System Overview")
-        .end_series();
+        .into_plot();
 
     let detail1 = Plot::new()
         .scatter(&x1, &y1)
         .title("Detail 1")
-        .end_series();
+        .into_plot();
 
     let detail2 = Plot::new()
         .scatter(&x2, &y2)
         .title("Detail 2")
-        .end_series();
+        .into_plot();
 
     let detail3 = Plot::new()
         .scatter(&x3, &y3)
         .title("Detail 3")
-        .end_series();
+        .into_plot();
 
     // Use 2×3 grid to simulate 1×1 + 1×3 layout
     subplots(2, 3, 1800, 1000)?
@@ -146,12 +147,12 @@ use ruviz::prelude::*;
 let timeseries = Plot::new()
     .line(&time, &signal)
     .title("Time Series (Wide)")
-    .end_series();
+    .into_plot();
 
 let distribution = Plot::new()
     .histogram(&data, None)
     .title("Distribution (Tall)")
-    .end_series();
+    .into_plot();
 
 // Use custom figure dimensions to accommodate different aspects
 subplots(1, 2, 2400, 1000)?  // Extra wide for different panel shapes
@@ -165,7 +166,7 @@ subplots(1, 2, 2400, 1000)?  // Extra wide for different panel shapes
 
 ### Parametric Curves
 
-```rust
+```rust,ignore,reason=illustrative-application-scaffold
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
@@ -189,7 +190,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Phase Portraits
 
-```rust
+```rust,ignore,reason=illustrative-application-scaffold
 use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -221,7 +222,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Vector Fields (Approximation)
 
-```rust
+```rust,ignore,reason=illustrative-application-scaffold
 use ruviz::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -254,9 +255,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Configuration-Driven Plots
 
-```rust
+```rust,check,features=serde
 use ruviz::prelude::*;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct PlotConfig {
@@ -265,15 +266,15 @@ struct PlotConfig {
     ylabel: String,
     theme: String,
     dpi: u32,
-    width: u32,
-    height: u32,
+    width_inches: f32,
+    height_inches: f32,
 }
 
 fn create_plot_from_config(
     x: &[f64],
     y: &[f64],
     config: &PlotConfig
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let theme = match config.theme.as_str() {
         "dark" => Theme::dark(),
         "publication" => Theme::publication(),
@@ -282,10 +283,10 @@ fn create_plot_from_config(
     };
 
     Plot::new()
-        .size_px(config.width, config.height)
+        .size(config.width_inches, config.height_inches)
         .dpi(config.dpi)
         .theme(theme)
-        .line(x, y)
+        .line(&x, &y)
         .title(&config.title)
         .xlabel(&config.xlabel)
         .ylabel(&config.ylabel)
@@ -322,7 +323,7 @@ impl PlotTemplate {
         title: &str
     ) -> Result<(), Box<dyn std::error::Error>> {
         Plot::new()
-            .size_px(2175, 1500)
+            .size(7.25, 5.0)
             .dpi(300)
             .theme(Theme::publication())
             .line(time, signal)
@@ -341,8 +342,7 @@ impl PlotTemplate {
         label: &str
     ) -> Result<(), Box<dyn std::error::Error>> {
         Plot::new()
-            .size_px(600, 400)
-            .dpi(96)
+            .size_px(600, 400) // Exact dashboard pixels; do not change DPI afterward
             .theme(Theme::light())
             .histogram(data, None)
             .color(Color::new(70, 130, 180))
@@ -448,7 +448,7 @@ fn plot_with_fallback(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Try high-quality first
     match Plot::new()
-        .size_px(2175, 1500)
+        .size(7.25, 5.0)
         .dpi(300)
         .line(x, y)
         .save(output)
@@ -462,7 +462,7 @@ fn plot_with_fallback(
 
     // Fallback to standard quality
     Plot::new()
-        .size_px(800, 600)
+        .size(8.333, 6.25)
         .dpi(96)
         .line(x, y)
         .save(output)?;

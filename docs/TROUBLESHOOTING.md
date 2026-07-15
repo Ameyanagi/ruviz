@@ -24,50 +24,52 @@ A: **Yes!** This is "cold start" performance. The time breakdown:
 
 **Q: My 100K point plot is slow**
 
-A: Measure the path you actually use. `render()` is the path that can use the parallel renderer:
+A: Measure the public output path you actually use. `render()` and ordinary `save()` preserve the Skia reference path; enabling parallel or GPU preferences does not by itself change that execution path.
+
 ```rust
-let _image = Plot::new()
+let plot = Plot::new()
     .line(&x, &y)
-    .render()?;
+    .into_plot();
+
+println!("requested: {}", plot.get_backend_name());
+println!("resolved: {}", plot.resolved_backend_name());
+let _image = plot.render()?;
 ```
 
-Expected performance on large datasets:
-- 100K points: ~35ms (2.9x faster than target) ✅
-- 1M points: ~87ms (5.7x faster than target) ✅
+Use an aggregated plot type when possible. For a supported native scatter PNG workload, DataShader is an explicit opt-in rather than a point-count threshold.
 
 **Q: How do I know which backend is being used?**
 
-A: `.auto_optimize()` stores an inferred backend name based on data size:
-- < 1K points → Skia
-- 1,000 to 99,999 points → Parallel when built with the `parallel` feature, otherwise Skia
-- 100,000+ points → GPU when built with the `gpu` feature, otherwise DataShader
+A: `get_backend_name()` reports the stored preference. `resolved_backend_name()` reports the native PNG execution backend, and `backend_resolution(...)` includes an explicit fallback reason. `.auto_optimize()` conservatively stores Skia unless you already selected a backend.
 
-The `render()` and `save()` paths still use their own public PNG policy.
-That policy is more conservative than the stored label for very large datasets:
-`.auto_optimize()` preserves the normal Skia visual path. Use explicit
-`BackendType::DataShader` only when you deliberately want density aggregation
-for compatible scatter plots.
-You can also inspect or override the stored backend label:
 ```rust
 use ruviz::core::BackendType;
+use ruviz::prelude::*;
 
 let plot = Plot::new()
+    .backend(BackendType::Parallel)
     .line(&x, &y)
-    .backend(BackendType::Parallel);
+    .into_plot();
 
 assert_eq!(plot.get_backend_name(), "parallel");
+assert_eq!(plot.resolved_backend_name(), "skia");
 ```
 
 ### Rendering Issues
 
 **Q: Fonts look different on different platforms**
 
-A: ruviz uses system fonts by default. To ensure consistency:
+A: Naming a system font only requests that family; it does not guarantee identical glyph metrics or fallback on every machine.
 
-**Option 1: Specify explicit fonts**
-```rust
+For reproducible raster, Typst, and PDF output, ship and register the same font bytes before selecting that family:
+
+```rust,ignore,reason=application-font-path
+ruviz::render::register_font_bytes(
+    std::fs::read("src/dejavu-sans.ttf")?,
+)?;
+
 let theme = Theme::builder()
-    .font("Arial")
+    .font("DejaVu Sans")
     .font_size(14.0)
     .title_font_size(16.0)
     .build();
@@ -78,29 +80,7 @@ Plot::new()
     .save("plot.png")?;
 ```
 
-**Option 2: Use installed open fonts**
-```rust
-let theme = Theme::builder()
-    .font("Open Sans")
-    .font_size(14.0)
-    .title_font_size(16.0)
-    .build();
-
-Plot::new()
-    .theme(theme)
-    .title("My Plot")
-    .save("plot.png")?;
-```
-
-**Option 3: Prefer generic families for portability**
-```rust
-let theme = Theme::builder().font("sans-serif").build();
-
-Plot::new()
-    .theme(theme)
-    .title("My Plot")
-    .save("plot.png")?;
-```
+Registration is used by supported raster, Typst, and PDF paths. Plain portable SVG stores a family reference, so the SVG viewer must also have the font. Generic families such as `sans-serif` improve availability but deliberately allow platform-specific substitution.
 
 **Q: Text is rotated incorrectly**
 
@@ -133,16 +113,15 @@ For Typst text specifically:
 
 **Q: Which backend should I use?**
 
-A: Start with plain `save()` or `render()`. Use `.auto_optimize()` only when you want the stored backend label for diagnostics:
+A: Start with plain `save()` or `render()`. `.auto_optimize()` stores Skia unless you already selected an explicit preference:
 
-```rust
+```rust,ignore,reason=requires-example-data
 Plot::new()
     .line(&x, &y)
     .save("plot.png")?;
 ```
 
-Backend decision overhead is negligible (< 142µs worst case).
-For guaranteed GPU rendering, enable the `gpu` feature and call `.gpu(true)`.
+Parallel and GPU preferences currently resolve public raster operations to Skia. `.gpu(true)` records preference metadata; it does not guarantee GPU execution. Explicit DataShader can execute only for a compatible native scatter PNG workload. Inspect `resolved_backend_name()` and `backend_resolution(...)` before attributing output or timing to a backend.
 
 **Q: Can I reuse a plot object?**
 
@@ -406,12 +385,7 @@ ruviz uses a **one-shot rendering API** where every `.save()` call initializes e
 
 ### Stored Backend Metadata
 
-`auto_optimize()` stores these inferred backend labels:
-- < 1,000 points → Skia (simple rendering pipeline)
-- 1,000-100,000 points → Parallel when available, otherwise Skia
-- ≥ 100,000 points → GPU when the `gpu` feature is enabled, otherwise DataShader
-
-Thresholds are based on empirical benchmarking across diverse hardware.
+`auto_optimize()` conservatively stores Skia unless an explicit preference was already selected. Point count does not infer Parallel, GPU, or DataShader. For a particular operation, use `backend_resolution(...)` to distinguish the stored preference from the executable backend and to inspect any fallback reason.
 
 ### Memory Usage
 

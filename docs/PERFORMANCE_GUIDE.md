@@ -93,14 +93,15 @@ Plot::new()
 ```
 
 **Why?**
-- Decision time: < 142µs (negligible)
-- `save()` already switches to its large-dataset export paths internally
-- `render()` is the in-memory path that can use the parallel renderer
+- `save()` and `render()` use the parity-preserving Skia reference path by default.
+- Large line, histogram, and heatmap workloads still benefit from operation-specific
+  optimizations inside that path.
+- `.auto_optimize()` conservatively stores Skia; it does not infer Parallel, GPU,
+  or DataShader from point count.
+- Explicit compatible native scatter PNG workloads may opt into DataShader.
 
-**Stored backend metadata (`auto_optimize()`)**:
-- < 1K points → Skia
-- 1,000 to 99,999 points → Parallel when built with the `parallel` feature, otherwise Skia
-- 100,000+ points → GPU when built with the `gpu` feature, otherwise DataShader
+When diagnosing a configured backend, print both `get_backend_name()` and
+`resolved_backend_name()`. Use `backend_resolution(...)` to inspect a fallback reason.
 
 ### 2. Choose the Right Plot Type
 
@@ -159,9 +160,10 @@ Plot::new()
 - 1M points: ~87ms (histogram)
 
 **Tips**:
-- Consider DataShader for > 1M points
-- Use histogram for distributions (faster than scatter)
-- Use `render()` for in-memory images and `save()` for PNG export
+- Use histogram for distributions rather than plotting every observation as scatter.
+- For dense native scatter PNG output, explicitly select DataShader and confirm
+  `resolved_backend_name() == "datashader"`; unsupported geometry falls back to Skia.
+- Use `render()` for in-memory images and `save()` for PNG export.
 
 ### 5. Memory Efficiency
 
@@ -230,7 +232,7 @@ Plot::new()
 
 To benchmark ruviz in your application:
 
-```rust
+```rust,ignore,reason=illustrative-service-scaffold
 use std::time::Instant;
 use ruviz::prelude::*;
 
@@ -401,48 +403,23 @@ async fn generate_plot(data: Vec<(f64, f64)>) -> Result<Image> {
 
 **Expected**: 30-50ms response time for 10K points, plus any external PNG encoding you add on top of `Image { width, height, pixels }`
 
-## Future Performance Work
+## Current and Future Performance Work
 
-Planned optimizations (future releases):
+The crate already caches its shared text system and includes specialized raster
+fast paths for eligible line, histogram, and heatmap output. Benchmark these
+current paths before adding feature flags.
 
-### Batch Rendering API (v0.2)
+Remaining areas of work include:
 
-```rust
-// Future API - amortized overhead
-let renderer = BatchRenderer::new()?;  // One-time setup
+- broader parity-approved optimized backend coverage
+- additional marker and scatter optimizations
+- lower-latency interactive workflows
+- wider WebGPU deployment
 
-for dataset in datasets {
-    renderer.plot_line(&dataset.x, &dataset.y,
-                      &format!("plot_{}.png", dataset.id))?;
-}
-// Expected: < 10ms per plot after warmup
-```
-
-### Static Font Cache (v0.2)
-
-Reduce cold start by 50-100ms:
-- Persistent font system across plots
-- System-wide font cache
-- One-time initialization
-
-### SIMD Marker Rendering (v0.3)
-
-Faster scatter plots:
-- Vectorized marker drawing
-- 2-3x improvement for scatter plots
-- Platform-optimized (SSE, AVX, NEON)
-
-### GPU Acceleration (experimental today)
-
-Available today behind the `gpu` feature and explicit `.gpu(true)`:
-- GPU-assisted PNG export in `save()` for sufficiently large datasets
-- Automatic CPU fallback if GPU initialization fails
-- `render()` continues to use the in-memory CPU/DataShader/parallel paths today
-
-Future GPU work:
-- Broader plot-type coverage
-- Lower-latency interactive workflows
-- Browser/WebGPU deployment
+The `gpu` feature currently exposes GPU types and preference metadata. Calling
+`.gpu(true)` does not make public `save()` or `render()` execute on the GPU; those
+operations resolve the preference to Skia and report the fallback through
+`backend_resolution(...)`.
 
 ## Comparison with Other Libraries
 
@@ -460,8 +437,8 @@ Future GPU work:
 
 **ruviz advantages**:
 - Pure Rust performance
-- Parallel rendering for large datasets
-- Zero-overhead auto-optimization
+- Specialized large-dataset raster fast paths
+- Conservative, inspectable backend resolution
 - Publication-quality output
 
 ### 1M Point Histogram
@@ -508,7 +485,7 @@ Future GPU work:
 **Consider alternatives if**:
 - Need production-grade interactive plots
 - Require extensive plot customization (ruviz prioritizes performance)
-- Working with web-only applications (WASM support planned)
+- Need browser behavior beyond the current experimental `crates/ruviz-web` Web/WASM API
 
 ## Additional Resources
 

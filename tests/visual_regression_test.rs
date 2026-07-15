@@ -1,339 +1,178 @@
-// Visual regression tests using perceptual diff against golden images
-// These tests ensure that rendering output remains pixel-perfect across changes
+// Deterministic visual regression tests using exact pixel comparison.
 // Run with: cargo test --test visual_regression_test -- --ignored
-// Note: Requires golden images in tests/fixtures/golden/ directory
+// The shared generator registers repository-owned font bytes and selects that
+// family for every plot and figure-level text surface.
 
-use image::{GenericImageView, Pixel};
-use std::{fs, path::Path};
+#[path = "../examples/generate_golden_images.rs"]
+mod golden_generator;
 
-/// Calculate perceptual difference between two PNG images
-/// Returns percentage difference (0.0 = identical, 100.0 = completely different)
-fn calculate_image_diff(path1: &Path, path2: &Path) -> Result<f64, Box<dyn std::error::Error>> {
-    let img1 = image::open(path1)?;
-    let img2 = image::open(path2)?;
+use image::{Rgba, RgbaImage};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
-    // Check dimensions match
-    if img1.dimensions() != img2.dimensions() {
-        return Err(format!(
-            "Image dimensions mismatch: {:?} vs {:?}",
-            img1.dimensions(),
-            img2.dimensions()
-        )
-        .into());
+struct WorkingDirectory {
+    original: PathBuf,
+}
+
+impl WorkingDirectory {
+    fn enter(path: &Path) -> std::io::Result<Self> {
+        let original = std::env::current_dir()?;
+        std::env::set_current_dir(path)?;
+        Ok(Self { original })
     }
+}
 
-    let (width, height) = img1.dimensions();
-    let total_pixels = (width * height) as f64;
-    let mut total_diff = 0.0;
+impl Drop for WorkingDirectory {
+    fn drop(&mut self) {
+        std::env::set_current_dir(&self.original)
+            .expect("failed to restore visual test working directory");
+    }
+}
 
-    // Compare pixel by pixel
-    for y in 0..height {
-        for x in 0..width {
-            let pixel1 = img1.get_pixel(x, y);
-            let pixel2 = img2.get_pixel(x, y);
-
-            let channels1 = pixel1.channels();
-            let channels2 = pixel2.channels();
-
-            // Calculate per-channel difference
-            let mut pixel_diff = 0.0;
-            for i in 0..channels1.len().min(channels2.len()) {
-                let diff = (channels1[i] as f64 - channels2[i] as f64).abs();
-                pixel_diff += diff;
+fn committed_fixture_names(directory: &Path) -> std::io::Result<BTreeSet<String>> {
+    fs::read_dir(directory)?
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.path().extension().is_some_and(|ext| ext == "png") => {
+                Some(Ok(entry.file_name().to_string_lossy().into_owned()))
             }
-
-            if pixel_diff > 0.0 {
-                total_diff += pixel_diff / (channels1.len() as f64 * 255.0);
-            }
-        }
-    }
-
-    // Return percentage difference
-    Ok((total_diff / total_pixels) * 100.0)
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect()
 }
 
-/// Generate test output and compare against golden image
-/// Returns true if images match within tolerance
-fn test_against_golden(
-    generate_fn: impl FnOnce() -> std::result::Result<(), Box<dyn std::error::Error>>,
-    test_path: &str,
-    golden_path: &str,
-    tolerance: f64,
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = Path::new(test_path).parent() {
-        fs::create_dir_all(parent)?;
+fn write_diff_image(actual: &RgbaImage, golden: &RgbaImage, path: &Path) -> image::ImageResult<()> {
+    let mut diff = RgbaImage::new(actual.width(), actual.height());
+    for (x, y, pixel) in diff.enumerate_pixels_mut() {
+        let actual_pixel = actual.get_pixel(x, y);
+        let golden_pixel = golden.get_pixel(x, y);
+        *pixel = Rgba([
+            actual_pixel[0].abs_diff(golden_pixel[0]).saturating_mul(4),
+            actual_pixel[1].abs_diff(golden_pixel[1]).saturating_mul(4),
+            actual_pixel[2].abs_diff(golden_pixel[2]).saturating_mul(4),
+            255,
+        ]);
     }
-    if !Path::new(golden_path).exists() {
+    diff.save(path)
+}
+
+fn assert_exact_pixels(
+    actual_path: &Path,
+    golden_path: &Path,
+    artifact_directory: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let actual = image::open(actual_path)?.to_rgba8();
+    let golden = image::open(golden_path)?.to_rgba8();
+    let fixture_name = golden_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("visual.png");
+    let actual_artifact = artifact_directory.join(format!("actual_{fixture_name}"));
+
+    if actual.dimensions() != golden.dimensions() {
+        fs::create_dir_all(artifact_directory)?;
+        actual.save(&actual_artifact)?;
         return Err(format!(
-            "Missing golden image fixture: {}. Run `cargo run --example generate_golden_images` to create or refresh tests/fixtures/golden.",
-            golden_path
+            "{} dimensions differ: actual {:?}, golden {:?}. Actual: {}",
+            fixture_name,
+            actual.dimensions(),
+            golden.dimensions(),
+            actual_artifact.display()
         )
         .into());
     }
 
-    // Generate test image
-    generate_fn()?;
+    let changed_pixels = actual
+        .pixels()
+        .zip(golden.pixels())
+        .filter(|(actual_pixel, golden_pixel)| actual_pixel != golden_pixel)
+        .count();
+    if changed_pixels == 0 {
+        return Ok(());
+    }
 
-    // Compare against golden
-    let diff = calculate_image_diff(Path::new(test_path), Path::new(golden_path))?;
+    fs::create_dir_all(artifact_directory)?;
+    let diff_artifact = artifact_directory.join(format!("diff_{fixture_name}"));
+    actual.save(&actual_artifact)?;
+    write_diff_image(&actual, &golden, &diff_artifact)?;
 
-    println!("  Difference: {:.4}% (tolerance: {:.4}%)", diff, tolerance);
+    Err(format!(
+        "{} changed {} of {} pixels; deterministic golden comparison requires an exact match. Actual: {}. Diff: {}",
+        fixture_name,
+        changed_pixels,
+        actual.width() as u64 * actual.height() as u64,
+        actual_artifact.display(),
+        diff_artifact.display()
+    )
+    .into())
+}
 
-    if diff > tolerance {
+#[test]
+fn dimension_mismatch_preserves_the_actual_artifact() {
+    let temp = tempfile::tempdir().expect("temporary visual test directory");
+    let actual_path = temp.path().join("actual.png");
+    let golden_path = temp.path().join("fixture.png");
+    let artifact_directory = temp.path().join("artifacts");
+    RgbaImage::new(2, 3)
+        .save(&actual_path)
+        .expect("save mismatched actual image");
+    RgbaImage::new(3, 2)
+        .save(&golden_path)
+        .expect("save mismatched golden image");
+
+    let error = assert_exact_pixels(&actual_path, &golden_path, &artifact_directory)
+        .expect_err("dimension mismatch should fail");
+    let actual_artifact = artifact_directory.join("actual_fixture.png");
+    assert!(actual_artifact.is_file());
+    assert!(
+        error
+            .to_string()
+            .contains(&actual_artifact.display().to_string())
+    );
+}
+
+#[test]
+fn bundled_golden_font_registration_and_selection_are_verifiable() {
+    golden_generator::register_golden_font()
+        .expect("the exact golden font bytes should be registered and selected");
+}
+
+#[test]
+#[ignore] // Regenerates and compares the committed golden image set.
+fn deterministic_golden_images_match_exactly() -> Result<(), Box<dyn std::error::Error>> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let committed_directory = repository.join("tests/fixtures/golden");
+    let expected_names: BTreeSet<String> = golden_generator::GOLDEN_FIXTURES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    let committed_names = committed_fixture_names(&committed_directory)?;
+    if committed_names != expected_names {
         return Err(format!(
-            "Visual regression detected! Difference {:.4}% exceeds tolerance {:.4}%",
-            diff, tolerance
+            "committed golden fixtures do not match GOLDEN_FIXTURES: expected {expected_names:?}, found {committed_names:?}"
         )
         .into());
     }
 
-    Ok(())
-}
+    let generated_root = tempfile::tempdir()?;
+    {
+        let _working_directory = WorkingDirectory::enter(generated_root.path())?;
+        golden_generator::generate_golden_images()?;
+    }
 
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_basic_line() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Basic Line Plot");
-    test_against_golden(
-        || {
-            let x: Vec<f64> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-            let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
-            Plot::new()
-                .line(&x, &y)
-                .title("Basic Line Plot")
-                .xlabel("X")
-                .ylabel("Y")
-                .save("generated/tests/render/vr_basic_line.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_basic_line.png",
-        "tests/fixtures/golden/01_basic_line.png",
-        0.5, // 0.5% tolerance for minor rendering differences
-    )?;
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_multi_series() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Multi-Series Plot");
-    test_against_golden(
-        || {
-            let x: Vec<f64> = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-            Plot::new()
-                .line(&x, &x.to_vec())
-                .label("Linear")
-                .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
-                .label("Quadratic")
-                .line(&x, &x.iter().map(|&v| v.powi(3)).collect::<Vec<_>>())
-                .label("Cubic")
-                .title("Multi-Series Plot")
-                .xlabel("X")
-                .ylabel("Y")
-                .legend(Position::TopLeft)
-                .save("generated/tests/render/vr_multi_series.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_multi_series.png",
-        "tests/fixtures/golden/02_multi_series.png",
-        0.5,
-    )?;
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_scatter() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Scatter Plot");
-    test_against_golden(
-        || {
-            let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-            let y = vec![2.3, 3.1, 2.8, 4.2, 3.9];
-            Plot::new()
-                .scatter(&x, &y)
-                .marker(MarkerStyle::Circle)
-                .marker_size(8.0)
-                .title("Scatter Plot")
-                .xlabel("X")
-                .ylabel("Y")
-                .save("generated/tests/render/vr_scatter.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_scatter.png",
-        "tests/fixtures/golden/03_scatter.png",
-        0.5,
-    )?;
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_bar_chart() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Bar Chart");
-    test_against_golden(
-        || {
-            let categories = vec!["A", "B", "C", "D", "E"];
-            let values = vec![25.0, 40.0, 30.0, 55.0, 45.0];
-            Plot::new()
-                .bar(&categories, &values)
-                .title("Bar Chart")
-                .ylabel("Value")
-                .save("generated/tests/render/vr_bar_chart.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_bar_chart.png",
-        "tests/fixtures/golden/04_bar_chart.png",
-        0.5,
-    )?;
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_histogram() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Histogram");
-    test_against_golden(
-        || {
-            let data = vec![
-                1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0, 1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5,
-                4.5, 5.5,
-            ];
-            Plot::new()
-                .histogram(&data, None)
-                .title("Histogram")
-                .xlabel("Value")
-                .ylabel("Frequency")
-                .save("generated/tests/render/vr_histogram.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_histogram.png",
-        "tests/fixtures/golden/05_histogram.png",
-        0.5,
-    )?;
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_boxplot() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Box Plot");
-    test_against_golden(
-        || {
-            let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 25.0];
-            Plot::new()
-                .boxplot(&data, None)
-                .title("Box Plot")
-                .ylabel("Value")
-                .save("generated/tests/render/vr_boxplot.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_boxplot.png",
-        "tests/fixtures/golden/06_boxplot.png",
-        0.5,
-    )?;
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_themes() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-    let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
-
-    for (theme, name, idx) in [
-        (Theme::light(), "light", 7),
-        (Theme::dark(), "dark", 8),
-        (Theme::publication(), "publication", 9),
-        (Theme::seaborn(), "seaborn", 10),
-    ] {
-        println!("Testing: {} Theme", name);
-        test_against_golden(
-            || {
-                Plot::new()
-                    .theme(theme)
-                    .line(&x, &y)
-                    .title(format!("{} Theme", name.to_uppercase()))
-                    .xlabel("X")
-                    .ylabel("Y")
-                    .save(format!("generated/tests/render/vr_theme_{}.png", name))?;
-                Ok(())
-            },
-            &format!("generated/tests/render/vr_theme_{}.png", name),
-            &format!("tests/fixtures/golden/0{}_theme_{}.png", idx, name),
-            0.5,
+    let actual_directory = generated_root.path().join("tests/fixtures/golden");
+    let artifact_directory = repository.join("generated/tests/render");
+    for fixture in golden_generator::GOLDEN_FIXTURES {
+        println!("Comparing {fixture}");
+        assert_exact_pixels(
+            &actual_directory.join(fixture),
+            &committed_directory.join(fixture),
+            &artifact_directory,
         )?;
     }
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_unicode() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Unicode Text");
-    test_against_golden(
-        || {
-            let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-            let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
-            Plot::new()
-                .line(&x, &y)
-                .title("Unicode: α β γ δ ε θ λ π σ ω")
-                .xlabel("Température (°C)")
-                .ylabel("Résultat")
-                .save("generated/tests/render/vr_unicode.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_unicode.png",
-        "tests/fixtures/golden/24_unicode.png",
-        0.5,
-    )?;
-
-    Ok(())
-}
-
-#[test]
-#[ignore] // Requires golden images
-fn test_visual_regression_dimensions() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    use ruviz::prelude::*;
-
-    println!("Testing: Custom Dimensions");
-    test_against_golden(
-        || {
-            let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
-            let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
-            Plot::new()
-                .size_px(1200, 900)
-                .line(&x, &y)
-                .title("Custom Dimensions")
-                .save("generated/tests/render/vr_custom_dimensions.png")?;
-            Ok(())
-        },
-        "generated/tests/render/vr_custom_dimensions.png",
-        "tests/fixtures/golden/14_custom_dimensions.png",
-        0.5,
-    )?;
 
     Ok(())
 }

@@ -406,7 +406,7 @@ impl RecordConfig {
 /// }).unwrap();
 /// ```
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use the record! macro instead: `record!(path, frames, |t| plot)`"
 )]
 pub fn record<P, I, F, R>(path: P, frames: I, mut frame_fn: F) -> Result<()>
@@ -441,7 +441,7 @@ where
 /// }).unwrap();
 /// ```
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use the record! macro instead: `record!(path, frames, config: cfg, |t| plot)`"
 )]
 pub fn record_with_config<P, I, F, R>(
@@ -500,7 +500,7 @@ where
 /// }).unwrap();
 /// ```
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use the record! macro instead: `record!(path, duration secs, |t| plot)`"
 )]
 pub fn record_duration<P, F, R>(
@@ -521,7 +521,7 @@ where
 
 /// Record an animation with duration and explicit config
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use the record! macro instead: `record!(path, duration secs, config: cfg, |t| plot)`"
 )]
 pub fn record_duration_with_config<P, F, R>(
@@ -571,7 +571,7 @@ where
 /// }).unwrap();
 /// ```
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use record_simple() or the record! macro with Signal-based animations instead"
 )]
 pub fn record_animated<'a, P, F, R>(
@@ -591,7 +591,7 @@ where
 
 /// Record animated observables with explicit configuration
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use record_simple_with_config() or the record! macro with Signal-based animations instead"
 )]
 pub fn record_animated_with_config<'a, P, F, R>(
@@ -686,7 +686,7 @@ where
 /// })?;
 /// ```
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use the record! macro instead: `record!(path, duration secs, |t| plot)`"
 )]
 pub fn record_simple<P, D, F, R>(path: P, frames: D, mut frame_fn: F) -> Result<()>
@@ -718,7 +718,7 @@ where
 /// })?;
 /// ```
 #[deprecated(
-    since = "0.9.0",
+    since = "0.1.0",
     note = "Use the record! macro instead: `record!(path, duration secs, config: cfg, |t| plot)`"
 )]
 pub fn record_simple_with_config<P, D, F, R>(

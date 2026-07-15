@@ -87,7 +87,7 @@ Plot::new()
 
 ### Scientific Computing Example
 
-```rust
+```rust,check,features=ndarray_support
 use ruviz::prelude::*;
 use ndarray::{Array1, Array2};
 use std::f64::consts::PI;
@@ -230,12 +230,12 @@ synthetic absorbed-energy style example.
 ```toml
 [dependencies]
 ruviz = { version = "0.4.19", features = ["polars_support"] }
-polars = "0.50"
+polars = { version = "0.50", features = ["lazy", "rolling_window"] }
 ```
 
 ### Basic DataFrame Plotting
 
-```rust
+```rust,check,features=polars_support
 use ruviz::prelude::*;
 use polars::prelude::*;
 
@@ -289,7 +289,7 @@ Plot::new()
 
 ### DataFrame Aggregation
 
-```rust
+```rust,check,features=polars_support
 use ruviz::prelude::*;
 use polars::prelude::*;
 
@@ -303,14 +303,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Group by category and calculate mean
     let grouped = df
         .lazy()
-        .groupby([col("category")])
+        .group_by([col("category")])
         .agg([col("value").mean()])
         .collect()?;
 
     // Extract for plotting
     let categories: Vec<&str> = grouped
         .column("category")?
-        .utf8()?
+        .str()?
         .into_iter()
         .map(|opt| opt.unwrap_or(""))
         .collect();
@@ -335,7 +335,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Time Series Analysis
 
-```rust
+```rust,check,features=polars_support
 use ruviz::prelude::*;
 use polars::prelude::*;
 
@@ -343,7 +343,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Create time series data
     let dates: Vec<i64> = (0..100).collect();
     let values: Vec<f64> = (0..100).map(|i| {
-        (i as f64 * 0.1).sin() * 10.0 + (rand::random::<f64>() - 0.5) * 2.0
+        let phase = i as f64;
+        (phase * 0.1).sin() * 10.0 + (phase * 1.7).sin()
     }).collect();
 
     let df = df! {
@@ -391,7 +392,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Reading CSV with std
 
-```rust
+```rust,check
 use ruviz::prelude::*;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -427,13 +428,13 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Reading CSV with polars
 
-```rust
+```rust,check,features=polars_support
 use ruviz::prelude::*;
 use polars::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Read CSV with polars
-    let df = CsvReader::from_path("data.csv")?
+    let df = CsvReader::new(std::fs::File::open("data.csv")?)
         .finish()?;
 
     // Extract columns
@@ -453,19 +454,18 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### CSV with Filtering
 
-```rust
+```rust,check,features=polars_support
 use ruviz::prelude::*;
 use polars::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Read and filter CSV
-    let df = CsvReader::from_path("measurements.csv")?
+    let df = CsvReader::new(std::fs::File::open("measurements.csv")?)
         .finish()?;
 
     // Filter data: value > 10
-    let filtered = df.filter(
-        &df.column("value")?.gt(10.0)?
-    )?;
+    let mask = df.column("value")?.f64()?.gt(10.0);
+    let filtered = df.filter(&mask)?;
 
     let x = filtered.column("time")?.f64()?;
     let y = filtered.column("value")?.f64()?;
@@ -494,7 +494,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
 
-```rust
+```rust,check,features=serde
 use ruviz::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -527,14 +527,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### End-to-End Workflow
 
-```rust
+```rust,check,features=polars_support
 use ruviz::prelude::*;
 use polars::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // 1. Load data
     println!("Loading data from CSV...");
-    let df = CsvReader::from_path("experiment_results.csv")?
+    let df = CsvReader::new(std::fs::File::open("experiment_results.csv")?)
         .finish()?;
 
     // 2. Data cleaning
@@ -548,7 +548,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("Computing statistics...");
     let stats = clean_df
         .lazy()
-        .groupby([col("condition")])
+        .group_by([col("condition")])
         .agg([
             col("measurement").mean().alias("mean"),
             col("measurement").std(1).alias("std"),
@@ -558,7 +558,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // 4. Extract for visualization
     let conditions: Vec<&str> = stats
         .column("condition")?
-        .utf8()?
+        .str()?
         .into_iter()
         .map(|opt| opt.unwrap_or(""))
         .collect();
@@ -589,25 +589,25 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
 ### Multi-Panel Analysis
 
-```rust
+```rust,check,features=polars_support
 use ruviz::prelude::*;
 use polars::prelude::*;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Load experiment data
-    let df = CsvReader::from_path("experiment.csv")?.finish()?;
+    let df = CsvReader::new(std::fs::File::open("experiment.csv")?).finish()?;
 
     // Panel A: Raw time series
     let time = df.column("time")?.f64()?;
     let signal = df.column("signal")?.f64()?;
 
-    let panel_a = Plot::new()
+    let panel_a: Plot = Plot::new()
         .line(time, signal)
         .title("A) Raw Signal")
         .xlabel("Time (s)")
         .ylabel("Amplitude")
-        .end_series()
-        .theme(Theme::seaborn());
+        .theme(Theme::seaborn())
+        .into();
 
     // Panel B: Distribution
     let signal_vec: Vec<f64> = df.column("signal")?
@@ -616,44 +616,45 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .filter_map(|v| v)
         .collect();
 
-    let panel_b = Plot::new()
+    let panel_b: Plot = Plot::new()
+        .theme(Theme::seaborn())
         .histogram(&signal_vec, None)
         .title("B) Distribution")
         .xlabel("Amplitude")
         .ylabel("Frequency")
-        .end_series()
-        .theme(Theme::seaborn());
+        .into();
 
     // Panel C: Group comparison
+    let group_a_mask = df.column("group")?.str()?.equal("A");
     let group_a: Vec<f64> = df
-        .filter(&df.column("group")?.equal("A")?)?
+        .filter(&group_a_mask)?
         .column("value")?
         .f64()?
         .into_iter()
         .filter_map(|v| v)
         .collect();
 
-    let panel_c = Plot::new()
+    let panel_c: Plot = Plot::new()
+        .theme(Theme::seaborn())
         .boxplot(&group_a, None)
         .title("C) Group Analysis")
         .xlabel("Group")
         .ylabel("Value")
-        .end_series()
-        .theme(Theme::seaborn());
+        .into();
 
     // Panel D: Correlation
     let x_var = df.column("variable_x")?.f64()?;
     let y_var = df.column("variable_y")?.f64()?;
 
-    let panel_d = Plot::new()
+    let panel_d: Plot = Plot::new()
         .scatter(x_var, y_var)
         .marker(MarkerStyle::Circle)
         .marker_size(4.0)
         .title("D) Correlation")
         .xlabel("Variable X")
         .ylabel("Variable Y")
-        .end_series()
-        .theme(Theme::seaborn());
+        .theme(Theme::seaborn())
+        .into();
 
     // Compose figure
     subplots(2, 2, 1600, 1200)?
@@ -730,7 +731,7 @@ let filled_data: Vec<f64> = df.column("value")?
 
 ```rust
 // Don't clone unnecessarily
-let df = CsvReader::from_path("large_file.csv")?.finish()?;
+let df = CsvReader::new(std::fs::File::open("large_file.csv")?).finish()?;
 let x = df.column("x")?.f64()?;  // Good: uses reference
 
 // Avoid

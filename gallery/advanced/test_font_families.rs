@@ -22,14 +22,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         println!("Testing {} font...", name);
 
         Plot::new()
-            .title(&format!("Font Test: {} Family", name))
+            .title(format!("Font Test: {} Family", name))
             .xlabel("X Values")
             .ylabel("Y Values")
             .theme(Theme::publication())
             .font_family(font_family)
             .line(&x_data, &y_data)
-            .label(&format!("{} line", name))
-            .save_with_size(&format!("generated/bench/font_test_{}.png", name), 800, 600)?;
+            .label(format!("{} line", name))
+            .save_with_size(format!("generated/bench/font_test_{}.png", name), 800, 600)?;
 
         println!("Generated generated/bench/font_test_{}.png", name);
     }
