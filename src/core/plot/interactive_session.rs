@@ -112,6 +112,24 @@ pub struct InteractiveViewportSnapshot {
     pub selected_count: usize,
 }
 
+/// Current interactive view bounds and their configured axis scales.
+///
+/// Unlike [`InteractiveViewportSnapshot`], this snapshot reads only the
+/// session's current pending view state and immutable scale configuration. It
+/// does not require layout or render geometry, and therefore may be used before
+/// the first render or after input whose result has not yet been displayed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InteractiveViewBoundsSnapshot {
+    /// The session's current base bounds.
+    pub base_bounds: ViewportRect,
+    /// The session's current pending visible bounds.
+    pub visible_bounds: ViewportRect,
+    /// The configured X-axis scale used to interpret the bounds.
+    pub x_scale: AxisScale,
+    /// The configured Y-axis scale used to interpret the bounds.
+    pub y_scale: AxisScale,
+}
+
 const MIN_ZOOM_LEVEL: f64 = 0.1;
 const MAX_ZOOM_LEVEL: f64 = 100.0;
 const VIEWPORT_EPSILON: f64 = 1e-9;
@@ -474,6 +492,7 @@ struct SessionState {
     data_bounds: DataBounds,
     base_bounds: DataBounds,
     visible_bounds: DataBounds,
+    pending_visible_restore: Option<DataBounds>,
     zoom_level: f64,
     pan_offset: ViewportPoint,
     hovered: Option<HitResult>,
@@ -498,6 +517,7 @@ impl Default for SessionState {
             data_bounds: DataBounds::default(),
             base_bounds: DataBounds::default(),
             visible_bounds: DataBounds::default(),
+            pending_visible_restore: None,
             zoom_level: 1.0,
             pan_offset: ViewportPoint::default(),
             hovered: None,
@@ -1496,6 +1516,7 @@ impl InteractivePlotSession {
             PlotInputEvent::ResetView => {
                 state.brush_anchor = None;
                 state.brushed_region = None;
+                state.pending_visible_restore = None;
                 state.visible_bounds = state.base_bounds;
                 sync_legacy_viewport_fields(
                     &mut state,
@@ -1823,6 +1844,26 @@ impl InteractivePlotSession {
         })
     }
 
+    /// Returns the current pending base and visible view bounds.
+    ///
+    /// This state-only snapshot does not require layout or render geometry. Its
+    /// bounds reflect input and restoration changes immediately, even when the
+    /// latest displayed frame still uses older bounds.
+    pub fn view_bounds_snapshot(&self) -> InteractiveViewBoundsSnapshot {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        let plot = self.inner.prepared.plot();
+        InteractiveViewBoundsSnapshot {
+            base_bounds: data_bounds_to_viewport_rect(state.base_bounds),
+            visible_bounds: data_bounds_to_viewport_rect(state.visible_bounds),
+            x_scale: plot.layout.x_scale.clone(),
+            y_scale: plot.layout.y_scale.clone(),
+        }
+    }
+
     /// Restores the visible bounds for the interactive viewport.
     pub fn restore_visible_bounds(&self, bounds: ViewportRect) -> bool {
         let next_visible = DataBounds::from_viewport_rect(bounds);
@@ -1851,22 +1892,70 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession state lock poisoned");
         self.begin_mutation();
-        let next_visible = normalize_visible_bounds(
+        let Some(next_visible) = normalize_visible_bounds(
             next_visible,
             state.base_bounds,
             &plot.layout.x_scale,
             &plot.layout.y_scale,
-        );
-        if bounds_close(state.visible_bounds, next_visible) {
+        ) else {
+            return false;
+        };
+        if !bounds_have_extent(next_visible)
+            || plot
+                .layout
+                .x_scale
+                .validate_range(next_visible.x_min, next_visible.x_max)
+                .is_err()
+            || plot
+                .layout
+                .y_scale
+                .validate_range(next_visible.y_min, next_visible.y_max)
+                .is_err()
+        {
+            return false;
+        }
+        if scaled_bounds_close(
+            state.visible_bounds,
+            next_visible,
+            state.base_bounds,
+            &plot.layout.x_scale,
+            &plot.layout.y_scale,
+        ) {
             return false;
         }
 
-        set_visible_bounds(
-            &mut state,
-            next_visible,
-            &plot.layout.x_scale,
-            &plot.layout.y_scale,
-        );
+        state.pending_visible_restore = None;
+        state.visible_bounds = next_visible;
+        sync_legacy_viewport_fields(&mut state, &plot.layout.x_scale, &plot.layout.y_scale);
+        drop(state);
+        self.mark_dirty(DirtyDomain::Data);
+        self.mark_dirty(DirtyDomain::Overlay);
+        true
+    }
+
+    /// Queues visible bounds to be restored after the next data or temporal refresh.
+    ///
+    /// This is intended for adapters that replace a session and need the replacement
+    /// plot's current-time data bounds to be resolved before normalization.
+    #[doc(hidden)]
+    pub fn defer_visible_bounds_restore(&self, bounds: ViewportRect) -> bool {
+        let requested = DataBounds::from_viewport_rect(bounds);
+        if !bounds_have_extent(requested) {
+            return false;
+        }
+
+        let plot = self.inner.prepared.plot();
+        if !bounds_are_valid_for_scales(requested, &plot.layout.x_scale, &plot.layout.y_scale) {
+            return false;
+        }
+
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned");
+        self.begin_mutation();
+        state.pending_visible_restore = Some(requested);
         drop(state);
         self.mark_dirty(DirtyDomain::Data);
         self.mark_dirty(DirtyDomain::Overlay);
@@ -1938,7 +2027,29 @@ impl InteractivePlotSession {
                     .unwrap_or(state.data_bounds);
                 state.data_bounds = next_data_bounds;
                 state.base_bounds = constraints.apply(next_data_bounds);
-                if bounds_close(previous_visible, previous_base) {
+                let pending_visible_restore = state.pending_visible_restore.take();
+                if let Some(requested) = pending_visible_restore {
+                    state.visible_bounds = normalize_visible_bounds(
+                        requested,
+                        state.base_bounds,
+                        &source_plot.layout.x_scale,
+                        &source_plot.layout.y_scale,
+                    )
+                    .filter(|bounds| {
+                        bounds_are_valid_for_scales(
+                            *bounds,
+                            &source_plot.layout.x_scale,
+                            &source_plot.layout.y_scale,
+                        )
+                    })
+                    .unwrap_or(state.base_bounds);
+                } else if scaled_bounds_close(
+                    previous_visible,
+                    previous_base,
+                    previous_base,
+                    &source_plot.layout.x_scale,
+                    &source_plot.layout.y_scale,
+                ) {
                     state.visible_bounds = state.base_bounds;
                 } else {
                     state.visible_bounds = normalize_visible_bounds(
@@ -1946,7 +2057,15 @@ impl InteractivePlotSession {
                         state.base_bounds,
                         &source_plot.layout.x_scale,
                         &source_plot.layout.y_scale,
-                    );
+                    )
+                    .filter(|bounds| {
+                        bounds_are_valid_for_scales(
+                            *bounds,
+                            &source_plot.layout.x_scale,
+                            &source_plot.layout.y_scale,
+                        )
+                    })
+                    .unwrap_or(state.base_bounds);
                 }
                 sync_legacy_viewport_fields(
                     &mut state,
@@ -2747,6 +2866,50 @@ fn bounds_close(a: DataBounds, b: DataBounds) -> bool {
         && axis_bounds_close((a.y_min, a.y_max), (b.y_min, b.y_max))
 }
 
+fn scaled_bounds_close(
+    a: DataBounds,
+    b: DataBounds,
+    base: DataBounds,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> bool {
+    scaled_axis_bounds_close(
+        (a.x_min, a.x_max),
+        (b.x_min, b.x_max),
+        (base.x_min, base.x_max),
+        x_scale,
+    ) && scaled_axis_bounds_close(
+        (a.y_min, a.y_max),
+        (b.y_min, b.y_max),
+        (base.y_min, base.y_max),
+        y_scale,
+    )
+}
+
+fn scaled_axis_bounds_close(
+    a: (f64, f64),
+    b: (f64, f64),
+    base: (f64, f64),
+    scale: &AxisScale,
+) -> bool {
+    const NORMALIZED_TOLERANCE: f64 = 1e-12;
+
+    if (a.1 - a.0).is_sign_negative() != (b.1 - b.0).is_sign_negative() {
+        return false;
+    }
+
+    let a_start = scale.normalized_position(a.0, base.0, base.1);
+    let a_end = scale.normalized_position(a.1, base.0, base.1);
+    let b_start = scale.normalized_position(b.0, base.0, base.1);
+    let b_end = scale.normalized_position(b.1, base.0, base.1);
+    a_start.is_finite()
+        && a_end.is_finite()
+        && b_start.is_finite()
+        && b_end.is_finite()
+        && (a_start - b_start).abs() <= NORMALIZED_TOLERANCE
+        && (a_end - b_end).abs() <= NORMALIZED_TOLERANCE
+}
+
 fn axis_bounds_close(a: (f64, f64), b: (f64, f64)) -> bool {
     let tolerance = (a.1 - a.0).abs().max((b.1 - b.0).abs()) * 1e-12;
     (a.0 == b.0 || (a.0 - b.0).abs() <= tolerance) && (a.1 == b.1 || (a.1 - b.1).abs() <= tolerance)
@@ -2765,19 +2928,33 @@ fn normalize_axis_bounds(
     bounds: (f64, f64),
     base_bounds: (f64, f64),
     scale: &AxisScale,
-) -> (f64, f64) {
+) -> Option<(f64, f64)> {
     let start = scale.normalized_position(bounds.0, base_bounds.0, base_bounds.1);
     let end = scale.normalized_position(bounds.1, base_bounds.0, base_bounds.1);
-    let center = (start + end) * 0.5;
-    let direction = direction_for_span(end - start, 1.0);
-    let span = (end - start)
+    if !start.is_finite() || !end.is_finite() {
+        return None;
+    }
+
+    let center = start * 0.5 + end * 0.5;
+    let half_span = end * 0.5 - start * 0.5;
+    if !center.is_finite() || !half_span.is_finite() {
+        return None;
+    }
+
+    let direction = direction_for_span(half_span, 1.0);
+    let half_span = half_span
         .abs()
-        .clamp(1.0 / MAX_ZOOM_LEVEL, 1.0 / MIN_ZOOM_LEVEL)
+        .clamp(0.5 / MAX_ZOOM_LEVEL, 0.5 / MIN_ZOOM_LEVEL)
         * direction;
-    (
-        scale.inverse_normalized_position(center - span * 0.5, base_bounds.0, base_bounds.1),
-        scale.inverse_normalized_position(center + span * 0.5, base_bounds.0, base_bounds.1),
-    )
+    let normalized_start = center - half_span;
+    let normalized_end = center + half_span;
+    if !normalized_start.is_finite() || !normalized_end.is_finite() {
+        return None;
+    }
+
+    let start = scale.inverse_normalized_position(normalized_start, base_bounds.0, base_bounds.1);
+    let end = scale.inverse_normalized_position(normalized_end, base_bounds.0, base_bounds.1);
+    (start.is_finite() && end.is_finite()).then_some((start, end))
 }
 
 fn zoom_axis_bounds(
@@ -2813,18 +2990,18 @@ fn normalize_visible_bounds(
     base_bounds: DataBounds,
     x_scale: &AxisScale,
     y_scale: &AxisScale,
-) -> DataBounds {
+) -> Option<DataBounds> {
     let x = normalize_axis_bounds(
         (bounds.x_min, bounds.x_max),
         (base_bounds.x_min, base_bounds.x_max),
         x_scale,
-    );
+    )?;
     let y = normalize_axis_bounds(
         (bounds.y_min, bounds.y_max),
         (base_bounds.y_min, base_bounds.y_max),
         y_scale,
-    );
-    DataBounds::from_limits(x.0, x.1, y.0, y.1)
+    )?;
+    Some(DataBounds::from_limits(x.0, x.1, y.0, y.1))
 }
 
 fn legacy_viewport_metrics(
@@ -2874,9 +3051,28 @@ fn set_visible_bounds(
     bounds: DataBounds,
     x_scale: &AxisScale,
     y_scale: &AxisScale,
-) {
-    state.visible_bounds = normalize_visible_bounds(bounds, state.base_bounds, x_scale, y_scale);
+) -> bool {
+    let Some(bounds) = normalize_visible_bounds(bounds, state.base_bounds, x_scale, y_scale) else {
+        return false;
+    };
+    if !bounds_are_valid_for_scales(bounds, x_scale, y_scale) {
+        return false;
+    }
+
+    state.pending_visible_restore = None;
+    state.visible_bounds = bounds;
     sync_legacy_viewport_fields(state, x_scale, y_scale);
+    true
+}
+
+fn bounds_are_valid_for_scales(
+    bounds: DataBounds,
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> bool {
+    bounds_have_extent(bounds)
+        && x_scale.validate_range(bounds.x_min, bounds.x_max).is_ok()
+        && y_scale.validate_range(bounds.y_min, bounds.y_max).is_ok()
 }
 
 fn direction_for_span(span: f64, fallback: f64) -> f64 {

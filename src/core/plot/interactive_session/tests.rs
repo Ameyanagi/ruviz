@@ -230,6 +230,59 @@ fn test_viewport_snapshot_remains_available_before_first_render() {
 }
 
 #[test]
+fn test_view_bounds_snapshot_is_available_immediately_after_construction() {
+    let plot: Plot = Plot::new()
+        .line(&[1.0, 1000.0], &[-5.0, 5.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .xlim(1000.0, 1.0)
+        .ylim(-5.0, 5.0)
+        .into();
+    let session = plot.prepare_interactive();
+
+    let snapshot = session.view_bounds_snapshot();
+
+    assert_eq!(snapshot.visible_bounds, snapshot.base_bounds);
+    assert_eq!(
+        (snapshot.base_bounds.min.x, snapshot.base_bounds.max.x),
+        (1000.0, 1.0)
+    );
+    assert_eq!(snapshot.x_scale, crate::axes::AxisScale::Log);
+    assert_eq!(snapshot.y_scale, crate::axes::AxisScale::Linear);
+}
+
+#[test]
+fn test_view_bounds_snapshot_reflects_restore_before_next_render() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 10.0], &[0.0, 20.0])
+        .xlim(0.0, 10.0)
+        .ylim(0.0, 20.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial frame should render");
+    let displayed_before = session.viewport_snapshot().unwrap().visible_bounds;
+    let restored = ViewportRect {
+        min: ViewportPoint::new(2.0, 4.0),
+        max: ViewportPoint::new(8.0, 16.0),
+    };
+
+    assert!(session.restore_visible_bounds(restored));
+
+    let pending = session.view_bounds_snapshot();
+    assert!(bounds_close(
+        DataBounds::from_viewport_rect(pending.visible_bounds),
+        DataBounds::from_viewport_rect(restored),
+    ));
+    assert_eq!(pending.base_bounds, displayed_before);
+    assert_eq!(
+        session.viewport_snapshot().unwrap().visible_bounds,
+        displayed_before,
+        "the geometry-backed snapshot should still describe the displayed frame"
+    );
+}
+
+#[test]
 fn test_displayed_coordinate_conversion_supports_scales_reversal_and_clamping() {
     let plot: Plot = Plot::new()
         .line(&[1.0, 1000.0], &[-100.0, 100.0])
@@ -919,6 +972,35 @@ fn test_restore_visible_bounds_rejects_invalid_log_domain() {
     }));
     assert_eq!(session.viewport_snapshot().unwrap(), before);
     assert!(!session.dirty_domains().needs_base_render());
+}
+
+#[test]
+fn test_restore_visible_bounds_rejects_extreme_finite_linear_bounds() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial linear frame should render");
+    let before = session.view_bounds_snapshot();
+
+    for (x_min, x_max) in [(1e308, 1.1e308), (1.1e308, 1e308)] {
+        assert!(!session.restore_visible_bounds(ViewportRect {
+            min: ViewportPoint::new(x_min, 0.0),
+            max: ViewportPoint::new(x_max, 1.0),
+        }));
+
+        let after = session.view_bounds_snapshot();
+        assert_eq!(after, before);
+        assert!(after.visible_bounds.min.x.is_finite());
+        assert!(after.visible_bounds.max.x.is_finite());
+        assert!(after.visible_bounds.min.y.is_finite());
+        assert!(after.visible_bounds.max.y.is_finite());
+        assert!(!session.dirty_domains().needs_base_render());
+    }
 }
 
 #[test]

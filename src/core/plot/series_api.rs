@@ -162,6 +162,13 @@ impl Plot {
     }
 
     /// Add a line series from source-backed data.
+    ///
+    /// With `Observable<Vec<f64>>` inputs, [`Observable::set`](crate::data::Observable::set)
+    /// replaces a complete coordinate vector without rebuilding the plot or its
+    /// interactive session. A [`BatchUpdate`](crate::data::BatchUpdate) defers
+    /// each observable's notifications until guard drop and coalesces repeated
+    /// changes within that observable. Separate observables still flush
+    /// independently; the guard is not a shared data lock.
     pub fn line_source<X, Y>(
         self,
         x_data: X,
@@ -306,6 +313,13 @@ impl Plot {
     }
 
     /// Add a scatter series from source-backed data.
+    ///
+    /// With `Observable<Vec<f64>>` inputs, [`Observable::set`](crate::data::Observable::set)
+    /// replaces a complete coordinate vector without rebuilding the plot or its
+    /// interactive session. A [`BatchUpdate`](crate::data::BatchUpdate) defers
+    /// each observable's notifications until guard drop and coalesces repeated
+    /// changes within that observable. Separate observables still flush
+    /// independently; the guard is not a shared data lock.
     pub fn scatter_source<X, Y>(
         self,
         x_data: X,
