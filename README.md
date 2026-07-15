@@ -13,7 +13,7 @@ Add the crate:
 
 ```toml
 [dependencies]
-ruviz = "0.4.19"
+ruviz = "0.4.20"
 ```
 
 Create and save a PNG:
@@ -162,7 +162,7 @@ Enable Typst-backed text rendering with:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.19", features = ["typst-math"] }
+ruviz = { version = "0.4.20", features = ["typst-math"] }
 ```
 
 Then call `.typst(true)`. The configured family is passed to plain raster,
@@ -197,7 +197,7 @@ compiled. If Typst is optional in your crate, forward and guard your own feature
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.19", default-features = false }
+ruviz = { version = "0.4.20", default-features = false }
 
 [features]
 default = []

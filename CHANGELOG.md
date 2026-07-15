@@ -6,6 +6,28 @@ All notable changes to this project will be documented in this file.
 
 _None yet._
 
+## [0.4.20] - 2026-07-15
+
+### Added
+
+- Added frame-coherent, lazily constructed point hit-test indexing for large interactive plots, including scaled, reversed, reactive, and streaming frames.
+- Added exact bundled-font golden-image CI coverage for all committed deterministic visual fixtures and stricter checked documentation-fence validation.
+- Added packaged-crate verification for clean external `ruviz` and `ruviz-gpui` consumers, including release artifact and VCS provenance checks.
+
+### Changed
+
+- Unified resolved plot data, series styling, typography, markers, legends, annotations, and error bars across raster, SVG, parallel, prepared, and interactive render paths.
+- Made backend selection and diagnostics report the renderer that actually executed, with truthful fallbacks for unsupported Parallel, GPU, and DataShader operations.
+- Made coordinate transforms, hit testing, overlays, subplots, and interactive rendering scale-aware while preserving exact fixed-size output contracts.
+- Shared runtime font registration across renderers and completed the public multiline `TextStyle` contract for plain and Typst text.
+
+### Fixed
+
+- Fixed animation completion/reentrancy races, transactional reactive notifications, memory-manager lock ordering, and same-session reentrant interactive render deadlocks.
+- Fixed text alpha compositing, font-family precedence, SVG marker/legend parity, asymmetric error bars, subplot DPI handling, margin validation, and stale per-frame resolution.
+- Fixed feature aliases and release gating so ndarray compatibility, packaged GPUI consumers, and tag publication are checked against the exact required CI runs.
+- Corrected stale backend, performance, sizing, font, API, and deprecation documentation and made documentation/visual CI failures retain actionable artifacts.
+
 ## [0.4.19] - 2026-06-03
 
 ### Fixed
@@ -455,7 +477,8 @@ _None yet._
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.19...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.20...HEAD
+[0.4.20]: https://github.com/Ameyanagi/ruviz/compare/v0.4.19...v0.4.20
 [0.4.19]: https://github.com/Ameyanagi/ruviz/compare/v0.4.18...v0.4.19
 [0.4.18]: https://github.com/Ameyanagi/ruviz/compare/v0.4.17...v0.4.18
 [0.4.17]: https://github.com/Ameyanagi/ruviz/compare/v0.4.16...v0.4.17

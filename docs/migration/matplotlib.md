@@ -416,7 +416,7 @@ let viridis_like = Theme::builder()
 ## Migration Checklist
 
 - [ ] Install Rust and cargo
-- [ ] Add `ruviz = "0.4.19"` to `Cargo.toml`
+- [ ] Add `ruviz = "0.4.20"` to `Cargo.toml`
 - [ ] Convert numpy arrays to `Vec<f64>` or `ndarray`
 - [ ] Replace `plt.plot()` with `Plot::new().line()`
 - [ ] Change `plt.savefig()` to `.save()?`
