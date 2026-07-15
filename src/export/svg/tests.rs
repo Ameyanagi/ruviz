@@ -19,6 +19,37 @@ fn parse_svg_attr(line: &str, attr: &str) -> f32 {
         .unwrap_or_else(|_| panic!("invalid {} in line: {}", attr, line))
 }
 
+fn svg_element_lines<'a>(svg: &'a str, tag: &str) -> Vec<&'a str> {
+    let prefix = format!("<{tag} ");
+    svg.lines()
+        .filter(|line| line.trim_start().starts_with(&prefix))
+        .collect()
+}
+
+fn parse_svg_points(line: &str) -> Vec<(f32, f32)> {
+    svg_attr_value(line, "points")
+        .split_whitespace()
+        .map(|point| {
+            let (x, y) = point
+                .split_once(',')
+                .unwrap_or_else(|| panic!("invalid point {point} in line: {line}"));
+            (
+                x.parse::<f32>()
+                    .unwrap_or_else(|_| panic!("invalid point x {x} in line: {line}")),
+                y.parse::<f32>()
+                    .unwrap_or_else(|_| panic!("invalid point y {y} in line: {line}")),
+            )
+        })
+        .collect()
+}
+
+fn assert_approx_eq(actual: f32, expected: f32) {
+    assert!(
+        (actual - expected).abs() <= 0.01,
+        "expected {expected}, got {actual}"
+    );
+}
+
 fn extract_svg_text_xy(svg: &str, text: &str) -> (f32, f32) {
     let marker = format!(">{}</text>", text);
     let line = svg
@@ -29,14 +60,12 @@ fn extract_svg_text_xy(svg: &str, text: &str) -> (f32, f32) {
 }
 
 fn has_svg_line(svg: &str, x1: f32, y1: f32, x2: f32, y2: f32) -> bool {
-    svg.lines()
-        .filter(|line| line.contains("<line"))
-        .any(|line| {
-            (parse_svg_attr(line, "x1") - x1).abs() <= 0.01
-                && (parse_svg_attr(line, "y1") - y1).abs() <= 0.01
-                && (parse_svg_attr(line, "x2") - x2).abs() <= 0.01
-                && (parse_svg_attr(line, "y2") - y2).abs() <= 0.01
-        })
+    svg_element_lines(svg, "line").into_iter().any(|line| {
+        (parse_svg_attr(line, "x1") - x1).abs() <= 0.01
+            && (parse_svg_attr(line, "y1") - y1).abs() <= 0.01
+            && (parse_svg_attr(line, "x2") - x2).abs() <= 0.01
+            && (parse_svg_attr(line, "y2") - y2).abs() <= 0.01
+    })
 }
 
 fn extract_typst_group_translates(svg: &str) -> Vec<(f32, f32)> {
@@ -279,6 +308,114 @@ fn test_polygon_outline_requires_three_points() {
 }
 
 #[test]
+fn test_triangle_down_marker_uses_skia_geometry() {
+    let mut renderer = SvgRenderer::new(100.0, 100.0);
+    renderer.draw_marker(20.0, 30.0, 10.0, MarkerStyle::TriangleDown, Color::RED);
+
+    let svg = renderer.to_svg_string();
+    let polygons = svg_element_lines(&svg, "polygon");
+    assert_eq!(polygons.len(), 1);
+    let polygon = polygons[0];
+    let points = parse_svg_points(polygon);
+    assert_eq!(points.len(), 3);
+    for ((actual_x, actual_y), (expected_x, expected_y)) in
+        points
+            .into_iter()
+            .zip([(20.0, 35.0), (15.67, 27.5), (24.33, 27.5)])
+    {
+        assert_approx_eq(actual_x, expected_x);
+        assert_approx_eq(actual_y, expected_y);
+    }
+    assert_eq!(svg_attr_value(polygon, "fill"), "rgb(255,0,0)");
+    assert!(svg_element_lines(&svg, "circle").is_empty());
+}
+
+#[test]
+fn test_star_marker_uses_skia_geometry() {
+    let mut renderer = SvgRenderer::new(100.0, 100.0);
+    renderer.draw_marker(20.0, 30.0, 10.0, MarkerStyle::Star, Color::BLUE);
+
+    let svg = renderer.to_svg_string();
+    let lines = svg_element_lines(&svg, "line");
+
+    assert_eq!(lines.len(), 4);
+    assert!(has_svg_line(&svg, 15.0, 30.0, 25.0, 30.0));
+    assert!(has_svg_line(&svg, 20.0, 25.0, 20.0, 35.0));
+    assert!(has_svg_line(&svg, 16.47, 26.47, 23.53, 33.53));
+    assert!(has_svg_line(&svg, 16.47, 33.53, 23.53, 26.47));
+    assert!(lines.iter().all(|line| {
+        (parse_svg_attr(line, "stroke-width") - 2.2).abs() <= 0.01
+            && svg_attr_value(line, "stroke-linecap") == "butt"
+    }));
+    assert!(svg_element_lines(&svg, "circle").is_empty());
+    assert!(svg_element_lines(&svg, "polygon").is_empty());
+}
+
+#[test]
+fn test_marker_rendering_is_exhaustive_and_matches_supported_svg_primitives() {
+    for style in [
+        MarkerStyle::Circle,
+        MarkerStyle::Square,
+        MarkerStyle::Triangle,
+        MarkerStyle::TriangleDown,
+        MarkerStyle::Diamond,
+        MarkerStyle::Plus,
+        MarkerStyle::Cross,
+        MarkerStyle::Star,
+        MarkerStyle::CircleOpen,
+        MarkerStyle::SquareOpen,
+        MarkerStyle::TriangleOpen,
+        MarkerStyle::DiamondOpen,
+    ] {
+        let mut renderer = SvgRenderer::new(100.0, 100.0);
+        renderer.draw_marker(20.0, 30.0, 10.0, style, Color::BLACK);
+        let svg = renderer.to_svg_string();
+
+        let (tag, expected_count) = match style {
+            MarkerStyle::Circle | MarkerStyle::CircleOpen => ("circle", 1),
+            MarkerStyle::Square | MarkerStyle::SquareOpen => ("rect", 1),
+            MarkerStyle::Triangle
+            | MarkerStyle::TriangleDown
+            | MarkerStyle::Diamond
+            | MarkerStyle::TriangleOpen
+            | MarkerStyle::DiamondOpen => ("polygon", 1),
+            MarkerStyle::Plus | MarkerStyle::Cross => ("line", 2),
+            MarkerStyle::Star => ("line", 4),
+        };
+
+        assert_eq!(
+            svg_element_lines(&svg, tag).len(),
+            expected_count,
+            "unexpected SVG primitive for {} marker: {svg}",
+            style.name()
+        );
+
+        match style {
+            MarkerStyle::CircleOpen | MarkerStyle::SquareOpen => {
+                let element = svg_element_lines(&svg, tag)[0];
+                assert_eq!(svg_attr_value(element, "fill"), "none");
+                assert_eq!(svg_attr_value(element, "stroke"), "rgb(0,0,0)");
+                assert_approx_eq(parse_svg_attr(element, "stroke-width"), 1.0);
+            }
+            MarkerStyle::TriangleOpen | MarkerStyle::DiamondOpen => {
+                let element = svg_element_lines(&svg, tag)[0];
+                assert_eq!(svg_attr_value(element, "fill"), "none");
+                assert_eq!(svg_attr_value(element, "stroke"), "rgb(0,0,0)");
+                assert_approx_eq(parse_svg_attr(element, "stroke-width"), 1.5);
+            }
+            MarkerStyle::Circle
+            | MarkerStyle::Square
+            | MarkerStyle::Triangle
+            | MarkerStyle::TriangleDown
+            | MarkerStyle::Diamond
+            | MarkerStyle::Plus
+            | MarkerStyle::Cross
+            | MarkerStyle::Star => {}
+        }
+    }
+}
+
+#[test]
 fn test_legend_line_handle_attribute_spacing() {
     let mut renderer = SvgRenderer::new(200.0, 150.0);
 
@@ -306,6 +443,62 @@ fn test_legend_line_handle_attribute_spacing() {
             .any(|line| line.contains(r#"stroke-width="1.5" />"#)),
         "legend handle should not emit dangling whitespace before '/>'"
     );
+}
+
+#[test]
+fn test_legend_line_width_and_marker_size_scale_at_2x() {
+    fn render_legend_at(scale: f32) -> (Vec<f32>, Vec<f32>) {
+        let mut renderer = SvgRenderer::new(400.0, 300.0);
+        renderer.set_dpi_scale(scale);
+        let items = [
+            LegendItem::line("line", Color::BLACK, LineStyle::Solid, 3.6),
+            LegendItem::scatter("scatter", Color::BLACK, MarkerStyle::Circle, 7.2),
+            LegendItem::line_marker(
+                "line-marker",
+                Color::BLACK,
+                LineStyle::Solid,
+                1.8,
+                MarkerStyle::Circle,
+                3.6,
+            ),
+        ];
+        let legend = Legend::upper_right().style(LegendStyle::invisible());
+
+        renderer
+            .draw_legend_full(&items, &legend, (0.0, 0.0, 400.0, 300.0), None)
+            .unwrap();
+
+        let svg = renderer.to_svg_string();
+        let line_widths = svg_element_lines(&svg, "line")
+            .into_iter()
+            .map(|line| parse_svg_attr(line, "stroke-width"))
+            .collect();
+        let marker_sizes = svg_element_lines(&svg, "circle")
+            .into_iter()
+            .map(|marker| parse_svg_attr(marker, "r") * 2.0)
+            .collect();
+        (line_widths, marker_sizes)
+    }
+
+    let (line_widths_1x, marker_sizes_1x) = render_legend_at(1.0);
+    let (line_widths_2x, marker_sizes_2x) = render_legend_at(2.0);
+
+    assert_eq!(line_widths_1x.len(), 2);
+    assert_eq!(marker_sizes_1x.len(), 2);
+    assert_eq!(line_widths_2x.len(), 2);
+    assert_eq!(marker_sizes_2x.len(), 2);
+    for (actual, expected) in line_widths_1x.into_iter().zip([5.0, 2.5]) {
+        assert_approx_eq(actual, expected);
+    }
+    for (actual, expected) in marker_sizes_1x.into_iter().zip([10.0, 5.0]) {
+        assert_approx_eq(actual, expected);
+    }
+    for (actual, expected) in line_widths_2x.into_iter().zip([10.0, 5.0]) {
+        assert_approx_eq(actual, expected);
+    }
+    for (actual, expected) in marker_sizes_2x.into_iter().zip([20.0, 10.0]) {
+        assert_approx_eq(actual, expected);
+    }
 }
 
 #[test]
