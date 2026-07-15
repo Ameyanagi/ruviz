@@ -548,6 +548,9 @@ jobs:
       - name: Install Linux desktop build dependencies
         uses: ./.github/actions/install-linux-desktop-build-deps
 
+      - name: Test release workflow gate
+        run: uv run python -m unittest scripts/test_wait_for_github_checks.py
+
       - name: Check published docs do not reference generated preview assets
         run: uv run python scripts/check_no_generated_asset_refs.py
 
