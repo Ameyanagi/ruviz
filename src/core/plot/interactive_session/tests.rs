@@ -1057,6 +1057,48 @@ fn test_overlapping_render_requests_cannot_commit_stale_base_cache() {
 }
 
 #[test]
+fn test_reentrant_render_request_returns_error() {
+    let session_slot = Arc::new(std::sync::Mutex::new(None));
+    let nested_error = Arc::new(std::sync::Mutex::new(None));
+    let session_slot_for_signal = Arc::clone(&session_slot);
+    let nested_error_for_signal = Arc::clone(&nested_error);
+    let color = signal::of(move |_| {
+        let session: Option<InteractivePlotSession> = session_slot_for_signal
+            .lock()
+            .expect("session slot lock poisoned")
+            .clone();
+        if let Some(session) = session {
+            let error = session
+                .render_to_surface(render_target())
+                .expect_err("reentrant render should return an error")
+                .to_string();
+            *nested_error_for_signal
+                .lock()
+                .expect("nested error lock poisoned") = Some(error);
+        }
+        Color::RED
+    });
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .color_source(color)
+        .into();
+    let session = plot.prepare_interactive();
+    *session_slot.lock().expect("session slot lock poisoned") = Some(session.clone());
+
+    session
+        .render_to_surface(render_target())
+        .expect("outer render should complete");
+
+    assert!(
+        nested_error
+            .lock()
+            .expect("nested error lock poisoned")
+            .as_deref()
+            .is_some_and(|error| error.contains("reentrant interactive render"))
+    );
+}
+
+#[test]
 fn test_session_invalidate_forces_base_rerender() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])

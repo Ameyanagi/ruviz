@@ -13,12 +13,49 @@ use crate::{
     },
 };
 use std::{
+    cell::RefCell,
+    collections::HashSet,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
+
+thread_local! {
+    static ACTIVE_RENDER_SESSIONS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+}
+
+struct ActiveRenderGuard {
+    session_id: usize,
+}
+
+impl ActiveRenderGuard {
+    fn enter(session_id: usize) -> Result<Self> {
+        let inserted = ACTIVE_RENDER_SESSIONS.with(|sessions| {
+            sessions
+                .try_borrow_mut()
+                .map(|mut sessions| sessions.insert(session_id))
+                .unwrap_or(false)
+        });
+        if !inserted {
+            return Err(PlottingError::RenderError(
+                "reentrant interactive render request".to_string(),
+            ));
+        }
+        Ok(Self { session_id })
+    }
+}
+
+impl Drop for ActiveRenderGuard {
+    fn drop(&mut self) {
+        ACTIVE_RENDER_SESSIONS.with(|sessions| {
+            if let Ok(mut sessions) = sessions.try_borrow_mut() {
+                sessions.remove(&self.session_id);
+            }
+        });
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -1463,6 +1500,7 @@ impl InteractivePlotSession {
         scale_factor: f32,
         time_seconds: f64,
     ) -> Result<InteractiveFrame> {
+        let _active_render = ActiveRenderGuard::enter(Arc::as_ptr(&self.inner) as usize)?;
         let _render_guard = self
             .inner
             .render_gate
