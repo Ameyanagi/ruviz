@@ -56,6 +56,9 @@ jobs:
           key: ${{ runner.os }}-cargo-docs-examples-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-docs-examples-
 
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
       - name: Install JS workspace dependencies
         run: bun install --frozen-lockfile
 

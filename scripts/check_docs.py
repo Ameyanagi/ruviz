@@ -691,8 +691,9 @@ def check_python_snippets(fences: list[CodeFence]) -> list[str]:
 def check_shell_snippets(fences: list[CodeFence]) -> list[str]:
     errors: list[str] = []
     for fence in fences:
+        parser = "sh" if fence.lang == "sh" else "bash"
         result = subprocess.run(
-            ["bash", "-n"],
+            [parser, "-n"],
             input=fence.code,
             cwd=ROOT,
             text=True,

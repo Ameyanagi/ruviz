@@ -66,13 +66,21 @@ fn assert_exact_pixels(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let actual = image::open(actual_path)?.to_rgba8();
     let golden = image::open(golden_path)?.to_rgba8();
+    let fixture_name = golden_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("visual.png");
+    let actual_artifact = artifact_directory.join(format!("actual_{fixture_name}"));
 
     if actual.dimensions() != golden.dimensions() {
+        fs::create_dir_all(artifact_directory)?;
+        actual.save(&actual_artifact)?;
         return Err(format!(
-            "{} dimensions differ: actual {:?}, golden {:?}",
-            golden_path.display(),
+            "{} dimensions differ: actual {:?}, golden {:?}. Actual: {}",
+            fixture_name,
             actual.dimensions(),
-            golden.dimensions()
+            golden.dimensions(),
+            actual_artifact.display()
         )
         .into());
     }
@@ -87,11 +95,6 @@ fn assert_exact_pixels(
     }
 
     fs::create_dir_all(artifact_directory)?;
-    let fixture_name = golden_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("visual.png");
-    let actual_artifact = artifact_directory.join(format!("actual_{fixture_name}"));
     let diff_artifact = artifact_directory.join(format!("diff_{fixture_name}"));
     actual.save(&actual_artifact)?;
     write_diff_image(&actual, &golden, &diff_artifact)?;
@@ -105,6 +108,30 @@ fn assert_exact_pixels(
         diff_artifact.display()
     )
     .into())
+}
+
+#[test]
+fn dimension_mismatch_preserves_the_actual_artifact() {
+    let temp = tempfile::tempdir().expect("temporary visual test directory");
+    let actual_path = temp.path().join("actual.png");
+    let golden_path = temp.path().join("fixture.png");
+    let artifact_directory = temp.path().join("artifacts");
+    RgbaImage::new(2, 3)
+        .save(&actual_path)
+        .expect("save mismatched actual image");
+    RgbaImage::new(3, 2)
+        .save(&golden_path)
+        .expect("save mismatched golden image");
+
+    let error = assert_exact_pixels(&actual_path, &golden_path, &artifact_directory)
+        .expect_err("dimension mismatch should fail");
+    let actual_artifact = artifact_directory.join("actual_fixture.png");
+    assert!(actual_artifact.is_file());
+    assert!(
+        error
+            .to_string()
+            .contains(&actual_artifact.display().to_string())
+    );
 }
 
 #[test]

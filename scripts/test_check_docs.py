@@ -158,6 +158,22 @@ class CheckDocsTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("invalid syntax", errors[0])
 
+    def test_sh_and_bash_fences_use_their_declared_parsers(self) -> None:
+        with mock.patch.object(
+            check_docs.subprocess,
+            "run",
+            return_value=mock.Mock(returncode=0, stderr=""),
+        ) as run:
+            self.assertEqual(
+                check_docs.check_shell_snippets(
+                    [fence("sh", "values=(one two)\n"), fence("bash", "true\n")]
+                ),
+                [],
+            )
+
+        self.assertEqual(run.call_args_list[0].args[0], ["sh", "-n"])
+        self.assertEqual(run.call_args_list[1].args[0], ["bash", "-n"])
+
     def test_all_example_programs_have_unique_covered_targets(self) -> None:
         self.assertEqual(check_docs.check_example_target_coverage(), [])
 
