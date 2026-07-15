@@ -164,7 +164,12 @@ Enable Typst-backed text rendering with:
 ruviz = { version = "0.4.19", features = ["typst-math"] }
 ```
 
-Then call `.typst(true)`:
+Then call `.typst(true)`. The configured family is passed to plain raster,
+plain SVG, and Typst text. Named-font consistency depends on that font being
+available to each renderer or SVG viewer; otherwise backend-specific fallback
+or substitution may occur. Typst resolves `serif`, `sans-serif`, and `monospace`
+to available concrete families. Because Typst has no generic cursive or fantasy
+selector, those two values use its selected sans-serif fallback:
 
 ```rust
 use ruviz::prelude::*;
@@ -178,6 +183,7 @@ fn main() -> Result<()> {
         .title("$f(x) = e^(-x)$")
         .xlabel("$x$")
         .ylabel("$f(x)$")
+        .font_family("New Computer Modern Sans")
         .typst(true)
         .save("typst_plot.png")?;
 

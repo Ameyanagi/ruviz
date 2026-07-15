@@ -94,7 +94,13 @@ If you want publication-style math in labels and titles, enable Typst text rende
 ruviz = { version = "0.4.19", features = ["typst-math"] }
 ```
 
-`.typst(true)` is only available when `typst-math` is enabled. Without it, the compile error is:
+`.typst(true)` is only available when `typst-math` is enabled. The configured
+family is passed to plain raster, plain SVG, and Typst text. Named-font
+consistency depends on that font being available to each renderer or SVG
+viewer; otherwise backend-specific fallback or substitution may occur. Typst
+resolves `serif`, `sans-serif`, and `monospace` to available concrete families.
+Because Typst has no generic cursive or fantasy selector, those two values use
+its selected sans-serif fallback. Without the feature, the compile error is:
 
 ```text
 error[E0599]: no method named `typst` found for struct `ruviz::core::Plot` in the current scope
@@ -148,6 +154,7 @@ fn main() -> Result<()> {
         .title("Quadratic: $y = x^2$")
         .xlabel("$x$")
         .ylabel("$y$")
+        .font_family("New Computer Modern Sans")
         .typst(true)
         .save("plot_typst.png")?;
 

@@ -110,6 +110,8 @@ impl Plot {
     /// ```
     pub fn with_theme(theme: Theme) -> Self {
         let mut plot = Self::new();
+        plot.display.config.typography.family =
+            crate::render::FontFamily::from(theme.font_family.as_str());
         plot.display.theme = theme;
         plot
     }
@@ -230,7 +232,13 @@ impl Plot {
     /// | Default | Dark | Seaborn | Publication |
     /// |---------|------|---------|-------------|
     /// | ![Default](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_default.png) | ![Dark](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_dark.png) | ![Seaborn](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_seaborn.png) | ![Publication](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/theme_publication.png) |
+    ///
+    /// Builder calls use last-call-wins precedence. Applying a theme replaces
+    /// the current typography settings, including the font family. Call
+    /// [`Plot::font_family`] after `theme` to override the theme's family.
     pub fn theme(mut self, theme: Theme) -> Self {
+        self.display.config.typography.family =
+            crate::render::FontFamily::from(theme.font_family.as_str());
         self.display.theme = theme;
         self
     }
@@ -772,6 +780,18 @@ impl Plot {
         // Convert to scale factor
         self.display.config.typography.title_scale =
             size / self.display.config.typography.base_size;
+        self
+    }
+
+    /// Set the font family used for plot text.
+    ///
+    /// This applies to titles, axis labels, tick labels, legends, and text
+    /// rendered through Typst when the `typst-math` feature is enabled.
+    pub fn font_family<F>(mut self, family: F) -> Self
+    where
+        F: Into<crate::render::FontFamily>,
+    {
+        self.display.config.typography.family = family.into();
         self
     }
 

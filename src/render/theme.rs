@@ -502,14 +502,9 @@ impl Theme {
         use super::FontFamily;
         use crate::core::config::TypographyConfig;
 
-        // Determine FontFamily from font_family string
-        let family = match self.font_family.to_lowercase().as_str() {
-            s if s.contains("serif") && !s.contains("sans") => FontFamily::Serif,
-            s if s.contains("mono") || s.contains("courier") || s.contains("consolas") => {
-                FontFamily::Monospace
-            }
-            _ => FontFamily::SansSerif,
-        };
+        // Preserve exact font family names while keeping generic CSS family
+        // names mapped to their corresponding portable family.
+        let family = FontFamily::from(self.font_family.as_str());
 
         TypographyConfig {
             base_size: self.font_size,
@@ -711,6 +706,23 @@ mod tests {
         assert_eq!(publication.font_family, "Times New Roman");
         assert_eq!(minimal.font_family, "Helvetica");
         assert!(colorblind.colorblind_friendly);
+    }
+
+    #[test]
+    fn test_theme_typography_preserves_named_font_families() {
+        let publication = Theme::publication().to_typography_config();
+        let minimal = Theme::minimal().to_typography_config();
+        let ieee = Theme::ieee().to_typography_config();
+
+        assert_eq!(
+            publication.family,
+            crate::render::FontFamily::Name("Times New Roman".to_string())
+        );
+        assert_eq!(
+            minimal.family,
+            crate::render::FontFamily::Name("Helvetica".to_string())
+        );
+        assert_eq!(ieee.family, crate::render::FontFamily::Serif);
     }
 
     #[test]

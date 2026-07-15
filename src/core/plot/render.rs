@@ -226,8 +226,12 @@ impl Plot {
         }
 
         let (scaled_width, scaled_height) = self.config_canvas_size();
-        let mut renderer =
-            SkiaRenderer::new(scaled_width, scaled_height, self.display.theme.clone())?;
+        let mut renderer = SkiaRenderer::with_font_family(
+            scaled_width,
+            scaled_height,
+            self.display.theme.clone(),
+            self.display.config.typography.family.clone(),
+        )?;
         renderer.set_text_engine_mode(self.display.text_engine);
         renderer.set_render_mode_diagnostics(match mode {
             RenderExecutionMode::Reference => "reference",
@@ -2157,7 +2161,11 @@ impl Plot {
         let width = width_px as f32;
         let height = height_px as f32;
 
-        let mut svg = SvgRenderer::new(width, height);
+        let mut svg = SvgRenderer::with_font_family(
+            width,
+            height,
+            self.display.config.typography.family.clone(),
+        );
         let render_scale = self.render_scale();
         svg.set_render_scale(render_scale);
         svg.set_text_engine_mode(self.display.text_engine);
@@ -2168,8 +2176,12 @@ impl Plot {
 
         // Use the same content-driven layout path as PNG rendering.
         let content = self.create_plot_content(y_min, y_max);
-        let mut measurement_renderer =
-            SkiaRenderer::new(width_px, height_px, self.display.theme.clone())?;
+        let mut measurement_renderer = SkiaRenderer::with_font_family(
+            width_px,
+            height_px,
+            self.display.theme.clone(),
+            self.display.config.typography.family.clone(),
+        )?;
         measurement_renderer.set_text_engine_mode(self.display.text_engine);
         measurement_renderer.set_render_scale(render_scale);
         let x_major_measurement_layout = TickLayout::compute(
