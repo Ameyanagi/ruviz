@@ -120,7 +120,7 @@ impl Plot {
         plot_area: tiny_skia::Rect,
         scale: &AxisScale,
     ) -> f32 {
-        if (max - min).abs() < f64::EPSILON {
+        if min == max || (!matches!(scale, AxisScale::Log) && (max - min).abs() < f64::EPSILON) {
             plot_area.left() + plot_area.width() * 0.5
         } else {
             let normalized = scale.normalized_position(value, min, max);
@@ -135,7 +135,7 @@ impl Plot {
         plot_area: tiny_skia::Rect,
         scale: &AxisScale,
     ) -> f32 {
-        if (max - min).abs() < f64::EPSILON {
+        if min == max || (!matches!(scale, AxisScale::Log) && (max - min).abs() < f64::EPSILON) {
             plot_area.top() + plot_area.height() * 0.5
         } else {
             let normalized = scale.normalized_position(value, min, max);
@@ -164,10 +164,10 @@ impl Plot {
                 && *tick <= range_max
                 && !major_ticks
                     .iter()
-                    .any(|major| Self::tick_values_overlap(*major, *tick))
+                    .any(|major| Self::tick_values_overlap(*major, *tick, scale))
         });
         ticks.sort_by(f64::total_cmp);
-        ticks.dedup_by(|left, right| Self::tick_values_overlap(*left, *right));
+        ticks.dedup_by(|left, right| Self::tick_values_overlap(*left, *right, scale));
         ticks
     }
 
@@ -193,8 +193,13 @@ impl Plot {
         ticks
     }
 
-    fn tick_values_overlap(left: f64, right: f64) -> bool {
-        (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1e-10
+    fn tick_values_overlap(left: f64, right: f64, scale: &AxisScale) -> bool {
+        match scale {
+            AxisScale::Log => left == right,
+            AxisScale::Linear | AxisScale::SymLog { .. } => {
+                (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1e-10
+            }
+        }
     }
 
     pub(crate) fn grid_tick_pixels(

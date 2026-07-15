@@ -52,7 +52,7 @@ impl TickLayout {
         let pixel_positions: Vec<f32> = data_positions
             .iter()
             .map(|&data_pos| {
-                if (data_max - data_min).abs() < f64::EPSILON {
+                if scale_range_is_degenerate(data_min, data_max, scale) {
                     pixel_min
                 } else {
                     let normalized = scale.normalized_position(data_pos, data_min, data_max);
@@ -92,7 +92,7 @@ impl TickLayout {
         let pixel_positions: Vec<f32> = data_positions
             .iter()
             .map(|&data_pos| {
-                if (data_max - data_min).abs() < f64::EPSILON {
+                if scale_range_is_degenerate(data_min, data_max, scale) {
                     pixel_bottom
                 } else {
                     // Invert: higher data values -> lower pixel values
@@ -213,6 +213,19 @@ impl TickLayout {
     }
 }
 
+fn scale_range_is_degenerate(data_min: f64, data_max: f64, scale: &AxisScale) -> bool {
+    match scale {
+        AxisScale::Log => {
+            data_min <= 0.0
+                || data_max <= 0.0
+                || !data_min.is_finite()
+                || !data_max.is_finite()
+                || data_min == data_max
+        }
+        _ => (data_max - data_min).abs() < f64::EPSILON,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +259,23 @@ mod tests {
         assert!((layout.pixel_positions[1] - 200.0).abs() < 0.1);
         assert!((layout.pixel_positions[2] - 100.0).abs() < 0.1);
         assert!((layout.pixel_positions[3] - 0.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_log_tick_layout_spreads_sub_epsilon_ticks() {
+        let min = f64::EPSILON / 1024.0;
+        let max = f64::EPSILON / 16.0;
+        let layout = TickLayout::compute(min, max, 0.0, 300.0, &AxisScale::Log, 8);
+
+        assert!(layout.pixel_positions.len() >= 2);
+        assert!(
+            layout
+                .pixel_positions
+                .windows(2)
+                .all(|pair| pair[0] < pair[1]),
+            "expected distinct log-space positions: {:?}",
+            layout.pixel_positions
+        );
     }
 
     #[test]

@@ -582,7 +582,10 @@ impl SkiaRenderer {
         x_max: f64,
         scale: &crate::axes::AxisScale,
     ) -> f32 {
-        if (x_max - x_min).abs() < f64::EPSILON {
+        if x_min == x_max
+            || (!matches!(scale, crate::axes::AxisScale::Log)
+                && (x_max - x_min).abs() < f64::EPSILON)
+        {
             plot_area.center_x()
         } else {
             let normalized = scale.normalized_position(x_value, x_min, x_max);
@@ -606,7 +609,10 @@ impl SkiaRenderer {
         y_max: f64,
         scale: &crate::axes::AxisScale,
     ) -> f32 {
-        if (y_max - y_min).abs() < f64::EPSILON {
+        if y_min == y_max
+            || (!matches!(scale, crate::axes::AxisScale::Log)
+                && (y_max - y_min).abs() < f64::EPSILON)
+        {
             plot_area.center_y()
         } else {
             let normalized = scale.normalized_position(y_value, y_min, y_max);

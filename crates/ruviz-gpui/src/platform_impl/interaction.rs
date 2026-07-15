@@ -88,28 +88,6 @@ pub(super) fn distance_px(a: ViewportPoint, b: ViewportPoint) -> f64 {
     (dx * dx + dy * dy).sqrt()
 }
 
-pub(super) fn cursor_data_position(
-    visible_bounds: ViewportRect,
-    plot_area: ViewportRect,
-    cursor_position_px: ViewportPoint,
-) -> Option<ViewportPoint> {
-    let plot_width = plot_area.width();
-    let plot_height = plot_area.height();
-    if plot_width <= f64::EPSILON || plot_height <= f64::EPSILON {
-        return None;
-    }
-    if !plot_area.contains(cursor_position_px) {
-        return None;
-    }
-
-    let normalized_x = (cursor_position_px.x - plot_area.min.x) / plot_width;
-    let normalized_y = (cursor_position_px.y - plot_area.min.y) / plot_height;
-    Some(ViewportPoint::new(
-        visible_bounds.min.x + visible_bounds.width() * normalized_x,
-        visible_bounds.max.y - visible_bounds.height() * normalized_y,
-    ))
-}
-
 impl RuvizPlot {
     pub(super) fn reset_pointer_state(&mut self) {
         self.interaction_state.reset_pointer_state();
@@ -148,13 +126,7 @@ impl RuvizPlot {
         &self,
         cursor_position_px: ViewportPoint,
     ) -> Result<Vec<ContextMenuEntry>> {
-        let snapshot = self.session.viewport_snapshot()?;
-        let cursor_available = cursor_data_position(
-            snapshot.visible_bounds,
-            snapshot.plot_area,
-            cursor_position_px,
-        )
-        .is_some();
+        let cursor_available = self.session.screen_to_data(cursor_position_px)?.is_some();
         let mut entries = Vec::new();
 
         let push_entry = |entries: &mut Vec<ContextMenuEntry>,

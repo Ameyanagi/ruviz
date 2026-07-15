@@ -11,6 +11,7 @@ pub mod ticks;
 
 pub use inset::{ConnectorStyle, InsetAxes};
 pub use polar::PolarAxes;
+pub(crate) use scale::expand_degenerate_range;
 pub use scale::{AxisScale, LinearScale, LogScale, Scale, SymLogScale};
 pub use secondary::{AxisType, DualAxes, SecondaryAxis};
 pub use tick_layout::TickLayout;

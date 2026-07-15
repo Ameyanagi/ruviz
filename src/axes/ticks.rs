@@ -82,14 +82,16 @@ pub fn generate_ticks_for_scale(
 /// # Returns
 /// Vector of tick positions at powers of 10 (1, 10, 100, 1000, ...)
 pub fn generate_log_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
-    if target_count == 0 || (max - min).abs() < f64::EPSILON {
-        return vec![min.max(f64::EPSILON), max.max(f64::EPSILON)];
-    }
-
     let (min, max) = if min <= max { (min, max) } else { (max, min) };
 
-    if min <= 0.0 || max <= 0.0 {
-        return vec![min.max(f64::EPSILON), max.max(f64::EPSILON)];
+    if min <= 0.0 || max <= 0.0 || !min.is_finite() || !max.is_finite() {
+        let mut fallback = vec![min, max];
+        fallback.retain(|tick| tick.is_finite() && *tick > 0.0);
+        fallback.dedup_by(|left, right| left == right);
+        return fallback;
+    }
+    if target_count == 0 || min == max {
+        return vec![min, max];
     }
 
     let log_min = min.log10().floor() as i32;
@@ -133,8 +135,11 @@ pub fn generate_log_ticks(min: f64, max: f64, target_count: usize) -> Vec<f64> {
         }
     }
 
-    ticks.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    ticks.dedup_by(|a, b| (*a - *b).abs() < f64::EPSILON);
+    if ticks.len() < 2 {
+        ticks.extend([min, max]);
+    }
+    ticks.sort_by(f64::total_cmp);
+    ticks.dedup_by(|left, right| left == right);
     ticks
 }
 
@@ -195,8 +200,12 @@ pub fn generate_symlog_ticks(min: f64, max: f64, linthresh: f64, target_count: u
     }
 
     ticks.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    ticks.dedup_by(|a, b| (*a - *b).abs() < f64::EPSILON);
+    ticks.dedup_by(|a, b| relative_ticks_overlap(*a, *b));
     ticks
+}
+
+fn relative_ticks_overlap(left: f64, right: f64) -> bool {
+    left == right || (left - right).abs() <= left.abs().max(right.abs()) * f64::EPSILON * 8.0
 }
 
 /// Generate minor ticks for logarithmic scales
@@ -353,6 +362,29 @@ mod tests {
         let ticks = generate_log_ticks(-10.0, 100.0, 5);
         // Should return a fallback
         assert!(!ticks.is_empty());
+    }
+
+    #[test]
+    fn test_log_ticks_preserve_sub_epsilon_range() {
+        let min = f64::EPSILON / 1024.0;
+        let max = f64::EPSILON / 16.0;
+        let ticks = generate_log_ticks(min, max, 8);
+
+        assert!(
+            ticks.len() >= 2,
+            "expected distinct sub-epsilon ticks: {ticks:?}"
+        );
+        assert!(ticks.iter().all(|tick| *tick >= min && *tick <= max));
+        assert!(ticks.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn test_log_ticks_fall_back_to_narrow_sub_epsilon_endpoints() {
+        let min = f64::EPSILON / 1024.0;
+        let max = min * 1.5;
+        let ticks = generate_log_ticks(min, max, 8);
+
+        assert_eq!(ticks, vec![min, max]);
     }
 
     #[test]

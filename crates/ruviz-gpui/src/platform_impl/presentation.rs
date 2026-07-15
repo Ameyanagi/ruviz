@@ -360,11 +360,7 @@ impl RuvizPlot {
         cursor_position_px: ViewportPoint,
     ) -> Result<Option<GpuiContextMenuActionContext>> {
         let snapshot = self.session.viewport_snapshot()?;
-        let cursor_data_position = cursor_data_position(
-            snapshot.visible_bounds,
-            snapshot.plot_area,
-            cursor_position_px,
-        );
+        let cursor_data_position = self.session.screen_to_data(cursor_position_px)?;
         let image = self.capture_visible_view_image(window)?;
         Ok(Some(GpuiContextMenuActionContext {
             action_id,

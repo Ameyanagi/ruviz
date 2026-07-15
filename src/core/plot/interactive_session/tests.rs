@@ -1,6 +1,7 @@
 #![allow(clippy::useless_conversion)]
 
 use super::*;
+use crate::core::IntoPlot;
 use crate::data::{Observable, StreamingBuffer, StreamingXY, signal};
 use crate::prelude::Plot;
 use crate::render::{Color, MarkerStyle};
@@ -120,6 +121,612 @@ fn test_small_interactive_frame_renders() {
     );
 }
 
+#[test]
+fn test_viewport_snapshot_remains_available_before_first_render() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .xlim(1.0, 0.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session.resize((320, 240), 1.0);
+
+    let snapshot = session
+        .viewport_snapshot()
+        .expect("viewport snapshot should preserve pre-render compatibility");
+    assert_eq!(
+        (snapshot.visible_bounds.min.x, snapshot.visible_bounds.max.x),
+        (1.0, 0.0)
+    );
+    assert!(snapshot.plot_area.width() > 0.0);
+    assert!(snapshot.plot_area.height() > 0.0);
+}
+
+#[test]
+fn test_displayed_coordinate_conversion_supports_scales_reversal_and_clamping() {
+    let plot: Plot = Plot::new()
+        .line(&[1.0, 1000.0], &[-100.0, 100.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::symlog(1.0))
+        .xlim(1000.0, 1.0)
+        .ylim(100.0, -100.0)
+        .into();
+    let session = plot.prepare_interactive();
+
+    assert!(
+        session
+            .screen_to_data(ViewportPoint::new(0.0, 0.0))
+            .is_err()
+    );
+    session
+        .render_to_surface(render_target())
+        .expect("scaled conversion frame should render");
+
+    let plot_area = session
+        .viewport_snapshot()
+        .expect("displayed viewport should be available")
+        .plot_area;
+    let center = ViewportPoint::new(
+        (plot_area.min.x + plot_area.max.x) * 0.5,
+        (plot_area.min.y + plot_area.max.y) * 0.5,
+    );
+    let center_data = session
+        .screen_to_data(center)
+        .expect("checked screen conversion should succeed")
+        .expect("plot center should be inside the displayed geometry");
+    assert!((center_data.x.log10() - 1.5).abs() < 1e-6);
+    assert!(center_data.y.abs() < 1e-6);
+
+    let round_trip = session
+        .data_to_screen(center_data)
+        .expect("checked data conversion should succeed")
+        .expect("converted center data should be inside the displayed bounds");
+    assert!((round_trip.x - center.x).abs() < 1e-4);
+    assert!((round_trip.y - center.y).abs() < 1e-4);
+
+    assert_eq!(
+        session
+            .screen_to_data(ViewportPoint::new(plot_area.min.x - 1.0, center.y))
+            .expect("outside checked screen conversion should succeed"),
+        None
+    );
+    assert_eq!(
+        session
+            .data_to_screen(ViewportPoint::new(0.5, 0.0))
+            .expect("outside checked data conversion should succeed"),
+        None
+    );
+    assert_eq!(
+        session
+            .data_to_screen(ViewportPoint::new(0.0, 0.0))
+            .expect("zero log input should be rejected without conversion"),
+        None
+    );
+    assert_eq!(
+        session
+            .data_to_screen(ViewportPoint::new(-1.0, 0.0))
+            .expect("negative log input should be rejected without conversion"),
+        None
+    );
+    assert_eq!(
+        session
+            .screen_to_data(ViewportPoint::new(f64::NAN, center.y))
+            .expect("non-finite checked conversion should return no point"),
+        None
+    );
+
+    let clamped_data = session
+        .screen_to_data_clamped(ViewportPoint::new(
+            plot_area.min.x - 100.0,
+            plot_area.min.y - 100.0,
+        ))
+        .expect("clamped screen conversion should succeed");
+    assert!((clamped_data.x - 1000.0).abs() < 1e-6);
+    assert!((clamped_data.y + 100.0).abs() < 1e-6);
+    let clamped_screen = session
+        .data_to_screen_clamped(ViewportPoint::new(2000.0, -200.0))
+        .expect("clamped data conversion should succeed");
+    assert!((clamped_screen.x - plot_area.min.x).abs() < 1e-4);
+    assert!((clamped_screen.y - plot_area.min.y).abs() < 1e-4);
+    assert!(
+        session
+            .data_to_screen_clamped(ViewportPoint::new(f64::INFINITY, 0.0))
+            .is_err()
+    );
+}
+
+#[test]
+fn test_high_dpi_conversion_uses_backing_pixels_and_logical_hit_tolerance() {
+    let plot: Plot = Plot::new()
+        .scatter(&[10.0], &[0.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .xlim(1.0, 100.0)
+        .ylim(-1.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(SurfaceTarget {
+            size_px: (640, 480),
+            scale_factor: 2.0,
+            time_seconds: 0.0,
+        })
+        .expect("high-DPI frame should render");
+
+    let data_position = ViewportPoint::new(10.0, 0.0);
+    let screen_position = session
+        .data_to_screen(data_position)
+        .expect("high-DPI data conversion should succeed")
+        .expect("point should be inside the displayed bounds");
+    let round_trip = session
+        .screen_to_data(screen_position)
+        .expect("high-DPI screen conversion should succeed")
+        .expect("backing-pixel point should be inside the plot area");
+    assert!((round_trip.x - data_position.x).abs() < 1e-6);
+    assert!((round_trip.y - data_position.y).abs() < 1e-6);
+
+    let six_logical_pixels_away = ViewportPoint::new(screen_position.x + 12.0, screen_position.y);
+    assert!(matches!(
+        session.hit_test(six_logical_pixels_away),
+        HitResult::SeriesPoint { point_index: 0, .. }
+    ));
+
+    let nine_logical_pixels_away = ViewportPoint::new(screen_position.x + 18.0, screen_position.y);
+    assert_eq!(session.hit_test(nine_logical_pixels_away), HitResult::None);
+}
+
+#[test]
+fn test_interactive_log_conversion_preserves_sub_epsilon_positive_limits() {
+    let min = f64::EPSILON / 1024.0;
+    let max = f64::EPSILON / 16.0;
+    let plot: Plot = Plot::new()
+        .line(&[min, max], &[0.0, 1.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .xlim(min, max)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("sub-epsilon log frame should render");
+    let snapshot = session.viewport_snapshot().unwrap();
+    assert_eq!(
+        (snapshot.visible_bounds.min.x, snapshot.visible_bounds.max.x),
+        (min, max)
+    );
+    let center = ViewportPoint::new(
+        (snapshot.plot_area.min.x + snapshot.plot_area.max.x) * 0.5,
+        (snapshot.plot_area.min.y + snapshot.plot_area.max.y) * 0.5,
+    );
+    let data = session.screen_to_data(center).unwrap().unwrap();
+    assert!(((data.x - (min * max).sqrt()) / data.x).abs() < 1e-12);
+
+    session.apply_input(PlotInputEvent::Zoom {
+        factor: 2.0,
+        center_px: center,
+    });
+    session
+        .render_to_surface(render_target())
+        .expect("zoomed sub-epsilon log frame should render");
+    let zoomed = session.screen_to_data(center).unwrap().unwrap();
+    assert!(((zoomed.x - data.x) / data.x).abs() < 1e-6);
+}
+
+#[test]
+fn test_interactive_log_auto_bounds_preserve_sub_epsilon_positive_range() {
+    let min = f64::EPSILON / 1024.0;
+    let max = f64::EPSILON / 16.0;
+    let plot: Plot = Plot::new()
+        .line(&[min, max], &[0.0, 1.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("auto-bounded sub-epsilon log frame should render");
+
+    let snapshot = session.viewport_snapshot().unwrap();
+    assert_eq!(
+        (snapshot.visible_bounds.min.x, snapshot.visible_bounds.max.x),
+        (min, max)
+    );
+}
+
+#[test]
+fn test_log_zoom_and_symlog_pan_follow_displayed_transform() {
+    let plot: Plot = Plot::new()
+        .line(&[1.0, 10.0, 1000.0], &[-100.0, 0.0, 100.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::symlog(1.0))
+        .xlim(1.0, 1000.0)
+        .ylim(-100.0, 100.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial nonlinear frame should render");
+    let plot_area = session.viewport_snapshot().unwrap().plot_area;
+    let anchor = ViewportPoint::new(
+        plot_area.min.x + plot_area.width() * 0.3,
+        plot_area.min.y + plot_area.height() * 0.65,
+    );
+    let anchor_data = session.screen_to_data(anchor).unwrap().unwrap();
+
+    session.apply_input(PlotInputEvent::Zoom {
+        factor: 2.0,
+        center_px: anchor,
+    });
+    session
+        .render_to_surface(render_target())
+        .expect("zoomed nonlinear frame should render");
+    let after_zoom = session.screen_to_data(anchor).unwrap().unwrap();
+    assert!(
+        ((after_zoom.x - anchor_data.x) / anchor_data.x).abs() < 1e-6,
+        "x anchor moved from {} to {}",
+        anchor_data.x,
+        after_zoom.x
+    );
+    assert!(
+        (after_zoom.y - anchor_data.y).abs() < 1e-6,
+        "y anchor moved from {} to {}",
+        anchor_data.y,
+        after_zoom.y
+    );
+
+    let tracked_data = ViewportPoint::new(10.0, 0.0);
+    let before_pan = session.data_to_screen(tracked_data).unwrap().unwrap();
+    let delta = ViewportPoint::new(18.0, 12.0);
+    session.apply_input(PlotInputEvent::Pan { delta_px: delta });
+    session
+        .render_to_surface(render_target())
+        .expect("panned nonlinear frame should render");
+    let after_pan = session.data_to_screen(tracked_data).unwrap().unwrap();
+    assert!((after_pan.x - before_pan.x - delta.x).abs() < 1e-4);
+    assert!((after_pan.y - before_pan.y - delta.y).abs() < 1e-4);
+}
+
+#[test]
+fn test_zoom_limit_preserves_off_center_anchor_and_reuses_base_at_limit() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 100.0], &[0.0, 100.0])
+        .xlim(0.0, 100.0)
+        .ylim(0.0, 100.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial zoom-limit frame should render");
+    let plot_area = session.viewport_snapshot().unwrap().plot_area;
+    let anchor = ViewportPoint::new(
+        plot_area.min.x + plot_area.width() * 0.2,
+        plot_area.min.y + plot_area.height() * 0.7,
+    );
+    let anchor_before = session.screen_to_data(anchor).unwrap().unwrap();
+
+    session.apply_input(PlotInputEvent::Zoom {
+        factor: 1e12,
+        center_px: anchor,
+    });
+    session
+        .render_to_surface(render_target())
+        .expect("clamped zoom-limit frame should render");
+    let anchor_after = session.screen_to_data(anchor).unwrap().unwrap();
+    assert!((anchor_after.x - anchor_before.x).abs() < 1e-8);
+    assert!((anchor_after.y - anchor_before.y).abs() < 1e-8);
+
+    session.apply_input(PlotInputEvent::Zoom {
+        factor: 1e12,
+        center_px: anchor,
+    });
+    let repeated = session
+        .render_to_surface(render_target())
+        .expect("repeated zoom-limit frame should reuse the base");
+    assert!(!repeated.layer_state.base_dirty);
+}
+
+#[test]
+fn test_failed_reactive_log_render_rolls_back_viewport_state() {
+    let y = Observable::new(vec![1.0, 10.0]);
+    let plot: Plot = Plot::new()
+        .line_source(vec![1.0, 2.0], y.clone())
+        .yscale(crate::axes::AxisScale::Log)
+        .xlim(1.0, 2.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial positive log frame should render");
+    let before = session.viewport_snapshot().unwrap();
+
+    y.set(vec![-10.0, -1.0]);
+    assert!(session.render_to_surface(render_target()).is_err());
+
+    let after = session.viewport_snapshot().unwrap();
+    assert_eq!(after.base_bounds, before.base_bounds);
+    assert_eq!(after.visible_bounds, before.visible_bounds);
+    assert_eq!(after.plot_area, before.plot_area);
+}
+
+#[test]
+fn test_restore_visible_bounds_rejects_invalid_log_domain() {
+    let plot: Plot = Plot::new()
+        .line(&[1.0, 100.0], &[0.0, 1.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .xlim(1.0, 100.0)
+        .ylim(0.0, 1.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial log frame should render");
+    let before = session.viewport_snapshot().unwrap();
+
+    assert!(!session.restore_visible_bounds(ViewportRect {
+        min: ViewportPoint::new(-10.0, 0.0),
+        max: ViewportPoint::new(-1.0, 1.0),
+    }));
+    assert_eq!(session.viewport_snapshot().unwrap(), before);
+    assert!(!session.dirty_domains().needs_base_render());
+}
+
+#[test]
+fn test_equal_tiny_positive_log_bounds_expand_multiplicatively() {
+    let value = f64::EPSILON / 1024.0;
+    let static_plot: Plot = Plot::new()
+        .scatter(&[value], &[1.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let (x_min, x_max, _, _) = static_plot
+        .effective_data_bounds()
+        .expect("static log bounds should resolve");
+    assert!(x_min > 0.0 && x_min < x_max);
+    static_plot
+        .render()
+        .expect("static equal-value log plot should render");
+
+    let interactive_plot: Plot = Plot::new()
+        .scatter(&[value], &[1.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = interactive_plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("interactive equal-value log plot should render");
+    let bounds = session.viewport_snapshot().unwrap().base_bounds;
+    assert!(bounds.min.x > 0.0 && bounds.min.x < bounds.max.x);
+}
+
+#[test]
+fn test_selected_hit_overlay_is_clipped_after_pan() {
+    let plot: Plot = Plot::new()
+        .scatter(&[5.0], &[5.0])
+        .xlim(0.0, 10.0)
+        .ylim(0.0, 10.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial selection frame should render");
+    let before = session.viewport_snapshot().unwrap();
+    let point = session
+        .data_to_screen(ViewportPoint::new(5.0, 5.0))
+        .unwrap()
+        .unwrap();
+    session.apply_input(PlotInputEvent::SelectAt { position_px: point });
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: ViewportPoint::new(before.plot_area.width() * 0.5 + 3.0, 0.0),
+    });
+
+    let frame = session
+        .render_to_surface(render_target())
+        .expect("panned selection frame should render");
+    let after = session.viewport_snapshot().unwrap();
+    assert_eq!(after.selected_count, 1);
+    let overlay = frame
+        .layers
+        .overlay
+        .expect("selection overlay should exist");
+    let plot_area = tiny_skia::Rect::from_ltrb(
+        after.plot_area.min.x as f32,
+        after.plot_area.min.y as f32,
+        after.plot_area.max.x as f32,
+        after.plot_area.max.y as f32,
+    )
+    .unwrap();
+    assert_eq!(
+        count_matching_pixels_outside_rect(&overlay, plot_area, |pixel| pixel[3] > 0),
+        0
+    );
+}
+
+#[test]
+fn test_large_offset_narrow_range_pan_is_not_discarded() {
+    let x_min = 1e15;
+    let x_max = x_min + 100.0;
+    let plot: Plot = Plot::new()
+        .line(&[x_min, x_max], &[0.0, 1.0])
+        .xlim(x_min, x_max)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial large-offset frame should render");
+    let tracked = ViewportPoint::new(x_min + 0.5, 0.5);
+    let before = session.data_to_screen(tracked).unwrap().unwrap();
+    let delta = ViewportPoint::new(20.0, 0.0);
+
+    session.apply_input(PlotInputEvent::Pan { delta_px: delta });
+    session
+        .render_to_surface(render_target())
+        .expect("large-offset panned frame should render");
+    let after = session.data_to_screen(tracked).unwrap().unwrap();
+    assert!((after.x - before.x - delta.x).abs() < 0.1);
+}
+
+#[test]
+fn test_scaled_error_bar_hit_and_selection_refresh_use_displayed_geometry() {
+    let plot: Plot = Plot::new()
+        .error_bars(&[1.0, 10.0, 100.0], &[-10.0, 0.0, 10.0], &[1.0, 1.0, 1.0])
+        .into_plot()
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::symlog(1.0))
+        .xlim(1.0, 100.0)
+        .ylim(-10.0, 10.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("scaled error-bar frame should render");
+    let data_position = ViewportPoint::new(10.0, 0.0);
+    let screen_position = session.data_to_screen(data_position).unwrap().unwrap();
+
+    assert!(matches!(
+        session.hit_test(screen_position),
+        HitResult::SeriesPoint { point_index: 1, .. }
+    ));
+    session.apply_input(PlotInputEvent::SelectAt {
+        position_px: screen_position,
+    });
+    let plot_area = session.viewport_snapshot().unwrap().plot_area;
+    session.apply_input(PlotInputEvent::Zoom {
+        factor: 2.0,
+        center_px: ViewportPoint::new(
+            (plot_area.min.x + plot_area.max.x) * 0.5,
+            (plot_area.min.y + plot_area.max.y) * 0.5,
+        ),
+    });
+    session
+        .render_to_surface(render_target())
+        .expect("zoomed error-bar frame should render");
+
+    let expected = session.data_to_screen(data_position).unwrap().unwrap();
+    let state = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned");
+    match state.selected.as_slice() {
+        [
+            HitResult::SeriesPoint {
+                point_index,
+                screen_position,
+                ..
+            },
+        ] => {
+            assert_eq!(*point_index, 1);
+            assert!((screen_position.x - expected.x).abs() < 1e-4);
+            assert!((screen_position.y - expected.y).abs() < 1e-4);
+        }
+        other => panic!("expected refreshed error-bar selection, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_heatmap_axis_hit_uses_scaled_screen_to_data_and_cell_geometry() {
+    let values = vec![vec![1.0, 2.0]];
+    let plot: Plot = Plot::new()
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .extent(1.0, 100.0, 1.0, 100.0)
+                    .colorbar(false),
+            ),
+        )
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::Log)
+        .xlim(1.0, 100.0)
+        .ylim(1.0, 100.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("log-axis heatmap frame should render");
+    let screen_position = session
+        .data_to_screen(ViewportPoint::new(10.0, 10.0))
+        .unwrap()
+        .unwrap();
+
+    match session.hit_test(screen_position) {
+        HitResult::HeatmapCell {
+            row,
+            col,
+            value,
+            screen_rect,
+            ..
+        } => {
+            assert_eq!((row, col), (0, 0));
+            assert_eq!(value, 1.0);
+            assert!(screen_rect.contains(screen_position));
+        }
+        other => panic!("expected scaled heatmap cell hit, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_incremental_streaming_uses_scaled_geometry_and_displayed_hit_data() {
+    let stream = StreamingXY::new(32);
+    stream.push_many(vec![(1.0, -10.0), (10.0, 0.0)]);
+    let plot: Plot = Plot::new()
+        .line_streaming(&stream)
+        .color(Color::new(220, 20, 20))
+        .into_plot()
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::symlog(1.0))
+        .xlim(1.0, 1000.0)
+        .ylim(-100.0, 100.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial scaled streaming frame should render");
+
+    stream.push(100.0, 10.0);
+    let incremental = session
+        .render_to_surface(render_target())
+        .expect("incremental scaled streaming frame should render");
+    assert!(incremental.layer_state.used_incremental_data);
+    let screen_position = session
+        .data_to_screen(ViewportPoint::new(100.0, 10.0))
+        .unwrap()
+        .unwrap();
+    assert!(
+        count_matching_pixels_near(
+            incremental.layers.base.as_ref(),
+            screen_position,
+            6,
+            |pixel| pixel[3] > 0 && pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100
+        ) > 0
+    );
+    assert!(matches!(
+        session.hit_test(screen_position),
+        HitResult::SeriesPoint { point_index: 2, .. }
+    ));
+}
 fn color_centroid<F>(image: &Image, predicate: F) -> Option<ViewportPoint>
 where
     F: Fn(&[u8]) -> bool,
@@ -447,6 +1054,48 @@ fn test_overlapping_render_requests_cannot_commit_stale_base_cache() {
     session
         .render_to_surface(second_target)
         .expect("latest render target should retain a coherent cache");
+}
+
+#[test]
+fn test_reentrant_render_request_returns_error() {
+    let session_slot = Arc::new(std::sync::Mutex::new(None));
+    let nested_error = Arc::new(std::sync::Mutex::new(None));
+    let session_slot_for_signal = Arc::clone(&session_slot);
+    let nested_error_for_signal = Arc::clone(&nested_error);
+    let color = signal::of(move |_| {
+        let session: Option<InteractivePlotSession> = session_slot_for_signal
+            .lock()
+            .expect("session slot lock poisoned")
+            .clone();
+        if let Some(session) = session {
+            let error = session
+                .render_to_surface(render_target())
+                .expect_err("reentrant render should return an error")
+                .to_string();
+            *nested_error_for_signal
+                .lock()
+                .expect("nested error lock poisoned") = Some(error);
+        }
+        Color::RED
+    });
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .color_source(color)
+        .into();
+    let session = plot.prepare_interactive();
+    *session_slot.lock().expect("session slot lock poisoned") = Some(session.clone());
+
+    session
+        .render_to_surface(render_target())
+        .expect("outer render should complete");
+
+    assert!(
+        nested_error
+            .lock()
+            .expect("nested error lock poisoned")
+            .as_deref()
+            .is_some_and(|error| error.contains("reentrant interactive render"))
+    );
 }
 
 #[test]
@@ -1133,6 +1782,17 @@ fn test_interactive_render_resolves_each_temporal_source_once() {
 
     assert_eq!(resolutions.load(Ordering::Relaxed), 1);
     assert_eq!(text_resolutions.load(Ordering::Relaxed), 1);
+
+    let plot_area = session.viewport_snapshot().unwrap().plot_area;
+    let center = ViewportPoint::new(
+        (plot_area.min.x + plot_area.max.x) * 0.5,
+        (plot_area.min.y + plot_area.max.y) * 0.5,
+    );
+    let data = session.screen_to_data(center).unwrap().unwrap();
+    assert!(session.data_to_screen(data).unwrap().is_some());
+    let _ = session.hit_test(center);
+    assert_eq!(resolutions.load(Ordering::Relaxed), 1);
+    assert_eq!(text_resolutions.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -1305,9 +1965,16 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
         .geometry_snapshot()
         .expect("geometry should be available after log heatmap render");
     let source_plot = session.prepared_plot().plot();
-    let frame = source_plot
-        .resolve_frame(0.0)
-        .expect("heatmap frame should resolve");
+    let displayed_data = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .base_cache
+        .as_ref()
+        .expect("displayed base cache should be available")
+        .displayed_data
+        .clone();
 
     let masked = HitResult::HeatmapCell {
         series_index: 0,
@@ -1319,7 +1986,7 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
             ViewportPoint::new(1.0, 1.0),
         ),
     };
-    assert!(refresh_hit_result(&masked, source_plot, &frame.series, &geometry).is_none());
+    assert!(refresh_hit_result(&masked, source_plot, &displayed_data, &geometry).is_none());
 
     let valid = HitResult::HeatmapCell {
         series_index: 0,
@@ -1331,7 +1998,7 @@ fn test_refresh_hit_result_drops_masked_log_heatmap_cells() {
             ViewportPoint::new(1.0, 1.0),
         ),
     };
-    match refresh_hit_result(&valid, source_plot, &frame.series, &geometry) {
+    match refresh_hit_result(&valid, source_plot, &displayed_data, &geometry) {
         Some(HitResult::HeatmapCell {
             row, col, value, ..
         }) => {
@@ -1492,8 +2159,8 @@ fn test_reversed_manual_limits_survive_zoom_and_zoom_rect() {
     assert!(after_zoom_visible.height() < 0.0);
 
     let zoom_geometry = session
-        .geometry_snapshot()
-        .expect("geometry should be available after reversed zoom");
+        .interaction_geometry()
+        .expect("displayed geometry should remain available after reversed zoom");
     let start_px = ViewportPoint::new(
         zoom_geometry.plot_area.left() as f64 + 32.0,
         zoom_geometry.plot_area.top() as f64 + 28.0,
@@ -1571,6 +2238,41 @@ fn test_pan_uses_plot_area_dimensions() {
     assert!(((after_visible.x_max - before_visible.x_max) - expected_dx).abs() < 1e-9);
     assert!(((after_visible.y_min - before_visible.y_min) - expected_dy).abs() < 1e-9);
     assert!(((after_visible.y_max - before_visible.y_max) - expected_dy).abs() < 1e-9);
+}
+
+#[test]
+fn test_pan_accumulates_before_the_next_render() {
+    let plot: Plot = Plot::new()
+        .line(&[1.0, 1000.0], &[-100.0, 100.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::symlog(1.0))
+        .xlim(1.0, 1000.0)
+        .ylim(-100.0, 100.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial nonlinear frame should render");
+
+    let tracked_data = ViewportPoint::new(10.0, 0.0);
+    let before = session.data_to_screen(tracked_data).unwrap().unwrap();
+    let first_delta = ViewportPoint::new(12.0, 7.0);
+    let second_delta = ViewportPoint::new(9.0, 5.0);
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: first_delta,
+    });
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: second_delta,
+    });
+    session
+        .render_to_surface(render_target())
+        .expect("accumulated nonlinear pan should render");
+
+    let after = session.data_to_screen(tracked_data).unwrap().unwrap();
+    assert!((after.x - before.x - first_delta.x - second_delta.x).abs() < 1e-4);
+    assert!((after.y - before.y - first_delta.y - second_delta.y).abs() < 1e-4);
 }
 
 #[test]
