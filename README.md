@@ -7,6 +7,19 @@ High-performance 2D plotting library for Rust.
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE)
 [![CI](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml/badge.svg)](https://github.com/Ameyanagi/ruviz/actions/workflows/ci.yml)
 
+## Visual Examples
+
+Click any plot to open its runnable Rust source. See the [complete gallery](docs/gallery/README.md)
+for more plot types, themes, publication layouts, and international text examples.
+
+| Line plot | Scatter plot | Heatmap |
+|:---:|:---:|:---:|
+| [![Sine-wave line plot](docs/assets/gallery/rust/basic/line_plot.png)](examples/doc_line_plot.rs) | [![Clustered scatter plot](docs/assets/gallery/rust/basic/scatter_plot.png)](examples/doc_scatter_plot.rs) | [![Colored heatmap](docs/assets/gallery/rust/basic/heatmap.png)](examples/doc_heatmap.rs) |
+
+| Violin plot | Radar chart | Multi-panel figure |
+|:---:|:---:|:---:|
+| [![Statistical violin plot](docs/assets/gallery/rust/statistical/violin_plot.png)](examples/doc_violin.rs) | [![Multi-axis radar chart](docs/assets/gallery/rust/advanced/radar_chart.png)](examples/doc_radar.rs) | [![Scientific multi-panel analysis](docs/assets/gallery/rust/publication/scientific_analysis_figure.png)](gallery/scientific/scientific_plotting.rs) |
+
 ## Quick Start
 
 Add the crate:
