@@ -1199,8 +1199,8 @@ fn detect_compiled_features() -> Vec<String> {
     if cfg!(feature = "gpu") {
         features.push("gpu".to_string());
     }
-    if cfg!(feature = "ndarray") {
-        features.push("ndarray".to_string());
+    if cfg!(feature = "ndarray_support") {
+        features.push("ndarray_support".to_string());
     }
     if cfg!(feature = "serde") {
         features.push("serde".to_string());

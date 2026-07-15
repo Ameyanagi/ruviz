@@ -141,7 +141,7 @@ sha2 = "0.10"
 plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "line_series"] }
 
 [features]
-default = ["ndarray", "parallel"]
+default = ["ndarray_support", "parallel"]
 
 # Display and window features
 window = ["winit", "raw-window-handle", "dep:softbuffer", "dep:rfd", "dep:arboard"]
@@ -152,10 +152,11 @@ interactive-gpu = ["interactive", "gpu"]  # Interactive mode WITH GPU accelerati
 serde = ["dep:serde", "serde_json", "palette/serde"]
 
 # Data format support
-ndarray_support = ["ndarray"]
+ndarray_support = ["dep:ndarray"]
 polars_support = ["polars"]
 nalgebra_support = ["dep:nalgebra"]
-# Backward-compatibility alias (historical feature name)
+# Backward-compatibility aliases (historical feature names)
+ndarray = ["ndarray_support"]
 nalgebra = ["nalgebra_support"]
 
 # Performance optimization features

@@ -119,11 +119,12 @@ helpers.
 
 ## Feature Flags
 
-Default features are `ndarray` and `parallel`.
+Default features are `ndarray_support` and `parallel`.
 
 | Feature | Description |
 |---------|-------------|
-| `ndarray_support` | ndarray data support |
+| `ndarray_support` | ndarray data support (canonical) |
+| `ndarray` | compatibility alias for `ndarray_support` |
 | `polars_support` | polars data support |
 | `nalgebra_support` | nalgebra data support |
 | `parallel` | enables the internal parallel renderer and backend metadata |
