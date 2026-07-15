@@ -91,6 +91,10 @@ impl<T> Signal<T> {
         (self.eval)(time)
     }
 
+    pub(crate) fn shares_source(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.eval, &other.eval)
+    }
+
     /// Transform the signal's output using a mapping function.
     ///
     /// # Arguments

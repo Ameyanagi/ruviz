@@ -1,6 +1,6 @@
 use super::{
-    Image, Plot, PlotData, PlotSeries, PreparedPlot, ReactiveSubscription, ResolvedSeries,
-    SeriesType,
+    Image, Plot, PlotData, PlotSeries, PreparedPlot, ReactiveSubscription, RenderExecutionMode,
+    ResolvedData, ResolvedFrame, ResolvedSeries, SeriesType,
 };
 use crate::{
     core::{
@@ -330,6 +330,7 @@ struct InteractivePlotSessionInner {
     quality_policy: Mutex<QualityPolicy>,
     prefer_gpu: Mutex<bool>,
     reactive_subscription: Mutex<ReactiveSubscription>,
+    render_gate: Mutex<()>,
     state: Mutex<SessionState>,
     dirty: Arc<Mutex<DirtyDomains>>,
     dirty_epoch: Arc<AtomicU64>,
@@ -481,9 +482,90 @@ struct InteractiveFrameKey {
 }
 
 #[derive(Clone, Debug)]
+enum DisplayedData {
+    Static,
+    Shared(Arc<[f64]>),
+}
+
+impl DisplayedData {
+    fn capture(source: &PlotData, resolved: &ResolvedData<'_>) -> Self {
+        if source.is_static() {
+            Self::Static
+        } else {
+            Self::Shared(
+                resolved
+                    .shared_arc()
+                    .expect("dynamic frame data must use owned shared storage"),
+            )
+        }
+    }
+
+    fn values<'a>(&'a self, source: &'a PlotData) -> Option<&'a [f64]> {
+        match self {
+            Self::Static => source.as_static().map(Vec::as_slice),
+            Self::Shared(values) => Some(values),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DisplayedSeriesData {
+    x: DisplayedData,
+    y: DisplayedData,
+}
+
+#[derive(Clone, Debug)]
+struct DisplayedFrameData {
+    series: Vec<Option<DisplayedSeriesData>>,
+}
+
+impl DisplayedFrameData {
+    fn capture(plot: &Plot, frame: &ResolvedFrame<'_>) -> Self {
+        let series = plot
+            .series_mgr
+            .series
+            .iter()
+            .zip(&frame.series)
+            .map(|(series, resolved)| match (&series.series_type, resolved) {
+                (
+                    SeriesType::Line { x_data, y_data }
+                    | SeriesType::Scatter { x_data, y_data }
+                    | SeriesType::ErrorBars { x_data, y_data, .. }
+                    | SeriesType::ErrorBarsXY { x_data, y_data, .. },
+                    ResolvedSeries::Line { x, y }
+                    | ResolvedSeries::Scatter { x, y }
+                    | ResolvedSeries::ErrorBars { x, y, .. }
+                    | ResolvedSeries::ErrorBarsXY { x, y, .. },
+                ) => Some(DisplayedSeriesData {
+                    x: DisplayedData::capture(x_data, x),
+                    y: DisplayedData::capture(y_data, y),
+                }),
+                _ => None,
+            })
+            .collect();
+        Self { series }
+    }
+
+    fn xy<'a>(&'a self, plot: &'a Plot, series_index: usize) -> Option<(&'a [f64], &'a [f64])> {
+        let displayed = self.series.get(series_index)?.as_ref()?;
+        let series = plot.series_mgr.series.get(series_index)?;
+        let (x_data, y_data) = match &series.series_type {
+            SeriesType::Line { x_data, y_data }
+            | SeriesType::Scatter { x_data, y_data }
+            | SeriesType::ErrorBars { x_data, y_data, .. }
+            | SeriesType::ErrorBarsXY { x_data, y_data, .. } => (x_data, y_data),
+            _ => return None,
+        };
+        Some((displayed.x.values(x_data)?, displayed.y.values(y_data)?))
+    }
+}
+
+#[derive(Clone, Debug)]
 struct InteractiveFrameCache {
     key: InteractiveFrameKey,
     image: Arc<Image>,
+    geometry: GeometrySnapshot,
+    displayed_data: DisplayedFrameData,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -568,8 +650,6 @@ struct StreamingDrawOp {
     marker_style: MarkerStyle,
     marker_size_px: f32,
     draw_markers: bool,
-    source: crate::data::StreamingXY,
-    sequence: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -632,6 +712,7 @@ impl InteractivePlotSession {
                 quality_policy: Mutex::new(QualityPolicy::Balanced),
                 prefer_gpu: Mutex::new(false),
                 reactive_subscription: Mutex::new(reactive_subscription),
+                render_gate: Mutex::new(()),
                 state: Mutex::new(state),
                 dirty,
                 dirty_epoch,
@@ -1019,35 +1100,30 @@ impl InteractivePlotSession {
     }
 
     pub fn hit_test(&self, position_px: ViewportPoint) -> HitResult {
-        let geometry = match self.geometry_snapshot() {
-            Ok(geometry) => geometry,
-            Err(_) => return HitResult::None,
-        };
-        let state = self
+        let Some((geometry, displayed_data)) = self
             .inner
             .state
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
-            .clone();
-        let plot = self
-            .inner
-            .prepared
-            .plot()
-            .prepared_frame_plot(state.size_px, state.scale_factor, state.time_seconds)
-            .xlim(geometry.x_bounds.0, geometry.x_bounds.1)
-            .ylim(geometry.y_bounds.0, geometry.y_bounds.1);
-        let snapshot = plot.snapshot_series(state.time_seconds);
+            .base_cache
+            .as_ref()
+            .map(|cache| (cache.geometry.clone(), cache.displayed_data.clone()))
+        else {
+            return HitResult::None;
+        };
+        let plot = self.inner.prepared.plot();
         let mut best_hit = HitResult::None;
         let mut best_distance = f64::INFINITY;
 
-        for (series_index, series) in snapshot.iter().enumerate() {
+        for (series_index, series) in plot.series_mgr.series.iter().enumerate() {
             match &series.series_type {
-                SeriesType::Line { x_data, y_data }
-                | SeriesType::Scatter { x_data, y_data }
-                | SeriesType::ErrorBars { x_data, y_data, .. }
-                | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                    let x = x_data.resolve(0.0);
-                    let y = y_data.resolve(0.0);
+                SeriesType::Line { .. }
+                | SeriesType::Scatter { .. }
+                | SeriesType::ErrorBars { .. }
+                | SeriesType::ErrorBarsXY { .. } => {
+                    let Some((x, y)) = displayed_data.xy(plot, series_index) else {
+                        continue;
+                    };
                     for (point_index, (&x_val, &y_val)) in x.iter().zip(y.iter()).enumerate() {
                         if !x_val.is_finite() || !y_val.is_finite() {
                             continue;
@@ -1237,6 +1313,11 @@ impl InteractivePlotSession {
         scale_factor: f32,
         time_seconds: f64,
     ) -> Result<InteractiveFrame> {
+        let _render_guard = self
+            .inner
+            .render_gate
+            .lock()
+            .expect("InteractivePlotSession render gate poisoned");
         let frame_start = start_frame_timer();
         self.resize(size_px, scale_factor);
         self.apply_input(PlotInputEvent::SetTime { time_seconds });
@@ -1261,10 +1342,14 @@ impl InteractivePlotSession {
 
         let dirty_before_render = self.dirty_domains();
         let dirty_epoch_before_render = self.inner.dirty_epoch.load(Ordering::Acquire);
+        let source_plot = self.inner.prepared.plot();
+        let resolved_frame = dirty_before_render
+            .needs_base_render()
+            .then(|| source_plot.resolve_frame(time_seconds))
+            .transpose()?;
 
         if dirty_before_render.layout || dirty_before_render.data || dirty_before_render.temporal {
-            let plot = self.inner.prepared.plot();
-            let constraints = AxisConstraints::from_plot(plot);
+            let constraints = AxisConstraints::from_plot(source_plot);
             let mut state = self
                 .inner
                 .state
@@ -1272,8 +1357,10 @@ impl InteractivePlotSession {
                 .expect("InteractivePlotSession state lock poisoned");
             let previous_base = state.base_bounds;
             let previous_visible = state.visible_bounds;
-            let next_data_bounds =
-                compute_data_bounds(plot, time_seconds).unwrap_or(state.data_bounds);
+            let next_data_bounds = resolved_frame
+                .as_ref()
+                .and_then(|frame| compute_data_bounds_from_frame(source_plot, frame).ok())
+                .unwrap_or(state.data_bounds);
             state.data_bounds = next_data_bounds;
             state.base_bounds = constraints.apply(next_data_bounds);
             if bounds_close(previous_visible, previous_base) {
@@ -1295,8 +1382,8 @@ impl InteractivePlotSession {
             build_frame_key(self.inner.prepared.plot(), &state)
         };
 
-        let geometry = self.ensure_geometry(&base_key)?;
-        self.refresh_overlay_state(&geometry, dirty_before_render)?;
+        let geometry = self.ensure_geometry(&base_key, resolved_frame.as_ref())?;
+        self.refresh_overlay_state(&geometry, dirty_before_render, resolved_frame.as_ref())?;
         let frame_size_px = {
             self.inner
                 .state
@@ -1304,7 +1391,12 @@ impl InteractivePlotSession {
                 .expect("InteractivePlotSession state lock poisoned")
                 .size_px
         };
-        let base_result = self.ensure_base_image(&base_key, &geometry, dirty_before_render)?;
+        let base_result = self.ensure_base_image(
+            &base_key,
+            &geometry,
+            dirty_before_render,
+            resolved_frame.as_ref(),
+        )?;
         let overlay_result = self.ensure_overlay_image(frame_size_px, dirty_before_render)?;
         let composed = if target == RenderTargetKind::Image {
             if let Some(overlay_image) = overlay_result.image.as_ref() {
@@ -1316,6 +1408,11 @@ impl InteractivePlotSession {
             Arc::clone(&base_result.image)
         };
 
+        if base_result.updated {
+            if let Some(frame) = resolved_frame.as_ref() {
+                frame.acknowledge_rendered(source_plot);
+            }
+        }
         self.clear_dirty_after_render(dirty_epoch_before_render);
 
         let surface_capability = if target == RenderTargetKind::Surface {
@@ -1349,7 +1446,11 @@ impl InteractivePlotSession {
         })
     }
 
-    fn ensure_geometry(&self, key: &InteractiveFrameKey) -> Result<GeometrySnapshot> {
+    fn ensure_geometry(
+        &self,
+        key: &InteractiveFrameKey,
+        frame: Option<&ResolvedFrame<'_>>,
+    ) -> Result<GeometrySnapshot> {
         {
             let state = self
                 .inner
@@ -1369,8 +1470,13 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
-        let geometry =
-            geometry_snapshot_for_state(self.inner.prepared.plot(), &state, key.clone())?;
+        let source_plot = self.inner.prepared.plot();
+        let owned_frame = frame
+            .is_none()
+            .then(|| source_plot.resolve_frame(state.time_seconds))
+            .transpose()?;
+        let frame = frame.or(owned_frame.as_ref()).expect("geometry frame");
+        let geometry = geometry_snapshot_for_state(source_plot, &state, key.clone(), frame)?;
 
         let mut state = self
             .inner
@@ -1386,6 +1492,7 @@ impl InteractivePlotSession {
         key: &InteractiveFrameKey,
         geometry: &GeometrySnapshot,
         dirty_before_render: DirtyDomains,
+        frame: Option<&ResolvedFrame<'_>>,
     ) -> Result<BaseLayerResult> {
         {
             let state = self
@@ -1416,7 +1523,9 @@ impl InteractivePlotSession {
             && !dirty_before_render.temporal
             && !dirty_before_render.interaction
         {
-            if let Some(incremental) = self.try_incremental_stream_render(key, geometry)? {
+            if let Some(incremental) =
+                self.try_incremental_stream_render(key, geometry, frame.expect("dirty base frame"))?
+            {
                 return Ok(incremental);
             }
         }
@@ -1427,11 +1536,10 @@ impl InteractivePlotSession {
             .lock()
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
-        let mut plot = self
-            .inner
-            .prepared
-            .plot()
-            .prepared_frame_plot(state.size_px, state.scale_factor, state.time_seconds)
+        let source_plot = self.inner.prepared.plot();
+        let frame = frame.expect("dirty base render must resolve a frame");
+        let mut plot = source_plot
+            .prepared_frame_shell(state.size_px, state.scale_factor, state.time_seconds)
             .xlim(geometry.x_bounds.0, geometry.x_bounds.1)
             .ylim(geometry.y_bounds.0, geometry.y_bounds.1);
         if self.prefer_gpu() {
@@ -1440,9 +1548,10 @@ impl InteractivePlotSession {
                 plot = plot.gpu(true);
             }
         }
-        let image = plot.render_at(state.time_seconds)?;
-        plot.acknowledge_rendered_snapshot(self.inner.prepared.plot());
-        let image = Arc::new(image);
+        let (renderer, _) =
+            plot.render_renderer_with_frame_and_diagnostics(RenderExecutionMode::Reference, frame)?;
+        let image = Arc::new(renderer.into_image());
+        let displayed_data = DisplayedFrameData::capture(source_plot, frame);
 
         let mut state = self
             .inner
@@ -1452,6 +1561,8 @@ impl InteractivePlotSession {
         state.base_cache = Some(InteractiveFrameCache {
             key: key.clone(),
             image: Arc::clone(&image),
+            geometry: geometry.clone(),
+            displayed_data,
         });
         Ok(BaseLayerResult {
             image,
@@ -1565,6 +1676,7 @@ impl InteractivePlotSession {
         &self,
         geometry: &GeometrySnapshot,
         dirty_before_render: DirtyDomains,
+        frame: Option<&ResolvedFrame<'_>>,
     ) -> Result<()> {
         if !dirty_before_render.layout && !dirty_before_render.data && !dirty_before_render.temporal
         {
@@ -1585,19 +1697,16 @@ impl InteractivePlotSession {
             return Ok(());
         }
 
-        let snapshot = self
-            .inner
-            .prepared
-            .plot()
-            .snapshot_series(state_snapshot.time_seconds);
+        let source_plot = self.inner.prepared.plot();
+        let frame = frame.expect("data/layout refresh must resolve a frame");
         let refreshed_hovered = state_snapshot
             .hovered
             .as_ref()
-            .and_then(|hit| refresh_hit_result(hit, &snapshot, geometry));
+            .and_then(|hit| refresh_hit_result(hit, source_plot, &frame.series, geometry));
         let refreshed_selected = state_snapshot
             .selected
             .iter()
-            .filter_map(|hit| refresh_hit_result(hit, &snapshot, geometry))
+            .filter_map(|hit| refresh_hit_result(hit, source_plot, &frame.series, geometry))
             .collect::<Vec<_>>();
         let (refreshed_tooltip, refreshed_tooltip_source) =
             if state_snapshot.tooltip_source == Some(TooltipSource::Hover) {
@@ -1632,7 +1741,7 @@ impl InteractivePlotSession {
             .expect("InteractivePlotSession state lock poisoned")
             .clone();
         let key = build_frame_key(self.inner.prepared.plot(), &state);
-        self.ensure_geometry(&key)
+        self.ensure_geometry(&key, None)
     }
 
     fn mark_dirty(&self, domain: DirtyDomain) {
@@ -1685,6 +1794,7 @@ impl InteractivePlotSession {
         &self,
         key: &InteractiveFrameKey,
         geometry: &GeometrySnapshot,
+        frame: &ResolvedFrame<'_>,
     ) -> Result<Option<BaseLayerResult>> {
         let (cached, state) = {
             let state = self
@@ -1701,8 +1811,10 @@ impl InteractivePlotSession {
             (cached, state.clone())
         };
 
+        let source_plot = self.inner.prepared.plot();
         let Some(draw_ops) = collect_streaming_draw_ops(
-            self.inner.prepared.plot(),
+            source_plot,
+            frame,
             state.size_px,
             state.scale_factor,
             state.time_seconds,
@@ -1720,9 +1832,7 @@ impl InteractivePlotSession {
             geometry,
             &draw_ops,
         )?);
-        for op in &draw_ops {
-            op.source.mark_rendered_through(op.sequence);
-        }
+        let displayed_data = DisplayedFrameData::capture(source_plot, frame);
 
         let mut state = self
             .inner
@@ -1732,6 +1842,8 @@ impl InteractivePlotSession {
         state.base_cache = Some(InteractiveFrameCache {
             key: key.clone(),
             image: Arc::clone(&image),
+            geometry: geometry.clone(),
+            displayed_data,
         });
 
         Ok(Some(BaseLayerResult {
@@ -1825,8 +1937,12 @@ impl InteractivePlotSession {
 }
 
 fn compute_data_bounds(plot: &Plot, time: f64) -> Result<DataBounds> {
-    let snapshot = plot.snapshot_series(time);
-    if snapshot.is_empty() {
+    let frame = plot.resolve_frame(time)?;
+    compute_data_bounds_from_frame(plot, &frame)
+}
+
+fn compute_data_bounds_from_frame(plot: &Plot, frame: &ResolvedFrame<'_>) -> Result<DataBounds> {
+    if frame.series.is_empty() {
         let bounds = plot.empty_cartesian_bounds();
         return Ok(DataBounds::from_limits(
             bounds.0, bounds.1, bounds.2, bounds.3,
@@ -1834,7 +1950,7 @@ fn compute_data_bounds(plot: &Plot, time: f64) -> Result<DataBounds> {
     }
 
     let (mut x_min, mut x_max, mut y_min, mut y_max) =
-        plot.calculate_data_bounds_for_series(&snapshot)?;
+        plot.calculate_data_bounds_from_resolved(&frame.series)?;
 
     if (x_max - x_min).abs() < f64::EPSILON {
         x_min -= 1.0;
@@ -2015,14 +2131,16 @@ fn geometry_snapshot_for_state(
     plot: &Plot,
     state: &SessionState,
     key: InteractiveFrameKey,
+    frame: &ResolvedFrame<'_>,
 ) -> Result<GeometrySnapshot> {
     let visible = state.visible_bounds;
-    let layout = compute_plot_layout(
+    let layout = compute_plot_layout_from_frame(
         plot,
         state.size_px,
         state.scale_factor,
         state.time_seconds,
         visible,
+        frame,
     )?;
 
     Ok(GeometrySnapshot {
@@ -2035,7 +2153,8 @@ fn geometry_snapshot_for_state(
 
 fn refresh_hit_result(
     hit: &HitResult,
-    snapshot: &[PlotSeries],
+    plot: &Plot,
+    resolved_series: &[ResolvedSeries<'_>],
     geometry: &GeometrySnapshot,
 ) -> Option<HitResult> {
     match hit {
@@ -2045,16 +2164,19 @@ fn refresh_hit_result(
             distance_px,
             ..
         } => {
-            let series = snapshot.get(*series_index)?;
-            let (x_val, y_val) = match &series.series_type {
-                SeriesType::Line { x_data, y_data }
-                | SeriesType::Scatter { x_data, y_data }
-                | SeriesType::ErrorBars { x_data, y_data, .. }
-                | SeriesType::ErrorBarsXY { x_data, y_data, .. } => {
-                    let x = x_data.resolve(0.0);
-                    let y = y_data.resolve(0.0);
-                    (*x.get(*point_index)?, *y.get(*point_index)?)
-                }
+            let series = plot.series_mgr.series.get(*series_index)?;
+            let resolved = resolved_series.get(*series_index)?;
+            let (x_val, y_val) = match (&series.series_type, resolved) {
+                (
+                    SeriesType::Line { .. }
+                    | SeriesType::Scatter { .. }
+                    | SeriesType::ErrorBars { .. }
+                    | SeriesType::ErrorBarsXY { .. },
+                    ResolvedSeries::Line { x, y }
+                    | ResolvedSeries::Scatter { x, y }
+                    | ResolvedSeries::ErrorBars { x, y, .. }
+                    | ResolvedSeries::ErrorBarsXY { x, y, .. },
+                ) => (*x.get(*point_index)?, *y.get(*point_index)?),
                 _ => return None,
             };
             if !x_val.is_finite() || !y_val.is_finite() {
@@ -2084,7 +2206,7 @@ fn refresh_hit_result(
             col,
             ..
         } => {
-            let series = snapshot.get(*series_index)?;
+            let series = plot.series_mgr.series.get(*series_index)?;
             let SeriesType::Heatmap { data } = &series.series_type else {
                 return None;
             };
@@ -2137,7 +2259,19 @@ fn compute_plot_layout(
     time_seconds: f64,
     visible: DataBounds,
 ) -> Result<ComputedSessionLayout> {
-    let layout_plot = plot.prepared_frame_plot(size_px, scale_factor, time_seconds);
+    let frame = plot.resolve_frame(time_seconds)?;
+    compute_plot_layout_from_frame(plot, size_px, scale_factor, time_seconds, visible, &frame)
+}
+
+fn compute_plot_layout_from_frame(
+    plot: &Plot,
+    size_px: (u32, u32),
+    scale_factor: f32,
+    time_seconds: f64,
+    visible: DataBounds,
+    frame: &ResolvedFrame<'_>,
+) -> Result<ComputedSessionLayout> {
+    let layout_plot = plot.prepared_frame_shell(size_px, scale_factor, time_seconds);
     layout_plot.validate_runtime_environment()?;
     let dpi = layout_plot.display.config.figure.dpi;
 
@@ -2150,7 +2284,8 @@ fn compute_plot_layout(
     renderer.set_text_engine_mode(layout_plot.display.text_engine);
     renderer.set_render_scale(layout_plot.render_scale());
 
-    let content = layout_plot.create_plot_content(visible.y_min, visible.y_max);
+    let content =
+        layout_plot.create_plot_content_from_resolved_text(visible.y_min, visible.y_max, frame);
     let (x_ticks, y_ticks) = layout_plot.configured_major_ticks(
         visible.x_min,
         visible.x_max,

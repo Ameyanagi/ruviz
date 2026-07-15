@@ -161,9 +161,7 @@ impl PreparedPlot {
             return Ok(image);
         }
 
-        let prepared_plot = self.prepared_render_plot(size_px, scale_factor, time)?;
-        let image = prepared_plot.render()?;
-        prepared_plot.acknowledge_rendered_snapshot(&self.plot);
+        let image = self.render_frame_uncached(size_px, scale_factor, time)?;
 
         *self.cache.lock().expect("PreparedPlot cache lock poisoned") = Some(PreparedFrameCache {
             key,
@@ -252,7 +250,7 @@ impl PreparedPlot {
             return Ok(plot);
         }
 
-        let plot = Arc::new(self.plot.prepared_frame_plot(size_px, scale_factor, time));
+        let plot = Arc::new(self.plot.prepared_frame_shell(size_px, scale_factor, time));
         *self
             .resolved_cache
             .lock()
@@ -271,76 +269,86 @@ impl PreparedPlot {
         time: f64,
     ) -> Result<(Image, RenderDiagnostics)> {
         let key = self.frame_key(size_px, scale_factor, time);
+        self.plot.validate_before_frame_resolution()?;
+        let frame = self.plot.resolve_frame(time)?;
         let prepared_plot = self.prepared_render_plot(size_px, scale_factor, time)?;
 
-        let result = prepared_plot.render_image_with_mode_and_series_renderer(
-            RenderExecutionMode::Reference,
-            |plot,
-             snapshot_series,
-             renderer,
-             plot_area,
-             x_min,
-             x_max,
-             y_min,
-             y_max,
-             _render_scale,
-             mode| {
-                let (prepared_geometry, used_cache, rebuilt_cache) = self
-                    .prepared_series_geometry(
-                        &key,
-                        plot,
-                        snapshot_series,
-                        plot_area,
-                        (x_min, x_max),
-                        (y_min, y_max),
-                        mode,
-                    )?;
-
-                if rebuilt_cache {
-                    renderer.note_rebuilt_prepared_geometry_cache();
-                }
-                if used_cache {
-                    renderer.note_prepared_geometry_cache();
-                }
-
-                for (series_index, series) in snapshot_series.iter().enumerate() {
-                    if let Some(plan) = prepared_geometry.get(series_index).and_then(Option::as_ref)
-                    {
-                        let color = series.color.unwrap_or(crate::render::Color::new(0, 0, 0));
-                        let line_width =
-                            plot.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
-                        let line_style = series
-                            .line_style
-                            .clone()
-                            .unwrap_or(crate::render::LineStyle::Solid);
-                        plan.execute(renderer)?;
-                        plot.render_series_overlays_after_raster(
-                            series,
-                            renderer,
+        let result = prepared_plot
+            .render_renderer_with_resolved_frame(
+                RenderExecutionMode::Reference,
+                &frame,
+                |plot,
+                 snapshot_series,
+                 resolved_series,
+                 renderer,
+                 plot_area,
+                 x_min,
+                 x_max,
+                 y_min,
+                 y_max,
+                 _render_scale,
+                 mode| {
+                    let (prepared_geometry, used_cache, rebuilt_cache) = self
+                        .prepared_series_geometry(
+                            &key,
+                            plot,
+                            snapshot_series,
+                            resolved_series,
                             plot_area,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                            color,
-                            line_width,
-                            &line_style,
+                            (x_min, x_max),
+                            (y_min, y_max),
+                            mode,
                         )?;
-                    } else {
-                        plot.render_series_normal(
-                            series, renderer, plot_area, x_min, x_max, y_min, y_max, mode,
-                        )?;
+
+                    if rebuilt_cache {
+                        renderer.note_rebuilt_prepared_geometry_cache();
                     }
-                }
+                    if used_cache {
+                        renderer.note_prepared_geometry_cache();
+                    }
 
-                Ok(())
-            },
-        );
+                    for (series_index, (series, resolved)) in
+                        snapshot_series.iter().zip(resolved_series).enumerate()
+                    {
+                        if let Some(plan) =
+                            prepared_geometry.get(series_index).and_then(Option::as_ref)
+                        {
+                            let color = series.color.unwrap_or(crate::render::Color::new(0, 0, 0));
+                            let line_width =
+                                plot.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
+                            let line_style = series
+                                .line_style
+                                .clone()
+                                .unwrap_or(crate::render::LineStyle::Solid);
+                            plan.execute(renderer)?;
+                            plot.render_series_overlays_after_raster(
+                                series,
+                                resolved,
+                                renderer,
+                                plot_area,
+                                x_min,
+                                x_max,
+                                y_min,
+                                y_max,
+                                color,
+                                line_width,
+                                &line_style,
+                            )?;
+                        } else {
+                            plot.render_series_normal(
+                                series, resolved, renderer, plot_area, x_min, x_max, y_min, y_max,
+                                mode,
+                            )?;
+                        }
+                    }
 
+                    Ok(())
+                },
+            )
+            .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics));
         if result.is_ok() {
-            prepared_plot.acknowledge_rendered_snapshot(&self.plot);
+            frame.acknowledge_rendered(&self.plot);
         }
-
         result
     }
 
@@ -349,6 +357,7 @@ impl PreparedPlot {
         key: &PreparedFrameKey,
         plot: &Plot,
         snapshot_series: &[super::PlotSeries],
+        resolved_series: &[super::ResolvedSeries<'_>],
         plot_area: tiny_skia::Rect,
         x_bounds: (f64, f64),
         y_bounds: (f64, f64),
@@ -373,9 +382,11 @@ impl PreparedPlot {
 
         let plans = snapshot_series
             .iter()
-            .map(|series| {
+            .zip(resolved_series)
+            .map(|(series, resolved)| {
                 plot.build_prepared_series_raster_plan(
-                    series, plot_area, x_bounds.0, x_bounds.1, y_bounds.0, y_bounds.1, mode,
+                    series, resolved, plot_area, x_bounds.0, x_bounds.1, y_bounds.0, y_bounds.1,
+                    mode,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -678,6 +689,31 @@ mod tests {
 
         assert_eq!(x.appended_since_mark(), 0);
         assert_eq!(y.appended_since_mark(), 0);
+    }
+
+    #[test]
+    fn test_prepared_plot_cache_does_not_retain_static_series_vectors() {
+        let plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
+        let prepared = plot.prepare();
+
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("prepared static frame should render");
+
+        let cache = prepared
+            .resolved_cache
+            .lock()
+            .expect("PreparedPlot resolved cache lock poisoned");
+        let cached = cache
+            .as_ref()
+            .expect("prepared plot shell should be cached");
+        let super::super::SeriesType::Line { x_data, y_data } =
+            &cached.plot.series_mgr.series[0].series_type
+        else {
+            panic!("cached prepared series should remain a line");
+        };
+        assert!(x_data.as_static().is_some_and(Vec::is_empty));
+        assert!(y_data.as_static().is_some_and(Vec::is_empty));
     }
 
     #[test]

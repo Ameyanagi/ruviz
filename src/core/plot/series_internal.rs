@@ -625,6 +625,7 @@ impl Plot {
     pub(super) fn build_prepared_series_raster_plan(
         &self,
         series: &PlotSeries,
+        resolved: &ResolvedSeries<'_>,
         plot_area: tiny_skia::Rect,
         x_min: f64,
         x_max: f64,
@@ -637,13 +638,11 @@ impl Plot {
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
 
-        let plan = match &series.series_type {
-            SeriesType::Line { x_data, y_data } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
+        let plan = match (&series.series_type, resolved) {
+            (SeriesType::Line { .. }, ResolvedSeries::Line { x, y }) => {
                 let mut points = project_xy_points(
-                    &x_data,
-                    &y_data,
+                    x,
+                    y,
                     x_min,
                     x_max,
                     y_min,
@@ -688,14 +687,12 @@ impl Plot {
                 }
                 Some(raster_plan)
             }
-            SeriesType::Scatter { x_data, y_data } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
+            (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                 let points = project_xy_points(
-                    &x_data,
-                    &y_data,
+                    x,
+                    y,
                     x_min,
                     x_max,
                     y_min,
@@ -708,7 +705,7 @@ impl Plot {
                 raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
                 Some(raster_plan)
             }
-            SeriesType::Heatmap { data } => {
+            (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
                 RectGridBatch::from_heatmap_data(data, heatmap_plot_area, data.config.alpha).map(
                     |rect_grid| {
@@ -727,6 +724,7 @@ impl Plot {
     pub(super) fn render_series_overlays_after_raster(
         &self,
         series: &PlotSeries,
+        resolved: &ResolvedSeries<'_>,
         renderer: &mut SkiaRenderer,
         plot_area: tiny_skia::Rect,
         x_min: f64,
@@ -737,17 +735,18 @@ impl Plot {
         line_width: f32,
         _line_style: &LineStyle,
     ) -> Result<()> {
-        match &series.series_type {
-            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+        match (&series.series_type, resolved) {
+            (
+                SeriesType::Line { .. } | SeriesType::Scatter { .. },
+                ResolvedSeries::Line { x, y } | ResolvedSeries::Scatter { x, y },
+            ) => {
                 if series.y_errors.is_some() || series.x_errors.is_some() {
-                    let x_data = x_data.resolve(0.0);
-                    let y_data = y_data.resolve(0.0);
                     Self::render_attached_error_bars(
                         renderer,
-                        &x_data,
-                        &y_data,
-                        series.y_errors.as_ref(),
-                        series.x_errors.as_ref(),
+                        x,
+                        y,
+                        series.y_errors.as_ref().map(ErrorValuesRef::from),
+                        series.x_errors.as_ref().map(ErrorValuesRef::from),
                         series.error_config.as_ref(),
                         color,
                         x_min,
@@ -760,7 +759,7 @@ impl Plot {
                     )?;
                 }
             }
-            SeriesType::Heatmap { data } => {
+            (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
                 let render_scale = self.render_scale();
                 let min_annotation_font_px = render_scale.points_to_pixels(8.0);
@@ -912,6 +911,7 @@ impl Plot {
     pub(super) fn render_series_normal(
         &self,
         series: &PlotSeries,
+        resolved: &ResolvedSeries<'_>,
         renderer: &mut SkiaRenderer,
         plot_area: tiny_skia::Rect,
         x_min: f64,
@@ -926,11 +926,12 @@ impl Plot {
         let clip_rect = clip_rect_from_plot_area(plot_area);
 
         if let Some(raster_plan) = self.build_prepared_series_raster_plan(
-            series, plot_area, x_min, x_max, y_min, y_max, mode,
+            series, resolved, plot_area, x_min, x_max, y_min, y_max, mode,
         )? {
             raster_plan.execute(renderer)?;
             self.render_series_overlays_after_raster(
                 series,
+                resolved,
                 renderer,
                 plot_area,
                 x_min,
@@ -944,12 +945,12 @@ impl Plot {
             return Ok(());
         }
 
-        match &series.series_type {
-            SeriesType::Line { .. } | SeriesType::Scatter { .. } => unreachable!(
+        match (&series.series_type, resolved) {
+            (SeriesType::Line { .. }, ResolvedSeries::Line { .. })
+            | (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { .. }) => unreachable!(
                 "cacheable line/scatter series should return before fallback rendering"
             ),
-            SeriesType::Bar { values, .. } => {
-                let values = values.resolve(0.0);
+            (SeriesType::Bar { .. }, ResolvedSeries::Bar { values, .. }) => {
                 // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
                 let bar_width_fraction = 0.8;
                 let data_range = (x_max - x_min) as f32;
@@ -975,9 +976,7 @@ impl Plot {
                     )?;
                 }
             }
-            SeriesType::Histogram { .. } => {
-                let hist_data = series.series_type.histogram_data_at(0.0)?;
-
+            (SeriesType::Histogram { .. }, ResolvedSeries::Histogram { data: hist_data }) => {
                 // Render histogram bars
                 for (i, &count) in hist_data.counts.iter().enumerate() {
                     if count > 0.0 {
@@ -1013,11 +1012,10 @@ impl Plot {
                     }
                 }
             }
-            SeriesType::BoxPlot { data, config } => {
-                let data = data.resolve(0.0);
+            (SeriesType::BoxPlot { .. }, ResolvedSeries::BoxPlot { data, config }) => {
                 // Calculate box plot statistics
-                let box_data =
-                    crate::plots::boxplot::calculate_box_plot(&data, config).map_err(|e| {
+                let box_data = crate::plots::boxplot::calculate_box_plot(&data.as_ref(), config)
+                    .map_err(|e| {
                         PlottingError::RenderError(format!("Box plot calculation failed: {}", e))
                     })?;
 
@@ -1185,11 +1183,12 @@ impl Plot {
                     }
                 }
             }
-            SeriesType::Heatmap { data } => {
+            (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
                 let heatmap_plot_area = plot_area_from_rect(plot_area, x_min, x_max, y_min, y_max);
                 data.draw_cells_batch(renderer, &heatmap_plot_area, data.config.alpha)?;
                 self.render_series_overlays_after_raster(
                     series,
+                    resolved,
                     renderer,
                     plot_area,
                     x_min,
@@ -1201,22 +1200,15 @@ impl Plot {
                     &line_style,
                 )?;
             }
-            SeriesType::ErrorBars {
-                x_data,
-                y_data,
-                y_errors,
-            } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
-                let y_errors = y_errors.resolve(0.0);
+            (SeriesType::ErrorBars { .. }, ResolvedSeries::ErrorBars { x, y, y_errors }) => {
                 // Draw markers at data points
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
 
-                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                    if x.is_finite() && y.is_finite() {
+                for (&x_value, &y_value) in x.iter().zip(y.iter()) {
+                    if x_value.is_finite() && y_value.is_finite() {
                         let (px, py) = crate::render::skia::map_data_to_pixels(
-                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                            x_value, y_value, x_min, x_max, y_min, y_max, plot_area,
                         );
                         renderer.draw_marker_clipped(
                             px,
@@ -1230,13 +1222,12 @@ impl Plot {
                 }
 
                 // Draw Y error bars
-                let y_err_values = ErrorValues::symmetric(y_errors);
                 Self::render_attached_error_bars(
                     renderer,
-                    &x_data,
-                    &y_data,
-                    Some(&y_err_values),
-                    None,
+                    x,
+                    y,
+                    Some(effective_error_values(series.y_errors.as_ref(), y_errors)),
+                    series.x_errors.as_ref().map(ErrorValuesRef::from),
                     series.error_config.as_ref(),
                     color,
                     x_min,
@@ -1248,24 +1239,23 @@ impl Plot {
                     self.render_scale(),
                 )?;
             }
-            SeriesType::ErrorBarsXY {
-                x_data,
-                y_data,
-                x_errors,
-                y_errors,
-            } => {
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
-                let x_errors = x_errors.resolve(0.0);
-                let y_errors = y_errors.resolve(0.0);
+            (
+                SeriesType::ErrorBarsXY { .. },
+                ResolvedSeries::ErrorBarsXY {
+                    x,
+                    y,
+                    x_errors,
+                    y_errors,
+                },
+            ) => {
                 // Draw markers at data points
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
 
-                for (&x, &y) in x_data.iter().zip(y_data.iter()) {
-                    if x.is_finite() && y.is_finite() {
+                for (&x_value, &y_value) in x.iter().zip(y.iter()) {
+                    if x_value.is_finite() && y_value.is_finite() {
                         let (px, py) = crate::render::skia::map_data_to_pixels(
-                            x, y, x_min, x_max, y_min, y_max, plot_area,
+                            x_value, y_value, x_min, x_max, y_min, y_max, plot_area,
                         );
                         renderer.draw_marker_clipped(
                             px,
@@ -1279,14 +1269,12 @@ impl Plot {
                 }
 
                 // Draw X and Y error bars
-                let x_err_values = ErrorValues::symmetric(x_errors);
-                let y_err_values = ErrorValues::symmetric(y_errors);
                 Self::render_attached_error_bars(
                     renderer,
-                    &x_data,
-                    &y_data,
-                    Some(&y_err_values),
-                    Some(&x_err_values),
+                    x,
+                    y,
+                    Some(effective_error_values(series.y_errors.as_ref(), y_errors)),
+                    Some(effective_error_values(series.x_errors.as_ref(), x_errors)),
                     series.error_config.as_ref(),
                     color,
                     x_min,
@@ -1298,7 +1286,7 @@ impl Plot {
                     self.render_scale(),
                 )?;
             }
-            SeriesType::Kde { data } => {
+            (SeriesType::Kde { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render KDE
                 let plot_area = crate::plots::PlotArea::new(
                     plot_area.x(),
@@ -1312,7 +1300,7 @@ impl Plot {
                 );
                 data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
-            SeriesType::Ecdf { data } => {
+            (SeriesType::Ecdf { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render ECDF
                 let plot_area = crate::plots::PlotArea::new(
                     plot_area.x(),
@@ -1326,7 +1314,7 @@ impl Plot {
                 );
                 data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
-            SeriesType::Violin { data } => {
+            (SeriesType::Violin { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Violin
                 let plot_area = crate::plots::PlotArea::new(
                     plot_area.x(),
@@ -1340,7 +1328,7 @@ impl Plot {
                 );
                 data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
-            SeriesType::Boxen { data } => {
+            (SeriesType::Boxen { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Boxen
                 let plot_area = crate::plots::PlotArea::new(
                     plot_area.x(),
@@ -1354,12 +1342,12 @@ impl Plot {
                 );
                 data.render(renderer, &plot_area, &self.display.theme, color)?;
             }
-            SeriesType::Quiver { data } => {
+            (SeriesType::Quiver { data }, ResolvedSeries::Other(_)) => {
                 self.render_quiver_series_scaled(
                     renderer, data, plot_area, x_min, x_max, y_min, y_max, color,
                 )?;
             }
-            SeriesType::Contour { data } => {
+            (SeriesType::Contour { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Contour
                 let contour_plot_area = crate::plots::PlotArea::new(
                     plot_area.x(),
@@ -1413,7 +1401,7 @@ impl Plot {
                     )?;
                 }
             }
-            SeriesType::Pie { data } => {
+            (SeriesType::Pie { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Pie with 1:1 aspect ratio
                 // (uses normalized 0-1 coordinates)
                 let (pie_x, pie_y, pie_size) = {
@@ -1427,13 +1415,13 @@ impl Plot {
                 );
                 data.render(renderer, &pie_plot_area, &self.display.theme, color)?;
             }
-            SeriesType::Radar { data } => {
+            (SeriesType::Radar { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Radar with 1:1 aspect ratio
                 // and extra top padding for title clearance
                 let radar_plot_area = Self::radar_plot_area(plot_area, x_min, x_max, y_min, y_max);
                 data.render(renderer, &radar_plot_area, &self.display.theme, color)?;
             }
-            SeriesType::Polar { data } => {
+            (SeriesType::Polar { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Polar with 1:1 aspect ratio
                 // Center the square plot area within available space
                 let (polar_x, polar_y, polar_size) = {
@@ -1447,6 +1435,7 @@ impl Plot {
                 );
                 data.render(renderer, &polar_plot_area, &self.display.theme, color)?;
             }
+            _ => unreachable!("resolved series variant must match its declarative series"),
         }
 
         Ok(())
@@ -1460,6 +1449,7 @@ impl Plot {
     pub(super) fn render_series_gpu(
         &self,
         series: &PlotSeries,
+        resolved: &ResolvedSeries<'_>,
         renderer: &mut SkiaRenderer,
         gpu_renderer: &mut GpuRenderer,
         plot_area: tiny_skia::Rect,
@@ -1479,12 +1469,8 @@ impl Plot {
             plot_area.height(),
         );
 
-        match &series.series_type {
-            SeriesType::Line { x_data, y_data } => {
-                // Resolve PlotData to concrete Vec<f64>
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
-
+        match (&series.series_type, resolved) {
+            (SeriesType::Line { .. }, ResolvedSeries::Line { x, y }) => {
                 // Use GPU for coordinate transformation
                 let viewport = (
                     plot_area.x(),
@@ -1495,8 +1481,8 @@ impl Plot {
 
                 let (x_transformed, y_transformed) = gpu_renderer
                     .transform_coordinates_optimal(
-                        &x_data,
-                        &y_data,
+                        &x.as_ref(),
+                        &y.as_ref(),
                         (x_min, x_max),
                         (y_min, y_max),
                         viewport,
@@ -1528,11 +1514,7 @@ impl Plot {
                     }
                 }
             }
-            SeriesType::Scatter { x_data, y_data } => {
-                // Resolve PlotData to concrete Vec<f64>
-                let x_data = x_data.resolve(0.0);
-                let y_data = y_data.resolve(0.0);
-
+            (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
                 // Use GPU for coordinate transformation
                 let viewport = (
                     plot_area.x(),
@@ -1543,8 +1525,8 @@ impl Plot {
 
                 let (x_transformed, y_transformed) = gpu_renderer
                     .transform_coordinates_optimal(
-                        &x_data,
-                        &y_data,
+                        &x.as_ref(),
+                        &y.as_ref(),
                         (x_min, x_max),
                         (y_min, y_max),
                         viewport,
@@ -1571,7 +1553,7 @@ impl Plot {
             // For other series types, fall back to normal rendering
             _ => {
                 self.render_series_normal(
-                    series, renderer, plot_area, x_min, x_max, y_min, y_max, mode,
+                    series, resolved, renderer, plot_area, x_min, x_max, y_min, y_max, mode,
                 )?;
             }
         }
@@ -1746,6 +1728,148 @@ impl Plot {
                         return Err(PlottingError::EmptyDataSet);
                     }
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn validate_resolved_series(series_list: &[ResolvedSeries<'_>]) -> Result<()> {
+        if series_list.is_empty() {
+            return Err(PlottingError::NoDataSeries);
+        }
+
+        for (idx, series) in series_list.iter().enumerate() {
+            match series {
+                ResolvedSeries::Line { x, y } | ResolvedSeries::Scatter { x, y } => {
+                    if x.len() != y.len() {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: x.len(),
+                            y_len: y.len(),
+                            series_index: Some(idx),
+                        });
+                    }
+                    if x.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    PlottingError::validate_data(x)?;
+                    PlottingError::validate_data(y)?;
+                }
+                ResolvedSeries::Bar { categories, values } => {
+                    if categories.len() != values.len() {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: categories.len(),
+                            y_len: values.len(),
+                            series_index: Some(idx),
+                        });
+                    }
+                    if categories.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    PlottingError::validate_data(values)?;
+                }
+                ResolvedSeries::ErrorBars { x, y, y_errors } => {
+                    if x.len() != y.len() || y.len() != y_errors.len() {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: x.len(),
+                            y_len: y.len(),
+                            series_index: Some(idx),
+                        });
+                    }
+                    PlottingError::validate_data(x)?;
+                    PlottingError::validate_data(y)?;
+                    PlottingError::validate_data(y_errors)?;
+                }
+                ResolvedSeries::ErrorBarsXY {
+                    x,
+                    y,
+                    x_errors,
+                    y_errors,
+                } => {
+                    if x.len() != y.len() || x.len() != x_errors.len() || x.len() != y_errors.len()
+                    {
+                        return Err(PlottingError::DataLengthMismatch {
+                            x_len: x.len(),
+                            y_len: y.len(),
+                            series_index: Some(idx),
+                        });
+                    }
+                    PlottingError::validate_data(x)?;
+                    PlottingError::validate_data(y)?;
+                    PlottingError::validate_data(x_errors)?;
+                    PlottingError::validate_data(y_errors)?;
+                }
+                ResolvedSeries::Histogram { data } => {
+                    if data.counts.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                }
+                ResolvedSeries::BoxPlot { data, .. } => {
+                    if data.is_empty() {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    PlottingError::validate_data(data)?;
+                }
+                ResolvedSeries::Other(series) => match series {
+                    SeriesType::Heatmap { data } if data.values.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Kde { data } if data.x.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Ecdf { data } if data.x.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Violin { data } if data.data.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Boxen { data } if data.boxes.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Quiver { data } if data.arrows.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Contour { data } if data.levels.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Pie { data } if data.values.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Radar { data } if data.series.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Polar { data } if data.points.is_empty() => {
+                        return Err(PlottingError::EmptyDataSet);
+                    }
+                    SeriesType::Quiver { data } => {
+                        for (position, arrow) in data.arrows.iter().enumerate() {
+                            let all_values = [
+                                arrow.start.0,
+                                arrow.start.1,
+                                arrow.end.0,
+                                arrow.end.1,
+                                arrow.magnitude,
+                                arrow.angle,
+                                arrow.head[0].0,
+                                arrow.head[0].1,
+                                arrow.head[1].0,
+                                arrow.head[1].1,
+                                arrow.head[2].0,
+                                arrow.head[2].1,
+                            ];
+                            if let Some(value) = all_values.iter().find(|value| !value.is_finite())
+                            {
+                                return Err(PlottingError::InvalidData {
+                                    message: format!(
+                                        "Non-finite quiver arrow value ({value}) found"
+                                    ),
+                                    position: Some(position),
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                },
             }
         }
 

@@ -70,6 +70,14 @@ impl<T> ReactiveValue<T> {
         }
     }
 
+    pub(crate) fn shares_source(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Temporal(left), Self::Temporal(right)) => left.shares_source(right),
+            (Self::Reactive(left), Self::Reactive(right)) => left.shares_source(right),
+            _ => false,
+        }
+    }
+
     pub(crate) fn subscribe_push_updates(
         &self,
         callback: SharedReactiveCallback,
@@ -170,6 +178,24 @@ impl PlotData {
     #[inline]
     pub fn resolve(&self, time: f64) -> Vec<f64> {
         self.resolve_cow(time).into_owned()
+    }
+
+    pub(crate) fn clone_without_static_values(&self) -> Self {
+        match self {
+            Self::Static(_) => Self::Static(Vec::new()),
+            Self::Temporal(signal) => Self::Temporal(signal.clone()),
+            Self::Reactive(observable) => Self::Reactive(observable.clone()),
+            Self::Streaming(stream) => Self::Streaming(stream.clone()),
+        }
+    }
+
+    pub(crate) fn shares_source(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Temporal(left), Self::Temporal(right)) => left.shares_source(right),
+            (Self::Reactive(left), Self::Reactive(right)) => left.shares_source(right),
+            (Self::Streaming(left), Self::Streaming(right)) => left.shares_source(right),
+            _ => false,
+        }
     }
 
     /// Check if this data is static.
