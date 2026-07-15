@@ -13,6 +13,7 @@ struct AnimationState<T> {
     target: Option<Arc<T>>,
     start_value: Option<Arc<T>>,
     progress: f64,
+    reserved_progress: f64,
     duration_secs: f64,
     easing_fn: fn(f64) -> f64,
     animating: bool,
@@ -69,6 +70,7 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
                 target: None,
                 start_value: None,
                 progress: 0.0,
+                reserved_progress: 0.0,
                 duration_secs: 0.0,
                 easing_fn: easing::ease_in_out_quad,
                 animating: false,
@@ -126,6 +128,7 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
             self.install_value(target, |state| {
                 state.generation = state.generation.wrapping_add(1);
                 state.progress = 1.0;
+                state.reserved_progress = 1.0;
                 state.duration_secs = duration_secs;
                 state.easing_fn = easing;
                 state.animating = false;
@@ -146,6 +149,7 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
             let old_start = state.start_value.replace(start_value);
             let old_target = state.target.replace(target);
             state.progress = 0.0;
+            state.reserved_progress = 0.0;
             state.duration_secs = duration_secs;
             state.easing_fn = easing;
             state.animating = true;
@@ -178,7 +182,8 @@ impl<T: Interpolate + Clone + Send + Sync + 'static> AnimatedObservable<T> {
 
             let start = Arc::clone(start);
             let target = Arc::clone(target);
-            let progress = (state.progress + delta_time / state.duration_secs).min(1.0);
+            let progress = (state.reserved_progress + delta_time / state.duration_secs).min(1.0);
+            state.reserved_progress = progress;
             state.generation = state.generation.wrapping_add(1);
 
             (start, target, state.easing_fn, progress, state.generation)
@@ -678,6 +683,24 @@ mod tests {
         assert!(!tick.join().expect("tick thread panicked"));
         assert_eq!(anim.get().value, 500.0);
         assert!(!anim.is_animating());
+    }
+
+    #[test]
+    fn test_concurrent_ticks_accumulate_elapsed_time() {
+        let initial = BlockingValue::new(0.0);
+        let anim = AnimatedObservable::new(initial.clone());
+        anim.animate_to_with_easing(initial.with_value(100.0), 1000, easing::linear);
+
+        let tick_anim = anim.clone();
+        let first_tick = std::thread::spawn(move || tick_anim.tick(0.1));
+        initial.interpolation_started.wait();
+
+        assert!(anim.tick(0.1));
+        initial.continue_interpolation.wait();
+
+        assert!(first_tick.join().expect("tick thread panicked"));
+        assert!((anim.progress() - 0.2).abs() < f64::EPSILON);
+        assert!((anim.get().value - 20.0).abs() < f64::EPSILON);
     }
 
     #[test]
