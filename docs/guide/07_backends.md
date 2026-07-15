@@ -33,10 +33,13 @@ There are two separate concepts in the current implementation:
    - `.resolved_backend_name()`
 
 The stored backend preference is visible through `get_backend_name()`.
-`resolved_backend_name()` reports the backend that the public PNG path will use
-for the current plot. `auto_optimize()` preserves the normal visual path for
-public PNG output; explicit DataShader remains available for density-rendered
-scatter output.
+`resolved_backend_name()` reports the backend that the native `Plot` PNG path
+will use for the current plot. `backend_resolution(BackendOperation::...)`
+separates the requested and actual backends and exposes an explicit Skia
+fallback reason. Prepared plots and embedded frames use
+`BackendOperation::RasterImage`; interactive base frames use
+`BackendOperation::Interactive`. Explicit DataShader remains available for
+compatible native `Plot` PNG output.
 
 ## GPUI Embedded Interactive Backend
 
@@ -69,13 +72,14 @@ Host applications can also trigger the same built-in actions directly from the
 
 ### What `.auto_optimize()` does today
 
-`.auto_optimize()` stores a backend choice based on total point count:
-
-- `< 1_000` points: `Skia`
-- `1_000..100_000`: `Parallel` if the `parallel` feature is enabled, otherwise `Skia`
-- `>= 100_000`: `GPU` if the `gpu` feature is enabled, otherwise `DataShader`
+`.auto_optimize()` conservatively stores `Skia`, because it is the only backend
+that can execute across every current public raster operation, target, feature
+set, and series mix. It does not advertise Parallel, GPU, or DataShader solely
+from point count.
 
 If you set `.backend(...)` first, `.auto_optimize()` keeps that explicit choice.
+Use `backend_resolution(...)` when you need the actual backend and any fallback
+reason for a specific raster operation.
 
 ```rust
 use ruviz::core::plot::BackendType;
@@ -158,11 +162,11 @@ Two important details:
 
 ## DataShader
 
-DataShader support exists in the crate, and `.auto_optimize()` may store
-`BackendType::DataShader` metadata for large datasets. Public PNG output keeps
-the normal visual path for `.auto_optimize()`. The DataShader PNG path is an
-explicit opt-in for supported scatter-only workloads. Mixed coordinate plots,
-lines, histograms, heatmaps, and other unsupported series fall back to Skia.
+DataShader support exists in the crate, but `.auto_optimize()` does not select
+it from point count. The DataShader PNG path is an explicit opt-in for supported
+scatter-only workloads. Mixed coordinate plots, lines, histograms, heatmaps,
+non-linear axes, and other unsupported cases fall back to Skia with an
+inspectable `BackendFallbackReason`.
 
 ```rust
 use ruviz::prelude::*;

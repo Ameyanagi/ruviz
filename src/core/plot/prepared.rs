@@ -1,7 +1,8 @@
 //! Prepared plot runtime for repeated frame rendering.
 
 use super::{
-    Image, InteractivePlotSession, Plot, RenderDiagnostics, RenderExecutionMode, ResolvedStyle,
+    BackendOperation, Image, InteractivePlotSession, Plot, RenderDiagnostics, RenderExecutionMode,
+    ResolvedStyle,
     data::{ReactiveTeardown, SharedReactiveCallback},
     raster_batches::SeriesRasterPlan,
 };
@@ -277,9 +278,10 @@ impl PreparedPlot {
         let frame = self.plot.resolve_frame(time)?;
         let prepared_plot = self.prepared_render_plot(&key, size_px, scale_factor, &frame.style)?;
 
+        let mode = prepared_plot.render_execution_mode(BackendOperation::RasterImage);
         let result = prepared_plot
             .render_renderer_with_resolved_frame(
-                RenderExecutionMode::Reference,
+                mode,
                 &frame,
                 |plot,
                  snapshot_series,

@@ -39,12 +39,13 @@ pub use legend::{
     LegendSpacingPixels, LegendStyle, find_best_position,
 };
 pub use plot::{
-    BackendType, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, Image, ImageTarget,
-    InsetAnchor, InsetLayout, InteractiveFrame, InteractivePlotSession,
-    InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Plot, PlotBuilder, PlotInput,
-    PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
-    RenderTargetKind, SeriesStyle, SurfaceCapability, SurfaceTarget, TextEngineMode, TickDirection,
-    TickSides, ViewportPoint, ViewportRect,
+    BackendFallbackReason, BackendOperation, BackendResolution, BackendType, DirtyDomain,
+    DirtyDomains, FramePacing, FrameStats, HitResult, Image, ImageTarget, InsetAnchor, InsetLayout,
+    InteractiveFrame, InteractivePlotSession, InteractiveViewportSnapshot, IntoPlot,
+    LayerRenderState, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource, PreparedPlot,
+    QualityPolicy, ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle,
+    SurfaceCapability, SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint,
+    ViewportRect,
 };
 pub use position::Position;
 pub use style::PlotStyle;

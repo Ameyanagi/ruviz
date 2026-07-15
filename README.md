@@ -145,12 +145,12 @@ SVG export is available without enabling the legacy `svg` feature.
 ## Backend Notes
 
 `.backend(...)`, `.auto_optimize()`, and `.get_backend_name()` store or report
-backend preference metadata. Use `.resolved_backend_name()` to inspect the
-backend that the public PNG render/save path will use for the current plot.
-Unsupported optimized backend preferences fall back to the Skia reference raster
-path for output parity. `auto_optimize()` keeps public PNG output on the normal
-visual path; supported large scatter workloads resolve to DataShader only when
-that backend is explicitly configured.
+backend preference metadata. `auto_optimize()` conservatively selects Skia rather
+than advertising a backend that cannot execute across every public raster path.
+Use `.resolved_backend_name()` for the native `Plot` PNG path, or
+`.backend_resolution(...)` to inspect the requested backend, actual backend, and
+any explicit Skia fallback reason for a raster operation. Supported scatter
+workloads resolve to DataShader only when that backend is explicitly configured.
 
 Use release builds and benchmark your actual workload before adding optional
 performance features. See [Backend Selection](docs/guide/07_backends.md) and

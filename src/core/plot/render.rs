@@ -247,7 +247,7 @@ impl Plot {
         const LARGE_DATASET_THRESHOLD: usize = 1_000_000;
         if total_points > LARGE_DATASET_THRESHOLD {
             log::warn!(
-                "Rendering {} points (>1M). DataShader optimization is available for large datasets.",
+                "Rendering {} points (>1M); consider explicit data reduction or a supported backend for this output path.",
                 total_points
             );
         }
@@ -792,41 +792,118 @@ impl Plot {
         )
     }
 
-    fn public_png_render_mode_for_series(&self, series_list: &[PlotSeries]) -> RenderExecutionMode {
-        let total_points = Self::calculate_total_points_for_series(series_list);
-        if self.should_use_configured_datashader_for_public_png(series_list, total_points) {
-            RenderExecutionMode::Optimized
-        } else {
-            RenderExecutionMode::Reference
+    fn backend_fallback(&self, reason: BackendFallbackReason) -> BackendResolution {
+        BackendResolution::new(self.render.backend, BackendType::Skia, Some(reason))
+    }
+
+    fn backend_resolution_for_series(
+        &self,
+        operation: BackendOperation,
+        series_list: &[PlotSeries],
+    ) -> BackendResolution {
+        let Some(requested_backend) = self.render.backend else {
+            return BackendResolution::new(None, BackendType::Skia, None);
+        };
+
+        if requested_backend == BackendType::Skia {
+            return BackendResolution::new(Some(BackendType::Skia), BackendType::Skia, None);
+        }
+
+        match requested_backend {
+            BackendType::Skia => unreachable!("Skia resolution returned above"),
+            BackendType::Parallel => {
+                #[cfg(not(feature = "parallel"))]
+                {
+                    self.backend_fallback(BackendFallbackReason::FeatureDisabled)
+                }
+                #[cfg(feature = "parallel")]
+                {
+                    self.backend_fallback(BackendFallbackReason::UnsupportedOperation)
+                }
+            }
+            BackendType::GPU => {
+                #[cfg(not(feature = "gpu"))]
+                {
+                    self.backend_fallback(BackendFallbackReason::FeatureDisabled)
+                }
+                #[cfg(feature = "gpu")]
+                {
+                    self.backend_fallback(BackendFallbackReason::UnsupportedOperation)
+                }
+            }
+            BackendType::DataShader => {
+                if operation != BackendOperation::Png {
+                    return self.backend_fallback(BackendFallbackReason::UnsupportedOperation);
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    self.backend_fallback(BackendFallbackReason::UnsupportedTarget)
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if series_list.is_empty() {
+                        return self.backend_fallback(BackendFallbackReason::EmptyPlot);
+                    }
+                    if Self::has_mixed_coordinate_series(series_list) {
+                        return self
+                            .backend_fallback(BackendFallbackReason::MixedCoordinateSystems);
+                    }
+                    if !series_list
+                        .iter()
+                        .all(Self::series_supports_auto_datashader)
+                    {
+                        return self.backend_fallback(BackendFallbackReason::UnsupportedSeries);
+                    }
+                    if !self.datashader_supports_axis_scales() {
+                        return self.backend_fallback(BackendFallbackReason::UnsupportedAxisScale);
+                    }
+                    if !self.datashader_supports_axis_directions() {
+                        return self.backend_fallback(BackendFallbackReason::ReversedAxisLimits);
+                    }
+                    BackendResolution::new(
+                        Some(BackendType::DataShader),
+                        BackendType::DataShader,
+                        None,
+                    )
+                }
+            }
         }
     }
 
-    fn public_png_render_mode(&self) -> RenderExecutionMode {
-        self.public_png_render_mode_for_series(&self.series_mgr.series)
+    /// Resolve the configured backend for a specific public raster operation.
+    ///
+    /// The result separates the stored preference from the backend that can
+    /// actually execute and provides a deterministic Skia fallback reason.
+    pub fn backend_resolution(&self, operation: BackendOperation) -> BackendResolution {
+        self.backend_resolution_for_series(operation, &self.series_mgr.series)
+    }
+
+    pub(super) fn render_execution_mode_for_series(
+        &self,
+        operation: BackendOperation,
+        series_list: &[PlotSeries],
+    ) -> RenderExecutionMode {
+        match self
+            .backend_resolution_for_series(operation, series_list)
+            .actual_backend()
+        {
+            BackendType::DataShader => RenderExecutionMode::Optimized,
+            BackendType::Skia => RenderExecutionMode::Reference,
+            BackendType::Parallel | BackendType::GPU => {
+                unreachable!("backend resolution only selects executable paths")
+            }
+        }
+    }
+
+    pub(super) fn render_execution_mode(&self, operation: BackendOperation) -> RenderExecutionMode {
+        self.render_execution_mode_for_series(operation, &self.series_mgr.series)
     }
 
     fn public_png_render_mode_from_resolved(
         &self,
-        resolved_series: &[ResolvedSeries<'_>],
+        _resolved_series: &[ResolvedSeries<'_>],
     ) -> RenderExecutionMode {
-        let total_points = Self::calculate_total_points_from_resolved(resolved_series);
-        if self
-            .should_use_configured_datashader_for_public_png(&self.series_mgr.series, total_points)
-        {
-            RenderExecutionMode::Optimized
-        } else {
-            RenderExecutionMode::Reference
-        }
-    }
-
-    fn should_use_configured_datashader_for_public_png(
-        &self,
-        series_list: &[PlotSeries],
-        total_points: usize,
-    ) -> bool {
-        matches!(self.render.backend, Some(BackendType::DataShader))
-            && !self.render.auto_optimized
-            && self.should_use_datashader_for_render(series_list, total_points)
+        self.render_execution_mode(BackendOperation::Png)
     }
 
     pub(crate) fn should_use_datashader_for_render(
@@ -834,7 +911,7 @@ impl Plot {
         series_list: &[PlotSeries],
         total_points: usize,
     ) -> bool {
-        if !self.datashader_supports_axis_scales() {
+        if !self.datashader_supports_axis_scales() || !self.datashader_supports_axis_directions() {
             return false;
         }
 
@@ -858,6 +935,16 @@ impl Plot {
     fn datashader_supports_axis_scales(&self) -> bool {
         matches!(self.layout.x_scale, AxisScale::Linear)
             && matches!(self.layout.y_scale, AxisScale::Linear)
+    }
+
+    fn datashader_supports_axis_directions(&self) -> bool {
+        self.layout
+            .x_limits
+            .is_none_or(|(x_min, x_max)| x_min < x_max)
+            && self
+                .layout
+                .y_limits
+                .is_none_or(|(y_min, y_max)| y_min < y_max)
     }
 
     /// Render the plot to an in-memory image.
@@ -922,12 +1009,13 @@ impl Plot {
     /// ```
     pub fn render_at(&self, time: f64) -> Result<Image> {
         self.validate_before_frame_resolution()?;
+        let mode = self.render_execution_mode(BackendOperation::RasterImage);
         if self.has_dynamic_style_sources() {
             return self
-                .render_dynamic_style_frame(RenderExecutionMode::Reference, time)
+                .render_dynamic_style_frame(mode, time)
                 .map(|(image, _)| image);
         }
-        self.render_image_with_mode_at(RenderExecutionMode::Reference, time)
+        self.render_image_with_mode_at(mode, time)
     }
 
     /// Render the plot and encode it as PNG bytes.
@@ -952,6 +1040,17 @@ impl Plot {
     ) -> Result<(Vec<u8>, RenderDiagnostics)> {
         self.save_png_bytes_with_backend()
             .map(|(png_bytes, _, diagnostics)| (png_bytes, diagnostics))
+    }
+
+    /// Render PNG bytes and include the deterministic backend decision.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[doc(hidden)]
+    pub fn benchmark_render_png_bytes_with_backend_resolution(
+        &self,
+    ) -> Result<(Vec<u8>, RenderDiagnostics, BackendResolution)> {
+        let resolution = self.backend_resolution(BackendOperation::Png);
+        self.save_png_bytes_with_backend()
+            .map(|(png_bytes, _, diagnostics)| (png_bytes, diagnostics, resolution))
     }
 
     /// Check if this plot contains any reactive data (Signal or Observable).
@@ -999,8 +1098,9 @@ impl Plot {
         let mut plot = self.resolved_style_shell(&frame.style);
         plot.display.config.figure.dpi = dpi;
         let plot = plot.set_subplot_output_pixels(renderer.width(), renderer.height());
-        let (subplot_renderer, _) = plot
-            .render_renderer_with_frame_and_diagnostics(RenderExecutionMode::Reference, &frame)?;
+        let mode = plot.render_execution_mode(BackendOperation::RasterImage);
+        let (subplot_renderer, _) =
+            plot.render_renderer_with_frame_and_diagnostics(mode, &frame)?;
         renderer.draw_subplot(subplot_renderer.into_image(), 0, 0)?;
         frame.acknowledge_rendered(self);
         Ok(())
@@ -1658,86 +1758,25 @@ impl Plot {
 
         Ok(image)
     }
-    /// Infer and store a backend label based on data size
+    /// Select a backend that is safe for every public raster output path.
     ///
-    /// Updates [`get_backend_name`](Self::get_backend_name) metadata based on
-    /// dataset characteristics:
-    /// - < 1K points: Skia (simple, fast)
-    /// - 1,000 to 99,999 points: Parallel when available, otherwise Skia
-    /// - 100,000+ points: GPU when available, otherwise DataShader
+    /// Automatic routing remains on the reference Skia backend until another
+    /// backend has a parity-approved path for the requested operation. Explicit
+    /// compatible DataShader PNG output remains available through
+    /// [`backend`](Self::backend).
     ///
     /// If a backend was explicitly set with `.backend()`, that choice is respected.
-    /// Public PNG output keeps the reference visual path for `.auto_optimize()`;
-    /// explicit `BackendType::DataShader` remains available for callers that
-    /// deliberately want density aggregation for compatible scatter plots.
     pub fn auto_optimize(self) -> Self {
         self.auto_optimize_with_extra_points(0)
     }
 
-    /// Auto-optimize with additional pending points from PlotBuilder
-    ///
-    /// This internal method is used by PlotBuilder to include points from
-    /// the current series that hasn't been finalized yet.
-    pub(crate) fn auto_optimize_with_extra_points(mut self, extra_points: usize) -> Self {
-        // If backend already explicitly set, respect that choice
+    /// Apply conservative auto-selection while a builder still owns a pending series.
+    pub(crate) fn auto_optimize_with_extra_points(mut self, _extra_points: usize) -> Self {
         if self.render.backend.is_some() {
             return self;
         }
 
-        // Count total data points across all series
-        let series_points: usize = self
-            .series_mgr
-            .series
-            .iter()
-            .map(|s| match &s.series_type {
-                SeriesType::Line { x_data, .. } => x_data.len(),
-                SeriesType::Scatter { x_data, .. } => x_data.len(),
-                SeriesType::Bar { values, .. } => values.len(),
-                SeriesType::Histogram { data, .. } => data.len(),
-                SeriesType::BoxPlot { data, .. } => data.len(),
-                SeriesType::ErrorBars { x_data, .. } => x_data.len(),
-                SeriesType::ErrorBarsXY { x_data, .. } => x_data.len(),
-                SeriesType::Heatmap { data } => data.n_rows * data.n_cols,
-                SeriesType::Kde { data } => data.x.len(),
-                SeriesType::Ecdf { data } => data.x.len(),
-                SeriesType::Violin { data } => data.data.len(),
-                SeriesType::Boxen { data } => data.boxes.len() * 4,
-                SeriesType::Contour { data } => data.x.len() * data.y.len(),
-                SeriesType::Pie { data } => data.values.len(),
-                SeriesType::Radar { data } => data.series.iter().map(|s| s.values.len()).sum(),
-                SeriesType::Polar { data } => data.points.len(),
-                SeriesType::Quiver { data } => data.arrows.len(),
-            })
-            .sum();
-
-        let total_points = series_points + extra_points;
-
-        // Select backend based on data size
-        let selected_backend =
-            if Self::has_mixed_coordinate_series(&self.series_mgr.series) || total_points < 1000 {
-                BackendType::Skia
-            } else if total_points < 100_000 {
-                #[cfg(feature = "parallel")]
-                {
-                    BackendType::Parallel
-                }
-                #[cfg(not(feature = "parallel"))]
-                {
-                    BackendType::Skia
-                }
-            } else {
-                // For very large datasets, prefer GPU if available, else DataShader
-                #[cfg(feature = "gpu")]
-                {
-                    BackendType::GPU
-                }
-                #[cfg(not(feature = "gpu"))]
-                {
-                    BackendType::DataShader
-                }
-            };
-
-        self.render.backend = Some(selected_backend);
+        self.render.backend = Some(BackendType::Skia);
         self.render.auto_optimized = true;
         self
     }
@@ -1749,11 +1788,10 @@ impl Plot {
         self
     }
 
-    /// Enable GPU acceleration for the PNG export path used by [`save`](Self::save).
+    /// Store a GPU backend preference for APIs that inspect plot configuration.
     ///
-    /// When enabled, [`save`](Self::save) may use GPU-assisted rendering for
-    /// sufficiently large datasets. [`render`](Self::render) continues to use
-    /// the in-memory CPU/DataShader/parallel paths today.
+    /// Public raster operations currently resolve this preference to Skia and
+    /// report the fallback through [`backend_resolution`](Self::backend_resolution).
     ///
     /// # Example
     ///
@@ -1772,13 +1810,13 @@ impl Plot {
     ///
     /// # Requirements
     ///
-    /// - Requires the `gpu` feature to be enabled
-    /// - Falls back to CPU if GPU is not available
+    /// Requires the `gpu` feature to be enabled.
     #[cfg(feature = "gpu")]
     pub fn gpu(mut self, enabled: bool) -> Self {
         self.render.enable_gpu = enabled;
         if enabled {
             self.render.backend = Some(BackendType::GPU);
+            self.render.auto_optimized = false;
         }
         self
     }
@@ -1794,18 +1832,9 @@ impl Plot {
     /// reports the configured backend preference. Unsupported optimized backend
     /// preferences fall back to the reference Skia raster path.
     pub fn resolved_backend_name(&self) -> &'static str {
-        #[cfg(target_arch = "wasm32")]
-        {
-            BackendType::Skia.as_str()
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            match self.public_png_render_mode() {
-                RenderExecutionMode::Optimized => BackendType::DataShader.as_str(),
-                RenderExecutionMode::Reference => BackendType::Skia.as_str(),
-            }
-        }
+        self.backend_resolution(BackendOperation::Png)
+            .actual_backend()
+            .as_str()
     }
 
     /// Save the plot to a PNG file.
@@ -1857,6 +1886,17 @@ impl Plot {
         self.save_png_bytes_with_backend()
     }
 
+    /// Render through the save path and include its backend decision.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[doc(hidden)]
+    pub fn benchmark_save_png_bytes_with_backend_resolution(
+        &self,
+    ) -> Result<(Vec<u8>, &'static str, RenderDiagnostics, BackendResolution)> {
+        let resolution = self.backend_resolution(BackendOperation::Png);
+        self.save_png_bytes_with_backend()
+            .map(|(png_bytes, backend, diagnostics)| (png_bytes, backend, diagnostics, resolution))
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn save_png_bytes_with_backend(&self) -> Result<(Vec<u8>, &'static str, RenderDiagnostics)> {
         self.validate_before_frame_resolution()?;
@@ -1876,11 +1916,14 @@ impl Plot {
         let (renderer, diagnostics) =
             render_plot.render_renderer_with_frame_and_diagnostics(mode, &frame)?;
         let png_bytes = renderer.encode_png_bytes()?;
-        let backend = if diagnostics.used_auto_datashader {
-            BackendType::DataShader.as_str()
-        } else {
-            BackendType::Skia.as_str()
-        };
+        let backend = diagnostics.actual_backend_name();
+        debug_assert_eq!(
+            backend,
+            self.backend_resolution_for_series(BackendOperation::Png, &self.series_mgr.series)
+                .actual_backend()
+                .as_str(),
+            "backend resolution must match the renderer that executed"
+        );
         Ok((png_bytes, backend, diagnostics, frame))
     }
 

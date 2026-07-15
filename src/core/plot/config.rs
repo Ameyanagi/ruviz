@@ -1,16 +1,16 @@
 //! Plot configuration types
 
-/// Backend types for rendering
+/// Backend types that may be requested for raster rendering.
 #[allow(clippy::upper_case_acronyms)] // GPU is the standard industry acronym
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendType {
-    /// Default Skia backend (CPU-based, good for <1K points)
+    /// Reference CPU raster backend.
     Skia,
-    /// Parallel multi-threaded backend (good for 1K-100K points)
+    /// Parallel CPU backend preference.
     Parallel,
-    /// GPU-accelerated backend (good for >100K points)
+    /// GPU backend preference.
     GPU,
-    /// DataShader aggregation backend (good for >1M points)
+    /// Density-aggregation backend for compatible scatter PNG output.
     DataShader,
 }
 
@@ -23,6 +23,83 @@ impl BackendType {
             Self::GPU => "gpu",
             Self::DataShader => "datashader",
         }
+    }
+}
+
+/// Public raster operation whose backend is being resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BackendOperation {
+    /// In-memory raster output, including prepared plots, subplot frames, and
+    /// PNG bytes encoded from those images.
+    RasterImage,
+    /// The native `Plot::render_png_bytes` and `Plot::save` routing policy.
+    Png,
+    /// Interactive base-layer rasterization.
+    Interactive,
+}
+
+/// Why a requested raster backend resolved to Skia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BackendFallbackReason {
+    /// The crate feature required by the requested backend is disabled.
+    FeatureDisabled,
+    /// No parity-approved public execution path exists for this operation.
+    UnsupportedOperation,
+    /// The requested backend is unavailable on the compilation target.
+    UnsupportedTarget,
+    /// The plot contains no series to render with the requested backend.
+    EmptyPlot,
+    /// The plot mixes Cartesian and non-Cartesian coordinate systems.
+    MixedCoordinateSystems,
+    /// At least one series type is unsupported by the requested backend.
+    UnsupportedSeries,
+    /// The requested backend does not support the configured axis scales.
+    UnsupportedAxisScale,
+    /// The requested backend cannot execute descending manual axis limits.
+    ReversedAxisLimits,
+}
+
+/// Deterministic backend decision for a specific public raster operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendResolution {
+    requested_backend: Option<BackendType>,
+    actual_backend: BackendType,
+    fallback_reason: Option<BackendFallbackReason>,
+}
+
+impl BackendResolution {
+    pub(crate) const fn new(
+        requested_backend: Option<BackendType>,
+        actual_backend: BackendType,
+        fallback_reason: Option<BackendFallbackReason>,
+    ) -> Self {
+        Self {
+            requested_backend,
+            actual_backend,
+            fallback_reason,
+        }
+    }
+
+    /// Explicit or auto-selected backend stored on the plot, if any.
+    pub const fn requested_backend(self) -> Option<BackendType> {
+        self.requested_backend
+    }
+
+    /// Backend that will execute for the selected operation.
+    pub const fn actual_backend(self) -> BackendType {
+        self.actual_backend
+    }
+
+    /// Reason the requested backend resolved to Skia, if it did.
+    pub const fn fallback_reason(self) -> Option<BackendFallbackReason> {
+        self.fallback_reason
+    }
+
+    /// Whether the stored backend choice could not execute.
+    pub const fn used_fallback(self) -> bool {
+        self.fallback_reason.is_some()
     }
 }
 

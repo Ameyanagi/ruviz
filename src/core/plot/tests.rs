@@ -3117,10 +3117,17 @@ fn test_render_to_svg_preserves_line_width_ratio_across_dpi() {
 
 #[test]
 #[cfg(feature = "gpu")]
-fn test_gpu_method_sets_backend() {
-    let plot = Plot::new().gpu(true);
+fn test_gpu_method_sets_backend_and_reports_skia_fallback() {
+    let plot = Plot::new().auto_optimize().gpu(true);
     assert_eq!(plot.get_backend_name(), "gpu");
     assert!(plot.render.enable_gpu);
+    assert!(!plot.render.auto_optimized);
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+    assert_eq!(resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(
+        resolution.fallback_reason(),
+        Some(BackendFallbackReason::UnsupportedOperation)
+    );
 }
 
 #[test]
@@ -3148,7 +3155,7 @@ fn test_gpu_threshold_constants() {
 #[test]
 #[cfg(feature = "gpu")]
 fn test_gpu_with_small_dataset() {
-    // Small datasets should not trigger GPU even with gpu(true)
+    // Static raster output truthfully falls back even with gpu(true).
     let x_data: Vec<f64> = (0..100).map(|i| i as f64).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x * x).collect();
 
@@ -3166,7 +3173,7 @@ fn test_gpu_with_small_dataset() {
 #[test]
 #[cfg(feature = "gpu")]
 fn test_gpu_with_medium_dataset() {
-    // Medium datasets (>5K) should trigger GPU path
+    // Dataset size does not advertise an unavailable static GPU path.
     let x_data: Vec<f64> = (0..6000).map(|i| i as f64 * 0.01).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
 
@@ -3176,7 +3183,7 @@ fn test_gpu_with_medium_dataset() {
         .title("Medium Dataset GPU Test")
         .end_series();
 
-    // Should succeed (GPU path if available, otherwise fallback to CPU)
+    // Rendering succeeds through the documented Skia fallback.
     let result = plot.render();
     assert!(result.is_ok());
 }
@@ -3289,14 +3296,19 @@ fn test_public_png_auto_optimize_keeps_large_scatter_on_skia_visual_path() {
         .auto_optimize()
         .into_plot();
 
-    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.get_backend_name(), "skia");
     assert_eq!(plot.resolved_backend_name(), "skia");
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+    assert_eq!(resolution.requested_backend(), Some(BackendType::Skia));
+    assert_eq!(resolution.actual_backend(), BackendType::Skia);
+    assert_eq!(resolution.fallback_reason(), None);
 
     let (png_bytes, backend, diagnostics) = plot
         .benchmark_save_png_bytes_with_diagnostics()
         .expect("auto-optimized scatter PNG render should preserve Skia visuals");
 
     assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.actual_backend(), BackendType::Skia);
     assert_eq!(diagnostics.render_mode, "reference");
     assert!(!diagnostics.used_auto_datashader);
     assert!(png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
@@ -3315,12 +3327,20 @@ fn test_public_png_explicit_datashader_uses_density_path_for_large_scatter() {
 
     assert_eq!(plot.get_backend_name(), "datashader");
     assert_eq!(plot.resolved_backend_name(), "datashader");
+    let resolution = plot.backend_resolution(BackendOperation::Png);
+    assert_eq!(
+        resolution.requested_backend(),
+        Some(BackendType::DataShader)
+    );
+    assert_eq!(resolution.actual_backend(), BackendType::DataShader);
+    assert_eq!(resolution.fallback_reason(), None);
 
     let (png_bytes, backend, diagnostics) = plot
         .benchmark_save_png_bytes_with_diagnostics()
         .expect("explicit DataShader scatter PNG render should use density path");
 
     assert_eq!(backend, "datashader");
+    assert_eq!(diagnostics.actual_backend(), BackendType::DataShader);
     assert_eq!(diagnostics.render_mode, "optimized");
     assert!(diagnostics.used_auto_datashader);
     assert!(png_bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
@@ -3328,7 +3348,7 @@ fn test_public_png_explicit_datashader_uses_density_path_for_large_scatter() {
 
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
-fn test_public_png_auto_optimize_falls_back_for_unsupported_large_line() {
+fn test_public_png_auto_optimize_refuses_unroutable_large_line_backend() {
     let x_data: Vec<f64> = (0..100_000).map(|i| i as f64 * 0.00001).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x.sin()).collect();
 
@@ -3337,14 +3357,20 @@ fn test_public_png_auto_optimize_falls_back_for_unsupported_large_line() {
         .auto_optimize()
         .into_plot();
 
-    assert_eq!(plot.get_backend_name(), "datashader");
+    assert_eq!(plot.get_backend_name(), "skia");
     assert_eq!(plot.resolved_backend_name(), "skia");
+    assert!(
+        !plot
+            .backend_resolution(BackendOperation::Png)
+            .used_fallback()
+    );
 
     let (_, backend, diagnostics) = plot
         .benchmark_save_png_bytes_with_diagnostics()
-        .expect("unsupported DataShader line PNG render should fall back to Skia");
+        .expect("auto-selected Skia line PNG render should stay on Skia");
 
     assert_eq!(backend, "skia");
+    assert_eq!(diagnostics.actual_backend(), BackendType::Skia);
     assert_eq!(diagnostics.render_mode, "reference");
     assert!(!diagnostics.used_auto_datashader);
 }

@@ -983,10 +983,10 @@ impl PlotSeriesBuilder {
         self.end_series().backend(backend)
     }
 
-    /// Enable GPU acceleration for coordinate transformations
+    /// Store a GPU backend preference.
     ///
-    /// When enabled, large datasets (>5K points) will use GPU compute shaders
-    /// for coordinate transformation, providing significant speedups.
+    /// Public raster operations currently resolve the preference to Skia with an
+    /// inspectable fallback reason.
     #[cfg(feature = "gpu")]
     pub fn gpu(self, enabled: bool) -> Plot {
         self.end_series().gpu(enabled)
