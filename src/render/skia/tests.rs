@@ -362,6 +362,25 @@ fn test_data_to_pixel_mapping() {
 }
 
 #[test]
+fn test_scaled_data_to_pixel_mapping_handles_log_symlog_and_reversed_domains() {
+    let plot_area = Rect::from_xywh(100.0, 50.0, 600.0, 400.0).unwrap();
+    let (px, py) = map_data_to_pixels_scaled(
+        10.0,
+        0.0,
+        100.0,
+        1.0,
+        100.0,
+        -100.0,
+        plot_area,
+        &crate::axes::AxisScale::Log,
+        &crate::axes::AxisScale::symlog(1.0),
+    );
+
+    assert!((px - 400.0).abs() < f32::EPSILON);
+    assert!((py - 250.0).abs() < f32::EPSILON);
+}
+
+#[test]
 fn test_tick_generation() {
     let ticks = generate_ticks(0.0, 10.0, 5);
     assert!(!ticks.is_empty());

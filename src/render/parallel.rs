@@ -179,21 +179,15 @@ impl ParallelRenderer {
         output_vec.clear();
         output_vec.reserve(point_count);
 
+        let transform = crate::core::CoordinateTransform::new(
+            bounds.x_min..bounds.x_max,
+            bounds.y_min..bounds.y_max,
+            plot_area.left..plot_area.right,
+            plot_area.top..plot_area.bottom,
+        );
         let project = |data_x: f64, data_y: f64| {
-            let pixel_x = if (bounds.x_max - bounds.x_min).abs() < f64::EPSILON {
-                plot_area.left + plot_area.width() * 0.5
-            } else {
-                let normalized_x = x_scale.normalized_position(data_x, bounds.x_min, bounds.x_max);
-                plot_area.left + normalized_x as f32 * plot_area.width()
-            };
-
-            let pixel_y = if (bounds.y_max - bounds.y_min).abs() < f64::EPSILON {
-                plot_area.top + plot_area.height() * 0.5
-            } else {
-                let normalized_y = y_scale.normalized_position(data_y, bounds.y_min, bounds.y_max);
-                plot_area.bottom - normalized_y as f32 * plot_area.height()
-            };
-
+            let (pixel_x, pixel_y) =
+                transform.data_to_screen_scaled(data_x, data_y, x_scale, y_scale);
             Point2f::new(pixel_x, pixel_y)
         };
 
@@ -250,7 +244,18 @@ impl ParallelRenderer {
         output_vec.clear();
         output_vec.reserve(point_count);
 
+        let x_range = bounds.x_max - bounds.x_min;
+        let y_range = bounds.y_max - bounds.y_min;
+        let x_is_degenerate = crate::axes::scale::linear_range_is_degenerate(x_range);
+        let y_is_degenerate = crate::axes::scale::linear_range_is_degenerate(y_range);
+
         #[cfg(feature = "simd")]
+        if !x_is_degenerate
+            && !y_is_degenerate
+            && x_range.is_finite()
+            && y_range.is_finite()
+            && bounds.x_min as f32 != bounds.x_max as f32
+            && bounds.y_min as f32 != bounds.y_max as f32
         {
             // Convert to SIMD-compatible types
             let simd_bounds = CoordinateBounds {
@@ -315,8 +320,26 @@ impl ParallelRenderer {
 
         // Fallback: simple coordinate transformation without SIMD
         for i in 0..point_count {
-            let x_norm = (x_data[i] - bounds.x_min) / (bounds.x_max - bounds.x_min);
-            let y_norm = (y_data[i] - bounds.y_min) / (bounds.y_max - bounds.y_min);
+            let x_norm = if x_is_degenerate {
+                0.5
+            } else {
+                crate::axes::scale::linear_normalized_position_with_range(
+                    x_data[i],
+                    bounds.x_min,
+                    bounds.x_max,
+                    x_range,
+                )
+            };
+            let y_norm = if y_is_degenerate {
+                0.5
+            } else {
+                crate::axes::scale::linear_normalized_position_with_range(
+                    y_data[i],
+                    bounds.y_min,
+                    bounds.y_max,
+                    y_range,
+                )
+            };
 
             let pixel_x = plot_area.left + x_norm as f32 * (plot_area.right - plot_area.left);
             let pixel_y = plot_area.bottom - y_norm as f32 * (plot_area.bottom - plot_area.top);
@@ -832,6 +855,63 @@ mod tests {
         assert!((points[0].y - 80.0).abs() <= 1e-5);
         assert!(points[0].x.is_finite());
         assert!(points[0].y.is_finite());
+    }
+
+    #[test]
+    fn test_linear_parallel_path_uses_shared_epsilon_and_extreme_range_rules() {
+        let renderer = ParallelRenderer::new();
+        let plot_area = PlotArea {
+            left: 10.0,
+            right: 210.0,
+            top: 20.0,
+            bottom: 120.0,
+        };
+
+        let min = 1.0;
+        let max = min + f64::EPSILON;
+        let epsilon_points = renderer
+            .transform_coordinates_parallel_scaled(
+                &[min, max],
+                &[0.0, 1.0],
+                DataBounds {
+                    x_min: min,
+                    x_max: max,
+                    y_min: 0.0,
+                    y_max: 1.0,
+                },
+                plot_area.clone(),
+                &AxisScale::Linear,
+                &AxisScale::Linear,
+            )
+            .unwrap();
+        assert_eq!(
+            epsilon_points,
+            vec![Point2f::new(10.0, 120.0), Point2f::new(210.0, 20.0)]
+        );
+
+        let extreme_points = renderer
+            .transform_coordinates_parallel_scaled(
+                &[-f64::MAX, 0.0, f64::MAX],
+                &[0.0, 0.5, 1.0],
+                DataBounds {
+                    x_min: -f64::MAX,
+                    x_max: f64::MAX,
+                    y_min: 0.0,
+                    y_max: 1.0,
+                },
+                plot_area,
+                &AxisScale::Linear,
+                &AxisScale::Linear,
+            )
+            .unwrap();
+        assert_eq!(
+            extreme_points,
+            vec![
+                Point2f::new(10.0, 120.0),
+                Point2f::new(110.0, 70.0),
+                Point2f::new(210.0, 20.0),
+            ]
+        );
     }
 
     #[test]

@@ -198,6 +198,54 @@ pub enum AxisScale {
     },
 }
 
+#[inline]
+pub(crate) fn linear_range_is_degenerate(range: f64) -> bool {
+    range.abs() < f64::EPSILON
+}
+
+#[inline]
+pub(crate) fn linear_normalized_position_with_range(
+    value: f64,
+    min: f64,
+    max: f64,
+    range: f64,
+) -> f64 {
+    if range.is_infinite() && value.is_finite() && min.is_finite() && max.is_finite() {
+        (value / 2.0 - min / 2.0) / (max / 2.0 - min / 2.0)
+    } else {
+        (value - min) / range
+    }
+}
+
+#[inline]
+fn linear_inverse_normalized_position(normalized: f64, min: f64, max: f64) -> f64 {
+    let range = max - min;
+    if range.is_infinite() && min.is_finite() && max.is_finite() {
+        (1.0 - normalized) * min + normalized * max
+    } else {
+        normalized * range + min
+    }
+}
+
+#[inline]
+fn log_normalization_bounds(min: f64, max: f64) -> (f64, f64) {
+    if min.is_finite() && min > 0.0 && max.is_finite() && max > 0.0 {
+        (min, max)
+    } else {
+        (min.max(f64::EPSILON), max.max(f64::EPSILON))
+    }
+}
+
+#[inline]
+fn log_ratio(value: f64, base: f64) -> f64 {
+    let ratio = value / base;
+    if ratio.is_finite() && ratio > 0.5 && ratio < 2.0 {
+        ((value - base) / base).ln_1p()
+    } else {
+        value.ln() - base.ln()
+    }
+}
+
 impl AxisScale {
     /// Create a logarithmic scale
     pub fn log() -> Self {
@@ -217,23 +265,29 @@ impl AxisScale {
         match self {
             AxisScale::Linear => {
                 let range = max - min;
-                if range.abs() < f64::EPSILON {
+                if linear_range_is_degenerate(range) {
                     0.5
                 } else {
-                    (value - min) / range
+                    linear_normalized_position_with_range(value, min, max, range)
                 }
             }
             AxisScale::Log => {
-                let min = min.max(f64::EPSILON);
-                let max = max.max(f64::EPSILON);
                 if value <= 0.0 {
                     return 0.0;
                 }
 
+                if min.is_finite() && min > 0.0 && max.is_finite() && max > 0.0 {
+                    if min == max {
+                        return 0.5;
+                    }
+                    return log_ratio(value, min) / log_ratio(max, min);
+                }
+
+                let (min, max) = log_normalization_bounds(min, max);
                 let log_min = min.log10();
                 let log_max = max.log10();
                 let log_range = log_max - log_min;
-                if log_range.abs() < f64::EPSILON {
+                if log_range.abs() <= f64::EPSILON {
                     0.5
                 } else {
                     (value.log10() - log_min) / log_range
@@ -252,11 +306,65 @@ impl AxisScale {
                 let transformed_max = symlog(max);
                 let transformed_value = symlog(value);
                 let range = transformed_max - transformed_min;
-                if range.abs() < f64::EPSILON {
+                if range.abs() <= f64::EPSILON {
                     0.5
                 } else {
                     (transformed_value - transformed_min) / range
                 }
+            }
+        }
+    }
+
+    /// Convert a normalized scale position back into a value in the provided range.
+    ///
+    /// This is the mathematical inverse of [`Self::normalized_position`] for valid,
+    /// non-degenerate ranges. Range direction is preserved, so `0.0` maps to
+    /// `min` and `1.0` maps to `max` even when the range is reversed.
+    pub fn inverse_normalized_position(&self, normalized: f64, min: f64, max: f64) -> f64 {
+        match self {
+            AxisScale::Linear => linear_inverse_normalized_position(normalized, min, max),
+            AxisScale::Log => {
+                if min.is_finite() && min > 0.0 && max.is_finite() && max > 0.0 {
+                    if normalized == 0.0 {
+                        return min;
+                    }
+                    if normalized == 1.0 {
+                        return max;
+                    }
+                    if min == max {
+                        return min;
+                    }
+
+                    let log_range = log_ratio(max, min);
+                    if log_range.abs() < 0.5 {
+                        return min * (normalized * log_range).exp();
+                    }
+                }
+
+                let (min, max) = log_normalization_bounds(min, max);
+                let log_min = min.log10();
+                let log_max = max.log10();
+                10.0_f64.powf(normalized * (log_max - log_min) + log_min)
+            }
+            AxisScale::SymLog { linthresh } => {
+                let symlog = |input: f64| {
+                    if input.abs() <= *linthresh {
+                        input / *linthresh
+                    } else {
+                        input.signum() * (1.0 + (input.abs() / *linthresh).log10())
+                    }
+                };
+                let inverse_symlog = |input: f64| {
+                    if input.abs() <= 1.0 {
+                        input * *linthresh
+                    } else {
+                        input.signum() * *linthresh * 10.0_f64.powf(input.abs() - 1.0)
+                    }
+                };
+
+                let transformed_min = symlog(min);
+                let transformed_max = symlog(max);
+                inverse_symlog(normalized * (transformed_max - transformed_min) + transformed_min)
             }
         }
     }
@@ -421,5 +529,137 @@ mod tests {
 
         let log_mid = AxisScale::Log.normalized_position(10.0, 100.0, 1.0);
         assert!((log_mid - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_axis_scale_inverse_normalization_endpoints_and_midpoints() {
+        let cases = [
+            (AxisScale::Linear, 0.0, 10.0, 5.0),
+            (AxisScale::Log, 1.0, 100.0, 10.0),
+            (AxisScale::symlog(1.0), -100.0, 100.0, 0.0),
+        ];
+
+        for (scale, min, max, midpoint) in cases {
+            assert!((scale.inverse_normalized_position(0.0, min, max) - min).abs() < 1e-10);
+            assert!((scale.inverse_normalized_position(0.5, min, max) - midpoint).abs() < 1e-10);
+            assert!((scale.inverse_normalized_position(1.0, min, max) - max).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_axis_scale_inverse_normalization_roundtrips_reversed_ranges() {
+        let cases = [
+            (AxisScale::Linear, 20.0, -10.0, vec![20.0, 7.0, -10.0]),
+            (AxisScale::Log, 1000.0, 1.0, vec![1000.0, 10.0, 1.0]),
+            (
+                AxisScale::symlog(2.0),
+                200.0,
+                -50.0,
+                vec![200.0, 10.0, 0.0, -2.0, -50.0],
+            ),
+        ];
+
+        for (scale, min, max, values) in cases {
+            for value in values {
+                let normalized = scale.normalized_position(value, min, max);
+                let recovered = scale.inverse_normalized_position(normalized, min, max);
+                let tolerance = value.abs().max(1.0) * 1e-10;
+                assert!(
+                    (recovered - value).abs() <= tolerance,
+                    "{scale:?} failed to round-trip {value} in {min}..{max}: {recovered}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_axis_scale_log_invalid_value_behavior_is_preserved() {
+        assert_eq!(AxisScale::Log.normalized_position(0.0, 1.0, 100.0), 0.0);
+        assert_eq!(AxisScale::Log.normalized_position(-1.0, 1.0, 100.0), 0.0);
+        assert!(AxisScale::Log.inverse_normalized_position(0.5, 1.0, 100.0) > 0.0);
+        assert!(AxisScale::Log.validate_range(0.0, 100.0).is_err());
+    }
+
+    #[test]
+    fn test_axis_scale_log_normalization_supports_sub_epsilon_domains() {
+        let low = f64::EPSILON / 16.0;
+        let high = f64::EPSILON / 2.0;
+        let midpoint = 10.0_f64.powf(low.log10() + (high.log10() - low.log10()) * 0.5);
+
+        for (min, max) in [(low, high), (high, low)] {
+            assert_eq!(AxisScale::Log.normalized_position(min, min, max), 0.0);
+            assert_eq!(AxisScale::Log.normalized_position(max, min, max), 1.0);
+
+            for value in [min, midpoint, max] {
+                let normalized = AxisScale::Log.normalized_position(value, min, max);
+                let recovered = AxisScale::Log.inverse_normalized_position(normalized, min, max);
+                assert!(
+                    ((recovered - value) / value).abs() <= 1e-12,
+                    "failed to round-trip {value} in {min}..{max}: {recovered}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_axis_scale_log_normalization_supports_close_positive_bounds() {
+        let min = 1.0_f64;
+        let midpoint = f64::from_bits(min.to_bits() + 1);
+        let max = f64::from_bits(min.to_bits() + 2);
+
+        assert_eq!(AxisScale::Log.normalized_position(min, min, max), 0.0);
+        assert_eq!(AxisScale::Log.normalized_position(max, min, max), 1.0);
+        let normalized = AxisScale::Log.normalized_position(midpoint, min, max);
+        assert!((normalized - 0.5).abs() <= f64::EPSILON);
+        assert_eq!(
+            AxisScale::Log.inverse_normalized_position(normalized, min, max),
+            midpoint
+        );
+    }
+
+    #[test]
+    fn test_axis_scale_linear_exact_epsilon_span_is_not_degenerate() {
+        let min = 0.0;
+        let max = f64::EPSILON;
+
+        assert_eq!(AxisScale::Linear.normalized_position(min, min, max), 0.0);
+        assert_eq!(
+            AxisScale::Linear.normalized_position(max / 2.0, min, max),
+            0.5
+        );
+        assert_eq!(AxisScale::Linear.normalized_position(max, min, max), 1.0);
+
+        let translated_min = 1.0;
+        let translated_max = translated_min + f64::EPSILON;
+        assert_eq!(
+            AxisScale::Linear.normalized_position(translated_min, translated_min, translated_max),
+            0.0
+        );
+        assert_eq!(
+            AxisScale::Linear.normalized_position(translated_max, translated_min, translated_max),
+            1.0
+        );
+    }
+
+    #[test]
+    fn test_axis_scale_linear_normalization_supports_finite_extreme_ranges() {
+        for (min, max) in [(-f64::MAX, f64::MAX), (f64::MAX, -f64::MAX)] {
+            assert_eq!(AxisScale::Linear.normalized_position(min, min, max), 0.0);
+            assert_eq!(AxisScale::Linear.normalized_position(0.0, min, max), 0.5);
+            assert_eq!(AxisScale::Linear.normalized_position(max, min, max), 1.0);
+
+            assert_eq!(
+                AxisScale::Linear.inverse_normalized_position(0.0, min, max),
+                min
+            );
+            assert_eq!(
+                AxisScale::Linear.inverse_normalized_position(0.5, min, max),
+                0.0
+            );
+            assert_eq!(
+                AxisScale::Linear.inverse_normalized_position(1.0, min, max),
+                max
+            );
+        }
     }
 }
