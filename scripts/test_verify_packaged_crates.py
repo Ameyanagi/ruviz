@@ -68,6 +68,9 @@ def parse_workflow_jobs(path: Path) -> dict[str, dict]:
             elif value:
                 current_job["needs"] = [value]
             continue
+        if indent == 4 and stripped.startswith("if:"):
+            current_job["if"] = stripped.removeprefix("if:").strip()
+            continue
         if indent == 6 and stripped.startswith("- name:"):
             current_step = {"name": stripped.split(":", 1)[1].strip()}
             current_job["steps"].append(current_step)
@@ -424,6 +427,7 @@ class MetadataSourceTests(unittest.TestCase):
         self.consumer = root / "consumer"
         self.ruviz_root = root / "archives/ruviz-1.2.3"
         self.gpui_root = root / "archives/ruviz-gpui-1.2.3"
+        self.registry_root = root / "registry/ruviz-1.2.3"
         for directory in (
             self.workspace,
             self.consumer,
@@ -539,7 +543,9 @@ class MetadataSourceTests(unittest.TestCase):
             },
         }
 
-    def validate(self, metadata: dict, mode: str) -> None:
+    def validate(
+        self, metadata: dict, mode: str, expected_vcs_sha: str | None = None
+    ) -> None:
         verify_packaged_crates.validate_metadata(
             metadata,
             mode=mode,
@@ -548,6 +554,7 @@ class MetadataSourceTests(unittest.TestCase):
             ruviz=self.ruviz,
             ruviz_gpui=self.ruviz_gpui,
             contract=self.contract,
+            expected_vcs_sha=expected_vcs_sha,
         )
 
     def test_ci_accepts_local_ruviz_and_registry_gpui(self) -> None:
@@ -555,6 +562,64 @@ class MetadataSourceTests(unittest.TestCase):
 
     def test_release_accepts_registry_ruviz_and_gpui(self) -> None:
         self.validate(self.metadata(mode="release"), "release")
+
+    def test_release_registry_ruviz_matches_expected_sha(self) -> None:
+        metadata = self.metadata(mode="release")
+        core = next(
+            package for package in metadata["packages"] if package["name"] == "ruviz"
+        )
+        registry_root = self.registry_root
+        registry_root.mkdir(parents=True)
+        (registry_root / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        (registry_root / ".cargo_vcs_info.json").write_text(
+            '{"git":{"sha1":"' + "a" * 40 + '"}}', encoding="utf-8"
+        )
+        core["manifest_path"] = str(registry_root / "Cargo.toml")
+
+        self.validate(metadata, "release", "a" * 40)
+
+    def test_release_registry_ruviz_rejects_mismatched_sha(self) -> None:
+        metadata = self.metadata(mode="release")
+        core = next(
+            package for package in metadata["packages"] if package["name"] == "ruviz"
+        )
+        registry_root = self.registry_root
+        registry_root.mkdir(parents=True)
+        (registry_root / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        (registry_root / ".cargo_vcs_info.json").write_text(
+            '{"git":{"sha1":"' + "b" * 40 + '"}}', encoding="utf-8"
+        )
+        core["manifest_path"] = str(registry_root / "Cargo.toml")
+
+        with self.assertRaisesRegex(VerificationError, "exact release SHA"):
+            self.validate(metadata, "release", "a" * 40)
+
+    def test_release_registry_ruviz_requires_vcs_metadata(self) -> None:
+        metadata = self.metadata(mode="release")
+        core = next(
+            package for package in metadata["packages"] if package["name"] == "ruviz"
+        )
+        registry_root = self.registry_root
+        registry_root.mkdir(parents=True)
+        (registry_root / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        core["manifest_path"] = str(registry_root / "Cargo.toml")
+
+        with self.assertRaisesRegex(VerificationError, "exact release SHA"):
+            self.validate(metadata, "release", "a" * 40)
+
+    def test_release_registry_ruviz_rejects_malformed_vcs_metadata(self) -> None:
+        metadata = self.metadata(mode="release")
+        core = next(
+            package for package in metadata["packages"] if package["name"] == "ruviz"
+        )
+        registry_root = self.registry_root
+        registry_root.mkdir(parents=True)
+        (registry_root / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        (registry_root / ".cargo_vcs_info.json").write_text("{", encoding="utf-8")
+        core["manifest_path"] = str(registry_root / "Cargo.toml")
+
+        with self.assertRaisesRegex(VerificationError, "invalid .cargo_vcs_info"):
+            self.validate(metadata, "release", "a" * 40)
 
     def test_release_accepts_sparse_crates_io_sources(self) -> None:
         metadata = self.metadata(mode="release", gpui_source=SPARSE_CRATES_IO_SOURCE)
@@ -755,6 +820,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
         )
         verify_job = jobs["verify-packaged-crates"]
         gpui_job = jobs["publish-ruviz-gpui"]
+        release_job = jobs["create-github-release"]
 
         self.assertEqual(verify_job["needs"], ["check-ci", "publish-ruviz"])
         checkout = step_named(verify_job, "Checkout code")
@@ -770,6 +836,16 @@ class WorkflowIntegrationTests(unittest.TestCase):
             "--expected-vcs-sha ${{ needs.check-ci.outputs.release_sha }}", verify_run
         )
         self.assertEqual(gpui_job["needs"], ["check-ci", "verify-packaged-crates"])
+        self.assertIn("verify-packaged-crates", release_job["needs"])
+        self.assertIn(
+            "needs.verify-packaged-crates.result == 'success'",
+            release_job["if"],
+        )
+        self.assertIn(
+            "needs.verify-packaged-crates.result == 'skipped'",
+            release_job["if"],
+        )
+        self.assertIn("contains(", release_job["if"])
 
         publish_steps = [
             (job_name, step)

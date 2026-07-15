@@ -383,37 +383,35 @@ def safe_extract_archive(
             f"normalized {name} manifest unexpectedly retains workspace-only tables"
         )
 
-    vcs_sha: str | None = None
-    vcs_dirty: bool | None = None
+    vcs_sha, vcs_dirty = read_vcs_metadata(root, f"archive {archive_path}")
+
+    return ExtractedCrate(
+        name, version, archive_path, root, manifest, vcs_sha, vcs_dirty
+    )
+
+
+def read_vcs_metadata(root: Path, artifact: str) -> tuple[str | None, bool | None]:
     vcs_info_path = root / ".cargo_vcs_info.json"
     if vcs_info_path.is_file():
         try:
             vcs_info = json.loads(vcs_info_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise VerificationError(
-                f"archive {archive_path} has invalid .cargo_vcs_info.json: {exc}"
+                f"{artifact} has invalid .cargo_vcs_info.json: {exc}"
             ) from exc
         if not isinstance(vcs_info, dict):
-            raise VerificationError(f"archive {archive_path} has invalid VCS metadata")
+            raise VerificationError(f"{artifact} has invalid VCS metadata")
         git_info = vcs_info.get("git", {})
         if not isinstance(git_info, dict):
-            raise VerificationError(
-                f"archive {archive_path} has invalid git VCS metadata"
-            )
+            raise VerificationError(f"{artifact} has invalid git VCS metadata")
         candidate = git_info.get("sha1")
         if candidate is not None and not isinstance(candidate, str):
-            raise VerificationError(f"archive {archive_path} has a non-string VCS SHA")
+            raise VerificationError(f"{artifact} has a non-string VCS SHA")
         dirty = git_info.get("dirty", False)
         if not isinstance(dirty, bool):
-            raise VerificationError(
-                f"archive {archive_path} has a non-boolean VCS dirty flag"
-            )
-        vcs_sha = candidate
-        vcs_dirty = dirty
-
-    return ExtractedCrate(
-        name, version, archive_path, root, manifest, vcs_sha, vcs_dirty
-    )
+            raise VerificationError(f"{artifact} has a non-boolean VCS dirty flag")
+        return candidate, dirty
+    return None, None
 
 
 def require_archive_vcs_sha(crate: ExtractedCrate, expected_sha: str) -> None:
@@ -426,6 +424,25 @@ def require_archive_vcs_sha(crate: ExtractedCrate, expected_sha: str) -> None:
         raise VerificationError(
             f"{crate.name} archive VCS metadata reports dirty={crate.vcs_dirty!r}; "
             "expected a clean exact-release archive"
+        )
+
+
+def require_registry_vcs_sha(package: dict[str, Any], expected_sha: str) -> None:
+    manifest_path = package.get("manifest_path")
+    if not isinstance(manifest_path, str):
+        raise VerificationError("registry ruviz package has no manifest path")
+    vcs_sha, vcs_dirty = read_vcs_metadata(
+        Path(manifest_path).resolve().parent, "registry ruviz artifact"
+    )
+    if vcs_sha != expected_sha:
+        raise VerificationError(
+            f"registry ruviz artifact was produced from VCS SHA {vcs_sha!r}; "
+            f"expected exact release SHA {expected_sha}"
+        )
+    if vcs_dirty is not False:
+        raise VerificationError(
+            "registry ruviz artifact VCS metadata reports "
+            f"dirty={vcs_dirty!r}; expected a clean exact-release artifact"
         )
 
 
@@ -531,6 +548,7 @@ def validate_metadata(
     ruviz: ExtractedCrate,
     ruviz_gpui: ExtractedCrate,
     contract: WorkspaceContract,
+    expected_vcs_sha: str | None = None,
 ) -> None:
     if Path(metadata.get("workspace_root", "")).resolve() != consumer.resolve():
         raise VerificationError(
@@ -614,6 +632,8 @@ def validate_metadata(
         raise VerificationError(
             f"release ruviz must resolve from crates.io, got {core.get('source')!r}"
         )
+    elif expected_vcs_sha is not None:
+        require_registry_vcs_sha(core, expected_vcs_sha)
 
     gpui = one_package("gpui", contract.gpui_version)
     if not is_crates_io_source(gpui.get("source")):
@@ -849,6 +869,7 @@ def verify(args: argparse.Namespace) -> None:
             ruviz=ruviz,
             ruviz_gpui=ruviz_gpui,
             contract=contract,
+            expected_vcs_sha=args.expected_vcs_sha,
         )
         run_command(["cargo", "check", "--locked"], cwd=consumer, env=cargo_env)
 
