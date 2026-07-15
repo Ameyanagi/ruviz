@@ -591,8 +591,7 @@ impl PlotRender for ContourPlotData {
         // Get colormap for level coloring
         let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
 
-        // Use provided alpha or config alpha
-        let effective_alpha = if alpha != 1.0 { alpha } else { config.alpha };
+        let effective_alpha = config.alpha * alpha.clamp(0.0, 1.0);
         let effective_line_width = renderer.render_scale().points_to_pixels(
             line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
         );
@@ -631,6 +630,8 @@ impl PlotRender for ContourPlotData {
                         color
                     }
                 });
+                let line_color =
+                    line_color.with_alpha((f32::from(line_color.a) / 255.0) * effective_alpha);
 
                 // Draw each contour segment (each segment is (x1, y1, x2, y2))
                 for &(x1, y1, x2, y2) in &level.segments {

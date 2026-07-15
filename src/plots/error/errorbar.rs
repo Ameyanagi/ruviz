@@ -427,7 +427,8 @@ impl PlotRender for ErrorBarData {
         }
 
         let config = &self.config;
-        let bar_color = config.color.unwrap_or(color).with_alpha(config.alpha);
+        let bar_color = config.color.unwrap_or(color);
+        let bar_color = bar_color.with_alpha((f32::from(bar_color.a) / 255.0) * config.alpha);
 
         // Convert ErrorLineStyle to LineStyle (using a helper fn to avoid move issues)
         let get_line_style = || match config.line_style {

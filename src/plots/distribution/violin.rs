@@ -600,12 +600,10 @@ impl PlotRender for ViolinData {
         let clip_rect = (area.x, area.y, area.width, area.height);
 
         // Use StyleResolver for fill color
-        let fill_alpha = if config.fill_alpha != 0.7 {
-            config.fill_alpha // User override
-        } else {
-            alpha.clamp(0.0, 1.0) // Theme/caller provided
-        };
-        let fill_color = config.fill_color.unwrap_or(color).with_alpha(fill_alpha);
+        let fill_base = config.fill_color.unwrap_or(color);
+        let fill_alpha =
+            (f32::from(fill_base.a) / 255.0) * config.fill_alpha * alpha.clamp(0.0, 1.0);
+        let fill_color = fill_base.with_alpha(fill_alpha);
 
         // Draw filled violin with clipping to plot area
         if screen_points.len() >= 3 {
@@ -617,6 +615,8 @@ impl PlotRender for ViolinData {
             line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
         );
         let line_color = resolver.edge_color(color, config.line_color);
+        let line_color =
+            line_color.with_alpha((f32::from(line_color.a) / 255.0) * alpha.clamp(0.0, 1.0));
 
         // Draw outline with clipping
         if screen_points.len() >= 2 && actual_line_width > 0.0 {

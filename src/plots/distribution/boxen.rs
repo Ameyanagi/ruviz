@@ -319,23 +319,38 @@ impl PlotRender for BoxenData {
         _theme: &Theme,
         color: Color,
     ) -> Result<()> {
+        self.render_styled(renderer, area, _theme, color, 1.0, None)
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
         if self.boxes.is_empty() {
             return Ok(());
         }
 
         let config = &self.config;
         let render_scale = renderer.render_scale();
-        let line_width_px = render_scale.points_to_pixels(config.line_width);
+        let line_width_points = line_width.unwrap_or(config.line_width);
+        let line_width_px = render_scale.points_to_pixels(line_width_points);
         let median_line_width_px = render_scale.points_to_pixels(2.0);
         let outlier_size_px = render_scale.points_to_pixels(config.outlier_size);
         let center = 0.5; // Centered position for single boxen
+        let base_color = config.color.unwrap_or(color);
+        let base_color =
+            base_color.with_alpha((f32::from(base_color.a) / 255.0) * alpha.clamp(0.0, 1.0));
 
         // Draw boxes from outermost to innermost (so inner boxes overlay outer)
         for (i, boxen_box) in self.boxes.iter().enumerate() {
             // Generate saturation gradient (lighter toward outside)
             let saturation_factor = 1.0 - (i as f32 / self.boxes.len() as f32) * config.saturation;
-            let box_color = config.color.unwrap_or(color);
-            let adjusted_color = adjust_saturation(box_color, saturation_factor);
+            let adjusted_color = adjust_saturation(base_color, saturation_factor);
 
             // Get rectangle vertices
             let rect = boxen_rect(boxen_box, center, config.orient);
@@ -352,10 +367,10 @@ impl PlotRender for BoxenData {
             }
 
             // Draw outline
-            if config.line_width > 0.0 {
+            if line_width_points > 0.0 {
                 let mut outline = screen_points.clone();
                 outline.push(screen_points[0]); // Close the path
-                renderer.draw_polyline(&outline, color, line_width_px, LineStyle::Solid)?;
+                renderer.draw_polyline(&outline, base_color, line_width_px, LineStyle::Solid)?;
             }
         }
 
@@ -370,7 +385,7 @@ impl PlotRender for BoxenData {
                     y,
                     x2,
                     y,
-                    Color::new(255, 255, 255),
+                    Color::new(255, 255, 255).with_alpha(alpha),
                     median_line_width_px,
                     LineStyle::Solid,
                 )?;
@@ -383,7 +398,7 @@ impl PlotRender for BoxenData {
                     y1,
                     x,
                     y2,
-                    Color::new(255, 255, 255),
+                    Color::new(255, 255, 255).with_alpha(alpha),
                     median_line_width_px,
                     LineStyle::Solid,
                 )?;
@@ -402,7 +417,7 @@ impl PlotRender for BoxenData {
                     py,
                     outlier_size_px,
                     crate::render::MarkerStyle::Circle,
-                    color,
+                    base_color,
                 )?;
             }
         }

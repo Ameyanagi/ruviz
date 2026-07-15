@@ -15,6 +15,12 @@ use crate::data::{Observable, StreamingBuffer, StreamingRenderState};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ReactiveSourceId {
+    Temporal(usize),
+    Reactive(usize),
+}
+
 // ============================================================================
 // ReactiveValue
 // ============================================================================
@@ -75,6 +81,14 @@ impl<T> ReactiveValue<T> {
             (Self::Temporal(left), Self::Temporal(right)) => left.shares_source(right),
             (Self::Reactive(left), Self::Reactive(right)) => left.shares_source(right),
             _ => false,
+        }
+    }
+
+    pub(crate) fn source_id(&self) -> Option<ReactiveSourceId> {
+        match self {
+            Self::Static(_) => None,
+            Self::Temporal(signal) => Some(ReactiveSourceId::Temporal(signal.source_id())),
+            Self::Reactive(observable) => Some(ReactiveSourceId::Reactive(observable.source_id())),
         }
     }
 

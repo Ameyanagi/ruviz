@@ -437,6 +437,7 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         error_config: None,
         inset_layout: None,
         group_id: None,
+        resolved_radar_colors: None,
     };
 
     series.set_color_source_value(Color::RED.into());
@@ -1981,14 +1982,9 @@ fn test_group_without_color_uses_single_palette_color() {
         .line(&x, &y3)
         .end_series();
     assert_eq!(plot.series_mgr.series.len(), 3);
-    assert_eq!(
-        plot.series_mgr.series[0].color,
-        plot.series_mgr.series[1].color
-    );
-    assert_ne!(
-        plot.series_mgr.series[0].color,
-        plot.series_mgr.series[2].color
-    );
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    assert_eq!(frame.style.series[0].color, frame.style.series[1].color);
+    assert_ne!(frame.style.series[0].color, frame.style.series[2].color);
 }
 
 #[test]
@@ -3930,16 +3926,16 @@ fn test_generic_streaming_buffers_are_acknowledged_after_png_and_save() {
 }
 
 #[test]
-fn test_streaming_resolved_plot_acknowledges_exact_captured_sequence() {
+fn test_resolved_frame_acknowledges_exact_captured_sequence() {
     use crate::data::{StreamingRenderState, StreamingXY};
 
     let stream = StreamingXY::new(100);
     stream.push_many(vec![(0.0, 0.0), (1.0, 1.0)]);
     let plot = Plot::new().line_streaming(&stream).end_series();
 
-    let resolved = plot.resolved_plot(0.0);
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
     stream.push(2.0, 4.0);
-    resolved.mark_reactive_sources_rendered();
+    frame.acknowledge_rendered(&plot);
 
     assert_eq!(stream.appended_count(), 1);
     assert_eq!(stream.read_appended_x(), vec![2.0]);
@@ -4938,6 +4934,7 @@ fn test_pie_svg_scales_edge_width_with_dpi() {
         let SeriesType::Pie { data } = &mut plot.series_mgr.series[0].series_type else {
             panic!("expected pie series");
         };
+        let data = Arc::make_mut(data);
         data.config.edge_color = Some(Color::BLACK);
         data.config.edge_width = 2.5;
     }
@@ -5063,6 +5060,141 @@ fn test_mixed_cartesian_radar_renders_svg_with_inset_geometry() {
         svg.contains(">Speed<"),
         "expected radar axis labels in SVG: {svg}"
     );
+}
+
+#[test]
+fn test_radar_internal_palette_is_shared_by_frame_shell_svg_and_legend() {
+    let theme = Theme {
+        color_palette: vec![Color::RED, Color::BLUE, Color::GREEN],
+        ..Theme::default()
+    };
+    let plot: Plot = Plot::new()
+        .theme(theme.clone())
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .radar(&["A", "B", "C"])
+        .add_series("first", &[1.0, 2.0, 3.0])
+        .add_series("second", &[3.0, 2.0, 1.0])
+        .into();
+
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let colors = frame.style.series[1]
+        .radar_colors
+        .as_ref()
+        .expect("radar colors should resolve");
+    assert_eq!(colors.as_ref(), &[Color::BLUE, Color::GREEN]);
+    assert_eq!(colors[0], theme.get_color(1));
+
+    let shell = plot.resolved_style_shell(&frame.style);
+    let legend = shell.collect_legend_items();
+    assert_eq!(legend.len(), 2);
+    assert!(matches!(
+        legend[0].item_type,
+        LegendItemType::Area {
+            edge_color: Some(Color::BLUE)
+        }
+    ));
+    assert!(matches!(
+        legend[1].item_type,
+        LegendItemType::Area {
+            edge_color: Some(Color::GREEN)
+        }
+    ));
+
+    let svg = plot.render_to_svg().expect("radar SVG should render");
+    assert!(svg.contains("rgb(0,0,255)"));
+    assert!(svg.contains("rgb(0,128,0)"));
+}
+
+#[test]
+fn test_radar_top_level_reactive_color_styles_unconfigured_internal_series_once() {
+    use crate::data::Signal;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_signal = Arc::clone(&calls);
+    let color = Signal::new(move |_| {
+        calls_for_signal.fetch_add(1, Ordering::Relaxed);
+        Color::RED
+    });
+    let plot: Plot = Plot::new()
+        .radar(&["A", "B", "C"])
+        .add_series("configured", &[1.0, 2.0, 3.0])
+        .with_color(Color::GREEN)
+        .add_series("reactive", &[3.0, 2.0, 1.0])
+        .color_source(color)
+        .into();
+
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let colors = frame.style.series[0]
+        .radar_colors
+        .as_deref()
+        .expect("radar colors should resolve");
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(colors, &[Color::GREEN, Color::RED]);
+
+    let shell = plot.resolved_style_shell(&frame.style);
+    let legend = shell.collect_legend_items();
+    assert!(matches!(
+        legend[0].item_type,
+        LegendItemType::Area {
+            edge_color: Some(Color::GREEN)
+        }
+    ));
+    assert!(matches!(
+        legend[1].item_type,
+        LegendItemType::Area {
+            edge_color: Some(Color::RED)
+        }
+    ));
+}
+
+#[test]
+fn test_radar_grid_uses_canonical_resolved_style_in_svg() {
+    let grid = GridStyle::default()
+        .color(Color::RED)
+        .alpha(1.0)
+        .line_width(3.0)
+        .line_style(LineStyle::Dashed);
+    let plot: Plot = Plot::new()
+        .with_grid_style(grid.clone())
+        .radar(&["A", "B", "C"])
+        .add_series("series", &[1.0, 2.0, 3.0])
+        .into();
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    assert_eq!(frame.style.grid_style, grid);
+
+    let svg = plot.render_to_svg().expect("radar SVG should render");
+    let grid_line = svg
+        .lines()
+        .find(|line| line.contains("<line ") && line.contains("stroke=\"rgb(255,0,0)\""))
+        .expect("resolved radar grid line should be present");
+    assert!(grid_line.contains("stroke-dasharray="));
+    let width = parse_svg_attr(grid_line, "stroke-width");
+    let expected = plot.render_scale().points_to_pixels(3.0);
+    assert!(
+        (width - expected).abs() < 0.01,
+        "width={width}, expected={expected}"
+    );
+}
+
+#[test]
+fn test_resolved_shell_shares_specialized_payloads() {
+    let plot: Plot = Plot::new()
+        .radar(&["A", "B", "C"])
+        .add_series("large", &[1.0, 2.0, 3.0])
+        .into();
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let shell = plot.resolved_style_shell(&frame.style);
+    let (SeriesType::Radar { data: original }, SeriesType::Radar { data: resolved }) = (
+        &plot.series_mgr.series[0].series_type,
+        &shell.series_mgr.series[0].series_type,
+    ) else {
+        panic!("expected radar payloads");
+    };
+    assert!(Arc::ptr_eq(original, resolved));
 }
 
 // ========== IntoPlot Trait Tests ==========
@@ -5328,6 +5460,371 @@ fn test_plot_builder_font_family_forwards_to_plot() {
         plot.get_config().typography.family,
         crate::render::FontFamily::Name("New Computer Modern Sans".to_string())
     );
+}
+
+#[test]
+fn test_theme_and_plot_config_follow_last_builder_call_precedence() {
+    let theme = crate::render::Theme::publication();
+    let config = PlotConfig::builder()
+        .font_size(18.0)
+        .font_family("Config Font")
+        .lines(|lines| lines.data_width(4.0).axis_width(2.0).grid_width(1.25))
+        .build();
+
+    let theme_last = Plot::new().plot_config(config.clone()).theme(theme.clone());
+    assert_eq!(
+        theme_last.get_config().typography,
+        theme.to_typography_config()
+    );
+    assert_eq!(theme_last.get_config().lines, theme.to_line_config());
+    assert_eq!(theme_last.layout.grid_style.color, theme.grid_color);
+    assert_eq!(
+        theme_last.layout.grid_style.line_width,
+        theme.to_line_config().grid_width
+    );
+
+    let config_last = Plot::new().theme(theme.clone()).plot_config(config.clone());
+    assert_eq!(config_last.get_config().typography, config.typography);
+    assert_eq!(config_last.get_config().lines, config.lines);
+    assert_eq!(config_last.layout.grid_style.color, theme.grid_color);
+    assert_eq!(
+        config_last.layout.grid_style.line_width,
+        config.lines.grid_width
+    );
+
+    let explicit_grid_last = Plot::new()
+        .theme(theme)
+        .with_grid_style(GridStyle::default().color(Color::RED).line_width(3.0));
+    assert_eq!(explicit_grid_last.layout.grid_style.color, Color::RED);
+    assert_eq!(explicit_grid_last.layout.grid_style.line_width, 3.0);
+}
+
+#[test]
+fn test_default_theme_application_preserves_default_metrics() {
+    let baseline = Plot::new();
+    let themed = Plot::new().theme(Theme::default());
+
+    assert_eq!(
+        baseline.get_config().typography,
+        themed.get_config().typography
+    );
+    assert_eq!(baseline.get_config().lines, themed.get_config().lines);
+}
+
+#[test]
+fn test_new_plot_preserves_established_default_grid_color() {
+    assert_eq!(Plot::new().layout.grid_style, GridStyle::default());
+}
+
+#[test]
+fn test_invalid_theme_base_font_does_not_poison_resolved_typography() {
+    for invalid in [0.0, f32::NAN, f32::INFINITY] {
+        let theme = Theme {
+            font_size: invalid,
+            ..Theme::default()
+        };
+        let plot = Plot::new().theme(theme);
+        let typography = &plot.get_config().typography;
+        assert!(typography.base_size.is_finite() && typography.base_size > 0.0);
+        assert!(typography.title_size().is_finite());
+        assert!(typography.label_size().is_finite());
+        assert!(typography.tick_size().is_finite());
+        assert!(typography.legend_size().is_finite());
+        plot.render()
+            .expect("sanitized theme typography should render");
+    }
+}
+
+#[test]
+fn test_later_theme_and_plot_config_clear_legacy_legend_font_override() {
+    let themed_plot = Plot::new()
+        .legend_font_size(22.0)
+        .theme(Theme::publication());
+    let themed = themed_plot
+        .resolve_frame(0.0)
+        .expect("frame should resolve");
+    assert_eq!(
+        themed.style.legend.font_size,
+        themed.style.config.typography.legend_size()
+    );
+
+    let config = PlotConfig::builder().font_size(16.0).build();
+    let configured_plot = Plot::new().legend_font_size(22.0).plot_config(config);
+    let configured = configured_plot
+        .resolve_frame(0.0)
+        .expect("frame should resolve");
+    assert_eq!(
+        configured.style.legend.font_size,
+        configured.style.config.typography.legend_size()
+    );
+
+    let explicit_last_plot = Plot::new()
+        .theme(Theme::publication())
+        .legend_font_size(22.0);
+    let explicit_last = explicit_last_plot
+        .resolve_frame(0.0)
+        .expect("frame should resolve");
+    assert_eq!(explicit_last.style.legend.font_size, 22.0);
+
+    let font_size_plot = Plot::new().legend_font_size(22.0).font_size(20.0);
+    let font_size_last = font_size_plot
+        .resolve_frame(0.0)
+        .expect("frame should resolve");
+    assert_eq!(font_size_last.style.legend.font_size, 18.0);
+
+    let scaled_plot = Plot::new().legend_font_size(22.0).scale_typography(2.0);
+    let scaled_last = scaled_plot
+        .resolve_frame(0.0)
+        .expect("frame should resolve");
+    assert_eq!(scaled_last.style.legend.font_size, 18.0);
+}
+
+#[test]
+fn test_absent_series_metrics_preserve_established_fallbacks() {
+    let mut plot = Plot::new();
+    plot.add_line(&[0.0, 1.0], &[0.0, 1.0])
+        .expect("line should be added");
+    plot.series_mgr.series[0].marker_style = Some(MarkerStyle::Circle);
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    assert_eq!(frame.style.series[0].line_width, None);
+    assert_eq!(frame.style.series[0].marker_size, None);
+
+    let shell = plot.resolved_style_shell(&frame.style);
+    assert_eq!(shell.series_mgr.series[0].line_width, None);
+    assert_eq!(shell.series_mgr.series[0].marker_size, None);
+
+    let line: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .marker(MarkerStyle::Circle)
+        .into();
+    let line_frame = line.resolve_frame(0.0).expect("line frame should resolve");
+    assert_eq!(line_frame.style.series[0].line_width, None);
+    assert_eq!(line_frame.style.series[0].marker_size, None);
+
+    let scatter: Plot = Plot::new().scatter(&[0.0, 1.0], &[0.0, 1.0]).into();
+    let scatter_frame = scatter
+        .resolve_frame(0.0)
+        .expect("scatter frame should resolve");
+    assert_eq!(scatter_frame.style.series[0].line_width, None);
+    assert_eq!(scatter_frame.style.series[0].marker_size, None);
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_parallel_marker_size_uses_resolved_points_and_dpi() {
+    let mut plot: Plot = Plot::new()
+        .dpi(200)
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .into();
+    plot.series_mgr.series[0].marker_size = Some(9.0);
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let shell = plot.resolved_style_shell(&frame.style);
+    let series = &shell.series_mgr.series[0];
+    assert_eq!(
+        shell.parallel_marker_size_px(series, 10.0),
+        shell.render_scale().points_to_pixels(9.0)
+    );
+
+    let fallback_plot: Plot = Plot::new()
+        .dpi(200)
+        .scatter(&[0.0, 1.0], &[0.0, 1.0])
+        .into();
+    let fallback_frame = fallback_plot
+        .resolve_frame(0.0)
+        .expect("frame should resolve");
+    let fallback_shell = fallback_plot.resolved_style_shell(&fallback_frame.style);
+    assert_eq!(
+        fallback_shell.parallel_marker_size_px(&fallback_shell.series_mgr.series[0], 10.0),
+        fallback_shell.render_scale().points_to_pixels(10.0)
+    );
+}
+
+#[test]
+fn test_resolved_alpha_reaches_svg_and_legend_once() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .color(Color::RED)
+        .alpha(0.5)
+        .label("alpha")
+        .into();
+    let svg = plot.render_to_svg().expect("SVG should render");
+    assert!(svg.contains("rgba(255,0,0,0.498)"));
+
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let shell = plot.resolved_style_shell(&frame.style);
+    let items = shell.collect_legend_items();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].color.a, 127);
+}
+
+#[test]
+fn test_specialized_kde_svg_uses_resolved_width_and_alpha() {
+    let samples = [0.0, 0.5, 1.0, 1.5, 2.0];
+    let plot: Plot = Plot::new()
+        .kde(&samples)
+        .color(Color::RED)
+        .line_width(4.0)
+        .alpha(0.5)
+        .into();
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    assert_eq!(frame.style.series[0].line_width, Some(4.0));
+    assert_eq!(frame.style.series[0].alpha, 0.5);
+
+    let svg = plot.render_to_svg().expect("KDE SVG should render");
+    let curve = svg
+        .lines()
+        .find(|line| line.contains("<polyline ") && line.contains("rgba(255,0,0,0.498)"))
+        .expect("resolved KDE curve should be present in SVG");
+    let width = parse_svg_attr(curve, "stroke-width");
+    let expected = plot.render_scale().points_to_pixels(4.0);
+    assert!(
+        (width - expected).abs() < 0.01,
+        "width={width}, expected={expected}"
+    );
+}
+
+#[test]
+fn test_shared_f32_style_source_is_sampled_once_across_properties() {
+    use crate::data::Signal;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_signal = Arc::clone(&calls);
+    let value = Signal::new(move |_| {
+        calls_for_signal.fetch_add(1, Ordering::Relaxed);
+        0.5_f32
+    });
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .line_width_source(value.clone())
+        .marker_size_source(value.clone())
+        .alpha_source(value)
+        .into();
+
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(frame.style.series[0].line_width, Some(0.5));
+    assert_eq!(frame.style.series[0].marker_size, Some(0.5));
+    assert_eq!(frame.style.series[0].alpha, 0.5);
+}
+
+#[test]
+fn test_auto_palette_color_is_resolved_after_late_theme_change() {
+    let x = vec![0.0, 1.0];
+    let y = vec![1.0, 2.0];
+    let plot: Plot = Plot::new().line(&x, &y).into();
+    assert_eq!(plot.series_mgr.series[0].color, None);
+
+    let mut theme = Theme::dark();
+    theme.color_palette = vec![Color::RED, Color::BLUE];
+    let plot = plot.theme(theme);
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+
+    assert_eq!(frame.style.series[0].color, Color::RED);
+}
+
+#[test]
+fn test_resolved_series_metrics_stay_in_points_across_backend_shells() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.0])
+        .line_width(3.5)
+        .marker(MarkerStyle::Diamond)
+        .marker_size(9.0)
+        .into();
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let resolved = &frame.style.series[0];
+    let style_shell = plot.resolved_style_shell(&frame.style);
+    let prepared_shell = plot.prepared_frame_shell_with_style((800, 600), 1.0, &frame.style);
+
+    for backend_shell in [&style_shell, &prepared_shell] {
+        let series = &backend_shell.series_mgr.series[0];
+        assert_eq!(series.line_width, resolved.line_width);
+        assert_eq!(series.marker_size, resolved.marker_size);
+        assert_eq!(series.marker_style, resolved.marker_style);
+    }
+
+    let svg = plot.render_to_svg().expect("SVG should render");
+    let series_polyline = svg
+        .lines()
+        .find(|line| line.contains("<polyline "))
+        .expect("line series should render as a polyline");
+    let svg_width_px = parse_svg_attr(series_polyline, "stroke-width");
+    let expected_width_px =
+        style_shell.dpi_scaled_line_width(resolved.line_width.expect("explicit line width"));
+    assert!(
+        (svg_width_px - expected_width_px).abs() < 0.01,
+        "SVG width {svg_width_px} should match raster width {expected_width_px}"
+    );
+}
+
+#[test]
+fn test_dark_theme_resolves_legend_semantic_colors() {
+    let theme = Theme::dark();
+    let plot: Plot = Plot::new()
+        .theme(theme.clone())
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .label("series")
+        .into();
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+
+    assert_eq!(frame.style.legend.text_color, theme.foreground);
+    assert_eq!(frame.style.legend.style.face_color, theme.background);
+    assert_eq!(frame.style.legend.style.edge_color, Some(theme.grid_color));
+}
+
+#[test]
+fn test_shared_reactive_series_style_is_sampled_once_per_frame() {
+    use crate::data::Signal;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_signal = Arc::clone(&calls);
+    let color = Signal::new(move |_| {
+        calls_for_signal.fetch_add(1, Ordering::Relaxed);
+        Color::BLUE
+    });
+    let x = vec![0.0, 1.0];
+    let y1 = vec![1.0, 2.0];
+    let y2 = vec![2.0, 3.0];
+    let plot = Plot::new().group(|group| group.color_source(color).line(&x, &y1).line(&x, &y2));
+
+    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert_eq!(frame.style.series[0].color, Color::BLUE);
+    assert_eq!(frame.style.series[1].color, Color::BLUE);
+
+    let style_shell = plot.resolved_style_shell(&frame.style);
+    let _ = style_shell.collect_legend_items();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn test_backend_getter_does_not_sample_reactive_style() {
+    use crate::data::Signal;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_signal = Arc::clone(&calls);
+    let color = Signal::new(move |_| {
+        calls_for_signal.fetch_add(1, Ordering::Relaxed);
+        Color::RED
+    });
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .color_source(color)
+        .into();
+
+    assert_eq!(plot.resolved_backend_name(), "skia");
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
 }
 
 #[cfg(feature = "typst-math")]

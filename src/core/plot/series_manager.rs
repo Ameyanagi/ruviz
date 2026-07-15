@@ -26,6 +26,8 @@ use super::{PlotSeries, SeriesType};
 pub struct SeriesManager {
     /// Data series
     pub(crate) series: Vec<PlotSeries>,
+    /// Palette slot reserved for each automatically colored series.
+    pub(crate) auto_color_slots: Vec<Option<usize>>,
     /// Auto-generate colors for series without explicit colors
     pub(crate) auto_color_index: usize,
 }
@@ -35,6 +37,7 @@ impl SeriesManager {
     pub fn new() -> Self {
         Self {
             series: Vec::new(),
+            auto_color_slots: Vec::new(),
             auto_color_index: 0,
         }
     }
@@ -66,9 +69,19 @@ impl SeriesManager {
         color
     }
 
-    /// Add a series to the manager
+    /// Add a series to the manager.
     pub(crate) fn push(&mut self, series: PlotSeries) {
+        self.push_with_auto_color_slot(series, None);
+    }
+
+    /// Add a series and retain its deferred automatic palette slot.
+    pub(crate) fn push_with_auto_color_slot(
+        &mut self,
+        series: PlotSeries,
+        auto_color_slot: Option<usize>,
+    ) {
         self.series.push(series);
+        self.auto_color_slots.push(auto_color_slot);
     }
 
     /// Increment the auto-color index
@@ -141,6 +154,7 @@ impl SeriesManager {
     /// Clear all series
     pub fn clear(&mut self) {
         self.series.clear();
+        self.auto_color_slots.clear();
         self.auto_color_index = 0;
     }
 

@@ -1539,7 +1539,7 @@ impl InteractivePlotSession {
         let source_plot = self.inner.prepared.plot();
         let frame = frame.expect("dirty base render must resolve a frame");
         let mut plot = source_plot
-            .prepared_frame_shell(state.size_px, state.scale_factor, state.time_seconds)
+            .prepared_frame_shell_with_style(state.size_px, state.scale_factor, &frame.style)
             .xlim(geometry.x_bounds.0, geometry.x_bounds.1)
             .ylim(geometry.y_bounds.0, geometry.y_bounds.1);
         if self.prefer_gpu() {
@@ -1937,8 +1937,16 @@ impl InteractivePlotSession {
 }
 
 fn compute_data_bounds(plot: &Plot, time: f64) -> Result<DataBounds> {
-    let frame = plot.resolve_frame(time)?;
-    compute_data_bounds_from_frame(plot, &frame)
+    let series = plot.snapshot_series(time);
+    if series.is_empty() {
+        let bounds = plot.empty_cartesian_bounds();
+        return Ok(DataBounds::from_limits(
+            bounds.0, bounds.1, bounds.2, bounds.3,
+        ));
+    }
+
+    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds_for_series(&series)?;
+    Ok(DataBounds::from_limits(x_min, x_max, y_min, y_max))
 }
 
 fn compute_data_bounds_from_frame(plot: &Plot, frame: &ResolvedFrame<'_>) -> Result<DataBounds> {
@@ -2267,11 +2275,11 @@ fn compute_plot_layout_from_frame(
     plot: &Plot,
     size_px: (u32, u32),
     scale_factor: f32,
-    time_seconds: f64,
+    _time_seconds: f64,
     visible: DataBounds,
     frame: &ResolvedFrame<'_>,
 ) -> Result<ComputedSessionLayout> {
-    let layout_plot = plot.prepared_frame_shell(size_px, scale_factor, time_seconds);
+    let layout_plot = plot.prepared_frame_shell_with_style(size_px, scale_factor, &frame.style);
     layout_plot.validate_runtime_environment()?;
     let dpi = layout_plot.display.config.figure.dpi;
 

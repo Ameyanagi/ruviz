@@ -237,6 +237,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -365,6 +366,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -642,6 +644,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -678,6 +681,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -744,6 +748,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -779,6 +784,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -833,50 +839,8 @@ impl Plot {
         match crate::plots::heatmap::process_heatmap_flat(&flat, rows, cols, heatmap_config) {
             Ok(heatmap_data) => {
                 let series = PlotSeries {
-                    series_type: SeriesType::Heatmap { data: heatmap_data },
-                    streaming_source: None,
-                    label: None,
-                    color: None,
-                    color_source: None,
-                    line_width: None,
-                    line_width_source: None,
-                    line_style: None,
-                    line_style_source: None,
-                    marker_style: None,
-                    marker_style_source: None,
-                    marker_size: None,
-                    marker_size_source: None,
-                    alpha: None,
-                    alpha_source: None,
-                    y_errors: None,
-                    x_errors: None,
-                    error_config: None,
-                    inset_layout: None,
-                    group_id: None,
-                };
-                PlotSeriesBuilder::new(self, series)
-            }
-            Err(err) => {
-                // Return empty plot if data processing fails
-                // This allows chaining to continue without panicking
-                self.set_pending_ingestion_error(PlottingError::DataExtractionFailed {
-                    source: "heatmap".to_string(),
-                    message: err,
-                });
-                let series = PlotSeries {
                     series_type: SeriesType::Heatmap {
-                        data: crate::plots::heatmap::HeatmapData {
-                            values: vec![vec![0.0]],
-                            n_rows: 1,
-                            n_cols: 1,
-                            data_min: 0.0,
-                            data_max: 0.0,
-                            vmin: 0.0,
-                            vmax: 1.0,
-                            x_extent: (0.0, 1.0),
-                            y_extent: (0.0, 1.0),
-                            config: crate::plots::heatmap::HeatmapConfig::default(),
-                        },
+                        data: Arc::new(heatmap_data),
                     },
                     streaming_source: None,
                     label: None,
@@ -897,6 +861,52 @@ impl Plot {
                     error_config: None,
                     inset_layout: None,
                     group_id: None,
+                    resolved_radar_colors: None,
+                };
+                PlotSeriesBuilder::new(self, series)
+            }
+            Err(err) => {
+                // Return empty plot if data processing fails
+                // This allows chaining to continue without panicking
+                self.set_pending_ingestion_error(PlottingError::DataExtractionFailed {
+                    source: "heatmap".to_string(),
+                    message: err,
+                });
+                let series = PlotSeries {
+                    series_type: SeriesType::Heatmap {
+                        data: Arc::new(crate::plots::heatmap::HeatmapData {
+                            values: vec![vec![0.0]],
+                            n_rows: 1,
+                            n_cols: 1,
+                            data_min: 0.0,
+                            data_max: 0.0,
+                            vmin: 0.0,
+                            vmax: 1.0,
+                            x_extent: (0.0, 1.0),
+                            y_extent: (0.0, 1.0),
+                            config: crate::plots::heatmap::HeatmapConfig::default(),
+                        }),
+                    },
+                    streaming_source: None,
+                    label: None,
+                    color: None,
+                    color_source: None,
+                    line_width: None,
+                    line_width_source: None,
+                    line_style: None,
+                    line_style_source: None,
+                    marker_style: None,
+                    marker_style_source: None,
+                    marker_size: None,
+                    marker_size_source: None,
+                    alpha: None,
+                    alpha_source: None,
+                    y_errors: None,
+                    x_errors: None,
+                    error_config: None,
+                    inset_layout: None,
+                    group_id: None,
+                    resolved_radar_colors: None,
                 };
                 PlotSeriesBuilder::new(self, series)
             }
@@ -958,6 +968,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -995,6 +1006,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(self, series)
@@ -1070,6 +1082,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(plot, series)
@@ -1115,6 +1128,7 @@ impl Plot {
             error_config: None,
             inset_layout: None,
             group_id: None,
+            resolved_radar_colors: None,
         };
 
         PlotSeriesBuilder::new(self, series)

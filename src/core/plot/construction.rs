@@ -1,8 +1,27 @@
 use super::*;
+use std::collections::HashMap;
 
 struct CachedResolvedData {
     source: PlotData,
     values: Arc<[f64]>,
+}
+
+fn resolve_reactive_style<T: Clone>(
+    source: &ReactiveValue<T>,
+    time: f64,
+    cache: &mut HashMap<data::ReactiveSourceId, T>,
+) -> T {
+    if let Some(source_id) = source.source_id() {
+        if let Some(value) = cache.get(&source_id) {
+            return value.clone();
+        }
+
+        let value = source.resolve(time);
+        cache.insert(source_id, value.clone());
+        return value;
+    }
+
+    source.resolve(time)
 }
 
 fn resolve_plot_data<'a>(
@@ -149,21 +168,24 @@ impl Plot {
     /// ```
     pub fn new() -> Self {
         let config = PlotConfig::default();
+        let theme = Theme::default();
         let (width, height) = config.canvas_size();
+        let mut layout = LayoutManager::new();
+        layout.grid_style.line_width = config.lines.grid_width;
         let display = PlotConfiguration {
             title: None,
             xlabel: None,
             ylabel: None,
             dimensions: (width, height),
             dpi: config.figure.dpi as u32,
-            theme: Theme::default(),
+            theme,
             text_engine: TextEngineMode::Plain,
             config,
         };
         Self {
             display,
             series_mgr: SeriesManager::new(),
-            layout: LayoutManager::new(),
+            layout,
             render: RenderPipeline::new(),
             annotations: Vec::new(),
             null_policy: NullPolicy::Error,
@@ -189,6 +211,7 @@ impl Plot {
         let mut plot = Self::new();
         plot.display.dimensions = (width, height);
         plot.display.dpi = config.figure.dpi as u32;
+        plot.layout.grid_style.line_width = config.lines.grid_width;
         plot.display.config = config;
         plot
     }
@@ -233,11 +256,7 @@ impl Plot {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn with_theme(theme: Theme) -> Self {
-        let mut plot = Self::new();
-        plot.display.config.typography.family =
-            crate::render::FontFamily::from(theme.font_family.as_str());
-        plot.display.theme = theme;
-        plot
+        Self::new().theme(theme)
     }
 
     /// Set null handling policy for dataframe-backed numeric ingestion.
@@ -303,6 +322,13 @@ impl Plot {
             .collect();
 
         for (idx, series) in self.series_mgr.series.iter().enumerate() {
+            let palette_slot = self
+                .series_mgr
+                .auto_color_slots
+                .get(idx)
+                .copied()
+                .flatten()
+                .unwrap_or(idx);
             if let Some(group_id) = series.group_id {
                 if !seen_group_ids.insert(group_id) {
                     continue;
@@ -312,7 +338,7 @@ impl Plot {
                     continue;
                 };
 
-                let default_color = self.display.theme.get_color(idx);
+                let default_color = self.display.theme.get_color(palette_slot);
                 if let Some(item) = series.to_legend_item_with_label(
                     label.to_string(),
                     default_color,
@@ -323,7 +349,7 @@ impl Plot {
                 continue;
             }
 
-            legend_items.extend(series.to_legend_items(idx, &self.display.theme));
+            legend_items.extend(series.to_legend_items(palette_slot, &self.display.theme));
         }
 
         legend_items
@@ -361,9 +387,10 @@ impl Plot {
     /// the current typography settings, including the font family. Call
     /// [`Plot::font_family`] after `theme` to override the theme's family.
     pub fn theme(mut self, theme: Theme) -> Self {
-        self.display.config.typography.family =
-            crate::render::FontFamily::from(theme.font_family.as_str());
-        self.display.theme = theme;
+        self.layout.grid_style.color = theme.grid_color;
+        self.display.apply_theme(theme);
+        self.layout.grid_style.line_width = self.display.config.lines.grid_width;
+        self.layout.legend.font_size = None;
         self
     }
 
@@ -390,6 +417,7 @@ impl Plot {
     /// ```
     pub fn scale_typography(mut self, factor: f32) -> Self {
         self.display.config.typography = self.display.config.typography.scale(factor);
+        self.layout.legend.font_size = None;
         self
     }
 
@@ -873,6 +901,8 @@ impl Plot {
     /// ```
     pub fn plot_style(mut self, style: PlotStyle) -> Self {
         self.display.config = style.config();
+        self.layout.grid_style.line_width = self.display.config.lines.grid_width;
+        self.layout.legend.font_size = None;
         let (w, h) = self.display.config.canvas_size();
         self.display.dimensions = (w, h);
         self.display.dpi = self.display.config.figure.dpi as u32;
@@ -894,6 +924,8 @@ impl Plot {
         let (w, h) = config.canvas_size();
         self.display.dimensions = (w, h);
         self.display.dpi = config.figure.dpi as u32;
+        self.layout.grid_style.line_width = config.lines.grid_width;
+        self.layout.legend.font_size = None;
         self.display.config = config;
         self
     }
@@ -903,6 +935,7 @@ impl Plot {
     /// All other font sizes (title, labels, ticks) scale relative to this.
     pub fn font_size(mut self, size: f32) -> Self {
         self.display.config.typography.base_size = size.max(4.0);
+        self.layout.legend.font_size = None;
         self
     }
 
@@ -1223,7 +1256,120 @@ impl Plot {
         }
     }
 
+    fn resolve_style(&self, time: f64) -> ResolvedStyle {
+        let config = self.display.config.clone();
+        let mut theme = self.display.theme.clone();
+        theme.line_width = config.lines.data_width;
+        theme.font_family = config.typography.family.as_str().to_string();
+        theme.font_size = config.typography.base_size;
+        theme.title_font_size = config.typography.title_size();
+        theme.legend_font_size = config.typography.legend_size();
+        theme.axis_label_font_size = config.typography.label_size();
+        theme.tick_label_font_size = config.typography.tick_size();
+        theme.grid_color = self.layout.grid_style.color;
+
+        let resolver = StyleResolver::new(&theme);
+        let mut color_cache = HashMap::new();
+        let mut f32_cache = HashMap::new();
+        let mut line_style_cache = HashMap::new();
+        let mut marker_style_cache = HashMap::new();
+        let mut series_styles = Vec::with_capacity(self.series_mgr.series.len());
+
+        debug_assert_eq!(
+            self.series_mgr.series.len(),
+            self.series_mgr.auto_color_slots.len()
+        );
+        for (series_index, series) in self.series_mgr.series.iter().enumerate() {
+            let palette_slot = self
+                .series_mgr
+                .auto_color_slots
+                .get(series_index)
+                .copied()
+                .flatten()
+                .unwrap_or(series_index);
+
+            let color = series
+                .color_source
+                .as_ref()
+                .map(|source| resolve_reactive_style(source, time, &mut color_cache))
+                .or(series.color);
+            let line_width = series
+                .line_width_source
+                .as_ref()
+                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
+                .or(series.line_width);
+            let line_style = series
+                .line_style_source
+                .as_ref()
+                .map(|source| resolve_reactive_style(source, time, &mut line_style_cache))
+                .or_else(|| series.line_style.clone())
+                .unwrap_or_else(|| theme.line_style.clone());
+            let marker_style = series
+                .marker_style_source
+                .as_ref()
+                .map(|source| resolve_reactive_style(source, time, &mut marker_style_cache))
+                .or(series.marker_style);
+            let marker_size = series
+                .marker_size_source
+                .as_ref()
+                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
+                .or(series.marker_size);
+            let alpha = series
+                .alpha_source
+                .as_ref()
+                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
+                .or(series.alpha);
+            let resolved_color = resolver.series_color(color, palette_slot);
+            let has_top_level_color = series.color.is_some() || series.color_source.is_some();
+            let radar_colors = match &series.series_type {
+                SeriesType::Radar { data } => Some(Arc::from(
+                    data.series
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| {
+                            data.config
+                                .colors
+                                .as_ref()
+                                .and_then(|colors| colors.get(index).copied())
+                                .filter(|color| *color != Color::TRANSPARENT)
+                                .or_else(|| has_top_level_color.then_some(resolved_color))
+                                .unwrap_or_else(|| theme.get_color(palette_slot + index))
+                        })
+                        .collect::<Vec<_>>(),
+                )),
+                _ => None,
+            };
+
+            series_styles.push(ResolvedSeriesStyle {
+                color: resolved_color,
+                line_width: line_width.map(|width| resolver.line_width(Some(width)).max(0.1)),
+                line_style,
+                marker_style,
+                marker_size: marker_size.map(|size| resolver.marker_size(Some(size)).max(0.1)),
+                alpha: resolver.fill_alpha(alpha, 1.0),
+                radar_colors,
+            });
+        }
+
+        let mut legend = self
+            .layout
+            .legend
+            .to_legend(config.typography.legend_size());
+        legend.text_color = theme.foreground;
+        legend.style.face_color = theme.background;
+        legend.style.edge_color = Some(theme.grid_color);
+
+        ResolvedStyle {
+            theme,
+            config,
+            grid_style: self.layout.grid_style.clone(),
+            legend,
+            series: series_styles,
+        }
+    }
+
     pub(super) fn resolve_frame(&self, time: f64) -> Result<ResolvedFrame<'_>> {
+        let style = self.resolve_style(time);
         let mut data_cache = Vec::new();
         let mut streaming_acknowledgements = Vec::new();
         let mut paired_acknowledgements: Vec<ResolvedStreamingPair> = Vec::new();
@@ -1278,6 +1424,7 @@ impl Plot {
         let mut text_cache = Vec::new();
         Ok(ResolvedFrame {
             series: resolved,
+            style,
             title: self
                 .display
                 .title
@@ -1343,34 +1490,31 @@ impl Plot {
             .collect()
     }
 
-    pub(super) fn resolved_plot(&self, time: f64) -> Plot {
-        let mut resolved = self.clone();
-        resolved.series_mgr.series = self.snapshot_series(time);
-        for series in &mut resolved.series_mgr.series {
-            series.resolve_style_sources(time);
-        }
-        resolved.display.title = self
-            .display
-            .title
-            .as_ref()
-            .map(|title| data::PlotText::Static(title.resolve(time)));
-        resolved.display.xlabel = self
-            .display
-            .xlabel
-            .as_ref()
-            .map(|label| data::PlotText::Static(label.resolve(time)));
-        resolved.display.ylabel = self
-            .display
-            .ylabel
-            .as_ref()
-            .map(|label| data::PlotText::Static(label.resolve(time)));
-        resolved
+    pub(super) fn resolved_style_shell(&self, style: &ResolvedStyle) -> Plot {
+        self.apply_resolved_style(self.clone_for_resolved_frame(), style)
     }
 
-    pub(super) fn resolved_style_shell(&self, time: f64) -> Plot {
-        let mut resolved = self.clone_for_resolved_frame();
-        for series in &mut resolved.series_mgr.series {
-            series.resolve_style_sources(time);
+    fn apply_resolved_style(&self, mut resolved: Plot, style: &ResolvedStyle) -> Plot {
+        resolved.display.theme = style.theme.clone();
+        resolved.display.config = style.config.clone();
+        resolved.layout.grid_style = style.grid_style.clone();
+        resolved.layout.legend.font_size = Some(style.legend.font_size);
+
+        debug_assert_eq!(resolved.series_mgr.series.len(), style.series.len());
+        for (series, series_style) in resolved.series_mgr.series.iter_mut().zip(&style.series) {
+            series.color = Some(series_style.color);
+            series.color_source = None;
+            series.line_width = series_style.line_width;
+            series.line_width_source = None;
+            series.line_style = Some(series_style.line_style.clone());
+            series.line_style_source = None;
+            series.marker_style = series_style.marker_style;
+            series.marker_style_source = None;
+            series.marker_size = series_style.marker_size;
+            series.marker_size_source = None;
+            series.alpha = Some(series_style.alpha);
+            series.alpha_source = None;
+            series.resolved_radar_colors = series_style.radar_colors.clone();
         }
         resolved
     }
@@ -1385,6 +1529,7 @@ impl Plot {
                     .iter()
                     .map(PlotSeries::clone_for_resolved_frame)
                     .collect(),
+                auto_color_slots: self.series_mgr.auto_color_slots.clone(),
                 auto_color_index: self.series_mgr.auto_color_index,
             },
             layout: self.layout.clone(),
@@ -1403,7 +1548,24 @@ impl Plot {
         scale_factor: f32,
         time: f64,
     ) -> Plot {
-        self.configure_prepared_frame_plot(self.clone(), size_px, scale_factor, time, true)
+        let style = self.resolve_style(time);
+        let mut plot = self.apply_resolved_style(self.clone(), &style);
+        plot.display.title = self
+            .display
+            .title
+            .as_ref()
+            .map(|title| data::PlotText::Static(title.resolve(time)));
+        plot.display.xlabel = self
+            .display
+            .xlabel
+            .as_ref()
+            .map(|label| data::PlotText::Static(label.resolve(time)));
+        plot.display.ylabel = self
+            .display
+            .ylabel
+            .as_ref()
+            .map(|label| data::PlotText::Static(label.resolve(time)));
+        self.configure_prepared_frame_plot(plot, size_px, scale_factor)
     }
 
     pub(crate) fn prepared_frame_shell(
@@ -1412,13 +1574,18 @@ impl Plot {
         scale_factor: f32,
         time: f64,
     ) -> Plot {
-        self.configure_prepared_frame_plot(
-            self.clone_for_resolved_frame(),
-            size_px,
-            scale_factor,
-            time,
-            false,
-        )
+        let style = self.resolve_style(time);
+        self.prepared_frame_shell_with_style(size_px, scale_factor, &style)
+    }
+
+    pub(crate) fn prepared_frame_shell_with_style(
+        &self,
+        size_px: (u32, u32),
+        scale_factor: f32,
+        style: &ResolvedStyle,
+    ) -> Plot {
+        let plot = self.resolved_style_shell(style);
+        self.configure_prepared_frame_plot(plot, size_px, scale_factor)
     }
 
     fn configure_prepared_frame_plot(
@@ -1426,31 +1593,9 @@ impl Plot {
         mut plot: Plot,
         size_px: (u32, u32),
         scale_factor: f32,
-        time: f64,
-        resolve_text: bool,
     ) -> Plot {
         let device_scale = Self::sanitize_prepared_scale_factor(scale_factor);
         let size_px = (size_px.0.max(1), size_px.1.max(1));
-        for series in &mut plot.series_mgr.series {
-            series.resolve_style_sources(time);
-        }
-        if resolve_text {
-            plot.display.title = self
-                .display
-                .title
-                .as_ref()
-                .map(|title| data::PlotText::Static(title.resolve(time)));
-            plot.display.xlabel = self
-                .display
-                .xlabel
-                .as_ref()
-                .map(|label| data::PlotText::Static(label.resolve(time)));
-            plot.display.ylabel = self
-                .display
-                .ylabel
-                .as_ref()
-                .map(|label| data::PlotText::Static(label.resolve(time)));
-        }
         plot.render.allow_subplot_dimensions = true;
         let dpi = Self::exact_canvas_dpi_for_figure(
             &plot.display.config.figure,

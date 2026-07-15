@@ -470,6 +470,7 @@ impl PlotRender for RadarPlotData {
                 .colors
                 .as_ref()
                 .and_then(|colors| colors.get(series_idx).copied())
+                .filter(|color| *color != Color::TRANSPARENT)
                 .unwrap_or_else(|| theme.get_color(series_idx));
 
             // Draw fill if enabled
@@ -530,6 +531,19 @@ impl PlotRender for RadarPlotData {
         alpha: f32,
         line_width: Option<f32>,
     ) -> Result<()> {
+        self.render_styled_with_grid(renderer, area, theme, color, alpha, line_width, None)
+    }
+
+    fn render_styled_with_grid(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
+        _color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+        grid_style: Option<&crate::core::GridStyle>,
+    ) -> Result<()> {
         if self.series.is_empty() {
             return Ok(());
         }
@@ -545,9 +559,15 @@ impl PlotRender for RadarPlotData {
         let scaled_marker_size = render_scale.points_to_pixels(config.marker_size);
 
         // Draw grid rings
-        if config.show_grid {
-            let grid_color = theme.grid_color;
-            let grid_line_width = render_scale.logical_pixels_to_pixels(0.5);
+        if config.show_grid && grid_style.is_none_or(|style| style.visible) {
+            let grid_color = grid_style.map_or(theme.grid_color, |style| {
+                style.color.with_alpha(style.alpha)
+            });
+            let grid_line_width =
+                render_scale.points_to_pixels(grid_style.map_or(0.5, |style| style.line_width));
+            let grid_line_style = grid_style
+                .map(|style| style.line_style.clone())
+                .unwrap_or(LineStyle::Solid);
             for ring in &self.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -565,7 +585,7 @@ impl PlotRender for RadarPlotData {
                         sy2,
                         grid_color,
                         grid_line_width,
-                        LineStyle::Solid,
+                        grid_line_style.clone(),
                     )?;
                 }
             }
@@ -581,7 +601,7 @@ impl PlotRender for RadarPlotData {
                     sy2,
                     grid_color,
                     grid_line_width,
-                    LineStyle::Solid,
+                    grid_line_style.clone(),
                 )?;
             }
         }
@@ -602,15 +622,14 @@ impl PlotRender for RadarPlotData {
                 .colors
                 .as_ref()
                 .and_then(|colors| colors.get(series_idx).copied())
+                .filter(|color| *color != Color::TRANSPARENT)
                 .unwrap_or_else(|| theme.get_color(series_idx));
+            let series_alpha = (f32::from(series_color.a) / 255.0) * alpha.clamp(0.0, 1.0);
+            let stroke_color = series_color.with_alpha(series_alpha);
 
             // Draw fill if enabled - use provided alpha
             if config.fill && !series.polygon.is_empty() {
-                let fill_alpha = if alpha != 1.0 {
-                    alpha * config.fill_alpha
-                } else {
-                    config.fill_alpha
-                };
+                let fill_alpha = series_alpha * config.fill_alpha;
                 let fill_color = series_color.with_alpha(fill_alpha);
                 let screen_polygon: Vec<(f32, f32)> = series
                     .polygon
@@ -633,7 +652,7 @@ impl PlotRender for RadarPlotData {
                         sy1,
                         sx2,
                         sy2,
-                        series_color,
+                        stroke_color,
                         effective_line_width,
                         LineStyle::Solid,
                     )?;
@@ -649,7 +668,7 @@ impl PlotRender for RadarPlotData {
                         sy,
                         scaled_marker_size,
                         MarkerStyle::Circle,
-                        series_color,
+                        stroke_color,
                     )?;
                 }
             }

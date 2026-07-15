@@ -409,7 +409,19 @@ impl PlotRender for PieData {
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
         theme: &Theme,
+        color: Color,
+    ) -> Result<()> {
+        self.render_styled(renderer, area, theme, color, 1.0, None)
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        theme: &Theme,
         _color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
     ) -> Result<()> {
         if self.wedges.is_empty() {
             return Ok(());
@@ -435,18 +447,21 @@ impl PlotRender for PieData {
             (0..screen_data.wedges.len())
                 .map(|i| palette[i % palette.len()])
                 .collect()
-        };
+        }
+        .into_iter()
+        .map(|color| color.with_alpha((f32::from(color.a) / 255.0) * alpha.clamp(0.0, 1.0)))
+        .collect::<Vec<_>>();
 
         // Number of segments per arc for smooth curves
         let segments = 64;
         let render_scale = renderer.render_scale();
-        let edge_width_px = render_scale.points_to_pixels(config.edge_width);
+        let edge_width_px = render_scale.points_to_pixels(line_width.unwrap_or(config.edge_width));
         let label_font_size_px = render_scale.points_to_pixels(config.label_font_size);
         let shadow_offset_px = render_scale.points_to_pixels(config.shadow as f32) as f64;
 
         // Draw shadow if configured
         if config.shadow > 0.0 {
-            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
+            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3 * alpha);
             for wedge in &screen_data.wedges {
                 let polygon = wedge.as_polygon(segments);
                 let shadow_polygon: Vec<(f32, f32)> = polygon
@@ -476,6 +491,8 @@ impl PlotRender for PieData {
 
             // Draw edge if configured
             if let Some(edge_color) = config.edge_color {
+                let edge_color = edge_color
+                    .with_alpha((f32::from(edge_color.a) / 255.0) * alpha.clamp(0.0, 1.0));
                 renderer.draw_polygon_outline(&polygon_f32, edge_color, edge_width_px)?;
             }
         }

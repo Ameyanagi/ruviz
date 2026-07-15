@@ -310,6 +310,18 @@ impl PlotRender for EcdfData {
         _theme: &Theme,
         color: Color,
     ) -> Result<()> {
+        self.render_styled(renderer, area, _theme, color, 1.0, None)
+    }
+
+    fn render_styled(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        _theme: &Theme,
+        color: Color,
+        alpha: f32,
+        line_width: Option<f32>,
+    ) -> Result<()> {
         use crate::render::LineStyle;
 
         if self.step_vertices.is_empty() {
@@ -318,7 +330,7 @@ impl PlotRender for EcdfData {
 
         // Draw confidence interval band if present
         if let (Some(ci_lower), Some(ci_upper)) = (&self.ci_lower, &self.ci_upper) {
-            let fill_color = color.with_alpha(0.2);
+            let fill_color = color.with_alpha((f32::from(color.a) / 255.0) * 0.2 * alpha);
 
             // Create polygon for CI band
             let mut polygon_points: Vec<(f32, f32)> = Vec::new();
@@ -346,12 +358,13 @@ impl PlotRender for EcdfData {
             .iter()
             .map(|(x, y)| area.data_to_screen(*x, *y))
             .collect();
+        let line_color = color.with_alpha((f32::from(color.a) / 255.0) * alpha);
 
         if line_points.len() >= 2 {
             let line_width = renderer
                 .render_scale()
-                .points_to_pixels(self.config.line_width);
-            renderer.draw_polyline(&line_points, color, line_width, LineStyle::Solid)?;
+                .points_to_pixels(line_width.unwrap_or(self.config.line_width));
+            renderer.draw_polyline(&line_points, line_color, line_width, LineStyle::Solid)?;
         }
 
         // Draw markers at data points if enabled
@@ -366,7 +379,7 @@ impl PlotRender for EcdfData {
                     py,
                     marker_size,
                     crate::render::MarkerStyle::Circle,
-                    color,
+                    line_color,
                 )?;
             }
         }

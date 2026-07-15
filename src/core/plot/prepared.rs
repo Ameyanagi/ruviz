@@ -1,7 +1,7 @@
 //! Prepared plot runtime for repeated frame rendering.
 
 use super::{
-    Image, InteractivePlotSession, Plot, RenderDiagnostics, RenderExecutionMode,
+    Image, InteractivePlotSession, Plot, RenderDiagnostics, RenderExecutionMode, ResolvedStyle,
     data::{ReactiveTeardown, SharedReactiveCallback},
     raster_batches::SeriesRasterPlan,
 };
@@ -235,28 +235,32 @@ impl PreparedPlot {
 
     fn prepared_render_plot(
         &self,
+        key: &PreparedFrameKey,
         size_px: (u32, u32),
         scale_factor: f32,
-        time: f64,
+        style: &ResolvedStyle,
     ) -> Result<Arc<Plot>> {
-        let key = self.frame_key(size_px, scale_factor, time);
         if let Some(plot) = self
             .resolved_cache
             .lock()
             .expect("PreparedPlot resolved cache lock poisoned")
             .as_ref()
-            .and_then(|cached| (cached.key == key).then(|| Arc::clone(&cached.plot)))
+            .and_then(|cached| (cached.key == *key).then(|| Arc::clone(&cached.plot)))
         {
             return Ok(plot);
         }
 
-        let plot = Arc::new(self.plot.prepared_frame_shell(size_px, scale_factor, time));
+        let plot = Arc::new(self.plot.prepared_frame_shell_with_style(
+            size_px,
+            scale_factor,
+            style,
+        ));
         *self
             .resolved_cache
             .lock()
             .expect("PreparedPlot resolved cache lock poisoned") =
             Some(PreparedResolvedPlotCache {
-                key,
+                key: key.clone(),
                 plot: Arc::clone(&plot),
             });
         Ok(plot)
@@ -271,7 +275,7 @@ impl PreparedPlot {
         let key = self.frame_key(size_px, scale_factor, time);
         self.plot.validate_before_frame_resolution()?;
         let frame = self.plot.resolve_frame(time)?;
-        let prepared_plot = self.prepared_render_plot(size_px, scale_factor, time)?;
+        let prepared_plot = self.prepared_render_plot(&key, size_px, scale_factor, &frame.style)?;
 
         let result = prepared_plot
             .render_renderer_with_resolved_frame(
@@ -313,7 +317,7 @@ impl PreparedPlot {
                         if let Some(plan) =
                             prepared_geometry.get(series_index).and_then(Option::as_ref)
                         {
-                            let color = series.color.unwrap_or(crate::render::Color::new(0, 0, 0));
+                            let color = series.color_with_alpha(crate::render::Color::new(0, 0, 0));
                             let line_width =
                                 plot.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
                             let line_style = series
@@ -714,6 +718,38 @@ mod tests {
         };
         assert!(x_data.as_static().is_some_and(Vec::is_empty));
         assert!(y_data.as_static().is_some_and(Vec::is_empty));
+    }
+
+    #[test]
+    fn test_prepared_style_shell_uses_pre_sample_version_key() {
+        let color = Observable::new(Color::RED);
+        let plot: Plot = Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .color_source(color.clone())
+            .into();
+        let prepared = plot.prepare();
+        let size = (320, 240);
+        let key_before = prepared.frame_key(size, 1.0, 0.0);
+        let frame = prepared
+            .plot
+            .resolve_frame(0.0)
+            .expect("frame should resolve");
+
+        color.set(Color::BLUE);
+        let key_after = prepared.frame_key(size, 1.0, 0.0);
+        assert_ne!(key_before, key_after);
+
+        prepared
+            .prepared_render_plot(&key_before, size, 1.0, &frame.style)
+            .expect("prepared style shell should build");
+        let cache = prepared
+            .resolved_cache
+            .lock()
+            .expect("PreparedPlot resolved cache lock poisoned");
+        let cached = cache.as_ref().expect("style shell should be cached");
+        assert_eq!(cached.key, key_before);
+        assert_ne!(cached.key, key_after);
+        assert_eq!(cached.plot.series_mgr.series[0].color, Some(Color::RED));
     }
 
     #[test]
