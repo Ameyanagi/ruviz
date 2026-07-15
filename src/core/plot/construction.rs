@@ -1152,6 +1152,7 @@ impl Plot {
         let device_scale = Self::sanitize_prepared_scale_factor(scale_factor);
         let size_px = (size_px.0.max(1), size_px.1.max(1));
         let mut plot = self.resolved_plot(time);
+        plot.render.allow_subplot_dimensions = true;
         let dpi = Self::exact_canvas_dpi_for_figure(
             &plot.display.config.figure,
             size_px,
