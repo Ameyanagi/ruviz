@@ -105,10 +105,10 @@ mod platform_impl {
         axes::AxisScale,
         core::plot::Image as RuvizImage,
         core::{
-            FramePacing, FrameStats, HitResult, ImageTarget, InteractivePlotSession,
-            InteractiveViewportSnapshot, Plot, PlotInputEvent, PlottingError, PreparedPlot,
-            QualityPolicy, ReactiveSubscription, RenderTargetKind, Result, SurfaceCapability,
-            SurfaceTarget, ViewportPoint, ViewportRect,
+            Annotation, AnnotationId, FramePacing, FrameStats, HitResult, ImageTarget,
+            InteractivePlotSession, InteractiveViewportSnapshot, Plot, PlotInputEvent,
+            PlottingError, PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind,
+            Result, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
         },
         export::write_rgba_png_atomic,
     };
@@ -918,6 +918,45 @@ mod platform_impl {
             self.session.prepared_plot()
         }
 
+        /// Adds a dynamic annotation to this plot's interactive overlay.
+        pub fn add_annotation(
+            &mut self,
+            annotation: Annotation,
+            cx: &mut Context<Self>,
+        ) -> Result<AnnotationId> {
+            let id = self.session.add_annotation(annotation)?;
+            cx.notify();
+            Ok(id)
+        }
+
+        /// Returns a copy of a dynamic annotation owned by this plot session.
+        pub fn annotation(&self, id: AnnotationId) -> Result<Annotation> {
+            self.session.annotation(id)
+        }
+
+        /// Replaces a dynamic annotation's complete value.
+        pub fn update_annotation(
+            &mut self,
+            id: AnnotationId,
+            annotation: Annotation,
+            cx: &mut Context<Self>,
+        ) -> Result<()> {
+            self.session.update_annotation(id, annotation)?;
+            cx.notify();
+            Ok(())
+        }
+
+        /// Removes a dynamic annotation from this plot session.
+        pub fn remove_annotation(
+            &mut self,
+            id: AnnotationId,
+            cx: &mut Context<Self>,
+        ) -> Result<bool> {
+            let removed = self.session.remove_annotation(id)?;
+            cx.notify();
+            Ok(removed)
+        }
+
         pub fn presentation_mode(&self) -> PresentationMode {
             self.options.presentation_mode
         }
@@ -1513,6 +1552,49 @@ mod platform_impl {
         fn assert_window_points_close(actual: Point<Pixels>, expected: Point<Pixels>) {
             assert!((f64::from(actual.x) - f64::from(expected.x)).abs() < 1e-4);
             assert!((f64::from(actual.y) - f64::from(expected.y)).abs() < 1e-4);
+        }
+
+        #[test]
+        fn test_dynamic_annotation_wrappers_delegate_to_session() {
+            let cx = TestAppContext::single();
+            let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+            let view = cx.update(|cx| {
+                cx.new(move |cx| {
+                    RuvizPlot::from_options_impl(
+                        plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+
+            let id = cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    view.add_annotation(Annotation::vline(0.25), cx)
+                        .expect("wrapper add should succeed")
+                })
+            });
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    assert!(matches!(
+                        view.annotation(id).unwrap(),
+                        Annotation::VLine { x, .. } if x == 0.25
+                    ));
+                })
+            });
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    view.update_annotation(id, Annotation::vline(0.75), cx)
+                        .expect("wrapper update should succeed");
+                    assert!(view.remove_annotation(id, cx).unwrap());
+                    assert!(matches!(
+                        view.annotation(id),
+                        Err(PlottingError::UnknownAnnotationId)
+                    ));
+                });
+            });
         }
 
         fn synchronize_test_frame(view: &mut RuvizPlot, request: RenderRequest) {

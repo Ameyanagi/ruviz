@@ -714,8 +714,13 @@ impl SkiaRenderer {
         style: &crate::core::ShapeStyle,
         transform: &AnnotationTransform<'_>,
     ) -> Result<()> {
-        let px_min = transform.x_pixel(span_x_min);
-        let px_max = transform.x_pixel(span_x_max);
+        // Reversed axis limits can map ordered data endpoints to decreasing
+        // pixel coordinates; sort before clamping so the span still renders.
+        let (px_min, px_max) = {
+            let a = transform.x_pixel(span_x_min);
+            let b = transform.x_pixel(span_x_max);
+            (a.min(b), a.max(b))
+        };
 
         // Clamp to plot area
         let left = px_min
@@ -753,8 +758,13 @@ impl SkiaRenderer {
         style: &crate::core::ShapeStyle,
         transform: &AnnotationTransform<'_>,
     ) -> Result<()> {
-        let py_max = transform.y_pixel(span_y_min);
-        let py_min = transform.y_pixel(span_y_max);
+        // Reversed axis limits can map ordered data endpoints to decreasing
+        // pixel coordinates; sort before clamping so the span still renders.
+        let (py_min, py_max) = {
+            let a = transform.y_pixel(span_y_min);
+            let b = transform.y_pixel(span_y_max);
+            (a.min(b), a.max(b))
+        };
 
         // Clamp to plot area
         let top = py_min
