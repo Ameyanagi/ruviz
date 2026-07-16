@@ -1631,6 +1631,10 @@ impl Plot {
             &mut y_max,
         );
 
+        if !x_min.is_finite() || !x_max.is_finite() || !y_min.is_finite() || !y_max.is_finite() {
+            return Ok(self.empty_cartesian_bounds());
+        }
+
         // Handle edge cases
         (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
         (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
@@ -1838,6 +1842,10 @@ impl Plot {
                     _ => unreachable!("PlotData-backed series resolve to dedicated variants"),
                 },
             }
+        }
+
+        if !x_min.is_finite() || !x_max.is_finite() || !y_min.is_finite() || !y_max.is_finite() {
+            return Ok(self.empty_cartesian_bounds());
         }
 
         (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
@@ -2069,6 +2077,10 @@ impl Plot {
                     y_max = label_margin;
                 }
             }
+        }
+
+        if !x_min.is_finite() || !x_max.is_finite() || !y_min.is_finite() || !y_max.is_finite() {
+            return Ok(self.empty_cartesian_bounds());
         }
 
         (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);

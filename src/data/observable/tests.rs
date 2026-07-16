@@ -714,11 +714,19 @@ fn test_streaming_buffer_clear() {
 
     buffer.push_many(vec![1.0, 2.0, 3.0]);
     assert_eq!(buffer.len(), 3);
+    buffer.mark_rendered();
 
     buffer.clear();
     assert!(buffer.is_empty());
     assert_eq!(buffer.len(), 0);
     assert!(buffer.read().is_empty());
+    assert_eq!(
+        buffer.render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    let (_, captured) = buffer.snapshot_for_render();
+    captured.mark_rendered();
+    assert_eq!(buffer.render_state(), StreamingRenderState::Unchanged);
 }
 
 #[test]
@@ -789,6 +797,262 @@ fn test_streaming_xy_push_many() {
 
     assert_eq!(xy.read_x(), vec![1.0, 2.0, 3.0]);
     assert_eq!(xy.read_y(), vec![10.0, 20.0, 30.0]);
+}
+
+#[test]
+fn test_streaming_xy_replace_updates_the_full_frame_once() {
+    let xy = StreamingXY::new(8);
+    xy.push_many([(1.0, 10.0), (2.0, 20.0)]);
+    xy.mark_rendered();
+    let before = xy.snapshot();
+    let x_version = xy.x().version();
+    let y_version = xy.y().version();
+
+    let x_hits = Arc::new(AtomicUsize::new(0));
+    let y_hits = Arc::new(AtomicUsize::new(0));
+    let pair_hits = Arc::new(AtomicUsize::new(0));
+    for (lane, hits) in [(xy.x(), Arc::clone(&x_hits)), (xy.y(), Arc::clone(&y_hits))] {
+        lane.subscribe(move || {
+            hits.fetch_add(1, AtomicOrdering::Relaxed);
+        });
+    }
+    let pair_hits_for_callback = Arc::clone(&pair_hits);
+    xy.subscribe_paired(move || {
+        pair_hits_for_callback.fetch_add(1, AtomicOrdering::Relaxed);
+    });
+
+    xy.replace([(4.0, 40.0), (5.0, 50.0), (6.0, 60.0)]);
+
+    let replaced = xy.snapshot();
+    assert_eq!(replaced.x(), &[4.0, 5.0, 6.0]);
+    assert_eq!(replaced.y(), &[40.0, 50.0, 60.0]);
+    assert_eq!(replaced.sequence(), before.sequence().wrapping_add(1));
+    assert_eq!(xy.x().version(), x_version.wrapping_add(1));
+    assert_eq!(xy.y().version(), y_version.wrapping_add(1));
+    assert_eq!(x_hits.load(AtomicOrdering::Relaxed), 1);
+    assert_eq!(y_hits.load(AtomicOrdering::Relaxed), 1);
+    assert_eq!(pair_hits.load(AtomicOrdering::Relaxed), 1);
+    assert_eq!(
+        replaced.render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    assert_eq!(
+        xy.x().render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    assert_eq!(
+        xy.y().render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+
+    xy.mark_rendered_through(replaced.sequence());
+    assert_eq!(xy.render_state(), StreamingRenderState::Unchanged);
+    assert_eq!(xy.x().render_state(), StreamingRenderState::Unchanged);
+    assert_eq!(xy.y().render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
+fn test_streaming_xy_replace_empty_is_one_atomic_clear() {
+    let xy = StreamingXY::new(8);
+    xy.push_many([(1.0, 10.0), (2.0, 20.0)]);
+    xy.mark_rendered();
+    let before = xy.snapshot();
+    let pair_hits = Arc::new(AtomicUsize::new(0));
+    let pair_hits_for_callback = Arc::clone(&pair_hits);
+    xy.subscribe_paired(move || {
+        pair_hits_for_callback.fetch_add(1, AtomicOrdering::Relaxed);
+    });
+
+    xy.replace(std::iter::empty());
+
+    let cleared = xy.snapshot();
+    assert!(cleared.x().is_empty());
+    assert!(cleared.y().is_empty());
+    assert_eq!(cleared.sequence(), before.sequence().wrapping_add(1));
+    assert_eq!(pair_hits.load(AtomicOrdering::Relaxed), 1);
+    assert_eq!(
+        cleared.render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    assert_eq!(
+        xy.x().render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    assert_eq!(
+        xy.y().render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    xy.mark_rendered_through(cleared.sequence());
+    assert_eq!(xy.render_state(), StreamingRenderState::Unchanged);
+    assert_eq!(xy.x().render_state(), StreamingRenderState::Unchanged);
+    assert_eq!(xy.y().render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
+fn test_streaming_xy_replace_over_capacity_retains_newest_points() {
+    let xy = StreamingXY::new(3);
+
+    xy.replace((1..=5).map(|x| (f64::from(x), f64::from(x * 10))));
+
+    assert_eq!(xy.read_x(), vec![3.0, 4.0, 5.0]);
+    assert_eq!(xy.read_y(), vec![30.0, 40.0, 50.0]);
+    assert_eq!(xy.snapshot().x(), &[3.0, 4.0, 5.0]);
+    xy.push(6.0, 60.0);
+    assert_eq!(xy.read_x(), vec![4.0, 5.0, 6.0]);
+    assert_eq!(xy.read_y(), vec![40.0, 50.0, 60.0]);
+}
+
+#[test]
+fn test_streaming_xy_replace_collects_input_before_mutation_lock() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    let (collecting_tx, collecting_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mut next = Some((2.0, 20.0));
+    let points = std::iter::from_fn(move || {
+        let point = next.take()?;
+        collecting_tx
+            .send(())
+            .expect("collection observer should remain alive");
+        release_rx
+            .recv()
+            .expect("input collection should be released");
+        Some(point)
+    });
+
+    let writer_xy = xy.clone();
+    let writer = thread::spawn(move || writer_xy.replace(points));
+    collecting_rx
+        .recv()
+        .expect("replacement should begin collecting input");
+
+    let (snapshot_tx, snapshot_rx) = mpsc::channel();
+    let reader_xy = xy.clone();
+    let reader = thread::spawn(move || {
+        let snapshot = reader_xy.snapshot();
+        snapshot_tx
+            .send((snapshot.x().to_vec(), snapshot.y().to_vec()))
+            .expect("snapshot observer should remain alive");
+    });
+    assert_eq!(
+        snapshot_rx
+            .recv_timeout(Duration::from_millis(250))
+            .expect("input collection must not hold the mutation gate"),
+        (vec![1.0], vec![10.0])
+    );
+
+    release_tx
+        .send(())
+        .expect("replacement collection should still be paused");
+    writer.join().expect("replacement writer should finish");
+    reader.join().expect("snapshot reader should finish");
+    assert_eq!(xy.snapshot().x(), &[2.0]);
+    assert_eq!(xy.snapshot().y(), &[20.0]);
+}
+
+#[test]
+fn test_streaming_xy_older_replace_ack_does_not_clear_newer_replace() {
+    let xy = StreamingXY::new(8);
+    xy.replace([(1.0, 10.0)]);
+    let older = xy.snapshot();
+    xy.replace([(2.0, 20.0), (3.0, 30.0)]);
+    let newer = xy.snapshot();
+
+    xy.mark_rendered_through(older.sequence());
+
+    assert_eq!(xy.render_state(), StreamingRenderState::FullRedrawRequired);
+    assert_eq!(xy.snapshot().rendered_through(), older.sequence());
+    xy.mark_rendered_through(newer.sequence());
+    assert_eq!(xy.render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
+fn test_streaming_xy_replace_is_atomic_for_callbacks_and_concurrent_snapshots() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let xy = StreamingXY::new(8);
+    xy.push(1.0, 10.0);
+    let callback_hits = Arc::new(AtomicUsize::new(0));
+    for lane in [xy.x(), xy.y()] {
+        let xy_for_callback = xy.clone();
+        let callback_hits = Arc::clone(&callback_hits);
+        lane.subscribe(move || {
+            let snapshot = xy_for_callback.snapshot();
+            assert_eq!(snapshot.x(), &[2.0, 3.0, 4.0]);
+            assert_eq!(snapshot.y(), &[20.0, 30.0, 40.0]);
+            assert_eq!(snapshot.x().len(), snapshot.y().len());
+            assert_eq!(xy_for_callback.read_x(), snapshot.x());
+            assert_eq!(xy_for_callback.read_y(), snapshot.y());
+            callback_hits.fetch_add(1, AtomicOrdering::Relaxed);
+        });
+    }
+    let xy_for_callback = xy.clone();
+    let callback_hits_for_pair = Arc::clone(&callback_hits);
+    xy.subscribe_paired(move || {
+        let snapshot = xy_for_callback.snapshot();
+        assert_eq!(snapshot.x().len(), snapshot.y().len());
+        assert_eq!(snapshot.x(), &[2.0, 3.0, 4.0]);
+        assert_eq!(snapshot.y(), &[20.0, 30.0, 40.0]);
+        assert_eq!(xy_for_callback.read_x(), snapshot.x());
+        assert_eq!(xy_for_callback.read_y(), snapshot.y());
+        callback_hits_for_pair.fetch_add(1, AtomicOrdering::Relaxed);
+    });
+
+    let (mid_commit_tx, mid_commit_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    xy.set_pair_commit_hook({
+        let release_rx = Arc::clone(&release_rx);
+        move || {
+            mid_commit_tx
+                .send(())
+                .expect("mid-commit receiver should remain alive");
+            release_rx
+                .lock()
+                .expect("release receiver lock poisoned")
+                .recv()
+                .expect("replacement should be released");
+        }
+    });
+
+    let writer_xy = xy.clone();
+    let writer = thread::spawn(move || {
+        writer_xy.replace([(2.0, 20.0), (3.0, 30.0), (4.0, 40.0)]);
+    });
+    mid_commit_rx
+        .recv()
+        .expect("replacement should pause between lane mutations");
+
+    let (snapshot_tx, snapshot_rx) = mpsc::channel();
+    let reader_xy = xy.clone();
+    let reader = thread::spawn(move || {
+        let snapshot = reader_xy.snapshot();
+        snapshot_tx
+            .send((snapshot.x().to_vec(), snapshot.y().to_vec()))
+            .expect("snapshot receiver should remain alive");
+    });
+    assert!(
+        snapshot_rx
+            .recv_timeout(Duration::from_millis(250))
+            .is_err(),
+        "paired snapshot must block until both replacement lanes commit"
+    );
+
+    release_tx
+        .send(())
+        .expect("replacement writer should still be paused");
+    let (x, y) = snapshot_rx
+        .recv()
+        .expect("snapshot should finish after replacement commits");
+    writer.join().expect("replacement writer should finish");
+    reader.join().expect("snapshot reader should finish");
+    assert_eq!(x, vec![2.0, 3.0, 4.0]);
+    assert_eq!(y, vec![20.0, 30.0, 40.0]);
+    assert_eq!(callback_hits.load(AtomicOrdering::Relaxed), 3);
 }
 
 #[test]

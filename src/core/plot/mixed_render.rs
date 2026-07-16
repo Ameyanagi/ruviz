@@ -193,7 +193,17 @@ impl Plot {
     }
 
     pub(super) fn empty_cartesian_bounds(&self) -> (f64, f64, f64, f64) {
-        self.apply_manual_axis_limits((0.0, 1.0, 0.0, 1.0))
+        let x = if matches!(&self.layout.x_scale, crate::axes::AxisScale::Log) {
+            (1.0, 10.0)
+        } else {
+            (0.0, 1.0)
+        };
+        let y = if matches!(&self.layout.y_scale, crate::axes::AxisScale::Log) {
+            (1.0, 10.0)
+        } else {
+            (0.0, 1.0)
+        };
+        self.apply_manual_axis_limits((x.0, x.1, y.0, y.1))
     }
 
     pub(super) fn effective_main_panel_bounds_for_series(

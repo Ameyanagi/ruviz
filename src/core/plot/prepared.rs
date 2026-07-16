@@ -438,7 +438,7 @@ impl From<Plot> for PreparedPlot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{Observable, StreamingXY};
+    use crate::data::{Observable, StreamingRenderState, StreamingXY};
     use crate::render::Color;
     use std::sync::{
         Arc,
@@ -678,6 +678,64 @@ mod tests {
         stream.push(1.0, 1.0);
 
         assert_eq!(hits.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_prepared_plot_full_redraw_acknowledges_streaming_replacement() {
+        let stream = StreamingXY::new(32);
+        stream.push_many([(0.0, 0.0), (1.0, 1.0)]);
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .xlim(0.0, 4.0)
+            .ylim(0.0, 16.0)
+            .into();
+        let prepared = plot.prepare();
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("initial prepared streaming frame should render");
+
+        stream.replace([(2.0, 4.0), (3.0, 9.0), (4.0, 16.0)]);
+        assert_eq!(
+            stream.render_state(),
+            StreamingRenderState::FullRedrawRequired
+        );
+
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("prepared replacement frame should render");
+        assert_eq!(stream.render_state(), StreamingRenderState::Unchanged);
+
+        stream.replace(std::iter::empty());
+        assert_eq!(
+            stream.render_state(),
+            StreamingRenderState::FullRedrawRequired
+        );
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("empty replacement frame should render");
+        assert_eq!(stream.render_state(), StreamingRenderState::Unchanged);
+    }
+
+    #[test]
+    fn test_prepared_plot_renders_empty_streaming_replacement_on_log_axes() {
+        let stream = StreamingXY::new(32);
+        stream.push_many([(1.0, 1.0), (10.0, 10.0)]);
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .xscale(crate::axes::AxisScale::Log)
+            .yscale(crate::axes::AxisScale::Log)
+            .into();
+        let prepared = plot.prepare();
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("initial logarithmic stream frame should render");
+
+        stream.replace(std::iter::empty());
+        prepared
+            .render_frame((320, 240), 1.0, 0.0)
+            .expect("empty logarithmic replacement should render");
+
+        assert_eq!(stream.render_state(), StreamingRenderState::Unchanged);
     }
 
     #[test]
