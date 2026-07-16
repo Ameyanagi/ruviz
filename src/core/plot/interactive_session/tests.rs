@@ -15,6 +15,24 @@ fn render_target() -> SurfaceTarget {
     }
 }
 
+fn install_render_test_hook(
+    session: &InteractivePlotSession,
+    point: RenderTestPoint,
+) -> (Arc<std::sync::Barrier>, Arc<std::sync::Barrier>) {
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    *session
+        .inner
+        .render_test_hook
+        .lock()
+        .expect("InteractivePlotSession render test hook lock poisoned") = Some(RenderTestHook {
+        point,
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+    });
+    (entered, release)
+}
+
 fn assert_index_matches_brute_force(
     session: &InteractivePlotSession,
     data_probes: &[ViewportPoint],
@@ -1470,14 +1488,69 @@ fn test_inflight_dirty_marks_survive_render_clear() {
     let plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
     let session = plot.prepare_interactive();
 
+    session
+        .render_to_surface(render_target())
+        .expect("initial frame should render");
+
     session.mark_dirty(DirtyDomain::Data);
-    let render_epoch = session.inner.dirty_epoch.load(Ordering::Acquire);
+    let (_, _, render_epoch) = session.render_snapshot();
+    let generation = session
+        .displayed_frame_generation()
+        .expect("initial frame should have a generation");
     session.mark_dirty(DirtyDomain::Overlay);
-    session.clear_dirty_after_render(render_epoch);
+    assert!(
+        session
+            .commit_frame_if_current(render_epoch, generation)
+            .is_err()
+    );
 
     let dirty = session.dirty_domains();
     assert!(dirty.data);
     assert!(dirty.overlay);
+}
+
+#[test]
+fn test_mutation_between_state_change_and_dirty_mark_returns_superseded_error() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .xlim(0.0, 2.0)
+        .ylim(0.0, 4.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial frame should render");
+    let visible = session.viewport_snapshot().unwrap().visible_bounds;
+    let next_visible = ViewportRect::from_points(
+        ViewportPoint::new(
+            visible.min.x + visible.width() * 0.1,
+            visible.min.y + visible.height() * 0.1,
+        ),
+        ViewportPoint::new(
+            visible.max.x - visible.width() * 0.1,
+            visible.max.y - visible.height() * 0.1,
+        ),
+    );
+    let (entered, release) = install_render_test_hook(&session, RenderTestPoint::BeforeDirtyMark);
+
+    let mutation_session = session.clone();
+    let mutation =
+        std::thread::spawn(move || mutation_session.restore_visible_bounds(next_visible));
+    entered.wait();
+
+    let error = session
+        .render_to_surface(render_target())
+        .expect_err("a changed key without its dirty mark must be superseded, not panic");
+    assert!(matches!(
+        error,
+        PlottingError::RenderError(message) if message.contains("superseded")
+    ));
+
+    release.wait();
+    assert!(mutation.join().expect("mutation thread should not panic"));
+    session
+        .render_to_surface(render_target())
+        .expect("render should recover after the delayed dirty mark");
 }
 
 #[test]
@@ -1525,6 +1598,247 @@ fn test_overlapping_render_requests_cannot_commit_stale_base_cache() {
     session
         .render_to_surface(second_target)
         .expect("latest render target should retain a coherent cache");
+}
+
+#[test]
+fn test_invalidate_during_render_supersedes_cache_publication_without_panicking() {
+    let first_resolution = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let entered = Arc::new(std::sync::Barrier::new(2));
+    let release = Arc::new(std::sync::Barrier::new(2));
+    let first_resolution_for_signal = Arc::clone(&first_resolution);
+    let entered_for_signal = Arc::clone(&entered);
+    let release_for_signal = Arc::clone(&release);
+    let color = signal::of(move |_| {
+        if first_resolution_for_signal.swap(false, Ordering::AcqRel) {
+            entered_for_signal.wait();
+            release_for_signal.wait();
+        }
+        Color::RED
+    });
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .color_source(color)
+        .into();
+    let session = plot.prepare_interactive();
+
+    let render_session = session.clone();
+    let render = std::thread::spawn(move || render_session.render_to_surface(render_target()));
+    entered.wait();
+    session.invalidate();
+    release.wait();
+
+    let error = render
+        .join()
+        .expect("render thread should not panic")
+        .expect_err("invalidated render should be superseded");
+    assert!(matches!(
+        error,
+        PlottingError::RenderError(message) if message.contains("superseded")
+    ));
+    assert_eq!(session.displayed_frame_generation(), None);
+
+    session
+        .render_to_surface(render_target())
+        .expect("a render after invalidation should recover normally");
+    assert!(session.displayed_frame_generation().is_some());
+}
+
+#[test]
+fn test_invalidation_after_base_publication_supersedes_final_return() {
+    let plot: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0]).into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial frame should render");
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: ViewportPoint::new(20.0, 0.0),
+    });
+    let (entered, release) =
+        install_render_test_hook(&session, RenderTestPoint::AfterBasePublication);
+
+    let render_session = session.clone();
+    let render = std::thread::spawn(move || render_session.render_to_surface(render_target()));
+    entered.wait();
+    session.invalidate();
+    release.wait();
+
+    let error = render
+        .join()
+        .expect("render thread should not panic")
+        .expect_err("invalidation after publication must supersede the final return");
+    assert!(matches!(
+        error,
+        PlottingError::RenderError(message) if message.contains("superseded")
+    ));
+    assert_eq!(session.displayed_frame_generation(), None);
+}
+
+#[test]
+fn test_cache_hit_and_overlay_only_invalidation_supersede_final_return() {
+    for overlay_only in [false, true] {
+        let plot: Plot = Plot::new().scatter(&[0.5], &[0.5]).into();
+        let session = plot.prepare_interactive();
+        session
+            .render_to_surface(render_target())
+            .expect("initial frame should render");
+        if overlay_only {
+            let point = session
+                .data_to_screen(ViewportPoint::new(0.5, 0.5))
+                .expect("mapping should succeed")
+                .expect("point should be visible");
+            session.apply_input(PlotInputEvent::Hover { position_px: point });
+            assert!(session.dirty_domains().overlay);
+            assert!(!session.dirty_domains().needs_base_render());
+        }
+        let (entered, release) =
+            install_render_test_hook(&session, RenderTestPoint::BeforeFinalCommit);
+
+        let render_session = session.clone();
+        let render = std::thread::spawn(move || render_session.render_to_surface(render_target()));
+        entered.wait();
+        session.invalidate();
+        release.wait();
+
+        let error = render
+            .join()
+            .expect("render thread should not panic")
+            .expect_err("invalidation before final commit must supersede the frame");
+        assert!(matches!(
+            error,
+            PlottingError::RenderError(message) if message.contains("superseded")
+        ));
+        assert_eq!(session.displayed_frame_generation(), None);
+    }
+}
+
+#[test]
+fn test_overlay_refresh_does_not_overwrite_concurrent_pointer_mutation() {
+    let plot: Plot = Plot::new()
+        .scatter(&[0.25, 0.75], &[0.25, 0.75])
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial frame should render");
+    let point = session
+        .data_to_screen(ViewportPoint::new(0.25, 0.25))
+        .expect("mapping should succeed")
+        .expect("point should be visible");
+    session.apply_input(PlotInputEvent::Hover { position_px: point });
+    assert!(
+        session
+            .inner
+            .state
+            .lock()
+            .expect("InteractivePlotSession state lock poisoned")
+            .hovered
+            .is_some()
+    );
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: ViewportPoint::new(20.0, 0.0),
+    });
+    let (entered, release) =
+        install_render_test_hook(&session, RenderTestPoint::BeforeOverlayRefreshCommit);
+
+    let render_session = session.clone();
+    let render = std::thread::spawn(move || render_session.render_to_surface(render_target()));
+    entered.wait();
+    session.apply_input(PlotInputEvent::ClearHover);
+    release.wait();
+
+    let error = render
+        .join()
+        .expect("render thread should not panic")
+        .expect_err("concurrent pointer mutation must supersede stale overlay refresh");
+    assert!(matches!(
+        error,
+        PlottingError::RenderError(message) if message.contains("superseded")
+    ));
+    let state = session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned");
+    assert!(state.hovered.is_none());
+    assert!(state.tooltip.is_none());
+}
+
+#[test]
+fn test_base_generation_exhaustion_returns_error_without_poisoning_state() {
+    let plot: Plot = Plot::new().line(&[0.0, 1.0], &[0.0, 1.0]).into();
+    let session = plot.prepare_interactive();
+    session
+        .inner
+        .state
+        .lock()
+        .expect("InteractivePlotSession state lock poisoned")
+        .base_generation = u64::MAX;
+
+    let error = session
+        .render_to_surface(render_target())
+        .expect_err("generation exhaustion should be reported");
+    assert!(matches!(
+        error,
+        PlottingError::RenderError(message) if message.contains("generation exhausted")
+    ));
+    assert_eq!(session.displayed_frame_generation(), None);
+    assert_eq!(
+        session
+            .inner
+            .state
+            .lock()
+            .expect("state lock should remain usable")
+            .base_generation,
+        u64::MAX
+    );
+}
+
+#[test]
+fn test_base_frame_generation_tracks_published_interactive_cache() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 4.0])
+        .xlim(0.0, 2.0)
+        .ylim(0.0, 4.0)
+        .into();
+    let session = plot.prepare_interactive();
+
+    assert_eq!(session.displayed_frame_generation(), None);
+    let first = session
+        .render_to_surface_with_generation(render_target())
+        .expect("initial frame should render");
+    assert_eq!(
+        session.displayed_frame_generation(),
+        Some(first.base_generation)
+    );
+
+    session.apply_input(PlotInputEvent::Hover {
+        position_px: ViewportPoint::new(200.0, 150.0),
+    });
+    let overlay_only = session
+        .render_to_surface_with_generation(render_target())
+        .expect("overlay-only frame should render");
+    assert_eq!(overlay_only.base_generation, first.base_generation);
+
+    session.apply_input(PlotInputEvent::Pan {
+        delta_px: ViewportPoint::new(20.0, 0.0),
+    });
+    let second = session
+        .render_to_surface_with_generation(render_target())
+        .expect("panned frame should render");
+    assert!(second.base_generation > first.base_generation);
+    assert_eq!(
+        session.displayed_frame_generation(),
+        Some(second.base_generation)
+    );
+
+    session.invalidate();
+    assert_eq!(session.displayed_frame_generation(), None);
+    let third = session
+        .render_to_surface_with_generation(render_target())
+        .expect("invalidated frame should render");
+    assert!(third.base_generation > second.base_generation);
 }
 
 #[test]

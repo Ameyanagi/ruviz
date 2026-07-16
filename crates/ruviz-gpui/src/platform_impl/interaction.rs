@@ -41,19 +41,29 @@ pub(super) enum ActiveDrag {
     None,
     LeftPan {
         anchor_px: ViewportPoint,
+        anchor_window: Point<Pixels>,
         last_px: ViewportPoint,
         crossed_threshold: bool,
+        click_eligible: bool,
     },
     RightZoom {
         anchor_px: ViewportPoint,
+        anchor_window: Point<Pixels>,
         current_px: ViewportPoint,
         crossed_threshold: bool,
         zoom_enabled: bool,
     },
     Brush {
         anchor_px: ViewportPoint,
+        anchor_window: Point<Pixels>,
         current_px: ViewportPoint,
         crossed_threshold: bool,
+    },
+    PrimaryClick {
+        anchor_px: ViewportPoint,
+        anchor_window: Point<Pixels>,
+        crossed_threshold: bool,
+        click_eligible: bool,
     },
 }
 
@@ -63,6 +73,7 @@ pub(super) struct InteractionState {
     pub(super) active_drag: ActiveDrag,
     pub(super) context_menu: Option<ContextMenuState>,
     pub(super) home_view_bounds: Option<ViewportRect>,
+    pub(super) last_hover_event: Option<PlotPointerEvent>,
 }
 
 impl InteractionState {
@@ -75,6 +86,7 @@ impl InteractionState {
     fn reset_pointer_state(&mut self) {
         self.last_pointer_px = None;
         self.active_drag = ActiveDrag::None;
+        self.last_hover_event = None;
     }
 }
 
@@ -82,13 +94,78 @@ pub(super) fn log_interaction_error(action: &str, err: &PlottingError) {
     eprintln!("ruviz-gpui {action} failed: {err}");
 }
 
-pub(super) fn distance_px(a: ViewportPoint, b: ViewportPoint) -> f64 {
-    let dx = a.x - b.x;
-    let dy = a.y - b.y;
+pub(super) fn window_distance_px(a: Point<Pixels>, b: Point<Pixels>) -> f64 {
+    let dx = f64::from(a.x - b.x);
+    let dy = f64::from(a.y - b.y);
     (dx * dx + dy * dy).sqrt()
 }
 
 impl RuvizPlot {
+    fn pointer_base_generation_is_current(&mut self, cx: &mut Context<Self>) -> bool {
+        let is_current = self.cached_frame.as_ref().is_some_and(|frame| {
+            self.session.displayed_frame_generation() == Some(frame.base_generation)
+        });
+        if !is_current {
+            self.reset_pointer_state();
+            cx.notify();
+        }
+        is_current
+    }
+
+    fn emit_plot_click(
+        &self,
+        window_position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let Some(event) = self.build_plot_pointer_event(
+            PlotPointerEventKind::Click,
+            Some(MouseButton::Left),
+            window_position,
+        )?
+        else {
+            return Ok(());
+        };
+        cx.emit(event.clone());
+        if let Some(handler) = self.pointer_event_handlers.click.as_ref() {
+            handler(event);
+        }
+        Ok(())
+    }
+
+    fn emit_plot_hover(
+        &mut self,
+        window_position: Point<Pixels>,
+        mouse_button: Option<MouseButton>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let Some(event) = self.build_plot_pointer_event(
+            PlotPointerEventKind::Hover,
+            mouse_button,
+            window_position,
+        )?
+        else {
+            self.interaction_state.last_hover_event = None;
+            return Ok(());
+        };
+        if self.interaction_state.last_hover_event.as_ref() == Some(&event) {
+            return Ok(());
+        }
+        self.interaction_state.last_hover_event = Some(event.clone());
+        cx.emit(event.clone());
+        if let Some(handler) = self.pointer_event_handlers.hover.clone() {
+            handler(event);
+        }
+        Ok(())
+    }
+
+    fn cancel_primary_click(&mut self) {
+        match &mut self.interaction_state.active_drag {
+            ActiveDrag::LeftPan { click_eligible, .. }
+            | ActiveDrag::PrimaryClick { click_eligible, .. } => *click_eligible = false,
+            _ => {}
+        }
+    }
+
     pub(super) fn reset_pointer_state(&mut self) {
         self.interaction_state.reset_pointer_state();
     }
@@ -441,6 +518,7 @@ impl RuvizPlot {
             current_px,
             crossed_threshold,
             zoom_enabled,
+            ..
         } = self.interaction_state.active_drag
         else {
             return None;
@@ -466,6 +544,10 @@ impl RuvizPlot {
     ) -> Result<()> {
         cx.focus_self(window);
 
+        if !self.pointer_base_generation_is_current(cx) {
+            return Ok(());
+        }
+
         if self.interaction_state.context_menu.is_some() {
             return self.handle_context_menu_left_click(event.position, window, cx);
         }
@@ -475,6 +557,7 @@ impl RuvizPlot {
         };
 
         self.interaction_state.last_pointer_px = Some(position_px);
+        self.interaction_state.last_hover_event = None;
         if event.click_count >= 2 {
             self.reset_view(cx);
             return Ok(());
@@ -483,6 +566,7 @@ impl RuvizPlot {
         if event.modifiers.shift && self.options.interaction.selection {
             self.interaction_state.active_drag = ActiveDrag::Brush {
                 anchor_px: position_px,
+                anchor_window: event.position,
                 current_px: position_px,
                 crossed_threshold: false,
             };
@@ -495,11 +579,18 @@ impl RuvizPlot {
         if self.options.interaction.pan {
             self.interaction_state.active_drag = ActiveDrag::LeftPan {
                 anchor_px: position_px,
+                anchor_window: event.position,
                 last_px: position_px,
                 crossed_threshold: false,
+                click_eligible: true,
             };
         } else {
-            self.interaction_state.active_drag = ActiveDrag::None;
+            self.interaction_state.active_drag = ActiveDrag::PrimaryClick {
+                anchor_px: position_px,
+                anchor_window: event.position,
+                crossed_threshold: false,
+                click_eligible: true,
+            };
         }
         cx.notify();
         Ok(())
@@ -512,6 +603,9 @@ impl RuvizPlot {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         cx.focus_self(window);
+        if !self.pointer_base_generation_is_current(cx) {
+            return Ok(());
+        }
         if self.interaction_state.context_menu.is_some() {
             self.close_context_menu(cx);
         }
@@ -520,8 +614,10 @@ impl RuvizPlot {
             return Ok(());
         };
         self.interaction_state.last_pointer_px = Some(position_px);
+        self.interaction_state.last_hover_event = None;
         self.interaction_state.active_drag = ActiveDrag::RightZoom {
             anchor_px: position_px,
+            anchor_window: event.position,
             current_px: position_px,
             crossed_threshold: false,
             zoom_enabled: self.options.interaction.zoom,
@@ -540,6 +636,9 @@ impl RuvizPlot {
             self.update_context_menu_hover(hovered_index, cx);
             return Ok(());
         }
+        if !self.pointer_base_generation_is_current(cx) {
+            return Ok(());
+        }
 
         let position_px = self.local_viewport_point(event.position);
         if let Some(position_px) = position_px {
@@ -548,34 +647,72 @@ impl RuvizPlot {
 
         match (self.interaction_state.active_drag, event.pressed_button) {
             (
+                ActiveDrag::PrimaryClick {
+                    anchor_px,
+                    anchor_window,
+                    crossed_threshold,
+                    click_eligible,
+                },
+                Some(MouseButton::Left),
+            ) => {
+                if position_px.is_none() {
+                    return Ok(());
+                }
+                self.interaction_state.active_drag = ActiveDrag::PrimaryClick {
+                    anchor_px,
+                    anchor_window,
+                    crossed_threshold: crossed_threshold
+                        || window_distance_px(anchor_window, event.position) > DRAG_THRESHOLD_PX,
+                    click_eligible,
+                };
+                return Ok(());
+            }
+            (
                 ActiveDrag::LeftPan {
                     anchor_px,
+                    anchor_window,
                     last_px,
                     crossed_threshold,
+                    click_eligible,
                 },
                 Some(MouseButton::Left),
             ) if self.options.interaction.pan => {
                 let Some(position_px) = position_px else {
                     return Ok(());
                 };
-                let crossed_threshold_now =
-                    crossed_threshold || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
-                let delta_px =
-                    ViewportPoint::new(position_px.x - last_px.x, position_px.y - last_px.y);
-                if delta_px.x.abs() > f64::EPSILON || delta_px.y.abs() > f64::EPSILON {
-                    self.session.apply_input(PlotInputEvent::Pan { delta_px });
-                    cx.notify();
-                }
+                let crossed_threshold_now = crossed_threshold
+                    || window_distance_px(anchor_window, event.position) > DRAG_THRESHOLD_PX;
+                let next_last_px = if crossed_threshold_now {
+                    let delta_anchor = if crossed_threshold {
+                        last_px
+                    } else {
+                        anchor_px
+                    };
+                    let delta_px = ViewportPoint::new(
+                        position_px.x - delta_anchor.x,
+                        position_px.y - delta_anchor.y,
+                    );
+                    if delta_px.x.abs() > f64::EPSILON || delta_px.y.abs() > f64::EPSILON {
+                        self.session.apply_input(PlotInputEvent::Pan { delta_px });
+                        cx.notify();
+                    }
+                    position_px
+                } else {
+                    last_px
+                };
                 self.interaction_state.active_drag = ActiveDrag::LeftPan {
                     anchor_px,
-                    last_px: position_px,
+                    anchor_window,
+                    last_px: next_last_px,
                     crossed_threshold: crossed_threshold_now,
+                    click_eligible,
                 };
                 return Ok(());
             }
             (
                 ActiveDrag::Brush {
                     anchor_px,
+                    anchor_window,
                     current_px: _,
                     crossed_threshold,
                 },
@@ -584,12 +721,13 @@ impl RuvizPlot {
                 let Some(position_px) = position_px else {
                     return Ok(());
                 };
-                let crossed_threshold_now =
-                    crossed_threshold || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
+                let crossed_threshold_now = crossed_threshold
+                    || window_distance_px(anchor_window, event.position) > DRAG_THRESHOLD_PX;
                 self.session
                     .apply_input(PlotInputEvent::BrushMove { position_px });
                 self.interaction_state.active_drag = ActiveDrag::Brush {
                     anchor_px,
+                    anchor_window,
                     current_px: position_px,
                     crossed_threshold: crossed_threshold_now,
                 };
@@ -599,6 +737,7 @@ impl RuvizPlot {
             (
                 ActiveDrag::RightZoom {
                     anchor_px,
+                    anchor_window,
                     current_px: _,
                     crossed_threshold,
                     zoom_enabled,
@@ -611,14 +750,15 @@ impl RuvizPlot {
                 } else {
                     position_px.unwrap_or(anchor_px)
                 };
-                let crossed_threshold_now =
-                    crossed_threshold || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
+                let crossed_threshold_now = crossed_threshold
+                    || window_distance_px(anchor_window, event.position) > DRAG_THRESHOLD_PX;
                 if crossed_threshold_now {
                     self.session.apply_input(PlotInputEvent::ClearHover);
                     self.session.apply_input(PlotInputEvent::HideTooltip);
                 }
                 self.interaction_state.active_drag = ActiveDrag::RightZoom {
                     anchor_px,
+                    anchor_window,
                     current_px: position_px,
                     crossed_threshold: crossed_threshold_now,
                     zoom_enabled,
@@ -646,6 +786,12 @@ impl RuvizPlot {
             None | Some(_) => {}
         }
 
+        if position_px.is_some() {
+            self.emit_plot_hover(event.position, event.pressed_button, cx)?;
+        } else {
+            self.interaction_state.last_hover_event = None;
+        }
+
         Ok(())
     }
 
@@ -654,16 +800,21 @@ impl RuvizPlot {
         event: &MouseUpEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.pointer_base_generation_is_current(cx) {
+            return Ok(());
+        }
         let position_px = self
             .local_viewport_point(event.position)
             .or(self.interaction_state.last_pointer_px);
 
+        let mut is_true_click = false;
         match (self.interaction_state.active_drag, position_px) {
             (
                 ActiveDrag::Brush {
                     anchor_px: _,
                     current_px: _,
                     crossed_threshold: _,
+                    ..
                 },
                 Some(position_px),
             ) if self.options.interaction.selection => {
@@ -673,19 +824,52 @@ impl RuvizPlot {
             }
             (
                 ActiveDrag::LeftPan {
-                    anchor_px,
+                    anchor_px: _,
+                    anchor_window,
                     last_px: _,
                     crossed_threshold,
+                    click_eligible,
                 },
                 Some(position_px),
             ) if self.options.interaction.selection && !crossed_threshold => {
-                if distance_px(anchor_px, position_px) <= DRAG_THRESHOLD_PX {
+                if click_eligible
+                    && window_distance_px(anchor_window, event.position) <= DRAG_THRESHOLD_PX
+                {
                     self.session
                         .apply_input(PlotInputEvent::SelectAt { position_px });
                     cx.notify();
+                    is_true_click = true;
                 }
             }
+            (
+                ActiveDrag::LeftPan {
+                    anchor_window,
+                    crossed_threshold,
+                    click_eligible,
+                    ..
+                },
+                Some(_),
+            ) if !crossed_threshold => {
+                is_true_click = click_eligible
+                    && window_distance_px(anchor_window, event.position) <= DRAG_THRESHOLD_PX;
+            }
+            (
+                ActiveDrag::PrimaryClick {
+                    anchor_window,
+                    crossed_threshold,
+                    click_eligible,
+                    ..
+                },
+                Some(_),
+            ) if !crossed_threshold => {
+                is_true_click = click_eligible
+                    && window_distance_px(anchor_window, event.position) <= DRAG_THRESHOLD_PX;
+            }
             _ => {}
+        }
+
+        if is_true_click && event.click_count < 2 {
+            self.emit_plot_click(event.position, cx)?;
         }
 
         self.reset_pointer_state();
@@ -697,6 +881,9 @@ impl RuvizPlot {
         event: &MouseUpEvent,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        if !self.pointer_base_generation_is_current(cx) {
+            return Ok(());
+        }
         let position_px = self
             .local_viewport_point(event.position)
             .or_else(|| self.clamped_viewport_point(event.position))
@@ -706,19 +893,21 @@ impl RuvizPlot {
             (
                 ActiveDrag::RightZoom {
                     anchor_px,
+                    anchor_window,
                     current_px: _,
                     crossed_threshold,
                     zoom_enabled,
                 },
                 Some(position_px),
             ) => {
-                let crossed_threshold_now =
-                    crossed_threshold || distance_px(anchor_px, position_px) > DRAG_THRESHOLD_PX;
+                let crossed_threshold_now = crossed_threshold
+                    || window_distance_px(anchor_window, event.position) > DRAG_THRESHOLD_PX;
                 if crossed_threshold_now {
                     if zoom_enabled {
                         let region_px = ViewportRect::from_points(anchor_px, position_px);
-                        if region_px.width() > DRAG_THRESHOLD_PX
-                            && region_px.height() > DRAG_THRESHOLD_PX
+                        if f64::from(event.position.x - anchor_window.x).abs() > DRAG_THRESHOLD_PX
+                            && f64::from(event.position.y - anchor_window.y).abs()
+                                > DRAG_THRESHOLD_PX
                         {
                             self.session
                                 .apply_input(PlotInputEvent::ZoomRect { region_px });
@@ -749,12 +938,18 @@ impl RuvizPlot {
             self.update_context_menu_hover(None, cx);
             return;
         }
+        if !self.pointer_base_generation_is_current(cx) {
+            return;
+        }
 
         self.session.apply_input(PlotInputEvent::ClearHover);
         self.session.apply_input(PlotInputEvent::HideTooltip);
         if !matches!(
             self.interaction_state.active_drag,
-            ActiveDrag::RightZoom { .. } | ActiveDrag::LeftPan { .. } | ActiveDrag::Brush { .. }
+            ActiveDrag::RightZoom { .. }
+                | ActiveDrag::LeftPan { .. }
+                | ActiveDrag::Brush { .. }
+                | ActiveDrag::PrimaryClick { .. }
         ) {
             self.reset_pointer_state();
         }
@@ -776,10 +971,14 @@ impl RuvizPlot {
         if !self.options.interaction.zoom || self.interaction_state.context_menu.is_some() {
             return Ok(());
         }
+        if !self.pointer_base_generation_is_current(cx) {
+            return Ok(());
+        }
 
         let Some(center_px) = self.local_viewport_point(event.position) else {
             return Ok(());
         };
+        self.cancel_primary_click();
         let factor = (1.0025f64)
             .powf(-Self::normalize_scroll_delta(event.delta))
             .clamp(0.25, 4.0);

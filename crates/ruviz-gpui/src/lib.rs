@@ -10,7 +10,31 @@
 //! - `RuvizPlot` for embedding static or interactive plots in GPUI views
 //! - configurable presentation modes for image-backed and hybrid rendering
 //! - built-in pan, zoom, hover, selection, and context-menu behavior
+//! - absolute-window coordinate mapping and frame-aware click/hover callbacks
 //! - clipboard and PNG save helpers routed through the host platform
+//!
+//! # Coordinates And Pointer Events
+//!
+//! [`RuvizPlot::data_at`] accepts an absolute GPUI window [`Point<Pixels>`], while
+//! [`RuvizPlot::screen_at`] returns one. Both methods use the currently displayed
+//! backing frame and return `Ok(None)` when layout or a valid in-bounds mapping is
+//! unavailable. Click and hover callbacks share [`PlotPointerEvent`]:
+//!
+//! ```rust,ignore
+//! let plot = ruviz_gpui::plot_builder(plot)
+//!     .on_plot_click(|event| {
+//!         println!("clicked data={:?}, hit={:?}", event.data_position, event.hit);
+//!     })
+//!     .on_plot_hover(|event| {
+//!         update_status(event.window_position, event.data_position);
+//!     })
+//!     .build(cx);
+//! ```
+//!
+//! Builder callbacks are convenient thread-safe observers. GPUI views that update host UI state
+//! should normally subscribe to the plot entity with `cx.subscribe(&plot, ...)`; [`RuvizPlot`]
+//! emits every click and hover event through [`gpui::EventEmitter`] as well as invoking the
+//! corresponding builder callback.
 //!
 //! # Platform Support
 //!
@@ -71,9 +95,10 @@ mod platform_impl {
     use ruviz::{
         core::plot::Image as RuvizImage,
         core::{
-            FramePacing, FrameStats, ImageTarget, InteractivePlotSession, Plot, PlotInputEvent,
-            PlottingError, PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind,
-            Result, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
+            FramePacing, FrameStats, HitResult, ImageTarget, InteractivePlotSession,
+            InteractiveViewportSnapshot, Plot, PlotInputEvent, PlottingError, PreparedPlot,
+            QualityPolicy, ReactiveSubscription, RenderTargetKind, Result, SurfaceCapability,
+            SurfaceTarget, ViewportPoint, ViewportRect,
         },
         export::write_rgba_png_atomic,
     };
@@ -104,6 +129,13 @@ mod platform_impl {
 
     type ContextMenuActionHandler =
         Arc<dyn Fn(GpuiContextMenuActionContext) -> Result<()> + Send + Sync>;
+    type PlotPointerEventHandler = Arc<dyn Fn(PlotPointerEvent) + Send + Sync>;
+
+    #[derive(Clone, Default)]
+    struct PlotPointerEventHandlers {
+        click: Option<PlotPointerEventHandler>,
+        hover: Option<PlotPointerEventHandler>,
+    }
 
     pub trait IntoPlotSession {
         fn into_plot_session(self) -> InteractivePlotSession;
@@ -285,6 +317,37 @@ mod platform_impl {
         pub image: RuvizImage,
     }
 
+    /// The kind of pointer event delivered by a [`PlotPointerEvent`] callback.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum PlotPointerEventKind {
+        Click,
+        Hover,
+    }
+
+    /// Frame-aware coordinates and hit information for a plot pointer event.
+    ///
+    /// [`Self::window_position`] is an absolute GPUI window coordinate. The
+    /// viewport coordinate, data coordinate, snapshot, and hit result all use
+    /// the interactive session's currently displayed backing frame.
+    /// [`RuvizPlot`] emits this type through [`gpui::EventEmitter`], so host views can use
+    /// `cx.subscribe(&plot, ...)` and update UI state with their normal GPUI context.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct PlotPointerEvent {
+        pub kind: PlotPointerEventKind,
+        /// The mouse button for a click, or the currently pressed button for a hover.
+        pub mouse_button: Option<MouseButton>,
+        /// Absolute position in the GPUI window coordinate system.
+        pub window_position: Point<Pixels>,
+        /// Position in the plot's displayed backing frame, in viewport pixels.
+        pub viewport_position: ViewportPoint,
+        /// Displayed data coordinates, or `None` in frame margins outside the plot area.
+        pub data_position: Option<ViewportPoint>,
+        /// Current displayed viewport state, including plot area and visible bounds.
+        pub viewport: InteractiveViewportSnapshot,
+        /// Hit result from the same displayed-frame coordinate contract.
+        pub hit: HitResult,
+    }
+
     /// Performance tuning options for the shared interactive session.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct PerformanceOptions {
@@ -423,6 +486,7 @@ mod platform_impl {
         scale_bits: u32,
         time_bits: u64,
         presentation_mode: PresentationMode,
+        presented_base_generation: Option<u64>,
     }
 
     impl RenderRequest {
@@ -437,7 +501,13 @@ mod platform_impl {
                 scale_bits: sanitize_scale_factor(scale_factor).to_bits(),
                 time_bits: time_seconds.to_bits(),
                 presentation_mode,
+                presented_base_generation: None,
             }
+        }
+
+        fn with_presented_base_generation(mut self, generation: Option<u64>) -> Self {
+            self.presented_base_generation = generation;
+            self
         }
 
         fn scale_factor(&self) -> f32 {
@@ -479,6 +549,7 @@ mod platform_impl {
     #[derive(Clone)]
     struct CachedFrame {
         request: RenderRequest,
+        base_generation: u64,
         primary: PrimaryFrame,
         overlay_image: Option<Arc<RenderImage>>,
         stats: FrameStats,
@@ -486,10 +557,16 @@ mod platform_impl {
     }
 
     struct RenderedFrame {
+        base_generation: u64,
         primary: Option<RenderedPrimary>,
-        overlay_image: Option<Arc<RenderImage>>,
+        overlay: RenderedOverlay,
         stats: FrameStats,
         target: RenderTargetKind,
+    }
+
+    enum RenderedOverlay {
+        Reuse,
+        Replace(Option<Arc<RenderImage>>),
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -549,6 +626,7 @@ mod platform_impl {
         plot: P,
         options: RuvizPlotOptions,
         context_menu_action_handler: Option<ContextMenuActionHandler>,
+        pointer_event_handlers: PlotPointerEventHandlers,
     }
 
     impl<P> RuvizPlotBuilder<P>
@@ -560,6 +638,7 @@ mod platform_impl {
                 plot,
                 options: RuvizPlotOptions::default(),
                 context_menu_action_handler: None,
+                pointer_event_handlers: PlotPointerEventHandlers::default(),
             }
         }
 
@@ -624,6 +703,32 @@ mod platform_impl {
             self
         }
 
+        /// Registers a thread-safe observer for primary-button clicks on the displayed plot frame.
+        ///
+        /// The callback runs on release and is suppressed for drags. Under standard platform
+        /// double-click semantics, click-count 1 may emit before click-count 2 is known; the
+        /// click-count 2 release emits no additional click. Host UI state should normally use
+        /// `cx.subscribe(&plot, ...)` instead so the subscriber receives a GPUI context.
+        pub fn on_plot_click<F>(mut self, handler: F) -> Self
+        where
+            F: Fn(PlotPointerEvent) + Send + Sync + 'static,
+        {
+            self.pointer_event_handlers.click = Some(Arc::new(handler));
+            self
+        }
+
+        /// Registers a thread-safe observer for pointer movement over the displayed plot frame.
+        ///
+        /// This callback is independent of the built-in hover/tooltip option, which continues
+        /// to run when enabled. Host UI state should normally use `cx.subscribe(&plot, ...)`.
+        pub fn on_plot_hover<F>(mut self, handler: F) -> Self
+        where
+            F: Fn(PlotPointerEvent) + Send + Sync + 'static,
+        {
+            self.pointer_event_handlers.hover = Some(Arc::new(handler));
+            self
+        }
+
         fn validate(&self) -> Result<()> {
             if self.options.context_menu.enabled
                 && !self.options.context_menu.custom_items.is_empty()
@@ -645,8 +750,15 @@ mod platform_impl {
             let options = self.options;
             let plot = self.plot;
             let context_menu_action_handler = self.context_menu_action_handler;
+            let pointer_event_handlers = self.pointer_event_handlers;
             Ok(cx.new(move |cx| {
-                RuvizPlot::from_options_impl(plot, options, context_menu_action_handler, cx)
+                RuvizPlot::from_options_impl(
+                    plot,
+                    options,
+                    context_menu_action_handler,
+                    pointer_event_handlers,
+                    cx,
+                )
             }))
         }
 
@@ -720,6 +832,7 @@ mod platform_impl {
         focus_handle: FocusHandle,
         interaction_state: InteractionState,
         context_menu_action_handler: Option<ContextMenuActionHandler>,
+        pointer_event_handlers: PlotPointerEventHandlers,
     }
 
     impl RuvizPlot {
@@ -727,6 +840,7 @@ mod platform_impl {
             plot: P,
             options: RuvizPlotOptions,
             context_menu_action_handler: Option<ContextMenuActionHandler>,
+            pointer_event_handlers: PlotPointerEventHandlers,
             cx: &mut Context<Self>,
         ) -> Self
         where
@@ -754,6 +868,7 @@ mod platform_impl {
                 focus_handle: cx.focus_handle(),
                 interaction_state: InteractionState::default(),
                 context_menu_action_handler,
+                pointer_event_handlers,
             }
         }
 
@@ -762,7 +877,13 @@ mod platform_impl {
         where
             P: IntoPlotSession,
         {
-            Self::from_options_impl(plot, RuvizPlotOptions::default(), None, cx)
+            Self::from_options_impl(
+                plot,
+                RuvizPlotOptions::default(),
+                None,
+                PlotPointerEventHandlers::default(),
+                cx,
+            )
         }
 
         #[deprecated(note = "Use ruviz_gpui::plot_builder(...).build(cx).")]
@@ -770,7 +891,13 @@ mod platform_impl {
         where
             P: IntoPlotSession,
         {
-            Self::from_options_impl(plot, options, None, _cx)
+            Self::from_options_impl(
+                plot,
+                options,
+                None,
+                PlotPointerEventHandlers::default(),
+                _cx,
+            )
         }
 
         pub fn interactive_session(&self) -> &InteractivePlotSession {
@@ -1190,11 +1317,81 @@ mod platform_impl {
         }
     }
 
+    impl gpui::EventEmitter<PlotPointerEvent> for RuvizPlot {}
+
     #[cfg(test)]
     mod tests {
         use super::*;
         use gpui::{Modifiers, MouseButton, TestAppContext};
+        use ruviz::plots::heatmap::HeatmapConfig;
         use ruviz::{axes::AxisScale, data::Observable, prelude::Plot};
+
+        struct PointerEventSubscriber {
+            events: Arc<Mutex<Vec<PlotPointerEvent>>>,
+            _subscription: gpui::Subscription,
+        }
+
+        fn mapped_test_view(
+            plot: Plot,
+            options: RuvizPlotOptions,
+            frame_size_px: (u32, u32),
+            scale_factor: f32,
+            component_bounds: Bounds<Pixels>,
+        ) -> (TestAppContext, Entity<RuvizPlot>) {
+            let session = plot.prepare_interactive();
+            let result = session
+                .render_to_surface_with_generation(SurfaceTarget {
+                    size_px: frame_size_px,
+                    scale_factor,
+                    time_seconds: options.interaction.time_seconds,
+                })
+                .expect("mapped test frame should render");
+            let base_generation = result.base_generation;
+            let frame = result.frame;
+            let time_seconds = options.interaction.time_seconds;
+            let presentation_mode = options.presentation_mode;
+            let cx = TestAppContext::single();
+            let view = cx.update(|cx| {
+                cx.new(move |cx| {
+                    let mut view = RuvizPlot::from_options_impl(
+                        session,
+                        options,
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    );
+                    view.cached_frame = Some(CachedFrame {
+                        request: RenderRequest::new(
+                            frame_size_px,
+                            scale_factor,
+                            time_seconds,
+                            presentation_mode,
+                        ),
+                        base_generation,
+                        primary: PrimaryFrame::Image(render_image_from_ruviz(
+                            frame.layers.base.as_ref().clone(),
+                        )),
+                        overlay_image: None,
+                        stats: frame.stats,
+                        target: frame.target,
+                    });
+                    view.update_layout(component_bounds, frame_size_px);
+                    view
+                })
+            });
+            (cx, view)
+        }
+
+        fn assert_window_points_close(actual: Point<Pixels>, expected: Point<Pixels>) {
+            assert!((f64::from(actual.x) - f64::from(expected.x)).abs() < 1e-4);
+            assert!((f64::from(actual.y) - f64::from(expected.y)).abs() < 1e-4);
+        }
+
+        fn synchronize_test_frame(view: &mut RuvizPlot, request: RenderRequest) {
+            let frame = render_frame_from_session(view.session.clone(), request.clone())
+                .expect("test frame should render");
+            view.replace_cached_frame(request, frame);
+        }
 
         #[test]
         fn test_rgba_to_bgra_conversion() {
@@ -1237,6 +1434,7 @@ mod platform_impl {
                 options: RuvizPlotOptions::default(),
                 cached_frame: Some(CachedFrame {
                     request: RenderRequest::new((1, 1), 1.0, 0.0, PresentationMode::Hybrid),
+                    base_generation: 0,
                     primary: PrimaryFrame::Image(render_image_from_ruviz(base)),
                     overlay_image: Some(render_image_from_ruviz(overlay)),
                     stats: FrameStats::default(),
@@ -1251,6 +1449,7 @@ mod platform_impl {
                 focus_handle,
                 interaction_state: InteractionState::default(),
                 context_menu_action_handler: None,
+                pointer_event_handlers: PlotPointerEventHandlers::default(),
             };
 
             let captured = view
@@ -1310,6 +1509,557 @@ mod platform_impl {
             assert_eq!(fill_backing_dimension_px(320, 1.5), 480);
             assert_eq!(fill_backing_dimension_px(320, 0.5), 320);
             assert_eq!(fill_backing_dimension_px(0, 2.0), 0);
+        }
+
+        #[test]
+        fn test_window_data_round_trip_respects_scale_and_presentation_geometry() {
+            let component_bounds =
+                Bounds::new(point(px(100.0), px(50.0)), size(px(500.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .size(4.0, 3.0)
+                .scatter(&[5.0], &[10.0])
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 20.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (800, 600),
+                2.0,
+                component_bounds,
+            );
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    let layout = view.last_layout.as_ref().expect("layout should exist");
+                    assert_eq!(layout.content_bounds.origin, point(px(150.0), px(50.0)));
+                    assert_eq!(layout.content_bounds.size, size(px(400.0), px(300.0)));
+
+                    let window_position = view
+                        .screen_at(ViewportPoint::new(5.0, 10.0))
+                        .expect("data mapping should succeed")
+                        .expect("center data should be visible");
+                    let data_position = view
+                        .data_at(window_position)
+                        .expect("window mapping should succeed")
+                        .expect("mapped point should be in the plot area");
+                    assert!((data_position.x - 5.0).abs() < 1e-6);
+                    assert!((data_position.y - 10.0).abs() < 1e-6);
+                    assert_window_points_close(
+                        view.screen_at(data_position)
+                            .expect("inverse mapping should succeed")
+                            .expect("round-tripped data should remain visible"),
+                        window_position,
+                    );
+                })
+            });
+
+            let plot: Plot = Plot::new()
+                .size(4.0, 3.0)
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .into();
+            let mut fill_options = RuvizPlotOptions::default();
+            fill_options.interaction.image_fit = ImageFit::Fill;
+            let (cx, view) =
+                mapped_test_view(plot, fill_options, (800, 600), 2.0, component_bounds);
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    let layout = view.last_layout.as_ref().expect("layout should exist");
+                    assert_eq!(layout.content_bounds, component_bounds);
+                    let center = ViewportPoint::new(0.5, 0.5);
+                    let window_position = view
+                        .screen_at(center)
+                        .expect("fill inverse mapping should succeed")
+                        .expect("center should be visible");
+                    let round_trip = view
+                        .data_at(window_position)
+                        .expect("fill forward mapping should succeed")
+                        .expect("fill center should remain inside the plot area");
+                    assert!((round_trip.x - center.x).abs() < 1e-6);
+                    assert!((round_trip.y - center.y).abs() < 1e-6);
+                })
+            });
+        }
+
+        #[test]
+        fn test_coordinate_mapping_returns_none_before_layout_and_outside_plot() {
+            let plot: Plot = Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let session = plot.prepare_interactive();
+            session
+                .render_to_surface(SurfaceTarget {
+                    size_px: (400, 300),
+                    scale_factor: 1.0,
+                    time_seconds: 0.0,
+                })
+                .expect("coordinate test frame should render");
+            let cx = TestAppContext::single();
+            let view = cx.update(|cx| {
+                cx.new(move |cx| {
+                    RuvizPlot::from_options_impl(
+                        session,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    assert_eq!(view.data_at(point(px(10.0), px(10.0))).unwrap(), None);
+                    assert_eq!(view.screen_at(ViewportPoint::new(0.5, 0.5)).unwrap(), None);
+                })
+            });
+
+            let bounds = Bounds::new(point(px(100.0), px(100.0)), size(px(400.0), px(300.0)));
+            cx.update(|app| {
+                view.update(app, |view, _| view.update_layout(bounds, (400, 300)));
+            });
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    assert_eq!(view.data_at(point(px(99.0), px(100.0))).unwrap(), None);
+                    let frame_corner = view
+                        .viewport_point_to_window_position(ViewportPoint::new(0.0, 0.0))
+                        .expect("layout should map frame coordinates");
+                    assert_eq!(view.data_at(frame_corner).unwrap(), None);
+                    assert_eq!(view.screen_at(ViewportPoint::new(2.0, 2.0)).unwrap(), None);
+                })
+            });
+        }
+
+        #[test]
+        fn test_generation_recovery_replaces_base_and_clears_stale_overlay() {
+            let component_bounds =
+                Bounds::new(point(px(40.0), px(30.0)), size(px(400.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .scatter(&[0.5], &[0.5])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (400, 300),
+                1.0,
+                component_bounds,
+            );
+
+            let (window_position, installed_generation) = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    (
+                        view.screen_at(ViewportPoint::new(0.5, 0.5))
+                            .expect("initial mapping should succeed")
+                            .expect("center should be visible"),
+                        view.cached_frame
+                            .as_ref()
+                            .expect("test frame should be installed")
+                            .base_generation,
+                    )
+                })
+            });
+
+            cx.update(|app| {
+                view.update(app, |view, _| {
+                    view.session.apply_input(PlotInputEvent::Hover {
+                        position_px: ViewportPoint::new(200.0, 150.0),
+                    });
+                    synchronize_test_frame(
+                        view,
+                        RenderRequest::new((400, 300), 1.0, 0.0, PresentationMode::Hybrid)
+                            .with_presented_base_generation(Some(installed_generation)),
+                    );
+                    assert!(
+                        view.cached_frame
+                            .as_ref()
+                            .expect("generation A should remain installed")
+                            .overlay_image
+                            .is_some(),
+                        "generation A must start with a visible overlay"
+                    );
+                    let installed_generation = view
+                        .cached_frame
+                        .as_ref()
+                        .expect("generation A should remain installed")
+                        .base_generation;
+
+                    view.session.apply_input(PlotInputEvent::ClearHover);
+                    view.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(30.0, 0.0),
+                    });
+                    let newer = view
+                        .session
+                        .render_to_surface_with_generation(SurfaceTarget {
+                            size_px: (400, 300),
+                            scale_factor: 1.0,
+                            time_seconds: 0.0,
+                        })
+                        .expect("newer core frame should render");
+                    assert!(newer.base_generation > installed_generation);
+                    assert_eq!(
+                        view.cached_frame
+                            .as_ref()
+                            .expect("old GPUI frame remains installed")
+                            .base_generation,
+                        installed_generation
+                    );
+                    assert!(
+                        newer.frame.layers.overlay.is_none(),
+                        "generation B should authoritatively have no overlay"
+                    );
+                    assert!(
+                        !view.session.dirty_domains().overlay,
+                        "the external B render must leave no later overlay dirtiness"
+                    );
+                    assert!(
+                        view.cached_frame
+                            .as_ref()
+                            .expect("old GPUI frame remains installed")
+                            .overlay_image
+                            .is_some(),
+                        "GPUI should still hold A's overlay before recovery"
+                    );
+
+                    assert_eq!(view.data_at(window_position).unwrap(), None);
+                    assert_eq!(view.screen_at(ViewportPoint::new(0.5, 0.5)).unwrap(), None);
+                    assert_eq!(
+                        view.build_plot_pointer_event(
+                            PlotPointerEventKind::Hover,
+                            None,
+                            window_position,
+                        )
+                        .unwrap(),
+                        None
+                    );
+
+                    let recovery_request =
+                        RenderRequest::new((400, 300), 1.0, 0.0, PresentationMode::Hybrid)
+                            .with_presented_base_generation(Some(installed_generation));
+                    assert!(!view.cache_is_current(&recovery_request));
+
+                    let recovered =
+                        render_frame_from_session(view.session.clone(), recovery_request.clone())
+                            .expect("the next GPUI render should recover the newer generation");
+                    assert_eq!(recovered.base_generation, newer.base_generation);
+                    assert!(
+                        recovered.primary.is_some(),
+                        "a generation mismatch must carry the matching base image"
+                    );
+                    assert!(
+                        matches!(recovered.overlay, RenderedOverlay::Replace(None)),
+                        "generation recovery must authoritatively clear A's overlay"
+                    );
+                    match recovered
+                        .primary
+                        .as_ref()
+                        .expect("recovery frame must include a primary")
+                    {
+                        RenderedPrimary::Image(image) => {
+                            let recovered_base = render_image_to_ruviz(image)
+                                .expect("recovered base image should be readable");
+                            assert_eq!(
+                                recovered_base.pixels.as_slice(),
+                                newer.frame.layers.base.pixels.as_slice(),
+                                "generation B must be associated with generation B's base pixels"
+                            );
+                        }
+                        #[cfg(all(feature = "gpu", target_os = "macos"))]
+                        RenderedPrimary::Surface(_) => {}
+                    }
+                    view.replace_cached_frame(recovery_request, recovered);
+
+                    assert_eq!(
+                        view.cached_frame
+                            .as_ref()
+                            .expect("recovered GPUI frame should be installed")
+                            .base_generation,
+                        newer.base_generation
+                    );
+                    assert!(
+                        view.cached_frame
+                            .as_ref()
+                            .expect("recovered GPUI frame should be installed")
+                            .overlay_image
+                            .is_none(),
+                        "A's overlay must not be reused with generation B"
+                    );
+                    assert!(view.data_at(window_position).unwrap().is_some());
+                    assert!(
+                        view.screen_at(ViewportPoint::new(0.5, 0.5))
+                            .unwrap()
+                            .is_some()
+                    );
+                    let installed_request = &view
+                        .cached_frame
+                        .as_ref()
+                        .expect("recovered GPUI frame should be installed")
+                        .request;
+                    assert!(view.cache_is_current(installed_request));
+                });
+            });
+        }
+
+        #[test]
+        fn test_pointer_handlers_ignore_generation_mismatch_and_recover_after_install() {
+            let component_bounds =
+                Bounds::new(point(px(40.0), px(30.0)), size(px(400.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .scatter(&[0.5], &[0.5])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (400, 300),
+                1.0,
+                component_bounds,
+            );
+            let events = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
+
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    let events_for_click = Arc::clone(&events);
+                    let events_for_hover = Arc::clone(&events);
+                    view.pointer_event_handlers = PlotPointerEventHandlers {
+                        click: Some(Arc::new(move |event| {
+                            events_for_click
+                                .lock()
+                                .expect("pointer event lock poisoned")
+                                .push(event);
+                        })),
+                        hover: Some(Arc::new(move |event| {
+                            events_for_hover
+                                .lock()
+                                .expect("pointer event lock poisoned")
+                                .push(event);
+                        })),
+                    };
+
+                    let stale_window_position = view
+                        .screen_at(ViewportPoint::new(0.5, 0.5))
+                        .expect("initial mapping should succeed")
+                        .expect("scatter point should be visible");
+                    let installed_generation = view
+                        .cached_frame
+                        .as_ref()
+                        .expect("generation A should be installed")
+                        .base_generation;
+                    view.session.apply_input(PlotInputEvent::Pan {
+                        delta_px: ViewportPoint::new(30.0, 0.0),
+                    });
+                    let newer = view
+                        .session
+                        .render_to_surface_with_generation(SurfaceTarget {
+                            size_px: (400, 300),
+                            scale_factor: 1.0,
+                            time_seconds: 0.0,
+                        })
+                        .expect("generation B should render externally");
+                    assert!(newer.base_generation > installed_generation);
+                    assert!(!view.session.dirty_domains().overlay);
+
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: stale_window_position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("mismatched hover should be ignored normally");
+                    let stale_px = view
+                        .local_viewport_point(stale_window_position)
+                        .expect("stale point should still map through the installed layout");
+                    view.interaction_state.active_drag = ActiveDrag::LeftPan {
+                        anchor_px: stale_px,
+                        anchor_window: stale_window_position,
+                        last_px: stale_px,
+                        crossed_threshold: false,
+                        click_eligible: true,
+                    };
+                    view.handle_left_mouse_up(
+                        &MouseUpEvent {
+                            button: MouseButton::Left,
+                            position: stale_window_position,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                        },
+                        cx,
+                    )
+                    .expect("mismatched click should be ignored normally");
+
+                    assert!(
+                        !view.session.dirty_domains().overlay,
+                        "mismatched hover/click must not alter core hover or selection"
+                    );
+                    assert_eq!(
+                        view.session
+                            .viewport_snapshot()
+                            .expect("generation B viewport should exist")
+                            .selected_count,
+                        0
+                    );
+                    assert!(
+                        events
+                            .lock()
+                            .expect("pointer event lock poisoned")
+                            .is_empty()
+                    );
+
+                    let recovery_request =
+                        RenderRequest::new((400, 300), 1.0, 0.0, PresentationMode::Hybrid)
+                            .with_presented_base_generation(Some(installed_generation));
+                    let recovered =
+                        render_frame_from_session(view.session.clone(), recovery_request.clone())
+                            .expect("GPUI recovery should succeed");
+                    view.replace_cached_frame(recovery_request, recovered);
+
+                    let current_window_position = view
+                        .screen_at(ViewportPoint::new(0.5, 0.5))
+                        .expect("recovered mapping should succeed")
+                        .expect("scatter point should remain visible");
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: current_window_position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("hover should recover after B installation");
+                    let current_px = view
+                        .local_viewport_point(current_window_position)
+                        .expect("current point should map through the layout");
+                    view.interaction_state.active_drag = ActiveDrag::LeftPan {
+                        anchor_px: current_px,
+                        anchor_window: current_window_position,
+                        last_px: current_px,
+                        crossed_threshold: false,
+                        click_eligible: true,
+                    };
+                    view.handle_left_mouse_up(
+                        &MouseUpEvent {
+                            button: MouseButton::Left,
+                            position: current_window_position,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                        },
+                        cx,
+                    )
+                    .expect("click should recover after B installation");
+
+                    assert!(view.session.dirty_domains().overlay);
+                    assert_eq!(
+                        view.session
+                            .viewport_snapshot()
+                            .expect("recovered viewport should exist")
+                            .selected_count,
+                        1
+                    );
+                    let events = events.lock().expect("pointer event lock poisoned");
+                    assert_eq!(events.len(), 2);
+                    assert_eq!(events[0].kind, PlotPointerEventKind::Hover);
+                    assert_eq!(events[1].kind, PlotPointerEventKind::Click);
+                });
+            });
+        }
+
+        #[test]
+        fn test_heatmap_hover_payload_coexists_with_builtin_hover_and_coalesces_duplicates() {
+            let events = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
+            let events_for_callback = Arc::clone(&events);
+            let plot: Plot = Plot::new()
+                .heatmap(
+                    &vec![vec![1.0, 2.0], vec![3.0, 4.0]],
+                    Some(HeatmapConfig::new().colorbar(false)),
+                )
+                .xlim(0.0, 2.0)
+                .ylim(0.0, 2.0)
+                .into();
+            let session = plot.prepare_interactive();
+            let cx = TestAppContext::single();
+            let view = cx.update(|cx| {
+                cx.new(move |cx| {
+                    let mut view = RuvizPlot::from_options_impl(
+                        session,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers {
+                            click: None,
+                            hover: Some(Arc::new(move |event| {
+                                events_for_callback
+                                    .lock()
+                                    .expect("hover event lock poisoned")
+                                    .push(event);
+                            })),
+                        },
+                        cx,
+                    );
+                    synchronize_test_frame(
+                        &mut view,
+                        RenderRequest::new((400, 300), 1.0, 0.0, PresentationMode::Hybrid),
+                    );
+                    view.update_layout(
+                        Bounds::new(Point::default(), size(px(400.0), px(300.0))),
+                        (400, 300),
+                    );
+                    view
+                })
+            });
+            let window_position = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    view.screen_at(ViewportPoint::new(1.5, 1.5))
+                        .expect("heatmap inverse mapping should succeed")
+                        .expect("heatmap cell center should be visible")
+                })
+            });
+
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: window_position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("heatmap hover should succeed");
+                    assert!(view.session.dirty_domains().overlay);
+                    view.handle_mouse_move(
+                        &MouseMoveEvent {
+                            position: window_position,
+                            pressed_button: None,
+                            modifiers: Modifiers::default(),
+                        },
+                        cx,
+                    )
+                    .expect("duplicate heatmap hover should succeed");
+                });
+            });
+
+            let events = events.lock().expect("hover event lock poisoned");
+            assert_eq!(events.len(), 1);
+            let event = &events[0];
+            assert_eq!(event.kind, PlotPointerEventKind::Hover);
+            assert_eq!(event.mouse_button, None);
+            assert_eq!(event.window_position, window_position);
+            assert!(event.viewport.plot_area.contains(event.viewport_position));
+            assert!(matches!(
+                event.hit,
+                HitResult::HeatmapCell {
+                    series_index: 0,
+                    row: 0,
+                    col: 1,
+                    value: 2.0,
+                    ..
+                }
+            ));
         }
 
         #[test]
@@ -1409,6 +2159,7 @@ mod platform_impl {
                 render_image_from_ruviz(ruviz::core::plot::Image::new(1, 1, vec![0, 0, 0, 255]));
             let cached_frame = CachedFrame {
                 request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                base_generation: 0,
                 primary: PrimaryFrame::Image(cached_primary),
                 overlay_image: None,
                 stats: FrameStats::default(),
@@ -1438,13 +2189,17 @@ mod platform_impl {
                     last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
                     active_drag: ActiveDrag::LeftPan {
                         anchor_px: ViewportPoint::new(1.0, 1.0),
+                        anchor_window: point(px(1.0), px(1.0)),
                         last_px: ViewportPoint::new(2.0, 2.0),
                         crossed_threshold: true,
+                        click_eligible: false,
                     },
                     context_menu: None,
                     home_view_bounds: None,
+                    last_hover_event: None,
                 },
                 context_menu_action_handler: None,
+                pointer_event_handlers: PlotPointerEventHandlers::default(),
             };
 
             let replacement_plot: Plot = Plot::new().line(&[0.0, 1.0], &[1.0, 2.0]).into();
@@ -1481,6 +2236,7 @@ mod platform_impl {
                 focus_handle: TestAppContext::single().update(|cx| cx.focus_handle()),
                 interaction_state: InteractionState::default(),
                 context_menu_action_handler: None,
+                pointer_event_handlers: PlotPointerEventHandlers::default(),
             };
 
             let save = KeyDownEvent {
@@ -1513,17 +2269,485 @@ mod platform_impl {
         }
 
         #[test]
+        fn test_click_fires_once_while_drag_and_builtin_interactions_do_not_click() {
+            let clicks = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
+            let clicks_for_callback = Arc::clone(&clicks);
+            let mut app = TestAppContext::single();
+            let (view, cx) = app.add_window_view(|_, cx| {
+                let plot: Plot = Plot::new()
+                    .scatter(&[0.5], &[0.5])
+                    .xlim(0.0, 1.0)
+                    .ylim(0.0, 1.0)
+                    .into();
+                RuvizPlot::from_options_impl(
+                    plot,
+                    RuvizPlotOptions::default(),
+                    None,
+                    PlotPointerEventHandlers {
+                        click: Some(Arc::new(move |event| {
+                            clicks_for_callback
+                                .lock()
+                                .expect("click event lock poisoned")
+                                .push(event);
+                        })),
+                        hover: None,
+                    },
+                    cx,
+                )
+            });
+
+            for _ in 0..4 {
+                cx.refresh().expect("rendered frame refresh should succeed");
+                cx.run_until_parked();
+            }
+            cx.update(|_, app| {
+                view.update(app, |view, _| {
+                    let layout = view
+                        .last_layout
+                        .clone()
+                        .expect("prepaint should resolve test layout");
+                    synchronize_test_frame(
+                        view,
+                        RenderRequest::new(
+                            layout.frame_size_px,
+                            1.0,
+                            0.0,
+                            PresentationMode::Hybrid,
+                        ),
+                    );
+                    view.update_layout(layout.component_bounds, layout.frame_size_px);
+                });
+            });
+
+            let (click_position, drag_start, drag_end, initial_bounds) = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    let screen_at = |data_position| {
+                        view.screen_at(data_position)
+                            .expect("test inverse mapping should succeed")
+                            .expect("test point should be visible")
+                    };
+                    (
+                        screen_at(ViewportPoint::new(0.5, 0.5)),
+                        screen_at(ViewportPoint::new(0.25, 0.25)),
+                        screen_at(ViewportPoint::new(0.75, 0.75)),
+                        view.session
+                            .viewport_snapshot()
+                            .expect("initial viewport should exist")
+                            .visible_bounds,
+                    )
+                })
+            });
+
+            cx.simulate_mouse_down(click_position, MouseButton::Left, Modifiers::default());
+            assert!(clicks.lock().expect("click event lock poisoned").is_empty());
+            cx.simulate_mouse_up(click_position, MouseButton::Left, Modifiers::default());
+            {
+                let clicks = clicks.lock().expect("click event lock poisoned");
+                assert_eq!(clicks.len(), 1);
+                assert_eq!(clicks[0].kind, PlotPointerEventKind::Click);
+                assert_eq!(clicks[0].mouse_button, Some(MouseButton::Left));
+                assert!(matches!(clicks[0].hit, HitResult::SeriesPoint { .. }));
+            }
+            let selected_count = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    view.session
+                        .viewport_snapshot()
+                        .expect("selected viewport should exist")
+                        .selected_count
+                })
+            });
+            assert_eq!(selected_count, 1);
+
+            cx.simulate_mouse_down(drag_start, MouseButton::Right, Modifiers::default());
+            cx.simulate_mouse_move(drag_end, MouseButton::Right, Modifiers::default());
+            cx.simulate_mouse_up(drag_end, MouseButton::Right, Modifiers::default());
+            assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+            let zoomed_bounds = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    view.session
+                        .viewport_snapshot()
+                        .expect("zoomed viewport should exist")
+                        .visible_bounds
+                })
+            });
+            assert_ne!(zoomed_bounds, initial_bounds);
+            cx.refresh().expect("zoomed frame refresh should succeed");
+            cx.run_until_parked();
+            cx.update(|_, app| {
+                view.update(app, |view, _| {
+                    let layout = view
+                        .last_layout
+                        .clone()
+                        .expect("zoomed layout should remain available");
+                    synchronize_test_frame(
+                        view,
+                        RenderRequest::new(
+                            layout.frame_size_px,
+                            1.0,
+                            0.0,
+                            PresentationMode::Hybrid,
+                        ),
+                    );
+                });
+            });
+
+            cx.simulate_mouse_down(drag_start, MouseButton::Left, Modifiers::default());
+            cx.simulate_mouse_move(drag_end, MouseButton::Left, Modifiers::default());
+            let pan_crossed_threshold = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    matches!(
+                        view.interaction_state.active_drag,
+                        ActiveDrag::LeftPan {
+                            crossed_threshold: true,
+                            ..
+                        }
+                    )
+                })
+            });
+            assert!(pan_crossed_threshold);
+            cx.simulate_mouse_up(drag_end, MouseButton::Left, Modifiers::default());
+            assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+
+            cx.simulate_mouse_down(drag_start, MouseButton::Left, Modifiers::shift());
+            cx.simulate_mouse_move(drag_end, MouseButton::Left, Modifiers::shift());
+            let brush_crossed_threshold = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    matches!(
+                        view.interaction_state.active_drag,
+                        ActiveDrag::Brush {
+                            crossed_threshold: true,
+                            ..
+                        }
+                    )
+                })
+            });
+            assert!(brush_crossed_threshold);
+            cx.simulate_mouse_up(drag_end, MouseButton::Left, Modifiers::shift());
+            assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+
+            cx.simulate_mouse_down(click_position, MouseButton::Right, Modifiers::default());
+            cx.simulate_mouse_up(click_position, MouseButton::Right, Modifiers::default());
+            let context_menu_open = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    view.interaction_state.context_menu.is_some()
+                })
+            });
+            assert!(context_menu_open);
+            assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+
+            cx.simulate_event(MouseDownEvent {
+                button: MouseButton::Left,
+                position: click_position,
+                modifiers: Modifiers::default(),
+                click_count: 2,
+                first_mouse: false,
+            });
+            cx.simulate_event(MouseUpEvent {
+                button: MouseButton::Left,
+                position: click_position,
+                modifiers: Modifiers::default(),
+                click_count: 2,
+            });
+            assert_eq!(clicks.lock().expect("click event lock poisoned").len(), 1);
+        }
+
+        #[test]
+        fn test_full_double_click_sequence_emits_at_most_one_click_to_gpui_subscriber() {
+            let mut app = TestAppContext::single();
+            let (view, cx) = app.add_window_view(|_, cx| {
+                let plot: Plot = Plot::new()
+                    .scatter(&[0.5], &[0.5])
+                    .xlim(0.0, 1.0)
+                    .ylim(0.0, 1.0)
+                    .into();
+                RuvizPlot::from_options_impl(
+                    plot,
+                    RuvizPlotOptions::default(),
+                    None,
+                    PlotPointerEventHandlers::default(),
+                    cx,
+                )
+            });
+            for _ in 0..4 {
+                cx.refresh().expect("rendered frame refresh should succeed");
+                cx.run_until_parked();
+            }
+            cx.update(|_, app| {
+                view.update(app, |view, _| {
+                    let request = view.cached_frame.as_ref().map_or_else(
+                        || {
+                            let layout = view
+                                .last_layout
+                                .as_ref()
+                                .expect("prepaint should resolve test layout");
+                            RenderRequest::new(
+                                layout.frame_size_px,
+                                1.0,
+                                0.0,
+                                PresentationMode::Hybrid,
+                            )
+                        },
+                        |frame| frame.request.clone(),
+                    );
+                    synchronize_test_frame(view, request);
+                });
+            });
+
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let subscriber = cx.update(|_, app| {
+                let events = Arc::clone(&events);
+                app.new(|cx: &mut Context<PointerEventSubscriber>| {
+                    let subscription = cx.subscribe(
+                        &view,
+                        move |subscriber: &mut PointerEventSubscriber,
+                              _,
+                              event: &PlotPointerEvent,
+                              cx| {
+                            subscriber
+                                .events
+                                .lock()
+                                .expect("subscriber event lock poisoned")
+                                .push(event.clone());
+                            cx.notify();
+                        },
+                    );
+                    PointerEventSubscriber {
+                        events,
+                        _subscription: subscription,
+                    }
+                })
+            });
+            cx.run_until_parked();
+
+            let click_position = cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    view.screen_at(ViewportPoint::new(0.5, 0.5))
+                        .expect("click mapping should succeed")
+                        .expect("center should be visible")
+                })
+            });
+            for click_count in [1, 2] {
+                cx.simulate_event(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: click_position,
+                    modifiers: Modifiers::default(),
+                    click_count,
+                    first_mouse: false,
+                });
+                cx.simulate_event(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: click_position,
+                    modifiers: Modifiers::default(),
+                    click_count,
+                });
+            }
+            cx.run_until_parked();
+
+            cx.read(|app| {
+                app.read_entity(&subscriber, |subscriber, _| {
+                    let events = subscriber
+                        .events
+                        .lock()
+                        .expect("subscriber event lock poisoned");
+                    assert_eq!(events.len(), 1);
+                    assert_eq!(events[0].kind, PlotPointerEventKind::Click);
+                })
+            });
+        }
+
+        #[test]
+        fn test_pan_threshold_uses_window_pixels_across_presentation_scales() {
+            for (frame_size_px, component_size, scale_factor) in [
+                ((100, 100), 400.0, 2.0),
+                ((800, 800), 200.0, 2.0),
+                ((300, 300), 300.0, 1.5),
+            ] {
+                let component_bounds = Bounds::new(
+                    point(px(20.0), px(30.0)),
+                    size(px(component_size), px(component_size)),
+                );
+                let plot: Plot = Plot::new()
+                    .line(&[0.0, 1.0], &[0.0, 1.0])
+                    .xlim(0.0, 1.0)
+                    .ylim(0.0, 1.0)
+                    .into();
+                let (cx, view) = mapped_test_view(
+                    plot,
+                    RuvizPlotOptions::default(),
+                    frame_size_px,
+                    scale_factor,
+                    component_bounds,
+                );
+
+                let anchor_window = point(
+                    component_bounds.origin.x + component_bounds.size.width * 0.5,
+                    component_bounds.origin.y + component_bounds.size.height * 0.5,
+                );
+                cx.update(|app| {
+                    view.update(app, |view, cx| {
+                        let anchor_px = view
+                            .local_viewport_point(anchor_window)
+                            .expect("anchor should map into the frame");
+                        assert!(!view.session.dirty_domains().data);
+                        view.interaction_state.active_drag = ActiveDrag::LeftPan {
+                            anchor_px,
+                            anchor_window,
+                            last_px: anchor_px,
+                            crossed_threshold: false,
+                            click_eligible: true,
+                        };
+
+                        view.handle_mouse_move(
+                            &MouseMoveEvent {
+                                position: point(anchor_window.x + px(2.0), anchor_window.y),
+                                pressed_button: Some(MouseButton::Left),
+                                modifiers: Modifiers::default(),
+                            },
+                            cx,
+                        )
+                        .expect("sub-threshold move should succeed");
+                        assert!(
+                            !view.session.dirty_domains().data,
+                            "sub-threshold jitter must not pan for frame {frame_size_px:?}"
+                        );
+                        assert!(matches!(
+                            view.interaction_state.active_drag,
+                            ActiveDrag::LeftPan {
+                                last_px,
+                                crossed_threshold: false,
+                                ..
+                            } if last_px == anchor_px
+                        ));
+
+                        view.handle_mouse_move(
+                            &MouseMoveEvent {
+                                position: point(anchor_window.x + px(4.0), anchor_window.y),
+                                pressed_button: Some(MouseButton::Left),
+                                modifiers: Modifiers::default(),
+                            },
+                            cx,
+                        )
+                        .expect("threshold-crossing move should succeed");
+                        assert!(matches!(
+                            view.interaction_state.active_drag,
+                            ActiveDrag::LeftPan {
+                                crossed_threshold: true,
+                                last_px,
+                                ..
+                            } if last_px != anchor_px
+                        ));
+                        assert!(
+                            view.session.dirty_domains().data,
+                            "crossing must apply the accumulated pan for frame {frame_size_px:?}"
+                        );
+                    });
+                });
+            }
+        }
+
+        #[test]
+        fn test_scroll_during_primary_press_cancels_click_eligibility() {
+            let component_bounds =
+                Bounds::new(point(px(10.0), px(10.0)), size(px(400.0), px(300.0)));
+            let plot: Plot = Plot::new()
+                .scatter(&[0.5], &[0.5])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let (cx, view) = mapped_test_view(
+                plot,
+                RuvizPlotOptions::default(),
+                (400, 300),
+                1.0,
+                component_bounds,
+            );
+            let anchor_window = point(px(210.0), px(160.0));
+
+            cx.update(|app| {
+                view.update(app, |view, cx| {
+                    let anchor_px = view
+                        .local_viewport_point(anchor_window)
+                        .expect("anchor should map into the frame");
+                    view.interaction_state.active_drag = ActiveDrag::LeftPan {
+                        anchor_px,
+                        anchor_window,
+                        last_px: anchor_px,
+                        crossed_threshold: false,
+                        click_eligible: true,
+                    };
+                    view.handle_scroll_wheel(
+                        &ScrollWheelEvent {
+                            position: anchor_window,
+                            delta: ScrollDelta::Pixels(point(px(0.0), px(-20.0))),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                    .expect("scroll zoom should succeed");
+                    assert!(matches!(
+                        view.interaction_state.active_drag,
+                        ActiveDrag::LeftPan {
+                            click_eligible: false,
+                            ..
+                        }
+                    ));
+
+                    view.handle_left_mouse_up(
+                        &MouseUpEvent {
+                            button: MouseButton::Left,
+                            position: anchor_window,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                        },
+                        cx,
+                    )
+                    .expect("release after scroll should succeed");
+                    assert_eq!(
+                        view.session
+                            .viewport_snapshot()
+                            .expect("viewport should exist")
+                            .selected_count,
+                        0
+                    );
+                });
+            });
+        }
+
+        #[test]
         fn test_right_mouse_up_far_from_anchor_zooms_without_move_events() {
             let mut app = TestAppContext::single();
             let (view, cx) = app.add_window_view(|_, cx| {
                 let plot: Plot = Plot::new()
                     .line(&[0.0, 1.0, 2.0, 3.0], &[0.0, 1.0, 0.5, 1.5])
                     .into();
-                RuvizPlot::from_options_impl(plot, RuvizPlotOptions::default(), None, cx)
+                RuvizPlot::from_options_impl(
+                    plot,
+                    RuvizPlotOptions::default(),
+                    None,
+                    PlotPointerEventHandlers::default(),
+                    cx,
+                )
             });
 
             cx.refresh().expect("window refresh should succeed");
             cx.run_until_parked();
+            cx.update(|_, app| {
+                view.update(app, |view, _| {
+                    let layout = view
+                        .last_layout
+                        .clone()
+                        .expect("plot should have a resolved layout");
+                    synchronize_test_frame(
+                        view,
+                        RenderRequest::new(
+                            layout.frame_size_px,
+                            1.0,
+                            0.0,
+                            PresentationMode::Hybrid,
+                        ),
+                    );
+                });
+            });
 
             let (start, end, initial_bounds) = cx.read(|app| {
                 app.read_entity(&view, |view, _| {
@@ -1706,6 +2930,7 @@ mod platform_impl {
         fn test_active_backend_reports_fallback_for_image_backed_surface_frames() {
             let frame = CachedFrame {
                 request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                base_generation: 0,
                 primary: PrimaryFrame::Image(render_image_from_ruviz(
                     ruviz::core::plot::Image::new(1, 1, vec![0, 0, 0, 255]),
                 )),
@@ -1738,6 +2963,7 @@ mod platform_impl {
                 .expect("surface upload should succeed");
             let frame = CachedFrame {
                 request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                base_generation: 0,
                 primary: PrimaryFrame::Surface(surface),
                 overlay_image: None,
                 stats: FrameStats::default(),

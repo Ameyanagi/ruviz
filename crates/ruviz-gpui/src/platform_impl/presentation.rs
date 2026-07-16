@@ -1,6 +1,83 @@
 use super::*;
 
 impl RuvizPlot {
+    /// Maps an absolute GPUI window position to displayed plot data coordinates.
+    ///
+    /// Returns `Ok(None)` before GPUI layout is available, outside the displayed
+    /// frame, or in a frame margin outside the core plot area. Core displayed-frame
+    /// conversion errors are returned unchanged.
+    pub fn data_at(&self, window_position: Point<Pixels>) -> Result<Option<ViewportPoint>> {
+        let Some(base_generation) = self.presented_base_generation() else {
+            return Ok(None);
+        };
+        let Some(viewport_position) = self.local_viewport_point(window_position) else {
+            return Ok(None);
+        };
+        let data_position = self.session.screen_to_data(viewport_position)?;
+        if !self.is_base_generation_presented(base_generation) {
+            return Ok(None);
+        }
+        Ok(data_position)
+    }
+
+    /// Maps displayed plot data coordinates to an absolute GPUI window position.
+    ///
+    /// Returns `Ok(None)` before GPUI layout is available or when the data point is
+    /// outside the displayed visible bounds. Core displayed-frame conversion errors
+    /// are returned unchanged.
+    pub fn screen_at(&self, data_position: ViewportPoint) -> Result<Option<Point<Pixels>>> {
+        let Some(base_generation) = self.presented_base_generation() else {
+            return Ok(None);
+        };
+        let viewport_position = self.session.data_to_screen(data_position)?;
+        if !self.is_base_generation_presented(base_generation) {
+            return Ok(None);
+        }
+        Ok(viewport_position.and_then(|position| self.viewport_point_to_window_position(position)))
+    }
+
+    pub(super) fn build_plot_pointer_event(
+        &self,
+        kind: PlotPointerEventKind,
+        mouse_button: Option<MouseButton>,
+        window_position: Point<Pixels>,
+    ) -> Result<Option<PlotPointerEvent>> {
+        let Some(base_generation) = self.presented_base_generation() else {
+            return Ok(None);
+        };
+        let Some(viewport_position) = self.local_viewport_point(window_position) else {
+            return Ok(None);
+        };
+        let data_position = self.session.screen_to_data(viewport_position)?;
+        let viewport = self.session.viewport_snapshot()?;
+        let hit = self.session.hit_test(viewport_position);
+        if !self.is_base_generation_presented(base_generation) {
+            return Ok(None);
+        }
+        Ok(Some(PlotPointerEvent {
+            kind,
+            mouse_button,
+            window_position,
+            viewport_position,
+            data_position,
+            viewport,
+            hit,
+        }))
+    }
+
+    fn presented_base_generation(&self) -> Option<u64> {
+        let generation = self.cached_frame.as_ref()?.base_generation;
+        self.is_base_generation_presented(generation)
+            .then_some(generation)
+    }
+
+    fn is_base_generation_presented(&self, generation: u64) -> bool {
+        self.cached_frame
+            .as_ref()
+            .is_some_and(|frame| frame.base_generation == generation)
+            && self.session.displayed_frame_generation() == Some(generation)
+    }
+
     pub(super) fn retire_cached_frame(&mut self) {
         if let Some(frame) = self.cached_frame.take() {
             retire_primary_frame(&mut self.retired_images, frame.primary);
@@ -10,7 +87,12 @@ impl RuvizPlot {
         }
     }
 
-    fn replace_cached_frame(&mut self, request: RenderRequest, mut frame: RenderedFrame) {
+    pub(super) fn replace_cached_frame(
+        &mut self,
+        mut request: RenderRequest,
+        mut frame: RenderedFrame,
+    ) {
+        request.presented_base_generation = Some(frame.base_generation);
         let previous = self.cached_frame.take();
         let primary = self
             .resolve_primary_frame(previous.as_ref(), &mut frame)
@@ -18,11 +100,12 @@ impl RuvizPlot {
         let overlay_image = if frame.target == RenderTargetKind::Image {
             None
         } else {
-            frame.overlay_image.or_else(|| {
-                previous
+            match frame.overlay {
+                RenderedOverlay::Reuse => previous
                     .as_ref()
-                    .and_then(|cached| cached.overlay_image.as_ref().map(Arc::clone))
-            })
+                    .and_then(|cached| cached.overlay_image.as_ref().map(Arc::clone)),
+                RenderedOverlay::Replace(overlay) => overlay,
+            }
         };
 
         if let Some(previous) = previous {
@@ -39,6 +122,7 @@ impl RuvizPlot {
 
         self.cached_frame = Some(CachedFrame {
             request,
+            base_generation: frame.base_generation,
             primary,
             overlay_image,
             stats: frame.stats,
@@ -129,12 +213,19 @@ impl RuvizPlot {
             scale_factor,
         )?;
 
-        Some(RenderRequest::new(
-            frame_size_px,
-            scale_factor,
-            self.options.interaction.time_seconds,
-            self.effective_presentation_mode(),
-        ))
+        Some(
+            RenderRequest::new(
+                frame_size_px,
+                scale_factor,
+                self.options.interaction.time_seconds,
+                self.effective_presentation_mode(),
+            )
+            .with_presented_base_generation(
+                self.cached_frame
+                    .as_ref()
+                    .map(|frame| frame.base_generation),
+            ),
+        )
     }
 
     pub(super) fn prepaint(
@@ -147,8 +238,13 @@ impl RuvizPlot {
         self.flush_retired_images(Some(window), cx);
 
         if let Some(request) = self.current_request(bounds, window) {
-            self.update_layout(bounds, request.size_px);
+            let requested_size_px = request.size_px;
             self.start_render_if_needed(entity, request, window, cx);
+            let frame_size_px = self
+                .cached_frame
+                .as_ref()
+                .map_or(requested_size_px, |frame| frame.request.size_px);
+            self.update_layout_state(bounds, frame_size_px);
         } else {
             self.last_layout = None;
         }
@@ -159,7 +255,12 @@ impl RuvizPlot {
         })
     }
 
-    fn update_layout(&mut self, bounds: Bounds<Pixels>, frame_size_px: (u32, u32)) {
+    #[cfg(test)]
+    pub(super) fn update_layout(&mut self, bounds: Bounds<Pixels>, frame_size_px: (u32, u32)) {
+        self.update_layout_state(bounds, frame_size_px);
+    }
+
+    fn update_layout_state(&mut self, bounds: Bounds<Pixels>, frame_size_px: (u32, u32)) {
         let image_size = size(frame_size_px.0.into(), frame_size_px.1.into());
         let content_bounds = self
             .options
@@ -182,11 +283,7 @@ impl RuvizPlot {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let cache_is_current = self
-            .cached_frame
-            .as_ref()
-            .is_some_and(|frame| frame.request == request && !request.is_dirty(&self.session));
-        if cache_is_current {
+        if self.cache_is_current(&request) {
             return;
         }
 
@@ -195,6 +292,14 @@ impl RuvizPlot {
         };
 
         self.start_render(entity, scheduled, window, cx);
+    }
+
+    pub(super) fn cache_is_current(&self, request: &RenderRequest) -> bool {
+        self.cached_frame.as_ref().is_some_and(|frame| {
+            frame.request == *request
+                && self.session.displayed_frame_generation() == Some(frame.base_generation)
+                && !request.is_dirty(&self.session)
+        })
     }
 
     fn start_render(
@@ -764,20 +869,20 @@ fn rgb_to_ycbcr_full_range(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     (y, cb, cr)
 }
 
-fn render_frame_from_session(
+pub(super) fn render_frame_from_session(
     session: InteractivePlotSession,
     request: RenderRequest,
 ) -> std::result::Result<RenderedFrame, String> {
-    let frame = match request.presentation_mode {
+    let result = match request.presentation_mode {
         PresentationMode::Image => session
-            .render_to_image(ImageTarget {
+            .render_to_image_with_generation(ImageTarget {
                 size_px: request.size_px,
                 scale_factor: request.scale_factor(),
                 time_seconds: request.time_seconds(),
             })
             .map_err(|err| err.to_string())?,
         PresentationMode::Hybrid => session
-            .render_to_surface(SurfaceTarget {
+            .render_to_surface_with_generation(SurfaceTarget {
                 size_px: request.size_px,
                 scale_factor: request.scale_factor(),
                 time_seconds: request.time_seconds(),
@@ -785,7 +890,7 @@ fn render_frame_from_session(
             .map_err(|err| err.to_string())?,
         #[allow(deprecated)]
         PresentationMode::SurfaceExperimental => session
-            .render_to_surface(SurfaceTarget {
+            .render_to_surface_with_generation(SurfaceTarget {
                 size_px: request.size_px,
                 scale_factor: request.scale_factor(),
                 time_seconds: request.time_seconds(),
@@ -793,19 +898,22 @@ fn render_frame_from_session(
             .map_err(|err| err.to_string())?,
     };
 
+    let base_generation = result.base_generation;
+    let frame = result.frame;
     let layer_state = frame.layer_state;
+    let generation_changed = request.presented_base_generation != Some(base_generation);
+    let include_base = layer_state.base_dirty || generation_changed;
     let use_surface_primary = should_use_surface_primary(
         request.presentation_mode,
         frame.target,
         frame.surface_capability,
     );
     Ok(RenderedFrame {
+        base_generation,
         primary: if use_surface_primary {
             #[cfg(all(feature = "gpu", target_os = "macos"))]
             {
-                layer_state
-                    .base_dirty
-                    .then(|| RenderedPrimary::Surface(Arc::clone(&frame.layers.base)))
+                include_base.then(|| RenderedPrimary::Surface(Arc::clone(&frame.layers.base)))
             }
             #[cfg(not(all(feature = "gpu", target_os = "macos")))]
             {
@@ -816,27 +924,31 @@ fn render_frame_from_session(
                 PresentationMode::Image => Some(RenderedPrimary::Image(render_image_from_ruviz(
                     frame.image.as_ref().clone(),
                 ))),
-                PresentationMode::Hybrid => layer_state.base_dirty.then(|| {
+                PresentationMode::Hybrid => include_base.then(|| {
                     RenderedPrimary::Image(render_image_from_ruviz(
                         frame.layers.base.as_ref().clone(),
                     ))
                 }),
                 #[allow(deprecated)]
-                PresentationMode::SurfaceExperimental => layer_state.base_dirty.then(|| {
+                PresentationMode::SurfaceExperimental => include_base.then(|| {
                     RenderedPrimary::Image(render_image_from_ruviz(
                         frame.layers.base.as_ref().clone(),
                     ))
                 }),
             }
         },
-        overlay_image: if matches!(request.presentation_mode, PresentationMode::Image) {
-            None
+        overlay: if matches!(request.presentation_mode, PresentationMode::Image) {
+            RenderedOverlay::Replace(None)
+        } else if layer_state.overlay_dirty || generation_changed {
+            RenderedOverlay::Replace(
+                frame
+                    .layers
+                    .overlay
+                    .as_ref()
+                    .map(|overlay| render_image_from_ruviz(overlay.as_ref().clone())),
+            )
         } else {
-            frame.layers.overlay.as_ref().and_then(|overlay| {
-                layer_state
-                    .overlay_dirty
-                    .then(|| render_image_from_ruviz(overlay.as_ref().clone()))
-            })
+            RenderedOverlay::Reuse
         },
         stats: frame.stats,
         target: frame.target,
