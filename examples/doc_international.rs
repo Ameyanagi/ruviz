@@ -3,7 +3,7 @@
 //! Generates docs/assets/rustdoc/international_japanese.png,
 //! docs/assets/rustdoc/international_chinese.png, docs/assets/rustdoc/international_korean.png,
 //! and docs/assets/rustdoc/international_comparison.png for rustdoc and gallery docs.
-//! Demonstrates support for Japanese, Chinese, Korean, and mixed scripts.
+//! Demonstrates Japanese, Chinese, and Korean labels alongside an English reference panel.
 
 mod util;
 
@@ -128,14 +128,16 @@ fn generate_multilang_comparison() -> Result<()> {
         .line(&x, &y_cos)
         .label("코사인");
 
-    // Mixed script plot - simplified labels for cleaner rendering
-    let plot_mixed = Plot::new()
-        .title("Mixed")
-        .xlabel("Time")
-        .ylabel("Value")
+    // English reference plot
+    let plot_en = Plot::new()
+        .title("English")
+        .xlabel("X axis")
+        .ylabel("Y axis")
         .legend_position(LegendPosition::UpperRight)
         .line(&x, &y_sin)
-        .label("Wave");
+        .label("sine")
+        .line(&x, &y_cos)
+        .label("cosine");
 
     // Create 2x2 subplot
     subplots(2, 2, 1000, 800)?
@@ -143,7 +145,7 @@ fn generate_multilang_comparison() -> Result<()> {
         .subplot_at(0, plot_jp.into())?
         .subplot_at(1, plot_cn.into())?
         .subplot_at(2, plot_kr.into())?
-        .subplot_at(3, plot_mixed.into())?
+        .subplot_at(3, plot_en.into())?
         .save("docs/assets/rustdoc/international_comparison.png")?;
 
     println!("  ✓ Generated docs/assets/rustdoc/international_comparison.png");

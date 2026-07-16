@@ -42,7 +42,8 @@ struct GalleryEntry {
     title: &'static str,
     summary: &'static str,
     asset_name: &'static str,
-    source_label: &'static str,
+    source_path: &'static str,
+    guide: Option<(&'static str, &'static str)>,
     source: AssetSource,
 }
 
@@ -100,7 +101,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Line Plot",
             summary: "The core line example used across the README and rustdoc.",
             asset_name: "line_plot.png",
-            source_label: "`examples/doc_line_plot.rs`",
+            source_path: "examples/doc_line_plot.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/line_plot.png",
             },
@@ -110,7 +112,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Scatter Plot",
             summary: "A compact point-cloud example for discrete observations.",
             asset_name: "scatter_plot.png",
-            source_label: "`examples/doc_scatter_plot.rs`",
+            source_path: "examples/doc_scatter_plot.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/scatter_plot.png",
             },
@@ -120,7 +123,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Bar Chart",
             summary: "Categorical values rendered as a simple bar chart.",
             asset_name: "bar_chart.png",
-            source_label: "`examples/doc_bar_chart.rs`",
+            source_path: "examples/doc_bar_chart.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/bar_chart.png",
             },
@@ -130,7 +134,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Heatmap",
             summary: "Matrix data shown with a continuous color scale.",
             asset_name: "heatmap.png",
-            source_label: "`examples/doc_heatmap.rs`",
+            source_path: "examples/doc_heatmap.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/heatmap.png",
             },
@@ -140,7 +145,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Histogram",
             summary: "Distribution counts rendered with the default histogram styling.",
             asset_name: "histogram.png",
-            source_label: "`examples/doc_histogram.rs`",
+            source_path: "examples/doc_histogram.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/histogram.png",
             },
@@ -150,7 +156,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Box Plot",
             summary: "Quartiles, whiskers, and outliers in a compact statistical summary.",
             asset_name: "boxplot.png",
-            source_label: "`examples/doc_boxplot.rs`",
+            source_path: "examples/doc_boxplot.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/boxplot.png",
             },
@@ -160,7 +167,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Kernel Density Estimate",
             summary: "KDE example copied from the rustdoc image set.",
             asset_name: "kde_plot.png",
-            source_label: "`examples/doc_kde.rs`",
+            source_path: "examples/doc_kde.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/kde_plot.png",
             },
@@ -170,7 +178,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "ECDF",
             summary: "Empirical CDF example copied from the rustdoc image set.",
             asset_name: "ecdf_plot.png",
-            source_label: "`examples/doc_ecdf.rs`",
+            source_path: "examples/doc_ecdf.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/ecdf_plot.png",
             },
@@ -180,7 +189,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Violin Plot",
             summary: "Distribution plot with quartile-aware styling.",
             asset_name: "violin_plot.png",
-            source_label: "`examples/doc_violin.rs`",
+            source_path: "examples/doc_violin.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/violin_plot.png",
             },
@@ -190,7 +200,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Error Bars",
             summary: "Uncertainty intervals attached to line and scatter series.",
             asset_name: "errorbar_plot.png",
-            source_label: "`examples/doc_errorbar.rs`",
+            source_path: "examples/doc_errorbar.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/errorbar_plot.png",
             },
@@ -200,7 +211,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Scientific Analysis Figure",
             summary: "Multi-panel figure assembled for report-style presentation.",
             asset_name: "scientific_analysis_figure.png",
-            source_label: "`examples/scientific_showcase.rs`",
+            source_path: "examples/scientific_showcase.rs",
+            guide: Some(("Subplots & Composition", "../../guide/06_subplots.md")),
             source: AssetSource::Example {
                 run: ExampleRun {
                     name: "scientific_showcase",
@@ -214,17 +226,19 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Publication Theme",
             summary: "Publication-oriented theme reference used by docs and comparisons.",
             asset_name: "theme_publication.png",
-            source_label: "`examples/doc_themes.rs`",
+            source_path: "examples/doc_themes.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/theme_publication.png",
             },
         },
         GalleryEntry {
             category: "publication",
-            title: "Subplot Layout",
-            summary: "A multi-panel subplot layout used for publication-scale figures.",
+            title: "Mixed Plots in a 2×2 Grid",
+            summary: "A composition example combining a line plot, scatter plot, bar chart, and multi-series comparison with a legend in a 2×2 grid.",
             asset_name: "subplots.png",
-            source_label: "`examples/doc_subplots.rs`",
+            source_path: "examples/doc_subplots.rs",
+            guide: Some(("Subplots & Composition", "../../guide/06_subplots.md")),
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/subplots.png",
             },
@@ -234,7 +248,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Typst Labels",
             summary: "Publication text rendered through Typst math mode.",
             asset_name: "typst_text.png",
-            source_label: "`examples/doc_typst_text.rs`",
+            source_path: "examples/doc_typst_text.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/typst_text.png",
             },
@@ -244,7 +259,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Parallel Multi-Series",
             summary: "A large multi-series render produced by the parallel example suite.",
             asset_name: "parallel_multi_series.png",
-            source_label: "`examples/parallel_demo.rs`",
+            source_path: "examples/parallel_demo.rs",
+            guide: None,
             source: AssetSource::Example {
                 run: ExampleRun {
                     name: "parallel_demo",
@@ -258,7 +274,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Memory-Optimized Signal",
             summary: "A dense signal render generated by the memory optimization example.",
             asset_name: "memory_optimization_demo.png",
-            source_label: "`examples/memory_optimization_demo.rs`",
+            source_path: "examples/memory_optimization_demo.rs",
+            guide: None,
             source: AssetSource::Example {
                 run: ExampleRun {
                     name: "memory_optimization_demo",
@@ -272,7 +289,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Contour Plot",
             summary: "Contour rendering example with level interpolation.",
             asset_name: "contour_plot.png",
-            source_label: "`examples/doc_contour.rs`",
+            source_path: "examples/doc_contour.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/contour_plot.png",
             },
@@ -282,7 +300,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Radar Chart",
             summary: "Radar chart example demonstrating non-cartesian layout support.",
             asset_name: "radar_chart.png",
-            source_label: "`examples/doc_radar.rs`",
+            source_path: "examples/doc_radar.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/radar_chart.png",
             },
@@ -292,7 +311,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Pie Chart",
             summary: "Composition shares with labels and percentages.",
             asset_name: "pie_chart.png",
-            source_label: "`examples/doc_pie.rs`",
+            source_path: "examples/doc_pie.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/pie_chart.png",
             },
@@ -302,7 +322,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Donut Chart",
             summary: "A pie chart variant with a central cutout.",
             asset_name: "pie_donut.png",
-            source_label: "`examples/doc_pie.rs`",
+            source_path: "examples/doc_pie.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/pie_donut.png",
             },
@@ -312,7 +333,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Polar Rose",
             summary: "A filled polar line plot for non-cartesian data.",
             asset_name: "polar_plot.png",
-            source_label: "`examples/doc_polar.rs`",
+            source_path: "examples/doc_polar.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/polar_plot.png",
             },
@@ -322,7 +344,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Color Palette",
             summary: "Default palette reference across multiple line series.",
             asset_name: "colors.png",
-            source_label: "`examples/doc_colors.rs`",
+            source_path: "examples/doc_colors.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/colors.png",
             },
@@ -332,7 +355,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Marker Styles",
             summary: "Reference image covering filled and open marker variants.",
             asset_name: "marker_styles.png",
-            source_label: "`examples/doc_marker_styles.rs`",
+            source_path: "examples/doc_marker_styles.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/marker_styles.png",
             },
@@ -342,7 +366,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Line Styles",
             summary: "Reference image covering solid, dashed, and dotted lines.",
             asset_name: "line_styles.png",
-            source_label: "`examples/doc_line_styles.rs`",
+            source_path: "examples/doc_line_styles.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/line_styles.png",
             },
@@ -352,7 +377,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Legend Positions",
             summary: "Reference image covering legend placement options.",
             asset_name: "legend_positions.png",
-            source_label: "`examples/doc_legend_positions.rs`",
+            source_path: "examples/doc_legend_positions.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/legend_positions.png",
             },
@@ -362,7 +388,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Traveling Sine Wave",
             summary: "Animated sine wave generated with the `record!` macro.",
             asset_name: "animation_sine_wave.gif",
-            source_label: "`examples/generate_animation_gallery.rs`",
+            source_path: "examples/generate_animation_gallery.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/animation_sine_wave.gif",
             },
@@ -372,7 +399,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Animated Bars",
             summary: "Animated categorical data example rendered as a GIF.",
             asset_name: "animation_bars.gif",
-            source_label: "`examples/generate_animation_gallery.rs`",
+            source_path: "examples/generate_animation_gallery.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/animation_bars.gif",
             },
@@ -382,7 +410,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Wave Interference",
             summary: "Animated wave interference example rendered as a GIF.",
             asset_name: "animation_interference.gif",
-            source_label: "`examples/generate_animation_gallery.rs`",
+            source_path: "examples/generate_animation_gallery.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/animation_interference.gif",
             },
@@ -392,7 +421,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Japanese Labels",
             summary: "Japanese-language labels rendered with the default browser/document fonts.",
             asset_name: "international_japanese.png",
-            source_label: "`examples/doc_international.rs`",
+            source_path: "examples/doc_international.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/international_japanese.png",
             },
@@ -402,7 +432,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Chinese Labels",
             summary: "Chinese-language bar chart rendering example.",
             asset_name: "international_chinese.png",
-            source_label: "`examples/doc_international.rs`",
+            source_path: "examples/doc_international.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/international_chinese.png",
             },
@@ -412,7 +443,8 @@ fn entries() -> Vec<GalleryEntry> {
             title: "Korean Labels",
             summary: "Korean-language line chart rendering example.",
             asset_name: "international_korean.png",
-            source_label: "`examples/doc_international.rs`",
+            source_path: "examples/doc_international.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/international_korean.png",
             },
@@ -420,9 +452,10 @@ fn entries() -> Vec<GalleryEntry> {
         GalleryEntry {
             category: "internationalization",
             title: "Multi-Language Comparison",
-            summary: "A four-panel comparison of CJK and mixed-language labels.",
+            summary: "A four-panel comparison of Japanese, Chinese, Korean, and English labels with identical sine/cosine content.",
             asset_name: "international_comparison.png",
-            source_label: "`examples/doc_international.rs`",
+            source_path: "examples/doc_international.rs",
+            guide: None,
             source: AssetSource::Copy {
                 source_rel: "docs/assets/rustdoc/international_comparison.png",
             },
@@ -571,7 +604,13 @@ fn write_category_pages(categories: &[Category], entries: &[GalleryEntry]) -> Re
                 "![{}](../../assets/gallery/rust/{}/{})\n\n",
                 entry.title, entry.category, entry.asset_name
             ));
-            content.push_str(&format!("Source: {}\n\n", entry.source_label));
+            content.push_str(&format!(
+                "Source: [{}](../../../{})\n\n",
+                entry.source_path, entry.source_path
+            ));
+            if let Some((label, path)) = entry.guide {
+                content.push_str(&format!("Guide: [{label}]({path})\n\n"));
+            }
         }
 
         content.push_str("[← Back to Gallery](../README.md)\n");

@@ -28,6 +28,7 @@ fn main() -> Result<()> {
         .title("Scatter Plot")
         .xlabel("x")
         .ylabel("y")
+        .ylim(-1.3, 1.3)
         .scatter(&x_scatter, &y_scatter)
         .color(Color::from_palette(1))
         .marker_size(6.0);
@@ -39,6 +40,7 @@ fn main() -> Result<()> {
         .title("Bar Chart")
         .xlabel("Quarter")
         .ylabel("Sales")
+        .ylim(0.0, 60.0)
         .bar(&categories, &values)
         .color(Color::from_palette(2));
 
@@ -57,7 +59,7 @@ fn main() -> Result<()> {
 
     // Create a 2x2 subplot figure
     subplots(2, 2, 800, 600)?
-        .suptitle("Subplot Gallery")
+        .suptitle("Mixed Plots in a 2×2 Grid")
         .subplot_at(0, plot_line.into())?
         .subplot_at(1, plot_scatter.into())?
         .subplot_at(2, plot_bar.into())?
