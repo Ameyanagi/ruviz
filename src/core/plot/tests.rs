@@ -2208,7 +2208,11 @@ fn test_outside_right_legend_is_additive_with_colorbar_band() {
     let legend = layout.legend_rect.unwrap();
 
     assert!(layout.plot_area.right < colorbar_layout.plot_area.right);
-    assert!(legend.left > colorbar_layout.plot_area.right);
+    // The legend band must be additive with the colorbar reservation: the gap
+    // between the shrunken plot area and the legend still fits the entire
+    // colorbar-inclusive right margin. Comparing margins instead of absolute
+    // edges keeps the assertion independent of platform font metrics.
+    assert!(legend.left - layout.plot_area.right >= colorbar_layout.margins.right);
     assert!(legend.right <= 640.0);
     with_legend
         .render()
