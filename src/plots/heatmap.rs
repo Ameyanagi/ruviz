@@ -46,6 +46,20 @@ pub enum Interpolation {
     Bilinear,
 }
 
+/// Physical Y extent used for heatmap row 0.
+///
+/// This policy is independent of the displayed Y-axis direction: reversing
+/// `ylim` changes where the physical extent appears on screen, not which data
+/// row occupies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeatmapOrigin {
+    /// Place row 0 adjacent to the upper (`y_extent.1`) edge.
+    #[default]
+    Upper,
+    /// Place row 0 adjacent to the lower (`y_extent.0`) edge.
+    Lower,
+}
+
 /// Configuration for heatmap rendering
 #[derive(Debug, Clone)]
 pub struct HeatmapConfig {
@@ -87,6 +101,8 @@ pub struct HeatmapConfig {
     pub symlog_auto_linthresh: bool,
     /// Physical extent for the heatmap grid as (xmin, xmax, ymin, ymax)
     pub extent: Option<(f64, f64, f64, f64)>,
+    /// Physical Y edge adjacent to row 0
+    pub origin: HeatmapOrigin,
 }
 
 impl Default for HeatmapConfig {
@@ -111,6 +127,7 @@ impl Default for HeatmapConfig {
             cell_borders: false,
             symlog_auto_linthresh: false,
             extent: None,
+            origin: HeatmapOrigin::Upper,
         }
     }
 }
@@ -252,6 +269,16 @@ impl HeatmapConfig {
         self.extent = Some((xmin, xmax, ymin, ymax));
         self
     }
+
+    /// Set the physical Y edge adjacent to row 0.
+    ///
+    /// [`HeatmapOrigin::Upper`] maps row 0 next to `ymax`, while
+    /// [`HeatmapOrigin::Lower`] maps it next to `ymin`. Reversing the displayed
+    /// Y axis does not change row identity.
+    pub fn origin(mut self, origin: HeatmapOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
 }
 
 // Implement PlotConfig marker trait
@@ -295,16 +322,53 @@ impl HeatmapData {
         (self.y_extent.1 - self.y_extent.0) / self.n_rows.max(1) as f64
     }
 
+    fn row_boundary_data_y(&self, boundary: usize) -> f64 {
+        let offset = boundary.min(self.n_rows) as f64 * self.y_step();
+        match self.config.origin {
+            HeatmapOrigin::Upper => self.y_extent.1 - offset,
+            HeatmapOrigin::Lower => self.y_extent.0 + offset,
+        }
+    }
+
+    pub(crate) fn row_data_bounds(&self, row: usize) -> (f64, f64) {
+        let first = self.row_boundary_data_y(row);
+        let second = self.row_boundary_data_y(row + 1);
+        (first.min(second), first.max(second))
+    }
+
+    pub(crate) fn row_at_data_y(&self, y: f64) -> Option<usize> {
+        if self.n_rows == 0 || !y.is_finite() || y < self.y_extent.0 || y > self.y_extent.1 {
+            return None;
+        }
+
+        let distance_from_origin = match self.config.origin {
+            HeatmapOrigin::Upper => self.y_extent.1 - y,
+            HeatmapOrigin::Lower => y - self.y_extent.0,
+        };
+        Some(
+            (distance_from_origin / self.y_step())
+                .floor()
+                .clamp(0.0, self.n_rows.saturating_sub(1) as f64) as usize,
+        )
+    }
+
+    pub(crate) fn cell_at_data_position(&self, x: f64, y: f64) -> Option<(usize, usize)> {
+        if self.n_cols == 0 || !x.is_finite() || x < self.x_extent.0 || x > self.x_extent.1 {
+            return None;
+        }
+
+        let col = ((x - self.x_extent.0) / self.x_step())
+            .floor()
+            .clamp(0.0, self.n_cols.saturating_sub(1) as f64) as usize;
+        Some((self.row_at_data_y(y)?, col))
+    }
+
     pub(crate) fn cell_data_bounds(&self, row: usize, col: usize) -> ((f64, f64), (f64, f64)) {
         let dx = self.x_step();
-        let dy = self.y_step();
         let x1 = self.x_extent.0 + col as f64 * dx;
         let x2 = self.x_extent.0 + (col + 1) as f64 * dx;
-        // Row 0 remains at the visual top of the heatmap, so it occupies the
-        // highest y interval within the configured extent.
-        let y_top = self.y_extent.1 - row as f64 * dy;
-        let y_bottom = self.y_extent.1 - (row + 1) as f64 * dy;
-        ((x1, x2), (y_bottom, y_top))
+        let (y1, y2) = self.row_data_bounds(row);
+        ((x1, x2), (y1, y2))
     }
 
     pub(crate) fn cell_screen_rect(
@@ -362,7 +426,6 @@ impl HeatmapData {
         let y_min = area.y;
         let y_max = area.y + area.height;
         let x_step = self.x_step();
-        let y_step = self.y_step();
 
         let x_edges = (0..=self.n_cols)
             .map(|index| {
@@ -375,7 +438,7 @@ impl HeatmapData {
             .collect();
         let y_edges = (0..=self.n_rows)
             .map(|index| {
-                let y = self.y_extent.1 - index as f64 * y_step;
+                let y = self.row_boundary_data_y(index);
                 area.data_to_screen(self.x_extent.0, y)
                     .1
                     .clamp(y_min, y_max)
@@ -794,6 +857,28 @@ mod tests {
         assert!(!config.cell_borders);
         assert!(!config.symlog_auto_linthresh);
         assert!(config.extent.is_none());
+        assert_eq!(config.origin, HeatmapOrigin::Upper);
+        assert_eq!(HeatmapOrigin::default(), HeatmapOrigin::Upper);
+    }
+
+    #[test]
+    fn test_explicit_upper_origin_is_pixel_compatible_with_default() {
+        let values = vec![vec![0.0, 1.0], vec![2.0, 3.0], vec![4.0, 5.0]];
+        let default = process_heatmap(&values, HeatmapConfig::new().colorbar(false))
+            .expect("default heatmap should process");
+        let explicit = process_heatmap(
+            &values,
+            HeatmapConfig::new()
+                .colorbar(false)
+                .origin(HeatmapOrigin::Upper),
+        )
+        .expect("explicit upper heatmap should process");
+        let area = PlotArea::new(7.0, 11.0, 91.0, 89.0, 0.0, 2.0, 0.0, 3.0);
+
+        let default_image = render_heatmap_cells(&default, &area, false).unwrap();
+        let explicit_image = render_heatmap_cells(&explicit, &area, false).unwrap();
+
+        assert_eq!(default_image.pixels, explicit_image.pixels);
     }
 
     #[test]
@@ -809,14 +894,18 @@ mod tests {
             }
         }
 
-        let data = process_heatmap(&values, HeatmapConfig::new().colorbar(false))
-            .expect("heatmap data should process");
         let area = PlotArea::new(8.0, 10.0, 90.0, 92.0, 0.0, cols as f64, 0.0, rows as f64);
 
-        let reference = render_heatmap_cells(&data, &area, true).expect("legacy heatmap render");
-        let candidate = render_heatmap_cells(&data, &area, false).expect("fast heatmap render");
+        for origin in [HeatmapOrigin::Upper, HeatmapOrigin::Lower] {
+            let data =
+                process_heatmap(&values, HeatmapConfig::new().colorbar(false).origin(origin))
+                    .expect("heatmap data should process");
+            let reference =
+                render_heatmap_cells(&data, &area, true).expect("legacy heatmap render");
+            let candidate = render_heatmap_cells(&data, &area, false).expect("fast heatmap render");
 
-        assert_heatmap_parity(&reference, &candidate);
+            assert_heatmap_parity(&reference, &candidate);
+        }
     }
 
     #[test]
@@ -850,6 +939,7 @@ mod tests {
             .cell_borders(true)
             .symlog_auto_linthresh(true)
             .extent(0.0, 3.0, 0.0, 2.0)
+            .origin(HeatmapOrigin::Lower)
             .annotate(true);
 
         assert_eq!(config.vmin, Some(0.0));
@@ -861,7 +951,78 @@ mod tests {
         assert!(config.cell_borders);
         assert!(config.symlog_auto_linthresh);
         assert_eq!(config.extent, Some((0.0, 3.0, 0.0, 2.0)));
+        assert_eq!(config.origin, HeatmapOrigin::Lower);
         assert!(config.annotate);
+    }
+
+    #[test]
+    fn test_row_mapping_uses_physical_extent_and_consistent_boundaries() {
+        let values = vec![vec![0.0], vec![1.0], vec![2.0]];
+
+        let upper =
+            process_heatmap(&values, HeatmapConfig::new().extent(10.0, 14.0, 20.0, 26.0)).unwrap();
+        assert_eq!(upper.row_data_bounds(0), (24.0, 26.0));
+        assert_eq!(upper.row_data_bounds(2), (20.0, 22.0));
+        assert_eq!(upper.row_at_data_y(26.0), Some(0));
+        assert_eq!(upper.row_at_data_y(24.0), Some(1));
+        assert_eq!(upper.row_at_data_y(20.0), Some(2));
+        assert_eq!(upper.cell_at_data_position(14.0, 26.0), Some((0, 0)));
+
+        let lower = process_heatmap(
+            &values,
+            HeatmapConfig::new()
+                .extent(10.0, 14.0, 20.0, 26.0)
+                .origin(HeatmapOrigin::Lower),
+        )
+        .unwrap();
+        assert_eq!(lower.row_data_bounds(0), (20.0, 22.0));
+        assert_eq!(lower.row_data_bounds(2), (24.0, 26.0));
+        assert_eq!(lower.row_at_data_y(20.0), Some(0));
+        assert_eq!(lower.row_at_data_y(22.0), Some(1));
+        assert_eq!(lower.row_at_data_y(26.0), Some(2));
+        assert_eq!(lower.cell_at_data_position(10.0, 20.0), Some((0, 0)));
+
+        for data in [&upper, &lower] {
+            assert_eq!(data.row_at_data_y(19.999), None);
+            assert_eq!(data.row_at_data_y(26.001), None);
+            assert_eq!(data.cell_at_data_position(9.999, 23.0), None);
+            assert_eq!(data.cell_at_data_position(14.001, 23.0), None);
+        }
+    }
+
+    #[test]
+    fn test_reversed_displayed_y_axis_changes_screen_position_not_row_identity() {
+        let values = vec![vec![0.0], vec![1.0], vec![2.0]];
+        let normal_area = PlotArea::new(0.0, 0.0, 30.0, 90.0, 10.0, 14.0, 20.0, 26.0);
+        let reversed_area = PlotArea::new(0.0, 0.0, 30.0, 90.0, 10.0, 14.0, 26.0, 20.0);
+
+        for (origin, normal_y, reversed_y) in [
+            (HeatmapOrigin::Upper, 0.0, 60.0),
+            (HeatmapOrigin::Lower, 60.0, 0.0),
+        ] {
+            let data = process_heatmap(
+                &values,
+                HeatmapConfig::new()
+                    .extent(10.0, 14.0, 20.0, 26.0)
+                    .origin(origin),
+            )
+            .unwrap();
+
+            assert_eq!(
+                data.cell_at_data_position(12.0, 25.0),
+                match origin {
+                    HeatmapOrigin::Upper => Some((0, 0)),
+                    HeatmapOrigin::Lower => Some((2, 0)),
+                }
+            );
+            let (_, y, _, height) = data.cell_screen_rect(&normal_area, 0, 0);
+            let (_, reversed_y_actual, _, reversed_height) =
+                data.cell_screen_rect(&reversed_area, 0, 0);
+            assert!((y - normal_y).abs() < 1e-4);
+            assert!((reversed_y_actual - reversed_y).abs() < 1e-4);
+            assert!((height - 30.0).abs() < 1e-4);
+            assert!((reversed_height - 30.0).abs() < 1e-4);
+        }
     }
 
     #[test]

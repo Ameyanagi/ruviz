@@ -3035,33 +3035,10 @@ fn hit_test_displayed_frame(
                     continue;
                 }
                 let data_position = geometry.screen_to_data(position_px);
-                if !data_position.x.is_finite()
-                    || !data_position.y.is_finite()
-                    || data_position.x < data.x_extent.0
-                    || data_position.x > data.x_extent.1
-                    || data_position.y < data.y_extent.0
-                    || data_position.y > data.y_extent.1
-                {
+                let Some((row, col)) = data.cell_at_data_position(data_position.x, data_position.y)
+                else {
                     continue;
-                }
-
-                let cell_width = (data.x_extent.1 - data.x_extent.0) / data.n_cols as f64;
-                let cell_height = (data.y_extent.1 - data.y_extent.0) / data.n_rows as f64;
-                if !cell_width.is_finite()
-                    || !cell_height.is_finite()
-                    || cell_width <= 0.0
-                    || cell_height <= 0.0
-                {
-                    continue;
-                }
-                let col = ((data_position.x - data.x_extent.0) / cell_width)
-                    .floor()
-                    .clamp(0.0, data.n_cols.saturating_sub(1) as f64)
-                    as usize;
-                let row = ((data.y_extent.1 - data_position.y) / cell_height)
-                    .floor()
-                    .clamp(0.0, data.n_rows.saturating_sub(1) as f64)
-                    as usize;
+                };
                 let Some(value) = data
                     .values
                     .get(row)
