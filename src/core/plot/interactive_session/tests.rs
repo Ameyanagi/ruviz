@@ -1155,7 +1155,7 @@ fn test_heatmap_origin_hit_rows_values_and_rectangles_survive_reversed_y_axis() 
                 .render_to_surface(render_target())
                 .expect("heatmap origin frame should render");
 
-            for row in 0..2 {
+            for (row, row_values) in values.iter().enumerate() {
                 let data_y = match (origin, row) {
                     (HeatmapOrigin::Upper, 0) | (HeatmapOrigin::Lower, 1) => 23.0,
                     (HeatmapOrigin::Upper, 1) | (HeatmapOrigin::Lower, 0) => 21.0,
@@ -1175,7 +1175,7 @@ fn test_heatmap_origin_hit_rows_values_and_rectangles_survive_reversed_y_axis() 
                         ..
                     } => {
                         assert_eq!((hit_row, col), (row, 1));
-                        assert_eq!(value, values[row][1]);
+                        assert_eq!(value, row_values[1]);
                         assert!(screen_rect.contains(screen_position));
 
                         let y_bounds = if data_y > 22.0 {
