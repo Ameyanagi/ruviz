@@ -78,7 +78,7 @@ pub struct PlotLayout {
     pub plot_area: LayoutRect,
 
     /// Pre-measured and resolved legend bounds for an outside legend.
-    pub legend_rect: Option<LayoutRect>,
+    pub(crate) legend_rect: Option<LayoutRect>,
 
     /// Title position (top center point), None if no title
     pub title_pos: Option<TextPosition>,
@@ -179,7 +179,7 @@ pub struct MeasuredDimensions {
     pub xtick: Option<(f32, f32)>,
     pub ytick: Option<(f32, f32)>,
     pub right_margin: Option<f32>,
-    pub legend: Option<(f32, f32)>,
+    pub(crate) legend: Option<(f32, f32)>,
 }
 
 // =============================================================================
