@@ -1269,7 +1269,10 @@ impl InteractivePlotSession {
 
     /// Adds a session-owned annotation to the interactive overlay.
     pub fn add_annotation(&self, annotation: Annotation) -> Result<AnnotationId> {
-        validate_dynamic_annotation(&annotation)?;
+        {
+            let layout = &self.inner.prepared.plot().layout;
+            validate_dynamic_annotation(&annotation, &layout.x_scale, &layout.y_scale)?;
+        }
         let mut annotations = self
             .inner
             .annotations
@@ -1305,7 +1308,10 @@ impl InteractivePlotSession {
 
     /// Replaces a session-owned annotation, including all geometry and style.
     pub fn update_annotation(&self, id: AnnotationId, annotation: Annotation) -> Result<()> {
-        validate_dynamic_annotation(&annotation)?;
+        {
+            let layout = &self.inner.prepared.plot().layout;
+            validate_dynamic_annotation(&annotation, &layout.x_scale, &layout.y_scale)?;
+        }
         let mut annotations = self
             .inner
             .annotations
@@ -3322,6 +3328,20 @@ fn require_finite_annotation_f64(value: f64, label: &str) -> Result<()> {
     }
 }
 
+fn require_annotation_coord_in_scale_domain(
+    value: f64,
+    scale: &crate::axes::AxisScale,
+    label: &str,
+) -> Result<()> {
+    require_finite_annotation_f64(value, label)?;
+    if matches!(scale, crate::axes::AxisScale::Log) && value <= 0.0 {
+        return Err(invalid_annotation(format!(
+            "{label} must be positive on a logarithmic axis"
+        )));
+    }
+    Ok(())
+}
+
 fn require_non_negative_annotation_f64(value: f64, label: &str) -> Result<()> {
     require_finite_annotation_f64(value, label)?;
     if value >= 0.0 {
@@ -3375,11 +3395,15 @@ fn validate_annotation_fill_style(style: &FillStyle) -> Result<()> {
     require_non_negative_annotation_f32(style.edge_width, "fill edge width")
 }
 
-fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
+fn validate_dynamic_annotation(
+    annotation: &Annotation,
+    x_scale: &crate::axes::AxisScale,
+    y_scale: &crate::axes::AxisScale,
+) -> Result<()> {
     match annotation {
         Annotation::Text { x, y, style, .. } => {
-            require_finite_annotation_f64(*x, "text x")?;
-            require_finite_annotation_f64(*y, "text y")?;
+            require_annotation_coord_in_scale_domain(*x, x_scale, "text x")?;
+            require_annotation_coord_in_scale_domain(*y, y_scale, "text y")?;
             if !style.font_size.is_finite() || style.font_size <= 0.0 {
                 return Err(invalid_annotation(
                     "text font size must be finite and positive",
@@ -3396,13 +3420,13 @@ fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
             y2,
             style,
         } => {
-            for (value, label) in [
-                (*x1, "arrow x1"),
-                (*y1, "arrow y1"),
-                (*x2, "arrow x2"),
-                (*y2, "arrow y2"),
+            for (value, scale, label) in [
+                (*x1, x_scale, "arrow x1"),
+                (*y1, y_scale, "arrow y1"),
+                (*x2, x_scale, "arrow x2"),
+                (*y2, y_scale, "arrow y2"),
             ] {
-                require_finite_annotation_f64(value, label)?;
+                require_annotation_coord_in_scale_domain(value, scale, label)?;
             }
             require_non_negative_annotation_f32(style.line_width, "arrow line width")?;
             require_non_negative_annotation_f32(style.head_length, "arrow head length")?;
@@ -3412,14 +3436,14 @@ fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
         Annotation::HLine {
             y, style, width, ..
         } => {
-            require_finite_annotation_f64(*y, "horizontal line y")?;
+            require_annotation_coord_in_scale_domain(*y, y_scale, "horizontal line y")?;
             require_non_negative_annotation_f32(*width, "horizontal line width")?;
             validate_annotation_line_style(style, "horizontal line style")
         }
         Annotation::VLine {
             x, style, width, ..
         } => {
-            require_finite_annotation_f64(*x, "vertical line x")?;
+            require_annotation_coord_in_scale_domain(*x, x_scale, "vertical line x")?;
             require_non_negative_annotation_f32(*width, "vertical line width")?;
             validate_annotation_line_style(style, "vertical line style")
         }
@@ -3430,8 +3454,8 @@ fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
             height,
             style,
         } => {
-            require_finite_annotation_f64(*x, "rectangle x")?;
-            require_finite_annotation_f64(*y, "rectangle y")?;
+            require_annotation_coord_in_scale_domain(*x, x_scale, "rectangle x")?;
+            require_annotation_coord_in_scale_domain(*y, y_scale, "rectangle y")?;
             require_non_negative_annotation_f64(*width, "rectangle width")?;
             require_non_negative_annotation_f64(*height, "rectangle height")?;
             require_finite_annotation_f64(*x + *width, "rectangle right edge")?;
@@ -3446,14 +3470,21 @@ fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
                     "FillBetween x, y1, and y2 must have equal lengths of at least 2",
                 ));
             }
-            for (label, values) in [
-                ("FillBetween x", x),
-                ("FillBetween y1", y1),
-                ("FillBetween y2", y2),
+            for (label, scale, values) in [
+                ("FillBetween x", x_scale, x),
+                ("FillBetween y1", y_scale, y1),
+                ("FillBetween y2", y_scale, y2),
             ] {
                 if let Some(index) = values.iter().position(|value| !value.is_finite()) {
                     return Err(invalid_annotation(format!(
                         "{label} contains a non-finite value at index {index}"
+                    )));
+                }
+                if matches!(scale, crate::axes::AxisScale::Log)
+                    && let Some(index) = values.iter().position(|value| *value <= 0.0)
+                {
+                    return Err(invalid_annotation(format!(
+                        "{label} contains a non-positive value at index {index} on a logarithmic axis"
                     )));
                 }
             }
@@ -3464,8 +3495,8 @@ fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
             x_max,
             style,
         } => {
-            require_finite_annotation_f64(*x_min, "horizontal span x_min")?;
-            require_finite_annotation_f64(*x_max, "horizontal span x_max")?;
+            require_annotation_coord_in_scale_domain(*x_min, x_scale, "horizontal span x_min")?;
+            require_annotation_coord_in_scale_domain(*x_max, x_scale, "horizontal span x_max")?;
             if x_min > x_max {
                 return Err(invalid_annotation(
                     "horizontal span x_min must not exceed x_max",
@@ -3478,8 +3509,8 @@ fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
             y_max,
             style,
         } => {
-            require_finite_annotation_f64(*y_min, "vertical span y_min")?;
-            require_finite_annotation_f64(*y_max, "vertical span y_max")?;
+            require_annotation_coord_in_scale_domain(*y_min, y_scale, "vertical span y_min")?;
+            require_annotation_coord_in_scale_domain(*y_max, y_scale, "vertical span y_max")?;
             if y_min > y_max {
                 return Err(invalid_annotation(
                     "vertical span y_min must not exceed y_max",

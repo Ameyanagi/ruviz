@@ -3854,6 +3854,51 @@ fn test_dynamic_annotation_validation_happens_before_mutation() {
 }
 
 #[test]
+fn test_dynamic_annotation_rejects_nonpositive_coords_on_log_axes() {
+    let plot: Plot = Plot::new()
+        .line(&[1.0, 100.0], &[1.0, 100.0])
+        .xscale(crate::axes::AxisScale::Log)
+        .yscale(crate::axes::AxisScale::Log)
+        .into();
+    let session = plot.prepare_interactive();
+
+    let invalid = [
+        Annotation::text(-5.0, 1.0, "negative x"),
+        Annotation::text(5.0, 0.0, "zero y"),
+        Annotation::hline(0.0),
+        Annotation::vline(-1.0),
+        Annotation::rectangle(0.0, 1.0, 2.0, 2.0),
+        Annotation::hspan(0.0, 10.0),
+        Annotation::vspan(-2.0, 10.0),
+        Annotation::arrow(1.0, 1.0, 10.0, 0.0),
+        Annotation::fill_between(vec![1.0, 10.0], vec![0.0, 2.0], vec![3.0, 4.0]),
+    ];
+    for annotation in invalid {
+        assert!(matches!(
+            session.add_annotation(annotation),
+            Err(PlottingError::InvalidAnnotation { .. })
+        ));
+    }
+
+    let id = session
+        .add_annotation(Annotation::vline(5.0))
+        .expect("positive coordinates are valid on log axes");
+    assert!(matches!(
+        session.update_annotation(id, Annotation::vline(0.0)),
+        Err(PlottingError::InvalidAnnotation { .. })
+    ));
+
+    // Linear axes still accept zero/negative coordinates.
+    let linear = annotation_test_session();
+    linear
+        .add_annotation(Annotation::hline(0.0))
+        .expect("zero is valid on linear axes");
+    linear
+        .add_annotation(Annotation::text(-5.0, 0.0, "negative"))
+        .expect("negative coords are valid on linear axes");
+}
+
+#[test]
 fn test_dynamic_annotation_changes_dirty_only_overlay_and_reuse_base() {
     let session = annotation_test_session();
     let initial = session.render_to_surface(render_target()).unwrap();
