@@ -51,8 +51,8 @@ Examples covering multilingual text layout and CJK rendering.
 ---
 
 Gallery assets are generated from `generated/examples/` and `docs/assets/rustdoc/`.
-Refresh them with:
+Refresh them in source-first order with:
 
 ```bash
-cargo run --bin generate_gallery
+make rust-gallery
 ```

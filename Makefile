@@ -3,7 +3,7 @@ SHELL := /bin/bash
 RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
 PYTHON_SITE_DIR := ../generated/python/site
 
-.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
+.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 help:
 	@echo "ruviz release documentation workflow"
@@ -14,6 +14,7 @@ help:
 	@echo "  make release-docs-rust   Refresh Rust README/rustdoc/gallery/golden assets"
 	@echo "  make release-docs-python Refresh Python gallery and build the MkDocs site"
 	@echo "  make release-docs-web    Build the npm package docs site and API reference"
+	@echo "  make rust-gallery        Refresh rustdoc images, then synchronize the Rust gallery"
 	@echo "  make build-generated-preview Rebuild docs-facing preview outputs under generated/"
 	@echo "  make build-generated-preview-rust Rebuild only generated/examples/ preview assets"
 	@echo "  make build-generated-preview-python Rebuild only generated/python/site/"
@@ -21,6 +22,7 @@ help:
 	@echo "  make generated-manifest  Refresh generated/manifest.json from local outputs"
 	@echo "  make check-doc-asset-refs Fail if published docs reference generated/ assets"
 	@echo "  make check-docs          Validate Markdown links/fences and README quick start syntax"
+	@echo "  make check-rust-gallery  Verify committed Rust gallery freshness without writes"
 	@echo "  make clean-generated     Remove generated/ and retired local output roots"
 	@echo ""
 	@echo "Validation targets:"
@@ -56,13 +58,19 @@ release-docs: assert-release-branch clean-generated release-docs-rust release-do
 
 release-docs-rust:
 	cargo run --example readme_quickstart
-	./scripts/generate-doc-images.sh
-	cargo run --bin generate_gallery
+	$(MAKE) rust-gallery
 	cargo run --example generate_golden_images
 	cargo test --all-features
 	cargo doc -p ruviz --all-features --no-deps
 	cargo doc -p ruviz-web --no-deps
 	cargo doc -p ruviz-gpui --no-deps
+
+rust-gallery:
+	./scripts/generate-doc-images.sh
+	cargo run --bin generate_gallery
+
+check-rust-gallery:
+	cargo run --bin generate_gallery -- --check
 
 release-docs-python:
 	bun run build:python-widget
