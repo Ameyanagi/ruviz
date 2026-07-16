@@ -88,6 +88,45 @@ cargo run -p ruviz-gpui --example streaming_embed
 cargo run -p ruviz-gpui --example coordinate_events
 ```
 
+## Updating Data and Replacing Plots
+
+For data-only changes, build the plot once with `line_source` or
+`scatter_source` and use `Observable<Vec<f64>>` for the changing coordinates.
+Replace a complete vector with `Observable::set`; the existing interactive
+session and its subscriptions stay in place:
+
+```rust
+use ruviz::{data::{BatchUpdate, Observable}, prelude::*};
+
+let x = Observable::new(vec![0.0, 1.0, 2.0]);
+let y = Observable::new(vec![0.0, 1.0, 4.0]);
+let plot: Plot = Plot::new().line_source(x.clone(), y.clone()).into();
+
+{
+    let mut batch = BatchUpdate::new();
+    batch.add(&x);
+    batch.add(&y);
+    x.set(vec![0.0, 2.0, 4.0]);
+    y.set(vec![1.0, 3.0, 9.0]);
+}
+```
+
+Reactive rerendering retains a user-customized visible view. If the visible
+view still matches the base view, it may autoscale to the replacement data.
+`BatchUpdate` defers each observable's notifications until guard drop, and
+repeated changes within each observable are coalesced. Separate observables
+still flush independently; the guard is not a shared data lock, so concurrent
+readers can observe the two objects independently.
+
+Use `RuvizPlot::set_plot` only when the plot definition itself must change. It
+replaces the whole interactive session and resets the visible and home views,
+pointer, drag, hover, selection, cached frames, scheduler and in-flight work,
+and reactive subscriptions. `RuvizPlot::set_plot_keep_view` performs the same
+replacement but queues old visible data bounds for restoration when the old view
+was customized. Restoration happens during the replacement's next render, after
+its data bounds have been resolved for the configured time. Incompatible bounds
+are discarded and the replacement keeps its natural view.
+
 ## Related Docs
 
 - Root crate docs: <https://docs.rs/ruviz>

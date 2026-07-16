@@ -55,6 +55,15 @@
 //! component. See the repository examples under
 //! `crates/ruviz-gpui/examples/` for end-to-end setups.
 //!
+//! For data-only updates, build the plot once with `Plot::line_source` or
+//! `Plot::scatter_source` and `Observable<Vec<f64>>`, then call
+//! `Observable::set` to replace a complete coordinate vector. Reactive renders
+//! retain a customized visible view; a view still at its base bounds can
+//! autoscale to the new data. `BatchUpdate` defers each observable's
+//! notifications until guard drop and coalesces repeated changes within that
+//! observable. Separate observables still flush independently; the guard is not
+//! a shared data lock.
+//!
 //! # Documentation
 //!
 //! - Repository README: <https://github.com/Ameyanagi/ruviz/blob/main/README.md>
@@ -93,6 +102,7 @@ mod platform_impl {
     };
     use image::{Frame, ImageBuffer, Rgba};
     use ruviz::{
+        axes::AxisScale,
         core::plot::Image as RuvizImage,
         core::{
             FramePacing, FrameStats, HitResult, ImageTarget, InteractivePlotSession,
@@ -955,11 +965,60 @@ mod platform_impl {
                 .stats()
         }
 
+        /// Converts `plot` into an interactive session and replaces the current one.
+        ///
+        /// This is a destructive replacement. The previous visible view is
+        /// discarded (a session created from a plot starts at its natural/base
+        /// bounds), any custom home view is cleared, and pointer, drag, hover,
+        /// selection, cached frames, scheduler and in-flight work, and reactive
+        /// subscriptions from the previous session are discarded.
+        ///
+        /// For a replacement that retains only a user-customized visible view,
+        /// use [`Self::set_plot_keep_view`]. For data-only changes, prefer
+        /// source-backed series and replace their `Observable<Vec<f64>>` values.
         pub fn set_plot<P>(&mut self, plot: P, cx: &mut Context<Self>)
         where
             P: IntoPlotSession,
         {
             self.replace_session(plot.into_plot_session());
+            cx.notify();
+        }
+
+        /// Replaces the plot while attempting to retain a customized visible view.
+        ///
+        /// The old visible data bounds are retained only when they materially
+        /// differ from the old base bounds. An untouched view therefore keeps the
+        /// replacement session's own view, normally the replacement plot's
+        /// natural bounds. Restoration goes through the new session's normal
+        /// scale validation and normalization, including log-domain checks,
+        /// reversed axes, and zoom limits.
+        ///
+        /// Like [`Self::set_plot`], this still replaces the entire interactive
+        /// session. It does not preserve the home view, pointer, drag, hover,
+        /// selection, cached frames, scheduler or in-flight work, or reactive
+        /// subscriptions.
+        ///
+        /// Restoration is applied during the replacement session's next render,
+        /// after its data bounds have been resolved for the configured time. If the
+        /// old bounds are incompatible with the replacement scales, the replacement
+        /// session keeps its natural bounds.
+        pub fn set_plot_keep_view<P>(&mut self, plot: P, cx: &mut Context<Self>)
+        where
+            P: IntoPlotSession,
+        {
+            let old_viewport = self.session.view_bounds_snapshot();
+            let should_restore = viewport_bounds_materially_differ(
+                old_viewport.visible_bounds,
+                old_viewport.base_bounds,
+                &old_viewport.x_scale,
+                &old_viewport.y_scale,
+            );
+
+            self.replace_session(plot.into_plot_session());
+            if should_restore {
+                self.session
+                    .defer_visible_bounds_restore(old_viewport.visible_bounds);
+            }
             cx.notify();
         }
 
@@ -1119,6 +1178,42 @@ mod platform_impl {
             self.last_layout = None;
             self.interaction_state.reset();
         }
+    }
+
+    const VIEW_BOUNDS_NORMALIZED_TOLERANCE: f64 = 1e-12;
+
+    fn viewport_bounds_materially_differ(
+        visible: ViewportRect,
+        base: ViewportRect,
+        x_scale: &AxisScale,
+        y_scale: &AxisScale,
+    ) -> bool {
+        !viewport_axis_bounds_close(
+            (visible.min.x, visible.max.x),
+            (base.min.x, base.max.x),
+            x_scale,
+        ) || !viewport_axis_bounds_close(
+            (visible.min.y, visible.max.y),
+            (base.min.y, base.max.y),
+            y_scale,
+        )
+    }
+
+    fn viewport_axis_bounds_close(
+        visible: (f64, f64),
+        base: (f64, f64),
+        scale: &AxisScale,
+    ) -> bool {
+        if (visible.1 - visible.0).is_sign_negative() != (base.1 - base.0).is_sign_negative() {
+            return false;
+        }
+
+        let start = scale.normalized_position(visible.0, base.0, base.1);
+        let end = scale.normalized_position(visible.1, base.0, base.1);
+        start.is_finite()
+            && end.is_finite()
+            && start.abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
+            && (end - 1.0).abs() <= VIEW_BOUNDS_NORMALIZED_TOLERANCE
     }
 
     impl Render for RuvizPlot {
@@ -1324,7 +1419,40 @@ mod platform_impl {
         use super::*;
         use gpui::{Modifiers, MouseButton, TestAppContext};
         use ruviz::plots::heatmap::HeatmapConfig;
-        use ruviz::{axes::AxisScale, data::Observable, prelude::Plot};
+        use ruviz::{
+            axes::AxisScale,
+            data::{BatchUpdate, Observable, signal},
+            prelude::Plot,
+        };
+
+        fn viewport_rect(x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> ViewportRect {
+            ViewportRect {
+                min: ViewportPoint::new(x_min, y_min),
+                max: ViewportPoint::new(x_max, y_max),
+            }
+        }
+
+        fn assert_viewport_bounds_close(actual: ViewportRect, expected: ViewportRect) {
+            assert!(
+                !viewport_bounds_materially_differ(
+                    actual,
+                    expected,
+                    &AxisScale::Linear,
+                    &AxisScale::Linear,
+                ),
+                "actual bounds {actual:?} differed from expected bounds {expected:?}"
+            );
+        }
+
+        fn render_test_surface(session: &InteractivePlotSession) {
+            session
+                .render_to_surface(SurfaceTarget {
+                    size_px: (320, 240),
+                    scale_factor: 1.0,
+                    time_seconds: 0.0,
+                })
+                .expect("test surface should render");
+        }
 
         struct PointerEventSubscriber {
             events: Arc<Mutex<Vec<PlotPointerEvent>>>,
@@ -2165,6 +2293,719 @@ mod platform_impl {
         }
 
         #[test]
+        fn test_set_plot_resets_customized_view_and_replacement_state() {
+            let cx = TestAppContext::single();
+            let old_y = Observable::new(vec![5.0]);
+            let replacement_y = Observable::new(vec![1.0, 2.0]);
+            let initial_plot: Plot = Plot::new()
+                .scatter_source(vec![5.0], old_y.clone())
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 10.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let custom_view = viewport_rect(2.0, 8.0, 1.0, 9.0);
+            let replacement_plot: Plot = Plot::new()
+                .line_source(vec![100.0, 200.0], replacement_y.clone())
+                .xlim(100.0, 200.0)
+                .ylim(-5.0, 5.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    view.session
+                        .render_to_surface(SurfaceTarget {
+                            size_px: (320, 240),
+                            scale_factor: 1.0,
+                            time_seconds: 0.0,
+                        })
+                        .expect("initial selection frame should render");
+                    let point = view
+                        .session
+                        .data_to_screen(ViewportPoint::new(5.0, 5.0))
+                        .expect("selection conversion should succeed")
+                        .expect("selection point should be visible");
+                    view.session
+                        .apply_input(PlotInputEvent::SelectAt { position_px: point });
+                    assert!(view.session.restore_visible_bounds(custom_view));
+
+                    view.interaction_state.last_pointer_px = Some(ViewportPoint::new(4.0, 5.0));
+                    view.interaction_state.active_drag = ActiveDrag::LeftPan {
+                        anchor_px: ViewportPoint::new(1.0, 1.0),
+                        anchor_window: Point::new(px(1.0), px(1.0)),
+                        last_px: ViewportPoint::new(2.0, 2.0),
+                        crossed_threshold: true,
+                        click_eligible: false,
+                    };
+                    view.interaction_state.home_view_bounds = Some(custom_view);
+                    view.last_layout = Some(InteractionLayout {
+                        component_bounds: Bounds::default(),
+                        content_bounds: Bounds::default(),
+                        frame_size_px: (320, 240),
+                    });
+                    view.cached_frame = Some(CachedFrame {
+                        request: RenderRequest::new((320, 240), 1.0, 0.0, PresentationMode::Hybrid),
+                        base_generation: 0,
+                        primary: PrimaryFrame::Image(render_image_from_ruviz(
+                            ruviz::core::plot::Image::new(1, 1, vec![0, 0, 0, 255]),
+                        )),
+                        overlay_image: None,
+                        stats: FrameStats::default(),
+                        target: RenderTargetKind::Surface,
+                    });
+                    view.scheduler.latest_requested_generation = 7;
+                    view.scheduler.dropped_frames = 3;
+
+                    view.set_plot(replacement_plot, cx);
+                });
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view
+                        .session
+                        .viewport_snapshot()
+                        .expect("replacement viewport should be available");
+                    assert_eq!(snapshot.visible_bounds, snapshot.base_bounds);
+                    assert_ne!(snapshot.visible_bounds, custom_view);
+                    assert_eq!(snapshot.selected_count, 0);
+                    assert!(view.cached_frame.is_none());
+                    assert_eq!(view.retired_images.len(), 1);
+                    assert!(view.last_layout.is_none());
+                    assert_eq!(view.interaction_state, InteractionState::default());
+                    assert_eq!(view.scheduler.latest_requested_generation, 0);
+                    assert!(view.scheduler.in_flight.is_none());
+                    assert!(view.scheduler.queued.is_none());
+                    assert_eq!(view.scheduler.dropped_frames, 0);
+                    assert!(view.in_flight_render.is_none());
+                })
+            });
+            assert_eq!(old_y.subscriber_count(), 0);
+            assert_eq!(replacement_y.subscriber_count(), 2);
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_restores_customized_view_and_resets_non_view_state() {
+            let cx = TestAppContext::single();
+            let old_y = Observable::new(vec![5.0]);
+            let replacement_y = Observable::new(vec![0.0, 100.0]);
+            let initial_plot: Plot = Plot::new()
+                .scatter_source(vec![5.0], old_y.clone())
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 10.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let custom_view = viewport_rect(2.0, 8.0, 1.0, 9.0);
+            let replacement_plot: Plot = Plot::new()
+                .line_source(vec![0.0, 100.0], replacement_y.clone())
+                .xlim(0.0, 100.0)
+                .ylim(0.0, 100.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    render_test_surface(&view.session);
+                    let point = view
+                        .session
+                        .data_to_screen(ViewportPoint::new(5.0, 5.0))
+                        .expect("selection conversion should succeed")
+                        .expect("selection point should be visible");
+                    view.session
+                        .apply_input(PlotInputEvent::SelectAt { position_px: point });
+                    assert_eq!(view.session.viewport_snapshot().unwrap().selected_count, 1);
+                    assert!(view.session.restore_visible_bounds(custom_view));
+                    view.interaction_state.last_pointer_px = Some(ViewportPoint::new(4.0, 5.0));
+                    view.interaction_state.active_drag = ActiveDrag::RightZoom {
+                        anchor_px: ViewportPoint::new(1.0, 1.0),
+                        anchor_window: Point::new(px(1.0), px(1.0)),
+                        current_px: ViewportPoint::new(2.0, 2.0),
+                        crossed_threshold: true,
+                        zoom_enabled: true,
+                    };
+                    view.interaction_state.home_view_bounds = Some(custom_view);
+                    view.scheduler.latest_requested_generation = 4;
+
+                    view.set_plot_keep_view(replacement_plot, cx)
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view
+                        .session
+                        .viewport_snapshot()
+                        .expect("replacement viewport should be available");
+                    assert_viewport_bounds_close(snapshot.visible_bounds, custom_view);
+                    assert_ne!(snapshot.visible_bounds, snapshot.base_bounds);
+                    assert_eq!(snapshot.selected_count, 0);
+                    assert_eq!(view.interaction_state, InteractionState::default());
+                    assert_eq!(view.scheduler.latest_requested_generation, 0);
+                    assert!(view.cached_frame.is_none());
+                    assert!(view.in_flight_render.is_none());
+                })
+            });
+            assert_eq!(old_y.subscriber_count(), 0);
+            assert_eq!(replacement_y.subscriber_count(), 2);
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_restores_after_temporal_bounds_resolve() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 100.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 100.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let custom_view = viewport_rect(0.0, 1.0, 20.0, 80.0);
+            let temporal_y = signal::of(|time| {
+                if time < 50.0 {
+                    vec![-1.0, 1.0]
+                } else {
+                    vec![0.0, 100.0]
+                }
+            });
+            let replacement_plot: Plot = Plot::new()
+                .line_source(vec![0.0, 1.0], temporal_y)
+                .xlim(0.0, 1.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    render_test_surface(&view.session);
+                    assert!(view.session.restore_visible_bounds(custom_view));
+                    view.set_plot_keep_view(replacement_plot, cx);
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    view.session
+                        .render_to_surface(SurfaceTarget {
+                            size_px: (320, 240),
+                            scale_factor: 1.0,
+                            time_seconds: 100.0,
+                        })
+                        .expect("temporal replacement frame should render");
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert_viewport_bounds_close(snapshot.visible_bounds, custom_view);
+                    assert_eq!(snapshot.base_bounds, viewport_rect(0.0, 1.0, 0.0, 100.0));
+                })
+            });
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_uses_replacement_bounds_for_untouched_view() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[0.0, 10.0], &[0.0, 10.0])
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 10.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let replacement_plot: Plot = Plot::new()
+                .line(&[100.0, 200.0], &[-5.0, 5.0])
+                .xlim(100.0, 200.0)
+                .ylim(-5.0, 5.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| view.set_plot_keep_view(replacement_plot, cx))
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert_eq!(snapshot.visible_bounds, snapshot.base_bounds);
+                    assert_eq!(snapshot.base_bounds, viewport_rect(100.0, 200.0, -5.0, 5.0));
+                })
+            });
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_keeps_already_equal_replacement_bounds() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[0.0, 10.0], &[0.0, 10.0])
+                .xlim(0.0, 10.0)
+                .ylim(0.0, 10.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let custom_view = viewport_rect(2.0, 8.0, 1.0, 9.0);
+            let replacement_plot: Plot = Plot::new()
+                .line(&[2.0, 8.0], &[1.0, 9.0])
+                .xlim(2.0, 8.0)
+                .ylim(1.0, 9.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    assert!(view.session.restore_visible_bounds(custom_view));
+                    view.set_plot_keep_view(replacement_plot, cx)
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert_viewport_bounds_close(snapshot.visible_bounds, custom_view);
+                    assert_viewport_bounds_close(snapshot.visible_bounds, snapshot.base_bounds);
+                })
+            });
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_detects_customization_on_large_log_range() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[1.0, 1e15], &[0.0, 1.0])
+                .xscale(AxisScale::Log)
+                .xlim(1.0, 1e15)
+                .ylim(0.0, 1.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let custom_view = viewport_rect(10.0, 1e15, 0.0, 1.0);
+            let replacement_plot: Plot = Plot::new()
+                .line(&[1.0, 1e16], &[0.0, 1.0])
+                .xscale(AxisScale::Log)
+                .xlim(1.0, 1e16)
+                .ylim(0.0, 1.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    assert!(view.session.restore_visible_bounds(custom_view));
+                    view.set_plot_keep_view(replacement_plot, cx)
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view.session.view_bounds_snapshot();
+                    assert!(!viewport_bounds_materially_differ(
+                        snapshot.visible_bounds,
+                        custom_view,
+                        &AxisScale::Log,
+                        &AxisScale::Linear,
+                    ));
+                })
+            });
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_rejects_old_bounds_outside_new_log_domain() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[-100.0, 100.0], &[0.0, 1.0])
+                .xlim(-100.0, 100.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let invalid_for_log = viewport_rect(-10.0, -1.0, 0.1, 0.9);
+            let replacement_plot: Plot = Plot::new()
+                .line(&[1.0, 100.0], &[0.0, 1.0])
+                .xscale(AxisScale::Log)
+                .xlim(1.0, 100.0)
+                .ylim(0.0, 1.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    render_test_surface(&view.session);
+                    assert!(view.session.restore_visible_bounds(invalid_for_log));
+                    view.set_plot_keep_view(replacement_plot, cx)
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert_eq!(snapshot.visible_bounds, snapshot.base_bounds);
+                    assert!(snapshot.visible_bounds.min.x > 0.0);
+                })
+            });
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_normalizes_linear_bounds_for_new_log_scale() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[1.0, 100.0], &[0.0, 1.0])
+                .xlim(1.0, 100.0)
+                .ylim(0.0, 1.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let far_linear_view = viewport_rect(1.0, 1e15, 0.0, 1.0);
+            let replacement_plot: Plot = Plot::new()
+                .line(&[1.0, 100.0], &[0.0, 1.0])
+                .xscale(AxisScale::Log)
+                .xlim(1.0, 100.0)
+                .ylim(0.0, 1.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    assert!(view.session.restore_visible_bounds(far_linear_view));
+                    view.set_plot_keep_view(replacement_plot, cx)
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view.session.view_bounds_snapshot();
+                    let normalized_span = AxisScale::Log.normalized_position(
+                        snapshot.visible_bounds.max.x,
+                        snapshot.base_bounds.min.x,
+                        snapshot.base_bounds.max.x,
+                    ) - AxisScale::Log.normalized_position(
+                        snapshot.visible_bounds.min.x,
+                        snapshot.base_bounds.min.x,
+                        snapshot.base_bounds.max.x,
+                    );
+                    assert!(snapshot.visible_bounds.min.x > 0.0);
+                    assert!((normalized_span.abs() - 0.01).abs() < 1e-12);
+                    assert_ne!(snapshot.visible_bounds, snapshot.base_bounds);
+                })
+            });
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_normalizes_outlying_bounds_to_new_zoom_limits() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[0.0, 100.0], &[0.0, 100.0])
+                .xlim(0.0, 100.0)
+                .ylim(0.0, 100.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let outlying_view = viewport_rect(-450.0, 550.0, -450.0, 550.0);
+            let replacement_plot: Plot = Plot::new()
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .xlim(0.0, 1.0)
+                .ylim(0.0, 1.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    render_test_surface(&view.session);
+                    assert!(view.session.restore_visible_bounds(outlying_view));
+                    render_test_surface(&view.session);
+                    view.set_plot_keep_view(replacement_plot, cx)
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert!((snapshot.visible_bounds.width().abs() - 10.0).abs() < 1e-9);
+                    assert!((snapshot.visible_bounds.height().abs() - 10.0).abs() < 1e-9);
+                    assert_ne!(snapshot.visible_bounds, outlying_view);
+                })
+            });
+        }
+
+        #[test]
+        fn test_set_plot_keep_view_restores_bounds_across_opposite_axis_orientation() {
+            let cx = TestAppContext::single();
+            let initial_plot: Plot = Plot::new()
+                .line(&[0.0, 10.0], &[0.0, 20.0])
+                .xlim(10.0, 0.0)
+                .ylim(20.0, 0.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        initial_plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let reversed_view = viewport_rect(8.0, 2.0, 15.0, 5.0);
+            let replacement_plot: Plot = Plot::new()
+                .line(&[0.0, 100.0], &[0.0, 200.0])
+                .xlim(0.0, 100.0)
+                .ylim(0.0, 200.0)
+                .into();
+
+            cx.update(|cx| {
+                view.update(cx, |view, cx| {
+                    render_test_surface(&view.session);
+                    assert!(view.session.restore_visible_bounds(reversed_view));
+                    view.set_plot_keep_view(replacement_plot, cx)
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    render_test_surface(&view.session);
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert_viewport_bounds_close(snapshot.visible_bounds, reversed_view);
+                    assert!(snapshot.visible_bounds.width() < 0.0);
+                    assert!(snapshot.visible_bounds.height() < 0.0);
+                })
+            });
+        }
+
+        #[test]
+        fn test_observable_vector_replacement_keeps_session_and_customized_view() {
+            let cx = TestAppContext::single();
+            let x = Observable::new(vec![0.0, 5.0, 10.0]);
+            let y = Observable::new(vec![0.0, 5.0, 10.0]);
+            let plot: Plot = Plot::new().line_source(x.clone(), y.clone()).into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let custom_view = viewport_rect(2.0, 8.0, 1.0, 9.0);
+            let old_base = cx.update(|cx| {
+                view.update(cx, |view, _| {
+                    view.session
+                        .render_to_surface(SurfaceTarget {
+                            size_px: (320, 240),
+                            scale_factor: 1.0,
+                            time_seconds: 0.0,
+                        })
+                        .expect("initial observable frame should render");
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert!(view.session.restore_visible_bounds(custom_view));
+                    view.interaction_state.last_pointer_px = Some(ViewportPoint::new(3.0, 4.0));
+                    snapshot.base_bounds
+                })
+            });
+
+            {
+                let mut batch = BatchUpdate::new();
+                batch.add(&x);
+                batch.add(&y);
+                x.set(vec![0.0, 10.0, 20.0]);
+                y.set(vec![-10.0, 0.0, 10.0]);
+            }
+
+            cx.update(|cx| {
+                view.update(cx, |view, _| {
+                    view.session
+                        .render_to_surface(SurfaceTarget {
+                            size_px: (320, 240),
+                            scale_factor: 1.0,
+                            time_seconds: 0.0,
+                        })
+                        .expect("updated observable frame should render");
+                })
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert_ne!(snapshot.base_bounds, old_base);
+                    assert_viewport_bounds_close(snapshot.visible_bounds, custom_view);
+                    assert_eq!(
+                        view.interaction_state.last_pointer_px,
+                        Some(ViewportPoint::new(3.0, 4.0))
+                    );
+                    assert!(!view.subscription.is_empty());
+                })
+            });
+            assert_eq!(x.subscriber_count(), 2);
+            assert_eq!(y.subscriber_count(), 2);
+        }
+
+        #[test]
+        fn test_observable_replacement_keeps_customized_wide_log_view() {
+            let cx = TestAppContext::single();
+            let x = Observable::new(vec![1.0, 1e15]);
+            let y = Observable::new(vec![0.0, 1.0]);
+            let plot: Plot = Plot::new()
+                .line_source(x.clone(), y.clone())
+                .xscale(AxisScale::Log)
+                .xlim(1.0, 1e15)
+                .ylim(0.0, 1.0)
+                .into();
+            let view = cx.update(|cx| {
+                cx.new(|cx| {
+                    RuvizPlot::from_options_impl(
+                        plot,
+                        RuvizPlotOptions::default(),
+                        None,
+                        PlotPointerEventHandlers::default(),
+                        cx,
+                    )
+                })
+            });
+            let custom_view = viewport_rect(10.0, 1e15, 0.0, 1.0);
+
+            cx.update(|cx| {
+                view.update(cx, |view, _| {
+                    render_test_surface(&view.session);
+                    assert!(view.session.restore_visible_bounds(custom_view));
+                })
+            });
+
+            {
+                let mut batch = BatchUpdate::new();
+                batch.add(&x);
+                batch.add(&y);
+                x.set(vec![1.0, 1e16]);
+                y.set(vec![0.0, 1.0]);
+            }
+
+            cx.update(|cx| {
+                view.update(cx, |view, _| render_test_surface(&view.session));
+            });
+
+            cx.read(|app| {
+                app.read_entity(&view, |view, _| {
+                    let snapshot = view.session.viewport_snapshot().unwrap();
+                    assert!(!viewport_bounds_materially_differ(
+                        snapshot.visible_bounds,
+                        custom_view,
+                        &AxisScale::Log,
+                        &AxisScale::Linear,
+                    ));
+                    assert!(viewport_bounds_materially_differ(
+                        snapshot.visible_bounds,
+                        snapshot.base_bounds,
+                        &AxisScale::Log,
+                        &AxisScale::Linear,
+                    ));
+                })
+            });
+        }
+
+        #[test]
+        fn test_viewport_customization_comparison_ignores_roundoff() {
+            let base = viewport_rect(0.0, 100.0, -50.0, 50.0);
+            let roundoff = viewport_rect(5e-11, 100.0 - 5e-11, -50.0, 50.0);
+            let customized = viewport_rect(0.01, 99.99, -50.0, 50.0);
+            let reversed = viewport_rect(100.0, 0.0, -50.0, 50.0);
+
+            assert!(!viewport_bounds_materially_differ(
+                base,
+                roundoff,
+                &AxisScale::Linear,
+                &AxisScale::Linear,
+            ));
+            assert!(viewport_bounds_materially_differ(
+                base,
+                customized,
+                &AxisScale::Linear,
+                &AxisScale::Linear,
+            ));
+            assert!(viewport_bounds_materially_differ(
+                reversed,
+                base,
+                &AxisScale::Linear,
+                &AxisScale::Linear,
+            ));
+        }
+
+        #[test]
         fn test_replace_session_retires_cached_frame() {
             let cx = TestAppContext::single();
             let focus_handle = cx.update(|cx| cx.focus_handle());
@@ -2205,7 +3046,7 @@ mod platform_impl {
                     last_pointer_px: Some(ViewportPoint::new(2.0, 2.0)),
                     active_drag: ActiveDrag::LeftPan {
                         anchor_px: ViewportPoint::new(1.0, 1.0),
-                        anchor_window: point(px(1.0), px(1.0)),
+                        anchor_window: Point::new(px(1.0), px(1.0)),
                         last_px: ViewportPoint::new(2.0, 2.0),
                         crossed_threshold: true,
                         click_eligible: false,
