@@ -126,6 +126,9 @@ jobs:
       - name: Run fast deterministic integration suites
         run: cargo test --test simple_api_test --test data_format_compatibility_test --test backend_parity_test --verbose
 
+      - name: Run scientific Unicode dark-background regression
+        run: cargo test --test international_text_tests scientific_unicode_preserves_light_on_dark_edges_and_rotation -- --exact
+
       - name: Run doc tests
         run: cargo test --doc --verbose
 

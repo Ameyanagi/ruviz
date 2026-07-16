@@ -8,6 +8,110 @@ use ruviz::render::{Color, FontConfig, FontFamily, TextRenderer};
 use std::path::Path;
 use tiny_skia::Pixmap;
 
+const DARK_BACKGROUND: [u8; 4] = [16, 16, 24, 255];
+
+#[derive(Debug, PartialEq, Eq)]
+struct InkBitmap {
+    width: u32,
+    height: u32,
+    pixels: Vec<bool>,
+}
+
+fn pixel_rgba(pixmap: &Pixmap, x: u32, y: u32) -> [u8; 4] {
+    let pixel = pixmap.pixels()[(y * pixmap.width() + x) as usize];
+    [pixel.red(), pixel.green(), pixel.blue(), pixel.alpha()]
+}
+
+fn is_ink(pixel: [u8; 4]) -> bool {
+    pixel[..3]
+        .iter()
+        .zip(DARK_BACKGROUND[..3].iter())
+        .any(|(&channel, &background)| channel.abs_diff(background) > 2)
+}
+
+fn ink_bounds(pixmap: &Pixmap) -> Option<(u32, u32, u32, u32)> {
+    let mut bounds = (pixmap.width(), pixmap.height(), 0, 0);
+    let mut found = false;
+
+    for y in 0..pixmap.height() {
+        for x in 0..pixmap.width() {
+            if is_ink(pixel_rgba(pixmap, x, y)) {
+                found = true;
+                bounds.0 = bounds.0.min(x);
+                bounds.1 = bounds.1.min(y);
+                bounds.2 = bounds.2.max(x);
+                bounds.3 = bounds.3.max(y);
+            }
+        }
+    }
+
+    found.then_some(bounds)
+}
+
+fn cropped_pixels(pixmap: &Pixmap, bounds: (u32, u32, u32, u32)) -> Vec<[u8; 4]> {
+    let mut pixels = Vec::new();
+    for y in bounds.1..=bounds.3 {
+        for x in bounds.0..=bounds.2 {
+            pixels.push(pixel_rgba(pixmap, x, y));
+        }
+    }
+    pixels
+}
+
+fn ink_column_runs(pixmap: &Pixmap, bounds: (u32, u32, u32, u32)) -> Vec<(u32, u32)> {
+    let occupied = |x| (bounds.1..=bounds.3).any(|y| is_ink(pixel_rgba(pixmap, x, y)));
+    let mut runs = Vec::new();
+    let mut start = None;
+
+    for x in bounds.0..=bounds.2 {
+        match (start, occupied(x)) {
+            (None, true) => start = Some(x),
+            (Some(run_start), false) => {
+                runs.push((run_start, x - 1));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(run_start) = start {
+        runs.push((run_start, bounds.2));
+    }
+    runs
+}
+
+fn normalized_ink_bitmap(pixmap: &Pixmap, x_bounds: (u32, u32)) -> InkBitmap {
+    let ink_pixels = (0..pixmap.height()).flat_map(|y| {
+        (x_bounds.0..=x_bounds.1)
+            .filter(move |&x| is_ink(pixel_rgba(pixmap, x, y)))
+            .map(move |x| (x, y))
+    });
+    let (mut min_y, mut max_y) = (pixmap.height(), 0);
+    for (_, y) in ink_pixels {
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+    assert!(min_y <= max_y, "glyph region contained no ink");
+
+    let width = x_bounds.1 - x_bounds.0 + 1;
+    let height = max_y - min_y + 1;
+    let mut pixels = Vec::with_capacity((width * height) as usize);
+    for y in min_y..=max_y {
+        for x in x_bounds.0..=x_bounds.1 {
+            pixels.push(is_ink(pixel_rgba(pixmap, x, y)));
+        }
+    }
+
+    InkBitmap {
+        width,
+        height,
+        pixels,
+    }
+}
+
+fn luminance(pixel: [u8; 4]) -> u32 {
+    2126 * pixel[0] as u32 + 7152 * pixel[1] as u32 + 722 * pixel[2] as u32
+}
+
 /// Test basic ASCII text rendering
 #[test]
 fn test_ascii_text_rendering() {
@@ -26,6 +130,105 @@ fn test_ascii_text_rendering() {
     );
 
     assert!(result.is_ok(), "ASCII text rendering should succeed");
+}
+
+/// Lock scientific Unicode glyph coverage and premultiplied AA on dark backgrounds.
+#[test]
+fn scientific_unicode_preserves_light_on_dark_edges_and_rotation() {
+    let font_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/ruviz-web/assets/NotoSans-Regular.ttf");
+    let font_bytes = std::fs::read(&font_path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read tracked deterministic test font {}: {error}",
+            font_path.display()
+        )
+    });
+    ruviz::render::register_font_bytes(font_bytes)
+        .expect("failed to register tracked Noto Sans test font");
+
+    let renderer = TextRenderer::new();
+    let config = FontConfig::new(FontFamily::Name("Noto Sans".to_string()), 48.0);
+    let text = "Å χ ² μ";
+    let ink = Color::new(235, 235, 245);
+    let background = tiny_skia::Color::from_rgba8(16, 16, 24, 255);
+    let mut normal = Pixmap::new(512, 192).expect("failed to create normal text pixmap");
+    let mut rotated = Pixmap::new(256, 512).expect("failed to create rotated text pixmap");
+    normal.fill(background);
+    rotated.fill(background);
+
+    renderer
+        .render_text(&mut normal, text, 32.0, 48.0, &config, ink)
+        .expect("normal scientific Unicode rendering failed");
+    renderer
+        .render_text_rotated(&mut rotated, text, 128.0, 256.0, &config, ink)
+        .expect("rotated scientific Unicode rendering failed");
+
+    let normal_bounds = ink_bounds(&normal).expect("Noto Sans rendered no normal glyph pixels");
+    let rotated_bounds = ink_bounds(&rotated).expect("Noto Sans rendered no rotated glyph pixels");
+    let normal_size = (
+        normal_bounds.2 - normal_bounds.0 + 1,
+        normal_bounds.3 - normal_bounds.1 + 1,
+    );
+    let rotated_size = (
+        rotated_bounds.2 - rotated_bounds.0 + 1,
+        rotated_bounds.3 - rotated_bounds.1 + 1,
+    );
+    assert_eq!(
+        rotated_size,
+        (normal_size.1, normal_size.0),
+        "90-degree rendering must swap the cropped ink dimensions"
+    );
+
+    // Exact RGBA parity catches damaged premultiplication at antialiased edges.
+    let normal_pixels = cropped_pixels(&normal, normal_bounds);
+    let rotated_pixels = cropped_pixels(&rotated, rotated_bounds);
+    for y in 0..normal_size.1 {
+        for x in 0..normal_size.0 {
+            let normal_index = (y * normal_size.0 + x) as usize;
+            let rotated_x = y;
+            let rotated_y = normal_size.0 - 1 - x;
+            let rotated_index = (rotated_y * rotated_size.0 + rotated_x) as usize;
+            assert_eq!(rotated_pixels[rotated_index], normal_pixels[normal_index]);
+        }
+    }
+
+    let background_luminance = luminance(DARK_BACKGROUND);
+    let ink_luminance = luminance([ink.r, ink.g, ink.b, ink.a]);
+    assert!(
+        normal_pixels
+            .iter()
+            .any(|&pixel| luminance(pixel) >= ink_luminance - 10_000 * 10),
+        "glyphs must contain bright interior pixels near the requested ink color"
+    );
+    assert!(
+        normal_pixels.iter().any(|&pixel| {
+            let value = luminance(pixel);
+            value > background_luminance + 10_000 * 2 && value < ink_luminance - 10_000 * 2
+        }),
+        "glyphs must retain intermediate-luminance antialiased edge pixels"
+    );
+
+    // Spaces isolate the four tokens; distinct normalized masks reject tofu boxes.
+    let runs = ink_column_runs(&normal, normal_bounds);
+    assert_eq!(runs.len(), 4, "expected one ink run for each Unicode token");
+    let glyphs: Vec<_> = runs
+        .into_iter()
+        .map(|run| normalized_ink_bitmap(&normal, run))
+        .collect();
+    for (index, glyph) in glyphs.iter().enumerate() {
+        assert!(
+            glyph.pixels.iter().filter(|&&pixel| pixel).count() >= 8,
+            "Unicode token {index} rendered too few ink pixels"
+        );
+    }
+    for left in 0..glyphs.len() {
+        for right in left + 1..glyphs.len() {
+            assert_ne!(
+                glyphs[left], glyphs[right],
+                "Unicode tokens {left} and {right} rendered as the same glyph"
+            );
+        }
+    }
 }
 
 /// Test CJK (Chinese/Japanese/Korean) text rendering
