@@ -18,7 +18,7 @@ for more plot types, themes, publication layouts, and international text example
 
 | Violin plot | Radar chart | Multi-panel figure |
 |:---:|:---:|:---:|
-| [![Statistical violin plot](docs/assets/gallery/rust/statistical/violin_plot.png)](examples/doc_violin.rs) | [![Multi-axis radar chart](docs/assets/gallery/rust/advanced/radar_chart.png)](examples/doc_radar.rs) | [![Scientific multi-panel analysis](docs/assets/gallery/rust/publication/scientific_analysis_figure.png)](gallery/scientific/scientific_plotting.rs) |
+| [![Statistical violin plot](docs/assets/gallery/rust/statistical/violin_plot.png)](examples/doc_violin.rs) | [![Multi-axis radar chart](docs/assets/gallery/rust/advanced/radar_chart.png)](examples/doc_radar.rs) | [![Scientific multi-panel analysis](docs/assets/gallery/rust/publication/scientific_analysis_figure.png)](examples/scientific_showcase.rs) |
 
 ## Quick Start
 

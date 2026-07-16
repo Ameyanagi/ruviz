@@ -75,6 +75,8 @@ fn main() -> Result<()> {
         .xlabel("Independent Variable")
         .ylabel("Dependent Variable")
         .theme(Theme::seaborn())
+        .xlim(-0.5, 10.5)
+        .ylim(0.0, 28.0)
         .scatter(&x_values, &y_values)
         .into();
 
@@ -83,21 +85,24 @@ fn main() -> Result<()> {
         .xlabel("Value Bins")
         .ylabel("Frequency")
         .theme(Theme::seaborn())
+        .ylim(0.0, 550.0)
         .histogram(&distribution, None)
         .into();
 
     let plot_d: Plot = Plot::new()
-        .title("D) Multi-Group Statistical Analysis")
-        .xlabel("Experimental Groups")
-        .ylabel("Measured Values")
+        .title("D) Distribution Summary")
+        .xlabel("Sample")
+        .ylabel("Measured Value")
         .theme(Theme::seaborn())
+        .ylim(4.5, 11.5)
         .boxplot(&group1, None)
         .into();
 
     let figure = SubplotFigure::new(2, 2, 1600, 1200)?
         .suptitle("Scientific Data Analysis - Multi-Panel Figure")
-        .hspace(0.3)
-        .wspace(0.3)
+        .suptitle_font_size(18.0)
+        .hspace(0.1)
+        .wspace(0.1)
         .subplot(0, 0, plot_a)?
         .subplot(0, 1, plot_b)?
         .subplot(1, 0, plot_c)?

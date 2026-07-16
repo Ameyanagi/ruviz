@@ -10,6 +10,8 @@ Subplots allow you to combine multiple plots into a single figure, essential for
 - Publication figures with multiple panels
 - Dashboard-style layouts
 
+![Mixed plots in a 2×2 grid](../assets/rustdoc/subplots.png)
+
 ## Basic Subplots
 
 ### 2×2 Grid
@@ -204,6 +206,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("B) Correlation Analysis")
         .xlabel("Independent Variable")
         .ylabel("Dependent Variable")
+        .xlim(-0.5, 10.5)
+        .ylim(0.0, 28.0)
         .scatter(&x_values, &y_values)
         .into_plot()
         .theme(Theme::seaborn());
@@ -212,14 +216,16 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .title("C) Distribution")
         .xlabel("Value Bins")
         .ylabel("Frequency")
+        .ylim(0.0, 550.0)
         .histogram(&distribution, None)
         .into_plot()
         .theme(Theme::seaborn());
 
     let panel_d = Plot::new()
-        .title("D) Statistical Analysis")
-        .xlabel("Groups")
-        .ylabel("Values")
+        .title("D) Distribution Summary")
+        .xlabel("Sample")
+        .ylabel("Measured Value")
+        .ylim(4.5, 11.5)
         .boxplot(&group_data, None)
         .into_plot()
         .theme(Theme::seaborn());
@@ -227,8 +233,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Compose publication figure
     subplots(2, 2, 1600, 1200)?
         .suptitle("Scientific Data Analysis - Multi-Panel Figure")
-        .hspace(0.3)
-        .wspace(0.3)
+        .suptitle_font_size(18.0)
+        .hspace(0.1)
+        .wspace(0.1)
         .subplot(0, 0, panel_a)?
         .subplot(0, 1, panel_b)?
         .subplot(1, 0, panel_c)?
