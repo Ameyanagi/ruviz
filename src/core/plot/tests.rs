@@ -2029,6 +2029,304 @@ fn test_svg_legend_default_font_size_uses_typography_and_dpi() {
     );
 }
 
+fn outside_legend_plot(position: LegendPosition, label: &str) -> Plot {
+    Plot::new()
+        .size_px(640, 480)
+        .legend_position(position)
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
+        .label(label)
+        .end_series()
+}
+
+#[test]
+fn test_plot_preserves_all_outside_legend_positions() {
+    for position in [
+        LegendPosition::OutsideRight,
+        LegendPosition::OutsideLeft,
+        LegendPosition::OutsideUpper,
+        LegendPosition::OutsideLower,
+    ] {
+        let plot = outside_legend_plot(position, "Series");
+        assert_eq!(plot.layout.legend.position, position);
+        assert_eq!(
+            plot.layout
+                .legend
+                .to_legend(plot.display.config.typography.legend_size())
+                .position,
+            position
+        );
+    }
+}
+
+#[test]
+fn test_all_outside_legend_rects_are_reserved_beyond_data_area() {
+    let baseline_plot = Plot::new()
+        .size_px(640, 480)
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
+        .end_series();
+    let baseline = compute_render_layout(&baseline_plot);
+
+    for position in [
+        LegendPosition::OutsideRight,
+        LegendPosition::OutsideLeft,
+        LegendPosition::OutsideUpper,
+        LegendPosition::OutsideLower,
+    ] {
+        let layout = compute_render_layout(&outside_legend_plot(position, "Series"));
+        let legend = layout.legend_rect.expect("outside legend rectangle");
+        assert!(legend.left >= 0.0 && legend.top >= 0.0);
+        assert!(legend.right <= 640.0 && legend.bottom <= 480.0);
+        match position {
+            LegendPosition::OutsideRight => {
+                assert!(legend.left > layout.plot_area.right);
+                assert!(layout.plot_area.right < baseline.plot_area.right);
+            }
+            LegendPosition::OutsideLeft => {
+                assert!(legend.right < layout.plot_area.left);
+                assert!(layout.plot_area.left > baseline.plot_area.left);
+            }
+            LegendPosition::OutsideUpper => {
+                assert!(legend.bottom < layout.plot_area.top);
+                assert!(layout.plot_area.top > baseline.plot_area.top);
+            }
+            LegendPosition::OutsideLower => {
+                assert!(legend.top > layout.plot_area.bottom);
+                assert!(layout.plot_area.bottom < baseline.plot_area.bottom);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn test_outside_side_band_tracks_long_label_measurement() {
+    let short = compute_render_layout(&outside_legend_plot(LegendPosition::OutsideRight, "Short"));
+    let long_label = "A much longer legend label measured by the text engine";
+    let long = compute_render_layout(&outside_legend_plot(
+        LegendPosition::OutsideRight,
+        long_label,
+    ));
+    let short_rect = short.legend_rect.unwrap();
+    let long_rect = long.legend_rect.unwrap();
+
+    assert!(long_rect.width() > short_rect.width() + 100.0);
+    assert!(long.margins.right > short.margins.right + 100.0);
+    assert!(long_rect.right <= 640.0);
+}
+
+#[test]
+fn test_oversized_outside_legend_band_is_capped_and_still_renders() {
+    let huge_label = "This is a valid but extremely long legend label that would otherwise \
+                      consume the entire canvas width when reserved as an outside band";
+    for position in [
+        LegendPosition::OutsideRight,
+        LegendPosition::OutsideLeft,
+        LegendPosition::OutsideUpper,
+        LegendPosition::OutsideLower,
+    ] {
+        let plot = outside_legend_plot(position, huge_label);
+        let layout = compute_render_layout(&plot);
+        assert!(
+            layout.plot_area.right > layout.plot_area.left,
+            "plot area collapsed horizontally for {position:?}"
+        );
+        assert!(
+            layout.plot_area.bottom > layout.plot_area.top,
+            "plot area collapsed vertically for {position:?}"
+        );
+        plot.render()
+            .unwrap_or_else(|e| panic!("raster render failed for {position:?}: {e}"));
+        outside_legend_plot(position, huge_label)
+            .render_to_svg()
+            .unwrap_or_else(|e| panic!("SVG render failed for {position:?}: {e}"));
+    }
+}
+
+#[test]
+fn test_outside_lower_multicolumn_uses_row_count_for_band_height() {
+    let make_plot = |columns| {
+        Plot::new()
+            .size_px(640, 480)
+            .legend_position(LegendPosition::OutsideLower)
+            .legend_columns(columns)
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .label("One")
+            .line(&[0.0, 1.0], &[1.0, 2.0])
+            .label("Two")
+            .line(&[0.0, 1.0], &[2.0, 3.0])
+            .label("Three")
+            .line(&[0.0, 1.0], &[3.0, 4.0])
+            .label("Four")
+            .end_series()
+    };
+    let single_column = compute_render_layout(&make_plot(1));
+    let two_columns = compute_render_layout(&make_plot(2));
+
+    assert!(
+        two_columns.legend_rect.unwrap().height()
+            < single_column.legend_rect.unwrap().height() * 0.7
+    );
+    assert!(two_columns.legend_rect.unwrap().top > two_columns.plot_area.bottom);
+    make_plot(2).render().expect("multi-column raster legend");
+    make_plot(2)
+        .render_to_svg()
+        .expect("multi-column SVG legend");
+}
+
+#[test]
+fn test_explicit_margins_remain_minimums_for_outside_legend() {
+    let mut plot = outside_legend_plot(LegendPosition::OutsideLeft, "Explicit margins");
+    plot.display.config.margins = MarginConfig::fixed(1.1, 0.4, 0.7, 0.9);
+    let layout = compute_render_layout(&plot);
+    let legend = layout.legend_rect.unwrap();
+
+    assert!(layout.margins.left > 110.0);
+    assert!(legend.right < layout.plot_area.left);
+    assert!(legend.left >= 0.0);
+    plot.render().expect("outside legend with fixed margins");
+}
+
+#[test]
+fn test_outside_right_legend_is_additive_with_colorbar_band() {
+    let values = vec![vec![0.0, 0.5], vec![1.0, 1.5]];
+    let base = Plot::new()
+        .size_px(640, 480)
+        .heatmap(
+            &values,
+            Some(
+                crate::plots::heatmap::HeatmapConfig::new()
+                    .colorbar(true)
+                    .colorbar_label("Field"),
+            ),
+        )
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .label("Overlay")
+        .end_series();
+    let colorbar_layout = compute_render_layout(&base);
+    let with_legend = base.legend_position(LegendPosition::OutsideRight);
+    let layout = compute_render_layout(&with_legend);
+    let legend = layout.legend_rect.unwrap();
+
+    assert!(layout.plot_area.right < colorbar_layout.plot_area.right);
+    assert!(legend.left > colorbar_layout.plot_area.right);
+    assert!(legend.right <= 640.0);
+    with_legend
+        .render()
+        .expect("colorbar and outside legend raster");
+    with_legend
+        .render_to_svg()
+        .expect("colorbar and outside legend SVG");
+}
+
+#[test]
+fn test_outside_legend_layout_scales_with_dpi_and_matches_exports() {
+    let low = outside_legend_plot(LegendPosition::OutsideRight, "DPI legend").dpi(100);
+    let high = outside_legend_plot(LegendPosition::OutsideRight, "DPI legend").dpi(200);
+    let low_layout = compute_render_layout(&low);
+    let high_layout = compute_render_layout(&high);
+
+    assert!(
+        high_layout.legend_rect.unwrap().width() > low_layout.legend_rect.unwrap().width() * 1.8
+    );
+    low.render().expect("outside legend PNG");
+    low.render_to_svg().expect("outside legend SVG");
+}
+
+#[test]
+fn test_png_and_svg_resolve_identical_outside_legend_rect() {
+    let plot =
+        outside_legend_plot(LegendPosition::OutsideLower, "Shared rectangle").legend_columns(2);
+    let raster_layout = compute_render_layout(&plot);
+    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+    let content = plot.create_plot_content(y_min, y_max);
+    let mut renderer = crate::render::SkiaRenderer::new(
+        plot.display.dimensions.0,
+        plot.display.dimensions.1,
+        plot.display.theme.clone(),
+    )
+    .unwrap();
+    renderer.set_render_scale(plot.render_scale());
+    renderer.set_text_engine_mode(plot.display.text_engine);
+    let x_layout = crate::axes::TickLayout::compute(
+        x_min,
+        x_max,
+        0.0,
+        1.0,
+        &plot.layout.x_scale,
+        plot.layout.tick_config.major_ticks_x,
+    );
+    let y_layout = crate::axes::TickLayout::compute_y_axis(
+        y_min,
+        y_max,
+        0.0,
+        1.0,
+        &plot.layout.y_scale,
+        plot.layout.tick_config.major_ticks_y,
+    );
+    let measurements = plot
+        .measure_layout_text_with_ticks(
+            &renderer,
+            &content,
+            plot.display.config.figure.dpi,
+            &x_layout.labels,
+            &y_layout.labels,
+        )
+        .unwrap();
+    let svg_layout = plot.compute_layout_from_measurements(
+        plot.display.dimensions,
+        &content,
+        plot.display.config.figure.dpi,
+        measurements.as_ref(),
+    );
+
+    assert_eq!(raster_layout.legend_rect, svg_layout.legend_rect);
+    assert_eq!(raster_layout.plot_area, svg_layout.plot_area);
+    plot.render().unwrap();
+    plot.render_to_svg().unwrap();
+}
+
+#[test]
+fn test_legacy_position_api_keeps_inside_layout_behavior() {
+    let legacy = Plot::new()
+        .size_px(640, 480)
+        .legend(Position::TopRight)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .label("Legacy")
+        .end_series();
+    let modern = Plot::new()
+        .size_px(640, 480)
+        .legend_position(LegendPosition::UpperRight)
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .label("Legacy")
+        .end_series();
+
+    assert_eq!(legacy.layout.legend.position, LegendPosition::UpperRight);
+    assert_eq!(
+        compute_render_layout(&legacy),
+        compute_render_layout(&modern)
+    );
+    assert!(compute_render_layout(&legacy).legend_rect.is_none());
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn test_parallel_render_honors_resolved_outside_legend_rect() {
+    let x: Vec<f64> = (0..25_000).map(|index| index as f64 / 250.0).collect();
+    let y: Vec<f64> = x.iter().map(|value| value.sin()).collect();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .with_parallel(None)
+        .legend_position(LegendPosition::OutsideRight)
+        .scatter(&x, &y)
+        .label("Parallel samples")
+        .end_series();
+
+    let layout = compute_render_layout(&plot);
+    assert!(layout.legend_rect.unwrap().left > layout.plot_area.right);
+    plot.render_with_parallel()
+        .expect("parallel outside legend should render");
+}
+
 #[cfg(feature = "parallel")]
 #[test]
 fn test_parallel_render_draws_enabled_legend() {

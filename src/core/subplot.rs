@@ -973,6 +973,30 @@ mod tests {
     }
 
     #[test]
+    fn test_subplot_renders_child_outside_legend_inside_cell() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("outside-child.png");
+        let plot: Plot = Plot::new()
+            .legend_position(crate::core::LegendPosition::OutsideLower)
+            .legend_columns(2)
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .label("Alpha")
+            .line(&[0.0, 1.0], &[1.0, 0.0])
+            .label("Beta")
+            .into();
+
+        subplots(1, 1, 500, 350)
+            .unwrap()
+            .subplot_at(0, plot)
+            .unwrap()
+            .save(&path)
+            .expect("outside child legend should render inside its subplot cell");
+
+        let image = image::open(path).unwrap().to_rgba8();
+        assert_eq!(image.dimensions(), (500, 350));
+    }
+
+    #[test]
     fn test_subplot_save_with_dpi_scales_canvas_and_composition() {
         fn ink_bounds(image: &image::RgbaImage) -> (u32, u32, u32, u32) {
             let mut bounds = (image.width(), image.height(), 0, 0);

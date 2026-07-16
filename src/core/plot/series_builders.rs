@@ -847,7 +847,7 @@ impl PlotSeriesBuilder {
     /// Configure legend with position
     pub fn legend(mut self, position: Position) -> Self {
         self.plot.layout.legend.enabled = true;
-        self.plot.layout.legend.position = position;
+        self.plot.layout.legend.position = LegendPosition::from_position(position);
         self
     }
 

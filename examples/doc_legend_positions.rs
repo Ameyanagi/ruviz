@@ -9,55 +9,37 @@ fn main() -> Result<()> {
     let y_sin: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
     let y_cos: Vec<f64> = x.iter().map(|&v| v.cos()).collect();
 
-    // Show 4 key legend positions with multiple series
-    let plot_ul = Plot::new()
-        .title("UpperLeft")
-        .legend_position(LegendPosition::UpperLeft)
-        .line(&x, &y_sin)
-        .label("sin(x)")
-        .color(Color::from_palette(0))
-        .line(&x, &y_cos)
-        .label("cos(x)")
-        .color(Color::from_palette(1));
+    let positions = [
+        ("UpperLeft", LegendPosition::UpperLeft),
+        ("UpperRight", LegendPosition::UpperRight),
+        ("LowerLeft", LegendPosition::LowerLeft),
+        ("LowerRight", LegendPosition::LowerRight),
+        ("OutsideLeft", LegendPosition::OutsideLeft),
+        ("OutsideRight", LegendPosition::OutsideRight),
+        ("OutsideUpper", LegendPosition::OutsideUpper),
+        ("OutsideLower", LegendPosition::OutsideLower),
+    ];
+    let plots: Vec<Plot> = positions
+        .into_iter()
+        .map(|(title, position)| {
+            Plot::new()
+                .title(title)
+                .legend_position(position)
+                .line(&x, &y_sin)
+                .label("sin(x)")
+                .color(Color::from_palette(0))
+                .line(&x, &y_cos)
+                .label("cos(x)")
+                .color(Color::from_palette(1))
+                .into()
+        })
+        .collect();
 
-    let plot_ur = Plot::new()
-        .title("UpperRight")
-        .legend_position(LegendPosition::UpperRight)
-        .line(&x, &y_sin)
-        .label("sin(x)")
-        .color(Color::from_palette(0))
-        .line(&x, &y_cos)
-        .label("cos(x)")
-        .color(Color::from_palette(1));
-
-    let plot_ll = Plot::new()
-        .title("LowerLeft")
-        .legend_position(LegendPosition::LowerLeft)
-        .line(&x, &y_sin)
-        .label("sin(x)")
-        .color(Color::from_palette(0))
-        .line(&x, &y_cos)
-        .label("cos(x)")
-        .color(Color::from_palette(1));
-
-    let plot_lr = Plot::new()
-        .title("LowerRight")
-        .legend_position(LegendPosition::LowerRight)
-        .line(&x, &y_sin)
-        .label("sin(x)")
-        .color(Color::from_palette(0))
-        .line(&x, &y_cos)
-        .label("cos(x)")
-        .color(Color::from_palette(1));
-
-    // Create a 2x2 subplot figure
-    subplots(2, 2, 800, 600)?
-        .suptitle("Legend Positions")
-        .subplot_at(0, plot_ul.into())?
-        .subplot_at(1, plot_ur.into())?
-        .subplot_at(2, plot_ll.into())?
-        .subplot_at(3, plot_lr.into())?
-        .save("docs/assets/rustdoc/legend_positions.png")?;
+    let mut figure = subplots(2, 4, 1200, 600)?.suptitle("Legend Positions");
+    for (index, plot) in plots.into_iter().enumerate() {
+        figure = figure.subplot_at(index, plot)?;
+    }
+    figure.save("docs/assets/rustdoc/legend_positions.png")?;
 
     println!("✓ Generated docs/assets/rustdoc/legend_positions.png");
     Ok(())

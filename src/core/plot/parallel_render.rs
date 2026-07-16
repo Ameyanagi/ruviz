@@ -1330,7 +1330,13 @@ impl Plot {
 
         let legend_items = self.collect_legend_items();
         if !legend_items.is_empty() && frame.style.legend.enabled {
-            renderer.draw_legend_full(&legend_items, &frame.style.legend, plot_area, None)?;
+            renderer.draw_legend_full_resolved(
+                &legend_items,
+                &frame.style.legend,
+                plot_area,
+                None,
+                layout.legend_rect.as_ref().map(|rect| rect.bounds()),
+            )?;
         }
 
         // Record performance statistics

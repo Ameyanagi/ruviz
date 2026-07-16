@@ -1793,6 +1793,17 @@ impl SvgRenderer {
         plot_area: (f32, f32, f32, f32), // (left, top, right, bottom)
         data_bboxes: Option<&[(f32, f32, f32, f32)]>,
     ) -> Result<()> {
+        self.draw_legend_full_resolved(items, legend, plot_area, data_bboxes, None)
+    }
+
+    pub(crate) fn draw_legend_full_resolved(
+        &mut self,
+        items: &[LegendItem],
+        legend: &Legend,
+        plot_area: (f32, f32, f32, f32),
+        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        resolved_rect: Option<(f32, f32, f32, f32)>,
+    ) -> Result<()> {
         if items.is_empty() || !legend.enabled {
             return Ok(());
         }
@@ -1800,7 +1811,7 @@ impl SvgRenderer {
         let legend = legend.scaled_for_render(self.render_scale);
         let legend = &legend;
         let spacing = legend.spacing.to_pixels(legend.font_size);
-        let (legend_width, legend_height, label_width) = match self.text_engine_mode {
+        let (measured_width, measured_height, label_width) = match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let char_width = legend.font_size * 0.6;
                 let (width, height) = legend.calculate_size(items, char_width);
@@ -1830,9 +1841,13 @@ impl SvgRenderer {
                 (width, height, max_label_width)
             }
         };
+        let (legend_width, legend_height) = resolved_rect
+            .map(|(left, top, right, bottom)| (right - left, bottom - top))
+            .unwrap_or((measured_width, measured_height));
 
         // Determine position
-        let position = if matches!(legend.position, LegendPosition::Best) {
+        let position = if resolved_rect.is_none() && matches!(legend.position, LegendPosition::Best)
+        {
             let bboxes = data_bboxes.unwrap_or(&[]);
             if bboxes.len() > 100000 {
                 LegendPosition::UpperRight
@@ -1854,8 +1869,11 @@ impl SvgRenderer {
             ..legend.clone()
         };
 
-        let (legend_x, legend_y) =
-            resolved_legend.calculate_position((legend_width, legend_height), plot_area);
+        let (legend_x, legend_y) = resolved_rect
+            .map(|(left, top, _, _)| (left, top))
+            .unwrap_or_else(|| {
+                resolved_legend.calculate_position((legend_width, legend_height), plot_area)
+            });
 
         // Draw frame
         self.draw_legend_frame(
@@ -1881,7 +1899,20 @@ impl SvgRenderer {
         let items_per_col = items.len().div_ceil(legend.columns);
 
         // Calculate column width
-        let col_width = spacing.handle_length + spacing.handle_text_pad + label_width;
+        let col_width = if resolved_rect.is_some() {
+            (legend_width
+                - spacing.border_pad * 2.0
+                - legend.columns.saturating_sub(1) as f32 * spacing.column_spacing)
+                / legend.columns.max(1) as f32
+        } else {
+            spacing.handle_length + spacing.handle_text_pad + label_width
+        };
+
+        // When drawing into a resolved (possibly capped) rectangle, clip rows
+        // that would extend past the frame instead of overwriting the plot.
+        let max_row_y = resolved_rect
+            .map(|(_, _, _, bottom)| bottom - spacing.border_pad)
+            .unwrap_or(f32::INFINITY);
 
         // Draw items column by column
         for col in 0..legend.columns {
@@ -1891,6 +1922,9 @@ impl SvgRenderer {
             for row in 0..items_per_col {
                 let idx = col * items_per_col + row;
                 if idx >= items.len() {
+                    break;
+                }
+                if row_y > max_row_y {
                     break;
                 }
 

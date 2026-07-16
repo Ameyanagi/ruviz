@@ -5,7 +5,7 @@
 //! tick marks, margins, and axis settings.
 
 use crate::axes::AxisScale;
-use crate::core::{GridStyle, Position};
+use crate::core::{GridStyle, LegendPosition, Position};
 
 use super::{LegendConfig, TickConfig};
 
@@ -86,11 +86,37 @@ impl LayoutManager {
 
     /// Set legend position
     pub fn set_legend_position(&mut self, position: Position) {
-        self.legend.position = position;
+        self.legend.position = LegendPosition::from_position(position);
     }
 
     /// Get legend position
     pub fn legend_position(&self) -> Position {
+        match self.legend.position {
+            LegendPosition::Best => Position::Best,
+            LegendPosition::UpperRight | LegendPosition::Right => Position::TopRight,
+            LegendPosition::UpperLeft => Position::TopLeft,
+            LegendPosition::LowerLeft => Position::BottomLeft,
+            LegendPosition::LowerRight => Position::BottomRight,
+            LegendPosition::CenterLeft => Position::CenterLeft,
+            LegendPosition::CenterRight => Position::CenterRight,
+            LegendPosition::LowerCenter => Position::BottomCenter,
+            LegendPosition::UpperCenter => Position::TopCenter,
+            LegendPosition::Center => Position::Center,
+            LegendPosition::Custom { x, y, .. } => Position::Custom { x, y },
+            LegendPosition::OutsideRight
+            | LegendPosition::OutsideLeft
+            | LegendPosition::OutsideUpper
+            | LegendPosition::OutsideLower => Position::TopRight,
+        }
+    }
+
+    /// Set the full legend position, including outside variants.
+    pub fn set_legend_position_full(&mut self, position: LegendPosition) {
+        self.legend.position = position;
+    }
+
+    /// Get the full legend position without converting through the legacy type.
+    pub fn legend_position_full(&self) -> LegendPosition {
         self.legend.position
     }
 
@@ -229,6 +255,24 @@ mod tests {
         assert!(layout.legend_enabled());
         assert_eq!(layout.legend_position(), Position::BottomLeft);
         assert_eq!(layout.legend.font_size, Some(12.0));
+    }
+
+    #[test]
+    fn test_full_legend_position_preserves_outside_variants() {
+        let mut layout = LayoutManager::new();
+        for position in [
+            LegendPosition::OutsideRight,
+            LegendPosition::OutsideLeft,
+            LegendPosition::OutsideUpper,
+            LegendPosition::OutsideLower,
+        ] {
+            layout.set_legend_position_full(position);
+            assert_eq!(layout.legend_position_full(), position);
+        }
+
+        layout.set_legend_position(Position::BottomCenter);
+        assert_eq!(layout.legend_position(), Position::BottomCenter);
+        assert_eq!(layout.legend_position_full(), LegendPosition::LowerCenter);
     }
 
     #[test]

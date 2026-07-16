@@ -7,7 +7,7 @@ impl Plot {
     /// For automatic positioning (like matplotlib's `plt.legend()`), use `legend_best()`.
     pub fn legend(mut self, position: Position) -> Self {
         self.layout.legend.enabled = true;
-        self.layout.legend.position = position;
+        self.layout.legend.position = LegendPosition::from_position(position);
         self
     }
 
@@ -39,24 +39,7 @@ impl Plot {
     /// ![Legend example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/legend.png)
     pub fn legend_position(mut self, position: LegendPosition) -> Self {
         self.layout.legend.enabled = true;
-        // Convert LegendPosition to old Position for backward compatibility
-        self.layout.legend.position = match position {
-            LegendPosition::UpperRight | LegendPosition::Right => Position::TopRight,
-            LegendPosition::UpperLeft => Position::TopLeft,
-            LegendPosition::LowerLeft => Position::BottomLeft,
-            LegendPosition::LowerRight => Position::BottomRight,
-            LegendPosition::CenterLeft => Position::CenterLeft,
-            LegendPosition::CenterRight => Position::CenterRight,
-            LegendPosition::LowerCenter => Position::BottomCenter,
-            LegendPosition::UpperCenter => Position::TopCenter,
-            LegendPosition::Center => Position::Center,
-            LegendPosition::Best => Position::Best,
-            LegendPosition::OutsideRight
-            | LegendPosition::OutsideLeft
-            | LegendPosition::OutsideUpper
-            | LegendPosition::OutsideLower => Position::TopRight,
-            LegendPosition::Custom { x, y, .. } => Position::Custom { x, y },
-        };
+        self.layout.legend.position = position;
         self
     }
 
@@ -88,7 +71,7 @@ impl Plot {
     /// ```
     pub fn legend_best(mut self) -> Self {
         self.layout.legend.enabled = true;
-        self.layout.legend.position = Position::Best;
+        self.layout.legend.position = LegendPosition::Best;
         self
     }
 

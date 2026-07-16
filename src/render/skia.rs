@@ -2746,6 +2746,17 @@ impl SkiaRenderer {
         plot_area: Rect,
         data_bboxes: Option<&[(f32, f32, f32, f32)]>,
     ) -> Result<()> {
+        self.draw_legend_full_resolved(items, legend, plot_area, data_bboxes, None)
+    }
+
+    pub(crate) fn draw_legend_full_resolved(
+        &mut self,
+        items: &[LegendItem],
+        legend: &Legend,
+        plot_area: Rect,
+        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        resolved_rect: Option<(f32, f32, f32, f32)>,
+    ) -> Result<()> {
         if items.is_empty() || !legend.enabled {
             return Ok(());
         }
@@ -2758,8 +2769,9 @@ impl SkiaRenderer {
         let char_width = legend.font_size * 0.6;
 
         // Calculate legend size
-        let (legend_width, legend_height) =
-            self.calculate_legend_dimensions(items, legend, char_width);
+        let (legend_width, legend_height) = resolved_rect
+            .map(|(left, top, right, bottom)| (right - left, bottom - top))
+            .unwrap_or_else(|| self.calculate_legend_dimensions(items, legend, char_width));
 
         // Determine position
         let plot_bounds = (
@@ -2769,7 +2781,8 @@ impl SkiaRenderer {
             plot_area.bottom(),
         );
 
-        let position = if matches!(legend.position, LegendPosition::Best) {
+        let position = if resolved_rect.is_none() && matches!(legend.position, LegendPosition::Best)
+        {
             // Use best position algorithm
             let bboxes = data_bboxes.unwrap_or(&[]);
             if bboxes.iter().map(|b| 1).sum::<usize>() > 100000 {
@@ -2794,8 +2807,11 @@ impl SkiaRenderer {
             ..legend.clone()
         };
 
-        let (legend_x, legend_y) =
-            resolved_legend.calculate_position((legend_width, legend_height), plot_bounds);
+        let (legend_x, legend_y) = resolved_rect
+            .map(|(left, top, _, _)| (left, top))
+            .unwrap_or_else(|| {
+                resolved_legend.calculate_position((legend_width, legend_height), plot_bounds)
+            });
 
         // Draw frame
         self.draw_legend_frame(
@@ -2821,9 +2837,21 @@ impl SkiaRenderer {
         let items_per_col = items.len().div_ceil(legend.columns);
 
         // Calculate column width
-        let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
-        let label_width = max_label_len as f32 * char_width;
-        let col_width = spacing.handle_length + spacing.handle_text_pad + label_width;
+        let col_width = if resolved_rect.is_some() {
+            (legend_width
+                - spacing.border_pad * 2.0
+                - legend.columns.saturating_sub(1) as f32 * spacing.column_spacing)
+                / legend.columns.max(1) as f32
+        } else {
+            let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
+            spacing.handle_length + spacing.handle_text_pad + max_label_len as f32 * char_width
+        };
+
+        // When drawing into a resolved (possibly capped) rectangle, clip rows
+        // that would extend past the frame instead of overwriting the plot.
+        let max_row_y = resolved_rect
+            .map(|(_, _, _, bottom)| bottom - spacing.border_pad)
+            .unwrap_or(f32::INFINITY);
 
         // Draw items column by column
         for col in 0..legend.columns {
@@ -2833,6 +2861,9 @@ impl SkiaRenderer {
             for row in 0..items_per_col {
                 let idx = col * items_per_col + row;
                 if idx >= items.len() {
+                    break;
+                }
+                if row_y > max_row_y {
                     break;
                 }
 
