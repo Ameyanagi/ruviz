@@ -1394,6 +1394,22 @@ mod platform_impl {
         }
 
         #[test]
+        fn test_builder_when_coexists_with_gpui_fluent_builder() {
+            // Both preludes export a `.when(...)` extension; ruviz's BuilderWhen
+            // is implemented only for ruviz builder families so neither call is
+            // ambiguous when both preludes are glob-imported.
+            use gpui::prelude::*;
+            use ruviz::prelude::*;
+
+            let _plot: Plot = Plot::new()
+                .when(true, |plot| plot.title("conditional"))
+                .line(&[0.0, 1.0], &[0.0, 1.0])
+                .when(true, |builder| builder.label("series"))
+                .into();
+            let _element = gpui::div().when(true, |div| div.flex());
+        }
+
+        #[test]
         fn test_rgba_to_bgra_conversion() {
             let mut pixels = vec![1, 2, 3, 255, 10, 20, 30, 128];
             rgba_to_bgra_in_place(&mut pixels);

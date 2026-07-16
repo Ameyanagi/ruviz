@@ -500,7 +500,7 @@ mod series_manager;
 mod tests;
 mod types;
 
-pub use builder::{IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
+pub use builder::{BuilderWhen, IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
 pub use config::{
     BackendFallbackReason, BackendOperation, BackendResolution, BackendType, GridMode,
     TickDirection, TickSides,

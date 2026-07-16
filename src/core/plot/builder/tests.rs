@@ -9,6 +9,36 @@ struct TestConfig {
 impl crate::plots::PlotConfig for TestConfig {}
 
 #[test]
+fn builder_when_applies_true_branch() {
+    let builder = PlotBuilder::new(
+        super::super::Plot::new(),
+        PlotInput::Single(vec![1.0, 2.0, 3.0]),
+        TestConfig::default(),
+    )
+    .when(true, |builder| builder.label("conditional"));
+
+    assert_eq!(builder.style.label.as_deref(), Some("conditional"));
+}
+
+#[test]
+fn builder_when_skips_false_branch_and_preserves_builder() {
+    let mut closure_invoked = false;
+    let builder = PlotBuilder::new(
+        super::super::Plot::new(),
+        PlotInput::Single(vec![1.0, 2.0, 3.0]),
+        TestConfig::default(),
+    )
+    .label("original")
+    .when(false, |builder| {
+        closure_invoked = true;
+        builder.label("changed")
+    });
+
+    assert!(!closure_invoked);
+    assert_eq!(builder.style.label.as_deref(), Some("original"));
+}
+
+#[test]
 fn test_plot_builder_creation() {
     let plot = super::super::Plot::new();
     let input = PlotInput::Single(vec![1.0, 2.0, 3.0]);
