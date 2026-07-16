@@ -1,5 +1,47 @@
-use ruviz::core::{BackendFallbackReason, BackendOperation};
+use ruviz::core::{
+    BackendFallbackReason, BackendOperation, ComputedMarginsPixels, LayoutRect, MeasuredDimensions,
+    PlotLayout, TextPosition,
+};
 use ruviz::prelude::*;
+
+#[test]
+fn layout_structs_support_exhaustive_external_construction() {
+    let plot_area = LayoutRect {
+        left: 10.0,
+        top: 20.0,
+        right: 310.0,
+        bottom: 220.0,
+    };
+    let layout = PlotLayout {
+        plot_area,
+        title_pos: Some(TextPosition {
+            x: 160.0,
+            y: 5.0,
+            size: 18.0,
+        }),
+        xlabel_pos: None,
+        ylabel_pos: None,
+        xtick_baseline_y: 225.0,
+        ytick_right_x: 5.0,
+        margins: ComputedMarginsPixels {
+            left: 10.0,
+            right: 10.0,
+            top: 20.0,
+            bottom: 20.0,
+        },
+    };
+    let measured = MeasuredDimensions {
+        title: Some((100.0, 20.0)),
+        xlabel: None,
+        ylabel: None,
+        xtick: Some((30.0, 12.0)),
+        ytick: Some((24.0, 12.0)),
+        right_margin: Some(10.0),
+    };
+
+    assert_eq!(layout.plot_area, plot_area);
+    assert_eq!(measured.title, Some((100.0, 20.0)));
+}
 
 #[test]
 fn builder_when_compiles_across_public_builder_families() {

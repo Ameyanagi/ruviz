@@ -628,7 +628,7 @@ fn compute_render_plot_area(plot: &Plot) -> tiny_skia::Rect {
     Plot::plot_area_from_layout(&layout).expect("valid plot area")
 }
 
-fn compute_render_layout(plot: &Plot) -> PlotLayout {
+fn compute_render_layout(plot: &Plot) -> ResolvedLayout {
     let (x_min, x_max, y_min, y_max) = plot
         .calculate_data_bounds()
         .expect("data bounds should be available");
@@ -708,7 +708,7 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
     (top_probe, right_probe)
 }
 
-fn compute_layout_without_tick_measurements(plot: &Plot) -> PlotLayout {
+fn compute_layout_without_tick_measurements(plot: &Plot) -> ResolvedLayout {
     let (x_min, x_max, y_min, y_max) = plot
         .calculate_data_bounds()
         .expect("data bounds should be available");
@@ -2981,9 +2981,9 @@ fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
         measured_dimensions.as_ref(),
     );
 
-    let title_pos = layout.title_pos.expect("title position");
-    let xlabel_pos = layout.xlabel_pos.expect("xlabel position");
-    let ylabel_pos = layout.ylabel_pos.expect("ylabel position");
+    let title_pos = layout.title_pos.as_ref().expect("title position");
+    let xlabel_pos = layout.xlabel_pos.as_ref().expect("xlabel position");
+    let ylabel_pos = layout.ylabel_pos.as_ref().expect("ylabel position");
     let text_renderer = TextRenderer::new();
     let title_metrics = text_renderer
         .measure_text_placement(
@@ -3338,9 +3338,9 @@ fn test_render_to_svg_typst_uses_layout_anchor_contract() {
         measured_dimensions.as_ref(),
     );
 
-    let title_pos = layout.title_pos.expect("title position");
-    let xlabel_pos = layout.xlabel_pos.expect("xlabel position");
-    let ylabel_pos = layout.ylabel_pos.expect("ylabel position");
+    let title_pos = layout.title_pos.as_ref().expect("title position");
+    let xlabel_pos = layout.xlabel_pos.as_ref().expect("xlabel position");
+    let ylabel_pos = layout.ylabel_pos.as_ref().expect("ylabel position");
 
     let typst_groups = extract_typst_group_boxes(&svg);
     assert!(

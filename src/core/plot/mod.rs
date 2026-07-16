@@ -524,10 +524,11 @@ pub use types::{InsetAnchor, InsetLayout, Plot};
 use crate::{
     axes::AxisScale,
     core::{
-        Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig, Legend,
-        LegendItem, LegendItemType, LegendPosition, MarginConfig, MeasuredDimensions, PlotConfig,
-        PlotContent, PlotLayout, PlotStyle, PlottingError, Position, REFERENCE_DPI, RenderScale,
-        Result, ShapeStyle, StyleResolver, TextStyle, pt_to_px,
+        Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig,
+        LayoutMeasurements, Legend, LegendItem, LegendItemType, LegendPosition, MarginConfig,
+        MeasuredDimensions, PlotConfig, PlotContent, PlotLayout, PlotStyle, PlottingError,
+        Position, REFERENCE_DPI, RenderScale, ResolvedLayout, Result, ShapeStyle, StyleResolver,
+        TextStyle, pt_to_px,
     },
     data::{
         Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,

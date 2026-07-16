@@ -1280,14 +1280,14 @@ impl Plot {
         renderer: &SkiaRenderer,
         content: &PlotContent,
         dpi: f32,
-    ) -> Result<Option<MeasuredDimensions>> {
+    ) -> Result<Option<LayoutMeasurements>> {
         let render_scale = RenderScale::new(dpi);
         let title_size_px =
             render_scale.points_to_pixels(self.display.config.typography.title_size());
         let label_size_px =
             render_scale.points_to_pixels(self.display.config.typography.label_size());
 
-        let mut measurements = MeasuredDimensions::default();
+        let mut measurements = LayoutMeasurements::default();
 
         if let Some(title) = content.title.as_deref() {
             measurements.title = Some(renderer.measure_text_with_weight(
@@ -1313,7 +1313,7 @@ impl Plot {
         dpi: f32,
         x_tick_labels: &[String],
         y_tick_labels: &[String],
-    ) -> Result<Option<MeasuredDimensions>> {
+    ) -> Result<Option<LayoutMeasurements>> {
         let tick_size_px =
             RenderScale::new(dpi).points_to_pixels(self.display.config.typography.tick_size());
         let mut measurements = self
@@ -1381,8 +1381,9 @@ impl Plot {
         canvas_size: (u32, u32),
         content: &PlotContent,
         dpi: f32,
-        measurements: Option<&MeasuredDimensions>,
-    ) -> PlotLayout {
+        measurements: Option<&LayoutMeasurements>,
+    ) -> ResolvedLayout {
+        let measured_dimensions = measurements.map(|m| &m.dimensions);
         let layout = match &self.display.config.margins {
             MarginConfig::ContentDriven {
                 edge_buffer,
@@ -1398,24 +1399,35 @@ impl Plot {
                 &self.display.config.typography,
                 &self.display.config.spacing,
                 dpi,
-                measurements,
+                measured_dimensions,
             ),
             MarginConfig::Fixed { .. }
             | MarginConfig::Auto { .. }
-            | MarginConfig::Proportional { .. } => {
-                self.compute_layout_with_explicit_margins(canvas_size, content, dpi, measurements)
-            }
+            | MarginConfig::Proportional { .. } => self.compute_layout_with_explicit_margins(
+                canvas_size,
+                content,
+                dpi,
+                measured_dimensions,
+            ),
         };
-        self.reserve_outside_legend(layout, canvas_size, dpi, measurements)
+        self.reserve_outside_legend(
+            ResolvedLayout {
+                layout,
+                legend_rect: None,
+            },
+            canvas_size,
+            dpi,
+            measurements,
+        )
     }
 
     fn reserve_outside_legend(
         &self,
-        mut layout: PlotLayout,
+        mut layout: ResolvedLayout,
         canvas_size: (u32, u32),
         dpi: f32,
-        measurements: Option<&MeasuredDimensions>,
-    ) -> PlotLayout {
+        measurements: Option<&LayoutMeasurements>,
+    ) -> ResolvedLayout {
         let Some((legend_width, legend_height)) = measurements.and_then(|m| m.legend) else {
             return layout;
         };
@@ -1656,7 +1668,6 @@ impl Plot {
 
         PlotLayout {
             plot_area,
-            legend_rect: None,
             title_pos: content
                 .title
                 .as_ref()
@@ -1733,7 +1744,7 @@ impl Plot {
         x_max: f64,
         y_min: f64,
         y_max: f64,
-    ) -> Result<(PlotLayout, Vec<f64>, Vec<f64>)> {
+    ) -> Result<(ResolvedLayout, Vec<f64>, Vec<f64>)> {
         if !content.show_tick_labels {
             let measurements =
                 self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
