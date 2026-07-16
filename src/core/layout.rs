@@ -15,6 +15,7 @@
 //! 4. **Center the plot** - Distribute extra space symmetrically
 
 use crate::core::{RenderScale, SpacingConfig, TypographyConfig};
+use std::ops::{Deref, DerefMut};
 
 // =============================================================================
 // Data Structures
@@ -76,9 +77,6 @@ impl LayoutRect {
 pub struct PlotLayout {
     /// The plotting area where data is drawn
     pub plot_area: LayoutRect,
-
-    /// Pre-measured and resolved legend bounds for an outside legend.
-    pub(crate) legend_rect: Option<LayoutRect>,
 
     /// Title position (top center point), None if no title
     pub title_pos: Option<TextPosition>,
@@ -179,7 +177,48 @@ pub struct MeasuredDimensions {
     pub xtick: Option<(f32, f32)>,
     pub ytick: Option<(f32, f32)>,
     pub right_margin: Option<f32>,
+}
+
+/// Crate-internal measurements used while resolving a complete render layout.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct LayoutMeasurements {
+    pub(crate) dimensions: MeasuredDimensions,
     pub(crate) legend: Option<(f32, f32)>,
+}
+
+impl Deref for LayoutMeasurements {
+    type Target = MeasuredDimensions;
+
+    fn deref(&self) -> &Self::Target {
+        &self.dimensions
+    }
+}
+
+impl DerefMut for LayoutMeasurements {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.dimensions
+    }
+}
+
+/// Crate-internal composition of the public layout and outside-legend state.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResolvedLayout {
+    pub(crate) layout: PlotLayout,
+    pub(crate) legend_rect: Option<LayoutRect>,
+}
+
+impl Deref for ResolvedLayout {
+    type Target = PlotLayout;
+
+    fn deref(&self) -> &Self::Target {
+        &self.layout
+    }
+}
+
+impl DerefMut for ResolvedLayout {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.layout
+    }
 }
 
 // =============================================================================
@@ -400,7 +439,6 @@ impl LayoutCalculator {
 
         PlotLayout {
             plot_area,
-            legend_rect: None,
             title_pos,
             xlabel_pos,
             ylabel_pos,
@@ -564,7 +602,6 @@ mod tests {
             xtick: None,
             ytick: None,
             right_margin: None,
-            legend: None,
         };
         let measured = calculator.compute(
             (640, 480),
