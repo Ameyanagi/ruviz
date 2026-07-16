@@ -568,7 +568,13 @@ impl Plot {
 
         let legend_items = self.collect_legend_items();
         if !legend_items.is_empty() && frame.style.legend.enabled {
-            renderer.draw_legend_full(&legend_items, &frame.style.legend, plot_area, None)?;
+            renderer.draw_legend_full_resolved(
+                &legend_items,
+                &frame.style.legend,
+                plot_area,
+                None,
+                layout.legend_rect.as_ref().map(|rect| rect.bounds()),
+            )?;
         }
 
         let diagnostics = renderer.render_diagnostics().clone();
@@ -1323,8 +1329,51 @@ impl Plot {
         if let Some(spec) = self.colorbar_measurement_spec() {
             measurements.right_margin = Some(self.measure_colorbar_right_margin(renderer, &spec)?);
         }
+        let legend = self
+            .layout
+            .legend
+            .to_legend(self.display.config.typography.legend_size());
+        let legend_items = self.collect_legend_items();
+        if legend.enabled && legend.position.is_outside() && !legend_items.is_empty() {
+            measurements.legend = Some(Self::measure_legend(renderer, &legend, &legend_items)?);
+        }
 
         Ok(Some(measurements))
+    }
+
+    fn measure_legend(
+        renderer: &SkiaRenderer,
+        legend: &Legend,
+        items: &[LegendItem],
+    ) -> Result<(f32, f32)> {
+        let legend = legend.scaled_for_render(renderer.render_scale());
+        let spacing = legend.spacing.to_pixels(legend.font_size);
+        let mut max_label_width = 0.0_f32;
+        for item in items {
+            max_label_width = max_label_width.max(
+                renderer
+                    .measure_label_text(&item.label, legend.font_size)?
+                    .0,
+            );
+        }
+        let columns = legend.columns.max(1);
+        let rows = items.len().div_ceil(columns);
+        let item_width = spacing.handle_length + spacing.handle_text_pad + max_label_width;
+        let content_width =
+            item_width * columns as f32 + columns.saturating_sub(1) as f32 * spacing.column_spacing;
+        let content_height =
+            rows as f32 * legend.font_size + rows.saturating_sub(1) as f32 * spacing.label_spacing;
+        let title_size = if let Some(title) = legend.title.as_deref() {
+            let title_width = renderer.measure_label_text(title, legend.font_size)?.0;
+            (title_width, legend.font_size + spacing.label_spacing)
+        } else {
+            (0.0, 0.0)
+        };
+
+        Ok((
+            content_width.max(title_size.0) + spacing.border_pad * 2.0,
+            content_height + title_size.1 + spacing.border_pad * 2.0,
+        ))
     }
 
     pub(super) fn compute_layout_from_measurements(
@@ -1334,7 +1383,7 @@ impl Plot {
         dpi: f32,
         measurements: Option<&MeasuredDimensions>,
     ) -> PlotLayout {
-        match &self.display.config.margins {
+        let layout = match &self.display.config.margins {
             MarginConfig::ContentDriven {
                 edge_buffer,
                 center_plot,
@@ -1356,7 +1405,145 @@ impl Plot {
             | MarginConfig::Proportional { .. } => {
                 self.compute_layout_with_explicit_margins(canvas_size, content, dpi, measurements)
             }
+        };
+        self.reserve_outside_legend(layout, canvas_size, dpi, measurements)
+    }
+
+    fn reserve_outside_legend(
+        &self,
+        mut layout: PlotLayout,
+        canvas_size: (u32, u32),
+        dpi: f32,
+        measurements: Option<&MeasuredDimensions>,
+    ) -> PlotLayout {
+        let Some((legend_width, legend_height)) = measurements.and_then(|m| m.legend) else {
+            return layout;
+        };
+        let position = self.layout.legend.position;
+        if !position.is_outside() {
+            return layout;
         }
+
+        let legend = self
+            .layout
+            .legend
+            .to_legend(self.display.config.typography.legend_size())
+            .scaled_for_render(RenderScale::from_canvas_size(
+                canvas_size.0,
+                canvas_size.1,
+                dpi,
+            ));
+        let pad = legend.spacing.to_pixels(legend.font_size).border_axes_pad;
+        let canvas_width = canvas_size.0 as f32;
+        let canvas_height = canvas_size.1 as f32;
+
+        // Cap the reserved band so the data rectangle keeps a usable minimum
+        // extent even for very wide labels or many legend rows. When capped,
+        // the legend frame shrinks and its content may extend past the canvas
+        // edge, but layout stays valid instead of failing to render.
+        const MIN_PLOT_EXTENT_PX: f32 = 40.0;
+        let max_horizontal_band =
+            (layout.plot_area.right - layout.plot_area.left - MIN_PLOT_EXTENT_PX).max(0.0);
+        let max_vertical_band =
+            (layout.plot_area.bottom - layout.plot_area.top - MIN_PLOT_EXTENT_PX).max(0.0);
+        let horizontal_band = (legend_width + pad * 2.0).min(max_horizontal_band);
+        let vertical_band = (legend_height + pad * 2.0).min(max_vertical_band);
+        let legend_width = match position {
+            LegendPosition::OutsideRight | LegendPosition::OutsideLeft => {
+                (horizontal_band - pad * 2.0).max(0.0)
+            }
+            _ => legend_width.min((canvas_width - pad * 2.0).max(0.0)),
+        };
+        let legend_height = match position {
+            LegendPosition::OutsideUpper | LegendPosition::OutsideLower => {
+                (vertical_band - pad * 2.0).max(0.0)
+            }
+            _ => legend_height.min((canvas_height - pad * 2.0).max(0.0)),
+        };
+
+        match position {
+            LegendPosition::OutsideRight => {
+                layout.plot_area.right -= horizontal_band;
+                layout.margins.right += horizontal_band;
+                let top = layout
+                    .plot_area
+                    .top
+                    .clamp(pad, (canvas_height - legend_height - pad).max(pad));
+                layout.legend_rect = Some(crate::core::layout::LayoutRect {
+                    left: canvas_width - legend_width - pad,
+                    top,
+                    right: canvas_width - pad,
+                    bottom: top + legend_height,
+                });
+            }
+            LegendPosition::OutsideLeft => {
+                layout.plot_area.left += horizontal_band;
+                layout.margins.left += horizontal_band;
+                layout.ytick_right_x += horizontal_band;
+                if let Some(pos) = layout.ylabel_pos.as_mut() {
+                    pos.x += horizontal_band;
+                }
+                let top = layout
+                    .plot_area
+                    .top
+                    .clamp(pad, (canvas_height - legend_height - pad).max(pad));
+                layout.legend_rect = Some(crate::core::layout::LayoutRect {
+                    left: pad,
+                    top,
+                    right: pad + legend_width,
+                    bottom: top + legend_height,
+                });
+            }
+            LegendPosition::OutsideUpper => {
+                layout.plot_area.top += vertical_band;
+                layout.margins.top += vertical_band;
+                if let Some(pos) = layout.title_pos.as_mut() {
+                    pos.y += vertical_band;
+                }
+                if let Some(pos) = layout.ylabel_pos.as_mut() {
+                    pos.y += vertical_band * 0.5;
+                }
+                let left = (layout.plot_area.right - legend_width)
+                    .clamp(pad, (canvas_width - legend_width - pad).max(pad));
+                layout.legend_rect = Some(crate::core::layout::LayoutRect {
+                    left,
+                    top: pad,
+                    right: left + legend_width,
+                    bottom: pad + legend_height,
+                });
+            }
+            LegendPosition::OutsideLower => {
+                layout.plot_area.bottom -= vertical_band;
+                layout.margins.bottom += vertical_band;
+                layout.xtick_baseline_y -= vertical_band;
+                if let Some(pos) = layout.xlabel_pos.as_mut() {
+                    pos.y -= vertical_band;
+                }
+                if let Some(pos) = layout.ylabel_pos.as_mut() {
+                    pos.y -= vertical_band * 0.5;
+                }
+                let left = (layout.plot_area.right - legend_width)
+                    .clamp(pad, (canvas_width - legend_width - pad).max(pad));
+                layout.legend_rect = Some(crate::core::layout::LayoutRect {
+                    left,
+                    top: canvas_height - legend_height - pad,
+                    right: left + legend_width,
+                    bottom: canvas_height - pad,
+                });
+            }
+            _ => {}
+        }
+
+        if position.is_outside() {
+            let center_x = layout.plot_area.center_x();
+            if let Some(pos) = layout.title_pos.as_mut() {
+                pos.x = center_x;
+            }
+            if let Some(pos) = layout.xlabel_pos.as_mut() {
+                pos.x = center_x;
+            }
+        }
+        layout
     }
 
     fn compute_layout_with_explicit_margins(
@@ -1469,6 +1656,7 @@ impl Plot {
 
         PlotLayout {
             plot_area,
+            legend_rect: None,
             title_pos: content
                 .title
                 .as_ref()
@@ -2789,7 +2977,13 @@ impl Plot {
         // Draw legend if we have labeled series and legend is enabled
         if !legend_items.is_empty() && frame.style.legend.enabled {
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
-            svg.draw_legend_full(&legend_items, &frame.style.legend, plot_bounds, None)?;
+            svg.draw_legend_full_resolved(
+                &legend_items,
+                &frame.style.legend,
+                plot_bounds,
+                None,
+                layout.legend_rect.as_ref().map(|rect| rect.bounds()),
+            )?;
         }
 
         Ok(svg.to_svg_string())

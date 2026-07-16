@@ -151,6 +151,38 @@ fn test_render_to_image_preserves_requested_surface_size() {
 }
 
 #[test]
+fn test_interactive_capture_honors_outside_legend_layout() {
+    let plot: Plot = Plot::new()
+        .legend_position(crate::core::LegendPosition::OutsideRight)
+        .line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5])
+        .label("Interactive legend")
+        .into();
+    let session = plot.clone().prepare_interactive();
+    let frame = session
+        .render_to_image(ImageTarget {
+            size_px: (640, 480),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .expect("interactive outside legend capture");
+    let snapshot = session.viewport_snapshot().unwrap();
+
+    let plain: Plot = Plot::new().line(&[0.0, 1.0, 2.0], &[0.0, 1.0, 0.5]).into();
+    let plain_session = plain.prepare_interactive();
+    plain_session
+        .render_to_image(ImageTarget {
+            size_px: (640, 480),
+            scale_factor: 1.0,
+            time_seconds: 0.0,
+        })
+        .unwrap();
+    let plain_snapshot = plain_session.viewport_snapshot().unwrap();
+
+    assert_eq!((frame.image.width, frame.image.height), (640, 480));
+    assert!(snapshot.plot_area.max.x < plain_snapshot.plot_area.max.x);
+}
+
+#[test]
 fn test_render_to_image_uses_fitted_size_when_requested() {
     let plot: Plot = Plot::new()
         .size(4.0, 3.0)

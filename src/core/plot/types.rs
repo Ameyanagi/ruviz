@@ -1435,7 +1435,7 @@ pub(crate) struct LegendConfig {
     /// Whether to show legend
     pub(crate) enabled: bool,
     /// Legend position
-    pub(crate) position: Position,
+    pub(crate) position: LegendPosition,
     /// Font size override in typographic points.
     pub(crate) font_size: Option<f32>,
     /// Corner radius for rounded corners
@@ -1448,7 +1448,7 @@ impl Default for LegendConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            position: Position::TopRight,
+            position: LegendPosition::UpperRight,
             font_size: None,
             corner_radius: None,
             columns: None,
@@ -1461,7 +1461,7 @@ impl LegendConfig {
     pub(super) fn to_legend(&self, default_font_size: f32) -> Legend {
         let mut legend = Legend {
             enabled: self.enabled,
-            position: LegendPosition::from_position(self.position),
+            position: self.position,
             font_size: self.font_size.unwrap_or(default_font_size),
             ..Legend::default()
         };
@@ -1469,7 +1469,7 @@ impl LegendConfig {
             legend.style.corner_radius = radius;
         }
         if let Some(cols) = self.columns {
-            legend.columns = cols;
+            legend.columns = cols.max(1);
         }
         legend
     }
