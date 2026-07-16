@@ -6,6 +6,35 @@ All notable changes to this project will be documented in this file.
 
 _None yet._
 
+## [0.5.0] - 2026-07-17
+
+### Breaking
+
+- `HeatmapConfig` gained the public `origin` field: exhaustive struct literals of `HeatmapConfig` must add it; builder-style construction via `HeatmapConfig::new()` is unaffected.
+- `PlottingError` gained the `InvalidAnnotation` and `UnknownAnnotationId` variants: exhaustive matches must handle them; matches with a `_` arm are unaffected.
+
+### Added
+
+- Added atomic `StreamingXY::replace` for one-call paired data replacement with capacity truncation, a single notification, and full-redraw acknowledgement; empty streams now render safely, including on log axes.
+- Added the `BuilderWhen` trait providing a conditional `.when(condition, |b| ...)` combinator across plot, series, group, subplot, config, theme, and interactive window builders without conflicting with GPUI's `FluentBuilder`.
+- Added configurable heatmap row origin via `HeatmapOrigin::{Upper, Lower}` on `HeatmapConfig`, with consistent rendering, cell bounds, and interactive hit testing, including reversed Y axes.
+- Added movable interactive annotations: session-scoped `AnnotationId` with fallible add/query/update/remove over every `Annotation` variant, scale-aware validation, and overlay-only invalidation that reuses cached base geometry.
+- Added `RuvizPlot::set_plot_keep_view` to the GPUI adapter for replacing a plot while preserving a customized pan/zoom view; plain `set_plot` keeps its documented destructive reset semantics.
+- Added GPUI plot coordinate mapping and pointer events for embedding applications.
+- Added subplot suptitle measurement with a title-size API and clarified spacing semantics.
+- Added a deterministic scientific Unicode light-on-dark text regression test using the repository-owned font.
+- Added deterministic Rust gallery freshness checks: a no-write `generate_gallery --check`, `make rust-gallery`/`check-rust-gallery` targets, byte-identity golden coverage, and a path-scoped CI job.
+
+### Changed
+
+- Outside legend positions (`OutsideRight`, `OutsideLeft`, `OutsideUpper`, `OutsideLower`) are now honored in layout and rendering across PNG, SVG, parallel, interactive, and subplot paths, reserving side bands that account for labels, DPI, margins, and colorbars.
+- Improved subplot gallery content: renamed and clarified example figures, tightened scientific showcase gutters, an English reference panel in the international figure, and repository-relative source links.
+
+### Fixed
+
+- Fixed streaming acknowledgement watermarks being shared across all consumers of a stream: incremental append-only rendering is now gated per consumer, so a second session or a prepared export no longer paints new points onto a stale pre-replacement base.
+- Fixed `PlotLayout` and `MeasuredDimensions` losing external struct-literal constructibility: legend placement state moved to crate-internal composition types, restoring the exact v0.4.20 public field sets, with an external-crate regression test.
+
 ## [0.4.20] - 2026-07-15
 
 ### Added
@@ -477,7 +506,8 @@ _None yet._
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.20...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Ameyanagi/ruviz/compare/v0.4.20...v0.5.0
 [0.4.20]: https://github.com/Ameyanagi/ruviz/compare/v0.4.19...v0.4.20
 [0.4.19]: https://github.com/Ameyanagi/ruviz/compare/v0.4.18...v0.4.19
 [0.4.18]: https://github.com/Ameyanagi/ruviz/compare/v0.4.17...v0.4.18
