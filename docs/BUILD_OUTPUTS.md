@@ -55,6 +55,8 @@ make release-docs
 Supporting targets:
 
 ```sh
+make rust-gallery
+make check-rust-gallery
 make build-generated-preview
 make generated-manifest
 make check-doc-asset-refs
@@ -63,6 +65,10 @@ make release-docs-python
 make release-docs-web
 make clean-generated
 ```
+
+`make rust-gallery` is the canonical Rust gallery refresh: it regenerates the
+upstream rustdoc images first and then synchronizes gallery assets and Markdown.
+Use `make check-rust-gallery` for the non-mutating freshness check used by CI.
 
 ## Legacy Paths
 

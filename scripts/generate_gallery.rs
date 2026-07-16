@@ -8,25 +8,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const GALLERY_DOCS_ROOT: &str = "docs/gallery";
-const GALLERY_ASSETS_ROOT: &str = "docs/assets/gallery/rust";
+pub const GALLERY_DOCS_ROOT: &str = "docs/gallery";
+pub const GALLERY_ASSETS_ROOT: &str = "docs/assets/gallery/rust";
 
 #[derive(Clone, Copy)]
-struct Category {
-    slug: &'static str,
-    title: &'static str,
-    description: &'static str,
-    icon: &'static str,
+pub struct Category {
+    pub slug: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    pub icon: &'static str,
 }
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-struct ExampleRun {
-    name: &'static str,
-    features: Option<&'static str>,
+pub struct ExampleRun {
+    pub name: &'static str,
+    pub features: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]
-enum AssetSource {
+pub enum AssetSource {
     Example {
         run: ExampleRun,
         output_rel: &'static str,
@@ -37,17 +37,17 @@ enum AssetSource {
 }
 
 #[derive(Clone, Copy)]
-struct GalleryEntry {
-    category: &'static str,
-    title: &'static str,
-    summary: &'static str,
-    asset_name: &'static str,
-    source_path: &'static str,
-    guide: Option<(&'static str, &'static str)>,
-    source: AssetSource,
+pub struct GalleryEntry {
+    pub category: &'static str,
+    pub title: &'static str,
+    pub summary: &'static str,
+    pub asset_name: &'static str,
+    pub source_path: &'static str,
+    pub guide: Option<(&'static str, &'static str)>,
+    pub source: AssetSource,
 }
 
-fn categories() -> Vec<Category> {
+pub fn categories() -> Vec<Category> {
     vec![
         Category {
             slug: "basic",
@@ -94,7 +94,7 @@ fn categories() -> Vec<Category> {
     ]
 }
 
-fn entries() -> Vec<GalleryEntry> {
+pub fn entries() -> Vec<GalleryEntry> {
     vec![
         GalleryEntry {
             category: "basic",
@@ -467,6 +467,141 @@ fn repo_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
 
+pub fn gallery_asset_path(repo_root: &Path, entry: &GalleryEntry) -> PathBuf {
+    repo_root
+        .join(GALLERY_ASSETS_ROOT)
+        .join(entry.category)
+        .join(entry.asset_name)
+}
+
+pub fn copy_source_path(repo_root: &Path, entry: &GalleryEntry) -> Option<PathBuf> {
+    match entry.source {
+        AssetSource::Copy { source_rel } => Some(repo_root.join(source_rel)),
+        AssetSource::Example { .. } => None,
+    }
+}
+
+pub fn expected_assets_by_category(entries: &[GalleryEntry]) -> BTreeMap<&str, BTreeSet<&str>> {
+    let mut expected = BTreeMap::new();
+    for entry in entries {
+        expected
+            .entry(entry.category)
+            .or_insert_with(BTreeSet::new)
+            .insert(entry.asset_name);
+    }
+    expected
+}
+
+pub fn validate_catalog(
+    repo_root: &Path,
+    categories: &[Category],
+    entries: &[GalleryEntry],
+) -> Result<(), Vec<String>> {
+    let mut category_slugs = BTreeSet::new();
+    let mut destinations = BTreeSet::new();
+    let mut errors = Vec::new();
+
+    for category in categories {
+        if !category_slugs.insert(category.slug) {
+            errors.push(format!(
+                "duplicate gallery category slug: {}",
+                category.slug
+            ));
+        }
+    }
+
+    for entry in entries {
+        if !category_slugs.contains(entry.category) {
+            errors.push(format!(
+                "catalog entry `{}` references unknown category `{}`",
+                entry.title, entry.category
+            ));
+        }
+        if !destinations.insert((entry.category, entry.asset_name)) {
+            errors.push(format!(
+                "duplicate gallery destination: {}/{}/{}",
+                GALLERY_ASSETS_ROOT, entry.category, entry.asset_name
+            ));
+        }
+
+        let source_path = repo_root.join(entry.source_path);
+        if !source_path.is_file() {
+            errors.push(format!(
+                "catalog source for `{}` does not exist: {}",
+                entry.title,
+                source_path.display()
+            ));
+        }
+
+        if let Some((_, guide_path)) = entry.guide {
+            let resolved = repo_root
+                .join(GALLERY_DOCS_ROOT)
+                .join(entry.category)
+                .join(guide_path);
+            if !resolved.is_file() {
+                errors.push(format!(
+                    "guide target for `{}` does not exist: {}",
+                    entry.title,
+                    resolved.display()
+                ));
+            }
+        }
+
+        if let Some(source_path) = copy_source_path(repo_root, entry) {
+            if !source_path.is_file() {
+                errors.push(format!(
+                    "copy source for `{}` does not exist: {}",
+                    entry.title,
+                    source_path.display()
+                ));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+pub fn unexpected_managed_assets(
+    repo_root: &Path,
+    categories: &[Category],
+    entries: &[GalleryEntry],
+) -> Result<Vec<PathBuf>, String> {
+    let expected = expected_assets_by_category(entries);
+    let mut unexpected = Vec::new();
+
+    for category in categories {
+        let asset_dir = repo_root.join(GALLERY_ASSETS_ROOT).join(category.slug);
+        if !asset_dir.exists() {
+            continue;
+        }
+        let keep = expected.get(category.slug).cloned().unwrap_or_default();
+        for item in fs::read_dir(&asset_dir)
+            .map_err(|err| format!("failed to read {}: {}", asset_dir.display(), err))?
+        {
+            let item =
+                item.map_err(|err| format!("failed to inspect {}: {}", asset_dir.display(), err))?;
+            let path = item.path();
+            let extension = path.extension().and_then(|value| value.to_str());
+            if extension != Some("png") && extension != Some("gif") {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if !keep.contains(name) {
+                unexpected.push(path);
+            }
+        }
+    }
+
+    unexpected.sort();
+    Ok(unexpected)
+}
+
 fn run_examples(entries: &[GalleryEntry]) -> Result<(), String> {
     let mut runs = BTreeSet::new();
     for entry in entries {
@@ -539,14 +674,36 @@ fn sync_assets(entries: &[GalleryEntry]) -> Result<(), String> {
     Ok(())
 }
 
-fn prune_stale_assets(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
-    let mut expected = BTreeMap::new();
+fn sync_copy_assets(entries: &[GalleryEntry]) -> Result<(), String> {
     for entry in entries {
-        expected
-            .entry(entry.category)
-            .or_insert_with(BTreeSet::new)
-            .insert(entry.asset_name);
+        let AssetSource::Copy { source_rel } = entry.source else {
+            continue;
+        };
+        let source = repo_path(source_rel);
+        let dest = gallery_asset_path(Path::new(env!("CARGO_MANIFEST_DIR")), entry);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                format!(
+                    "failed to create gallery asset directory {}: {}",
+                    parent.display(),
+                    err
+                )
+            })?;
+        }
+        fs::copy(&source, &dest).map_err(|err| {
+            format!(
+                "failed to copy gallery asset {} -> {}: {}",
+                source.display(),
+                dest.display(),
+                err
+            )
+        })?;
     }
+    Ok(())
+}
+
+fn prune_stale_assets(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
+    let expected = expected_assets_by_category(entries);
 
     for category in categories {
         let asset_dir = repo_path(GALLERY_ASSETS_ROOT).join(category.slug);
@@ -583,37 +740,47 @@ fn prune_stale_assets(categories: &[Category], entries: &[GalleryEntry]) -> Resu
     Ok(())
 }
 
-fn write_category_pages(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
-    let mut by_category: BTreeMap<&str, Vec<&GalleryEntry>> = BTreeMap::new();
+pub fn render_category_page(category: &Category, entries: &[&GalleryEntry]) -> String {
+    let mut content = String::new();
+    content.push_str(&format!("# {}\n\n", category.title));
+    content.push_str(category.description);
+    content.push_str("\n\n## Examples\n\n");
+
     for entry in entries {
-        by_category.entry(entry.category).or_default().push(entry);
+        content.push_str(&format!("### {}\n\n", entry.title));
+        content.push_str(entry.summary);
+        content.push_str("\n\n");
+        content.push_str(&format!(
+            "![{}](../../assets/gallery/rust/{}/{})\n\n",
+            entry.title, entry.category, entry.asset_name
+        ));
+        content.push_str(&format!(
+            "Source: [{}](../../../{})\n\n",
+            entry.source_path, entry.source_path
+        ));
+        if let Some((label, path)) = entry.guide {
+            content.push_str(&format!("Guide: [{label}]({path})\n\n"));
+        }
     }
 
+    content.push_str("[← Back to Gallery](../README.md)\n");
+    content
+}
+
+pub fn entries_for_category<'a>(
+    entries: &'a [GalleryEntry],
+    category: &str,
+) -> Vec<&'a GalleryEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.category == category)
+        .collect()
+}
+
+fn write_category_pages(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
     for category in categories {
-        let category_entries = by_category.get(category.slug).cloned().unwrap_or_default();
-        let mut content = String::new();
-        content.push_str(&format!("# {}\n\n", category.title));
-        content.push_str(category.description);
-        content.push_str("\n\n## Examples\n\n");
-
-        for entry in category_entries {
-            content.push_str(&format!("### {}\n\n", entry.title));
-            content.push_str(entry.summary);
-            content.push_str("\n\n");
-            content.push_str(&format!(
-                "![{}](../../assets/gallery/rust/{}/{})\n\n",
-                entry.title, entry.category, entry.asset_name
-            ));
-            content.push_str(&format!(
-                "Source: [{}](../../../{})\n\n",
-                entry.source_path, entry.source_path
-            ));
-            if let Some((label, path)) = entry.guide {
-                content.push_str(&format!("Guide: [{label}]({path})\n\n"));
-            }
-        }
-
-        content.push_str("[← Back to Gallery](../README.md)\n");
+        let category_entries = entries_for_category(entries, category.slug);
+        let content = render_category_page(category, &category_entries);
 
         let readme_path = repo_path(GALLERY_DOCS_ROOT)
             .join(category.slug)
@@ -630,7 +797,7 @@ fn write_category_pages(categories: &[Category], entries: &[GalleryEntry]) -> Re
     Ok(())
 }
 
-fn write_gallery_index(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
+pub fn render_gallery_index(categories: &[Category], entries: &[GalleryEntry]) -> String {
     let mut counts = BTreeMap::new();
     for entry in entries {
         *counts.entry(entry.category).or_insert(0usize) += 1;
@@ -660,7 +827,14 @@ fn write_gallery_index(categories: &[Category], entries: &[GalleryEntry]) -> Res
     content.push_str(
         "Gallery assets are generated from `generated/examples/` and `docs/assets/rustdoc/`.\n",
     );
-    content.push_str("Refresh them with:\n\n```bash\ncargo run --bin generate_gallery\n```\n");
+    content
+        .push_str("Refresh them in source-first order with:\n\n```bash\nmake rust-gallery\n```\n");
+
+    content
+}
+
+fn write_gallery_index(categories: &[Category], entries: &[GalleryEntry]) -> Result<(), String> {
+    let content = render_gallery_index(categories, entries);
 
     let index_path = repo_path(GALLERY_DOCS_ROOT).join("README.md");
     fs::write(&index_path, content).map_err(|err| {
@@ -692,10 +866,116 @@ fn ensure_gallery_layout(categories: &[Category]) -> Result<(), String> {
     Ok(())
 }
 
+fn stage_copy_backed_preview(entries: &[GalleryEntry]) -> Result<(), String> {
+    let subplot = entries
+        .iter()
+        .find(|entry| entry.asset_name == "subplots.png")
+        .ok_or_else(|| "catalog is missing the canonical subplot entry".to_string())?;
+    let source = copy_source_path(Path::new(env!("CARGO_MANIFEST_DIR")), subplot)
+        .ok_or_else(|| "canonical subplot entry must be Copy-backed".to_string())?;
+    let destination = repo_path("generated/examples/copy-backed/subplots.png");
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "preview subplot destination has no parent".to_string())?;
+    fs::create_dir_all(parent).map_err(|err| {
+        format!(
+            "failed to create preview directory {}: {}",
+            parent.display(),
+            err
+        )
+    })?;
+    fs::copy(&source, &destination).map_err(|err| {
+        format!(
+            "failed to stage Copy-backed preview {} -> {}: {}",
+            source.display(),
+            destination.display(),
+            err
+        )
+    })?;
+    Ok(())
+}
+
+pub fn check_gallery(
+    repo_root: &Path,
+    categories: &[Category],
+    entries: &[GalleryEntry],
+) -> Vec<String> {
+    let mut errors = validate_catalog(repo_root, categories, entries)
+        .err()
+        .unwrap_or_default();
+
+    for category in categories {
+        let expected =
+            render_category_page(category, &entries_for_category(entries, category.slug));
+        let path = repo_root
+            .join(GALLERY_DOCS_ROOT)
+            .join(category.slug)
+            .join("README.md");
+        match fs::read_to_string(&path) {
+            Ok(actual) if actual == expected => {}
+            Ok(_) => errors.push(format!(
+                "generated Markdown is stale: {} (run `make rust-gallery`)",
+                path.display()
+            )),
+            Err(err) => errors.push(format!("failed to read {}: {}", path.display(), err)),
+        }
+    }
+
+    let index_path = repo_root.join(GALLERY_DOCS_ROOT).join("README.md");
+    match fs::read_to_string(&index_path) {
+        Ok(actual) if actual == render_gallery_index(categories, entries) => {}
+        Ok(_) => errors.push(format!(
+            "generated Markdown is stale: {} (run `make rust-gallery`)",
+            index_path.display()
+        )),
+        Err(err) => errors.push(format!("failed to read {}: {}", index_path.display(), err)),
+    }
+
+    for entry in entries {
+        let destination = gallery_asset_path(repo_root, entry);
+        match copy_source_path(repo_root, entry) {
+            Some(source) => match (fs::read(&source), fs::read(&destination)) {
+                (Ok(source_bytes), Ok(destination_bytes)) if source_bytes == destination_bytes => {}
+                (Ok(_), Ok(_)) => errors.push(format!(
+                    "Copy-backed gallery asset is stale: {} differs from {}",
+                    destination.display(),
+                    source.display()
+                )),
+                (Err(err), _) => {
+                    errors.push(format!("failed to read {}: {}", source.display(), err))
+                }
+                (_, Err(err)) => errors.push(format!(
+                    "failed to read gallery asset {}: {}",
+                    destination.display(),
+                    err
+                )),
+            },
+            None if !destination.is_file() => errors.push(format!(
+                "Example-backed gallery asset is missing: {}",
+                destination.display()
+            )),
+            None => {}
+        }
+    }
+
+    match unexpected_managed_assets(repo_root, categories, entries) {
+        Ok(paths) => errors.extend(
+            paths
+                .into_iter()
+                .map(|path| format!("unexpected managed gallery asset: {}", path.display())),
+        ),
+        Err(err) => errors.push(err),
+    }
+
+    errors
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Mode {
     Full,
     PreviewOnly,
+    Check,
+    DeterministicOnly,
 }
 
 fn parse_mode() -> Result<Mode, String> {
@@ -705,8 +985,17 @@ fn parse_mode() -> Result<Mode, String> {
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--preview-only" => mode = Mode::PreviewOnly,
+            "--check" => mode = Mode::Check,
+            "--deterministic-only" => mode = Mode::DeterministicOnly,
             "--help" | "-h" => {
-                println!("Usage: cargo run --bin generate_gallery -- [--preview-only]");
+                println!(
+                    "Usage: cargo run --bin generate_gallery -- [--preview-only|--check|--deterministic-only]"
+                );
+                println!("  --check               verify committed gallery files without writing");
+                println!("  --preview-only        refresh generated preview outputs only");
+                println!(
+                    "  --deterministic-only  refresh Markdown and Copy-backed assets without examples"
+                );
                 std::process::exit(0);
             }
             _ if arg.starts_with('-') => {
@@ -731,8 +1020,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let categories = categories();
     let entries = entries();
 
+    if mode == Mode::Check {
+        let errors = check_gallery(Path::new(env!("CARGO_MANIFEST_DIR")), &categories, &entries);
+        if errors.is_empty() {
+            println!("Rust gallery freshness check passed");
+            return Ok(());
+        }
+        for error in &errors {
+            eprintln!("gallery freshness error: {error}");
+        }
+        return Err(format!(
+            "Rust gallery freshness check failed with {} error(s)",
+            errors.len()
+        )
+        .into());
+    }
+
+    if mode == Mode::DeterministicOnly {
+        ensure_gallery_layout(&categories)?;
+        sync_copy_assets(&entries)?;
+        prune_stale_assets(&categories, &entries)?;
+        write_category_pages(&categories, &entries)?;
+        write_gallery_index(&categories, &entries)?;
+        println!("Deterministic gallery outputs refreshed");
+        return Ok(());
+    }
+
     run_examples(&entries)?;
     if mode == Mode::PreviewOnly {
+        stage_copy_backed_preview(&entries)?;
         println!("Preview example assets refreshed under generated/examples");
         return Ok(());
     }

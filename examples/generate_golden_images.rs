@@ -5,7 +5,7 @@ use ruviz::core::PlottingError;
 use ruviz::prelude::*;
 
 const GOLDEN_FONT_BYTES: &[u8] = include_bytes!("../src/dejavu-sans.ttf");
-const GOLDEN_FONT_FAMILY: &str = "DejaVu Sans";
+pub const GOLDEN_FONT_FAMILY: &str = "DejaVu Sans";
 
 pub const GOLDEN_FIXTURES: [&str; 25] = [
     "01_basic_line.png",

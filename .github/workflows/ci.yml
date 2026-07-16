@@ -652,6 +652,12 @@ jobs:
       - name: Verify backend documentation contracts
         run: cargo test --test auto_optimization_test --test nonbreaking_plot_api_test
 
+      - name: Verify gallery production contracts
+        run: cargo test --test gallery_generator_test --test gallery_structure_test
+
+      - name: Check Rust gallery freshness
+        run: make check-rust-gallery
+
       - name: Test release workflow gate
         run: uv run python -m unittest scripts/test_wait_for_github_checks.py
 
@@ -669,6 +675,7 @@ jobs:
     if: github.event_name == 'pull_request'
     outputs:
       run_preview: ${{ steps.scope.outputs.run_preview }}
+      run_gallery: ${{ steps.scope.outputs.run_gallery }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -682,6 +689,7 @@ jobs:
         run: |
           git fetch --no-tags --depth=1 origin "${BASE_REF}"
           run_preview=false
+          run_gallery=false
           while IFS= read -r path; do
             [ -z "${path}" ] && continue
             case "${path}" in
@@ -691,7 +699,78 @@ jobs:
                 ;;
             esac
           done < <(git diff --name-only "origin/${BASE_REF}...HEAD")
-          echo "run_preview=${run_preview}" >> "$GITHUB_OUTPUT"
+          while IFS= read -r path; do
+            [ -z "${path}" ] && continue
+            case "${path}" in
+              scripts/generate_gallery.rs|examples/doc_*.rs|examples/generate_golden_images.rs|examples/scientific_showcase.rs|examples/parallel_demo.rs|examples/memory_optimization_demo.rs|examples/generate_animation_gallery.rs|docs/gallery/*|docs/assets/rustdoc/*|docs/assets/gallery/*|docs/guide/*|tests/gallery_*|tests/common/visual.rs|tests/fixtures/golden/*|src/*|Makefile|.github/workflows/ci.yml)
+                run_gallery=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only "origin/${BASE_REF}...HEAD")
+          {
+            echo "run_preview=${run_preview}"
+            echo "run_gallery=${run_gallery}"
+          } >> "$GITHUB_OUTPUT"
+
+  gallery-freshness:
+    name: Gallery Regeneration
+    runs-on: ubuntu-24.04
+    needs: [preview-scope]
+    if: needs.preview-scope.outputs.run_gallery == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install fixed Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-gallery-1.94.1-${{ hashFiles('**/Cargo.lock', 'src/dejavu-sans.ttf', 'tests/fixtures/golden/gallery/gallery_subplots.png') }}
+          restore-keys: ${{ runner.os }}-cargo-gallery-1.94.1-
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Create gallery failure artifact directory
+        run: mkdir -p generated/tests/render
+
+      - name: Compare deterministic subplot fixture
+        run: cargo test --test gallery_visual_test -- --ignored
+
+      - name: Check committed gallery freshness
+        run: make check-rust-gallery
+
+      - name: Regenerate deterministic gallery outputs
+        if: always()
+        run: cargo run --bin generate_gallery -- --deterministic-only
+
+      - name: Verify deterministic gallery diff
+        if: always()
+        run: |
+          if ! git diff --exit-code -- docs/gallery docs/assets/gallery/rust > generated/tests/gallery-diff.txt; then
+            cat generated/tests/gallery-diff.txt
+            exit 1
+          fi
+
+      - name: Upload gallery outputs and diff on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gallery-freshness-failure-${{ github.run_id }}
+          path: |
+            generated/tests/render/*.png
+            generated/tests/gallery-diff.txt
+          if-no-files-found: warn
+          retention-days: 7
 
   generated-preview-rust:
     name: Generated Preview (Rust)
