@@ -506,7 +506,8 @@ _None yet._
 - [@yonas](https://github.com/yonas) - FreeBSD support (#1)
 - [@Ameyanagi](https://github.com/Ameyanagi) - Cross-platform build fixes (#4)
 
-[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.4.20...HEAD
+[Unreleased]: https://github.com/Ameyanagi/ruviz/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Ameyanagi/ruviz/compare/v0.4.20...v0.5.0
 [0.4.20]: https://github.com/Ameyanagi/ruviz/compare/v0.4.19...v0.4.20
 [0.4.19]: https://github.com/Ameyanagi/ruviz/compare/v0.4.18...v0.4.19
 [0.4.18]: https://github.com/Ameyanagi/ruviz/compare/v0.4.17...v0.4.18
