@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::core::IntoPlot;
-use crate::data::{Observable, StreamingBuffer, StreamingXY, signal};
+use crate::data::{Observable, StreamingBuffer, StreamingRenderState, StreamingXY, signal};
 use crate::prelude::Plot;
 use crate::render::{Color, MarkerStyle};
 use std::sync::{Arc, atomic::Ordering};
@@ -2027,6 +2027,42 @@ fn test_streaming_surface_render_falls_back_after_wraparound() {
 }
 
 #[test]
+fn test_streaming_surface_render_falls_back_and_acknowledges_replacement() {
+    let stream = StreamingXY::new(8);
+    stream.push_many([(0.0, 0.0), (1.0, 0.5), (2.0, 1.0)]);
+    let plot: Plot = Plot::new()
+        .line_streaming(&stream)
+        .xlim(0.0, 6.0)
+        .ylim(-1.0, 2.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("initial replacement stream frame should render");
+
+    stream.replace([(3.0, 1.25), (4.0, 0.75), (5.0, 0.25)]);
+    assert_eq!(
+        stream.render_state(),
+        StreamingRenderState::FullRedrawRequired
+    );
+    let rerendered = session
+        .render_to_surface(render_target())
+        .expect("replacement stream frame should render");
+
+    assert!(!rerendered.layer_state.used_incremental_data);
+    assert_eq!(stream.render_state(), StreamingRenderState::Unchanged);
+
+    stream.replace(std::iter::empty());
+    let cleared = session
+        .render_to_surface(render_target())
+        .expect("empty replacement stream frame should render");
+    assert!(cleared.layer_state.base_dirty);
+    assert!(!cleared.layer_state.used_incremental_data);
+    assert_ne!(cleared.layers.base.pixels, rerendered.layers.base.pixels);
+    assert_eq!(stream.render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
 fn test_interactive_full_render_acknowledges_generic_streaming_buffers() {
     let x = StreamingBuffer::new(16);
     let y = StreamingBuffer::new(16);
@@ -2045,6 +2081,52 @@ fn test_interactive_full_render_acknowledges_generic_streaming_buffers() {
 
     assert_eq!(x.appended_since_mark(), 0);
     assert_eq!(y.appended_since_mark(), 0);
+}
+
+#[test]
+fn test_interactive_generic_streaming_buffers_render_after_clear() {
+    let x = StreamingBuffer::new(16);
+    let y = StreamingBuffer::new(16);
+    x.push_many(vec![0.0, 1.0, 2.0]);
+    y.push_many(vec![0.0, 0.5, 1.0]);
+    let plot: Plot = Plot::new().line_source(x.clone(), y.clone()).into();
+    let session = plot.prepare_interactive();
+
+    session
+        .render_to_surface(render_target())
+        .expect("initial generic streaming frame should render");
+
+    x.clear();
+    y.clear();
+    session
+        .render_to_surface(render_target())
+        .expect("cleared generic streaming frame should render");
+}
+
+#[test]
+fn test_viewport_snapshot_on_initially_empty_stream() {
+    let stream = StreamingXY::new(8);
+    let plot: Plot = Plot::new().line_streaming(&stream).into();
+    let session = plot.prepare_interactive();
+    session.resize((320, 240), 1.0);
+
+    let snapshot = session
+        .viewport_snapshot()
+        .expect("viewport snapshot should succeed before any data arrives");
+    assert!(snapshot.base_bounds.min.x.is_finite());
+    assert!(snapshot.base_bounds.max.x > snapshot.base_bounds.min.x);
+    assert!(snapshot.base_bounds.max.y > snapshot.base_bounds.min.y);
+
+    stream.push_many([(0.0, 0.0), (1.0, 1.0)]);
+    stream.replace(std::iter::empty());
+    let after_empty_replace = session
+        .viewport_snapshot()
+        .expect("viewport snapshot should succeed after replace(empty)");
+    assert!(after_empty_replace.base_bounds.min.x.is_finite());
+
+    session
+        .render_to_surface(render_target())
+        .expect("empty stream should still render a frame");
 }
 
 #[test]

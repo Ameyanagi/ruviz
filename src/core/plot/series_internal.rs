@@ -1831,7 +1831,10 @@ impl Plot {
         Ok(())
     }
 
-    pub(super) fn validate_resolved_series(series_list: &[ResolvedSeries<'_>]) -> Result<()> {
+    pub(super) fn validate_resolved_series(
+        &self,
+        series_list: &[ResolvedSeries<'_>],
+    ) -> Result<()> {
         if series_list.is_empty() {
             return Err(PlottingError::NoDataSeries);
         }
@@ -1846,7 +1849,16 @@ impl Plot {
                             series_index: Some(idx),
                         });
                     }
-                    if x.is_empty() {
+                    let is_streaming = self.series_mgr.series.get(idx).is_some_and(|series| {
+                        matches!(
+                            &series.series_type,
+                            SeriesType::Line { x_data, y_data }
+                                | SeriesType::Scatter { x_data, y_data }
+                                if matches!(x_data, PlotData::Streaming(_))
+                                    && matches!(y_data, PlotData::Streaming(_))
+                        )
+                    });
+                    if x.is_empty() && !is_streaming {
                         return Err(PlottingError::EmptyDataSet);
                     }
                     PlottingError::validate_data(x)?;

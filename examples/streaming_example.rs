@@ -65,7 +65,24 @@ fn basic_streaming() {
     plot.save("generated/examples/streaming_basic.png")
         .expect("Failed to save plot");
 
-    println!("Saved: generated/examples/streaming_basic.png\n");
+    // A scrub supplies a complete frame: replace it atomically instead of
+    // exposing an intermediate clear followed by a batch append.
+    stream.replace((20..25).map(|i| (i as f64, (i * i) as f64)));
+    println!("Scrubbed to full frame: {:?}", stream.read_x());
+    println!("Replacement render state: {:?}", stream.render_state());
+
+    Plot::new()
+        .line_streaming(&stream)
+        .color(Color::new(31, 119, 180))
+        .title("Atomically Replaced Streaming Frame")
+        .xlabel("X")
+        .ylabel("Y")
+        .save("generated/examples/streaming_replaced.png")
+        .expect("Failed to save replaced frame");
+    println!("After replacement render: {:?}", stream.render_state());
+    println!(
+        "Saved: generated/examples/streaming_basic.png and generated/examples/streaming_replaced.png\n"
+    );
 }
 
 /// Demonstrate ring buffer wrap-around behavior

@@ -1303,8 +1303,10 @@ pub struct StreamingBuffer<T> {
     write_pos: Arc<std::sync::atomic::AtomicUsize>,
     /// Total elements written (used to determine if full)
     total_written: Arc<AtomicU64>,
-    /// Number of explicit clears, used by paired legacy-lane reconciliation.
+    /// Number of explicit clears or full replacements.
     clear_generation: Arc<AtomicU64>,
+    /// Highest clear generation acknowledged by a completed render.
+    rendered_clear_generation: Arc<AtomicU64>,
     /// Version counter for change detection
     version: Arc<AtomicU64>,
     /// Append count since last mark_rendered()
@@ -1346,6 +1348,7 @@ impl<T: Clone> StreamingBuffer<T> {
             write_pos: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             total_written: Arc::new(AtomicU64::new(0)),
             clear_generation: Arc::new(AtomicU64::new(0)),
+            rendered_clear_generation: Arc::new(AtomicU64::new(0)),
             version: Arc::new(AtomicU64::new(0)),
             appended_since_render: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             rendered_through: Arc::new(AtomicU64::new(0)),
@@ -1405,6 +1408,24 @@ impl<T: Clone> StreamingBuffer<T> {
         let appended = self.appended_since_render.load(Ordering::Relaxed);
         self.appended_since_render
             .store(appended.saturating_add(count), Ordering::Release);
+    }
+
+    fn replace_locked(&self, values: Vec<T>) {
+        let retain_from = values.len().saturating_sub(self.capacity);
+        let retained = values.len() - retain_from;
+        let mut data = self.data.write().expect("Lock poisoned");
+        for slot in data.iter_mut() {
+            *slot = None;
+        }
+        for (slot, value) in data.iter_mut().zip(values.into_iter().skip(retain_from)) {
+            *slot = Some(value);
+        }
+        self.write_pos.store(retained, Ordering::Release);
+        self.total_written.store(retained as u64, Ordering::Release);
+        self.appended_since_render
+            .store(retained, Ordering::Release);
+        self.rendered_through.store(0, Ordering::Release);
+        self.clear_generation.fetch_add(1, Ordering::Release);
     }
 
     /// Get all valid data in order (oldest to newest)
@@ -1525,8 +1546,11 @@ impl<T: Clone> StreamingBuffer<T> {
         }
 
         let _data = self.data.read().expect("Lock poisoned");
+        let generation = self.clear_generation.load(Ordering::Acquire);
         let total = self.total_written.load(Ordering::Acquire);
         self.rendered_through.store(total, Ordering::Release);
+        self.rendered_clear_generation
+            .store(generation, Ordering::Release);
         self.appended_since_render.store(0, Ordering::Release);
     }
 
@@ -1541,6 +1565,8 @@ impl<T: Clone> StreamingBuffer<T> {
             .rendered_through
             .fetch_max(total, Ordering::AcqRel)
             .max(total);
+        self.rendered_clear_generation
+            .store(generation, Ordering::Release);
         let pending = current_total.saturating_sub(acknowledged.min(current_total));
         self.appended_since_render.store(
             usize::try_from(pending).unwrap_or(usize::MAX),
@@ -1554,6 +1580,12 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Describe whether the current buffer changes can be rendered incrementally.
     pub fn render_state(&self) -> StreamingRenderState {
+        if self.clear_generation.load(Ordering::Acquire)
+            != self.rendered_clear_generation.load(Ordering::Acquire)
+        {
+            return StreamingRenderState::FullRedrawRequired;
+        }
+
         let appended = self.appended_since_render.load(Ordering::Acquire);
         if appended == 0 {
             return StreamingRenderState::Unchanged;
@@ -1690,6 +1722,7 @@ impl<T: Clone> Clone for StreamingBuffer<T> {
             write_pos: Arc::clone(&self.write_pos),
             total_written: Arc::clone(&self.total_written),
             clear_generation: Arc::clone(&self.clear_generation),
+            rendered_clear_generation: Arc::clone(&self.rendered_clear_generation),
             version: Arc::clone(&self.version),
             appended_since_render: Arc::clone(&self.appended_since_render),
             rendered_through: Arc::clone(&self.rendered_through),
@@ -1872,6 +1905,53 @@ impl StreamingXY {
         }
     }
 
+    /// Atomically replace the complete visible X/Y frame.
+    ///
+    /// The input is collected before mutation begins. If it exceeds the buffer
+    /// capacity, only the newest points are retained. Even an empty replacement
+    /// is a single paired mutation and requires a full redraw until the exact
+    /// replacement snapshot is acknowledged.
+    pub fn replace(&self, points: impl IntoIterator<Item = (f64, f64)>) {
+        let mut points: Vec<_> = points.into_iter().collect();
+        let retain_from = points.len().saturating_sub(self.x.capacity());
+        if retain_from > 0 {
+            points.drain(..retain_from);
+        }
+
+        let count = points.len();
+        let x = points.iter().map(|(x, _)| *x).collect();
+        let y = points.iter().map(|(_, y)| *y).collect();
+        let should_dispatch = {
+            let _gate = self.mutation_gate.lock().expect("Mutation gate poisoned");
+            self.reconcile_legacy_lanes_locked();
+            self.x.replace_locked(x);
+            self.run_pair_commit_hook();
+            self.y.replace_locked(y);
+            self.x.increment_version();
+            self.y.increment_version();
+
+            let mut paired_data = self.paired_data.lock().expect("Paired data lock poisoned");
+            paired_data.clear();
+            paired_data.extend(points);
+
+            let mut progress = self.progress.lock().expect("StreamingXY progress poisoned");
+            progress.sequence = progress.sequence.wrapping_add(1);
+            progress.total_written = count as u64;
+            progress.last_clear_sequence = Some(progress.sequence);
+            progress.synced_x_total = self.x.total_written();
+            progress.synced_y_total = self.y.total_written();
+            progress.synced_x_version = self.x.version();
+            progress.synced_y_version = self.y.version();
+            progress.synced_x_clear_generation = self.x.clear_generation.load(Ordering::Acquire);
+            progress.synced_y_clear_generation = self.y.clear_generation.load(Ordering::Acquire);
+            self.sync_lane_watermarks(&progress);
+            self.pair_notifications.queue()
+        };
+        if should_dispatch {
+            self.drain_pair_notifications();
+        }
+    }
+
     fn record_push_locked(&self, count: usize) {
         let mut progress = self.progress.lock().expect("StreamingXY progress poisoned");
         progress.sequence = progress.sequence.wrapping_add(count as u64);
@@ -1984,6 +2064,17 @@ impl StreamingXY {
             && !Self::sequence_after(sequence, progress.sequence)
         {
             progress.rendered_through = sequence;
+        }
+        if progress
+            .last_clear_sequence
+            .is_none_or(|clear| !Self::sequence_after(clear, progress.rendered_through))
+        {
+            self.x
+                .rendered_clear_generation
+                .store(progress.synced_x_clear_generation, Ordering::Release);
+            self.y
+                .rendered_clear_generation
+                .store(progress.synced_y_clear_generation, Ordering::Release);
         }
         self.sync_lane_watermarks(&progress);
     }

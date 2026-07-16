@@ -245,7 +245,7 @@ impl Plot {
         }
 
         if !frame.series.is_empty() {
-            Self::validate_resolved_series(&frame.series)?;
+            self.validate_resolved_series(&frame.series)?;
         }
 
         let total_points = Self::calculate_total_points_from_resolved(&frame.series);
@@ -591,7 +591,7 @@ impl Plot {
         }
 
         if !frame.series.is_empty() {
-            Self::validate_resolved_series(&frame.series)?;
+            self.validate_resolved_series(&frame.series)?;
         }
 
         let total_points = Self::calculate_total_points_from_resolved(&frame.series);
@@ -2324,7 +2324,7 @@ impl Plot {
 
         self.validate_runtime_environment()?;
         if !frame.series.is_empty() {
-            Self::validate_resolved_series(&frame.series)?;
+            self.validate_resolved_series(&frame.series)?;
         }
 
         let (width_px, height_px) = self.config_canvas_size();
