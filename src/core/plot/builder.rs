@@ -52,6 +52,46 @@
 use super::data::{PlotData, ReactiveValue};
 use crate::render::{Color, LineStyle, MarkerStyle};
 
+/// Extension trait providing a generic conditional combinator for fluent builders.
+///
+/// Implemented for ruviz's consuming builder families rather than as a blanket
+/// impl over all types so that `use ruviz::prelude::*` can coexist with other
+/// fluent-builder preludes (e.g. GPUI's `FluentBuilder::when`) without method
+/// ambiguity.
+pub trait BuilderWhen: Sized {
+    /// Apply `f` to `self` when `condition` is true; otherwise return `self` unchanged.
+    ///
+    /// The closure is not invoked when `condition` is false.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![0.0, 1.0, 2.0];
+    /// let y = vec![0.0, 1.0, 0.5];
+    /// let show_label = true;
+    ///
+    /// let _plot = Plot::new()
+    ///     .line(&x, &y)
+    ///     .when(show_label, |builder| builder.label("series"))
+    ///     .into_plot();
+    /// ```
+    fn when(self, condition: bool, f: impl FnOnce(Self) -> Self) -> Self {
+        if condition { f(self) } else { self }
+    }
+}
+
+impl BuilderWhen for super::Plot {}
+impl<C> BuilderWhen for PlotBuilder<C> where C: crate::plots::PlotConfig + Clone {}
+impl BuilderWhen for super::series_builders::PlotSeriesBuilder {}
+impl BuilderWhen for super::series_builders::SeriesGroupBuilder {}
+impl BuilderWhen for crate::core::subplot::SubplotFigure {}
+impl BuilderWhen for crate::core::config::PlotConfigBuilder {}
+impl BuilderWhen for crate::render::theme::ThemeBuilder {}
+#[cfg(all(feature = "interactive", not(target_arch = "wasm32")))]
+impl BuilderWhen for crate::interactive::window::InteractiveWindowBuilder {}
+
 /// Trait for types that can be converted to a finalized [`Plot`](super::Plot)
 ///
 /// This trait enables uniform handling of all builder types (`Plot`, `PlotBuilder<C>`,

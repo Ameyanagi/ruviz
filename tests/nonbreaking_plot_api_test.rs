@@ -2,6 +2,48 @@ use ruviz::core::{BackendFallbackReason, BackendOperation};
 use ruviz::prelude::*;
 
 #[test]
+fn builder_when_compiles_across_public_builder_families() {
+    let x = vec![0.0, 1.0, 2.0];
+    let y = vec![0.0, 1.0, 0.5];
+    let data = vec![1.0, 2.0, 3.0, 4.0];
+
+    let _plot = Plot::new()
+        .when(true, |plot| plot.title("conditional title"))
+        .grid(false);
+
+    let _generic_builder = Plot::new()
+        .line(&x, &y)
+        .when(true, |builder| builder.label("line"))
+        .line_width(2.0);
+
+    let _series_builder = Plot::new()
+        .histogram(&data, None)
+        .when(true, |builder| builder.label("histogram"))
+        .width(2.0);
+
+    let _grouped_plot = Plot::new().group(|group| {
+        group
+            .when(true, |group| group.group_label("group"))
+            .line_width(2.0)
+            .line(&x, &y)
+    });
+
+    let figure = SubplotFigure::new(1, 1, 400, 300)
+        .expect("subplot figure should be constructed")
+        .when(true, |figure| figure.suptitle("conditional title"))
+        .margin(0.1);
+    assert_eq!(figure.grid_spec().total_subplots(), 1);
+}
+
+#[cfg(all(feature = "interactive", not(target_arch = "wasm32")))]
+#[test]
+fn builder_when_compiles_for_interactive_window_builder() {
+    let _builder = InteractiveWindowBuilder::new()
+        .when(true, |window| window.resizable(false))
+        .title("conditional");
+}
+
+#[test]
 fn high_level_step_area_and_stem_apis_render() {
     let x = vec![0.0, 1.0, 2.0, 3.0];
     let y = vec![1.0, 3.0, 2.0, 4.0];
