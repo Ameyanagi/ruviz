@@ -1,15 +1,16 @@
 use super::{
     BackendOperation, Image, Plot, PlotData, PlotSeries, PreparedPlot, ReactiveSubscription,
-    ResolvedData, ResolvedFrame, ResolvedSeries, SeriesType,
+    ResolvedData, ResolvedFrame, ResolvedSeries, SeriesType, TextEngineMode,
 };
 use crate::{
     axes::{AxisScale, expand_degenerate_range},
     core::{
-        CoordinateTransform, LayoutCalculator, LayoutConfig, MarginConfig, PlotLayout,
-        PlottingError, REFERENCE_DPI, Result,
+        Annotation, CoordinateTransform, FillStyle, LayoutCalculator, LayoutConfig, MarginConfig,
+        PlotLayout, PlottingError, REFERENCE_DPI, RenderScale, Result, ShapeStyle,
     },
     render::{
-        Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, skia::SkiaRenderer,
+        Color, FontConfig, FontFamily, LineStyle, MarkerStyle, TextRenderer, Theme,
+        skia::SkiaRenderer,
     },
 };
 use std::{
@@ -24,6 +25,55 @@ use std::{
 
 thread_local! {
     static ACTIVE_RENDER_SESSIONS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+}
+
+static NEXT_ANNOTATION_SESSION_TOKEN: AtomicU64 = AtomicU64::new(1);
+
+/// Opaque identifier for a dynamic annotation owned by one interactive session.
+///
+/// IDs remain valid only for the session that created them and until the
+/// annotation is removed.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AnnotationId {
+    session_token: u64,
+    value: u64,
+}
+
+#[derive(Debug)]
+struct DynamicAnnotations {
+    session_token: u64,
+    next_id: u64,
+    revision: u64,
+    entries: std::collections::BTreeMap<u64, Annotation>,
+}
+
+impl DynamicAnnotations {
+    fn new() -> Self {
+        let session_token = NEXT_ANNOTATION_SESSION_TOKEN
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |token| {
+                token.checked_add(1)
+            })
+            .expect("interactive annotation session token space exhausted");
+        Self {
+            session_token,
+            next_id: 1,
+            revision: 0,
+            entries: std::collections::BTreeMap::new(),
+        }
+    }
+
+    fn require_local_id(&self, id: AnnotationId) -> Result<u64> {
+        if id.session_token != self.session_token || !self.entries.contains_key(&id.value) {
+            return Err(PlottingError::UnknownAnnotationId);
+        }
+        Ok(id.value)
+    }
+
+    fn next_revision(&self) -> Result<u64> {
+        self.revision.checked_add(1).ok_or_else(|| {
+            PlottingError::RenderError("dynamic annotation revision exhausted".to_string())
+        })
+    }
 }
 
 struct ActiveRenderGuard {
@@ -393,6 +443,7 @@ pub struct InteractivePlotSession {
 #[derive(Debug)]
 struct InteractivePlotSessionInner {
     prepared: PreparedPlot,
+    annotations: Mutex<DynamicAnnotations>,
     frame_pacing: Mutex<FramePacing>,
     quality_policy: Mutex<QualityPolicy>,
     prefer_gpu: Mutex<bool>,
@@ -910,6 +961,10 @@ struct InteractiveFrameCache {
 #[derive(Clone, Debug, PartialEq)]
 struct OverlayFrameKey {
     size_px: (u32, u32),
+    annotations_revision: u64,
+    /// Displayed data bounds as bit patterns so pan/zoom/temporal geometry
+    /// changes invalidate annotation pixels rendered under an older transform.
+    view_bounds_bits: Option<[u64; 4]>,
     plot_area: Option<ViewportRect>,
     hovered: Option<HitResult>,
     selected: Vec<HitResult>,
@@ -931,6 +986,10 @@ struct GeometrySnapshot {
     y_bounds: (f64, f64),
     x_scale: AxisScale,
     y_scale: AxisScale,
+    annotation_theme: Theme,
+    annotation_font_family: FontFamily,
+    annotation_render_scale: RenderScale,
+    annotation_text_engine: TextEngineMode,
     transform: CoordinateTransform,
 }
 
@@ -1186,6 +1245,7 @@ impl InteractivePlotSession {
         Self {
             inner: Arc::new(InteractivePlotSessionInner {
                 prepared,
+                annotations: Mutex::new(DynamicAnnotations::new()),
                 frame_pacing: Mutex::new(FramePacing::Display),
                 quality_policy: Mutex::new(QualityPolicy::Balanced),
                 prefer_gpu: Mutex::new(false),
@@ -1205,6 +1265,77 @@ impl InteractivePlotSession {
 
     pub fn prepared_plot(&self) -> &PreparedPlot {
         &self.inner.prepared
+    }
+
+    /// Adds a session-owned annotation to the interactive overlay.
+    pub fn add_annotation(&self, annotation: Annotation) -> Result<AnnotationId> {
+        validate_dynamic_annotation(&annotation)?;
+        let mut annotations = self
+            .inner
+            .annotations
+            .lock()
+            .expect("InteractivePlotSession annotations lock poisoned");
+        let value = annotations.next_id;
+        let next_id = value.checked_add(1).ok_or_else(|| {
+            PlottingError::RenderError("dynamic annotation ID space exhausted".to_string())
+        })?;
+        let revision = annotations.next_revision()?;
+        let id = AnnotationId {
+            session_token: annotations.session_token,
+            value,
+        };
+        annotations.entries.insert(value, annotation);
+        annotations.next_id = next_id;
+        annotations.revision = revision;
+        self.begin_mutation();
+        self.mark_dirty(DirtyDomain::Overlay);
+        Ok(id)
+    }
+
+    /// Returns a copy of a session-owned dynamic annotation.
+    pub fn annotation(&self, id: AnnotationId) -> Result<Annotation> {
+        let annotations = self
+            .inner
+            .annotations
+            .lock()
+            .expect("InteractivePlotSession annotations lock poisoned");
+        let value = annotations.require_local_id(id)?;
+        Ok(annotations.entries[&value].clone())
+    }
+
+    /// Replaces a session-owned annotation, including all geometry and style.
+    pub fn update_annotation(&self, id: AnnotationId, annotation: Annotation) -> Result<()> {
+        validate_dynamic_annotation(&annotation)?;
+        let mut annotations = self
+            .inner
+            .annotations
+            .lock()
+            .expect("InteractivePlotSession annotations lock poisoned");
+        let value = annotations.require_local_id(id)?;
+        let revision = annotations.next_revision()?;
+        annotations.entries.insert(value, annotation);
+        annotations.revision = revision;
+        self.begin_mutation();
+        self.mark_dirty(DirtyDomain::Overlay);
+        Ok(())
+    }
+
+    /// Removes a session-owned annotation.
+    ///
+    /// Foreign and stale IDs return [`PlottingError::UnknownAnnotationId`].
+    pub fn remove_annotation(&self, id: AnnotationId) -> Result<bool> {
+        let mut annotations = self
+            .inner
+            .annotations
+            .lock()
+            .expect("InteractivePlotSession annotations lock poisoned");
+        let value = annotations.require_local_id(id)?;
+        let revision = annotations.next_revision()?;
+        let removed = annotations.entries.remove(&value).is_some();
+        annotations.revision = revision;
+        self.begin_mutation();
+        self.mark_dirty(DirtyDomain::Overlay);
+        Ok(removed)
     }
 
     pub fn subscribe_reactive<F>(&self, callback: F) -> ReactiveSubscription
@@ -2303,6 +2434,14 @@ impl InteractivePlotSession {
         size_px: (u32, u32),
         dirty_before_render: DirtyDomains,
     ) -> Result<OverlayLayerResult> {
+        let (annotations_revision, annotations_empty) = {
+            let annotations = self
+                .inner
+                .annotations
+                .lock()
+                .expect("InteractivePlotSession annotations lock poisoned");
+            (annotations.revision, annotations.entries.is_empty())
+        };
         let state = self
             .inner
             .state
@@ -2311,6 +2450,15 @@ impl InteractivePlotSession {
             .clone();
         let overlay_key = OverlayFrameKey {
             size_px,
+            annotations_revision,
+            view_bounds_bits: state.base_cache.as_ref().map(|cache| {
+                [
+                    cache.geometry.x_bounds.0.to_bits(),
+                    cache.geometry.x_bounds.1.to_bits(),
+                    cache.geometry.y_bounds.0.to_bits(),
+                    cache.geometry.y_bounds.1.to_bits(),
+                ]
+            }),
             plot_area: state
                 .base_cache
                 .as_ref()
@@ -2326,7 +2474,8 @@ impl InteractivePlotSession {
         let overlay_is_empty = state.hovered.is_none()
             && state.selected.is_empty()
             && state.brushed_region.is_none()
-            && state.tooltip.is_none();
+            && state.tooltip.is_none()
+            && annotations_empty;
 
         {
             let state = self
@@ -2367,7 +2516,51 @@ impl InteractivePlotSession {
             });
         }
 
-        let mut pixels = vec![0u8; (size_px.0 * size_px.1 * 4) as usize];
+        // Clone annotation values only when a fresh raster is actually needed;
+        // FillBetween can own large vectors and cache hits above must stay cheap.
+        let annotations = {
+            let annotations = self
+                .inner
+                .annotations
+                .lock()
+                .expect("InteractivePlotSession annotations lock poisoned");
+            annotations.entries.values().cloned().collect::<Vec<_>>()
+        };
+        let mut pixels = if annotations.is_empty() {
+            vec![0u8; (size_px.0 * size_px.1 * 4) as usize]
+        } else {
+            let geometry = state
+                .base_cache
+                .as_ref()
+                .map(|cache| &cache.geometry)
+                .ok_or_else(displayed_geometry_unavailable)?;
+            let mut theme = geometry.annotation_theme.clone();
+            theme.background = Color::TRANSPARENT;
+            let mut renderer = SkiaRenderer::with_font_family(
+                size_px.0,
+                size_px.1,
+                theme,
+                geometry.annotation_font_family.clone(),
+            )?;
+            renderer.set_text_engine_mode(geometry.annotation_text_engine);
+            let render_scale = geometry.annotation_render_scale;
+            renderer.set_render_scale(render_scale);
+            renderer.draw_annotations_where_scaled(
+                &annotations,
+                geometry.plot_area,
+                geometry.x_bounds.0,
+                geometry.x_bounds.1,
+                geometry.y_bounds.0,
+                geometry.y_bounds.1,
+                render_scale.dpi(),
+                &geometry.x_scale,
+                &geometry.y_scale,
+                |_| true,
+            )?;
+            let mut image = renderer.into_image_demultiplied();
+            clip_overlay_to_plot_area(&mut image.pixels, size_px, geometry.plot_area);
+            image.pixels
+        };
         let hit_clip = state
             .base_cache
             .as_ref()
@@ -3115,6 +3308,205 @@ fn require_finite_point(point: ViewportPoint, label: &str) -> Result<()> {
     }
 }
 
+fn invalid_annotation(reason: impl Into<String>) -> PlottingError {
+    PlottingError::InvalidAnnotation {
+        reason: reason.into(),
+    }
+}
+
+fn require_finite_annotation_f64(value: f64, label: &str) -> Result<()> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(invalid_annotation(format!("{label} must be finite")))
+    }
+}
+
+fn require_non_negative_annotation_f64(value: f64, label: &str) -> Result<()> {
+    require_finite_annotation_f64(value, label)?;
+    if value >= 0.0 {
+        Ok(())
+    } else {
+        Err(invalid_annotation(format!("{label} must be non-negative")))
+    }
+}
+
+fn require_non_negative_annotation_f32(value: f32, label: &str) -> Result<()> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(())
+    } else {
+        Err(invalid_annotation(format!(
+            "{label} must be finite and non-negative"
+        )))
+    }
+}
+
+fn validate_annotation_line_style(style: &LineStyle, label: &str) -> Result<()> {
+    if let LineStyle::Custom(pattern) = style
+        && (!pattern.is_empty()
+            && (pattern.len() % 2 != 0
+                || pattern
+                    .iter()
+                    .any(|value| !value.is_finite() || *value <= 0.0)))
+    {
+        return Err(invalid_annotation(format!(
+            "{label} custom dash pattern must contain an even number of finite positive lengths"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_annotation_shape_style(style: &ShapeStyle, label: &str) -> Result<()> {
+    if !style.fill_alpha.is_finite() || !(0.0..=1.0).contains(&style.fill_alpha) {
+        return Err(invalid_annotation(format!(
+            "{label} fill alpha must be finite and between 0 and 1"
+        )));
+    }
+    require_non_negative_annotation_f32(style.edge_width, &format!("{label} edge width"))?;
+    validate_annotation_line_style(&style.edge_style, &format!("{label} edge style"))
+}
+
+fn validate_annotation_fill_style(style: &FillStyle) -> Result<()> {
+    if !style.alpha.is_finite() || !(0.0..=1.0).contains(&style.alpha) {
+        return Err(invalid_annotation(
+            "fill alpha must be finite and between 0 and 1",
+        ));
+    }
+    require_non_negative_annotation_f32(style.edge_width, "fill edge width")
+}
+
+fn validate_dynamic_annotation(annotation: &Annotation) -> Result<()> {
+    match annotation {
+        Annotation::Text { x, y, style, .. } => {
+            require_finite_annotation_f64(*x, "text x")?;
+            require_finite_annotation_f64(*y, "text y")?;
+            if !style.font_size.is_finite() || style.font_size <= 0.0 {
+                return Err(invalid_annotation(
+                    "text font size must be finite and positive",
+                ));
+            }
+            require_finite_annotation_f64(f64::from(style.rotation), "text rotation")?;
+            require_non_negative_annotation_f32(style.padding, "text padding")?;
+            require_non_negative_annotation_f32(style.border_width, "text border width")
+        }
+        Annotation::Arrow {
+            x1,
+            y1,
+            x2,
+            y2,
+            style,
+        } => {
+            for (value, label) in [
+                (*x1, "arrow x1"),
+                (*y1, "arrow y1"),
+                (*x2, "arrow x2"),
+                (*y2, "arrow y2"),
+            ] {
+                require_finite_annotation_f64(value, label)?;
+            }
+            require_non_negative_annotation_f32(style.line_width, "arrow line width")?;
+            require_non_negative_annotation_f32(style.head_length, "arrow head length")?;
+            require_non_negative_annotation_f32(style.head_width, "arrow head width")?;
+            validate_annotation_line_style(&style.line_style, "arrow line style")
+        }
+        Annotation::HLine {
+            y, style, width, ..
+        } => {
+            require_finite_annotation_f64(*y, "horizontal line y")?;
+            require_non_negative_annotation_f32(*width, "horizontal line width")?;
+            validate_annotation_line_style(style, "horizontal line style")
+        }
+        Annotation::VLine {
+            x, style, width, ..
+        } => {
+            require_finite_annotation_f64(*x, "vertical line x")?;
+            require_non_negative_annotation_f32(*width, "vertical line width")?;
+            validate_annotation_line_style(style, "vertical line style")
+        }
+        Annotation::Rectangle {
+            x,
+            y,
+            width,
+            height,
+            style,
+        } => {
+            require_finite_annotation_f64(*x, "rectangle x")?;
+            require_finite_annotation_f64(*y, "rectangle y")?;
+            require_non_negative_annotation_f64(*width, "rectangle width")?;
+            require_non_negative_annotation_f64(*height, "rectangle height")?;
+            require_finite_annotation_f64(*x + *width, "rectangle right edge")?;
+            require_finite_annotation_f64(*y + *height, "rectangle top edge")?;
+            validate_annotation_shape_style(style, "rectangle")
+        }
+        Annotation::FillBetween {
+            x, y1, y2, style, ..
+        } => {
+            if x.len() < 2 || x.len() != y1.len() || x.len() != y2.len() {
+                return Err(invalid_annotation(
+                    "FillBetween x, y1, and y2 must have equal lengths of at least 2",
+                ));
+            }
+            for (label, values) in [
+                ("FillBetween x", x),
+                ("FillBetween y1", y1),
+                ("FillBetween y2", y2),
+            ] {
+                if let Some(index) = values.iter().position(|value| !value.is_finite()) {
+                    return Err(invalid_annotation(format!(
+                        "{label} contains a non-finite value at index {index}"
+                    )));
+                }
+            }
+            validate_annotation_fill_style(style)
+        }
+        Annotation::HSpan {
+            x_min,
+            x_max,
+            style,
+        } => {
+            require_finite_annotation_f64(*x_min, "horizontal span x_min")?;
+            require_finite_annotation_f64(*x_max, "horizontal span x_max")?;
+            if x_min > x_max {
+                return Err(invalid_annotation(
+                    "horizontal span x_min must not exceed x_max",
+                ));
+            }
+            validate_annotation_shape_style(style, "horizontal span")
+        }
+        Annotation::VSpan {
+            y_min,
+            y_max,
+            style,
+        } => {
+            require_finite_annotation_f64(*y_min, "vertical span y_min")?;
+            require_finite_annotation_f64(*y_max, "vertical span y_max")?;
+            if y_min > y_max {
+                return Err(invalid_annotation(
+                    "vertical span y_min must not exceed y_max",
+                ));
+            }
+            validate_annotation_shape_style(style, "vertical span")
+        }
+    }
+}
+
+fn clip_overlay_to_plot_area(pixels: &mut [u8], size_px: (u32, u32), plot_area: tiny_skia::Rect) {
+    for y in 0..size_px.1 {
+        for x in 0..size_px.0 {
+            let center_x = x as f32 + 0.5;
+            let center_y = y as f32 + 0.5;
+            if center_x < plot_area.left()
+                || center_x > plot_area.right()
+                || center_y < plot_area.top()
+                || center_y > plot_area.bottom()
+            {
+                let index = ((y as usize * size_px.0 as usize) + x as usize) * 4;
+                pixels[index..index + 4].fill(0);
+            }
+        }
+    }
+}
+
 fn axis_accepts_value(scale: &AxisScale, value: f64) -> bool {
     match scale {
         AxisScale::Linear | AxisScale::SymLog { .. } => true,
@@ -3314,6 +3706,10 @@ fn sanitize_scale_factor(scale_factor: f32) -> f32 {
 
 struct ComputedSessionLayout {
     plot_area_rect: tiny_skia::Rect,
+    annotation_theme: Theme,
+    annotation_font_family: FontFamily,
+    annotation_render_scale: RenderScale,
+    annotation_text_engine: TextEngineMode,
 }
 
 fn geometry_snapshot_for_state(
@@ -3339,6 +3735,10 @@ fn geometry_snapshot_for_state(
         y_bounds: (visible.y_min, visible.y_max),
         x_scale: plot.layout.x_scale.clone(),
         y_scale: plot.layout.y_scale.clone(),
+        annotation_theme: layout.annotation_theme,
+        annotation_font_family: layout.annotation_font_family,
+        annotation_render_scale: layout.annotation_render_scale,
+        annotation_text_engine: layout.annotation_text_engine,
         transform: CoordinateTransform::new(
             visible.x_min..visible.x_max,
             visible.y_min..visible.y_max,
@@ -3477,7 +3877,13 @@ fn compute_plot_layout_from_frame(
         position: None,
     })?;
 
-    Ok(ComputedSessionLayout { plot_area_rect })
+    Ok(ComputedSessionLayout {
+        plot_area_rect,
+        annotation_theme: layout_plot.display.theme.clone(),
+        annotation_font_family: layout_plot.display.config.typography.family.clone(),
+        annotation_render_scale: layout_plot.render_scale(),
+        annotation_text_engine: layout_plot.display.text_engine,
+    })
 }
 
 mod helpers;

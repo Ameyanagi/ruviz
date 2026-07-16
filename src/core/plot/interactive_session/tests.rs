@@ -3724,3 +3724,386 @@ fn test_surface_frame_clips_series_pixels_to_plot_area_after_zoom() {
         geometry.plot_area
     );
 }
+
+fn annotation_test_session() -> InteractivePlotSession {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .xlim(0.0, 1.0)
+        .ylim(0.0, 1.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    plot.prepare_interactive()
+}
+
+fn dynamic_annotation_variants(offset: f64) -> Vec<Annotation> {
+    vec![
+        Annotation::text(0.2 + offset, 0.3, format!("label {offset}")),
+        Annotation::arrow(0.1 + offset, 0.2, 0.4 + offset, 0.5),
+        Annotation::hline(0.25 + offset),
+        Annotation::vline(0.25 + offset),
+        Annotation::rectangle(0.1 + offset, 0.2, 0.2, 0.3),
+        Annotation::fill_between(
+            vec![0.1 + offset, 0.3 + offset],
+            vec![0.2, 0.4],
+            vec![0.1, 0.2],
+        ),
+        Annotation::hspan(0.1 + offset, 0.3 + offset),
+        Annotation::vspan(0.2 + offset, 0.4 + offset),
+    ]
+}
+
+#[test]
+fn test_dynamic_annotations_support_every_variant_lifecycle() {
+    let session = annotation_test_session();
+    for (annotation, replacement) in dynamic_annotation_variants(0.0)
+        .into_iter()
+        .zip(dynamic_annotation_variants(0.05))
+    {
+        let expected_initial = std::mem::discriminant(&annotation);
+        let expected_replacement = std::mem::discriminant(&replacement);
+        let id = session.add_annotation(annotation).unwrap();
+        assert_eq!(
+            std::mem::discriminant(&session.annotation(id).unwrap()),
+            expected_initial
+        );
+        session.update_annotation(id, replacement).unwrap();
+        assert_eq!(
+            std::mem::discriminant(&session.annotation(id).unwrap()),
+            expected_replacement
+        );
+        assert!(session.remove_annotation(id).unwrap());
+        assert!(matches!(
+            session.annotation(id),
+            Err(PlottingError::UnknownAnnotationId)
+        ));
+    }
+}
+
+#[test]
+fn test_dynamic_annotation_ids_reject_foreign_and_stale_sessions() {
+    let first = annotation_test_session();
+    let second = annotation_test_session();
+    let id = first.add_annotation(Annotation::vline(0.25)).unwrap();
+    assert!(matches!(
+        second.annotation(id),
+        Err(PlottingError::UnknownAnnotationId)
+    ));
+    assert!(matches!(
+        second.update_annotation(id, Annotation::vline(0.5)),
+        Err(PlottingError::UnknownAnnotationId)
+    ));
+    assert!(matches!(
+        second.remove_annotation(id),
+        Err(PlottingError::UnknownAnnotationId)
+    ));
+    assert!(first.remove_annotation(id).unwrap());
+    assert!(matches!(
+        first.update_annotation(id, Annotation::vline(0.75)),
+        Err(PlottingError::UnknownAnnotationId)
+    ));
+    assert!(matches!(
+        first.remove_annotation(id),
+        Err(PlottingError::UnknownAnnotationId)
+    ));
+}
+
+#[test]
+fn test_dynamic_annotation_validation_happens_before_mutation() {
+    let session = annotation_test_session();
+    let invalid = [
+        Annotation::text(f64::NAN, 0.0, "nan"),
+        Annotation::hline(f64::INFINITY),
+        Annotation::rectangle(0.0, 0.0, -1.0, 1.0),
+        Annotation::fill_between(Vec::new(), Vec::new(), Vec::new()),
+        Annotation::fill_between(vec![0.5], vec![0.5], vec![0.5]),
+        Annotation::fill_between(vec![0.0, 1.0], vec![0.0], vec![0.0, 1.0]),
+        Annotation::FillBetween {
+            x: vec![0.0, 1.0],
+            y1: vec![0.0, f64::NEG_INFINITY],
+            y2: vec![0.0, 0.0],
+            style: FillStyle::default(),
+            where_positive: false,
+        },
+        Annotation::hspan(1.0, 0.0),
+        Annotation::VLine {
+            x: 0.5,
+            style: LineStyle::Solid,
+            color: Color::RED,
+            width: -1.0,
+        },
+    ];
+    for annotation in invalid {
+        assert!(matches!(
+            session.add_annotation(annotation),
+            Err(PlottingError::InvalidAnnotation { .. })
+        ));
+    }
+
+    let id = session.add_annotation(Annotation::vline(0.25)).unwrap();
+    let dirty_before = session.dirty_domains();
+    assert!(matches!(
+        session.update_annotation(id, Annotation::vline(f64::NAN)),
+        Err(PlottingError::InvalidAnnotation { .. })
+    ));
+    assert_eq!(session.dirty_domains(), dirty_before);
+    assert!(matches!(
+        session.annotation(id).unwrap(),
+        Annotation::VLine { x, .. } if x == 0.25
+    ));
+}
+
+#[test]
+fn test_dynamic_annotation_changes_dirty_only_overlay_and_reuse_base() {
+    let session = annotation_test_session();
+    let initial = session.render_to_surface(render_target()).unwrap();
+    assert_eq!(session.dirty_domains(), DirtyDomains::default());
+    let id = session.add_annotation(Annotation::vline(0.25)).unwrap();
+    assert_eq!(
+        session.dirty_domains(),
+        DirtyDomains {
+            overlay: true,
+            ..DirtyDomains::default()
+        }
+    );
+    let added = session.render_to_surface(render_target()).unwrap();
+    assert!(!added.layer_state.base_dirty);
+    assert!(added.layer_state.overlay_dirty);
+    assert!(Arc::ptr_eq(&initial.layers.base, &added.layers.base));
+
+    session
+        .update_annotation(id, Annotation::vline(0.75))
+        .unwrap();
+    let updated = session.render_to_surface(render_target()).unwrap();
+    assert!(!updated.layer_state.base_dirty);
+    assert!(updated.layer_state.overlay_dirty);
+    assert!(Arc::ptr_eq(&added.layers.base, &updated.layers.base));
+
+    session.remove_annotation(id).unwrap();
+    let removed = session.render_to_surface(render_target()).unwrap();
+    assert!(!removed.layer_state.base_dirty);
+    assert!(removed.layer_state.overlay_dirty);
+    assert!(Arc::ptr_eq(&updated.layers.base, &removed.layers.base));
+    assert!(removed.layers.overlay.is_none());
+}
+
+fn red_overlay_centroid_x(image: &Image) -> Option<f64> {
+    let mut total_x = 0.0;
+    let mut count = 0_u64;
+    for (index, pixel) in image.pixels.chunks_exact(4).enumerate() {
+        if pixel[0] > 180 && pixel[1] < 80 && pixel[2] < 80 && pixel[3] > 0 {
+            total_x += (index as u32 % image.width) as f64 + 0.5;
+            count += 1;
+        }
+    }
+    (count > 0).then_some(total_x / count as f64)
+}
+
+#[test]
+fn test_dynamic_annotation_tracks_current_zoom_transform() {
+    let session = annotation_test_session();
+    session.render_to_surface(render_target()).unwrap();
+    let id = session
+        .add_annotation(Annotation::vline_styled(
+            0.25,
+            Color::RED,
+            3.0,
+            LineStyle::Solid,
+        ))
+        .unwrap();
+    let before = session.render_to_surface(render_target()).unwrap();
+    let before_expected = session
+        .data_to_screen(ViewportPoint::new(0.25, 0.5))
+        .unwrap()
+        .unwrap()
+        .x;
+    let before_actual = red_overlay_centroid_x(before.layers.overlay.as_ref().unwrap()).unwrap();
+    assert!((before_actual - before_expected).abs() < 2.0);
+
+    let center = session
+        .data_to_screen(ViewportPoint::new(0.5, 0.5))
+        .unwrap()
+        .unwrap();
+    session.apply_input(PlotInputEvent::Zoom {
+        factor: 1.5,
+        center_px: center,
+    });
+    let after = session.render_to_surface(render_target()).unwrap();
+    let after_expected = session
+        .data_to_screen(ViewportPoint::new(0.25, 0.5))
+        .unwrap()
+        .unwrap()
+        .x;
+    let after_actual = red_overlay_centroid_x(after.layers.overlay.as_ref().unwrap()).unwrap();
+    assert!((after_actual - after_expected).abs() < 2.0);
+    assert!((after_actual - before_actual).abs() > 5.0);
+    assert!(matches!(
+        session.annotation(id).unwrap(),
+        Annotation::VLine { x, .. } if x == 0.25
+    ));
+}
+
+#[test]
+fn test_dynamic_annotations_are_clipped_to_displayed_plot_area() {
+    let session = annotation_test_session();
+    session.render_to_surface(render_target()).unwrap();
+    session
+        .add_annotation(Annotation::Rectangle {
+            x: -1.0,
+            y: -1.0,
+            width: 3.0,
+            height: 3.0,
+            style: ShapeStyle::default().fill(Color::RED),
+        })
+        .unwrap();
+    let frame = session.render_to_surface(render_target()).unwrap();
+    let overlay = frame.layers.overlay.as_ref().unwrap();
+    let plot_area = session.viewport_snapshot().unwrap().plot_area;
+
+    for (index, pixel) in overlay.pixels.chunks_exact(4).enumerate() {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let x = (index as u32 % overlay.width) as f64 + 0.5;
+        let y = (index as u32 / overlay.width) as f64 + 0.5;
+        assert!(
+            plot_area.contains(ViewportPoint::new(x, y)),
+            "dynamic annotation pixel leaked outside plot area at ({x}, {y})"
+        );
+    }
+}
+
+#[test]
+fn test_dynamic_annotations_appear_and_move_in_image_capture() {
+    let session = annotation_test_session();
+    let target = ImageTarget {
+        size_px: (320, 240),
+        scale_factor: 1.0,
+        time_seconds: 0.0,
+    };
+    let base = session.render_to_image(target).unwrap();
+    let id = session
+        .add_annotation(Annotation::vline_styled(
+            0.25,
+            Color::RED,
+            4.0,
+            LineStyle::Solid,
+        ))
+        .unwrap();
+    let added = session.render_to_image(target).unwrap();
+    session
+        .update_annotation(
+            id,
+            Annotation::vline_styled(0.75, Color::RED, 4.0, LineStyle::Solid),
+        )
+        .unwrap();
+    let moved = session.render_to_image(target).unwrap();
+
+    assert_ne!(base.image.pixels, added.image.pixels);
+    assert_ne!(added.image.pixels, moved.image.pixels);
+    assert!(Arc::ptr_eq(&base.layers.base, &added.layers.base));
+    assert!(Arc::ptr_eq(&added.layers.base, &moved.layers.base));
+}
+
+#[test]
+fn test_dynamic_annotation_mutations_are_thread_safe() {
+    let session = annotation_test_session();
+    let threads = (0..8)
+        .map(|thread_index| {
+            let session = session.clone();
+            std::thread::spawn(move || {
+                for iteration in 0..32 {
+                    let x = (thread_index * 32 + iteration) as f64 / 512.0;
+                    let id = session.add_annotation(Annotation::vline(x)).unwrap();
+                    session
+                        .update_annotation(id, Annotation::vline(x + 0.01))
+                        .unwrap();
+                    assert!(session.remove_annotation(id).unwrap());
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    for thread in threads {
+        thread.join().expect("annotation mutation thread panicked");
+    }
+    let frame = session.render_to_surface(render_target()).unwrap();
+    assert!(frame.layers.overlay.is_none());
+}
+
+#[test]
+fn test_dynamic_spans_render_on_reversed_axes() {
+    let plot: Plot = Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .xlim(1.0, 0.0)
+        .ylim(1.0, 0.0)
+        .ticks(false)
+        .grid(false)
+        .into();
+    let session = plot.prepare_interactive();
+    session.render_to_surface(render_target()).unwrap();
+    session
+        .add_annotation(Annotation::HSpan {
+            x_min: 0.2,
+            x_max: 0.6,
+            style: ShapeStyle::default().fill(Color::RED).fill_alpha(1.0),
+        })
+        .unwrap();
+    session
+        .add_annotation(Annotation::VSpan {
+            y_min: 0.2,
+            y_max: 0.6,
+            style: ShapeStyle::default().fill(Color::RED).fill_alpha(1.0),
+        })
+        .unwrap();
+    let frame = session.render_to_surface(render_target()).unwrap();
+    let overlay = frame
+        .layers
+        .overlay
+        .as_ref()
+        .expect("span overlay should render");
+    let opaque_pixels = overlay
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[3] > 0)
+        .count();
+    assert!(
+        opaque_pixels > 0,
+        "reversed-axis spans must produce overlay pixels"
+    );
+}
+
+#[test]
+fn test_translucent_dynamic_annotation_composes_with_straight_alpha() {
+    let session = annotation_test_session();
+    let target = ImageTarget {
+        size_px: (320, 240),
+        scale_factor: 1.0,
+        time_seconds: 0.0,
+    };
+    session.render_to_image(target).unwrap();
+    session
+        .add_annotation(Annotation::VSpan {
+            y_min: 0.0,
+            y_max: 1.0,
+            style: ShapeStyle::default().fill(Color::RED).fill_alpha(0.5),
+        })
+        .unwrap();
+    let frame = session.render_to_image(target).unwrap();
+    let overlay = frame
+        .layers
+        .overlay
+        .as_ref()
+        .expect("translucent overlay should render");
+    let translucent_pixel = overlay
+        .pixels
+        .chunks_exact(4)
+        .find(|pixel| pixel[3] > 0 && pixel[3] < 255)
+        .expect("half-alpha span should produce translucent pixels");
+    // Straight (non-premultiplied) alpha: color channels must exceed the
+    // alpha-scaled value a premultiplied buffer would carry.
+    assert!(
+        translucent_pixel[0] > 200,
+        "red channel should stay near full intensity in straight alpha, got {:?}",
+        translucent_pixel
+    );
+}

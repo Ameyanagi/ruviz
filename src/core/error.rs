@@ -46,6 +46,10 @@ pub enum PlottingError {
     SystemError(String),
     /// Invalid input parameter
     InvalidInput(String),
+    /// Invalid dynamic annotation value or style geometry
+    InvalidAnnotation { reason: String },
+    /// Annotation ID does not belong to this session or is no longer present
+    UnknownAnnotationId,
     /// Data contains invalid values (NaN, Inf)
     InvalidData {
         message: String,
@@ -239,6 +243,12 @@ impl fmt::Display for PlottingError {
             }
             PlottingError::InvalidInput(msg) => {
                 write!(f, "Invalid input: {}", msg)
+            }
+            PlottingError::InvalidAnnotation { reason } => {
+                write!(f, "Invalid annotation: {}", reason)
+            }
+            PlottingError::UnknownAnnotationId => {
+                write!(f, "Unknown annotation ID for this interactive session")
             }
             PlottingError::InvalidData { message, position } => match position {
                 Some(pos) => write!(f, "Invalid data at position {}: {}", pos, message),

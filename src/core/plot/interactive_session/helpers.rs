@@ -497,6 +497,32 @@ pub(super) fn blend_channel(background: u8, foreground: u8, alpha: f32) -> u8 {
     ((bg * (1.0 - alpha) + fg * alpha) * 255.0) as u8
 }
 
+/// Straight-alpha source-over composition of `color` onto one RGBA pixel.
+///
+/// Unlike a plain channel blend that overwrites destination alpha, this
+/// preserves existing coverage (e.g. dynamic annotations underneath a brush
+/// or hover marker) so the base layer does not bleed through.
+fn blend_pixel_over(dst: &mut [u8], color: Color) {
+    let src_a = color.a as f32 / 255.0;
+    if src_a <= 0.0 {
+        return;
+    }
+    let dst_a = dst[3] as f32 / 255.0;
+    let out_a = src_a + dst_a * (1.0 - src_a);
+    if out_a <= 0.0 {
+        return;
+    }
+    let blend = |dst_c: u8, src_c: u8| -> u8 {
+        let d = dst_c as f32 / 255.0;
+        let s = src_c as f32 / 255.0;
+        (((s * src_a + d * dst_a * (1.0 - src_a)) / out_a) * 255.0).round() as u8
+    };
+    dst[0] = blend(dst[0], color.r);
+    dst[1] = blend(dst[1], color.g);
+    dst[2] = blend(dst[2], color.b);
+    dst[3] = (out_a * 255.0).round() as u8;
+}
+
 pub(super) fn draw_hit(
     pixels: &mut [u8],
     size_px: (u32, u32),
@@ -560,11 +586,7 @@ fn draw_circle_clipped(
                 continue;
             }
             let index = ((y * width + x) * 4) as usize;
-            let alpha = color.a as f32 / 255.0;
-            pixels[index] = blend_channel(pixels[index], color.r, alpha);
-            pixels[index + 1] = blend_channel(pixels[index + 1], color.g, alpha);
-            pixels[index + 2] = blend_channel(pixels[index + 2], color.b, alpha);
-            pixels[index + 3] = color.a;
+            blend_pixel_over(&mut pixels[index..index + 4], color);
         }
     }
 }
@@ -586,7 +608,6 @@ fn draw_rect_clipped(
     let y1 = rect.min.y.round() as i32;
     let x2 = rect.max.x.round() as i32;
     let y2 = rect.max.y.round() as i32;
-    let alpha = color.a as f32 / 255.0;
 
     let clip_x1 = clip.map_or(0, |clip| clip.min.x.ceil() as i32);
     let clip_y1 = clip.map_or(0, |clip| clip.min.y.ceil() as i32);
@@ -596,10 +617,7 @@ fn draw_rect_clipped(
     for y in y1.max(0).max(clip_y1)..y2.min(height).min(clip_y2) {
         for x in x1.max(0).max(clip_x1)..x2.min(width).min(clip_x2) {
             let index = ((y * width + x) * 4) as usize;
-            pixels[index] = blend_channel(pixels[index], color.r, alpha);
-            pixels[index + 1] = blend_channel(pixels[index + 1], color.g, alpha);
-            pixels[index + 2] = blend_channel(pixels[index + 2], color.b, alpha);
-            pixels[index + 3] = color.a;
+            blend_pixel_over(&mut pixels[index..index + 4], color);
         }
     }
 }
@@ -618,7 +636,6 @@ pub(super) fn draw_rect_outline(
     let x2 = rect.max.x.round() as i32;
     let y2 = rect.max.y.round() as i32;
     let thickness = thickness.max(1);
-    let alpha = color.a as f32 / 255.0;
 
     for y in y1.max(0)..=y2.min(height - 1) {
         for x in x1.max(0)..=x2.min(width - 1) {
@@ -631,10 +648,7 @@ pub(super) fn draw_rect_outline(
             }
             let index = ((y * width + x) * 4) as usize;
             if index + 3 < pixels.len() {
-                pixels[index] = blend_channel(pixels[index], color.r, alpha);
-                pixels[index + 1] = blend_channel(pixels[index + 1], color.g, alpha);
-                pixels[index + 2] = blend_channel(pixels[index + 2], color.b, alpha);
-                pixels[index + 3] = color.a;
+                blend_pixel_over(&mut pixels[index..index + 4], color);
             }
         }
     }

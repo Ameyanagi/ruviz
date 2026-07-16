@@ -39,7 +39,8 @@ pub use legend::{
     LegendSpacingPixels, LegendStyle, find_best_position,
 };
 pub use plot::{
-    BackendFallbackReason, BackendOperation, BackendResolution, BackendType, BuilderWhen,
+    AnnotationId, BackendFallbackReason, BackendOperation, BackendResolution, BackendType,
+    BuilderWhen,
     DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, Image, ImageTarget, InsetAnchor,
     InsetLayout, InteractiveFrame, InteractiveFrameWithGeneration, InteractivePlotSession,
     InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Plot, PlotBuilder, PlotInput,

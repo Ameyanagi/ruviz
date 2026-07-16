@@ -823,7 +823,8 @@ pub mod animation;
 pub mod prelude {
     pub use crate::axes::AxisScale;
     pub use crate::core::{
-        Annotation, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FillStyle, FramePacing,
+        Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FillStyle,
+        FramePacing,
         FrameStats, GridSpec, HatchPattern, HitResult, Image, ImageTarget, InsetAnchor,
         InsetLayout, InteractiveFrame, InteractivePlotSession, InteractiveViewportSnapshot,
         IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem, LegendItemType,

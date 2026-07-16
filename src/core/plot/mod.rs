@@ -509,10 +509,10 @@ pub use configuration::{PlotConfiguration, TextEngineMode};
 pub use data::{IntoPlotData, PlotData, PlotSource, PlotText, ReactiveValue};
 pub use image::Image;
 pub use interactive_session::{
-    DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget, InteractiveFrame,
-    InteractiveFrameWithGeneration, InteractivePlotSession, InteractiveViewBoundsSnapshot,
-    InteractiveViewportSnapshot, LayerRenderState, PlotInputEvent, QualityPolicy, RenderTargetKind,
-    SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
+    AnnotationId, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, ImageTarget,
+    InteractiveFrame, InteractiveFrameWithGeneration, InteractivePlotSession,
+    InteractiveViewBoundsSnapshot, InteractiveViewportSnapshot, LayerRenderState, PlotInputEvent,
+    QualityPolicy, RenderTargetKind, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
 };
 pub use layout_manager::LayoutManager;
 pub use prepared::{PreparedPlot, ReactiveSubscription};

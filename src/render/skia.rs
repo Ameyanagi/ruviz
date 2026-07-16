@@ -3035,6 +3035,19 @@ impl SkiaRenderer {
         }
     }
 
+    /// Consume the renderer and convert to an `Image` with straight-alpha
+    /// (demultiplied) RGBA pixels.
+    ///
+    /// Use this when the buffer will be composed by straight-alpha blenders
+    /// (e.g. the interactive overlay compositor) rather than tiny-skia.
+    pub fn into_image_demultiplied(self) -> Image {
+        Image {
+            width: self.width,
+            height: self.height,
+            pixels: self.pixmap.take_demultiplied(),
+        }
+    }
+
     /// Save the current pixmap as a PNG with straight-alpha RGBA encoding.
     pub fn save_png<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         crate::export::write_bytes_atomic(path, &self.encode_png_bytes()?)
