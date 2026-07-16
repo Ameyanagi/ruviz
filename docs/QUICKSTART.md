@@ -2,15 +2,15 @@
 
 Get started with ruviz in less than 5 minutes!
 
-## What's New in v0.4.20
+## What's New in v0.5.0
 
-- Rendering now shares resolved data, styling, fonts, annotations, and error bars across raster, SVG, prepared, parallel, and interactive paths.
-- Interactive transforms and hit testing are scale-aware, frame-coherent, and indexed for large displayed datasets.
-- Backend diagnostics now report actual execution and explain safe fallbacks for unsupported GPU, Parallel, and DataShader operations.
-- Deterministic bundled-font golden tests and checked documentation examples now guard visual and documentation quality in CI.
+- Streaming data can be replaced atomically with `StreamingXY::replace`, and acknowledgement watermarks are tracked per consumer so shared streams never composite stale frames.
+- Outside legend positions (`OutsideRight`, `OutsideLeft`, `OutsideUpper`, `OutsideLower`) are honored across PNG, SVG, parallel, interactive, and subplot rendering.
+- Interactive annotations can be added, updated, and removed at runtime, and heatmaps accept a configurable row origin.
+- Builders gain a conditional `.when(...)` combinator, and the GPUI adapter gains coordinate mapping, pointer events, and view-preserving plot replacement.
 
 See full details:
-- [Release notes for v0.4.20](releases/v0.4.20.md)
+- [Release notes for v0.5.0](releases/v0.5.0.md)
 - [Project changelog](../CHANGELOG.md)
 
 ## Installation
@@ -24,7 +24,7 @@ cd my_plot
 2. **Add ruviz to your `Cargo.toml`**:
 ```toml
 [dependencies]
-ruviz = "0.4.20"
+ruviz = "0.5.0"
 ```
 
 3. **Write your first plot** in `src/main.rs`:
@@ -63,8 +63,8 @@ an embedded interactive plot view:
 
 ```toml
 [dependencies]
-ruviz = "0.4.20"
-ruviz-gpui = "0.4.20"
+ruviz = "0.5.0"
+ruviz-gpui = "0.5.0"
 ```
 
 `ruviz-gpui` is supported on Linux, macOS, and Windows. On Windows, prefer the
@@ -92,7 +92,7 @@ If you want publication-style math in labels and titles, enable Typst text rende
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.20", features = ["typst-math"] }
+ruviz = { version = "0.5.0", features = ["typst-math"] }
 ```
 
 `.typst(true)` is only available when `typst-math` is enabled. The configured
@@ -111,7 +111,7 @@ If you want Typst to stay optional in your own crate, forward a local feature fi
 
 ```toml
 [dependencies]
-ruviz = { version = "0.4.20", default-features = false }
+ruviz = { version = "0.5.0", default-features = false }
 
 [features]
 default = []
@@ -363,7 +363,7 @@ Plot::new()
 ### With polars (requires `polars_support` feature)
 ```toml
 [dependencies]
-ruviz = { version = "0.4.20", features = ["polars_support"] }
+ruviz = { version = "0.5.0", features = ["polars_support"] }
 polars = "0.50"
 ```
 
@@ -391,7 +391,7 @@ The default feature set already includes `parallel`. Add `performance` only
 when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
-ruviz = { version = "0.4.20", features = ["performance"] }
+ruviz = { version = "0.5.0", features = ["performance"] }
 ```
 
 ### Large Dataset Export
