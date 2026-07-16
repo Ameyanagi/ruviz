@@ -836,9 +836,10 @@ pub mod prelude {
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,
     };
     pub use crate::plots::{
-        BoxenConfig, BoxenOrientation, ContourConfig, HeatmapConfig, Interpolation, PieConfig,
-        PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, PolarPlotConfig, QuiverConfig,
-        QuiverPivot, RadarConfig, StemMarker, StemOrientation, StepWhere, ViolinConfig,
+        BoxenConfig, BoxenOrientation, ContourConfig, HeatmapConfig, HeatmapOrigin, Interpolation,
+        PieConfig, PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, PolarPlotConfig,
+        QuiverConfig, QuiverPivot, RadarConfig, StemMarker, StemOrientation, StepWhere,
+        ViolinConfig,
     };
     pub use crate::render::{
         Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,

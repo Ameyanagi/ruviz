@@ -1109,6 +1109,84 @@ fn test_heatmap_axis_hit_uses_scaled_screen_to_data_and_cell_geometry() {
 }
 
 #[test]
+fn test_heatmap_origin_hit_rows_values_and_rectangles_survive_reversed_y_axis() {
+    use crate::plots::{HeatmapConfig, HeatmapOrigin};
+
+    let values = vec![vec![10.0, 11.0], vec![20.0, 21.0]];
+    for origin in [HeatmapOrigin::Upper, HeatmapOrigin::Lower] {
+        for reversed in [false, true] {
+            let (y_min, y_max) = if reversed { (24.0, 20.0) } else { (20.0, 24.0) };
+            let plot: Plot = Plot::new()
+                .heatmap(
+                    &values,
+                    Some(
+                        HeatmapConfig::new()
+                            .extent(10.0, 14.0, 20.0, 24.0)
+                            .origin(origin)
+                            .colorbar(false),
+                    ),
+                )
+                .into_plot()
+                .xlim(10.0, 14.0)
+                .ylim(y_min, y_max)
+                .ticks(false)
+                .grid(false)
+                .into();
+            let session = plot.prepare_interactive();
+            session
+                .render_to_surface(render_target())
+                .expect("heatmap origin frame should render");
+
+            for row in 0..2 {
+                let data_y = match (origin, row) {
+                    (HeatmapOrigin::Upper, 0) | (HeatmapOrigin::Lower, 1) => 23.0,
+                    (HeatmapOrigin::Upper, 1) | (HeatmapOrigin::Lower, 0) => 21.0,
+                    _ => unreachable!(),
+                };
+                let screen_position = session
+                    .data_to_screen(ViewportPoint::new(13.0, data_y))
+                    .unwrap()
+                    .unwrap();
+
+                match session.hit_test(screen_position) {
+                    HitResult::HeatmapCell {
+                        row: hit_row,
+                        col,
+                        value,
+                        screen_rect,
+                        ..
+                    } => {
+                        assert_eq!((hit_row, col), (row, 1));
+                        assert_eq!(value, values[row][1]);
+                        assert!(screen_rect.contains(screen_position));
+
+                        let y_bounds = if data_y > 22.0 {
+                            (22.0, 24.0)
+                        } else {
+                            (20.0, 22.0)
+                        };
+                        let first = session
+                            .data_to_screen(ViewportPoint::new(12.0, y_bounds.0))
+                            .unwrap()
+                            .unwrap();
+                        let second = session
+                            .data_to_screen(ViewportPoint::new(14.0, y_bounds.1))
+                            .unwrap()
+                            .unwrap();
+                        let expected = ViewportRect::from_points(first, second);
+                        assert!((screen_rect.min.x - expected.min.x).abs() < 1e-4);
+                        assert!((screen_rect.min.y - expected.min.y).abs() < 1e-4);
+                        assert!((screen_rect.max.x - expected.max.x).abs() < 1e-4);
+                        assert!((screen_rect.max.y - expected.max.y).abs() < 1e-4);
+                    }
+                    other => panic!("expected heatmap cell hit, got {other:?}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn test_incremental_streaming_uses_scaled_geometry_and_displayed_hit_data() {
     let stream = StreamingXY::new(32);
     stream.push_many(vec![(1.0, -10.0), (10.0, 0.0)]);
