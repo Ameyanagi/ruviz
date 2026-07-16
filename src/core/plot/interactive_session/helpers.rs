@@ -21,10 +21,15 @@ pub(super) fn compose_images(base: &Image, overlay: &Image) -> Image {
 pub(super) fn collect_streaming_draw_ops(
     plot: &Plot,
     frame: &ResolvedFrame<'_>,
+    rendered_streams: &StreamingFrameWatermarks,
     size_px: (u32, u32),
     scale_factor: f32,
     _time_seconds: f64,
 ) -> Result<Option<Vec<StreamingDrawOp>>> {
+    if !rendered_streams.generic_streams_allow_incremental(frame) {
+        return Ok(None);
+    }
+
     if plot
         .display
         .title
@@ -76,6 +81,7 @@ pub(super) fn collect_streaming_draw_ops(
                     x_data,
                     y_data,
                     frame,
+                    rendered_streams,
                     StreamingDrawKind::Line,
                     color,
                     line_width_px,
@@ -98,6 +104,7 @@ pub(super) fn collect_streaming_draw_ops(
                     x_data,
                     y_data,
                     frame,
+                    rendered_streams,
                     StreamingDrawKind::Scatter,
                     color,
                     line_width_px,
@@ -127,6 +134,7 @@ pub(super) fn streaming_draw_op(
     x_data: &PlotData,
     y_data: &PlotData,
     frame: &ResolvedFrame<'_>,
+    rendered_streams: &StreamingFrameWatermarks,
     kind: StreamingDrawKind,
     color: Color,
     line_width_px: f32,
@@ -147,7 +155,15 @@ pub(super) fn streaming_draw_op(
     else {
         return Ok(None);
     };
-    let appended_count = match snapshot.render_state {
+    let Some(rendered_through) = rendered_streams.paired.iter().find_map(|rendered| {
+        rendered
+            .source
+            .shares_source(source)
+            .then_some(rendered.sequence)
+    }) else {
+        return Ok(None);
+    };
+    let appended_count = match snapshot.watermark.render_state_since(rendered_through) {
         crate::data::StreamingRenderState::AppendOnly { visible_appended } => visible_appended,
         _ => return Ok(None),
     };

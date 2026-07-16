@@ -1337,8 +1337,7 @@ pub(crate) struct ResolvedStreamingPair {
     pub(super) source: StreamingXY,
     pub(super) x: Arc<[f64]>,
     pub(super) y: Arc<[f64]>,
-    pub(super) sequence: u64,
-    pub(super) render_state: crate::data::StreamingRenderState,
+    pub(super) watermark: crate::data::observable::StreamingXYRenderWatermark,
 }
 
 #[derive(Clone, Debug)]
@@ -1377,7 +1376,9 @@ impl ResolvedFrame<'_> {
             stream.mark_rendered();
         }
         for stream in &self.paired_acknowledgements {
-            stream.source.mark_rendered_through(stream.sequence);
+            stream
+                .source
+                .mark_rendered_through(stream.watermark.sequence());
         }
     }
 }

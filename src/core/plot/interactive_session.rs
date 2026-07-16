@@ -956,6 +956,59 @@ struct InteractiveFrameCache {
     geometry: GeometrySnapshot,
     displayed_data: DisplayedFrameData,
     point_hit_index: LazyPointHitIndex,
+    streaming_watermarks: StreamingFrameWatermarks,
+}
+
+#[derive(Clone, Default)]
+struct StreamingFrameWatermarks {
+    generic: Vec<crate::data::StreamingBuffer<f64>>,
+    paired: Vec<PairedStreamingWatermark>,
+}
+
+impl std::fmt::Debug for StreamingFrameWatermarks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingFrameWatermarks")
+            .field("generic_count", &self.generic.len())
+            .field("paired", &self.paired)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PairedStreamingWatermark {
+    source: crate::data::StreamingXY,
+    sequence: u64,
+}
+
+impl StreamingFrameWatermarks {
+    fn capture(frame: &ResolvedFrame<'_>) -> Self {
+        Self {
+            generic: frame.streaming_acknowledgements.clone(),
+            paired: frame
+                .paired_acknowledgements
+                .iter()
+                .map(|stream| PairedStreamingWatermark {
+                    source: stream.source.clone(),
+                    sequence: stream.watermark.sequence(),
+                })
+                .collect(),
+        }
+    }
+
+    fn generic_streams_allow_incremental(&self, frame: &ResolvedFrame<'_>) -> bool {
+        frame.streaming_acknowledgements.iter().all(|current| {
+            self.generic
+                .iter()
+                .find(|rendered| current.shares_source(rendered))
+                .is_some_and(|rendered| {
+                    matches!(
+                        current.render_state_since(rendered),
+                        crate::data::StreamingRenderState::Unchanged
+                            | crate::data::StreamingRenderState::AppendOnly { .. }
+                    )
+                })
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2415,6 +2468,7 @@ impl InteractivePlotSession {
         let image = Arc::new(renderer.into_image());
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
         let point_hit_index = Arc::new(OnceLock::new());
+        let streaming_watermarks = StreamingFrameWatermarks::capture(frame);
 
         let generation = self.publish_base_cache_if_epoch(
             InteractiveFrameCache {
@@ -2424,6 +2478,7 @@ impl InteractivePlotSession {
                 geometry: geometry.clone(),
                 displayed_data,
                 point_hit_index,
+                streaming_watermarks,
             },
             epoch_before_render,
         )?;
@@ -2874,6 +2929,7 @@ impl InteractivePlotSession {
         let Some(draw_ops) = collect_streaming_draw_ops(
             source_plot,
             frame,
+            &cached.streaming_watermarks,
             state.size_px,
             state.scale_factor,
             state.time_seconds,
@@ -2893,6 +2949,7 @@ impl InteractivePlotSession {
         )?);
         let displayed_data = DisplayedFrameData::capture(source_plot, frame);
         let point_hit_index = Arc::new(OnceLock::new());
+        let streaming_watermarks = StreamingFrameWatermarks::capture(frame);
 
         let generation = self.publish_base_cache_if_epoch(
             InteractiveFrameCache {
@@ -2902,6 +2959,7 @@ impl InteractivePlotSession {
                 geometry: geometry.clone(),
                 displayed_data,
                 point_hit_index,
+                streaming_watermarks,
             },
             epoch_before_render,
         )?;

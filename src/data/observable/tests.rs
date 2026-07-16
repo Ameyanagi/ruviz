@@ -730,6 +730,33 @@ fn test_streaming_buffer_clear() {
 }
 
 #[test]
+fn test_streaming_buffer_render_state_since_is_per_consumer() {
+    let buffer = StreamingBuffer::<f64>::new(8);
+    buffer.push_many([1.0, 2.0]);
+
+    let (_, consumer_b) = buffer.snapshot_for_render();
+    consumer_b.mark_rendered();
+
+    buffer.clear();
+    buffer.push_many([10.0, 20.0]);
+    let (_, consumer_a) = buffer.snapshot_for_render();
+    consumer_a.mark_rendered();
+    buffer.push(30.0);
+
+    let (_, current) = buffer.snapshot_for_render();
+    assert_eq!(
+        current.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+    assert_eq!(
+        current.render_state_since(&consumer_b),
+        StreamingRenderState::FullRedrawRequired
+    );
+}
+
+#[test]
 fn test_streaming_buffer_subscribers() {
     let buffer = StreamingBuffer::<f64>::new(10);
     let count = Arc::new(AtomicUsize::new(0));
@@ -886,6 +913,32 @@ fn test_streaming_xy_replace_empty_is_one_atomic_clear() {
     assert_eq!(xy.render_state(), StreamingRenderState::Unchanged);
     assert_eq!(xy.x().render_state(), StreamingRenderState::Unchanged);
     assert_eq!(xy.y().render_state(), StreamingRenderState::Unchanged);
+}
+
+#[test]
+fn test_streaming_xy_snapshot_render_state_since_is_per_consumer() {
+    let xy = StreamingXY::new(8);
+    xy.push_many([(1.0, 10.0), (2.0, 20.0)]);
+
+    let consumer_b = xy.snapshot();
+    xy.mark_rendered_through(consumer_b.sequence());
+
+    xy.replace([(4.0, 40.0), (5.0, 50.0)]);
+    let consumer_a = xy.snapshot();
+    xy.mark_rendered_through(consumer_a.sequence());
+    xy.push(6.0, 60.0);
+
+    let current = xy.snapshot();
+    assert_eq!(
+        current.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+    assert_eq!(
+        current.render_state_since(consumer_b.sequence()),
+        StreamingRenderState::FullRedrawRequired
+    );
 }
 
 #[test]
