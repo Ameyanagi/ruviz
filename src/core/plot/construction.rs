@@ -1387,13 +1387,12 @@ impl Plot {
                 let snapshot_index = if let Some(index) = snapshot_index {
                     index
                 } else {
-                    let (x, y, sequence, render_state) = stream.snapshot().into_parts();
+                    let (x, y, watermark) = stream.snapshot().into_parts();
                     paired_acknowledgements.push(ResolvedStreamingPair {
                         source: stream.clone(),
                         x: Arc::from(x),
                         y: Arc::from(y),
-                        sequence,
-                        render_state,
+                        watermark,
                     });
                     paired_acknowledgements.len() - 1
                 };

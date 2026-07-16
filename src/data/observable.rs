@@ -1580,21 +1580,37 @@ impl<T: Clone> StreamingBuffer<T> {
 
     /// Describe whether the current buffer changes can be rendered incrementally.
     pub fn render_state(&self) -> StreamingRenderState {
-        if self.clear_generation.load(Ordering::Acquire)
-            != self.rendered_clear_generation.load(Ordering::Acquire)
-        {
+        let generation = self.clear_generation.load(Ordering::Acquire);
+        let rendered_generation = self.rendered_clear_generation.load(Ordering::Acquire);
+        let total_written = self.total_written.load(Ordering::Acquire);
+        let appended = self.appended_since_render.load(Ordering::Acquire);
+        Self::render_state_between(
+            rendered_generation,
+            generation,
+            total_written,
+            appended,
+            self.capacity,
+        )
+    }
+
+    fn render_state_between(
+        rendered_generation: u64,
+        generation: u64,
+        total_written: u64,
+        appended: usize,
+        capacity: usize,
+    ) -> StreamingRenderState {
+        if generation != rendered_generation {
             return StreamingRenderState::FullRedrawRequired;
         }
 
-        let appended = self.appended_since_render.load(Ordering::Acquire);
         if appended == 0 {
             return StreamingRenderState::Unchanged;
         }
 
-        let total_written = self.total_written.load(Ordering::Acquire);
-        let visible_after = std::cmp::min(total_written as usize, self.capacity);
+        let visible_after = std::cmp::min(total_written as usize, capacity);
         let total_before = total_written.saturating_sub(appended as u64);
-        let visible_before = std::cmp::min(total_before as usize, self.capacity);
+        let visible_before = std::cmp::min(total_before as usize, capacity);
 
         if visible_before == 0 {
             return StreamingRenderState::AppendOnly {
@@ -1602,13 +1618,34 @@ impl<T: Clone> StreamingBuffer<T> {
             };
         }
 
-        if visible_before.saturating_add(appended) <= self.capacity {
+        if visible_before.saturating_add(appended) <= capacity {
             return StreamingRenderState::AppendOnly {
                 visible_appended: appended,
             };
         }
 
         StreamingRenderState::FullRedrawRequired
+    }
+
+    pub(crate) fn render_state_since(&self, rendered: &Self) -> StreamingRenderState {
+        if !self.shares_source(rendered) {
+            return StreamingRenderState::FullRedrawRequired;
+        }
+        let Some((rendered_generation, rendered_through)) = rendered.acknowledge_through else {
+            return StreamingRenderState::FullRedrawRequired;
+        };
+        let Some((generation, total_written)) = self.acknowledge_through else {
+            return StreamingRenderState::FullRedrawRequired;
+        };
+        let appended =
+            usize::try_from(total_written.saturating_sub(rendered_through)).unwrap_or(usize::MAX);
+        Self::render_state_between(
+            rendered_generation,
+            generation,
+            total_written,
+            appended,
+            self.capacity,
+        )
     }
 
     /// Check if partial re-render is possible.
@@ -1742,6 +1779,35 @@ pub struct StreamingXYSnapshot {
     rendered_through: u64,
     render_state: StreamingRenderState,
     appended_start: usize,
+    total_written: u64,
+    last_clear_sequence: Option<u64>,
+    capacity: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StreamingXYRenderWatermark {
+    sequence: u64,
+    total_written: u64,
+    last_clear_sequence: Option<u64>,
+    visible_after: usize,
+    capacity: usize,
+}
+
+impl StreamingXYRenderWatermark {
+    pub(crate) fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) fn render_state_since(self, rendered_through: u64) -> StreamingRenderState {
+        StreamingXY::render_state_between(
+            self.sequence,
+            rendered_through,
+            self.total_written,
+            self.last_clear_sequence,
+            self.visible_after,
+            self.capacity,
+        )
+    }
 }
 
 impl StreamingXYSnapshot {
@@ -1770,6 +1836,10 @@ impl StreamingXYSnapshot {
         self.render_state
     }
 
+    pub(crate) fn render_state_since(&self, rendered_through: u64) -> StreamingRenderState {
+        self.render_watermark().render_state_since(rendered_through)
+    }
+
     /// Aligned visible X tail that may be appended incrementally.
     pub fn appended_x(&self) -> &[f64] {
         &self.x[self.appended_start..]
@@ -1780,8 +1850,19 @@ impl StreamingXYSnapshot {
         &self.y[self.appended_start..]
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<f64>, Vec<f64>, u64, StreamingRenderState) {
-        (self.x, self.y, self.sequence, self.render_state)
+    fn render_watermark(&self) -> StreamingXYRenderWatermark {
+        StreamingXYRenderWatermark {
+            sequence: self.sequence,
+            total_written: self.total_written,
+            last_clear_sequence: self.last_clear_sequence,
+            visible_after: self.x.len(),
+            capacity: self.capacity,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<f64>, Vec<f64>, StreamingXYRenderWatermark) {
+        let watermark = self.render_watermark();
+        (self.x, self.y, watermark)
     }
 }
 
@@ -2160,6 +2241,9 @@ impl StreamingXY {
             rendered_through: progress.rendered_through,
             render_state,
             appended_start,
+            total_written: progress.total_written,
+            last_clear_sequence: progress.last_clear_sequence,
+            capacity: self.x.capacity(),
         }
     }
 
@@ -2274,19 +2358,36 @@ impl StreamingXY {
         visible_after: usize,
         capacity: usize,
     ) -> StreamingRenderState {
-        if progress.sequence == progress.rendered_through {
+        Self::render_state_between(
+            progress.sequence,
+            progress.rendered_through,
+            progress.total_written,
+            progress.last_clear_sequence,
+            visible_after,
+            capacity,
+        )
+    }
+
+    fn render_state_between(
+        sequence: u64,
+        rendered_through: u64,
+        total_written: u64,
+        last_clear_sequence: Option<u64>,
+        visible_after: usize,
+        capacity: usize,
+    ) -> StreamingRenderState {
+        if sequence == rendered_through {
             return StreamingRenderState::Unchanged;
         }
-        if progress
-            .last_clear_sequence
-            .is_some_and(|sequence| Self::sequence_after(sequence, progress.rendered_through))
+        if last_clear_sequence
+            .is_some_and(|sequence| Self::sequence_after(sequence, rendered_through))
         {
             return StreamingRenderState::FullRedrawRequired;
         }
 
-        let appended = Self::sequence_distance(progress.sequence, progress.rendered_through);
+        let appended = Self::sequence_distance(sequence, rendered_through);
         let appended = usize::try_from(appended).unwrap_or(usize::MAX);
-        let total_before = progress.total_written.saturating_sub(appended as u64);
+        let total_before = total_written.saturating_sub(appended as u64);
         let visible_before = usize::try_from(total_before)
             .unwrap_or(usize::MAX)
             .min(capacity);

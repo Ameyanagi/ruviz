@@ -2569,6 +2569,81 @@ fn test_streaming_surface_render_falls_back_and_acknowledges_replacement() {
 }
 
 #[test]
+fn test_two_streaming_sessions_keep_independent_acknowledgement_watermarks() {
+    let stream = StreamingXY::new(16);
+    stream.push_many([(0.0, 0.0), (1.0, 0.5), (2.0, 1.0)]);
+    let plot: Plot = Plot::new()
+        .line_streaming(&stream)
+        .xlim(0.0, 8.0)
+        .ylim(-1.0, 2.0)
+        .into();
+    let session_1 = plot.prepare_interactive();
+    let session_2 = plot.prepare_interactive();
+
+    session_1
+        .render_to_surface(render_target())
+        .expect("session 1 initial frame should render");
+    session_2
+        .render_to_surface(render_target())
+        .expect("session 2 initial frame should render");
+
+    stream.replace([(3.0, 1.25), (4.0, 0.75), (5.0, 0.25)]);
+    let session_1_replacement = session_1
+        .render_to_surface(render_target())
+        .expect("session 1 replacement frame should render");
+    assert!(!session_1_replacement.layer_state.used_incremental_data);
+
+    stream.push(6.0, 0.5);
+    assert_eq!(
+        stream.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+    let session_2_frame = session_2
+        .render_to_surface(render_target())
+        .expect("session 2 stale frame should render");
+
+    assert!(session_2_frame.layer_state.base_dirty);
+    assert!(!session_2_frame.layer_state.used_incremental_data);
+}
+
+#[test]
+fn test_prepared_render_does_not_advance_interactive_stream_watermark() {
+    let stream = StreamingXY::new(16);
+    stream.push_many([(0.0, 0.0), (1.0, 0.5), (2.0, 1.0)]);
+    let plot: Plot = Plot::new()
+        .line_streaming(&stream)
+        .xlim(0.0, 8.0)
+        .ylim(-1.0, 2.0)
+        .into();
+    let prepared = plot.prepare();
+    let session = plot.prepare_interactive();
+
+    session
+        .render_to_surface(render_target())
+        .expect("initial interactive frame should render");
+
+    stream.replace([(3.0, 1.25), (4.0, 0.75), (5.0, 0.25)]);
+    prepared
+        .render_frame((320, 240), 1.0, 0.0)
+        .expect("prepared replacement frame should render");
+    stream.push(6.0, 0.5);
+    assert_eq!(
+        stream.render_state(),
+        StreamingRenderState::AppendOnly {
+            visible_appended: 1
+        }
+    );
+
+    let interactive_frame = session
+        .render_to_surface(render_target())
+        .expect("stale interactive frame should render");
+    assert!(interactive_frame.layer_state.base_dirty);
+    assert!(!interactive_frame.layer_state.used_incremental_data);
+}
+
+#[test]
 fn test_interactive_full_render_acknowledges_generic_streaming_buffers() {
     let x = StreamingBuffer::new(16);
     let y = StreamingBuffer::new(16);
@@ -3448,8 +3523,12 @@ fn test_incremental_stream_style_multiplies_intrinsic_and_series_alpha_once() {
         .color(Color::RED.with_alpha(0.5))
         .alpha(0.5)
         .into();
+    let rendered_frame = plot.resolve_frame(0.0).expect("frame should resolve");
+    let rendered_streams = StreamingFrameWatermarks::capture(&rendered_frame);
+    rendered_frame.acknowledge_rendered(&plot);
+    stream.push(2.0, 2.0);
     let frame = plot.resolve_frame(0.0).expect("frame should resolve");
-    let ops = collect_streaming_draw_ops(&plot, &frame, (320, 240), 1.0, 0.0)
+    let ops = collect_streaming_draw_ops(&plot, &frame, &rendered_streams, (320, 240), 1.0, 0.0)
         .expect("draw ops should resolve")
         .expect("stream should support incremental rendering");
 
