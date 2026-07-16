@@ -120,8 +120,8 @@ subplots(2, 2, 800, 600)?
 use ruviz::prelude::*;
 
 subplots(2, 2, 800, 600)?
-    .hspace(0.3)  // Horizontal spacing (between rows)
-    .wspace(0.3)  // Vertical spacing (between columns)
+    .hspace(0.3)  // Vertical spacing (between rows)
+    .wspace(0.3)  // Horizontal spacing (between columns)
     .subplot(0, 0, plot1)?
     .subplot(0, 1, plot2)?
     .subplot(1, 0, plot3)?

@@ -2,9 +2,35 @@
 ///
 /// Provides grid-based layout system for arranging multiple plots
 /// within a single figure, similar to matplotlib's subplot functionality.
-use crate::core::{Plot, PlottingError, REFERENCE_DPI, Result};
+use crate::core::{Plot, PlottingError, REFERENCE_DPI, RenderScale, Result};
 use crate::render::{Theme, skia::SkiaRenderer};
 use tiny_skia::Rect;
+
+const DEFAULT_SUPTITLE_SCALE: f32 = 1.2;
+const SUPTITLE_TOP_INSET_POINTS: f32 = 6.0;
+const SUPTITLE_GRID_GAP_POINTS: f32 = 6.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SuptitleLayout {
+    font_size_px: f32,
+    text_width: f32,
+    text_height: f32,
+    text_top: f32,
+    reserved_height: f32,
+}
+
+impl SuptitleLayout {
+    #[cfg(test)]
+    fn text_bounds(self, figure_width: u32) -> Rect {
+        Rect::from_xywh(
+            (figure_width as f32 - self.text_width) / 2.0,
+            self.text_top,
+            self.text_width,
+            self.text_height,
+        )
+        .expect("measured suptitle dimensions must form a valid rectangle")
+    }
+}
 
 /// Grid specification for subplot layout
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -13,9 +39,9 @@ pub struct GridSpec {
     pub rows: usize,
     /// Number of columns in the subplot grid
     pub cols: usize,
-    /// Horizontal spacing between subplots (as fraction of subplot width)
+    /// Vertical spacing between rows (as a fraction of subplot height)
     pub hspace: f32,
-    /// Vertical spacing between subplots (as fraction of subplot height)  
+    /// Horizontal spacing between columns (as a fraction of subplot width)
     pub wspace: f32,
 }
 
@@ -39,7 +65,7 @@ impl GridSpec {
         }
     }
 
-    /// Set horizontal spacing between subplots
+    /// Set vertical spacing between rows
     ///
     /// # Example
     ///
@@ -54,7 +80,7 @@ impl GridSpec {
         self
     }
 
-    /// Set vertical spacing between subplots
+    /// Set horizontal spacing between columns
     ///
     /// # Example
     ///
@@ -177,6 +203,8 @@ pub struct SubplotFigure {
     height: u32,
     /// Overall figure title
     suptitle: Option<String>,
+    /// Optional figure title font size override in points
+    suptitle_font_size: Option<f32>,
     /// Figure-level styling used for the canvas and suptitle
     theme: Theme,
     /// Figure margin (fraction of figure size)
@@ -203,6 +231,41 @@ impl SubplotFigure {
         Ok(value.floor() as u32)
     }
 
+    fn margin_pixels(&self, width: u32, height: u32) -> f32 {
+        self.margin * width.min(height) as f32
+    }
+
+    fn resolved_suptitle_font_size(&self) -> f32 {
+        self.suptitle_font_size
+            .unwrap_or(self.theme.title_font_size * DEFAULT_SUPTITLE_SCALE)
+            .max(6.0)
+    }
+
+    fn suptitle_layout(
+        &self,
+        renderer: &SkiaRenderer,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<SuptitleLayout>> {
+        let Some(title) = &self.suptitle else {
+            return Ok(None);
+        };
+
+        let render_scale = renderer.render_scale();
+        let font_size_px = render_scale.points_to_pixels(self.resolved_suptitle_font_size());
+        let (text_width, text_height) = renderer.measure_text(title, font_size_px)?;
+        let top_inset = render_scale.points_to_pixels(SUPTITLE_TOP_INSET_POINTS);
+        let grid_gap = render_scale.points_to_pixels(SUPTITLE_GRID_GAP_POINTS);
+
+        Ok(Some(SuptitleLayout {
+            font_size_px,
+            text_width,
+            text_height,
+            text_top: self.margin_pixels(width, height) + top_inset,
+            reserved_height: top_inset + text_height + grid_gap,
+        }))
+    }
+
     /// Create a new subplot figure
     ///
     /// # Example
@@ -227,18 +290,19 @@ impl SubplotFigure {
             width,
             height,
             suptitle: None,
+            suptitle_font_size: None,
             theme: Theme::default(),
             margin: 0.05, // 5% margin by default - tighter layout
         })
     }
 
-    /// Set horizontal spacing between subplots
+    /// Set vertical spacing between rows
     pub fn hspace(mut self, hspace: f32) -> Self {
         self.grid = self.grid.with_hspace(hspace);
         self
     }
 
-    /// Set vertical spacing between subplots
+    /// Set horizontal spacing between columns
     pub fn wspace(mut self, wspace: f32) -> Self {
         self.grid = self.grid.with_wspace(wspace);
         self
@@ -258,6 +322,15 @@ impl SubplotFigure {
     /// ```
     pub fn suptitle<S: Into<String>>(mut self, title: S) -> Self {
         self.suptitle = Some(title.into());
+        self
+    }
+
+    /// Set the overall figure title font size in typographic points.
+    ///
+    /// When unset, the size derives from the figure theme and is larger than
+    /// the theme's panel title size.
+    pub fn suptitle_font_size(mut self, size: f32) -> Self {
+        self.suptitle_font_size = Some(size.max(6.0));
         self
     }
 
@@ -394,27 +467,20 @@ impl SubplotFigure {
 
         // Create main renderer for the figure
         let mut renderer = SkiaRenderer::new(width, height, self.theme.clone())?;
-        renderer.set_render_scale(crate::core::RenderScale::from_canvas_size(
-            width, height, dpi,
-        ));
+        renderer.set_render_scale(RenderScale::from_canvas_size(width, height, dpi));
 
-        // Calculate suptitle height to reserve space for it
-        let suptitle_height = if self.suptitle.is_some() {
-            45.0_f32 * dpi_scale // Reserve space for title (30px position + 15px padding)
-        } else {
-            0.0_f32
-        };
+        let suptitle_layout = self.suptitle_layout(&renderer, width, height)?;
+        let suptitle_height = suptitle_layout
+            .map(|layout| layout.reserved_height)
+            .unwrap_or(0.0);
 
         // Render figure title if present
-        if let Some(title) = &self.suptitle {
-            let title_y = 30.0_f32 * dpi_scale;
-            let title_size = 16.0_f32 * dpi_scale;
-
+        if let (Some(title), Some(layout)) = (&self.suptitle, suptitle_layout) {
             renderer.draw_text_centered(
                 title,
                 width as f32 / 2.0,
-                title_y,
-                title_size,
+                layout.text_top,
+                layout.font_size_px,
                 self.theme.foreground,
             )?;
         }
@@ -532,6 +598,35 @@ pub fn subplots_default(rows: usize, cols: usize) -> Result<SubplotFigure> {
 mod tests {
     use super::*;
 
+    fn assert_rect(rect: Rect, expected: (f32, f32, f32, f32)) {
+        assert_eq!(
+            (rect.left(), rect.top(), rect.width(), rect.height()),
+            expected
+        );
+    }
+
+    fn assert_proportional(at_100: f32, at_200: f32, name: &str) {
+        assert!(
+            (at_200 - 2.0 * at_100).abs() <= 0.001,
+            "{name} should scale exactly with DPI: at 100 DPI={at_100}, at 200 DPI={at_200}"
+        );
+    }
+
+    fn assert_close(actual: f32, expected: f32, name: &str) {
+        assert!(
+            (actual - expected).abs() <= 0.001,
+            "{name} should match: actual={actual}, expected={expected}"
+        );
+    }
+
+    fn renderer_for(figure: &SubplotFigure, dpi: f32) -> (SkiaRenderer, u32, u32) {
+        let width = SubplotFigure::scaled_dimension(figure.width, dpi, "width").unwrap();
+        let height = SubplotFigure::scaled_dimension(figure.height, dpi, "height").unwrap();
+        let mut renderer = SkiaRenderer::new(width, height, figure.theme.clone()).unwrap();
+        renderer.set_render_scale(RenderScale::from_canvas_size(width, height, dpi));
+        (renderer, width, height)
+    }
+
     #[test]
     fn test_grid_spec_creation() {
         let grid = GridSpec::new(2, 3);
@@ -556,35 +651,197 @@ mod tests {
     }
 
     #[test]
-    fn test_subplot_rect_calculation() {
-        let grid = GridSpec::new(2, 2);
-        let margin = 0.1;
-        let top_offset = 0.0; // No suptitle
+    fn test_1x2_wspace_controls_horizontal_geometry() {
+        let grid = GridSpec::new(1, 2).with_wspace(0.25);
 
-        // Test first subplot (top-left)
-        let rect = grid.subplot_rect(0, 800, 600, margin, top_offset).unwrap();
-        // With 0.1 margin on 600px min dimension: margin_px = 60px
-        // With 0.1 spacing: x = 60 + spacing/2 ≈ 77px
-        assert!(rect.left() >= 60.0); // Should be past margin
-        assert!(rect.top() >= 60.0);
-        assert!(rect.width() > 0.0);
-        assert!(rect.height() > 0.0);
-
-        // Test last subplot (bottom-right)
-        let rect = grid.subplot_rect(3, 800, 600, margin, top_offset).unwrap();
-        assert!(rect.right() <= 740.0); // Should fit within margins (800 - 60)
-        assert!(rect.bottom() <= 540.0); // Should fit within margins (600 - 60)
+        assert_rect(
+            grid.subplot_rect(0, 800, 400, 0.0, 0.0).unwrap(),
+            (50.0, 0.0, 300.0, 400.0),
+        );
+        assert_rect(
+            grid.subplot_rect(1, 800, 400, 0.0, 0.0).unwrap(),
+            (450.0, 0.0, 300.0, 400.0),
+        );
     }
 
     #[test]
-    fn test_subplot_rect_with_suptitle_offset() {
-        let grid = GridSpec::new(2, 2);
-        let margin = 0.1;
-        let top_offset = 45.0; // With suptitle
+    fn test_2x1_hspace_controls_vertical_geometry() {
+        let grid = GridSpec::new(2, 1).with_hspace(0.5);
 
-        // Test first subplot with suptitle - should start below the suptitle area
-        let rect = grid.subplot_rect(0, 800, 600, margin, top_offset).unwrap();
-        assert!(rect.top() >= 60.0 + top_offset); // Should be past margin + suptitle
+        assert_rect(
+            grid.subplot_rect(0, 800, 600, 0.0, 0.0).unwrap(),
+            (0.0, 75.0, 800.0, 150.0),
+        );
+        assert_rect(
+            grid.subplot_rect(1, 800, 600, 0.0, 0.0).unwrap(),
+            (0.0, 375.0, 800.0, 150.0),
+        );
+    }
+
+    #[test]
+    fn test_2x2_spacing_directions_are_independent() {
+        let grid = GridSpec::new(2, 2).with_hspace(0.5).with_wspace(0.25);
+
+        for (index, expected) in [
+            (0, (50.0, 75.0, 300.0, 150.0)),
+            (1, (450.0, 75.0, 300.0, 150.0)),
+            (2, (50.0, 375.0, 300.0, 150.0)),
+            (3, (450.0, 375.0, 300.0, 150.0)),
+        ] {
+            assert_rect(
+                grid.subplot_rect(index, 800, 600, 0.0, 0.0).unwrap(),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn test_suptitle_measurement_drives_title_and_grid_top_geometry() {
+        let without_title = SubplotFigure::new(1, 1, 800, 600).unwrap().margin(0.1);
+        let (renderer, width, height) = renderer_for(&without_title, REFERENCE_DPI);
+        assert_eq!(
+            without_title
+                .suptitle_layout(&renderer, width, height)
+                .unwrap(),
+            None
+        );
+        assert_rect(
+            without_title
+                .grid
+                .subplot_rect(0, width, height, without_title.margin, 0.0)
+                .unwrap(),
+            (60.0, 60.0, 680.0, 480.0),
+        );
+
+        let with_title = without_title.suptitle("Figure Title");
+        let (renderer, width, height) = renderer_for(&with_title, REFERENCE_DPI);
+        let layout = with_title
+            .suptitle_layout(&renderer, width, height)
+            .unwrap()
+            .unwrap();
+        let render_scale = renderer.render_scale();
+        let inset = render_scale.points_to_pixels(SUPTITLE_TOP_INSET_POINTS);
+        let gap = render_scale.points_to_pixels(SUPTITLE_GRID_GAP_POINTS);
+        let expected_size = render_scale
+            .points_to_pixels(with_title.theme.title_font_size * DEFAULT_SUPTITLE_SCALE);
+        let (expected_width, expected_height) = renderer
+            .measure_text("Figure Title", expected_size)
+            .unwrap();
+
+        assert_eq!(layout.font_size_px, expected_size);
+        assert_eq!(layout.text_width, expected_width);
+        assert_eq!(layout.text_height, expected_height);
+        assert_eq!(layout.text_top, 60.0 + inset);
+        assert_eq!(layout.reserved_height, inset + expected_height + gap);
+        assert!(
+            with_title.resolved_suptitle_font_size() > with_title.theme.title_font_size,
+            "the default figure title must outrank the theme's panel title"
+        );
+
+        let title_bounds = layout.text_bounds(width);
+        let subplot = with_title
+            .grid
+            .subplot_rect(0, width, height, with_title.margin, layout.reserved_height)
+            .unwrap();
+        assert_eq!(title_bounds.top(), layout.text_top);
+        assert_close(
+            title_bounds.height(),
+            layout.text_height,
+            "title bounds height",
+        );
+        assert_close(
+            title_bounds.bottom() + gap,
+            subplot.top(),
+            "title-to-grid gap",
+        );
+    }
+
+    #[test]
+    fn test_custom_suptitle_font_size_is_point_based() {
+        let figure = SubplotFigure::new(1, 1, 800, 600)
+            .unwrap()
+            .margin(0.1)
+            .suptitle("Custom Title")
+            .suptitle_font_size(24.0);
+        let (renderer, width, height) = renderer_for(&figure, REFERENCE_DPI);
+        let layout = figure
+            .suptitle_layout(&renderer, width, height)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(figure.suptitle_font_size, Some(24.0));
+        let render_scale = renderer.render_scale();
+        let expected_size = render_scale.points_to_pixels(24.0);
+        let expected_height = renderer
+            .measure_text("Custom Title", expected_size)
+            .unwrap()
+            .1;
+        let expected_reserved = render_scale.points_to_pixels(SUPTITLE_TOP_INSET_POINTS)
+            + expected_height
+            + render_scale.points_to_pixels(SUPTITLE_GRID_GAP_POINTS);
+        let subplot = figure
+            .grid
+            .subplot_rect(0, width, height, figure.margin, layout.reserved_height)
+            .unwrap();
+
+        assert_eq!(layout.font_size_px, expected_size);
+        assert_eq!(layout.reserved_height, expected_reserved);
+        assert_eq!(subplot.top(), 60.0 + expected_reserved);
+    }
+
+    #[test]
+    fn test_suptitle_and_subplot_bounds_scale_proportionally_with_dpi() {
+        let figure = SubplotFigure::new(2, 2, 800, 600)
+            .unwrap()
+            .margin(0.1)
+            .hspace(0.5)
+            .wspace(0.25)
+            .suptitle("Scaling Figure");
+        let (renderer_100, width_100, height_100) = renderer_for(&figure, 100.0);
+        let (renderer_200, width_200, height_200) = renderer_for(&figure, 200.0);
+        let title_100 = figure
+            .suptitle_layout(&renderer_100, width_100, height_100)
+            .unwrap()
+            .unwrap();
+        let title_200 = figure
+            .suptitle_layout(&renderer_200, width_200, height_200)
+            .unwrap()
+            .unwrap();
+        let bounds_100 = title_100.text_bounds(width_100);
+        let bounds_200 = title_200.text_bounds(width_200);
+        let subplot_100 = figure
+            .grid
+            .subplot_rect(
+                3,
+                width_100,
+                height_100,
+                figure.margin,
+                title_100.reserved_height,
+            )
+            .unwrap();
+        let subplot_200 = figure
+            .grid
+            .subplot_rect(
+                3,
+                width_200,
+                height_200,
+                figure.margin,
+                title_200.reserved_height,
+            )
+            .unwrap();
+
+        for (name, at_100, at_200) in [
+            ("title left", bounds_100.left(), bounds_200.left()),
+            ("title top", bounds_100.top(), bounds_200.top()),
+            ("title width", bounds_100.width(), bounds_200.width()),
+            ("title height", bounds_100.height(), bounds_200.height()),
+            ("subplot left", subplot_100.left(), subplot_200.left()),
+            ("subplot top", subplot_100.top(), subplot_200.top()),
+            ("subplot width", subplot_100.width(), subplot_200.width()),
+            ("subplot height", subplot_100.height(), subplot_200.height()),
+        ] {
+            assert_proportional(at_100, at_200, name);
+        }
     }
 
     #[test]
