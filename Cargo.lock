@@ -8129,6 +8129,7 @@ dependencies = [
  "approx",
  "arboard",
  "av1-grain 0.4.1",
+ "base64",
  "bytemuck",
  "color_quant",
  "cosmic-text 0.16.0",

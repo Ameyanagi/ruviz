@@ -10,9 +10,15 @@ use crate::render::three_d::scene::{
     MeshVertex3D, PointBatch3D, PointGeometryBatch3D, PointStyle3D, Scene3D, SceneGeometry3D,
     StrokeStyle3D,
 };
+#[cfg(feature = "parallel")]
+use crate::render::three_d::software::raster::SoftwareQuality3D;
+use crate::render::three_d::software::raster::{
+    SoftwareRenderOptions3D, SoftwareRenderOutput3D, render_scene,
+};
 
 use super::RenderDiagnostics3D;
 use super::builder::{Plot3D, Series3D};
+use super::layout::Axis3Layout;
 use super::resolve::{CacheKey3D, ResolvedFrame3D};
 
 #[derive(Default)]
@@ -74,6 +80,33 @@ impl Plot3D {
         let frame = self.resolve()?;
         PreparedSceneCache3D::default().prepare(&frame)
     }
+
+    pub(super) fn render_software_layer(
+        self,
+        options: SoftwareRenderOptions3D,
+    ) -> Result<PreparedSoftwareFrame3D> {
+        let frame = self.resolve()?;
+        let layout = Axis3Layout::resolve(&frame)?;
+        let (scene, mut diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
+        let output = render_scene(&scene, &layout, frame.figure.dpi, options)?;
+        diagnostics.actual_backend = "cpu3d".to_string();
+        diagnostics.draw_calls = output.draw_calls;
+        diagnostics.primitives_culled = output.primitives_culled;
+        diagnostics.readback_bytes = 0;
+        Ok(PreparedSoftwareFrame3D {
+            frame,
+            layout,
+            output,
+            diagnostics,
+        })
+    }
+}
+
+pub(super) struct PreparedSoftwareFrame3D {
+    pub(super) frame: ResolvedFrame3D,
+    pub(super) layout: Axis3Layout,
+    pub(super) output: SoftwareRenderOutput3D,
+    pub(super) diagnostics: RenderDiagnostics3D,
 }
 
 fn lower_geometry(
@@ -737,5 +770,43 @@ mod tests {
         assert!(!Arc::ptr_eq(&first.geometry, &second.geometry));
         assert!(!Arc::ptr_eq(&first, &second));
         assert_eq!(diagnostics.scene_compiles, 1);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn serial_and_parallel_software_tiles_are_byte_identical() {
+        let frame = surface(
+            &[0.0, 1.0, 2.0],
+            &[0.0, 1.0, 2.0],
+            &[[0.0, 0.5, 0.0], [0.5, 1.0, 0.5], [0.0, 0.5, 0.0]],
+        )
+        .figure_size(2.0, 1.5)
+        .dpi(72)
+        .finalize()
+        .resolve()
+        .expect("frame");
+        let layout = Axis3Layout::resolve(&frame).expect("layout");
+        let (scene, _) = prepare(frame.clone());
+        let serial = render_scene(
+            &scene,
+            &layout,
+            frame.figure.dpi,
+            SoftwareRenderOptions3D {
+                quality: SoftwareQuality3D::Export,
+                parallel: false,
+            },
+        )
+        .expect("serial");
+        let parallel = render_scene(
+            &scene,
+            &layout,
+            frame.figure.dpi,
+            SoftwareRenderOptions3D {
+                quality: SoftwareQuality3D::Export,
+                parallel: true,
+            },
+        )
+        .expect("parallel");
+        assert_eq!(serial.layer.pixels, parallel.layer.pixels);
     }
 }

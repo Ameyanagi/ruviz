@@ -2,6 +2,7 @@
 
 mod builder;
 mod diagnostics;
+pub(crate) mod layout;
 mod prepared;
 mod resolve;
 mod types;

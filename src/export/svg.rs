@@ -20,6 +20,9 @@ use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
 use std::path::Path;
 
+#[cfg(feature = "3d")]
+use base64::Engine as _;
+
 /// SVG renderer for vector-based plot export
 pub struct SvgRenderer {
     width: f32,
@@ -454,6 +457,26 @@ impl SvgRenderer {
             points_str, color_str
         )
         .unwrap();
+    }
+
+    /// Embed a straight-alpha RGBA image as a PNG data URI.
+    #[cfg(feature = "3d")]
+    pub(crate) fn draw_embedded_png(
+        &mut self,
+        image: &crate::core::plot::Image,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Result<()> {
+        let png = image.encode_png()?;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png);
+        writeln!(
+            self.content,
+            r#"  <image x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" href="data:image/png;base64,{encoded}"/>"#
+        )
+        .unwrap();
+        Ok(())
     }
 
     /// Draw a polygon outline.

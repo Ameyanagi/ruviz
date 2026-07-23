@@ -65,6 +65,7 @@ polars = { version = "0.50", optional = true }
 
 # Image I/O
 image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = { version = "0.22", optional = true }
 
 # PDF export (SVG → PDF pipeline)
 svg2pdf = { version = "0.13", optional = true }  # Uses usvg 0.43 internally
@@ -145,7 +146,7 @@ default = ["ndarray_support", "parallel"]
 
 # Experimental 3D plotting. CPU/static support lives in this feature; direct
 # GPU rendering composes with the existing `gpu` feature.
-"3d" = []
+"3d" = ["dep:base64"]
 
 # Display and window features
 window = ["winit", "raw-window-handle", "dep:softbuffer", "dep:rfd", "dep:arboard"]
@@ -493,3 +494,8 @@ harness = false
 [[bench]]
 name = "performance"
 harness = false
+
+[[bench]]
+name = "three_d"
+harness = false
+required-features = ["3d"]

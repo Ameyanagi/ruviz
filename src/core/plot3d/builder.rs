@@ -7,6 +7,8 @@ use crate::plots::{
     Line3DConfig, Scatter3DConfig, Surface3DConfig, SurfaceSampling, SurfaceShading,
     Wireframe3DConfig,
 };
+use crate::render::three_d::overlay::{compose_image, compose_svg};
+use crate::render::three_d::software::raster::SoftwareRenderOptions3D;
 use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme};
 
 use super::{AxisAspect3D, Camera3D, Point3D};
@@ -37,7 +39,7 @@ impl Plot3D {
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum Series3D {
+pub(crate) enum Series3D {
     Scatter {
         data: Points3DData,
         config: Scatter3DConfig,
@@ -179,11 +181,35 @@ fn grid_data_bounds(data: &Grid3DData) -> Result<Bounds3D> {
     }))
 }
 
-fn rendering_not_available() -> PlottingError {
+fn interaction_not_available() -> PlottingError {
     PlottingError::RenderError(
-        "3D rasterization is not available in this implementation slice; the retained scene was validated and compiled successfully"
+        "interactive 3D presentation is not available yet; use render(), save(), or render_to_svg() for deterministic CPU output"
             .to_string(),
     )
+}
+
+impl Plot3D {
+    fn render_image(self) -> Result<(Image, super::RenderDiagnostics3D)> {
+        let prepared = self.render_software_layer(SoftwareRenderOptions3D::export())?;
+        let image = compose_image(
+            &prepared.layout,
+            &prepared.frame.figure,
+            &prepared.frame.theme,
+            prepared.output.layer,
+        )?;
+        Ok((image, prepared.diagnostics))
+    }
+
+    fn render_svg(self) -> Result<(String, super::RenderDiagnostics3D)> {
+        let prepared = self.render_software_layer(SoftwareRenderOptions3D::export())?;
+        let svg = compose_svg(
+            &prepared.layout,
+            &prepared.frame.figure,
+            &prepared.frame.theme,
+            &prepared.output.layer,
+        )?;
+        Ok((svg, prepared.diagnostics))
+    }
 }
 
 macro_rules! impl_common_builder {
@@ -338,13 +364,17 @@ macro_rules! impl_common_builder {
                     .map(|(_, diagnostics)| diagnostics)
             }
 
+            /// Render through the CPU 3D backend and return structured counters.
+            #[doc(hidden)]
+            pub fn benchmark_render_with_diagnostics(
+                self,
+            ) -> Result<(Image, super::RenderDiagnostics3D)> {
+                self.finalize().render_image()
+            }
+
             /// Render an in-memory image.
-            ///
-            /// The method is part of the alpha API contract. Rasterization is
-            /// delivered by the software depth-renderer milestone.
             pub fn render(self) -> Result<Image> {
-                self.finalize().prepare_once()?;
-                Err(rendering_not_available())
+                self.finalize().render_image().map(|(image, _)| image)
             }
 
             /// Render PNG bytes.
@@ -355,15 +385,34 @@ macro_rules! impl_common_builder {
             /// Save the plot, selecting an exporter from the path extension.
             #[cfg(not(target_arch = "wasm32"))]
             pub fn save<P: AsRef<Path>>(self, path: P) -> Result<()> {
-                let bytes = self.render_png_bytes()?;
-                std::fs::write(path, bytes)?;
-                Ok(())
+                let path = path.as_ref();
+                let extension = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or("png")
+                    .to_ascii_lowercase();
+                match extension.as_str() {
+                    "png" => {
+                        let bytes = self.render_png_bytes()?;
+                        crate::export::write_bytes_atomic(path, &bytes)
+                    }
+                    "svg" => {
+                        let svg = self.render_to_svg()?;
+                        crate::export::write_bytes_atomic(path, svg.as_bytes())
+                    }
+                    #[cfg(feature = "pdf")]
+                    "pdf" => {
+                        let svg = self.render_to_svg()?;
+                        let pdf = crate::export::svg_to_pdf(&svg)?;
+                        crate::export::write_bytes_atomic(path, &pdf)
+                    }
+                    _ => Err(PlottingError::UnsupportedFormat(extension)),
+                }
             }
 
             /// Render a hybrid SVG document.
             pub fn render_to_svg(self) -> Result<String> {
-                self.finalize().prepare_once()?;
-                Err(rendering_not_available())
+                self.finalize().render_svg().map(|(svg, _)| svg)
             }
 
             /// Save a hybrid SVG document.
@@ -378,7 +427,7 @@ macro_rules! impl_common_builder {
             #[cfg(not(target_arch = "wasm32"))]
             pub fn show(self) -> Result<()> {
                 self.finalize().prepare_once()?;
-                Err(rendering_not_available())
+                Err(interaction_not_available())
             }
         }
 

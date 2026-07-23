@@ -32,18 +32,21 @@ ray-marching design after the mesh/scatter pipeline is stable.
 
 | Work item | Status on `feat/3d-implementation` |
 | --- | --- |
-| 3D-00 | In progress: exact `3d` feature, exports, canonical compile contract, and concrete builders exist; benchmark manifest remains |
-| 3D-01 | In progress: serializable diagnostics schema and retained-scene compile counters exist; deterministic dataset manifest and runner integration remain |
+| 3D-00 | In progress: exact `3d` feature, exports, canonical compile contract, concrete builders, and a dedicated Criterion target exist; deterministic dataset manifest remains |
+| 3D-01 | In progress: serializable diagnostics, retained-scene counters, and cold compile/render benchmarks exist; committed dataset hashes and warm-update runner integration remain |
 | 3D-02 | Complete for the linear MVP: f64 bounds/normalization, typed camera validation, orthographic/perspective projection, unprojection, screen rays, and homogeneous six-plane clipping are tested |
 | 3D-03 | In progress: common 1D/2D ingestion, structured point/grid diagnostics, multi-series builders, and retained lowering exist; compile-fail and extended ecosystem-input matrices remain |
 | 3D-04 | In progress: coherent owned frames, stable dirty-domain keys, normalized primitive lowering, and geometry/appearance retention exist; BVH preparation remains |
-| 3D-05 through 3D-14 | Not started |
+| 3D-05 | In progress: automatic camera-projected Axis3 viewport, panes, box, grid, ticks, labels, title, DPI scaling, and collision nudging exist; theme/view goldens remain |
+| 3D-06 | In progress: deterministic tiled depth rendering for mesh/line/points, 24-bit depth ties, top-left fill, perspective-correct attributes, shading, and 1x/4x sampling exist; the full exact-golden/property corpus remains |
+| 3D-07 | In progress: Image/PNG and hybrid SVG/PDF output are live and tested; whole-image goldens and broader semantic parity remain |
+| 3D-08 through 3D-14 | Not started |
 
-The `render`, `save`, `render_to_svg`, and `show` method names are present so
-the canonical API is compile-tested. Until the 3D-06/3D-07 renderer/export
-milestones land, they validate and compile the complete retained scene and then
-return an explicit `RenderError`; they do not route through the 2D renderer or
-create partial output.
+`render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
+deterministic CPU 3D backend. `save` selects PNG, hybrid SVG, or hybrid PDF from
+the extension. `show` still returns an explicit interaction-unavailable error
+until the native presentation/interaction milestones; no 3D call routes
+through the 2D series match graph.
 
 ## Decisions
 
@@ -1042,8 +1045,8 @@ Documentation must state:
 - Made small-model API reliability a release gate with a compile-tested prompt
   corpus.
 - Named the experimental Cargo feature exactly `3d` at user request. Because
-  the key begins with a digit it is quoted in `Cargo.toml` (`"3d" = []`);
-  Rust feature gates use `#[cfg(feature = "3d")]`.
+  the key begins with a digit it is quoted in `Cargo.toml`; Rust feature gates
+  use `#[cfg(feature = "3d")]`.
 - Implemented the first feature/API/math slice: the four top-level functions,
   concrete builders, multi-series chaining, common styling and labels, typed
   camera validation, f64 scene normalization, and wgpu-depth-range projection.
@@ -1093,6 +1096,44 @@ Documentation must state:
 - Enforced the opaque MVP at validation time: translucent fixed colors and
   translucent colormap entries are rejected instead of producing
   order-dependent output.
+- Kept Axis3 separate from the 2D layout graph while reusing the existing leaf
+  tick formatter, text renderer, line/polygon drawing, DPI conversion, and
+  image compositor. The retained Axis3 snapshot contains one resolved viewport
+  and camera plus projected panes, grid lines, box edges, tick marks, tick
+  labels, axis labels, and title anchors.
+- The first rendered perspective preview exposed colliding endpoint labels at
+  the common projected box corner. Tick directions now use each projected
+  edge's outward-facing perpendicular, and a deterministic text-box estimate
+  nudges later labels outward until anchors no longer overlap.
+- Implemented the CPU reference renderer as 32x32 disjoint tiles with
+  24-bit-quantized depth, stable primitive-ID tie breaking, six-plane
+  homogeneous clipping, a top-left triangle rule, perspective-correct scalar
+  and normal interpolation, screen-space thick/dashed lines, depth-tested
+  marker billboards, and deterministic ambient-plus-Lambert shading.
+- Static output uses four fixed sample locations per pixel; the renderer also
+  has a one-sample mode for the later interactive CPU fallback. A feature-gated
+  test proves serial and Rayon tile execution produce byte-identical raster
+  layers.
+- Stable IDs intentionally assign points and lines before surfaces so coplanar
+  wireframes and markers win exact quantized-depth ties without a
+  camera-dependent epsilon or submission-order race.
+- Hybrid SVG and PDF contain one PNG-encoded, fully depth-tested 3D raster layer
+  plus vector panes, grid, box, ticks, labels, and title. PNG, SVG, and PDF
+  terminal tests pass, and diagnostics truthfully report
+  `actual_backend=cpu3d`, zero readback bytes, draw calls, submitted geometry,
+  and culled primitives.
+- Added the canonical `examples/3d_surface.rs` example and a dedicated
+  `benches/three_d.rs` Criterion target. The short profile covers 10K/100K
+  scatter and 32/100 surfaces; `RUVIZ_3D_BENCH_FULL=1` enables 1M scatter and
+  512/1024 surfaces.
+- Recorded the first local cold/export baseline on Apple M4/32 GiB,
+  aarch64 macOS, Rust 1.94.1, release mode, 640x480, features `3d,parallel`.
+  Median Criterion times were 6.64 ms for 10K scatter, 35.13 ms for 100K
+  scatter, 325.69 ms for 1M scatter, 5.99 ms for a 32x32 surface, 9.02 ms for
+  100x100, 81.07 ms for 512x512, and 306.66 ms for 1024x1024. These are cold
+  builder-to-image measurements including ingestion, scene compilation, 4x
+  sampling, Axis3 text, and image composition, so they are deliberately not
+  labeled as the later retained warm-frame measurements.
 
 ## Primary references
 

@@ -4,7 +4,7 @@ use ruviz::core::{Camera3D, PlottingError, Projection3D};
 use ruviz::prelude::*;
 
 // These functions are compile contracts for the one documented construction
-// path. They are intentionally not executed until the depth renderer lands.
+// path.
 #[allow(dead_code)]
 fn canonical_scatter_save(x: &[f64], y: &[f64], z: &[f64]) -> ruviz::core::Result<()> {
     scatter3d(x, y, z).save("scatter3d.png")
@@ -119,4 +119,93 @@ fn compile_diagnostics_are_structured_and_truthful() {
     assert_eq!(diagnostics.triangles_submitted, 2);
     assert_eq!(diagnostics.actual_backend, "unresolved");
     assert_eq!(diagnostics.readback_bytes, 0);
+}
+
+#[test]
+fn cpu_render_is_deterministic_and_reports_the_actual_backend() {
+    fn render() -> (ruviz::core::Image, ruviz::core::RenderDiagnostics3D) {
+        surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 0.75], [0.25, 1.0]])
+            .title("CPU 3d")
+            .xlabel("x")
+            .ylabel("y")
+            .zlabel("z")
+            .figure_size(2.4, 1.8)
+            .dpi(72)
+            .benchmark_render_with_diagnostics()
+            .expect("software render")
+    }
+
+    let (first, diagnostics) = render();
+    let (second, _) = render();
+    assert_eq!((first.width, first.height), (172, 129));
+    assert_eq!(
+        first.pixels.len(),
+        first.width as usize * first.height as usize * 4
+    );
+    assert_eq!(first.pixels, second.pixels);
+    assert_eq!(diagnostics.actual_backend, "cpu3d");
+    assert_eq!(diagnostics.draw_calls, 1);
+    assert_eq!(diagnostics.triangles_submitted, 2);
+    assert_eq!(diagnostics.readback_bytes, 0);
+}
+
+#[test]
+fn png_and_hybrid_svg_terminals_are_live() {
+    let png = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[1.0, 0.0])
+        .figure_size(2.0, 1.5)
+        .dpi(72)
+        .render_png_bytes()
+        .expect("PNG");
+    assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+    let svg = line3d(&[0.0, 1.0], &[0.0, 1.0], &[1.0, 0.0])
+        .title("Hybrid 3d")
+        .figure_size(2.0, 1.5)
+        .dpi(72)
+        .render_to_svg()
+        .expect("SVG");
+    assert!(svg.contains("data:image/png;base64,"));
+    assert!(svg.contains("Hybrid 3d"));
+    assert_eq!(svg.matches("<image ").count(), 1);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn save_selects_png_and_svg_from_the_extension() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let png = directory.path().join("plot.png");
+    let svg = directory.path().join("plot.svg");
+    scatter3d(&[0.0], &[0.0], &[0.0])
+        .figure_size(1.5, 1.2)
+        .dpi(72)
+        .save(&png)
+        .expect("save PNG");
+    scatter3d(&[0.0], &[0.0], &[0.0])
+        .figure_size(1.5, 1.2)
+        .dpi(72)
+        .save(&svg)
+        .expect("save SVG");
+    assert!(
+        std::fs::read(png)
+            .expect("read PNG")
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+    assert!(
+        std::fs::read_to_string(svg)
+            .expect("read SVG")
+            .contains("data:image/png;base64,")
+    );
+}
+
+#[cfg(all(feature = "pdf", not(target_arch = "wasm32")))]
+#[test]
+fn hybrid_pdf_save_uses_the_same_depth_tested_layer() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let pdf = directory.path().join("plot.pdf");
+    surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 0.0]])
+        .figure_size(2.0, 1.5)
+        .dpi(72)
+        .save(&pdf)
+        .expect("save PDF");
+    assert!(std::fs::read(pdf).expect("read PDF").starts_with(b"%PDF-"));
 }
