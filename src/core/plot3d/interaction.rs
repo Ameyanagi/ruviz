@@ -8,11 +8,11 @@ use crate::render::three_d::overlay::compose_image;
 use crate::render::three_d::scene::Scene3D;
 use crate::render::three_d::software::raster::{SoftwareRenderOptions3D, render_scene};
 
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 use crate::render::three_d::gpu::Wgpu3DRenderer;
 
 use super::Camera3D;
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 use super::RenderDiagnostics3D;
 use super::builder::Plot3D;
 use super::layout::Axis3Layout;
@@ -100,7 +100,7 @@ pub struct InteractivePlot3DSession {
     scene_generation: u64,
     camera_generation: u64,
     active_drag: Option<ActiveDrag3D>,
-    #[cfg(feature = "gpu")]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     gpu_renderer: Option<Wgpu3DRenderer>,
 }
 
@@ -123,7 +123,7 @@ impl InteractivePlot3DSession {
             scene_generation,
             camera_generation: 0,
             active_drag: None,
-            #[cfg(feature = "gpu")]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             gpu_renderer: None,
         })
     }
@@ -208,6 +208,42 @@ impl InteractivePlot3DSession {
     /// Restore the camera supplied by the original builder.
     pub fn reset_view(&mut self) -> Result<()> {
         self.set_camera(self.initial_camera)
+    }
+
+    /// Resize the physical render target without rebuilding scene geometry.
+    pub fn resize(&mut self, width_px: u32, height_px: u32, scale_factor: f32) -> Result<()> {
+        if width_px == 0 || height_px == 0 {
+            return Err(PlottingError::InvalidDimensions {
+                width: width_px,
+                height: height_px,
+            });
+        }
+        if !scale_factor.is_finite() || scale_factor <= 0.0 {
+            return Err(PlottingError::InvalidInput(format!(
+                "3D window scale factor must be finite and greater than zero, got {scale_factor}"
+            )));
+        }
+        let dpi = 72.0 * scale_factor;
+        let current_size = self.frame.figure.canvas_size();
+        let changed = current_size != (width_px, height_px)
+            || self.frame.figure.dpi.to_bits() != dpi.to_bits();
+        if changed {
+            self.frame.figure.width = width_px as f32 / dpi;
+            self.frame.figure.height = height_px as f32 / dpi;
+            self.frame.figure.dpi = dpi;
+            self.advance_camera_generation()?;
+        }
+        Ok(())
+    }
+
+    /// Current physical render-target size.
+    pub fn size_px(&self) -> (u32, u32) {
+        self.frame.figure.canvas_size()
+    }
+
+    /// Resolved plot title, if one was supplied.
+    pub fn title(&self) -> Option<&str> {
+        self.frame.title.as_deref()
     }
 
     /// Apply one frontend event.
@@ -358,7 +394,7 @@ impl InteractivePlot3DSession {
     ///
     /// This is a diagnosed correctness fallback for CPU-image frontends, not
     /// direct presentation.
-    #[cfg(feature = "gpu")]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     pub fn render_gpu_readback(&mut self) -> Result<(Image, RenderDiagnostics3D)> {
         let layout = Axis3Layout::resolve(&self.frame)?;
         let renderer = match &mut self.gpu_renderer {

@@ -76,6 +76,8 @@ compile_error!("ruviz-gpui currently supports macOS, Linux, and Windows only.");
 mod platform_impl {
     mod interaction;
     mod presentation;
+    #[cfg(feature = "3d")]
+    mod three_d;
 
     use arboard::{Clipboard, ImageData};
     #[cfg(all(feature = "gpu", target_os = "macos"))]
@@ -124,6 +126,8 @@ mod platform_impl {
 
     use self::interaction::*;
     use self::presentation::*;
+    #[cfg(feature = "3d")]
+    pub use self::three_d::*;
 
     pub use gpui;
     pub use ruviz;

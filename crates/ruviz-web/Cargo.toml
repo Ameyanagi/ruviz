@@ -11,6 +11,11 @@ readme = "README.md"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+"3d" = ["ruviz/3d"]
+"3d-gpu" = ["3d", "ruviz/gpu"]
+
 [dependencies]
 ruviz = { version = "0.5.0", path = "../..", default-features = false }
 js-sys = "0.3.92"

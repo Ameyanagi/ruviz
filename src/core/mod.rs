@@ -50,7 +50,7 @@ pub use plot::{
     ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle, SurfaceCapability,
     SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint, ViewportRect,
 };
-#[cfg(all(feature = "3d", feature = "gpu"))]
+#[cfg(all(feature = "3d", feature = "gpu", not(target_arch = "wasm32")))]
 pub use plot3d::GpuBenchmarkSession3D;
 #[cfg(feature = "3d")]
 pub use plot3d::{

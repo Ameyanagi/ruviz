@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 use crate::core::Image;
 use crate::core::{Bounds3D, PlottingError, Result};
 use crate::plots::three_d::{Grid3DData, Points3DData};
 use crate::plots::{SurfaceSampling, SurfaceShading};
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 use crate::render::three_d::gpu::{GpuFrameOutput3D, Wgpu3DRenderer, render_with_shared_renderer};
 use crate::render::three_d::scene::{
     LineBatch3D, LineGeometryBatch3D, MeshBatch3D, MeshColor3D, MeshGeometryBatch3D, MeshStyle3D,
@@ -135,7 +135,7 @@ impl Plot3D {
         })
     }
 
-    #[cfg(feature = "gpu")]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     pub(super) fn render_gpu_layer(self) -> Result<PreparedGpuFrame3D> {
         let frame = self.resolve()?;
         let layout = Axis3Layout::resolve(&frame)?;
@@ -166,7 +166,7 @@ pub(super) struct PreparedSoftwareFrame3D {
     pub(super) diagnostics: RenderDiagnostics3D,
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub(super) struct PreparedGpuFrame3D {
     pub(super) frame: ResolvedFrame3D,
     pub(super) layout: Axis3Layout,
@@ -179,7 +179,7 @@ pub(super) struct PreparedGpuFrame3D {
 /// This is intentionally hidden from the canonical plotting API. It keeps one
 /// prepared scene and renderer so benchmarks can measure camera-only frames
 /// without ingestion, geometry upload, static readback, or image composition.
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 #[doc(hidden)]
 pub struct GpuBenchmarkSession3D {
     frame: ResolvedFrame3D,
@@ -189,7 +189,7 @@ pub struct GpuBenchmarkSession3D {
     sampling_mode: String,
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 impl GpuBenchmarkSession3D {
     pub(super) fn new(plot: Plot3D) -> Result<Self> {
         let frame = plot.resolve()?;
@@ -228,7 +228,7 @@ impl GpuBenchmarkSession3D {
     }
 }
 
-#[cfg(feature = "gpu")]
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 fn apply_no_readback_diagnostics(diagnostics: &mut RenderDiagnostics3D, output: GpuFrameOutput3D) {
     diagnostics.actual_backend = "gpu3d".to_string();
     diagnostics.adapter_name = Some(output.adapter_name);

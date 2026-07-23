@@ -2165,6 +2165,7 @@ impl InteractivePlotSession {
             .render_gate
             .lock()
             .expect("InteractivePlotSession render gate poisoned");
+        #[allow(clippy::let_unit_value)]
         let frame_start = start_frame_timer();
         self.resize(size_px, scale_factor);
         self.apply_input(PlotInputEvent::SetTime { time_seconds });

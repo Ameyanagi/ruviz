@@ -251,6 +251,7 @@ pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Resul
             .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
         file.sync_all()
             .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
         drop(file);
         rename_temp_into_place(&temp_path, &destination_path)?;
         Ok(())
@@ -309,6 +310,7 @@ where
             .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err.into_error())))?;
         file.sync_all()
             .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
         drop(file);
         rename_temp_into_place(&temp_path, &destination_path)?;
         Ok(())

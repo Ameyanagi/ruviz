@@ -214,7 +214,7 @@ impl Plot3D {
         Ok((svg, prepared.diagnostics))
     }
 
-    #[cfg(feature = "gpu")]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     fn render_gpu_image(self) -> Result<(Image, super::RenderDiagnostics3D)> {
         let prepared = self.render_gpu_layer()?;
         let image = compose_image(
@@ -226,7 +226,7 @@ impl Plot3D {
         Ok((image, prepared.diagnostics))
     }
 
-    #[cfg(feature = "gpu")]
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     fn render_gpu_svg(self) -> Result<(String, super::RenderDiagnostics3D)> {
         let prepared = self.render_gpu_layer()?;
         let svg = compose_svg(
@@ -448,7 +448,7 @@ macro_rules! impl_common_builder {
             }
 
             /// Render through direct offscreen wgpu and return structured counters.
-            #[cfg(feature = "gpu")]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             #[doc(hidden)]
             pub fn benchmark_render_gpu_with_diagnostics(
                 self,
@@ -457,7 +457,7 @@ macro_rules! impl_common_builder {
             }
 
             /// Create a retained no-readback GPU performance session.
-            #[cfg(feature = "gpu")]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             #[doc(hidden)]
             pub fn benchmark_gpu_session(self) -> Result<super::GpuBenchmarkSession3D> {
                 super::GpuBenchmarkSession3D::new(self.finalize())
@@ -473,13 +473,13 @@ macro_rules! impl_common_builder {
             /// This is an explicit GPU request and returns an error when no
             /// compatible adapter is available. The normal [`Self::render`]
             /// terminal remains the deterministic CPU reference.
-            #[cfg(feature = "gpu")]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             pub fn render_gpu(self) -> Result<Image> {
                 self.finalize().render_gpu_image().map(|(image, _)| image)
             }
 
             /// Render PNG bytes through direct offscreen wgpu.
-            #[cfg(feature = "gpu")]
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             pub fn render_gpu_png_bytes(self) -> Result<Vec<u8>> {
                 self.render_gpu()?.encode_png()
             }
@@ -562,7 +562,14 @@ macro_rules! impl_common_builder {
             }
 
             /// Show the plot in a native interactive window.
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
+            pub fn show(self) -> Result<()> {
+                let session = super::InteractivePlot3DSession::new(self.finalize())?;
+                crate::interactive::show_interactive_3d(session)
+            }
+
+            /// Show the plot in a native interactive window.
+            #[cfg(all(not(feature = "interactive-gpu"), not(target_arch = "wasm32")))]
             pub fn show(self) -> Result<()> {
                 self.finalize().prepare_once()?;
                 Err(interaction_not_available())

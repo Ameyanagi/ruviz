@@ -43,13 +43,18 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | 3D-08 | In progress: independent direct-wgpu offscreen mesh, instanced line, and instanced point pipelines render through queried RGBA/depth/MSAA attachments and pass the local required-Metal-adapter coverage probe; cross-vendor required-adapter jobs and the full differential corpus remain |
 | 3D-09 | In progress: explicit `render_gpu()`, truthful `gpu3d` diagnostics, bounded geometry/appearance caches, persistent device/pipelines/attachments, one-write camera frames, static readback, resize recreation, and next-frame device-loss recreation exist; Auto routing, stress tests, and direct presentation remain |
 | 3D-10 | Complete: one authoritative retained session provides orbit/pan/zoom/reset, portable camera snapshots, replacement-data keep-view, process-unique generation-safe point/line/surface picking, interactive CPU frames, and diagnosed GPU-readback frames |
-| 3D-11 through 3D-14 | Not started |
+| 3D-11 | Complete for the correctness adapters: native winit and GPUI share the retained core controls, preserve 2D behavior, coalesce native redraw requests, and truthfully identify image-backed GPU readback |
+| 3D-12 | In progress: main-thread Canvas2D and worker OffscreenCanvas adapters expose the same complete input/export API and compile under wasm `3d-gpu`; animation-frame/worker coalescing and browser smoke tests remain |
+| 3D-13 | Not started: native surface and asynchronous browser WebGPU presentation must prove zero per-frame readback and CPU texture upload |
+| 3D-14 | Not started |
 
 `render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
 deterministic CPU 3D backend. `save` selects PNG, hybrid SVG, or hybrid PDF from
-the extension. `show` still returns an explicit interaction-unavailable error
-until the native presentation/interaction milestones; no 3D call routes
-through the 2D series match graph.
+the extension. With `interactive-gpu`, native `show` opens the retained winit
+correctness adapter and explicitly uses `gpu3d-readback-fallback`; without that
+feature it returns an interaction-unavailable error. GPUI and web expose their
+own image-backed correctness adapters. No 3D call routes through the 2D series
+match graph, and none of these adapters is the direct-presentation endpoint.
 
 ## Decisions
 
@@ -1283,6 +1288,47 @@ Documentation must state:
   required-adapter GPU integration tests pass. Strict `3d,gpu` all-target
   Clippy and warnings-denied rustdoc also pass, apart from the already recorded
   repository-level Clippy MSRV mismatch warning.
+- The first `ruviz-gpui` `3d-gpu` compile exposed a pre-existing macOS adapter
+  dependency split: the crate directly selected `core-video 0.4`, while the
+  pinned workspace GPUI revision consumes `core-video 0.5`, so
+  `Window::paint_surface` received two nominally different `CVPixelBuffer`
+  types. The direct dependency is now aligned to `core-video 0.5`; strict
+  `3d-gpu` Clippy and all 47 GPUI library tests pass with the pinned revision.
+- The first wasm `3d-gpu` compile confirmed that the native synchronous renderer
+  cannot be reused as a browser singleton: WebGPU buffer/device handles are
+  intentionally `!Send`/`!Sync`, so the native `OnceLock<Mutex<_>>` is invalid,
+  and synchronous `pollster` initialization is not a browser API. Keep native
+  sync GPU terminals off wasm; the direct browser path must be an async
+  main-thread/thread-local surface session.
+- Strict wasm Clippy also exposed existing target-specific noise outside 3d:
+  its zero-sized frame timer triggered `let_unit_value`, wasm's `File` stub
+  made two explicit close-before-rename drops look redundant, and the existing
+  browser wgpu backend intentionally uses `Arc` around handles that are
+  `!Send`/`!Sync` on the single-threaded target. Scope these allowances to the
+  exact wasm sites rather than weakening native Clippy.
+- Added a native winit adapter behind `3d,interactive-gpu`. It maps left-drag
+  orbit, middle/right-drag pan, wheel zoom, click pick, double-click reset,
+  Escape reset, resize/DPI changes, and redraw requests into the retained core
+  session. Presentation currently converts the diagnosed GPU-readback image
+  into softbuffer pixels; its docs and diagnostics call it a correctness
+  fallback, never direct presentation.
+- Added a GPUI `RuvizPlot3D` component and `plot3d(session, cx)` constructor.
+  It uses the same retained session and event semantics, caches camera-stable
+  frames, converts component coordinates into backing pixels, and uses CPU
+  images or the diagnosed GPU-readback fallback according to features. Direct
+  GPUI texture interop remains an isolated post-surface adapter gap.
+- Added JavaScript-owned `JsPlot3D` plus main-thread `Web3DCanvasSession` and
+  worker-capable `Offscreen3DCanvasSession`. Both adapters expose matching
+  pointer, wheel, double-click, reset, selection, resize, render, PNG export,
+  and destroy methods over one shared implementation. They intentionally use
+  deterministic CPU Canvas2D presentation until the asynchronous WebGPU
+  surface session is implemented.
+- The adapter checkpoint passes `cargo check --all-features`, strict native
+  all-feature Clippy, strict GPUI `3d-gpu` Clippy, strict wasm
+  `3d-gpu` Clippy, the full 1,309-test no-default `3d` library suite, both
+  focused winit mapping tests, and all 47 GPUI library tests. The only emitted
+  warning is the already recorded repository-level `.clippy.toml` Rust 1.87
+  versus Cargo Rust 1.92 mismatch.
 
 ## Primary references
 
