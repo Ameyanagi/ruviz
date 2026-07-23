@@ -45,6 +45,9 @@ jobs:
         with:
           components: clippy
 
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -55,10 +58,13 @@ jobs:
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy -p ruviz --all-targets --all-features -- -D warnings
 
       - name: Run clippy for the 3D GPU feature surface
-        run: cargo clippy --no-default-features --features 3d,gpu -- -D warnings
+        run: cargo clippy -p ruviz --no-default-features --features 3d,gpu -- -D warnings
+
+      - name: Run clippy for the GPUI 3D feature surface
+        run: cargo clippy -p ruviz-gpui --all-targets --all-features -- -D warnings
 
       - name: Test production unwrap checker
         run: python3 -m unittest scripts/test_check_no_new_production_unwraps.py
@@ -297,7 +303,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: three-d-required-adapter-${{ github.run_id }}
+          name: 3d-required-adapter-${{ github.run_id }}
           path: generated/tests/render/three_d_gpu_required_adapter.png
           if-no-files-found: warn
           retention-days: 7
