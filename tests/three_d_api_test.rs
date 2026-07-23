@@ -103,6 +103,33 @@ fn named_degree_camera_api_is_unambiguous() {
 }
 
 #[test]
+fn retained_interaction_api_is_small_and_generation_safe() {
+    let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+        .interactive_session()
+        .expect("session");
+    let initial = session.camera_snapshot();
+    session.orbit(12.0, -4.0).expect("orbit");
+    session.pan(3.0, 2.0).expect("pan");
+    session.zoom_by(1.1).expect("zoom");
+    assert_ne!(session.camera(), initial.camera);
+    session.restore_camera(initial).expect("restore");
+    assert_eq!(session.camera(), initial.camera);
+    let replacement = scatter3d(&[1.0], &[2.0], &[3.0])
+        .interactive_session_with_view(initial)
+        .expect("keep-view replacement");
+    assert_eq!(replacement.camera(), initial.camera);
+    assert_ne!(
+        replacement.camera_snapshot().scene_generation,
+        initial.scene_generation
+    );
+    let image = session.render().expect("interactive CPU frame");
+    assert_eq!(
+        image.pixels.len(),
+        image.width as usize * image.height as usize * 4
+    );
+}
+
+#[test]
 fn grid_diagnostics_name_expected_and_actual_shapes() {
     let error = surface(&[0.0, 1.0, 2.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 2.0]])
         .validate()

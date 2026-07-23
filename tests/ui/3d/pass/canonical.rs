@@ -27,6 +27,17 @@ fn terminal_contract() -> ruviz::core::Result<()> {
     let _ = scatter3d(&values, &values, &values).render()?;
     let _ = scatter3d(&values, &values, &values).render_png_bytes()?;
     let _ = scatter3d(&values, &values, &values).render_to_svg()?;
+    let mut session = scatter3d(&values, &values, &values)
+        .look_at(0.5, 0.5, 0.5)
+        .interactive_session()?;
+    session.orbit(10.0, -5.0)?;
+    session.pan(2.0, 1.0)?;
+    session.zoom_by(1.1)?;
+    let snapshot = session.camera_snapshot();
+    session.restore_camera(snapshot)?;
+    let _ = session.render()?;
+    let _replacement =
+        scatter3d(&values, &values, &values).interactive_session_with_view(snapshot)?;
     #[cfg(feature = "gpu")]
     {
         let _ = scatter3d(&values, &values, &values).render_gpu()?;

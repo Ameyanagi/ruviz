@@ -72,7 +72,7 @@ impl Axis3Layout {
         let viewport = axis_viewport(frame, canvas_width, canvas_height);
         let camera = frame
             .camera
-            .prepare(viewport.width as f32 / viewport.height as f32)?;
+            .prepare(viewport.width as f32 / viewport.height as f32, frame.bounds)?;
         let corners = projected_box_corners(camera, viewport)?;
         let anchor_index = outer_anchor_corner(&corners);
         let anchor_signs = corner_signs(anchor_index);
@@ -273,6 +273,33 @@ impl Axis3Layout {
             });
         }
         Ok(Some((origin, direction.normalize())))
+    }
+
+    pub(crate) fn unproject_local_at_depth(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        depth: f32,
+    ) -> Result<Vec3> {
+        if !screen_x.is_finite()
+            || !screen_y.is_finite()
+            || !depth.is_finite()
+            || !(0.0..=1.0).contains(&depth)
+        {
+            return Err(PlottingError::InvalidInput(
+                "3D unprojection requires finite screen coordinates and depth in 0..=1".to_string(),
+            ));
+        }
+        let ndc_x = (screen_x - self.viewport.x as f32) / self.viewport.width as f32 * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen_y - self.viewport.y as f32) / self.viewport.height as f32 * 2.0;
+        let homogeneous =
+            self.camera.inverse_view_projection * Vec3::new(ndc_x, ndc_y, depth).extend(1.0);
+        if !homogeneous.is_finite() || homogeneous.w.abs() <= f32::EPSILON {
+            return Err(PlottingError::InvalidTopology3D {
+                reason: "3D unprojection produced an invalid homogeneous divisor".to_string(),
+            });
+        }
+        Ok((homogeneous.truncate() / homogeneous.w) / self.camera.axis_aspect)
     }
 }
 

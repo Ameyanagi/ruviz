@@ -50,6 +50,13 @@ pub(crate) struct SoftwareRenderOptions3D {
 }
 
 impl SoftwareRenderOptions3D {
+    pub(crate) fn interactive() -> Self {
+        Self {
+            quality: SoftwareQuality3D::Interactive,
+            parallel: cfg!(feature = "parallel"),
+        }
+    }
+
     pub(crate) fn export() -> Self {
         Self {
             quality: SoftwareQuality3D::Export,

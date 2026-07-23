@@ -290,6 +290,12 @@ macro_rules! impl_common_builder {
                 self
             }
 
+            /// Orbit around an explicit point in data coordinates.
+            pub fn look_at(mut self, x: f64, y: f64, z: f64) -> Self {
+                self.plot.camera = self.plot.camera.look_at(Point3D::new(x, y, z));
+                self
+            }
+
             /// Set camera azimuth in degrees.
             pub fn azimuth_deg(mut self, degrees: f32) -> Self {
                 self.plot.camera = self.plot.camera.azimuth_deg(degrees);
@@ -406,6 +412,21 @@ macro_rules! impl_common_builder {
             /// viewport or over empty space returns `Ok(None)`.
             pub fn pick(self, screen_x: f32, screen_y: f32) -> Result<Option<super::PickHit3D>> {
                 self.finalize().pick_at(screen_x, screen_y)
+            }
+
+            /// Create a retained backend-neutral 3d interaction session.
+            pub fn interactive_session(self) -> Result<super::InteractivePlot3DSession> {
+                super::InteractivePlot3DSession::new(self.finalize())
+            }
+
+            /// Create a retained session while preserving a previous camera view.
+            pub fn interactive_session_with_view(
+                self,
+                snapshot: super::CameraSnapshot3D,
+            ) -> Result<super::InteractivePlot3DSession> {
+                let mut session = super::InteractivePlot3DSession::new(self.finalize())?;
+                session.restore_camera(snapshot)?;
+                Ok(session)
             }
 
             /// Compile the retained scene and return structured benchmark counters.

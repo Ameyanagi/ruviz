@@ -42,7 +42,7 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | 3D-07 | In progress: Image/PNG and hybrid SVG/PDF output are live and tested, with large-offset orthographic/perspective semantic probes; whole-image goldens and broader semantic parity remain |
 | 3D-08 | In progress: independent direct-wgpu offscreen mesh, instanced line, and instanced point pipelines render through queried RGBA/depth/MSAA attachments and pass the local required-Metal-adapter coverage probe; cross-vendor required-adapter jobs and the full differential corpus remain |
 | 3D-09 | In progress: explicit `render_gpu()`, truthful `gpu3d` diagnostics, bounded geometry/appearance caches, persistent device/pipelines/attachments, one-write camera frames, static readback, resize recreation, and next-frame device-loss recreation exist; Auto routing, stress tests, and direct presentation remain |
-| 3D-10 | In progress: backend-neutral screen rays and lazy CPU surface-triangle BVH picking exist; camera interaction, point/line picking, and frontend adapters remain |
+| 3D-10 | Complete: one authoritative retained session provides orbit/pan/zoom/reset, portable camera snapshots, replacement-data keep-view, process-unique generation-safe point/line/surface picking, interactive CPU frames, and diagnosed GPU-readback frames |
 | 3D-11 through 3D-14 | Not started |
 
 `render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
@@ -1245,6 +1245,44 @@ Documentation must state:
   camera frame with no readback or resource upload. The dedicated resize and
   forced-device-loss unit probes also passed, as did the serde diagnostics
   schema probe.
+- The M4 camera audit found that azimuth/elevation/zoom alone cannot represent
+  a portable pan. `Camera3D` now carries an optional `f64` data-space look-at
+  target, defaulting to the resolved bounds center. Core pan unprojects the
+  dragged target plane and writes that target back into the camera, so camera
+  snapshots contain the complete view and frontend adapters need no hidden
+  camera state.
+- Added a retained `InteractivePlot3DSession` with the small direct methods
+  `orbit`, `pan`, `zoom_by`, `reset_view`, `camera_snapshot`,
+  `restore_camera`, `pick`, and `render`, plus a compact adapter-neutral event
+  enum. Left drag orbits, middle/right drag pans, positive wheel deltas zoom
+  in, clicks below the three-pixel drag threshold pick, and double-left or
+  Escape resets.
+- Extended the CPU picker across all opaque MVP primitives. Scatter uses the
+  rendered marker radius, line and wireframe use clipped screen-space segment
+  distance and rendered width, and surfaces retain the lazy triangle BVH.
+  Candidates are resolved by projected depth with deterministic point/line/
+  surface tie priority. Results carry scene and camera generations so adapters
+  can reject stale asynchronous hits.
+- Added a retained GPU image path to the interaction session, but deliberately
+  label it `gpu3d-readback-fallback` with a fallback reason and nonzero
+  readback diagnostics. It is a correctness bridge for current CPU-image
+  frontends and does not satisfy the later direct-presentation gate.
+- A generation audit found that per-session counters starting from the same
+  value were insufficient: a hit from a replaced plot could accidentally match
+  the new session. Scene generations now come from a checked process-wide
+  allocator, while camera generations remain local to that unique scene.
+  `interactive_session_with_view(snapshot)` creates a new unique scene while
+  restoring the previous camera, which is the explicit keep-view contract.
+- The initial screen-space point and line picker intentionally uses conservative
+  rendered envelopes. It does not yet reject the empty corners of non-circular
+  marker SDFs or gaps inside dashed lines. Depth ordering, source interpolation,
+  clip-volume handling, and stale-result checks remain exact; sub-shape picking
+  can be tightened later without changing the public result type.
+- Completed the local 3D-10 gate: five focused interaction/session unit tests,
+  all 12 public 3d API tests, both small-model compile-test groups, and all five
+  required-adapter GPU integration tests pass. Strict `3d,gpu` all-target
+  Clippy and warnings-denied rustdoc also pass, apart from the already recorded
+  repository-level Clippy MSRV mismatch warning.
 
 ## Primary references
 

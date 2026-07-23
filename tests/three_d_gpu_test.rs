@@ -138,3 +138,18 @@ fn retained_camera_session_has_no_readback_or_warm_uploads() {
     assert_eq!(warm.camera_uniform_writes, 1);
     assert_eq!(warm.readback_bytes, 0);
 }
+
+#[test]
+fn interactive_gpu_image_path_is_truthfully_labeled_as_readback_fallback() {
+    let mut session = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+        .interactive_session()
+        .expect("interactive session");
+    let (image, diagnostics) = session
+        .render_gpu_readback()
+        .expect("interactive GPU readback");
+    assert!(image.pixels.iter().any(|&channel| channel != 0));
+    assert_eq!(diagnostics.actual_backend, "gpu3d-readback-fallback");
+    assert!(diagnostics.fallback_reason.is_some());
+    assert!(diagnostics.readback_bytes > 0);
+    assert!(diagnostics.adapter_name.is_some());
+}

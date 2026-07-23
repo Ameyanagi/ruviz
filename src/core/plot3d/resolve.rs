@@ -243,6 +243,15 @@ fn hash_camera(hasher: &mut StableHasher3D, camera: Camera3D) {
     hasher.f32(camera.get_elevation_deg());
     hasher.f32(camera.get_roll_deg());
     hasher.f32(camera.get_zoom());
+    match camera.target() {
+        Some(target) => {
+            hasher.byte(1);
+            hasher.f64(target.x);
+            hasher.f64(target.y);
+            hasher.f64(target.z);
+        }
+        None => hasher.byte(0),
+    }
     match camera.projection() {
         super::Projection3D::Orthographic => hasher.byte(0),
         super::Projection3D::Perspective { vertical_fov_deg } => {

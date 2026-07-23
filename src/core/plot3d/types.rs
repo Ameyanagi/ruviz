@@ -222,6 +222,7 @@ pub struct Camera3D {
     projection: Projection3D,
     aspect: AxisAspect3D,
     zoom: f32,
+    target: Option<Point3D>,
 }
 
 impl Camera3D {
@@ -267,6 +268,20 @@ impl Camera3D {
         self
     }
 
+    /// Orbit around an explicit point in data coordinates.
+    ///
+    /// By default the camera looks at the center of the resolved plot bounds.
+    pub fn look_at(mut self, target: Point3D) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    /// Return to looking at the center of the resolved plot bounds.
+    pub fn look_at_bounds_center(mut self) -> Self {
+        self.target = None;
+        self
+    }
+
     /// Current azimuth in degrees.
     pub const fn get_azimuth_deg(self) -> f32 {
         self.azimuth_deg
@@ -297,6 +312,11 @@ impl Camera3D {
         self.zoom
     }
 
+    /// Explicit data-space look-at target, or `None` for the bounds center.
+    pub const fn target(self) -> Option<Point3D> {
+        self.target
+    }
+
     /// Validate all camera parameters.
     pub fn validate(self) -> Result<()> {
         validate_finite("azimuth_deg", self.azimuth_deg)?;
@@ -310,6 +330,11 @@ impl Camera3D {
             });
         }
         validate_positive_finite("zoom", self.zoom)?;
+        if self.target.is_some_and(|target| !target.is_finite()) {
+            return Err(PlottingError::InvalidInput(
+                "3D camera look-at target must contain finite data coordinates".to_string(),
+            ));
+        }
         if let Projection3D::Perspective { vertical_fov_deg } = self.projection {
             validate_finite("vertical_fov_deg", vertical_fov_deg)?;
             if !(1.0..179.0).contains(&vertical_fov_deg) {
@@ -354,7 +379,7 @@ impl Camera3D {
             });
         }
 
-        let prepared = self.prepare(viewport_width as f32 / viewport_height as f32)?;
+        let prepared = self.prepare(viewport_width as f32 / viewport_height as f32, bounds)?;
         let local = bounds.normalize(point, prepared.axis_aspect);
         let clip = prepared.view_projection * local.extend(1.0);
         if !clip.is_finite() || clip.w <= 0.0 {
@@ -402,7 +427,7 @@ impl Camera3D {
             });
         }
 
-        let prepared = self.prepare(viewport_width as f32 / viewport_height as f32)?;
+        let prepared = self.prepare(viewport_width as f32 / viewport_height as f32, bounds)?;
         let local = unproject_local(
             prepared.inverse_view_projection,
             screen_x,
@@ -452,7 +477,11 @@ impl Camera3D {
         Ok(ScreenRay3D { origin, direction })
     }
 
-    pub(crate) fn prepare(self, viewport_aspect: f32) -> Result<PreparedCamera3D> {
+    pub(crate) fn prepare(
+        self,
+        viewport_aspect: f32,
+        bounds: Bounds3D,
+    ) -> Result<PreparedCamera3D> {
         self.validate()?;
         if !viewport_aspect.is_finite() || viewport_aspect <= 0.0 {
             return Err(PlottingError::InvalidCamera3D {
@@ -462,6 +491,8 @@ impl Camera3D {
             });
         }
 
+        let axis_aspect = self.aspect.resolved();
+        let target = bounds.normalize(self.target.unwrap_or_else(|| bounds.center()), axis_aspect);
         let azimuth = self.azimuth_deg.to_radians();
         let elevation = self.elevation_deg.to_radians();
         let eye_direction = Vec3::new(
@@ -505,15 +536,15 @@ impl Camera3D {
                 )
             }
         };
-        let eye = eye_direction * eye_distance;
-        let forward = (-eye).normalize();
+        let eye = target + eye_direction * eye_distance;
+        let forward = (target - eye).normalize();
         let up = Quat::from_axis_angle(forward, self.roll_deg.to_radians()) * Vec3::Z;
-        let view = Mat4::look_at_rh(eye, Vec3::ZERO, up);
+        let view = Mat4::look_at_rh(eye, target, up);
         let view_projection = projection * view;
         Ok(PreparedCamera3D {
             view_projection,
             inverse_view_projection: view_projection.inverse(),
-            axis_aspect: self.aspect.resolved(),
+            axis_aspect,
         })
     }
 }
@@ -568,6 +599,7 @@ impl Default for Camera3D {
             projection: Projection3D::Orthographic,
             aspect: AxisAspect3D::Auto,
             zoom: 1.0,
+            target: None,
         }
     }
 }

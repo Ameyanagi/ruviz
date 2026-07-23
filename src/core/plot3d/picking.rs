@@ -1,9 +1,10 @@
 use std::cmp::Ordering;
 
-use glam::Vec3;
+use glam::{Vec2, Vec3, Vec4};
 
 use crate::core::{PlottingError, Result};
-use crate::render::three_d::scene::SceneGeometry3D;
+use crate::render::three_d::scene::{Scene3D, SceneGeometry3D};
+use crate::render::three_d::software::clip::{ClipVertex3D, clip_segment, is_inside_clip_volume};
 
 use super::Point3D;
 use super::builder::Plot3D;
@@ -15,6 +16,10 @@ const LEAF_SIZE: usize = 8;
 /// Kind of retained primitive selected by a 3d pick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickPrimitive3D {
+    /// One scatter marker.
+    Point,
+    /// One line or wireframe segment.
+    LineSegment,
     /// One triangle from a surface series.
     SurfaceTriangle,
 }
@@ -26,16 +31,36 @@ pub struct PickHit3D {
     pub series_index: u32,
     /// Primitive kind.
     pub primitive: PickPrimitive3D,
+    /// Primitive index within its retained batch.
+    pub primitive_index: u32,
     /// Triangle index within the retained surface batch.
+    ///
+    /// This compatibility field matches [`Self::primitive_index`] for a
+    /// surface and is zero for points and line segments.
     pub triangle_index: u32,
-    /// Source-grid vertex indices for the triangle.
+    /// Source-data indices. Read the first [`Self::source_count`] entries.
     pub source_indices: [u32; 3],
+    /// Number of meaningful entries in [`Self::source_indices`].
+    pub source_count: u8,
     /// Triangle barycentric coordinates in source-index order.
+    ///
+    /// Points use `[1, 0, 0]`. Lines use `[1-t, t, 0]`.
     pub barycentric: [f32; 3],
     /// Hit position in the original data coordinate system.
     pub point: Point3D,
     /// Distance from the near-plane ray origin in normalized scene units.
     pub ray_distance: f32,
+    /// Retained scene generation that produced this result.
+    pub scene_generation: u64,
+    /// Camera generation that produced this result.
+    pub camera_generation: u64,
+}
+
+impl PickHit3D {
+    /// Meaningful source-data indices for this primitive.
+    pub fn sources(&self) -> &[u32] {
+        &self.source_indices[..usize::from(self.source_count).min(self.source_indices.len())]
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -245,14 +270,125 @@ impl Plot3D {
     pub(super) fn pick_at(self, screen_x: f32, screen_y: f32) -> Result<Option<PickHit3D>> {
         let frame = self.resolve()?;
         let layout = Axis3Layout::resolve(&frame)?;
-        let Some((origin, direction)) = layout.screen_ray_local(screen_x, screen_y)? else {
-            return Ok(None);
-        };
         let mut cache = PreparedSceneCache3D::default();
         let (scene, bvh, _) = cache.prepare_with_bvh(&frame)?;
-        let Some(hit) = bvh.intersect_ray(&scene.geometry, origin, direction)? else {
-            return Ok(None);
-        };
+        pick_scene(&frame, &layout, &scene, &bvh, screen_x, screen_y, 0, 0)
+    }
+}
+
+pub(crate) fn pick_scene(
+    frame: &super::resolve::ResolvedFrame3D,
+    layout: &Axis3Layout,
+    scene: &Scene3D,
+    bvh: &Bvh3D,
+    screen_x: f32,
+    screen_y: f32,
+    scene_generation: u64,
+    camera_generation: u64,
+) -> Result<Option<PickHit3D>> {
+    let Some((ray_origin, ray_direction)) = layout.screen_ray_local(screen_x, screen_y)? else {
+        return Ok(None);
+    };
+    let cursor = Vec2::new(screen_x, screen_y);
+    let mut closest: Option<(f32, u8, u32, u32, PickHit3D)> = None;
+
+    for batch in &scene.points {
+        let tolerance = batch.style.marker_size * frame.figure.dpi / 144.0 + 3.0;
+        for (point_index, (&position, &source_index)) in batch
+            .geometry
+            .positions
+            .iter()
+            .zip(batch.geometry.source_indices.iter())
+            .enumerate()
+        {
+            let local = Vec3::from_array(position);
+            let Some(projected) = project_visible_local(layout, local) else {
+                continue;
+            };
+            let screen_distance = cursor.distance(projected.truncate());
+            if screen_distance > tolerance {
+                continue;
+            }
+            let primitive_index = checked_u32(point_index, "3D point pick index")?;
+            let hit = PickHit3D {
+                series_index: batch.geometry.series_index,
+                primitive: PickPrimitive3D::Point,
+                primitive_index,
+                triangle_index: 0,
+                source_indices: [source_index; 3],
+                source_count: 1,
+                barycentric: [1.0, 0.0, 0.0],
+                point: frame.bounds.denormalize(local, Vec3::ONE),
+                ray_distance: (local - ray_origin).dot(ray_direction).max(0.0),
+                scene_generation,
+                camera_generation,
+            };
+            consider_pick(
+                &mut closest,
+                projected.z,
+                0,
+                batch.geometry.series_index,
+                primitive_index,
+                hit,
+            );
+        }
+    }
+
+    for batch in &scene.lines {
+        let tolerance = batch.style.line_width * frame.figure.dpi / 144.0 + 3.0;
+        for (segment_index, &[start_index, end_index]) in batch.geometry.segments.iter().enumerate()
+        {
+            let start = indexed_position(&batch.geometry.positions, start_index, "line start")?;
+            let end = indexed_position(&batch.geometry.positions, end_index, "line end")?;
+            let Some((projected_start, projected_end, original_start_t, original_end_t)) =
+                project_clipped_segment(layout, start, end)
+            else {
+                continue;
+            };
+            let (screen_distance, clipped_t) = point_segment_distance(
+                cursor,
+                projected_start.truncate(),
+                projected_end.truncate(),
+            );
+            if screen_distance > tolerance {
+                continue;
+            }
+            let original_t = original_start_t + (original_end_t - original_start_t) * clipped_t;
+            let local = start.lerp(end, original_t);
+            let depth = projected_start.z + (projected_end.z - projected_start.z) * clipped_t;
+            let primitive_index = checked_u32(segment_index, "3D line pick index")?;
+            let start_source = indexed_source(
+                &batch.geometry.source_indices,
+                start_index,
+                "line start source",
+            )?;
+            let end_source =
+                indexed_source(&batch.geometry.source_indices, end_index, "line end source")?;
+            let hit = PickHit3D {
+                series_index: batch.geometry.series_index,
+                primitive: PickPrimitive3D::LineSegment,
+                primitive_index,
+                triangle_index: 0,
+                source_indices: [start_source, end_source, end_source],
+                source_count: 2,
+                barycentric: [1.0 - original_t, original_t, 0.0],
+                point: frame.bounds.denormalize(local, Vec3::ONE),
+                ray_distance: (local - ray_origin).dot(ray_direction).max(0.0),
+                scene_generation,
+                camera_generation,
+            };
+            consider_pick(
+                &mut closest,
+                depth,
+                1,
+                batch.geometry.series_index,
+                primitive_index,
+                hit,
+            );
+        }
+    }
+
+    if let Some(hit) = bvh.intersect_ray(&scene.geometry, ray_origin, ray_direction)? {
         let mesh = scene
             .geometry
             .meshes
@@ -277,16 +413,126 @@ impl Plot3D {
                 })?
                 .source_index;
         }
-        Ok(Some(PickHit3D {
+        let projected = project_visible_local(layout, hit.local_position).ok_or_else(|| {
+            PlottingError::InvalidTopology3D {
+                reason: "visible 3D surface pick projected outside the clip volume".to_string(),
+            }
+        })?;
+        let surface_hit = PickHit3D {
             series_index: mesh.series_index,
             primitive: PickPrimitive3D::SurfaceTriangle,
+            primitive_index: hit.triangle_index,
             triangle_index: hit.triangle_index,
             source_indices,
+            source_count: 3,
             barycentric: hit.barycentric,
             point: frame.bounds.denormalize(hit.local_position, Vec3::ONE),
             ray_distance: hit.distance,
-        }))
+            scene_generation,
+            camera_generation,
+        };
+        consider_pick(
+            &mut closest,
+            projected.z,
+            2,
+            mesh.series_index,
+            hit.triangle_index,
+            surface_hit,
+        );
     }
+
+    Ok(closest.map(|(_, _, _, _, hit)| hit))
+}
+
+fn consider_pick(
+    closest: &mut Option<(f32, u8, u32, u32, PickHit3D)>,
+    depth: f32,
+    priority: u8,
+    series_index: u32,
+    primitive_index: u32,
+    hit: PickHit3D,
+) {
+    let key = (depth, priority, series_index, primitive_index);
+    let replace = closest.as_ref().is_none_or(
+        |(current_depth, current_priority, current_series, current_primitive, _)| {
+            depth.total_cmp(current_depth).is_lt()
+                || (depth.to_bits() == current_depth.to_bits()
+                    && (priority, series_index, primitive_index)
+                        < (*current_priority, *current_series, *current_primitive))
+        },
+    );
+    if replace {
+        *closest = Some((key.0, key.1, key.2, key.3, hit));
+    }
+}
+
+fn project_visible_local(layout: &Axis3Layout, local: Vec3) -> Option<Vec3> {
+    let clip = layout.camera.view_projection * (local * layout.camera.axis_aspect).extend(1.0);
+    if !is_inside_clip_volume(clip) {
+        return None;
+    }
+    Some(project_clip_position(layout, clip))
+}
+
+fn project_clipped_segment(
+    layout: &Axis3Layout,
+    start: Vec3,
+    end: Vec3,
+) -> Option<(Vec3, Vec3, f32, f32)> {
+    let vertex = |local_position: Vec3, scalar: f32| ClipVertex3D {
+        clip_position: layout.camera.view_projection
+            * (local_position * layout.camera.axis_aspect).extend(1.0),
+        local_position,
+        normal: Vec3::ZERO,
+        color: Vec4::ZERO,
+        scalar,
+    };
+    let [start, end] = clip_segment(vertex(start, 0.0), vertex(end, 1.0))?;
+    Some((
+        project_clip_position(layout, start.clip_position),
+        project_clip_position(layout, end.clip_position),
+        start.scalar,
+        end.scalar,
+    ))
+}
+
+fn project_clip_position(layout: &Axis3Layout, clip: Vec4) -> Vec3 {
+    let ndc = clip.truncate() / clip.w;
+    Vec3::new(
+        layout.viewport.x as f32 + (ndc.x * 0.5 + 0.5) * layout.viewport.width as f32,
+        layout.viewport.y as f32 + (0.5 - ndc.y * 0.5) * layout.viewport.height as f32,
+        ndc.z,
+    )
+}
+
+fn point_segment_distance(point: Vec2, start: Vec2, end: Vec2) -> (f32, f32) {
+    let segment = end - start;
+    let length_squared = segment.length_squared();
+    let t = if length_squared <= f32::EPSILON {
+        0.0
+    } else {
+        ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0)
+    };
+    (point.distance(start + segment * t), t)
+}
+
+fn indexed_position(positions: &[[f32; 3]], index: u32, context: &str) -> Result<Vec3> {
+    positions
+        .get(index as usize)
+        .copied()
+        .map(Vec3::from_array)
+        .ok_or_else(|| PlottingError::InvalidTopology3D {
+            reason: format!("3D pick references an out-of-range {context}"),
+        })
+}
+
+fn indexed_source(sources: &[u32], index: u32, context: &str) -> Result<u32> {
+    sources
+        .get(index as usize)
+        .copied()
+        .ok_or_else(|| PlottingError::InvalidTopology3D {
+            reason: format!("3D pick references an out-of-range {context}"),
+        })
 }
 
 fn build_node(

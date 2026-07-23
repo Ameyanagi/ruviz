@@ -54,7 +54,8 @@ pub use plot::{
 pub use plot3d::GpuBenchmarkSession3D;
 #[cfg(feature = "3d")]
 pub use plot3d::{
-    AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D,
+    AxisAspect3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
+    InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D, PointerButton3D,
     ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D,
     Surface3DBuilder, Wireframe3DBuilder,
 };
