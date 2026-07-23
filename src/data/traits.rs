@@ -92,6 +92,20 @@ impl<T> Data1D<T> for &[T] {
     }
 }
 
+impl<T> Data1D<T> for [T] {
+    fn len(&self) -> usize {
+        <[T]>::len(self)
+    }
+
+    fn get(&self, index: usize) -> Option<&T> {
+        <[T]>::get(self, index)
+    }
+
+    fn iter(&self) -> Box<dyn Iterator<Item = &T> + '_> {
+        Box::new(<[T]>::iter(self))
+    }
+}
+
 #[cfg(feature = "ndarray_support")]
 fn ndarray_len_1d<T, S>(array: &ndarray::ArrayBase<S, ndarray::Ix1>) -> usize
 where
@@ -221,7 +235,7 @@ pub trait NumericData1D {
 
 impl<T> NumericData1D for T
 where
-    T: Data1D<f64>,
+    T: Data1D<f64> + ?Sized,
 {
     fn len(&self) -> usize {
         Data1D::len(self)
@@ -303,6 +317,19 @@ macro_rules! impl_numeric_data_1d_for_primitive_collections {
                 }
             }
 
+            impl NumericData1D for [$ty] {
+                fn len(&self) -> usize {
+                    <[$ty]>::len(self)
+                }
+
+                fn try_collect_f64_with_policy(
+                    &self,
+                    _null_policy: NullPolicy,
+                ) -> Result<Vec<f64>, PlottingError> {
+                    Ok(self.iter().map(|v| *v as f64).collect())
+                }
+            }
+
             #[cfg(feature = "ndarray_support")]
             impl NumericData1D for ndarray::Array1<$ty> {
                 fn len(&self) -> usize {
@@ -338,7 +365,7 @@ impl_numeric_data_1d_for_primitive_collections!(
     f32, i64, i32, i16, i8, u64, u32, u16, u8, isize, usize
 );
 
-/// Fallible numeric ingestion contract for 2D plotting data (heatmap-style).
+/// Fallible numeric ingestion contract for regular 2D numeric data.
 pub trait NumericData2D {
     /// Returns `(rows, cols)`.
     fn shape(&self) -> (usize, usize);
@@ -347,48 +374,91 @@ pub trait NumericData2D {
     fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError>;
 }
 
-impl NumericData2D for Vec<Vec<f64>> {
-    fn shape(&self) -> (usize, usize) {
-        <[Vec<f64>] as NumericData2D>::shape(self.as_slice())
-    }
+macro_rules! impl_numeric_data_2d_for_rows {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl NumericData2D for Vec<Vec<$ty>> {
+                fn shape(&self) -> (usize, usize) {
+                    <[Vec<$ty>] as NumericData2D>::shape(self.as_slice())
+                }
 
-    fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError> {
-        <[Vec<f64>] as NumericData2D>::try_collect_row_major_f64(self.as_slice())
-    }
-}
-
-impl NumericData2D for [Vec<f64>] {
-    fn shape(&self) -> (usize, usize) {
-        (
-            self.len(),
-            self.first().map(std::vec::Vec::len).unwrap_or(0),
-        )
-    }
-
-    fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError> {
-        if self.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let cols = self[0].len();
-        for (row_idx, row) in self.iter().enumerate() {
-            if row.len() != cols {
-                return Err(PlottingError::InvalidInput(format!(
-                    "Heatmap rows have inconsistent lengths: row {} has {} values, expected {}",
-                    row_idx,
-                    row.len(),
-                    cols
-                )));
+                fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError> {
+                    <[Vec<$ty>] as NumericData2D>::try_collect_row_major_f64(self.as_slice())
+                }
             }
-        }
 
-        let mut values = Vec::with_capacity(self.len() * cols);
-        for row in self {
-            values.extend(row.iter().copied());
-        }
-        Ok(values)
-    }
+            impl NumericData2D for [Vec<$ty>] {
+                fn shape(&self) -> (usize, usize) {
+                    (
+                        self.len(),
+                        self.first().map(std::vec::Vec::len).unwrap_or(0),
+                    )
+                }
+
+                fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError> {
+                    if self.is_empty() {
+                        return Ok(vec![]);
+                    }
+
+                    let cols = self[0].len();
+                    for (row_idx, row) in self.iter().enumerate() {
+                        if row.len() != cols {
+                            return Err(PlottingError::RaggedData2D {
+                                context: "NumericData2D",
+                                row: row_idx,
+                                expected_columns: cols,
+                                actual_columns: row.len(),
+                            });
+                        }
+                    }
+
+                    let capacity = self.len().checked_mul(cols).ok_or_else(|| {
+                        PlottingError::DataExtractionFailed {
+                            source: "NumericData2D".to_string(),
+                            message: format!(
+                                "shape {}x{} causes integer overflow",
+                                self.len(),
+                                cols
+                            ),
+                        }
+                    })?;
+                    let mut values = Vec::with_capacity(capacity);
+                    for row in self {
+                        values.extend(row.iter().map(|value| *value as f64));
+                    }
+                    Ok(values)
+                }
+            }
+
+            impl<const ROWS: usize, const COLUMNS: usize> NumericData2D
+                for [[$ty; COLUMNS]; ROWS]
+            {
+                fn shape(&self) -> (usize, usize) {
+                    (ROWS, COLUMNS)
+                }
+
+                fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError> {
+                    let capacity = ROWS.checked_mul(COLUMNS).ok_or_else(|| {
+                        PlottingError::DataExtractionFailed {
+                            source: "NumericData2D".to_string(),
+                            message: format!(
+                                "shape {}x{} causes integer overflow",
+                                ROWS, COLUMNS
+                            ),
+                        }
+                    })?;
+                    let mut values = Vec::with_capacity(capacity);
+                    for row in self {
+                        values.extend(row.iter().map(|value| *value as f64));
+                    }
+                    Ok(values)
+                }
+            }
+        )+
+    };
 }
+
+impl_numeric_data_2d_for_rows!(f64, f32, i64, i32, i16, i8, u64, u32, u16, u8, isize, usize);
 
 #[cfg(feature = "ndarray_support")]
 impl NumericData2D for ndarray::Array2<f64> {
@@ -420,6 +490,42 @@ impl<'a> NumericData2D for ndarray::ArrayView2<'a, f64> {
         for r in 0..rows {
             for c in 0..cols {
                 values.push(self[(r, c)]);
+            }
+        }
+        Ok(values)
+    }
+}
+
+#[cfg(feature = "ndarray_support")]
+impl NumericData2D for ndarray::Array2<f32> {
+    fn shape(&self) -> (usize, usize) {
+        (self.nrows(), self.ncols())
+    }
+
+    fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError> {
+        let (rows, cols) = (self.nrows(), self.ncols());
+        let mut values = Vec::with_capacity(rows * cols);
+        for r in 0..rows {
+            for c in 0..cols {
+                values.push(f64::from(self[(r, c)]));
+            }
+        }
+        Ok(values)
+    }
+}
+
+#[cfg(feature = "ndarray_support")]
+impl<'a> NumericData2D for ndarray::ArrayView2<'a, f32> {
+    fn shape(&self) -> (usize, usize) {
+        (self.nrows(), self.ncols())
+    }
+
+    fn try_collect_row_major_f64(&self) -> Result<Vec<f64>, PlottingError> {
+        let (rows, cols) = (self.nrows(), self.ncols());
+        let mut values = Vec::with_capacity(rows * cols);
+        for r in 0..rows {
+            for c in 0..cols {
+                values.push(f64::from(self[(r, c)]));
             }
         }
         Ok(values)
@@ -786,7 +892,7 @@ mod tests {
     fn test_numeric_data2d_row_mismatch_error() {
         let data = vec![vec![1.0, 2.0], vec![3.0]];
         let err = data.try_collect_row_major_f64().unwrap_err();
-        assert!(matches!(err, PlottingError::InvalidInput(_)));
+        assert!(matches!(err, PlottingError::RaggedData2D { row: 1, .. }));
     }
 
     #[cfg(feature = "ndarray_support")]

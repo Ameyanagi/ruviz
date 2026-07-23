@@ -28,6 +28,21 @@ PNG/SVG/PDF output, and retained GPU interaction.
 Volume rendering is not part of this project. It requires a separate
 ray-marching design after the mesh/scatter pipeline is stable.
 
+## Current implementation status
+
+| Work item | Status on `feat/3d-implementation` |
+| --- | --- |
+| 3D-00 | In progress: exact `3d` feature, exports, canonical compile contract, and concrete builders exist; benchmark manifest remains |
+| 3D-02 | In progress: f64 bounds/normalization, typed camera validation, orthographic/perspective matrices, and projection tests exist; clipping/unprojection remain |
+| 3D-03 | In progress: common 1D/2D ingestion, structured point/grid diagnostics, and multi-series builder validation exist; retained lowering remains |
+| 3D-05 through 3D-14 | Not started |
+
+The `render`, `save`, `render_to_svg`, and `show` method names are present so
+the canonical API is compile-tested. Until the 3D-06/3D-07 renderer/export
+milestones land, they validate the complete builder and then return an explicit
+`RenderError`; they do not route through the 2D renderer or create partial
+output.
+
 ## Decisions
 
 ### 1. One canonical public API
@@ -122,8 +137,9 @@ surface: row 3 has 99 values, expected 100
 Add structured errors rather than encoding these cases in a generic string:
 
 ```rust
-DataLengthMismatch3D { x_len, y_len, z_len, series_index }
+DataLengthMismatch3D { operation, x_len, y_len, z_len, series_index }
 GridShapeMismatch {
+    operation,
     expected_rows,
     expected_columns,
     actual_rows,
@@ -418,21 +434,21 @@ may contain 2D and 3D plots because each child owns its camera and depth buffer.
 Development and the first alpha use:
 
 ```toml
-ruviz = { version = "...", features = ["three-d"] }
+ruviz = { version = "...", features = ["3d"] }
 ```
 
 Feature composition:
 
 | Features | Behavior |
 | --- | --- |
-| `three-d` | CPU/static 3D |
-| `three-d,gpu` | Direct offscreen wgpu 3D |
-| `three-d,interactive-gpu` | Native interactive 3D |
-| `full` | Includes `three-d` |
+| `3d` | CPU/static 3D |
+| `3d,gpu` | Direct offscreen wgpu 3D |
+| `3d,interactive-gpu` | Native interactive 3D |
+| `full` | Includes `3d` |
 
 The stable usability target is for the canonical code examples to work with the
 normal/default ruviz dependency. After an alpha/RC feedback cycle, add
-`three-d` to the default feature set if compile size, platform support, and API
+`3d` to the default feature set if compile size, platform support, and API
 stability gates pass. Until then, missing-feature errors and docs must show the
 exact Cargo feature declaration.
 
@@ -624,7 +640,7 @@ Includes 3D-00 and 3D-01.
 
 Deliver:
 
-- `three-d` feature contract;
+- `3d` feature contract;
 - canonical API compile tests;
 - deterministic dataset manifests and hashes;
 - benchmark schema extended from the current plotting runners;
@@ -737,7 +753,7 @@ After at least one alpha/RC feedback cycle:
 - verify Metal, Vulkan, DX12, and claimed WebGPU paths;
 - confirm API corpus results and error quality;
 - confirm no unresolved depth/precision leaks;
-- consider adding `three-d` to default features.
+- consider adding `3d` to default features.
 
 Transparency, volumes, arbitrary meshes, and advanced lighting remain separate
 projects and do not block the opaque stable MVP.
@@ -887,9 +903,9 @@ Required feature rows:
 
 ```text
 --no-default-features
---no-default-features --features three-d
---no-default-features --features three-d,gpu
---no-default-features --features three-d,interactive-gpu
+--no-default-features --features 3d
+--no-default-features --features 3d,gpu
+--no-default-features --features 3d,interactive-gpu
 --all-features
 ```
 
@@ -906,7 +922,7 @@ Required checks:
 - Linux/macOS/Windows compile matrix;
 - FreeBSD CPU check;
 - WASM CPU and WebGPU compile checks;
-- packaged external consumer with `features = ["three-d"]`;
+- packaged external consumer with `features = ["3d"]`;
 - registered examples and deterministic gallery freshness.
 
 Scheduled or dedicated hardware checks:
@@ -1023,6 +1039,29 @@ Documentation must state:
   text.
 - Made small-model API reliability a release gate with a compile-tested prompt
   corpus.
+- Named the experimental Cargo feature exactly `3d` at user request. Because
+  the key begins with a digit it is quoted in `Cargo.toml` (`"3d" = []`);
+  Rust feature gates use `#[cfg(feature = "3d")]`.
+- Implemented the first feature/API/math slice: the four top-level functions,
+  concrete builders, multi-series chaining, common styling and labels, typed
+  camera validation, f64 scene normalization, and wgpu-depth-range projection.
+- A compile test exposed that `&[T]` variables inferred unsized `[T]` at the
+  canonical `&X + ?Sized` boundary. Added unsized slice ingestion so callers do
+  not need an artificial double borrow.
+- Replaced the old heatmap-specific ragged-row ingestion string with structured
+  `RaggedData2D` context. Surface and wireframe errors now name the originating
+  operation and the exact row, expected column count, and actual count.
+- Added `operation` to 3D length/shape errors after validation showed that the
+  original field set could not produce the required function-specific
+  diagnostics for both surface and wireframe.
+- Verified the slice with no defaults, normal defaults, and `3d` plus defaults.
+  The 3D API integration suite passes in both feature configurations; the
+  no-default `3d` library suite passes 1,261 tests; rustdoc passes with warnings
+  denied.
+- Attempting to align `.clippy.toml` from Rust 1.87 to the crate MSRV 1.92
+  enabled 45 pre-existing `collapsible_if` findings across unrelated 2D code.
+  Kept the existing Clippy MSRV for this slice and made the alignment a separate
+  maintenance prerequisite rather than mixing a broad 2D rewrite into 3D-00.
 
 ## Primary references
 

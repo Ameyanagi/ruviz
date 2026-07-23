@@ -833,6 +833,11 @@ pub mod prelude {
         SurfaceTarget, TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint,
         ViewportRect, subplots, subplots_default,
     };
+    #[cfg(feature = "3d")]
+    pub use crate::core::{
+        AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, Point3D, ProjectedPoint3D, Projection3D,
+        Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder,
+    };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,
     };
@@ -842,6 +847,11 @@ pub mod prelude {
         QuiverConfig, QuiverPivot, RadarConfig, StemMarker, StemOrientation, StepWhere,
         ViolinConfig,
     };
+    #[cfg(feature = "3d")]
+    pub use crate::plots::{
+        Line3DConfig, Scatter3DConfig, Surface3DConfig, SurfaceSampling, SurfaceShading,
+        Wireframe3DConfig,
+    };
     pub use crate::render::{
         Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,
         Theme,
@@ -849,6 +859,8 @@ pub mod prelude {
 
     // Top-level convenience functions
     pub use crate::{bar, line, scatter};
+    #[cfg(feature = "3d")]
+    pub use crate::{line3d, scatter3d, surface, wireframe};
 
     #[cfg(all(feature = "interactive", not(target_arch = "wasm32")))]
     pub use crate::interactive::{
@@ -876,6 +888,63 @@ pub mod prelude {
 use core::{Plot, PlotBuilder};
 use data::NumericData1D;
 use plots::{BarConfig, LineConfig, ScatterConfig};
+
+#[cfg(feature = "3d")]
+use core::{Line3DBuilder, Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder};
+#[cfg(feature = "3d")]
+use data::NumericData2D;
+
+/// Create a 3D scatter plot from x, y, and z coordinates.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn scatter3d<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Scatter3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData1D + ?Sized,
+{
+    Scatter3DBuilder::from_data(x, y, z)
+}
+
+/// Create a 3D line plot from x, y, and z coordinates.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn line3d<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Line3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData1D + ?Sized,
+{
+    Line3DBuilder::from_data(x, y, z)
+}
+
+/// Create a regular-grid surface where `z.shape() == (y.len(), x.len())`.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn surface<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Surface3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData2D + ?Sized,
+{
+    Surface3DBuilder::from_data(x, y, z)
+}
+
+/// Create a regular-grid wireframe where `z.shape() == (y.len(), x.len())`.
+///
+/// Enable it with `ruviz = { version = "...", features = ["3d"] }`.
+#[cfg(feature = "3d")]
+pub fn wireframe<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Wireframe3DBuilder
+where
+    X: NumericData1D + ?Sized,
+    Y: NumericData1D + ?Sized,
+    Z: NumericData2D + ?Sized,
+{
+    Wireframe3DBuilder::from_data(x, y, z)
+}
 
 /// Create a line plot with the given data.
 ///

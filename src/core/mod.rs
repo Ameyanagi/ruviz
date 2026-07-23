@@ -8,6 +8,8 @@ pub mod grid_style;
 pub mod layout;
 pub mod legend;
 pub mod plot;
+#[cfg(feature = "3d")]
+pub mod plot3d;
 pub mod position;
 pub mod style;
 pub mod style_utils;
@@ -47,6 +49,11 @@ pub use plot::{
     PlotBuilder, PlotInput, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy,
     ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle, SurfaceCapability,
     SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint, ViewportRect,
+};
+#[cfg(feature = "3d")]
+pub use plot3d::{
+    AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, Point3D, ProjectedPoint3D, Projection3D,
+    Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder,
 };
 pub use position::Position;
 pub use style::PlotStyle;

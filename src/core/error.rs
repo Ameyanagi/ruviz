@@ -11,6 +11,37 @@ pub enum PlottingError {
         y_len: usize,
         series_index: Option<usize>,
     },
+    /// Three-dimensional coordinate arrays have mismatched lengths.
+    DataLengthMismatch3D {
+        operation: &'static str,
+        x_len: usize,
+        y_len: usize,
+        z_len: usize,
+        series_index: Option<usize>,
+    },
+    /// A regular-grid z matrix does not match `(y.len(), x.len())`.
+    GridShapeMismatch {
+        operation: &'static str,
+        expected_rows: usize,
+        expected_columns: usize,
+        actual_rows: usize,
+        actual_columns: usize,
+    },
+    /// Rows in a two-dimensional numeric input have inconsistent lengths.
+    RaggedData2D {
+        context: &'static str,
+        row: usize,
+        expected_columns: usize,
+        actual_columns: usize,
+    },
+    /// Invalid 3D camera field.
+    InvalidCamera3D {
+        field: &'static str,
+        value: f32,
+        reason: &'static str,
+    },
+    /// Invalid 3D mesh or grid topology.
+    InvalidTopology3D { reason: String },
     /// Empty data set provided
     EmptyDataSet,
     /// No data series added to plot
@@ -170,6 +201,62 @@ impl fmt::Display for PlottingError {
                         x_len, y_len
                     )
                 }
+            }
+            PlottingError::DataLengthMismatch3D {
+                operation,
+                x_len,
+                y_len,
+                z_len,
+                series_index,
+            } => {
+                if let Some(idx) = series_index {
+                    write!(
+                        f,
+                        "{} series {}: x, y, and z must have the same length (x={}, y={}, z={})",
+                        operation, idx, x_len, y_len, z_len
+                    )
+                } else {
+                    write!(
+                        f,
+                        "{}: x, y, and z must have the same length (x={}, y={}, z={})",
+                        operation, x_len, y_len, z_len
+                    )
+                }
+            }
+            PlottingError::GridShapeMismatch {
+                operation,
+                expected_rows,
+                expected_columns,
+                actual_rows,
+                actual_columns,
+            } => {
+                write!(
+                    f,
+                    "{}: z shape must be (y.len(), x.len()) = ({}, {}), got ({}, {})",
+                    operation, expected_rows, expected_columns, actual_rows, actual_columns
+                )
+            }
+            PlottingError::RaggedData2D {
+                context,
+                row,
+                expected_columns,
+                actual_columns,
+            } => {
+                write!(
+                    f,
+                    "{}: row {} has {} values, expected {}",
+                    context, row, actual_columns, expected_columns
+                )
+            }
+            PlottingError::InvalidCamera3D {
+                field,
+                value,
+                reason,
+            } => {
+                write!(f, "camera: {} {}, got {}", field, reason, value)
+            }
+            PlottingError::InvalidTopology3D { reason } => {
+                write!(f, "Invalid 3D topology: {}", reason)
             }
             PlottingError::EmptyDataSet => {
                 write!(

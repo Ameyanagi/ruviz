@@ -45,6 +45,7 @@ pub mod flow;
 pub mod hierarchical;
 pub mod polar;
 pub mod regression;
+#[cfg(feature = "3d")]
 pub mod three_d;
 pub mod vector;
 
@@ -80,6 +81,11 @@ pub use composition::pie::{PieConfig, PieData};
 pub use polar::polar_plot::{PolarPlotConfig, PolarPlotData, compute_polar_plot};
 pub use polar::radar::{
     RadarConfig, RadarPlotData, compute_radar_chart, compute_radar_chart_with_labels,
+};
+#[cfg(feature = "3d")]
+pub use three_d::{
+    Line3DConfig, Scatter3DConfig, Surface3DConfig, SurfaceSampling, SurfaceShading,
+    Wireframe3DConfig,
 };
 pub use vector::{
     Quiver, QuiverArrow, QuiverConfig, QuiverInput, QuiverPivot, QuiverPlotData, compute_quiver,
