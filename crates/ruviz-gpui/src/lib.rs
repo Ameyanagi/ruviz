@@ -1305,7 +1305,21 @@ mod platform_impl {
                                     );
                                     let fitted_bounds =
                                         image_fit.into_gpui().get_bounds(bounds, image_size);
-                                    window.paint_surface(fitted_bounds, surface);
+                                    // `gpui` 0.2.2 from crates.io uses core-video
+                                    // 0.4, while the workspace GPUI patch uses
+                                    // core-video 0.5 like this crate. Both wrappers
+                                    // own the same Core Foundation object, but their
+                                    // Rust types are intentionally distinct. Borrow
+                                    // the raw CF object under the get rule so GPUI's
+                                    // inferred wrapper receives its own retain; the
+                                    // ruviz wrapper can then drop independently.
+                                    // SAFETY: both wrapper versions use the same
+                                    // non-null CVPixelBufferRef ABI, and the get rule
+                                    // balances the target wrapper's eventual release.
+                                    let gpui_surface = unsafe {
+                                        TCFType::wrap_under_get_rule(surface.as_CFTypeRef() as _)
+                                    };
+                                    window.paint_surface(fitted_bounds, gpui_surface);
                                     fitted_bounds
                                 }
                             };
@@ -3945,6 +3959,37 @@ mod platform_impl {
             );
             assert!(reused.is_planar());
             assert_eq!(reused.get_plane_count(), 2);
+        }
+
+        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[test]
+        fn test_get_rule_bridge_retains_pixel_buffer_after_source_drop() {
+            let mut upload = SurfaceUploadState::default();
+            let retained: CVPixelBuffer = {
+                let source = upload
+                    .update(
+                        None,
+                        &ruviz::core::plot::Image::new(
+                            2,
+                            2,
+                            vec![
+                                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                            ],
+                        ),
+                    )
+                    .expect("surface upload should succeed");
+
+                // Exercise the same erased Core Foundation get-rule bridge used
+                // when GPUI resolves a different core-video wrapper version.
+                unsafe { TCFType::wrap_under_get_rule(source.as_CFTypeRef() as _) }
+            };
+
+            assert_eq!(retained.get_width(), 2);
+            assert_eq!(retained.get_height(), 2);
+            assert_eq!(
+                retained.get_pixel_format(),
+                kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            );
         }
     }
 }

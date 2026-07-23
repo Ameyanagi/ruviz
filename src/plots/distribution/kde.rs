@@ -248,11 +248,11 @@ pub fn compute_kde(data: &[f64], config: &KdeConfig) -> KdeData {
         }
 
         // Normalize to [0, 1]
-        if let Some(&max) = cumulative.last() {
-            if max > 0.0 {
-                for c in &mut cumulative {
-                    *c /= max;
-                }
+        if let Some(&max) = cumulative.last()
+            && max > 0.0
+        {
+            for c in &mut cumulative {
+                *c /= max;
             }
         }
 

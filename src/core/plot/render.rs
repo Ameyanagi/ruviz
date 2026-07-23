@@ -503,27 +503,27 @@ impl Plot {
             }
         }
 
-        if let Some(ref pos) = layout.title_pos {
-            if let Some(title) = frame.title.as_deref() {
-                renderer.draw_title_at_with_weight(
-                    pos,
-                    title,
-                    self.display.theme.foreground,
-                    self.display.config.typography.title_weight,
-                )?;
-            }
+        if let Some(ref pos) = layout.title_pos
+            && let Some(title) = frame.title.as_deref()
+        {
+            renderer.draw_title_at_with_weight(
+                pos,
+                title,
+                self.display.theme.foreground,
+                self.display.config.typography.title_weight,
+            )?;
         }
 
-        if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(xlabel) = frame.xlabel.as_deref() {
-                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
-            }
+        if let Some(ref pos) = layout.xlabel_pos
+            && let Some(xlabel) = frame.xlabel.as_deref()
+        {
+            renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
         }
 
-        if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ylabel) = frame.ylabel.as_deref() {
-                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
-            }
+        if let Some(ref pos) = layout.ylabel_pos
+            && let Some(ylabel) = frame.ylabel.as_deref()
+        {
+            renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
         }
 
         renderer.draw_annotations_where_scaled(
@@ -2949,40 +2949,40 @@ impl Plot {
         svg.end_group(); // End clip group
 
         // Draw title/xlabel/ylabel using layout-computed positions.
-        if let Some(ref pos) = layout.title_pos {
-            if let Some(title) = frame.title.as_deref() {
-                svg.draw_text_centered_with_weight(
-                    title,
-                    pos.x,
-                    pos.y,
-                    pos.size,
-                    self.display.theme.foreground,
-                    self.display.config.typography.title_weight,
-                )?;
-            }
+        if let Some(ref pos) = layout.title_pos
+            && let Some(title) = frame.title.as_deref()
+        {
+            svg.draw_text_centered_with_weight(
+                title,
+                pos.x,
+                pos.y,
+                pos.size,
+                self.display.theme.foreground,
+                self.display.config.typography.title_weight,
+            )?;
         }
-        if let Some(ref pos) = layout.xlabel_pos {
-            if let Some(xlabel) = frame.xlabel.as_deref() {
-                svg.draw_text_centered(
-                    xlabel,
-                    pos.x,
-                    pos.y,
-                    pos.size,
-                    self.display.theme.foreground,
-                )?;
-            }
+        if let Some(ref pos) = layout.xlabel_pos
+            && let Some(xlabel) = frame.xlabel.as_deref()
+        {
+            svg.draw_text_centered(
+                xlabel,
+                pos.x,
+                pos.y,
+                pos.size,
+                self.display.theme.foreground,
+            )?;
         }
-        if let Some(ref pos) = layout.ylabel_pos {
-            if let Some(ylabel) = frame.ylabel.as_deref() {
-                svg.draw_text_rotated(
-                    ylabel,
-                    pos.x,
-                    pos.y,
-                    pos.size,
-                    self.display.theme.foreground,
-                    -90.0,
-                )?;
-            }
+        if let Some(ref pos) = layout.ylabel_pos
+            && let Some(ylabel) = frame.ylabel.as_deref()
+        {
+            svg.draw_text_rotated(
+                ylabel,
+                pos.x,
+                pos.y,
+                pos.size,
+                self.display.theme.foreground,
+                -90.0,
+            )?;
         }
 
         // Draw legend if we have labeled series and legend is enabled

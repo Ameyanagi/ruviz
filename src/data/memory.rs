@@ -489,16 +489,15 @@ impl<T> BufferPool<T> {
 
     fn get_buffer(&mut self, min_capacity: usize) -> (Vec<T>, bool) {
         // Try to find a suitable buffer in the pool
-        if min_capacity >= self.min_capacity {
-            if let Some(pos) = self
+        if min_capacity >= self.min_capacity
+            && let Some(pos) = self
                 .available
                 .iter()
                 .position(|buf| buf.capacity() >= min_capacity)
-            {
-                let mut buffer = self.available.swap_remove(pos);
-                buffer.clear();
-                return (buffer, true);
-            }
+        {
+            let mut buffer = self.available.swap_remove(pos);
+            buffer.clear();
+            return (buffer, true);
         }
 
         // No suitable buffer found, allocate new one

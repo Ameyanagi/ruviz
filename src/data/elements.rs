@@ -180,10 +180,10 @@ impl<T> ManagedElementStorage<T> {
 
 impl<T> Drop for ManagedElementStorage<T> {
     fn drop(&mut self) {
-        if let Some(storage) = self.storage.take() {
-            if let Ok(mut pool) = self.pool.lock() {
-                pool.return_storage(storage);
-            }
+        if let Some(storage) = self.storage.take()
+            && let Ok(mut pool) = self.pool.lock()
+        {
+            pool.return_storage(storage);
         }
     }
 }

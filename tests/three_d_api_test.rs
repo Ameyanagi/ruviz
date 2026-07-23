@@ -211,6 +211,23 @@ fn cpu_render_is_deterministic_and_reports_the_actual_backend() {
     assert_eq!(diagnostics.readback_bytes, 0);
 }
 
+#[cfg(not(feature = "gpu"))]
+#[test]
+fn auto_render_truthfully_reports_cpu_when_gpu_feature_is_disabled() {
+    let (image, diagnostics) = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+        .render_auto_with_diagnostics()
+        .expect("auto CPU fallback");
+
+    assert!(image.pixels.iter().any(|&channel| channel != 0));
+    assert_eq!(diagnostics.actual_backend, "cpu3d");
+    assert_eq!(diagnostics.adapter_name, None);
+    assert_eq!(diagnostics.readback_bytes, 0);
+    assert_eq!(
+        diagnostics.fallback_reason.as_deref(),
+        Some("direct native 3d GPU rendering is unavailable because the `gpu` feature is disabled")
+    );
+}
+
 #[test]
 fn png_and_hybrid_svg_terminals_are_live() {
     let png = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[1.0, 0.0])

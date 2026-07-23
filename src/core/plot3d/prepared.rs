@@ -117,47 +117,59 @@ impl Plot3D {
         self,
         options: SoftwareRenderOptions3D,
     ) -> Result<PreparedSoftwareFrame3D> {
-        let sample_count = options.quality.sample_count();
         let frame = self.resolve()?;
-        let layout = Axis3Layout::resolve(&frame)?;
-        let (scene, mut diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
-        let output = render_scene(&scene, &layout, frame.figure.dpi, options)?;
-        diagnostics.actual_backend = "cpu3d".to_string();
-        diagnostics.sample_count = sample_count;
-        diagnostics.draw_calls = output.draw_calls;
-        diagnostics.primitives_culled = output.primitives_culled;
-        diagnostics.readback_bytes = 0;
-        Ok(PreparedSoftwareFrame3D {
-            frame,
-            layout,
-            output,
-            diagnostics,
-        })
+        render_resolved_software_layer(frame, options)
     }
 
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     pub(super) fn render_gpu_layer(self) -> Result<PreparedGpuFrame3D> {
         let frame = self.resolve()?;
-        let layout = Axis3Layout::resolve(&frame)?;
-        let (scene, mut diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
-        let output = render_with_shared_renderer(&scene, &layout, frame.figure.dpi)?;
-        diagnostics.actual_backend = "gpu3d".to_string();
-        diagnostics.adapter_name = Some(output.adapter_name);
-        diagnostics.sample_count = output.sample_count;
-        diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
-        diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
-        diagnostics.texture_upload_bytes = output.resource_update.texture_upload_bytes;
-        diagnostics.buffer_creations = output.resource_update.buffer_creations;
-        diagnostics.camera_uniform_writes = output.camera_uniform_writes;
-        diagnostics.draw_calls = output.draw_calls;
-        diagnostics.readback_bytes = output.readback_bytes;
-        Ok(PreparedGpuFrame3D {
-            frame,
-            layout,
-            layer: output.layer,
-            diagnostics,
-        })
+        render_resolved_gpu_layer(frame)
     }
+}
+
+pub(super) fn render_resolved_software_layer(
+    frame: ResolvedFrame3D,
+    options: SoftwareRenderOptions3D,
+) -> Result<PreparedSoftwareFrame3D> {
+    let sample_count = options.quality.sample_count();
+    let layout = Axis3Layout::resolve(&frame)?;
+    let (scene, mut diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
+    let output = render_scene(&scene, &layout, frame.figure.dpi, options)?;
+    diagnostics.actual_backend = "cpu3d".to_string();
+    diagnostics.sample_count = sample_count;
+    diagnostics.draw_calls = output.draw_calls;
+    diagnostics.primitives_culled = output.primitives_culled;
+    diagnostics.readback_bytes = 0;
+    Ok(PreparedSoftwareFrame3D {
+        frame,
+        layout,
+        output,
+        diagnostics,
+    })
+}
+
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+pub(super) fn render_resolved_gpu_layer(frame: ResolvedFrame3D) -> Result<PreparedGpuFrame3D> {
+    let layout = Axis3Layout::resolve(&frame)?;
+    let (scene, mut diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
+    let output = render_with_shared_renderer(&scene, &layout, frame.figure.dpi)?;
+    diagnostics.actual_backend = "gpu3d".to_string();
+    diagnostics.adapter_name = Some(output.adapter_name);
+    diagnostics.sample_count = output.sample_count;
+    diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
+    diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
+    diagnostics.texture_upload_bytes = output.resource_update.texture_upload_bytes;
+    diagnostics.buffer_creations = output.resource_update.buffer_creations;
+    diagnostics.camera_uniform_writes = output.camera_uniform_writes;
+    diagnostics.draw_calls = output.draw_calls;
+    diagnostics.readback_bytes = output.readback_bytes;
+    Ok(PreparedGpuFrame3D {
+        frame,
+        layout,
+        layer: output.layer,
+        diagnostics,
+    })
 }
 
 pub(super) struct PreparedSoftwareFrame3D {
@@ -848,23 +860,25 @@ mod tests {
             .finalize()
             .resolve()
             .expect("base");
-        let camera = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
-            .azimuth_deg(10.0)
-            .finalize()
-            .resolve()
-            .expect("camera");
         let mut cache = PreparedSceneCache3D::default();
         let (first, _) = cache.prepare(&base).expect("first");
-        let (second, diagnostics) = cache.prepare(&camera).expect("second");
-        assert!(Arc::ptr_eq(&first, &second));
-        assert_eq!(diagnostics.scene_compiles, 0);
-        assert_eq!(diagnostics.triangulations, 0);
-        assert_eq!(diagnostics.normal_recomputations, 0);
-        assert_eq!(diagnostics.bvh_rebuilds, 0);
-        assert_eq!(diagnostics.vertex_upload_bytes, 0);
-        assert_eq!(diagnostics.index_upload_bytes, 0);
-        assert_eq!(diagnostics.buffer_creations, 0);
-        assert_eq!(diagnostics.camera_uniform_writes, 1);
+        for frame_index in 0..256 {
+            let camera = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+                .azimuth_deg(10.0 + frame_index as f32 * 0.25)
+                .finalize()
+                .resolve()
+                .expect("camera");
+            let (second, diagnostics) = cache.prepare(&camera).expect("warm camera");
+            assert!(Arc::ptr_eq(&first, &second));
+            assert_eq!(diagnostics.scene_compiles, 0);
+            assert_eq!(diagnostics.triangulations, 0);
+            assert_eq!(diagnostics.normal_recomputations, 0);
+            assert_eq!(diagnostics.bvh_rebuilds, 0);
+            assert_eq!(diagnostics.vertex_upload_bytes, 0);
+            assert_eq!(diagnostics.index_upload_bytes, 0);
+            assert_eq!(diagnostics.buffer_creations, 0);
+            assert_eq!(diagnostics.camera_uniform_writes, 1);
+        }
     }
 
     #[test]
@@ -1108,14 +1122,16 @@ mod tests {
         renderer
             .render_to_image(&scene, &layout, frame.figure.dpi)
             .expect("first frame");
-        renderer.mark_device_lost_for_test();
-        let recovered = renderer
-            .render_to_image(&scene, &layout, frame.figure.dpi)
-            .expect("recovered frame");
-        assert!(recovered.resource_update.vertex_upload_bytes > 0);
-        assert!(recovered.resource_update.index_upload_bytes > 0);
-        assert!(recovered.resource_update.buffer_creations > 0);
-        assert_eq!(recovered.camera_uniform_writes, 1);
+        for _ in 0..4 {
+            renderer.mark_device_lost_for_test();
+            let recovered = renderer
+                .render_to_image(&scene, &layout, frame.figure.dpi)
+                .expect("recovered frame");
+            assert!(recovered.resource_update.vertex_upload_bytes > 0);
+            assert!(recovered.resource_update.index_upload_bytes > 0);
+            assert!(recovered.resource_update.buffer_creations > 0);
+            assert_eq!(recovered.camera_uniform_writes, 1);
+        }
     }
 
     #[cfg(feature = "parallel")]

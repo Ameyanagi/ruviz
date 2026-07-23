@@ -33,27 +33,30 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | Work item | Status on `feat/3d-implementation` |
 | --- | --- |
 | 3D-00 | Complete: exact `3d` feature, exports, canonical compile contract, concrete builders, a dedicated Criterion target, and a deterministic hashed dataset manifest exist |
-| 3D-01 | In progress: serializable diagnostics, retained-scene counters, committed dataset hashes, and cold compile/render benchmarks exist; warm-update runner integration remains |
+| 3D-01 | Complete for the alpha evidence contract: serializable diagnostics, retained-scene counters, committed dataset hashes, cold compile/render and retained warm/camera-update benchmarks, a structured artifact schema/generator, and raw local observations exist; style/data-update, cold-adapter, and fixed-hardware gates are explicitly unmeasured rather than inferred |
 | 3D-02 | Complete for the linear MVP: f64 bounds/normalization, typed camera validation, orthographic/perspective projection, unprojection, screen rays, and homogeneous six-plane clipping are tested |
 | 3D-03 | Complete for the linear MVP: common 1D/2D ingestion, structured diagnostics, multi-series builders, explicit limits, retained lowering, compile-pass/fail contracts, and ndarray/nalgebra input probes exist |
 | 3D-04 | Complete for the linear MVP: coherent owned frames, stable dirty-domain keys, normalized primitive lowering, geometry/appearance retention, and lazy deterministic surface BVH preparation exist |
-| 3D-05 | In progress: automatic camera-projected Axis3 viewport, panes, box, grid, ticks, labels, title, DPI scaling, and collision nudging exist; theme/view goldens remain |
-| 3D-06 | In progress: deterministic tiled depth rendering for mesh/line/points, 24-bit depth ties, top-left fill, perspective-correct attributes, shading, 1x/4x sampling, and a committed exact isolated-layer hash exist; the full exact-golden/property corpus remains |
-| 3D-07 | In progress: Image/PNG and hybrid SVG/PDF output are live and tested, with large-offset orthographic/perspective semantic probes; whole-image goldens and broader semantic parity remain |
-| 3D-08 | In progress: independent direct-wgpu offscreen mesh, instanced line, and instanced point pipelines render through queried RGBA/depth/MSAA attachments and pass the local required-Metal-adapter coverage probe; cross-vendor required-adapter jobs and the full differential corpus remain |
-| 3D-09 | In progress: explicit `render_gpu()`, truthful `gpu3d` diagnostics, bounded geometry/appearance caches, persistent device/pipelines/attachments, one-write camera frames, static readback, resize recreation, next-frame device-loss recreation, and native direct presentation exist; Auto routing and stress tests remain |
+| 3D-05 | Complete for the opaque alpha: automatic camera-projected Axis3 viewport, panes, box, grid, ticks, labels, title, outside-right legends, requested surface colorbars, DPI scaling, collision nudging, and eight fixed-camera theme/view goldens exist |
+| 3D-06 | Complete for the opaque alpha: deterministic tiled mesh/line/point depth rendering, 24-bit depth ties, top-left fill, perspective-correct attributes, shading, 1x/4x sampling, clip-volume properties, serial/parallel equality, exact isolated-layer hashes, and a minimized regression seed are covered |
+| 3D-07 | Complete for the opaque alpha: Image/PNG and hybrid SVG/PDF output, large-offset projection probes, eight whole-image goldens, deterministic embedded depth layers, vector overlays, and PDF image-payload parity are covered |
+| 3D-08 | Complete for the alpha implementation and local adapter gate: independent direct-wgpu offscreen mesh, instanced line, and instanced point pipelines render through queried RGBA/depth/MSAA attachments and pass the required local Metal adapter suite; a hard-fail Vulkan llvmpipe job is committed, while Vulkan/DX12 hardware results remain scheduled evidence |
+| 3D-09 | Complete: explicit `render_gpu()` fails when unavailable; opt-in `render_auto()` attempts direct native wgpu and truthfully falls back to `cpu3d`; bounded retained caches, persistent resources, static readback, resize/device-loss recreation, 128-frame warm-camera stress, and repeated recovery coverage exist |
 | 3D-10 | Complete: one authoritative retained session provides orbit/pan/zoom/reset, portable camera snapshots, replacement-data keep-view, process-unique generation-safe point/line/surface picking, interactive CPU frames, and diagnosed GPU-readback frames |
 | 3D-11 | Complete: native winit now presents retained geometry and Axis3 directly through wgpu, while GPUI shares the retained core controls and truthfully identifies its image-backed GPU-readback fallback |
 | 3D-12 | Complete for M4: matching Canvas2D and direct-WebGPU adapters exist for main-thread canvas and worker OffscreenCanvas, the shipped WASM build contains them, and a 500-event Chromium burst test proves latest-pointer/one-frame coalescing |
-| 3D-13 | Complete for M4: native winit and Chromium main/worker sessions present retained Axis3 scenes as `gpu3d-surface` with zero readback, zero CPU framebuffer upload, no Canvas2D paint, and cumulative present/upload diagnostics; broader platform evidence remains an M5 gate |
-| 3D-14 | Not started |
+| 3D-13 | Complete for the alpha implementation: native winit and Chromium main/worker sessions present retained Axis3 scenes as `gpu3d-surface` with zero readback, zero CPU framebuffer upload, no Canvas2D paint, retained legend/colorbar overlays, and cumulative present/upload diagnostics; broader hardware results remain scheduled evidence |
+| 3D-14 | In progress: docs, Matplotlib/Makie migrations, Rust/TypeScript/Python examples, gallery/goldens, raw local benchmark artifact, package consumers, platform/feature CI, and prerelease release semantics are implemented; final integrated verification and Greptile review remain |
 
 `render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
 deterministic CPU 3D backend. `save` selects PNG, hybrid SVG, or hybrid PDF from
 the extension. With `interactive-gpu`, native `show` opens the retained direct
 wgpu surface adapter; without that feature it returns an
-interaction-unavailable error. GPUI and web currently expose image-backed
-correctness adapters. No 3D call routes through the 2D series match graph.
+interaction-unavailable error. GPUI exposes a truthfully diagnosed
+image-backed correctness adapter; web exposes both that Canvas2D fallback and
+direct WebGPU canvas/OffscreenCanvas sessions. The npm API and static Python
+alpha mirror the four canonical entry points. No 3D call routes through the
+2D series match graph.
 
 ## Decisions
 
@@ -960,9 +963,10 @@ examples/doc_line3d.rs
 examples/doc_surface3d.rs
 examples/doc_wireframe3d.rs
 examples/interactive_orbit3d.rs
-gallery/three_d/
-docs/guide/12_three_d.md
+docs/gallery/3d/
+docs/guide/12_3d.md
 docs/migration/matplotlib-3d.md
+docs/migration/makie-3d.md
 ```
 
 Every example is registered and compile-tested. Fixed-camera examples feed the
@@ -993,7 +997,7 @@ Documentation must state:
 | Transparency renders incorrectly | Opaque-only MVP; reject unsupported alpha |
 | SVG surfaces are huge or misordered | Rasterized 3D layer with vector text |
 | Axis labels jump during orbit | Stable protrusions, deterministic edge choice, hysteresis |
-| GPUI/web still read back every frame | Do not claim high performance until direct presentation |
+| GPUI still uploads an image-backed fallback | Diagnose it explicitly; native/web direct surface paths carry performance claims |
 | GPU tests silently skip | Required adapter job that fails on absence |
 | Cross-vendor anti-aliasing differs | Exact CPU tests; semantic/tolerant GPU tests |
 | Small models choose the wrong API | One canonical spelling, compile corpus, explicit diagnostics |
@@ -1010,7 +1014,7 @@ Documentation must state:
 - mixed 2D and 3D series in one axes;
 - fully vector depth-correct surfaces;
 - interactive multi-subplot session;
-- zero-copy GPUI/WebGPU presentation before dedicated adapter work;
+- zero-copy GPUI presentation before dedicated platform interop work;
 - GPU picking in the first interaction milestone.
 
 ## Findings log
@@ -1411,19 +1415,21 @@ Documentation must state:
   coalesced burst. Texture diagnostics now include the one-time 1 KiB
   colormap upload per mesh as well as presentation-atlas uploads, while warm
   camera frames remain zero-texture-upload frames.
-- Remaining browser hardening after the M4 gate is intentionally tracked for
-  M5/follow-up: share adapter/device/pipelines per JavaScript realm, preserve a
+- Remaining browser hardening after the M4 gate is intentionally tracked as
+  post-alpha work: share adapter/device/pipelines per JavaScript realm, preserve a
   camera snapshot across device-loss recreation, expose typed retry state for
   skipped frames, and consider merging scene/compositor command submission
   after measuring whether the current two-submit design misses frame budgets.
-- The M5 audit found that 3D-14 remains blocked after direct presentation by
-  incomplete warm/update benchmark integration, Axis3/export whole-image
-  goldens, cross-vendor GPU evidence, browser smoke tests, feature/platform CI,
-  package consumers, documentation/gallery/migration material, structured
-  performance artifacts, and prerelease publishing semantics. It also found
-  that Cargo auto-discovered `examples/3d_surface.rs` without its required
-  feature; the example is now explicitly registered with
-  `required-features = ["3d"]`.
+- The M5 audit initially found 3D-14 blocked by profiling integration,
+  Axis3/export goldens, browser evidence, feature/platform CI, package
+  consumers, documentation/gallery/migration completeness, and prerelease
+  publishing semantics. Those implementation and release-definition gaps are
+  now closed. Style/data-update and cold-adapter profiling, fixed-hardware
+  Metal/Vulkan/DX12 performance, actual cross-platform CI runner results, and
+  real registry publication remain explicitly reported scheduled evidence,
+  not silently assumed alpha passes. The audit also found that Cargo
+  auto-discovered `examples/3d_surface.rs` without its required feature; the
+  example is now explicitly registered with `required-features = ["3d"]`.
 - The production panic-call gate originally excluded everything after an
   inline `#[cfg(test)] mod tests` because it did not track the module's closing
   brace. The checker now masks comments and Rust string forms, bounds only the
@@ -1434,6 +1440,98 @@ Documentation must state:
   propagates its formatting error, and homogeneous triangle clipping handles
   an unexpectedly empty polygon without panicking. The checker tests, checker,
   formatting check, and all-feature build pass.
+- The backend-routing audit found no existing 3d `BackendPreference` state:
+  `render()` and `save()` intentionally remain deterministic CPU-reference
+  terminals, while `render_gpu()` is the explicit fail-if-unavailable path.
+  Adding stored Auto state would silently change static output by feature set,
+  so the smallest nonbreaking API is the opt-in `render_auto()` terminal plus
+  `render_auto_with_diagnostics()`.
+- Auto attempts direct offscreen wgpu only for native builds where the
+  synchronous GPU renderer is compiled. It reports `actual_backend=gpu3d`
+  only after that direct render succeeds. GPU initialization/render failures,
+  feature-disabled builds, and wasm image terminals execute the CPU renderer,
+  report `actual_backend=cpu3d`, and retain a stable non-empty fallback reason;
+  browser direct presentation remains the async WebGPU canvas-session API.
+- Retention stress coverage now performs 256 backend-neutral camera
+  preparations against one scene, 128 retained no-readback GPU camera frames,
+  and four forced device-loss/recreation cycles. Camera-only frames preserve
+  scene identity, perform no geometry/index uploads or buffer creations, and
+  write exactly one camera uniform; every recreated GPU context reuploads its
+  retained resources before reporting recovery.
+
+### 2026-07-24
+
+- The CPU correctness corpus now locks segment and triangle clip-volume
+  closure, 24-bit depth ordering, perspective-correct interpolation,
+  serial/parallel mixed-scene byte equality, deterministic aggressive camera
+  clipping, and PNG/SVG/PDF hybrid image-payload parity. Property testing found
+  and fixed an f32 far-plane intersection that could escape `z <= w` by one
+  ULP; the minimized seed is committed under `proptest-regressions/`. Whole
+  PDF bytes are intentionally not compared because equivalent converter object
+  ordering is nondeterministic; embedded image streams are byte-compared.
+- Closed the Axis3 decoration audit: 3D series labels now resolve a
+  deterministic outside-right legend, and requested surface colorbars resolve
+  finite z-range ticks and vector/solid gradients across CPU PNG, hybrid SVG,
+  and direct native/browser WebGPU. Defaults remain absent/off. The direct
+  compositor emits decoration gradients as retained solid vertices and reuses
+  the existing text atlas across camera-only frames, so warm presentation
+  texture uploads remain zero.
+- Added eight deterministic 640x480 gallery/golden images under the exact `3d`
+  category: scatter, line, surface, wireframe, dark and publication themes,
+  high-elevation orthographic view, and perspective view. Debug and release
+  generation are byte-identical locally; the pinned visual job owns the
+  cross-host exact-pixel gate. Hybrid SVG tests require one raster depth layer
+  plus vector Axis3 text and decorations.
+- The documentation surface now includes `docs/guide/12_3d.md`, canonical
+  compile-checked examples, and focused Matplotlib `mplot3d` and Makie `Axis3`
+  migration guides. The audit corrected an initially false performance claim:
+  `SurfaceSampling::Auto` currently preserves full static topology like
+  `Full`; users who need a hard geometry cap choose `MaxGrid` explicitly. The
+  staged-docs hook also requires every ignored Rust fence to carry a concrete
+  reason, so feature-gated and abbreviated migration snippets now state why
+  they are not compiled in place.
+- Added a high-level npm API whose smallest path is
+  `surface(x, y, z).title(...).mount(canvas)`, with matching `scatter3d`,
+  `line3d`, and `wireframe` factories, typed row-major grids, automatic main
+  thread input/resize wiring, OffscreenCanvas support, and frame coalescing.
+  The package and installed-consumer verifier require the dedicated `ruviz/3d`
+  artifacts and exports. The current browser bridge retains one 3D series;
+  choosing another series method replaces it and is documented rather than
+  implying Rust multi-series parity.
+- Added a static Python alpha with `Plot3D`, `plot3d`, and the same four
+  top-level series functions. Numeric arrays cross a dedicated native PyO3
+  handle rather than JSON, multiple series share the Rust builder pipeline,
+  and PNG/hybrid SVG/PDF exports are tested. Interactive/GPU Python sessions
+  remain outside this alpha. Local integration commands must run from
+  `python/` through `uv run`: invoking Cargo from the workspace root selected
+  macOS Python 3.9 and correctly failed the package's `abi3-py310` floor,
+  while the managed CPython 3.14 environment passed Cargo, maturin, pytest,
+  and Ruff.
+- Aligned `.clippy.toml` with Cargo's Rust 1.92 MSRV. The newer MSRV enabled 56
+  pre-existing `collapsible_if` findings; the mechanical let-chain rewrites
+  were applied across the affected source files and are covered by the full
+  regression suite rather than suppressing the lint.
+- The packaged macOS consumer exposed a type-version boundary hidden by the
+  workspace GPUI patch: crates.io GPUI 0.2.2 uses `core-video` 0.4 while
+  `ruviz-gpui` uses 0.5. The adapter now crosses that boundary through the
+  shared `CVPixelBufferRef` Core Foundation ABI with `wrap_under_get_rule`,
+  giving GPUI its own retain without a layout transmute. A source-drop
+  ownership test and a fresh packaged consumer against registry GPUI pass.
+- CI now defines hard 3D feature rows, MSRV/Clippy/panic checks, a required
+  Vulkan llvmpipe adapter test, Linux/macOS/Windows and FreeBSD compile rows,
+  wasm CPU/WebGPU builds, Chromium main/worker WebGPU smoke, deterministic
+  gallery/golden checks, and Ubuntu/macOS packaged consumers. Release jobs
+  support Cargo/Python prerelease versions, use npm's `next` tag for
+  prereleases, verify package propagation, and require every registry job
+  before creating the GitHub release.
+- Published
+  `docs/benchmarks/ruviz-3d-performance-local-2026-07-24.json` and its
+  methodology page. The fresh retained run contains eight raw Criterion
+  observations with dataset and source hashes: local Metal camera-frame
+  medians were 6.482 ms for 100K scatter and 2.052 ms for a 100x100 surface.
+  All fixed-hardware, long-orbit, cross-vendor, and GLMakie gates remain
+  `not_evaluated`; timing-only Criterion files explicitly leave renderer
+  diagnostic sidecars unmeasured.
 
 ## Primary references
 

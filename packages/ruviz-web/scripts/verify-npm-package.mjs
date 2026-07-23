@@ -9,15 +9,28 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const packageDir = resolve(scriptDir, "..");
 const requiredTarballFiles = [
+  "dist/3d.d.ts",
+  "dist/3d.js",
+  "dist/3d.js.map",
   "dist/index.js",
   "generated/raw/ruviz_web_raw.d.ts",
   "generated/raw/ruviz_web_raw.js",
   "generated/raw/ruviz_web_raw_bg.wasm",
 ];
 const requiredInstalledFiles = [
+  "dist/3d.d.ts",
+  "dist/3d.js",
+  "dist/3d.js.map",
   "dist/index.js",
   "generated/raw/ruviz_web_raw.js",
   "generated/raw/ruviz_web_raw_bg.wasm",
+];
+const requiredThreeDExports = [
+  "createPlot3d",
+  "scatter3d",
+  "line3d",
+  "surface",
+  "wireframe",
 ];
 
 function run(command, args, cwd) {
@@ -59,6 +72,18 @@ function assertFilesExist(baseDir, relativePaths, scope) {
   }
 }
 
+function assertThreeDSubpathExports(cwd) {
+  const source = [
+    'import * as threeD from "ruviz/3d";',
+    `const requiredExports = ${JSON.stringify(requiredThreeDExports)};`,
+    "const invalidExports = requiredExports.filter((name) => typeof threeD[name] !== \"function\");",
+    "if (invalidExports.length > 0) {",
+    "  throw new Error(`ruviz/3d is missing callable exports: ${invalidExports.join(\", \")}`);",
+    "}",
+  ].join("\n");
+  run(process.execPath, ["--input-type=module", "--eval", source], cwd);
+}
+
 const tempRoot = mkdtempSync(join(tmpdir(), "ruviz-web-pack-"));
 let keepTemp = false;
 
@@ -90,9 +115,10 @@ try {
 
   const installedPackageDir = join(installDir, "node_modules", packEntry.name);
   assertFilesExist(installedPackageDir, requiredInstalledFiles, "Installed package");
+  assertThreeDSubpathExports(installDir);
 
   console.log(
-    `Verified ${packEntry.name}@${packEntry.version} tarball contains wasm runtime assets and survives local bun install.`,
+    `Verified ${packEntry.name}@${packEntry.version} tarball contains wasm and 3D runtime assets, exposes ruviz/3d, and survives local bun install.`,
   );
 } catch (error) {
   keepTemp = true;

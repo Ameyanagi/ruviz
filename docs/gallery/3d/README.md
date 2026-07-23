@@ -1,0 +1,71 @@
+# 3D Plots
+
+Fixed-camera scatter, line, surface, wireframe, theme, and projection examples.
+
+## Examples
+
+### Orthographic Scatter
+
+Two deterministic point spirals rendered with an equal-axis orthographic camera.
+
+![Orthographic Scatter](../../assets/gallery/rust/3d/scatter3d.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+### Perspective Helix
+
+A fixed perspective view of a three-dimensional helix.
+
+![Perspective Helix](../../assets/gallery/rust/3d/line3d.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+### Smooth Surface
+
+A full-resolution regular grid with smooth shading and a viridis colormap.
+
+![Smooth Surface](../../assets/gallery/rust/3d/surface3d.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+### Wireframe
+
+A sampled regular-grid wireframe rendered from a fixed orthographic view.
+
+![Wireframe](../../assets/gallery/rust/3d/wireframe3d.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+### Dark Theme Surface
+
+The same fixed surface geometry under the dark theme and plasma colormap.
+
+![Dark Theme Surface](../../assets/gallery/rust/3d/surface3d_dark.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+### Publication Theme Surface
+
+A high-contrast publication theme with deterministic bundled typography.
+
+![Publication Theme Surface](../../assets/gallery/rust/3d/surface3d_publication.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+### High-Elevation View
+
+An alternate orthographic camera that exercises projected Axis3 placement.
+
+![High-Elevation View](../../assets/gallery/rust/3d/surface3d_high_view.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+### Perspective Surface
+
+The canonical surface rendered through an explicit 40-degree perspective camera.
+
+![Perspective Surface](../../assets/gallery/rust/3d/surface3d_perspective.png)
+
+Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
+
+[← Back to Gallery](../README.md)

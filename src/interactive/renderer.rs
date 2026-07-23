@@ -415,13 +415,13 @@ impl RealTimeRenderer {
         device_scale: f32,
     ) -> Result<Vec<u8>> {
         // Check if we can use cached render
-        if !state.needs_redraw && !state.viewport_dirty {
-            if let Some(cached) = self
+        if !state.needs_redraw
+            && !state.viewport_dirty
+            && let Some(cached) = self
                 .render_cache
                 .get_base_render(state.zoom_level, state.pan_offset)
-            {
-                return Ok(cached);
-            }
+        {
+            return Ok(cached);
         }
 
         // Render fresh base plot

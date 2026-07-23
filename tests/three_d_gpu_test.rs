@@ -47,6 +47,25 @@ fn required_adapter_executes_direct_mesh_line_and_point_draws() {
 }
 
 #[test]
+fn auto_render_reports_gpu_only_after_direct_wgpu_execution() {
+    let (image, diagnostics) = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+        .render_auto_with_diagnostics()
+        .expect("required direct 3d adapter");
+
+    assert!(image.pixels.iter().any(|&channel| channel != 0));
+    assert_eq!(diagnostics.actual_backend, "gpu3d");
+    assert!(
+        diagnostics
+            .adapter_name
+            .as_deref()
+            .is_some_and(|name| !name.is_empty())
+    );
+    assert_eq!(diagnostics.fallback_reason, None);
+    assert!(diagnostics.draw_calls > 0);
+    assert!(diagnostics.readback_bytes > 0);
+}
+
+#[test]
 fn explicit_gpu_save_keeps_png_and_hybrid_svg_simple() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let png = directory.path().join("surface.png");
@@ -125,18 +144,22 @@ fn retained_camera_session_has_no_readback_or_warm_uploads() {
     assert!(first.vertex_upload_bytes > 0);
     assert!(first.index_upload_bytes > 0);
 
-    let warm = session
-        .render_camera_no_readback(Camera3D::default().azimuth_deg(20.0))
-        .expect("warm retained frame");
-    assert_eq!(warm.actual_backend, "gpu3d");
-    assert_eq!(warm.scene_compiles, 0);
-    assert_eq!(warm.triangulations, 0);
-    assert_eq!(warm.normal_recomputations, 0);
-    assert_eq!(warm.vertex_upload_bytes, 0);
-    assert_eq!(warm.index_upload_bytes, 0);
-    assert_eq!(warm.buffer_creations, 0);
-    assert_eq!(warm.camera_uniform_writes, 1);
-    assert_eq!(warm.readback_bytes, 0);
+    for frame_index in 0..128 {
+        let warm = session
+            .render_camera_no_readback(
+                Camera3D::default().azimuth_deg(20.0 + frame_index as f32 * 0.25),
+            )
+            .expect("warm retained frame");
+        assert_eq!(warm.actual_backend, "gpu3d");
+        assert_eq!(warm.scene_compiles, 0);
+        assert_eq!(warm.triangulations, 0);
+        assert_eq!(warm.normal_recomputations, 0);
+        assert_eq!(warm.vertex_upload_bytes, 0);
+        assert_eq!(warm.index_upload_bytes, 0);
+        assert_eq!(warm.buffer_creations, 0);
+        assert_eq!(warm.camera_uniform_writes, 1);
+        assert_eq!(warm.readback_bytes, 0);
+    }
 }
 
 #[test]

@@ -2,7 +2,9 @@ use glam::{Vec2, Vec3};
 
 use crate::core::{PlottingError, Result};
 use crate::render::skia::{format_tick_labels, generate_ticks};
+use crate::render::{Color, ColorMap};
 
+use super::builder::Series3D;
 use super::resolve::ResolvedFrame3D;
 use super::types::PreparedCamera3D;
 
@@ -44,6 +46,54 @@ pub(crate) struct OverlayText3D {
     pub(crate) centered: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct OverlayRect3D {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+impl OverlayRect3D {
+    pub(crate) fn right(self) -> f32 {
+        self.x + self.width
+    }
+
+    pub(crate) fn bottom(self) -> f32 {
+        self.y + self.height
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LegendGlyph3D {
+    Marker,
+    Line,
+    Fill,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LegendItem3D {
+    pub(crate) glyph: LegendGlyph3D,
+    pub(crate) color: Color,
+    pub(crate) glyph_rect: OverlayRect3D,
+    pub(crate) label: OverlayText3D,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Legend3D {
+    pub(crate) bounds: OverlayRect3D,
+    pub(crate) items: Vec<LegendItem3D>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Colorbar3D {
+    pub(crate) bounds: OverlayRect3D,
+    pub(crate) colormap: ColorMap,
+    pub(crate) data_range: (f64, f64),
+    pub(crate) tick_marks: Vec<OverlayLine3D>,
+    pub(crate) tick_labels: Vec<OverlayText3D>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Axis3Layout {
     pub(crate) canvas_width: u32,
@@ -57,6 +107,8 @@ pub(crate) struct Axis3Layout {
     pub(crate) tick_labels: Vec<OverlayText3D>,
     pub(crate) axis_labels: Vec<OverlayText3D>,
     pub(crate) title: Option<OverlayText3D>,
+    pub(crate) legend: Option<Legend3D>,
+    pub(crate) colorbars: Vec<Colorbar3D>,
 }
 
 impl Axis3Layout {
@@ -69,7 +121,9 @@ impl Axis3Layout {
             });
         }
 
-        let viewport = axis_viewport(frame, canvas_width, canvas_height);
+        let decorations = decoration_sources(frame);
+        let decoration_width = decoration_band_width(frame, &decorations, canvas_width);
+        let viewport = axis_viewport(frame, canvas_width, canvas_height, decoration_width);
         let camera = frame
             .camera
             .prepare(viewport.width as f32 / viewport.height as f32, frame.bounds)?;
@@ -214,6 +268,7 @@ impl Axis3Layout {
                 position: Vec2::new(canvas_width as f32 * 0.5, 8.0 * line_scale),
                 centered: true,
             });
+        let (legend, colorbars) = resolve_decorations(frame, viewport, canvas_width, &decorations);
 
         Ok(Self {
             canvas_width,
@@ -227,6 +282,8 @@ impl Axis3Layout {
             tick_labels,
             axis_labels,
             title,
+            legend,
+            colorbars,
         })
     }
 
@@ -303,12 +360,274 @@ impl Axis3Layout {
     }
 }
 
-fn axis_viewport(frame: &ResolvedFrame3D, canvas_width: u32, canvas_height: u32) -> Viewport3D {
+#[derive(Clone, Debug)]
+struct DecorationSources3D {
+    legend: Vec<LegendSource3D>,
+    colorbars: Vec<ColorbarSource3D>,
+}
+
+#[derive(Clone, Debug)]
+struct LegendSource3D {
+    label: String,
+    color: Color,
+    glyph: LegendGlyph3D,
+}
+
+#[derive(Clone, Debug)]
+struct ColorbarSource3D {
+    colormap: ColorMap,
+    data_range: (f64, f64),
+}
+
+fn decoration_sources(frame: &ResolvedFrame3D) -> DecorationSources3D {
+    let mut legend = Vec::new();
+    let mut colorbars = Vec::new();
+    for (series_index, series) in frame.series.iter().enumerate() {
+        match series {
+            Series3D::Scatter { config, label, .. } => {
+                push_legend_source(
+                    &mut legend,
+                    label,
+                    config
+                        .color
+                        .unwrap_or_else(|| palette_color(frame, series_index)),
+                    LegendGlyph3D::Marker,
+                );
+            }
+            Series3D::Line { config, label, .. } => {
+                push_legend_source(
+                    &mut legend,
+                    label,
+                    config
+                        .color
+                        .unwrap_or_else(|| palette_color(frame, series_index)),
+                    LegendGlyph3D::Line,
+                );
+            }
+            Series3D::Surface {
+                data,
+                config,
+                label,
+            } => {
+                let legend_color = config.color.unwrap_or_else(|| config.colormap.sample(0.5));
+                push_legend_source(&mut legend, label, legend_color, LegendGlyph3D::Fill);
+                if config.colorbar {
+                    let colormap = config.color.map_or_else(
+                        || config.colormap.clone(),
+                        |color| ColorMap::new("solid 3d surface".to_string(), vec![color]),
+                    );
+                    if let Some(data_range) = finite_range(&data.z) {
+                        colorbars.push(ColorbarSource3D {
+                            colormap,
+                            data_range,
+                        });
+                    }
+                }
+            }
+            Series3D::Wireframe { config, label, .. } => {
+                push_legend_source(
+                    &mut legend,
+                    label,
+                    config.color.unwrap_or(frame.theme.foreground),
+                    LegendGlyph3D::Line,
+                );
+            }
+        }
+    }
+    DecorationSources3D { legend, colorbars }
+}
+
+fn push_legend_source(
+    output: &mut Vec<LegendSource3D>,
+    label: &Option<String>,
+    color: Color,
+    glyph: LegendGlyph3D,
+) {
+    if let Some(label) = label.as_ref().filter(|label| !label.is_empty()) {
+        output.push(LegendSource3D {
+            label: label.clone(),
+            color,
+            glyph,
+        });
+    }
+}
+
+fn finite_range(values: &[f64]) -> Option<(f64, f64)> {
+    let mut minimum = f64::INFINITY;
+    let mut maximum = f64::NEG_INFINITY;
+    for &value in values {
+        if value.is_finite() {
+            minimum = minimum.min(value);
+            maximum = maximum.max(value);
+        }
+    }
+    (minimum.is_finite() && maximum.is_finite()).then_some((minimum, maximum))
+}
+
+fn palette_color(frame: &ResolvedFrame3D, series_index: usize) -> Color {
+    if frame.theme.color_palette.is_empty() {
+        frame.theme.foreground
+    } else {
+        frame.theme.color_palette[series_index % frame.theme.color_palette.len()]
+    }
+}
+
+fn decoration_band_width(
+    frame: &ResolvedFrame3D,
+    decorations: &DecorationSources3D,
+    canvas_width: u32,
+) -> f32 {
+    if decorations.legend.is_empty() && decorations.colorbars.is_empty() {
+        return 0.0;
+    }
+    let dpi_scale = frame.figure.dpi / 72.0;
+    let legend_width = decorations
+        .legend
+        .iter()
+        .map(|item| {
+            34.0 * dpi_scale
+                + item.label.chars().count() as f32
+                    * frame.theme.legend_font_size
+                    * dpi_scale
+                    * 0.58
+        })
+        .fold(0.0_f32, f32::max);
+    let colorbar_width = if decorations.colorbars.is_empty() {
+        0.0
+    } else {
+        76.0 * dpi_scale
+    };
+    let maximum = (canvas_width as f32 * 0.36).max(1.0);
+    let minimum = (70.0 * dpi_scale).min(maximum);
+    (legend_width.max(colorbar_width) + 14.0 * dpi_scale).clamp(minimum, maximum)
+}
+
+fn resolve_decorations(
+    frame: &ResolvedFrame3D,
+    viewport: Viewport3D,
+    canvas_width: u32,
+    sources: &DecorationSources3D,
+) -> (Option<Legend3D>, Vec<Colorbar3D>) {
+    let dpi_scale = frame.figure.dpi / 72.0;
+    let band_x = (viewport.right() + 10.0 * dpi_scale).min(canvas_width.saturating_sub(1) as f32);
+    let band_right = canvas_width as f32 - 6.0 * dpi_scale;
+    let band_width = (band_right - band_x)
+        .max(1.0)
+        .min(canvas_width as f32 - band_x);
+    let item_height =
+        (frame.theme.legend_font_size * dpi_scale + 7.0 * dpi_scale).max(14.0 * dpi_scale);
+    let legend = (!sources.legend.is_empty()).then(|| {
+        let padding = 6.0 * dpi_scale;
+        let height = padding * 2.0 + item_height * sources.legend.len() as f32;
+        let bounds = OverlayRect3D {
+            x: band_x,
+            y: viewport.y as f32,
+            width: band_width,
+            height,
+        };
+        let items = sources
+            .legend
+            .iter()
+            .enumerate()
+            .map(|(index, source)| {
+                let row_top = bounds.y + padding + index as f32 * item_height;
+                let glyph_size = 10.0 * dpi_scale;
+                LegendItem3D {
+                    glyph: source.glyph,
+                    color: source.color,
+                    glyph_rect: OverlayRect3D {
+                        x: bounds.x + padding,
+                        y: row_top + (item_height - glyph_size) * 0.5,
+                        width: 16.0 * dpi_scale,
+                        height: glyph_size,
+                    },
+                    label: OverlayText3D {
+                        text: source.label.clone(),
+                        position: Vec2::new(
+                            bounds.x + padding + 23.0 * dpi_scale,
+                            row_top + item_height * 0.5,
+                        ),
+                        centered: false,
+                    },
+                }
+            })
+            .collect();
+        Legend3D { bounds, items }
+    });
+
+    let colorbar_top = legend.as_ref().map_or(viewport.y as f32, |legend| {
+        legend.bounds.bottom() + 12.0 * dpi_scale
+    });
+    let colorbar_bottom = viewport.bottom();
+    let colorbar_count = sources.colorbars.len();
+    let colorbar_gap = 10.0 * dpi_scale;
+    let total_gap = colorbar_gap * colorbar_count.saturating_sub(1) as f32;
+    let colorbar_height =
+        ((colorbar_bottom - colorbar_top - total_gap) / colorbar_count.max(1) as f32).max(1.0);
+    let bar_width = (14.0 * dpi_scale).min((band_width * 0.28).max(1.0));
+    let mut colorbars = Vec::with_capacity(colorbar_count);
+    for (index, source) in sources.colorbars.iter().enumerate() {
+        let bounds = OverlayRect3D {
+            x: band_x,
+            y: colorbar_top + index as f32 * (colorbar_height + colorbar_gap),
+            width: bar_width,
+            height: colorbar_height,
+        };
+        let tick_values = colorbar_tick_values(source.data_range);
+        let tick_text = format_tick_labels(&tick_values);
+        let mut tick_marks = Vec::with_capacity(tick_values.len());
+        let mut tick_labels = Vec::with_capacity(tick_values.len());
+        for (&value, text) in tick_values.iter().zip(tick_text) {
+            let normalized = normalized_colorbar_value(value, source.data_range);
+            let y = bounds.y + bounds.height * (1.0 - normalized);
+            tick_marks.push(OverlayLine3D {
+                start: Vec2::new(bounds.right(), y),
+                end: Vec2::new(bounds.right() + 4.0 * dpi_scale, y),
+            });
+            tick_labels.push(OverlayText3D {
+                text,
+                position: Vec2::new(bounds.right() + 7.0 * dpi_scale, y),
+                centered: false,
+            });
+        }
+        colorbars.push(Colorbar3D {
+            bounds,
+            colormap: source.colormap.clone(),
+            data_range: source.data_range,
+            tick_marks,
+            tick_labels,
+        });
+    }
+    (legend, colorbars)
+}
+
+fn colorbar_tick_values(range: (f64, f64)) -> Vec<f64> {
+    if range.0.to_bits() == range.1.to_bits() {
+        vec![range.0]
+    } else {
+        vec![range.0, range.0 * 0.5 + range.1 * 0.5, range.1]
+    }
+}
+
+fn normalized_colorbar_value(value: f64, range: (f64, f64)) -> f32 {
+    if range.0.to_bits() == range.1.to_bits() {
+        0.5
+    } else {
+        ((value - range.0) / (range.1 - range.0)).clamp(0.0, 1.0) as f32
+    }
+}
+
+fn axis_viewport(
+    frame: &ResolvedFrame3D,
+    canvas_width: u32,
+    canvas_height: u32,
+    decoration_width: f32,
+) -> Viewport3D {
     let width = canvas_width as f32;
     let height = canvas_height as f32;
     let dpi_scale = frame.figure.dpi / 72.0;
     let left = (width * 0.14).max(42.0 * dpi_scale);
-    let right = (width * 0.10).max(24.0 * dpi_scale);
+    let right = (width * 0.10).max(24.0 * dpi_scale).max(decoration_width);
     let top = if frame.title.is_some() {
         (height * 0.14).max(36.0 * dpi_scale)
     } else {
@@ -515,6 +834,35 @@ mod tests {
         let orthographic = Axis3Layout::resolve(&orthographic).expect("layout");
         let perspective = Axis3Layout::resolve(&perspective).expect("layout");
         assert_ne!(orthographic.box_edges, perspective.box_edges);
+    }
+
+    #[test]
+    fn labels_and_requested_colorbars_resolve_into_a_bounded_right_band() {
+        let undecorated = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+            .finalize()
+            .resolve()
+            .expect("undecorated");
+        let decorated = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+            .label("terrain")
+            .colorbar(true)
+            .finalize()
+            .resolve()
+            .expect("decorated");
+        let undecorated = Axis3Layout::resolve(&undecorated).expect("undecorated layout");
+        let decorated = Axis3Layout::resolve(&decorated).expect("decorated layout");
+
+        assert!(undecorated.legend.is_none());
+        assert!(undecorated.colorbars.is_empty());
+        assert!(decorated.viewport.width < undecorated.viewport.width);
+        let legend = decorated.legend.as_ref().expect("legend");
+        assert_eq!(legend.items.len(), 1);
+        assert_eq!(legend.items[0].label.text, "terrain");
+        assert!(legend.bounds.right() <= decorated.canvas_width as f32);
+        let colorbar = decorated.colorbars.first().expect("colorbar");
+        assert_eq!(colorbar.data_range, (0.0, 3.0));
+        assert_eq!(colorbar.tick_labels.len(), 3);
+        assert!(colorbar.bounds.right() <= decorated.canvas_width as f32);
+        assert!(colorbar.bounds.bottom() <= decorated.canvas_height as f32);
     }
 
     #[test]

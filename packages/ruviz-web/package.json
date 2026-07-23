@@ -14,6 +14,9 @@
   },
   "files": [
     "README.md",
+    "dist/3d.d.ts",
+    "dist/3d.js",
+    "dist/3d.js.map",
     "dist/index.d.ts",
     "dist/index.js",
     "dist/index.js.map",
@@ -38,6 +41,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./3d": {
+      "types": "./dist/3d.d.ts",
+      "import": "./dist/3d.js"
     },
     "./raw": {
       "types": "./generated/raw/ruviz_web_raw.d.ts",

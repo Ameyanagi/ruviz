@@ -107,7 +107,13 @@ pub(crate) fn clip_triangle(triangle: [ClipVertex3D; 3]) -> Vec<[ClipVertex3D; 3
     }
     let first = polygon[0];
     (1..polygon.len() - 1)
-        .map(|index| [first, polygon[index], polygon[index + 1]])
+        .map(|index| {
+            [
+                clamp_to_clip_volume(first),
+                clamp_to_clip_volume(polygon[index]),
+                clamp_to_clip_volume(polygon[index + 1]),
+            ]
+        })
         .collect()
 }
 
@@ -139,8 +145,23 @@ pub(crate) fn clip_segment(
             }
         }
     }
-    Some([start, end])
+    Some([clamp_to_clip_volume(start), clamp_to_clip_volume(end)])
 }
+
+fn clamp_to_clip_volume(mut vertex: ClipVertex3D) -> ClipVertex3D {
+    let w = vertex.clip_position.w;
+    if !w.is_finite() || w <= 0.0 {
+        return vertex;
+    }
+    vertex.clip_position.x = vertex.clip_position.x.clamp(-w, w);
+    vertex.clip_position.y = vertex.clip_position.y.clamp(-w, w);
+    vertex.clip_position.z = vertex.clip_position.z.clamp(0.0, w);
+    vertex
+}
+
+#[cfg(test)]
+#[path = "clip_correctness_tests.rs"]
+mod correctness_tests;
 
 #[cfg(test)]
 mod tests {

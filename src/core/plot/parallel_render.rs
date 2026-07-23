@@ -1301,30 +1301,30 @@ impl Plot {
         }
 
         // Draw title if present
-        if let Some(ref pos) = layout.title_pos {
-            if let Some(title) = frame.title.as_deref() {
-                renderer.draw_title_at_with_weight(
-                    pos,
-                    title,
-                    self.display.theme.foreground,
-                    self.display.config.typography.title_weight,
-                )?;
-            }
+        if let Some(ref pos) = layout.title_pos
+            && let Some(title) = frame.title.as_deref()
+        {
+            renderer.draw_title_at_with_weight(
+                pos,
+                title,
+                self.display.theme.foreground,
+                self.display.config.typography.title_weight,
+            )?;
         }
 
         // Draw xlabel if present (only for Cartesian plots)
         if self.needs_cartesian_axes() {
-            if let Some(ref pos) = layout.xlabel_pos {
-                if let Some(xlabel) = frame.xlabel.as_deref() {
-                    renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
-                }
+            if let Some(ref pos) = layout.xlabel_pos
+                && let Some(xlabel) = frame.xlabel.as_deref()
+            {
+                renderer.draw_xlabel_at(pos, xlabel, self.display.theme.foreground)?;
             }
 
             // Draw ylabel if present
-            if let Some(ref pos) = layout.ylabel_pos {
-                if let Some(ylabel) = frame.ylabel.as_deref() {
-                    renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
-                }
+            if let Some(ref pos) = layout.ylabel_pos
+                && let Some(ylabel) = frame.ylabel.as_deref()
+            {
+                renderer.draw_ylabel_at(pos, ylabel, self.display.theme.foreground)?;
             }
         }
 

@@ -1166,10 +1166,10 @@ impl Plot {
 
         let size_px = (size_px.0.max(1), size_px.1.max(1));
 
-        if let Some(dpi) = preferred_dpi.filter(|dpi| dpi.is_finite() && *dpi > 0.0) {
-            if Self::canvas_size_for_figure_dpi(figure, dpi) == size_px {
-                return Some(dpi);
-            }
+        if let Some(dpi) = preferred_dpi.filter(|dpi| dpi.is_finite() && *dpi > 0.0)
+            && Self::canvas_size_for_figure_dpi(figure, dpi) == size_px
+        {
+            return Some(dpi);
         }
 
         let figure_width = f64::from(figure.width);

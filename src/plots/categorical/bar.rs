@@ -557,16 +557,16 @@ impl PlotRender for StackedBarData {
             renderer.draw_rectangle(x, y, w, h, bar_color, true)?;
 
             // Draw edge if specified
-            if config.edge_width > 0.0 {
-                if let Some(edge_color) = config.edge_color {
-                    let outline = vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)];
-                    renderer.draw_polyline(
-                        &outline,
-                        edge_color,
-                        config.edge_width,
-                        LineStyle::Solid,
-                    )?;
-                }
+            if config.edge_width > 0.0
+                && let Some(edge_color) = config.edge_color
+            {
+                let outline = vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)];
+                renderer.draw_polyline(
+                    &outline,
+                    edge_color,
+                    config.edge_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 
@@ -609,16 +609,16 @@ impl PlotRender for GroupedBarData {
             renderer.draw_rectangle(x, y, w, h, bar_color, true)?;
 
             // Draw edge if specified
-            if config.edge_width > 0.0 {
-                if let Some(edge_color) = config.edge_color {
-                    let outline = vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)];
-                    renderer.draw_polyline(
-                        &outline,
-                        edge_color,
-                        config.edge_width,
-                        LineStyle::Solid,
-                    )?;
-                }
+            if config.edge_width > 0.0
+                && let Some(edge_color) = config.edge_color
+            {
+                let outline = vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)];
+                renderer.draw_polyline(
+                    &outline,
+                    edge_color,
+                    config.edge_width,
+                    LineStyle::Solid,
+                )?;
             }
         }
 

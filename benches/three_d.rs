@@ -2,7 +2,6 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-#[cfg(feature = "gpu")]
 use ruviz::core::Camera3D;
 use ruviz::{scatter3d, surface};
 
@@ -114,6 +113,76 @@ fn benchmark_surface(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_cpu_retained(c: &mut Criterion) {
+    let full = std::env::var_os("RUVIZ_3D_BENCH_FULL").is_some();
+    let scatter_sizes: &[usize] = if full {
+        &[100_000, 1_000_000]
+    } else {
+        &[100_000]
+    };
+    let surface_sizes: &[usize] = if full { &[100, 512, 1024] } else { &[100] };
+
+    let mut scatter_cases = scatter_sizes
+        .iter()
+        .map(|&size| {
+            let (x, y, z) = scatter_data(size);
+            let session = scatter3d(&x, &y, &z)
+                .interactive_session()
+                .expect("retained CPU scatter session");
+            (format!("scatter-{size}-640x480"), size as u64, session)
+        })
+        .collect::<Vec<_>>();
+    let mut surface_cases = surface_sizes
+        .iter()
+        .map(|&side| {
+            let (x, y, z) = surface_data(side);
+            let session = surface(&x, &y, &z)
+                .interactive_session()
+                .expect("retained CPU surface session");
+            (
+                format!("surface-{side}x{side}-640x480"),
+                side.saturating_sub(1).pow(2).saturating_mul(2) as u64,
+                session,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    for (_, _, session) in scatter_cases.iter_mut().chain(surface_cases.iter_mut()) {
+        session.render().expect("prime retained CPU session");
+    }
+
+    let mut group = c.benchmark_group("3d/cpu/retained-warm-frame");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_millis(500));
+    group.measurement_time(Duration::from_secs(2));
+    for (id, elements, session) in scatter_cases.iter_mut().chain(surface_cases.iter_mut()) {
+        group.throughput(Throughput::Elements(*elements));
+        group.bench_function(id.as_str(), |b| {
+            b.iter(|| black_box(session.render().expect("retained CPU unchanged frame")));
+        });
+    }
+    group.finish();
+
+    let mut frame = 0_u64;
+    let mut group = c.benchmark_group("3d/cpu/retained-camera-update");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_millis(500));
+    group.measurement_time(Duration::from_secs(2));
+    for (id, elements, session) in scatter_cases.iter_mut().chain(surface_cases.iter_mut()) {
+        group.throughput(Throughput::Elements(*elements));
+        group.bench_function(id.as_str(), |b| {
+            b.iter(|| {
+                frame = frame.wrapping_add(1);
+                session
+                    .set_camera(Camera3D::default().azimuth_deg((frame % 360) as f32))
+                    .expect("update retained CPU camera");
+                black_box(session.render().expect("retained CPU camera frame"))
+            });
+        });
+    }
+    group.finish();
+}
+
 fn benchmark_gpu_export(c: &mut Criterion) {
     #[cfg(feature = "gpu")]
     {
@@ -162,6 +231,32 @@ fn benchmark_gpu_export(c: &mut Criterion) {
             .render_no_readback()
             .expect("prime retained GPU surface");
 
+        let mut group = c.benchmark_group("3d/gpu/retained-warm-no-readback");
+        group.sample_size(10);
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        group.throughput(Throughput::Elements(100_000));
+        group.bench_function("scatter-100000-640x480", |b| {
+            b.iter(|| {
+                black_box(
+                    scatter_session
+                        .render_no_readback()
+                        .expect("retained GPU unchanged scatter frame"),
+                )
+            });
+        });
+        group.throughput(Throughput::Elements(19_602));
+        group.bench_function("surface-100x100-640x480", |b| {
+            b.iter(|| {
+                black_box(
+                    surface_session
+                        .render_no_readback()
+                        .expect("retained GPU unchanged surface frame"),
+                )
+            });
+        });
+        group.finish();
+
         let mut group = c.benchmark_group("3d/gpu/retained-camera-no-readback");
         group.sample_size(10);
         group.warm_up_time(Duration::from_millis(500));
@@ -201,6 +296,7 @@ criterion_group!(
     three_d_benches,
     benchmark_scatter,
     benchmark_surface,
+    benchmark_cpu_retained,
     benchmark_gpu_export
 );
 criterion_main!(three_d_benches);

@@ -78,6 +78,60 @@ Both `createCanvasSession()` and `createWorkerSession()` default to
 `autoResize: true` and `bindInput: true`, so pointer, wheel, and resize events
 are wired automatically unless you disable them.
 
+## WebGPU 3D
+
+Create and mount a 3D plot in one fluent expression:
+
+```ts,check
+import { surface } from "ruviz";
+
+const canvas = document.querySelector("canvas")!;
+const session = await surface(
+  [-1, 0, 1],
+  [-1, 0, 1],
+  [
+    [2, 1, 2],
+    [1, 0, 1],
+    [2, 1, 2],
+  ],
+)
+  .title("z = x² + y²")
+  .mount(canvas);
+
+// Optional: the session already renders after mount, input, and resize.
+session.render();
+```
+
+The top-level `scatter3d(x, y, z)`, `line3d(x, y, z)`, `surface(x, y, z)`,
+and `wireframe(x, y, z)` factories accept arrays or typed arrays.
+`createPlot3d()` exposes the same series methods on a discoverable builder.
+Surface grids may be a flat row-major array or one row per y value as above.
+Mounting an `HTMLCanvasElement` binds input and resize handling automatically.
+The current browser bridge retains one 3D series, so calling a second series
+method on the same builder replaces the first.
+
+The same builder works inside a worker after the main thread transfers its
+canvas:
+
+```ts,check
+import { createPlot3d } from "ruviz";
+
+declare const offscreenCanvas: OffscreenCanvas;
+declare const devicePixelRatioFromMainThread: number;
+
+const x = [0, 1, 2];
+const y = [0, 1, 0];
+const z = [1, 2, 3];
+
+const session = await createPlot3d()
+  .scatter3d(x, y, z)
+  .mount(offscreenCanvas, { scaleFactor: devicePixelRatioFromMainThread });
+```
+
+Worker code forwards input and resize messages through the session's
+camel-cased methods such as `pointerMove(...)`, `wheel(...)`, and `resize(...)`.
+Rendering requests are coalesced to one submission per animation frame.
+
 ## Plot Types
 
 The fluent builder currently supports:

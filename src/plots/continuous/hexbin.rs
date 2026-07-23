@@ -288,10 +288,10 @@ pub fn compute_hexbin(
         let count = vals.len();
 
         // Apply mincnt filter
-        if let Some(min) = config.mincnt {
-            if count < min {
-                continue;
-            }
+        if let Some(min) = config.mincnt
+            && count < min
+        {
+            continue;
         }
 
         let value = match config.reduce_fn {
@@ -417,22 +417,22 @@ impl PlotRender for HexbinPlotData {
             renderer.draw_filled_polygon(&screen_vertices, fill_color)?;
 
             // Draw edge if configured
-            if let Some(edge_color) = config.edge_color {
-                if config.edge_width > 0.0 {
-                    // Draw hexagon outline
-                    for i in 0..6 {
-                        let (x1, y1) = screen_vertices[i];
-                        let (x2, y2) = screen_vertices[(i + 1) % 6];
-                        renderer.draw_line(
-                            x1,
-                            y1,
-                            x2,
-                            y2,
-                            edge_color,
-                            config.edge_width,
-                            LineStyle::Solid,
-                        )?;
-                    }
+            if let Some(edge_color) = config.edge_color
+                && config.edge_width > 0.0
+            {
+                // Draw hexagon outline
+                for i in 0..6 {
+                    let (x1, y1) = screen_vertices[i];
+                    let (x2, y2) = screen_vertices[(i + 1) % 6];
+                    renderer.draw_line(
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        edge_color,
+                        config.edge_width,
+                        LineStyle::Solid,
+                    )?;
                 }
             }
         }

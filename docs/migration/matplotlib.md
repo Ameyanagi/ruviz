@@ -184,7 +184,7 @@ Plot::new()
 | SVG export | `savefig('file.svg')` | Supported via `.export_svg("file.svg")?` |
 | Heatmaps | `imshow()`, `pcolormesh()` | Supported via `.heatmap(...)` |
 | Contour plots | `contour()` | Supported via `.contour(...)` |
-| 3D plots | `mpl_toolkits.mplot3d` | Planned v1.0+ |
+| 3D plots | `mpl_toolkits.mplot3d` | Opt-in alpha with exact feature `3d`; see the [3D guide](../guide/12_3d.md) and [Matplotlib 3D migration notes](matplotlib-3d.md) |
 | Interactive plots | `%matplotlib notebook` | Experimental via `show_interactive(plot).await` |
 | Polar plots | `projection='polar'` | Supported via `.polar_line(...)` |
 | Animations | `FuncAnimation` | Supported with the `record!` macro |

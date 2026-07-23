@@ -1,8 +1,13 @@
 use crate::core::plot::Image;
-use crate::core::plot3d::layout::{Axis3Layout, OverlayLine3D, OverlayText3D};
+use crate::core::plot3d::layout::{
+    Axis3Layout, Colorbar3D, Legend3D, LegendGlyph3D, LegendItem3D, OverlayLine3D, OverlayRect3D,
+    OverlayText3D,
+};
 use crate::core::{FigureConfig, Result};
 use crate::export::SvgRenderer;
 use crate::render::{Color, LineStyle, SkiaRenderer, Theme};
+
+const COLORBAR_SEGMENTS: usize = 64;
 
 pub(crate) fn compose_image(
     layout: &Axis3Layout,
@@ -81,6 +86,7 @@ pub(crate) fn compose_svg(
             layout,
         )?;
     }
+    draw_decorations_svg(&mut renderer, layout, figure, theme)?;
     Ok(renderer.to_svg_string())
 }
 
@@ -139,7 +145,226 @@ fn draw_foreground_skia(
             layout,
         )?;
     }
+    draw_decorations_skia(renderer, layout, figure, theme)?;
     Ok(())
+}
+
+fn draw_decorations_skia(
+    renderer: &mut SkiaRenderer,
+    layout: &Axis3Layout,
+    figure: &FigureConfig,
+    theme: &Theme,
+) -> Result<()> {
+    if let Some(legend) = &layout.legend {
+        renderer.draw_solid_rectangle(
+            legend.bounds.x,
+            legend.bounds.y,
+            legend.bounds.width,
+            legend.bounds.height,
+            theme.background,
+        )?;
+        renderer.draw_rectangle(
+            legend.bounds.x,
+            legend.bounds.y,
+            legend.bounds.width,
+            legend.bounds.height,
+            theme.grid_color,
+            false,
+        )?;
+        for item in &legend.items {
+            draw_legend_item_skia(renderer, item, figure)?;
+            draw_skia_text(
+                renderer,
+                &item.label,
+                legend_font_size(figure, theme),
+                theme.foreground,
+                layout,
+            )?;
+        }
+    }
+    for colorbar in &layout.colorbars {
+        draw_colorbar_skia(renderer, colorbar, layout, figure, theme)?;
+    }
+    Ok(())
+}
+
+fn draw_legend_item_skia(
+    renderer: &mut SkiaRenderer,
+    item: &LegendItem3D,
+    figure: &FigureConfig,
+) -> Result<()> {
+    match item.glyph {
+        LegendGlyph3D::Marker => {
+            let size = item.glyph_rect.height.min(item.glyph_rect.width) * 0.72;
+            renderer.draw_solid_rectangle(
+                item.glyph_rect.x + (item.glyph_rect.width - size) * 0.5,
+                item.glyph_rect.y + (item.glyph_rect.height - size) * 0.5,
+                size,
+                size,
+                item.color,
+            )
+        }
+        LegendGlyph3D::Line => renderer.draw_line(
+            item.glyph_rect.x,
+            item.glyph_rect.y + item.glyph_rect.height * 0.5,
+            item.glyph_rect.right(),
+            item.glyph_rect.y + item.glyph_rect.height * 0.5,
+            item.color,
+            axis_width(figure).max(1.5),
+            LineStyle::Solid,
+        ),
+        LegendGlyph3D::Fill => renderer.draw_solid_rectangle(
+            item.glyph_rect.x,
+            item.glyph_rect.y,
+            item.glyph_rect.width,
+            item.glyph_rect.height,
+            item.color,
+        ),
+    }
+}
+
+fn draw_colorbar_skia(
+    renderer: &mut SkiaRenderer,
+    colorbar: &Colorbar3D,
+    layout: &Axis3Layout,
+    figure: &FigureConfig,
+    theme: &Theme,
+) -> Result<()> {
+    for (rect, color) in colorbar_segments(colorbar) {
+        renderer.draw_solid_rectangle(rect.x, rect.y, rect.width, rect.height, color)?;
+    }
+    renderer.draw_rectangle(
+        colorbar.bounds.x,
+        colorbar.bounds.y,
+        colorbar.bounds.width,
+        colorbar.bounds.height,
+        theme.foreground,
+        false,
+    )?;
+    for line in &colorbar.tick_marks {
+        draw_skia_line(renderer, *line, theme.foreground, axis_width(figure))?;
+    }
+    for text in &colorbar.tick_labels {
+        draw_skia_text(
+            renderer,
+            text,
+            tick_font_size(figure, theme),
+            theme.foreground,
+            layout,
+        )?;
+    }
+    Ok(())
+}
+
+fn draw_decorations_svg(
+    renderer: &mut SvgRenderer,
+    layout: &Axis3Layout,
+    figure: &FigureConfig,
+    theme: &Theme,
+) -> Result<()> {
+    if let Some(legend) = &layout.legend {
+        renderer.draw_rectangle(
+            legend.bounds.x,
+            legend.bounds.y,
+            legend.bounds.width,
+            legend.bounds.height,
+            theme.background,
+            true,
+        );
+        renderer.draw_rectangle(
+            legend.bounds.x,
+            legend.bounds.y,
+            legend.bounds.width,
+            legend.bounds.height,
+            theme.grid_color,
+            false,
+        );
+        for item in &legend.items {
+            draw_legend_item_svg(renderer, item, figure);
+            draw_svg_text(
+                renderer,
+                &item.label,
+                legend_font_size(figure, theme),
+                theme.foreground,
+                layout,
+            )?;
+        }
+    }
+    for colorbar in &layout.colorbars {
+        for (rect, color) in colorbar_segments(colorbar) {
+            renderer.draw_rectangle(rect.x, rect.y, rect.width, rect.height, color, true);
+        }
+        renderer.draw_rectangle(
+            colorbar.bounds.x,
+            colorbar.bounds.y,
+            colorbar.bounds.width,
+            colorbar.bounds.height,
+            theme.foreground,
+            false,
+        );
+        for line in &colorbar.tick_marks {
+            draw_svg_line(renderer, *line, theme.foreground, axis_width(figure));
+        }
+        for text in &colorbar.tick_labels {
+            draw_svg_text(
+                renderer,
+                text,
+                tick_font_size(figure, theme),
+                theme.foreground,
+                layout,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn draw_legend_item_svg(renderer: &mut SvgRenderer, item: &LegendItem3D, figure: &FigureConfig) {
+    match item.glyph {
+        LegendGlyph3D::Marker => {
+            let size = item.glyph_rect.height.min(item.glyph_rect.width) * 0.72;
+            renderer.draw_rectangle(
+                item.glyph_rect.x + (item.glyph_rect.width - size) * 0.5,
+                item.glyph_rect.y + (item.glyph_rect.height - size) * 0.5,
+                size,
+                size,
+                item.color,
+                true,
+            );
+        }
+        LegendGlyph3D::Line => renderer.draw_line(
+            item.glyph_rect.x,
+            item.glyph_rect.y + item.glyph_rect.height * 0.5,
+            item.glyph_rect.right(),
+            item.glyph_rect.y + item.glyph_rect.height * 0.5,
+            item.color,
+            axis_width(figure).max(1.5),
+            LineStyle::Solid,
+        ),
+        LegendGlyph3D::Fill => renderer.draw_rectangle(
+            item.glyph_rect.x,
+            item.glyph_rect.y,
+            item.glyph_rect.width,
+            item.glyph_rect.height,
+            item.color,
+            true,
+        ),
+    }
+}
+
+fn colorbar_segments(colorbar: &Colorbar3D) -> impl Iterator<Item = (OverlayRect3D, Color)> + '_ {
+    let segment_height = colorbar.bounds.height / COLORBAR_SEGMENTS as f32;
+    (0..COLORBAR_SEGMENTS).map(move |index| {
+        let normalized = 1.0 - index as f64 / COLORBAR_SEGMENTS.saturating_sub(1).max(1) as f64;
+        (
+            OverlayRect3D {
+                x: colorbar.bounds.x,
+                y: colorbar.bounds.y + index as f32 * segment_height,
+                width: colorbar.bounds.width,
+                height: segment_height + 0.5,
+            },
+            colorbar.colormap.sample(normalized),
+        )
+    })
 }
 
 fn draw_skia_line(
@@ -249,9 +474,15 @@ fn title_font_size(figure: &FigureConfig, theme: &Theme) -> f32 {
     theme.title_font_size * figure.dpi / 72.0
 }
 
+fn legend_font_size(figure: &FigureConfig, theme: &Theme) -> f32 {
+    theme.legend_font_size * figure.dpi / 72.0
+}
+
 #[cfg(test)]
 mod tests {
     use crate::scatter3d;
+
+    use super::COLORBAR_SEGMENTS;
 
     #[test]
     fn hybrid_svg_contains_one_embedded_raster_layer_and_vector_text() {
@@ -263,5 +494,46 @@ mod tests {
         assert!(svg.contains("data:image/png;base64,"));
         assert!(svg.contains("A 3d plot"));
         assert!(svg.contains("<line "));
+    }
+
+    #[test]
+    fn hybrid_svg_renders_labeled_series_and_requested_surface_colorbar() {
+        let svg = crate::surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+            .label("terrain")
+            .colorbar(true)
+            .render_to_svg()
+            .expect("svg");
+        assert!(svg.contains("terrain"));
+        assert!(
+            svg.matches("<rect ").count() >= COLORBAR_SEGMENTS + 3,
+            "colorbar gradient and legend should remain vector SVG"
+        );
+        assert_eq!(svg.matches("<image ").count(), 1);
+    }
+
+    #[test]
+    fn cpu_image_contains_the_outside_right_legend_and_colorbar_band() {
+        let image = crate::surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+            .label("terrain")
+            .colorbar(true)
+            .render()
+            .expect("image");
+        let right_band_start = image.width as usize * 3 / 4;
+        let mut colors = std::collections::BTreeSet::new();
+        for y in 0..image.height as usize {
+            for x in right_band_start..image.width as usize {
+                let offset = (y * image.width as usize + x) * 4;
+                colors.insert([
+                    image.pixels[offset],
+                    image.pixels[offset + 1],
+                    image.pixels[offset + 2],
+                ]);
+            }
+        }
+        assert!(
+            colors.len() > 16,
+            "the colorbar should contribute a visible range of colors; got {}",
+            colors.len()
+        );
     }
 }

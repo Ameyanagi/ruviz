@@ -332,18 +332,12 @@ impl BoxPlotData {
         }
 
         // Draw mean if present
-        if self.show_mean {
-            if let Some(mean_val) = self.mean {
-                let (mx, my) = area.data_to_screen(center_x, mean_val);
-                // Diamond marker for mean
-                renderer.draw_marker(
-                    mx,
-                    my,
-                    self.flier_size,
-                    MarkerStyle::Diamond,
-                    marker_color,
-                )?;
-            }
+        if self.show_mean
+            && let Some(mean_val) = self.mean
+        {
+            let (mx, my) = area.data_to_screen(center_x, mean_val);
+            // Diamond marker for mean
+            renderer.draw_marker(mx, my, self.flier_size, MarkerStyle::Diamond, marker_color)?;
         }
 
         Ok(())
@@ -457,17 +451,11 @@ impl BoxPlotData {
         }
 
         // Draw mean if present
-        if self.show_mean {
-            if let Some(mean_val) = self.mean {
-                let (mx, my) = area.data_to_screen(mean_val, center_y);
-                renderer.draw_marker(
-                    mx,
-                    my,
-                    self.flier_size,
-                    MarkerStyle::Diamond,
-                    marker_color,
-                )?;
-            }
+        if self.show_mean
+            && let Some(mean_val) = self.mean
+        {
+            let (mx, my) = area.data_to_screen(mean_val, center_y);
+            renderer.draw_marker(mx, my, self.flier_size, MarkerStyle::Diamond, marker_color)?;
         }
 
         Ok(())

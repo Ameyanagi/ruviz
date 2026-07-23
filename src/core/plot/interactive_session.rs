@@ -2305,10 +2305,10 @@ impl InteractivePlotSession {
 
             self.run_render_test_hook(RenderTestPoint::BeforeFinalCommit);
             self.commit_frame_if_current(epoch_before_render, base_result.generation)?;
-            if base_result.updated {
-                if let Some(frame) = resolved_frame.as_ref() {
-                    frame.acknowledge_rendered(source_plot);
-                }
+            if base_result.updated
+                && let Some(frame) = resolved_frame.as_ref()
+            {
+                frame.acknowledge_rendered(source_plot);
             }
 
             let surface_capability = if target == RenderTargetKind::Surface {
@@ -2347,12 +2347,11 @@ impl InteractivePlotSession {
             })
         })();
 
-        if render_result.is_err() {
-            if let (Some(previous), Some(epoch)) = (state_before_render, render_epoch) {
-                if !self.restore_state_if_epoch(previous, epoch) {
-                    return Err(render_superseded_error());
-                }
-            }
+        if render_result.is_err()
+            && let (Some(previous), Some(epoch)) = (state_before_render, render_epoch)
+            && !self.restore_state_if_epoch(previous, epoch)
+        {
+            return Err(render_superseded_error());
         }
         render_result
     }
@@ -2368,10 +2367,10 @@ impl InteractivePlotSession {
                 .state
                 .lock()
                 .expect("InteractivePlotSession state lock poisoned");
-            if let Some(geometry) = &state.geometry {
-                if geometry.key == *key {
-                    return Ok(geometry.clone());
-                }
+            if let Some(geometry) = &state.geometry
+                && geometry.key == *key
+            {
+                return Ok(geometry.clone());
             }
         }
 
@@ -2417,17 +2416,16 @@ impl InteractivePlotSession {
                 .dirty
                 .lock()
                 .expect("InteractivePlotSession dirty lock poisoned");
-            if !dirty.needs_base_render() {
-                if let Some(cached) = &state.base_cache {
-                    if cached.key == *key {
-                        return Ok(BaseLayerResult {
-                            image: Arc::clone(&cached.image),
-                            generation: cached.generation,
-                            updated: false,
-                            used_incremental_data: false,
-                        });
-                    }
-                }
+            if !dirty.needs_base_render()
+                && let Some(cached) = &state.base_cache
+                && cached.key == *key
+            {
+                return Ok(BaseLayerResult {
+                    image: Arc::clone(&cached.image),
+                    generation: cached.generation,
+                    updated: false,
+                    used_incremental_data: false,
+                });
             }
         }
 
@@ -2435,15 +2433,14 @@ impl InteractivePlotSession {
             && !dirty_before_render.layout
             && !dirty_before_render.temporal
             && !dirty_before_render.interaction
-        {
-            if let Some(incremental) = self.try_incremental_stream_render(
+            && let Some(incremental) = self.try_incremental_stream_render(
                 key,
                 geometry,
                 frame.ok_or_else(render_superseded_error)?,
                 epoch_before_render,
-            )? {
-                return Ok(incremental);
-            }
+            )?
+        {
+            return Ok(incremental);
         }
 
         let state = self
@@ -2550,15 +2547,15 @@ impl InteractivePlotSession {
                 .dirty
                 .lock()
                 .expect("InteractivePlotSession dirty lock poisoned");
-            if !dirty_before_render.needs_overlay_render() && !dirty.needs_overlay_render() {
-                if let Some(cached) = &state.overlay_cache {
-                    if cached.key == overlay_key {
-                        return Ok(OverlayLayerResult {
-                            image: cached.image.clone(),
-                            updated: false,
-                        });
-                    }
-                }
+            if !dirty_before_render.needs_overlay_render()
+                && !dirty.needs_overlay_render()
+                && let Some(cached) = &state.overlay_cache
+                && cached.key == overlay_key
+            {
+                return Ok(OverlayLayerResult {
+                    image: cached.image.clone(),
+                    updated: false,
+                });
             }
         }
 

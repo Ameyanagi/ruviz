@@ -164,10 +164,10 @@ pub fn compare_images(
     let size_diff = (ref_meta.len() as f64 - gen_meta.len() as f64).abs() / ref_meta.len() as f64;
 
     // If diff output requested and there's a difference, copy generated as "diff"
-    if let Some(diff_path) = diff_output {
-        if size_diff > 0.1 {
-            let _ = std::fs::copy(generated, diff_path);
-        }
+    if let Some(diff_path) = diff_output
+        && size_diff > 0.1
+    {
+        let _ = std::fs::copy(generated, diff_path);
     }
 
     Ok(size_diff as f32)

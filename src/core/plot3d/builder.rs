@@ -11,6 +11,9 @@ use crate::render::three_d::overlay::{compose_image, compose_svg};
 use crate::render::three_d::software::raster::SoftwareRenderOptions3D;
 use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme};
 
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+use super::prepared::render_resolved_gpu_layer;
+use super::prepared::render_resolved_software_layer;
 use super::{AxisAspect3D, Camera3D, Point3D};
 
 #[derive(Debug, Default)]
@@ -194,13 +197,7 @@ fn interaction_not_available() -> PlottingError {
 impl Plot3D {
     fn render_image(self) -> Result<(Image, super::RenderDiagnostics3D)> {
         let prepared = self.render_software_layer(SoftwareRenderOptions3D::export())?;
-        let image = compose_image(
-            &prepared.layout,
-            &prepared.frame.figure,
-            &prepared.frame.theme,
-            prepared.output.layer,
-        )?;
-        Ok((image, prepared.diagnostics))
+        compose_software_image(prepared)
     }
 
     fn render_svg(self) -> Result<(String, super::RenderDiagnostics3D)> {
@@ -217,13 +214,32 @@ impl Plot3D {
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
     fn render_gpu_image(self) -> Result<(Image, super::RenderDiagnostics3D)> {
         let prepared = self.render_gpu_layer()?;
-        let image = compose_image(
-            &prepared.layout,
-            &prepared.frame.figure,
-            &prepared.frame.theme,
-            prepared.layer,
-        )?;
-        Ok((image, prepared.diagnostics))
+        compose_gpu_image(prepared)
+    }
+
+    fn render_auto_image(self) -> Result<(Image, super::RenderDiagnostics3D)> {
+        let frame = self.resolve()?;
+        #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+        {
+            match render_resolved_gpu_layer(frame.clone()) {
+                Ok(prepared) => compose_gpu_image(prepared),
+                Err(error) => {
+                    log::debug!("automatic direct 3d GPU rendering failed: {error}");
+                    let mut prepared =
+                        render_resolved_software_layer(frame, SoftwareRenderOptions3D::export())?;
+                    prepared.diagnostics.fallback_reason =
+                        Some(AUTO_GPU_RUNTIME_FALLBACK_REASON.to_string());
+                    compose_software_image(prepared)
+                }
+            }
+        }
+        #[cfg(not(all(feature = "gpu", not(target_arch = "wasm32"))))]
+        {
+            let mut prepared =
+                render_resolved_software_layer(frame, SoftwareRenderOptions3D::export())?;
+            prepared.diagnostics.fallback_reason = Some(auto_gpu_unavailable_reason().to_string());
+            compose_software_image(prepared)
+        }
     }
 
     #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
@@ -237,6 +253,45 @@ impl Plot3D {
         )?;
         Ok((svg, prepared.diagnostics))
     }
+}
+
+fn compose_software_image(
+    prepared: super::prepared::PreparedSoftwareFrame3D,
+) -> Result<(Image, super::RenderDiagnostics3D)> {
+    let image = compose_image(
+        &prepared.layout,
+        &prepared.frame.figure,
+        &prepared.frame.theme,
+        prepared.output.layer,
+    )?;
+    Ok((image, prepared.diagnostics))
+}
+
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+fn compose_gpu_image(
+    prepared: super::prepared::PreparedGpuFrame3D,
+) -> Result<(Image, super::RenderDiagnostics3D)> {
+    let image = compose_image(
+        &prepared.layout,
+        &prepared.frame.figure,
+        &prepared.frame.theme,
+        prepared.layer,
+    )?;
+    Ok((image, prepared.diagnostics))
+}
+
+#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+const AUTO_GPU_RUNTIME_FALLBACK_REASON: &str =
+    "direct native 3d GPU rendering was unavailable; CPU fallback executed";
+
+#[cfg(all(not(feature = "gpu"), not(target_arch = "wasm32")))]
+const fn auto_gpu_unavailable_reason() -> &'static str {
+    "direct native 3d GPU rendering is unavailable because the `gpu` feature is disabled"
+}
+
+#[cfg(target_arch = "wasm32")]
+const fn auto_gpu_unavailable_reason() -> &'static str {
+    "synchronous 3d image readback is unavailable on wasm32; use a WebGPU canvas session for direct presentation"
 }
 
 macro_rules! impl_common_builder {
@@ -447,6 +502,19 @@ macro_rules! impl_common_builder {
                 self.finalize().render_image()
             }
 
+            /// Automatically prefer direct native wgpu, with a diagnosed CPU fallback.
+            ///
+            /// This opt-in terminal leaves [`Self::render`] deterministic on
+            /// the CPU reference backend. When direct native wgpu is compiled
+            /// and available, `actual_backend` is `gpu3d`; otherwise the CPU
+            /// result reports `actual_backend=cpu3d` and a non-empty fallback
+            /// reason.
+            pub fn render_auto_with_diagnostics(
+                self,
+            ) -> Result<(Image, super::RenderDiagnostics3D)> {
+                self.finalize().render_auto_image()
+            }
+
             /// Render through direct offscreen wgpu and return structured counters.
             #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
             #[doc(hidden)]
@@ -466,6 +534,14 @@ macro_rules! impl_common_builder {
             /// Render an in-memory image.
             pub fn render(self) -> Result<Image> {
                 self.finalize().render_image().map(|(image, _)| image)
+            }
+
+            /// Automatically prefer direct native wgpu and fall back to CPU.
+            ///
+            /// Use [`Self::render_auto_with_diagnostics`] when the selected
+            /// backend and fallback reason are needed.
+            pub fn render_auto(self) -> Result<Image> {
+                self.render_auto_with_diagnostics().map(|(image, _)| image)
             }
 
             /// Render an in-memory image through direct offscreen wgpu.

@@ -222,6 +222,31 @@ path = "examples/3d_surface.rs"
 required-features = ["3d"]
 
 [[example]]
+name = "doc_scatter3d"
+path = "examples/doc_scatter3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "doc_line3d"
+path = "examples/doc_line3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "doc_surface3d"
+path = "examples/doc_surface3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "doc_wireframe3d"
+path = "examples/doc_wireframe3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "generate_3d_gallery"
+path = "examples/generate_3d_gallery.rs"
+required-features = ["3d"]
+
+[[example]]
 name = "interactive_orbit3d"
 path = "examples/interactive_orbit3d.rs"
 required-features = ["3d", "interactive-gpu"]

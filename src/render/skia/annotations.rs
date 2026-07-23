@@ -735,16 +735,15 @@ impl SkiaRenderer {
             transform.plot_area.top(),
             right - left,
             transform.plot_area.height(),
-        ) {
-            if let Some(fill_color) = &style.fill_color {
-                let mut paint = Paint::default();
-                let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
-                paint.set_color(color_with_alpha.to_tiny_skia_color());
-                paint.anti_alias = true;
+        ) && let Some(fill_color) = &style.fill_color
+        {
+            let mut paint = Paint::default();
+            let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
+            paint.set_color(color_with_alpha.to_tiny_skia_color());
+            paint.anti_alias = true;
 
-                self.pixmap
-                    .fill_rect(rect, &paint, Transform::identity(), None);
-            }
+            self.pixmap
+                .fill_rect(rect, &paint, Transform::identity(), None);
         }
 
         Ok(())
@@ -779,16 +778,15 @@ impl SkiaRenderer {
             top,
             transform.plot_area.width(),
             bottom - top,
-        ) {
-            if let Some(fill_color) = &style.fill_color {
-                let mut paint = Paint::default();
-                let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
-                paint.set_color(color_with_alpha.to_tiny_skia_color());
-                paint.anti_alias = true;
+        ) && let Some(fill_color) = &style.fill_color
+        {
+            let mut paint = Paint::default();
+            let color_with_alpha = fill_color.with_alpha(style.fill_alpha);
+            paint.set_color(color_with_alpha.to_tiny_skia_color());
+            paint.anti_alias = true;
 
-                self.pixmap
-                    .fill_rect(rect, &paint, Transform::identity(), None);
-            }
+            self.pixmap
+                .fill_rect(rect, &paint, Transform::identity(), None);
         }
 
         Ok(())

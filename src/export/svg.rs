@@ -1483,28 +1483,29 @@ impl SvgRenderer {
     ) -> Result<()> {
         // X-axis labels
         for (i, &x) in x_ticks.iter().enumerate() {
-            if x >= plot_left && x <= plot_right {
-                if let Some(label) = x_labels.get(i) {
-                    let label_snippet = self.generated_label(label);
-                    let (text_width, _) =
-                        self.measure_text_for_layout(&label_snippet, font_size)?;
-                    let label_x = (x - text_width / 2.0).max(0.0).min(self.width - text_width);
-                    self.draw_text(&label_snippet, label_x, xtick_baseline_y, font_size, color)?;
-                }
+            if x >= plot_left
+                && x <= plot_right
+                && let Some(label) = x_labels.get(i)
+            {
+                let label_snippet = self.generated_label(label);
+                let (text_width, _) = self.measure_text_for_layout(&label_snippet, font_size)?;
+                let label_x = (x - text_width / 2.0).max(0.0).min(self.width - text_width);
+                self.draw_text(&label_snippet, label_x, xtick_baseline_y, font_size, color)?;
             }
         }
 
         // Y-axis labels
         for (i, &y) in y_ticks.iter().enumerate() {
-            if y >= plot_top && y <= plot_bottom {
-                if let Some(label) = y_labels.get(i) {
-                    let label_snippet = self.generated_label(label);
-                    let (text_width, text_height) =
-                        self.measure_text_for_layout(&label_snippet, font_size)?;
-                    let label_x = (ytick_right_x - text_width).max(0.0);
-                    let centered_y = y - text_height / 2.0;
-                    self.draw_text(&label_snippet, label_x, centered_y, font_size, color)?;
-                }
+            if y >= plot_top
+                && y <= plot_bottom
+                && let Some(label) = y_labels.get(i)
+            {
+                let label_snippet = self.generated_label(label);
+                let (text_width, text_height) =
+                    self.measure_text_for_layout(&label_snippet, font_size)?;
+                let label_x = (ytick_right_x - text_width).max(0.0);
+                let centered_y = y - text_height / 2.0;
+                self.draw_text(&label_snippet, label_x, centered_y, font_size, color)?;
             }
         }
 

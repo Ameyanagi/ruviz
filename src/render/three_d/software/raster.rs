@@ -866,6 +866,10 @@ fn checked_rgba_len(width: u32, height: u32) -> Result<usize> {
 }
 
 #[cfg(test)]
+#[path = "raster_correctness_tests.rs"]
+mod correctness_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

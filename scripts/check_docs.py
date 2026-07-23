@@ -75,6 +75,27 @@ export class JsPlot {
   constructor();
 }
 
+export class JsPlot3D {
+  [key: string]: any;
+  constructor();
+}
+
+export class WebGPU3DCanvasSession {
+  [key: string]: any;
+  static create(
+    canvas: HTMLCanvasElement,
+    plot: JsPlot3D,
+  ): Promise<WebGPU3DCanvasSession>;
+}
+
+export class OffscreenWebGPU3DCanvasSession {
+  [key: string]: any;
+  static create(
+    canvas: OffscreenCanvas,
+    plot: JsPlot3D,
+  ): Promise<OffscreenWebGPU3DCanvasSession>;
+}
+
 export class ObservableVecF64 {
   [key: string]: any;
   constructor(values: Float64Array);

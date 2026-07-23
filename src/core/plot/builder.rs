@@ -1731,12 +1731,11 @@ impl PlotBuilder<crate::plots::RadarConfig> {
         // Capture any pending label from the previous .label() call for the PREVIOUS series
         // Pattern: .series([...]).label("A").series([...]).label("B")
         // When the second .series() is called, we capture "A" for the first series
-        if let Some(label) = self.style.label.take() {
-            if let Some(last) = self.config.series_labels.last_mut() {
-                if last.is_empty() {
-                    *last = label;
-                }
-            }
+        if let Some(label) = self.style.label.take()
+            && let Some(last) = self.config.series_labels.last_mut()
+            && last.is_empty()
+        {
+            *last = label;
         }
 
         // Store series data in the input
@@ -1862,12 +1861,11 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     ///     .save("red.png")?;
     /// ```
     pub fn with_color(mut self, color: Color) -> Self {
-        if let Some(idx) = self.config.current_series_idx {
-            if let Some(ref mut colors) = self.config.colors {
-                if let Some(c) = colors.get_mut(idx) {
-                    *c = color;
-                }
-            }
+        if let Some(idx) = self.config.current_series_idx
+            && let Some(ref mut colors) = self.config.colors
+            && let Some(c) = colors.get_mut(idx)
+        {
+            *c = color;
         }
         self
     }
@@ -1888,10 +1886,10 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     ///     .save("transparent.png")?;
     /// ```
     pub fn with_fill_alpha(mut self, alpha: f32) -> Self {
-        if let Some(idx) = self.config.current_series_idx {
-            if let Some(a) = self.config.per_series_fill_alphas.get_mut(idx) {
-                *a = Some(alpha.clamp(0.0, 1.0));
-            }
+        if let Some(idx) = self.config.current_series_idx
+            && let Some(a) = self.config.per_series_fill_alphas.get_mut(idx)
+        {
+            *a = Some(alpha.clamp(0.0, 1.0));
         }
         self
     }
@@ -1911,10 +1909,10 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     ///     .save("thick.png")?;
     /// ```
     pub fn with_line_width(mut self, width: f32) -> Self {
-        if let Some(idx) = self.config.current_series_idx {
-            if let Some(w) = self.config.per_series_line_widths.get_mut(idx) {
-                *w = Some(width.max(0.1));
-            }
+        if let Some(idx) = self.config.current_series_idx
+            && let Some(w) = self.config.per_series_line_widths.get_mut(idx)
+        {
+            *w = Some(width.max(0.1));
         }
         self
     }
@@ -1955,12 +1953,11 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     fn finalize(mut self) -> super::Plot {
         // Capture any pending label from the last .label() call for the last series
         // (since there's no subsequent .series() call to capture it)
-        if let Some(label) = self.style.label.take() {
-            if let Some(last) = self.config.series_labels.last_mut() {
-                if last.is_empty() {
-                    *last = label;
-                }
-            }
+        if let Some(label) = self.style.label.take()
+            && let Some(last) = self.config.series_labels.last_mut()
+            && last.is_empty()
+        {
+            *last = label;
         }
 
         // Parse series from the accumulated data

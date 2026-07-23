@@ -186,10 +186,10 @@ impl NotificationState {
 
             let callbacks = collect_subscriber_callbacks(subscribers, lock_error);
             for callback in callbacks {
-                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| callback())) {
-                    if first_panic.is_none() {
-                        first_panic = Some(payload);
-                    }
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| callback()))
+                    && first_panic.is_none()
+                {
+                    first_panic = Some(payload);
                 }
             }
         }
@@ -779,16 +779,16 @@ impl<'a> Drop for BatchUpdate<'a> {
         }
         let mut first_panic = None;
         for obs in &self.observables {
-            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| obs.flush_batch())) {
-                if first_panic.is_none() {
-                    first_panic = Some(payload);
-                }
+            if let Err(payload) = catch_unwind(AssertUnwindSafe(|| obs.flush_batch()))
+                && first_panic.is_none()
+            {
+                first_panic = Some(payload);
             }
         }
-        if !std::thread::panicking() {
-            if let Some(payload) = first_panic {
-                resume_unwind(payload);
-            }
+        if !std::thread::panicking()
+            && let Some(payload) = first_panic
+        {
+            resume_unwind(payload);
         }
     }
 }
@@ -1151,10 +1151,10 @@ impl ReactiveDataHandle {
         let current = self.current_versions.read().expect("Lock poisoned");
 
         for (i, version_arc) in current.iter().enumerate() {
-            if let Some(&last_version) = last.get(i) {
-                if version_arc.load(Ordering::Acquire) != last_version {
-                    return true;
-                }
+            if let Some(&last_version) = last.get(i)
+                && version_arc.load(Ordering::Acquire) != last_version
+            {
+                return true;
             }
         }
         false
@@ -2494,10 +2494,10 @@ impl StreamingXY {
         let mut first_panic = None;
         while self.pair_notifications.take_pending() {
             let mut run = |notify: &dyn Fn()| {
-                if let Err(payload) = catch_unwind(AssertUnwindSafe(notify)) {
-                    if first_panic.is_none() {
-                        first_panic = Some(payload);
-                    }
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(notify))
+                    && first_panic.is_none()
+                {
+                    first_panic = Some(payload);
                 }
             };
             run(&|| self.x.notify_subscribers());

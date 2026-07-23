@@ -23,6 +23,7 @@ fn production_categories_and_entry_mappings_are_exact() {
     let entries = generate_gallery::entries();
     let actual: BTreeSet<_> = categories.iter().map(|category| category.slug).collect();
     let expected = BTreeSet::from([
+        "3d",
         "advanced",
         "animation",
         "basic",

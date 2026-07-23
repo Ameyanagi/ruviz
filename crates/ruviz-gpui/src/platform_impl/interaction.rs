@@ -181,11 +181,11 @@ impl RuvizPlot {
     }
 
     fn update_context_menu_hover(&mut self, hovered_index: Option<usize>, cx: &mut Context<Self>) {
-        if let Some(menu) = self.interaction_state.context_menu.as_mut() {
-            if menu.hovered_index != hovered_index {
-                menu.hovered_index = hovered_index;
-                cx.notify();
-            }
+        if let Some(menu) = self.interaction_state.context_menu.as_mut()
+            && menu.hovered_index != hovered_index
+        {
+            menu.hovered_index = hovered_index;
+            cx.notify();
         }
     }
 

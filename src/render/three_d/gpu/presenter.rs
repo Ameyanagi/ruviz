@@ -7,7 +7,9 @@ use wgpu::util::DeviceExt;
 #[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 use winit::window::Window;
 
-use crate::core::plot3d::layout::{Axis3Layout, OverlayLine3D, OverlayText3D};
+use crate::core::plot3d::layout::{
+    Axis3Layout, LegendGlyph3D, OverlayLine3D, OverlayRect3D, OverlayText3D,
+};
 use crate::core::{FigureConfig, PlottingError, Result};
 use crate::render::three_d::scene::Scene3D;
 use crate::render::{Color, SkiaRenderer, Theme};
@@ -19,6 +21,7 @@ const TEXTURE_SHADER: &str = include_str!("shaders/present_texture.wgsl");
 const SOLID_SHADER: &str = include_str!("shaders/present_solid.wgsl");
 const TEXT_PADDING: u32 = 2;
 const PREFERRED_ATLAS_WIDTH: u32 = 2048;
+const COLORBAR_SEGMENTS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PresentationUpdate3D {
@@ -549,11 +552,7 @@ impl PresentationCompositor3D {
         theme: &Theme,
     ) -> Result<u64> {
         let key = TextAtlasKey::from_layout(layout, figure, theme);
-        if self
-            .text_atlas
-            .as_ref()
-            .is_some_and(|atlas| atlas.key == key)
-        {
+        if !text_atlas_key_changed(self.text_atlas.as_ref().map(|atlas| &atlas.key), &key) {
             return Ok(0);
         }
         if key.entries.is_empty() {
@@ -571,6 +570,10 @@ impl PresentationCompositor3D {
         self.text_atlas = Some(atlas);
         Ok(uploaded)
     }
+}
+
+fn text_atlas_key_changed(existing: Option<&TextAtlasKey>, requested: &TextAtlasKey) -> bool {
+    existing != Some(requested)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -826,7 +829,130 @@ fn foreground_vertices(
     for line in layout.box_edges.iter().chain(&layout.tick_marks) {
         push_solid_line(&mut vertices, *line, width, color, layout);
     }
+    if let Some(legend) = &layout.legend {
+        push_solid_rect(
+            &mut vertices,
+            legend.bounds,
+            linear_color(theme.background),
+            layout,
+        );
+        push_solid_rect_outline(
+            &mut vertices,
+            legend.bounds,
+            width,
+            linear_color(theme.grid_color),
+            layout,
+        );
+        for item in &legend.items {
+            match item.glyph {
+                LegendGlyph3D::Marker => {
+                    let size = item.glyph_rect.height.min(item.glyph_rect.width) * 0.72;
+                    push_solid_rect(
+                        &mut vertices,
+                        OverlayRect3D {
+                            x: item.glyph_rect.x + (item.glyph_rect.width - size) * 0.5,
+                            y: item.glyph_rect.y + (item.glyph_rect.height - size) * 0.5,
+                            width: size,
+                            height: size,
+                        },
+                        linear_color(item.color),
+                        layout,
+                    );
+                }
+                LegendGlyph3D::Line => push_solid_line(
+                    &mut vertices,
+                    OverlayLine3D {
+                        start: glam::Vec2::new(
+                            item.glyph_rect.x,
+                            item.glyph_rect.y + item.glyph_rect.height * 0.5,
+                        ),
+                        end: glam::Vec2::new(
+                            item.glyph_rect.right(),
+                            item.glyph_rect.y + item.glyph_rect.height * 0.5,
+                        ),
+                    },
+                    width.max(1.5),
+                    linear_color(item.color),
+                    layout,
+                ),
+                LegendGlyph3D::Fill => push_solid_rect(
+                    &mut vertices,
+                    item.glyph_rect,
+                    linear_color(item.color),
+                    layout,
+                ),
+            }
+        }
+    }
+    for colorbar in &layout.colorbars {
+        let segment_height = colorbar.bounds.height / COLORBAR_SEGMENTS as f32;
+        for index in 0..COLORBAR_SEGMENTS {
+            let normalized = 1.0 - index as f64 / COLORBAR_SEGMENTS.saturating_sub(1).max(1) as f64;
+            push_solid_rect(
+                &mut vertices,
+                OverlayRect3D {
+                    x: colorbar.bounds.x,
+                    y: colorbar.bounds.y + index as f32 * segment_height,
+                    width: colorbar.bounds.width,
+                    height: segment_height + 0.5,
+                },
+                linear_color(colorbar.colormap.sample(normalized)),
+                layout,
+            );
+        }
+        push_solid_rect_outline(&mut vertices, colorbar.bounds, width, color, layout);
+        for line in &colorbar.tick_marks {
+            push_solid_line(&mut vertices, *line, width, color, layout);
+        }
+    }
     vertices
+}
+
+fn push_solid_rect(
+    output: &mut Vec<SolidVertex>,
+    rect: OverlayRect3D,
+    color: [f32; 4],
+    layout: &Axis3Layout,
+) {
+    let top_left = glam::Vec2::new(rect.x, rect.y);
+    let top_right = glam::Vec2::new(rect.right(), rect.y);
+    let bottom_right = glam::Vec2::new(rect.right(), rect.bottom());
+    let bottom_left = glam::Vec2::new(rect.x, rect.bottom());
+    push_solid_triangle(output, top_left, top_right, bottom_right, color, layout);
+    push_solid_triangle(output, top_left, bottom_right, bottom_left, color, layout);
+}
+
+fn push_solid_rect_outline(
+    output: &mut Vec<SolidVertex>,
+    rect: OverlayRect3D,
+    width: f32,
+    color: [f32; 4],
+    layout: &Axis3Layout,
+) {
+    let top_left = glam::Vec2::new(rect.x, rect.y);
+    let top_right = glam::Vec2::new(rect.right(), rect.y);
+    let bottom_right = glam::Vec2::new(rect.right(), rect.bottom());
+    let bottom_left = glam::Vec2::new(rect.x, rect.bottom());
+    for line in [
+        OverlayLine3D {
+            start: top_left,
+            end: top_right,
+        },
+        OverlayLine3D {
+            start: top_right,
+            end: bottom_right,
+        },
+        OverlayLine3D {
+            start: bottom_right,
+            end: bottom_left,
+        },
+        OverlayLine3D {
+            start: bottom_left,
+            end: top_left,
+        },
+    ] {
+        push_solid_line(output, line, width, color, layout);
+    }
 }
 
 fn push_solid_triangle(
@@ -915,7 +1041,18 @@ fn text_specs<'a>(
 ) -> Vec<(&'a OverlayText3D, f32)> {
     let dpi_scale = figure.dpi / 72.0;
     let mut specs = Vec::with_capacity(
-        layout.tick_labels.len() + layout.axis_labels.len() + usize::from(layout.title.is_some()),
+        layout.tick_labels.len()
+            + layout.axis_labels.len()
+            + usize::from(layout.title.is_some())
+            + layout
+                .legend
+                .as_ref()
+                .map_or(0, |legend| legend.items.len())
+            + layout
+                .colorbars
+                .iter()
+                .map(|colorbar| colorbar.tick_labels.len())
+                .sum::<usize>(),
     );
     specs.extend(
         layout
@@ -932,6 +1069,20 @@ fn text_specs<'a>(
     if let Some(title) = &layout.title {
         specs.push((title, theme.title_font_size * dpi_scale));
     }
+    if let Some(legend) = &layout.legend {
+        specs.extend(
+            legend
+                .items
+                .iter()
+                .map(|item| (&item.label, theme.legend_font_size * dpi_scale)),
+        );
+    }
+    specs.extend(layout.colorbars.iter().flat_map(|colorbar| {
+        colorbar
+            .tick_labels
+            .iter()
+            .map(|text| (text, theme.tick_label_font_size * dpi_scale))
+    }));
     specs
 }
 
@@ -1125,6 +1276,8 @@ fn create_texture_pipeline(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::plot3d::layout::Colorbar3D;
+    use crate::render::ColorMap;
     use crate::scatter3d;
 
     use super::*;
@@ -1161,6 +1314,37 @@ mod tests {
     }
 
     #[test]
+    fn direct_colorbar_uses_solid_vertices_instead_of_a_texture() {
+        let frame = scatter3d(&[0.0], &[0.0], &[0.0])
+            .finalize()
+            .resolve()
+            .expect("frame");
+        let mut layout = Axis3Layout::resolve(&frame).expect("layout");
+        let baseline = foreground_vertices(&layout, &frame.figure, &frame.theme).len();
+        layout.colorbars.push(Colorbar3D {
+            bounds: OverlayRect3D {
+                x: 550.0,
+                y: 80.0,
+                width: 14.0,
+                height: 240.0,
+            },
+            colormap: ColorMap::viridis(),
+            data_range: (0.0, 1.0),
+            tick_marks: Vec::new(),
+            tick_labels: Vec::new(),
+        });
+        let foreground = foreground_vertices(&layout, &frame.figure, &frame.theme);
+        assert!(foreground.len() >= baseline + COLORBAR_SEGMENTS * 6);
+        assert!(foreground.iter().all(|vertex| {
+            vertex
+                .position
+                .iter()
+                .all(|component| component.is_finite())
+                && vertex.color.iter().all(|component| component.is_finite())
+        }));
+    }
+
+    #[test]
     fn surface_format_selection_uses_preferred_base_with_srgb_view() {
         assert_eq!(
             select_surface_format(&[
@@ -1191,7 +1375,7 @@ mod tests {
     #[test]
     fn camera_only_layout_change_reuses_the_text_atlas_key() {
         let first = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
-            .title("direct")
+            .label("terrain")
             .xlabel("x")
             .ylabel("y")
             .zlabel("z")
@@ -1200,7 +1384,7 @@ mod tests {
             .resolve()
             .expect("first");
         let second = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
-            .title("direct")
+            .label("terrain")
             .xlabel("x")
             .ylabel("y")
             .zlabel("z")
@@ -1211,9 +1395,21 @@ mod tests {
         let first_layout = Axis3Layout::resolve(&first).expect("first layout");
         let second_layout = Axis3Layout::resolve(&second).expect("second layout");
         assert_ne!(first_layout.box_edges, second_layout.box_edges);
+        let first_key = TextAtlasKey::from_layout(&first_layout, &first.figure, &first.theme);
+        assert!(
+            first_key
+                .entries
+                .iter()
+                .any(|entry| entry.text == "terrain")
+        );
         assert_eq!(
-            TextAtlasKey::from_layout(&first_layout, &first.figure, &first.theme),
+            first_key,
             TextAtlasKey::from_layout(&second_layout, &second.figure, &second.theme)
+        );
+        let second_key = TextAtlasKey::from_layout(&second_layout, &second.figure, &second.theme);
+        assert!(
+            !text_atlas_key_changed(Some(&first_key), &second_key),
+            "camera-only decoration changes must report zero warm text-atlas upload bytes"
         );
     }
 }

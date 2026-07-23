@@ -80,6 +80,12 @@ pub fn categories() -> Vec<Category> {
             icon: "🎨",
         },
         Category {
+            slug: "3d",
+            title: "3D Plots",
+            description: "Fixed-camera scatter, line, surface, wireframe, theme, and projection examples.",
+            icon: "🧊",
+        },
+        Category {
             slug: "animation",
             title: "Animation",
             description: "GIF examples generated from the animation helpers and `record!` flows.",
@@ -384,6 +390,126 @@ pub fn entries() -> Vec<GalleryEntry> {
             },
         },
         GalleryEntry {
+            category: "3d",
+            title: "Orthographic Scatter",
+            summary: "Two deterministic point spirals rendered with an equal-axis orthographic camera.",
+            asset_name: "scatter3d.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/scatter3d.png",
+            },
+        },
+        GalleryEntry {
+            category: "3d",
+            title: "Perspective Helix",
+            summary: "A fixed perspective view of a three-dimensional helix.",
+            asset_name: "line3d.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/line3d.png",
+            },
+        },
+        GalleryEntry {
+            category: "3d",
+            title: "Smooth Surface",
+            summary: "A full-resolution regular grid with smooth shading and a viridis colormap.",
+            asset_name: "surface3d.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/surface3d.png",
+            },
+        },
+        GalleryEntry {
+            category: "3d",
+            title: "Wireframe",
+            summary: "A sampled regular-grid wireframe rendered from a fixed orthographic view.",
+            asset_name: "wireframe3d.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/wireframe3d.png",
+            },
+        },
+        GalleryEntry {
+            category: "3d",
+            title: "Dark Theme Surface",
+            summary: "The same fixed surface geometry under the dark theme and plasma colormap.",
+            asset_name: "surface3d_dark.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/surface3d_dark.png",
+            },
+        },
+        GalleryEntry {
+            category: "3d",
+            title: "Publication Theme Surface",
+            summary: "A high-contrast publication theme with deterministic bundled typography.",
+            asset_name: "surface3d_publication.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/surface3d_publication.png",
+            },
+        },
+        GalleryEntry {
+            category: "3d",
+            title: "High-Elevation View",
+            summary: "An alternate orthographic camera that exercises projected Axis3 placement.",
+            asset_name: "surface3d_high_view.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/surface3d_high_view.png",
+            },
+        },
+        GalleryEntry {
+            category: "3d",
+            title: "Perspective Surface",
+            summary: "The canonical surface rendered through an explicit 40-degree perspective camera.",
+            asset_name: "surface3d_perspective.png",
+            source_path: "examples/generate_3d_gallery.rs",
+            guide: None,
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "generate_3d_gallery",
+                    features: Some("3d"),
+                },
+                output_rel: "generated/examples/3d/surface3d_perspective.png",
+            },
+        },
+        GalleryEntry {
             category: "animation",
             title: "Traveling Sine Wave",
             summary: "Animated sine wave generated with the `record!` macro.",
@@ -547,14 +673,14 @@ pub fn validate_catalog(
             }
         }
 
-        if let Some(source_path) = copy_source_path(repo_root, entry) {
-            if !source_path.is_file() {
-                errors.push(format!(
-                    "copy source for `{}` does not exist: {}",
-                    entry.title,
-                    source_path.display()
-                ));
-            }
+        if let Some(source_path) = copy_source_path(repo_root, entry)
+            && !source_path.is_file()
+        {
+            errors.push(format!(
+                "copy source for `{}` does not exist: {}",
+                entry.title,
+                source_path.display()
+            ));
         }
     }
 
