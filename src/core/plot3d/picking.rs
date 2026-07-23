@@ -413,32 +413,29 @@ pub(crate) fn pick_scene(
                 })?
                 .source_index;
         }
-        let projected = project_visible_local(layout, hit.local_position).ok_or_else(|| {
-            PlottingError::InvalidTopology3D {
-                reason: "visible 3D surface pick projected outside the clip volume".to_string(),
-            }
-        })?;
-        let surface_hit = PickHit3D {
-            series_index: mesh.series_index,
-            primitive: PickPrimitive3D::SurfaceTriangle,
-            primitive_index: hit.triangle_index,
-            triangle_index: hit.triangle_index,
-            source_indices,
-            source_count: 3,
-            barycentric: hit.barycentric,
-            point: frame.bounds.denormalize(hit.local_position, Vec3::ONE),
-            ray_distance: hit.distance,
-            scene_generation,
-            camera_generation,
-        };
-        consider_pick(
-            &mut closest,
-            projected.z,
-            2,
-            mesh.series_index,
-            hit.triangle_index,
-            surface_hit,
-        );
+        if let Some(projected) = project_visible_local(layout, hit.local_position) {
+            let surface_hit = PickHit3D {
+                series_index: mesh.series_index,
+                primitive: PickPrimitive3D::SurfaceTriangle,
+                primitive_index: hit.triangle_index,
+                triangle_index: hit.triangle_index,
+                source_indices,
+                source_count: 3,
+                barycentric: hit.barycentric,
+                point: frame.bounds.denormalize(hit.local_position, Vec3::ONE),
+                ray_distance: hit.distance,
+                scene_generation,
+                camera_generation,
+            };
+            consider_pick(
+                &mut closest,
+                projected.z,
+                2,
+                mesh.series_index,
+                hit.triangle_index,
+                surface_hit,
+            );
+        }
     }
 
     Ok(closest.map(|(_, _, _, _, hit)| hit))
@@ -750,5 +747,24 @@ mod tests {
             .intersect_ray(&geometry, Vec3::new(-1.0, -1.0, 2.0), -Vec3::Z)
             .expect("intersection");
         assert!(hit.is_some());
+    }
+
+    #[test]
+    fn surface_hit_beyond_explicit_clip_limits_is_a_miss_not_an_error() {
+        let frame = crate::surface(&[-1.0, 1.0], &[-1.0, 1.0], &[[10.0, 10.0], [10.0, 10.0]])
+            .zlim(0.0, 1.0)
+            .finalize()
+            .resolve()
+            .expect("resolved frame");
+        let layout = Axis3Layout::resolve(&frame).expect("axis layout");
+        let mut cache = PreparedSceneCache3D::default();
+        let (scene, bvh, _) = cache.prepare_with_bvh(&frame).expect("prepared scene");
+        let screen_x = layout.viewport.x as f32 + layout.viewport.width as f32 * 0.5;
+        let screen_y = layout.viewport.y as f32 + layout.viewport.height as f32 * 0.5;
+
+        let hit = pick_scene(&frame, &layout, &scene, &bvh, screen_x, screen_y, 0, 0)
+            .expect("clipped surface pick");
+
+        assert!(hit.is_none());
     }
 }

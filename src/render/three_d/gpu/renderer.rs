@@ -60,7 +60,25 @@ pub(crate) struct Wgpu3DRenderer {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-static SHARED_RENDERER: OnceLock<Mutex<Wgpu3DRenderer>> = OnceLock::new();
+static SHARED_RENDERER: OnceLock<Mutex<Option<Wgpu3DRenderer>>> = OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+fn with_locked_try_init<T, E, Output>(
+    slot: &OnceLock<Mutex<Option<T>>>,
+    initialize: impl FnOnce() -> std::result::Result<T, E>,
+    lock_error: impl Fn() -> E,
+    operation: impl FnOnce(&mut T) -> std::result::Result<Output, E>,
+) -> std::result::Result<Output, E> {
+    let mut slot = slot
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| lock_error())?;
+    if slot.is_none() {
+        *slot = Some(initialize()?);
+    }
+    let value = slot.as_mut().ok_or_else(lock_error)?;
+    operation(value)
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn render_with_shared_renderer(
@@ -68,17 +86,12 @@ pub(crate) fn render_with_shared_renderer(
     layout: &Axis3Layout,
     dpi: f32,
 ) -> Result<GpuRenderOutput3D> {
-    if SHARED_RENDERER.get().is_none() {
-        let renderer = Wgpu3DRenderer::new()?;
-        let _ = SHARED_RENDERER.set(Mutex::new(renderer));
-    }
-    let renderer = SHARED_RENDERER.get().ok_or_else(|| {
-        PlottingError::RenderError("direct 3d GPU renderer failed to initialize".to_string())
-    })?;
-    let mut renderer = renderer.lock().map_err(|_| {
-        PlottingError::RenderError("direct 3d GPU renderer lock was poisoned".to_string())
-    })?;
-    renderer.render_to_image(scene, layout, dpi)
+    with_locked_try_init(
+        &SHARED_RENDERER,
+        Wgpu3DRenderer::new,
+        || PlottingError::RenderError("direct 3d GPU renderer lock was poisoned".to_string()),
+        |renderer| renderer.render_to_image(scene, layout, dpi),
+    )
 }
 
 impl Wgpu3DRenderer {
@@ -645,5 +658,48 @@ fn validate_dimensions(width: u32, height: u32, maximum: u32) -> Result<()> {
         })
     } else {
         Ok(())
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
+
+    use super::*;
+
+    #[test]
+    fn shared_slot_initializes_once_under_contention() {
+        let slot = Arc::new(OnceLock::new());
+        let start = Arc::new(Barrier::new(16));
+        let initializations = Arc::new(AtomicUsize::new(0));
+        let mut threads = Vec::new();
+
+        for _ in 0..16 {
+            let slot = Arc::clone(&slot);
+            let start = Arc::clone(&start);
+            let initializations = Arc::clone(&initializations);
+            threads.push(std::thread::spawn(move || {
+                start.wait();
+                with_locked_try_init(
+                    &slot,
+                    || {
+                        initializations.fetch_add(1, Ordering::SeqCst);
+                        std::thread::yield_now();
+                        Ok::<_, ()>(42)
+                    },
+                    || (),
+                    |value| {
+                        assert_eq!(*value, 42);
+                        Ok(())
+                    },
+                )
+            }));
+        }
+
+        for thread in threads {
+            assert_eq!(thread.join().expect("thread panicked"), Ok(()));
+        }
+        assert_eq!(initializations.load(Ordering::SeqCst), 1);
     }
 }

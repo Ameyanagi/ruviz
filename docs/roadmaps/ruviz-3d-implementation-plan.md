@@ -1532,6 +1532,15 @@ Documentation must state:
   All fixed-hardware, long-orbit, cross-vendor, and GLMakie gates remain
   `not_evaluated`; timing-only Criterion files explicitly leave renderer
   diagnostic sidecars unmeasured.
+- Greptile agent review `ea16bfd4-688f-40ae-9435-84e4b051fbdb` found two P1
+  correctness issues in new code. A BVH surface hit beyond explicit clip
+  limits incorrectly aborted the entire pick, while points and lines treated
+  the equivalent case as a miss; surface picking now skips the invisible hit
+  and has an explicit-limit regression. Shared native GPU initialization also
+  used a racy `OnceLock::get`/`set` sequence; it now initializes inside one
+  locked optional slot, retries cleanly after an initialization error, and a
+  16-thread contention regression proves the initializer runs exactly once.
+  Both fixes pass Rust 1.92 and strict all-target/all-feature Clippy.
 
 ## Primary references
 
