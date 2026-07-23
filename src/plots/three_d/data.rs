@@ -123,9 +123,9 @@ impl Grid3DData {
             },
             other => other,
         })?;
-        validate_coordinate_infinities("surface", "x", &x)?;
-        validate_coordinate_infinities("surface", "y", &y)?;
-        validate_coordinate_infinities("surface", "z", &z)?;
+        validate_coordinate_infinities(operation, "x", &x)?;
+        validate_coordinate_infinities(operation, "y", &y)?;
+        validate_coordinate_infinities(operation, "z", &z)?;
 
         if !z.iter().any(|value| value.is_finite()) {
             return Err(PlottingError::InvalidTopology3D {

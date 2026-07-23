@@ -108,3 +108,15 @@ fn ragged_grid_diagnostic_names_surface_and_row() {
     ));
     assert_eq!(error.to_string(), "surface: row 1 has 2 values, expected 3");
 }
+
+#[test]
+fn compile_diagnostics_are_structured_and_truthful() {
+    let diagnostics = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 2.0]])
+        .benchmark_compile_scene_with_diagnostics()
+        .expect("scene diagnostics");
+    assert_eq!(diagnostics.scene_compiles, 1);
+    assert_eq!(diagnostics.triangulations, 1);
+    assert_eq!(diagnostics.triangles_submitted, 2);
+    assert_eq!(diagnostics.actual_backend, "unresolved");
+    assert_eq!(diagnostics.readback_bytes, 0);
+}

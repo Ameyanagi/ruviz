@@ -33,15 +33,17 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | Work item | Status on `feat/3d-implementation` |
 | --- | --- |
 | 3D-00 | In progress: exact `3d` feature, exports, canonical compile contract, and concrete builders exist; benchmark manifest remains |
-| 3D-02 | In progress: f64 bounds/normalization, typed camera validation, orthographic/perspective matrices, and projection tests exist; clipping/unprojection remain |
-| 3D-03 | In progress: common 1D/2D ingestion, structured point/grid diagnostics, and multi-series builder validation exist; retained lowering remains |
+| 3D-01 | In progress: serializable diagnostics schema and retained-scene compile counters exist; deterministic dataset manifest and runner integration remain |
+| 3D-02 | Complete for the linear MVP: f64 bounds/normalization, typed camera validation, orthographic/perspective projection, unprojection, screen rays, and homogeneous six-plane clipping are tested |
+| 3D-03 | In progress: common 1D/2D ingestion, structured point/grid diagnostics, multi-series builders, and retained lowering exist; compile-fail and extended ecosystem-input matrices remain |
+| 3D-04 | In progress: coherent owned frames, stable dirty-domain keys, normalized primitive lowering, and geometry/appearance retention exist; BVH preparation remains |
 | 3D-05 through 3D-14 | Not started |
 
 The `render`, `save`, `render_to_svg`, and `show` method names are present so
 the canonical API is compile-tested. Until the 3D-06/3D-07 renderer/export
-milestones land, they validate the complete builder and then return an explicit
-`RenderError`; they do not route through the 2D renderer or create partial
-output.
+milestones land, they validate and compile the complete retained scene and then
+return an explicit `RenderError`; they do not route through the 2D renderer or
+create partial output.
 
 ## Decisions
 
@@ -1062,6 +1064,35 @@ Documentation must state:
   enabled 45 pre-existing `collapsible_if` findings across unrelated 2D code.
   Kept the existing Clippy MSRV for this slice and made the alignment a separate
   maintenance prerequisite rather than mixing a broad 2D rewrite into 3D-00.
+- Added inverse projection and normalized data-space screen rays with explicit
+  wgpu depth semantics (`0..=1`). Orthographic and perspective round trips are
+  tested on large-offset data; f64 offset removal happens before f32 camera
+  math, and the representative inverse error stays below `1e-3` data units.
+- Added Sutherland-Hodgman homogeneous triangle clipping and homogeneous segment
+  clipping for all six wgpu clip planes. Property tests cover arbitrary finite
+  clip-space triangles without panics or non-finite generated vertices.
+- Split retained scene state into appearance-independent normalized geometry and
+  styled scene batches. Camera-only updates reuse the exact scene allocation;
+  style-only updates reuse geometry allocations; data changes rebuild geometry.
+- Lowered high-level plots to the backend-neutral point/segment/indexed-mesh
+  vocabulary. Surface cells use the specified row-major split, smooth normals
+  are area-weighted, flat shading duplicates triangle vertices, wireframes emit
+  unique row/column edges, and source indices survive lowering for later
+  picking.
+- Confirmed NaN semantics during lowering: line segments do not bridge gaps and
+  each surface triangle is removed only when one of its own vertices is
+  non-finite. Infinity remains an ingestion error.
+- `SurfaceSampling::Auto` remains full-resolution for this static preparation
+  path. `MaxGrid` deterministically retains both endpoints and reports
+  `sampling_mode=max-grid`; interactive diagnosed LOD still belongs to the GPU
+  and interaction milestones.
+- Added the public serializable `RenderDiagnostics3D` schema and a hidden
+  benchmark compile terminal. Before a renderer executes it truthfully reports
+  `actual_backend=unresolved`, zero draw/readback/upload counters, and the
+  retained-scene compilation work that actually occurred.
+- Enforced the opaque MVP at validation time: translucent fixed colors and
+  translucent colormap entries are rejected instead of producing
+  order-dependent output.
 
 ## Primary references
 

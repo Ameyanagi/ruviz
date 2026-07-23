@@ -637,6 +637,11 @@ impl ColorMap {
     pub fn is_empty(&self) -> bool {
         self.colors.is_empty()
     }
+
+    #[cfg(feature = "3d")]
+    pub(crate) fn colors(&self) -> &[Color] {
+        &self.colors
+    }
 }
 
 // Predefined colormaps

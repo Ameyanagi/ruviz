@@ -17,6 +17,8 @@ pub mod style;
 pub mod text;
 pub(crate) mod text_anchor;
 pub mod theme;
+#[cfg(feature = "3d")]
+pub(crate) mod three_d;
 pub mod typst_text;
 
 pub use backend::Renderer;

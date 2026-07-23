@@ -12,16 +12,16 @@ use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme};
 use super::{AxisAspect3D, Camera3D, Point3D};
 
 #[derive(Debug, Default)]
-struct Plot3D {
-    series: Vec<Series3D>,
-    camera: Camera3D,
-    figure: FigureConfig,
-    theme: Theme,
-    title: Option<String>,
-    xlabel: Option<String>,
-    ylabel: Option<String>,
-    zlabel: Option<String>,
-    pending_error: Option<PlottingError>,
+pub(super) struct Plot3D {
+    pub(super) series: Vec<Series3D>,
+    pub(super) camera: Camera3D,
+    pub(super) figure: FigureConfig,
+    pub(super) theme: Theme,
+    pub(super) title: Option<String>,
+    pub(super) xlabel: Option<String>,
+    pub(super) ylabel: Option<String>,
+    pub(super) zlabel: Option<String>,
+    pub(super) pending_error: Option<PlottingError>,
 }
 
 impl Plot3D {
@@ -31,31 +31,13 @@ impl Plot3D {
         }
     }
 
-    fn validate_and_bounds(mut self) -> Result<Bounds3D> {
-        if let Some(error) = self.pending_error.take() {
-            return Err(error);
-        }
-        self.camera.validate()?;
-        validate_figure(&self.figure)?;
-        if self.series.is_empty() {
-            return Err(PlottingError::NoDataSeries);
-        }
-
-        let mut combined: Option<Bounds3D> = None;
-        for series in &self.series {
-            series.validate_style()?;
-            let bounds = series.bounds()?;
-            match &mut combined {
-                Some(combined) => combined.include(bounds),
-                None => combined = Some(bounds),
-            }
-        }
-        combined.ok_or(PlottingError::EmptyDataSet)
+    fn validate_and_bounds(self) -> Result<Bounds3D> {
+        self.resolve().map(|frame| frame.bounds)
     }
 }
 
-#[derive(Debug)]
-enum Series3D {
+#[derive(Clone, Debug)]
+pub(super) enum Series3D {
     Scatter {
         data: Points3DData,
         config: Scatter3DConfig,
@@ -79,34 +61,53 @@ enum Series3D {
 }
 
 impl Series3D {
-    fn bounds(&self) -> Result<Bounds3D> {
+    pub(super) fn bounds(&self) -> Result<Bounds3D> {
         match self {
             Self::Scatter { data, .. } | Self::Line { data, .. } => point_data_bounds(data),
             Self::Surface { data, .. } | Self::Wireframe { data, .. } => grid_data_bounds(data),
         }
     }
 
-    fn validate_style(&self) -> Result<()> {
+    pub(super) fn validate_style(&self) -> Result<()> {
         match self {
             Self::Scatter { config, label, .. } => {
                 validate_positive_style("scatter3d marker size", config.marker_size)?;
+                validate_opaque_color("scatter3d", config.color)?;
                 validate_label(label)
             }
             Self::Line { config, label, .. } => {
                 validate_positive_style("line3d line width", config.line_width)?;
+                validate_opaque_color("line3d", config.color)?;
                 validate_label(label)
             }
             Self::Surface { config, label, .. } => {
-                validate_sampling(config.sampling)?;
+                validate_sampling("surface", config.sampling)?;
+                validate_opaque_color("surface", config.color)?;
+                if config.colormap.colors().iter().any(|color| color.a != 255) {
+                    return Err(PlottingError::InvalidInput(
+                        "surface: transparent colormap entries are unsupported in the opaque MVP"
+                            .to_string(),
+                    ));
+                }
                 validate_label(label)
             }
             Self::Wireframe { config, label, .. } => {
                 validate_positive_style("wireframe line width", config.line_width)?;
-                validate_sampling(config.sampling)?;
+                validate_sampling("wireframe", config.sampling)?;
+                validate_opaque_color("wireframe", config.color)?;
                 validate_label(label)
             }
         }
     }
+}
+
+fn validate_opaque_color(operation: &str, color: Option<Color>) -> Result<()> {
+    if color.is_some_and(|color| color.a != 255) {
+        return Err(PlottingError::InvalidInput(format!(
+            "{operation}: transparency is unsupported in the opaque 3D MVP"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_label(label: &Option<String>) -> Result<()> {
@@ -118,13 +119,13 @@ fn validate_label(label: &Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn validate_sampling(sampling: SurfaceSampling) -> Result<()> {
+fn validate_sampling(operation: &str, sampling: SurfaceSampling) -> Result<()> {
     if let SurfaceSampling::MaxGrid { rows, columns } = sampling
         && (rows < 2 || columns < 2)
     {
         return Err(PlottingError::InvalidTopology3D {
             reason: format!(
-                "surface sampling dimensions must each be at least 2, got {rows}x{columns}"
+                "{operation} sampling dimensions must each be at least 2, got {rows}x{columns}"
             ),
         });
     }
@@ -141,7 +142,7 @@ fn validate_positive_style(name: &str, value: f32) -> Result<()> {
     }
 }
 
-fn validate_figure(figure: &FigureConfig) -> Result<()> {
+pub(super) fn validate_figure(figure: &FigureConfig) -> Result<()> {
     if !figure.width.is_finite()
         || !figure.height.is_finite()
         || figure.width <= 0.0
@@ -180,7 +181,7 @@ fn grid_data_bounds(data: &Grid3DData) -> Result<Bounds3D> {
 
 fn rendering_not_available() -> PlottingError {
     PlottingError::RenderError(
-        "3D rendering is not available in this implementation slice; the public API, validation, bounds, and camera math are enabled by feature `3d`"
+        "3D rasterization is not available in this implementation slice; the retained scene was validated and compiled successfully"
             .to_string(),
     )
 }
@@ -327,12 +328,22 @@ macro_rules! impl_common_builder {
                 self.finalize().validate_and_bounds()
             }
 
+            /// Compile the retained scene and return structured benchmark counters.
+            #[doc(hidden)]
+            pub fn benchmark_compile_scene_with_diagnostics(
+                self,
+            ) -> Result<super::RenderDiagnostics3D> {
+                self.finalize()
+                    .prepare_once()
+                    .map(|(_, diagnostics)| diagnostics)
+            }
+
             /// Render an in-memory image.
             ///
             /// The method is part of the alpha API contract. Rasterization is
             /// delivered by the software depth-renderer milestone.
             pub fn render(self) -> Result<Image> {
-                self.finalize().validate_and_bounds()?;
+                self.finalize().prepare_once()?;
                 Err(rendering_not_available())
             }
 
@@ -351,7 +362,7 @@ macro_rules! impl_common_builder {
 
             /// Render a hybrid SVG document.
             pub fn render_to_svg(self) -> Result<String> {
-                self.finalize().validate_and_bounds()?;
+                self.finalize().prepare_once()?;
                 Err(rendering_not_available())
             }
 
@@ -366,7 +377,7 @@ macro_rules! impl_common_builder {
             /// Show the plot in a native interactive window.
             #[cfg(not(target_arch = "wasm32"))]
             pub fn show(self) -> Result<()> {
-                self.finalize().validate_and_bounds()?;
+                self.finalize().prepare_once()?;
                 Err(rendering_not_available())
             }
         }
@@ -413,7 +424,7 @@ impl Scatter3DBuilder {
         }
     }
 
-    fn finalize(mut self) -> Plot3D {
+    pub(super) fn finalize(mut self) -> Plot3D {
         if let Some(data) = self.data.take() {
             self.plot.series.push(Series3D::Scatter {
                 data,
@@ -489,7 +500,7 @@ impl Line3DBuilder {
         }
     }
 
-    fn finalize(mut self) -> Plot3D {
+    pub(super) fn finalize(mut self) -> Plot3D {
         if let Some(data) = self.data.take() {
             self.plot.series.push(Series3D::Line {
                 data,
@@ -562,7 +573,7 @@ impl Surface3DBuilder {
         }
     }
 
-    fn finalize(mut self) -> Plot3D {
+    pub(super) fn finalize(mut self) -> Plot3D {
         if let Some(data) = self.data.take() {
             self.plot.series.push(Series3D::Surface {
                 data,
@@ -647,7 +658,7 @@ impl Wireframe3DBuilder {
         }
     }
 
-    fn finalize(mut self) -> Plot3D {
+    pub(super) fn finalize(mut self) -> Plot3D {
         if let Some(data) = self.data.take() {
             self.plot.series.push(Series3D::Wireframe {
                 data,
@@ -732,5 +743,14 @@ mod tests {
                 .validate()
                 .expect_err("invalid sampling");
         assert!(matches!(error, PlottingError::InvalidTopology3D { .. }));
+    }
+
+    #[test]
+    fn transparent_styles_are_rejected_for_the_opaque_mvp() {
+        let error = Scatter3DBuilder::from_data(&[0.0], &[0.0], &[0.0])
+            .color(Color::new_rgba(255, 0, 0, 128))
+            .validate()
+            .expect_err("transparent scatter");
+        assert!(error.to_string().contains("transparency is unsupported"));
     }
 }

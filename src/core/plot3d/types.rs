@@ -16,11 +16,11 @@ impl Point3D {
         Self { x, y, z }
     }
 
-    fn is_finite(self) -> bool {
+    pub(crate) fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
 
-    fn has_infinite_component(self) -> bool {
+    pub(crate) fn has_infinite_component(self) -> bool {
         self.x.is_infinite() || self.y.is_infinite() || self.z.is_infinite()
     }
 }
@@ -117,11 +117,19 @@ impl Bounds3D {
         self.max.z = self.max.z.max(other.max.z);
     }
 
-    fn normalize(self, point: Point3D, aspect: Vec3) -> Vec3 {
+    pub(crate) fn normalize(self, point: Point3D, aspect: Vec3) -> Vec3 {
         Vec3::new(
             normalize_axis(point.x, self.min.x, self.max.x, aspect.x),
             normalize_axis(point.y, self.min.y, self.max.y, aspect.y),
             normalize_axis(point.z, self.min.z, self.max.z, aspect.z),
+        )
+    }
+
+    fn denormalize(self, point: Vec3, aspect: Vec3) -> Point3D {
+        Point3D::new(
+            denormalize_axis(point.x, self.min.x, self.max.x, aspect.x),
+            denormalize_axis(point.y, self.min.y, self.max.y, aspect.y),
+            denormalize_axis(point.z, self.min.z, self.max.z, aspect.z),
         )
     }
 }
@@ -144,6 +152,18 @@ fn normalize_axis(value: f64, low: f64, high: f64, aspect: f32) -> f32 {
     let center = midpoint(low, high);
     let half_span = high * 0.5 - low * 0.5;
     ((value - center) / half_span) as f32 * aspect
+}
+
+fn denormalize_axis(value: f32, low: f64, high: f64, aspect: f32) -> f64 {
+    let center = midpoint(low, high);
+    let half_span = if low == high {
+        // Degenerate data ranges still need a meaningful inverse mapping for
+        // screen rays and picking around a single point.
+        1.0
+    } else {
+        high * 0.5 - low * 0.5
+    };
+    center + f64::from(value / aspect) * half_span
 }
 
 /// Projection used by a 3D camera.
@@ -356,6 +376,82 @@ impl Camera3D {
         })
     }
 
+    /// Unproject a viewport pixel at an explicit wgpu-compatible depth.
+    ///
+    /// `depth` is in the closed range `0..=1`, where zero is the near clip
+    /// plane and one is the far clip plane.
+    pub fn unproject_at_depth(
+        self,
+        screen_x: f32,
+        screen_y: f32,
+        depth: f32,
+        bounds: Bounds3D,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) -> Result<Point3D> {
+        validate_viewport(viewport_width, viewport_height)?;
+        self.validate()?;
+        let bounds = Bounds3D::new(bounds.min, bounds.max)?;
+        validate_screen_coordinate("screen_x", screen_x)?;
+        validate_screen_coordinate("screen_y", screen_y)?;
+        if !depth.is_finite() || !(0.0..=1.0).contains(&depth) {
+            return Err(PlottingError::InvalidCamera3D {
+                field: "depth",
+                value: depth,
+                reason: "must be finite and between 0 and 1",
+            });
+        }
+
+        let prepared = self.prepare(viewport_width as f32 / viewport_height as f32)?;
+        let local = unproject_local(
+            prepared.inverse_view_projection,
+            screen_x,
+            screen_y,
+            depth,
+            viewport_width,
+            viewport_height,
+        )?;
+        Ok(bounds.denormalize(local, prepared.axis_aspect))
+    }
+
+    /// Construct a data-space ray through a viewport pixel.
+    pub fn screen_ray(
+        self,
+        screen_x: f32,
+        screen_y: f32,
+        bounds: Bounds3D,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) -> Result<ScreenRay3D> {
+        let origin = self.unproject_at_depth(
+            screen_x,
+            screen_y,
+            0.0,
+            bounds,
+            viewport_width,
+            viewport_height,
+        )?;
+        let far = self.unproject_at_depth(
+            screen_x,
+            screen_y,
+            1.0,
+            bounds,
+            viewport_width,
+            viewport_height,
+        )?;
+        let mut direction = Point3D::new(far.x - origin.x, far.y - origin.y, far.z - origin.z);
+        let length = direction.x.hypot(direction.y).hypot(direction.z);
+        if !length.is_finite() || length == 0.0 {
+            return Err(PlottingError::InvalidTopology3D {
+                reason: "screen ray has a degenerate data-space direction".to_string(),
+            });
+        }
+        direction.x /= length;
+        direction.y /= length;
+        direction.z /= length;
+        Ok(ScreenRay3D { origin, direction })
+    }
+
     pub(crate) fn prepare(self, viewport_aspect: f32) -> Result<PreparedCamera3D> {
         self.validate()?;
         if !viewport_aspect.is_finite() || viewport_aspect <= 0.0 {
@@ -373,11 +469,7 @@ impl Camera3D {
             elevation.cos() * azimuth.sin(),
             elevation.sin(),
         );
-        let eye = eye_direction * 4.0;
-        let forward = (-eye).normalize();
-        let up = Quat::from_axis_angle(forward, self.roll_deg.to_radians()) * Vec3::Z;
-        let view = Mat4::look_at_rh(eye, Vec3::ZERO, up);
-        let projection = match self.projection {
+        let (eye_distance, projection) = match self.projection {
             Projection3D::Orthographic => {
                 let (half_width, half_height) = if viewport_aspect >= 1.0 {
                     let half_height = 1.8 / self.zoom;
@@ -386,19 +478,37 @@ impl Camera3D {
                     let half_width = 1.8 / self.zoom;
                     (half_width, half_width / viewport_aspect)
                 };
-                Mat4::orthographic_rh(
-                    -half_width,
-                    half_width,
-                    -half_height,
-                    half_height,
-                    0.01,
-                    100.0,
+                (
+                    4.0,
+                    Mat4::orthographic_rh(
+                        -half_width,
+                        half_width,
+                        -half_height,
+                        half_height,
+                        0.01,
+                        100.0,
+                    ),
                 )
             }
             Projection3D::Perspective { vertical_fov_deg } => {
-                Mat4::perspective_rh(vertical_fov_deg.to_radians(), viewport_aspect, 0.01, 100.0)
+                let base_half_y = vertical_fov_deg.to_radians() * 0.5;
+                let base_half_x = (base_half_y.tan() * viewport_aspect).atan();
+                let limiting_half_fov = base_half_x.min(base_half_y);
+                let scene_radius = Vec3::new(1.0, 1.0, 0.75).length();
+                let eye_distance = scene_radius / limiting_half_fov.sin() * 1.05;
+                let effective_half_y = (base_half_y.tan() / self.zoom).atan();
+                let near = (eye_distance - scene_radius * 1.25).max(0.001);
+                let far = eye_distance + scene_radius * 1.25;
+                (
+                    eye_distance,
+                    Mat4::perspective_rh(effective_half_y * 2.0, viewport_aspect, near, far),
+                )
             }
         };
+        let eye = eye_direction * eye_distance;
+        let forward = (-eye).normalize();
+        let up = Quat::from_axis_angle(forward, self.roll_deg.to_radians()) * Vec3::Z;
+        let view = Mat4::look_at_rh(eye, Vec3::ZERO, up);
         let view_projection = projection * view;
         Ok(PreparedCamera3D {
             view_projection,
@@ -406,6 +516,47 @@ impl Camera3D {
             axis_aspect: self.aspect.resolved(),
         })
     }
+}
+
+fn validate_viewport(width: u32, height: u32) -> Result<()> {
+    if width == 0 || height == 0 {
+        Err(PlottingError::InvalidDimensions { width, height })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_screen_coordinate(field: &'static str, value: f32) -> Result<()> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(PlottingError::InvalidCamera3D {
+            field,
+            value,
+            reason: "must be finite",
+        })
+    }
+}
+
+fn unproject_local(
+    inverse_view_projection: Mat4,
+    screen_x: f32,
+    screen_y: f32,
+    depth: f32,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> Result<Vec3> {
+    let ndc_x = screen_x / viewport_width as f32 * 2.0 - 1.0;
+    let ndc_y = 1.0 - screen_y / viewport_height as f32 * 2.0;
+    let homogeneous = inverse_view_projection * Vec3::new(ndc_x, ndc_y, depth).extend(1.0);
+    if !homogeneous.is_finite() || homogeneous.w.abs() <= f32::EPSILON {
+        return Err(PlottingError::InvalidCamera3D {
+            field: "inverse_view_projection",
+            value: homogeneous.w,
+            reason: "produced a non-finite or zero homogeneous divisor",
+        });
+    }
+    Ok(homogeneous.truncate() / homogeneous.w)
 }
 
 impl Default for Camera3D {
@@ -457,6 +608,15 @@ pub struct ProjectedPoint3D {
     pub depth: f32,
     /// Whether the point lies inside all six clip planes.
     pub visible: bool,
+}
+
+/// A normalized data-space ray through a viewport pixel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenRay3D {
+    /// Point on the near clip plane.
+    pub origin: Point3D,
+    /// Unit-length direction in data coordinates.
+    pub direction: Point3D,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -541,6 +701,82 @@ mod tests {
         assert_abs_diff_eq!(projected.y, 300.0, epsilon = 1.0e-3);
         assert!(projected.visible);
         assert!((0.0..=1.0).contains(&projected.depth));
+    }
+
+    #[test]
+    fn project_unproject_roundtrips_orthographic_and_perspective_points() {
+        let bounds = Bounds3D::new(
+            Point3D::new(1.0e12, -4.0, 2.0),
+            Point3D::new(1.0e12 + 8.0, 12.0, 10.0),
+        )
+        .expect("bounds");
+        let point = Point3D::new(1.0e12 + 3.0, 1.5, 6.0);
+        for camera in [
+            Camera3D::default(),
+            Camera3D::default().perspective_deg(45.0),
+        ] {
+            let projected = camera.project(point, bounds, 900, 600).expect("projection");
+            assert!(projected.visible);
+            let unprojected = camera
+                .unproject_at_depth(projected.x, projected.y, projected.depth, bounds, 900, 600)
+                .expect("unprojection");
+            assert_abs_diff_eq!(unprojected.x, point.x, epsilon = 1.0e-3);
+            assert_abs_diff_eq!(unprojected.y, point.y, epsilon = 1.0e-3);
+            assert_abs_diff_eq!(unprojected.z, point.z, epsilon = 1.0e-3);
+        }
+    }
+
+    #[test]
+    fn screen_ray_has_unit_data_space_direction() {
+        let bounds = Bounds3D::new(Point3D::new(-2.0, -4.0, -8.0), Point3D::new(2.0, 4.0, 8.0))
+            .expect("bounds");
+        let ray = Camera3D::default()
+            .perspective_deg(50.0)
+            .screen_ray(320.0, 240.0, bounds, 640, 480)
+            .expect("ray");
+        let length = ray
+            .direction
+            .x
+            .hypot(ray.direction.y)
+            .hypot(ray.direction.z);
+        assert_abs_diff_eq!(length, 1.0, epsilon = 1.0e-9);
+    }
+
+    #[test]
+    fn unprojection_rejects_depth_outside_wgpu_range() {
+        let bounds = Bounds3D::new(Point3D::new(-1.0, -1.0, -1.0), Point3D::new(1.0, 1.0, 1.0))
+            .expect("bounds");
+        let error = Camera3D::default()
+            .unproject_at_depth(10.0, 10.0, -0.1, bounds, 100, 100)
+            .expect_err("negative depth");
+        assert!(matches!(
+            error,
+            PlottingError::InvalidCamera3D { field: "depth", .. }
+        ));
+    }
+
+    #[test]
+    fn perspective_zoom_changes_apparent_size_without_moving_center() {
+        let bounds = Bounds3D::new(Point3D::new(-1.0, -1.0, -1.0), Point3D::new(1.0, 1.0, 1.0))
+            .expect("bounds");
+        let point = Point3D::new(1.0, 0.0, 0.0);
+        let normal = Camera3D::default()
+            .perspective_deg(45.0)
+            .project(point, bounds, 800, 600)
+            .expect("normal");
+        let zoomed = Camera3D::default()
+            .perspective_deg(45.0)
+            .zoom(2.0)
+            .project(point, bounds, 800, 600)
+            .expect("zoomed");
+        assert!((zoomed.x - 400.0).abs() > (normal.x - 400.0).abs());
+        let center = Camera3D::default()
+            .perspective_deg(45.0)
+            .zoom(2.0)
+            .project(bounds.center(), bounds, 800, 600)
+            .expect("center");
+        assert_abs_diff_eq!(center.x, 400.0, epsilon = 1.0e-3);
+        assert_abs_diff_eq!(center.y, 300.0, epsilon = 1.0e-3);
     }
 
     #[test]

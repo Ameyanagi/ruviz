@@ -53,7 +53,7 @@ pub use plot::{
 #[cfg(feature = "3d")]
 pub use plot3d::{
     AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, Point3D, ProjectedPoint3D, Projection3D,
-    Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder,
+    RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D, Surface3DBuilder, Wireframe3DBuilder,
 };
 pub use position::Position;
 pub use style::PlotStyle;
