@@ -27,6 +27,13 @@ fn terminal_contract() -> ruviz::core::Result<()> {
     let _ = scatter3d(&values, &values, &values).render()?;
     let _ = scatter3d(&values, &values, &values).render_png_bytes()?;
     let _ = scatter3d(&values, &values, &values).render_to_svg()?;
+    #[cfg(feature = "gpu")]
+    {
+        let _ = scatter3d(&values, &values, &values).render_gpu()?;
+        let _ = scatter3d(&values, &values, &values).render_gpu_png_bytes()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        scatter3d(&values, &values, &values).save_gpu("plot.png")?;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         scatter3d(&values, &values, &values).save("plot.png")?;

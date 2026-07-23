@@ -213,6 +213,30 @@ impl Plot3D {
         )?;
         Ok((svg, prepared.diagnostics))
     }
+
+    #[cfg(feature = "gpu")]
+    fn render_gpu_image(self) -> Result<(Image, super::RenderDiagnostics3D)> {
+        let prepared = self.render_gpu_layer()?;
+        let image = compose_image(
+            &prepared.layout,
+            &prepared.frame.figure,
+            &prepared.frame.theme,
+            prepared.layer,
+        )?;
+        Ok((image, prepared.diagnostics))
+    }
+
+    #[cfg(feature = "gpu")]
+    fn render_gpu_svg(self) -> Result<(String, super::RenderDiagnostics3D)> {
+        let prepared = self.render_gpu_layer()?;
+        let svg = compose_svg(
+            &prepared.layout,
+            &prepared.frame.figure,
+            &prepared.frame.theme,
+            &prepared.layer,
+        )?;
+        Ok((svg, prepared.diagnostics))
+    }
 }
 
 macro_rules! impl_common_builder {
@@ -402,9 +426,41 @@ macro_rules! impl_common_builder {
                 self.finalize().render_image()
             }
 
+            /// Render through direct offscreen wgpu and return structured counters.
+            #[cfg(feature = "gpu")]
+            #[doc(hidden)]
+            pub fn benchmark_render_gpu_with_diagnostics(
+                self,
+            ) -> Result<(Image, super::RenderDiagnostics3D)> {
+                self.finalize().render_gpu_image()
+            }
+
+            /// Create a retained no-readback GPU performance session.
+            #[cfg(feature = "gpu")]
+            #[doc(hidden)]
+            pub fn benchmark_gpu_session(self) -> Result<super::GpuBenchmarkSession3D> {
+                super::GpuBenchmarkSession3D::new(self.finalize())
+            }
+
             /// Render an in-memory image.
             pub fn render(self) -> Result<Image> {
                 self.finalize().render_image().map(|(image, _)| image)
+            }
+
+            /// Render an in-memory image through direct offscreen wgpu.
+            ///
+            /// This is an explicit GPU request and returns an error when no
+            /// compatible adapter is available. The normal [`Self::render`]
+            /// terminal remains the deterministic CPU reference.
+            #[cfg(feature = "gpu")]
+            pub fn render_gpu(self) -> Result<Image> {
+                self.finalize().render_gpu_image().map(|(image, _)| image)
+            }
+
+            /// Render PNG bytes through direct offscreen wgpu.
+            #[cfg(feature = "gpu")]
+            pub fn render_gpu_png_bytes(self) -> Result<Vec<u8>> {
+                self.render_gpu()?.encode_png()
             }
 
             /// Render PNG bytes.
@@ -433,6 +489,37 @@ macro_rules! impl_common_builder {
                     #[cfg(feature = "pdf")]
                     "pdf" => {
                         let svg = self.render_to_svg()?;
+                        let pdf = crate::export::svg_to_pdf(&svg)?;
+                        crate::export::write_bytes_atomic(path, &pdf)
+                    }
+                    _ => Err(PlottingError::UnsupportedFormat(extension)),
+                }
+            }
+
+            /// Save through direct offscreen wgpu.
+            ///
+            /// PNG uses the composited GPU image. SVG and PDF keep vector
+            /// Axis3 text around one depth-tested GPU raster layer.
+            #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+            pub fn save_gpu<P: AsRef<Path>>(self, path: P) -> Result<()> {
+                let path = path.as_ref();
+                let extension = path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .unwrap_or("png")
+                    .to_ascii_lowercase();
+                match extension.as_str() {
+                    "png" => {
+                        let bytes = self.render_gpu_png_bytes()?;
+                        crate::export::write_bytes_atomic(path, &bytes)
+                    }
+                    "svg" => {
+                        let svg = self.finalize().render_gpu_svg()?.0;
+                        crate::export::write_bytes_atomic(path, svg.as_bytes())
+                    }
+                    #[cfg(feature = "pdf")]
+                    "pdf" => {
+                        let svg = self.finalize().render_gpu_svg()?.0;
                         let pdf = crate::export::svg_to_pdf(&svg)?;
                         crate::export::write_bytes_atomic(path, &pdf)
                     }

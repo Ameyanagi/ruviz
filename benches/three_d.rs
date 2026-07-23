@@ -2,6 +2,8 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+#[cfg(feature = "gpu")]
+use ruviz::core::Camera3D;
 use ruviz::{scatter3d, surface};
 
 fn scatter_data(size: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
@@ -112,5 +114,93 @@ fn benchmark_surface(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(three_d_benches, benchmark_scatter, benchmark_surface);
+fn benchmark_gpu_export(c: &mut Criterion) {
+    #[cfg(feature = "gpu")]
+    {
+        let mut group = c.benchmark_group("3d/gpu/scene-upload-export");
+        group.sample_size(10);
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+
+        let (x, y, z) = scatter_data(100_000);
+        group.throughput(Throughput::Elements(100_000));
+        group.bench_function("scatter-100000-640x480", |b| {
+            b.iter(|| {
+                black_box(
+                    scatter3d(black_box(&x), black_box(&y), black_box(&z))
+                        .benchmark_render_gpu_with_diagnostics()
+                        .expect("direct GPU scatter export"),
+                )
+            });
+        });
+
+        let (x, y, z) = surface_data(100);
+        group.throughput(Throughput::Elements(19_602));
+        group.bench_function("surface-100x100-640x480", |b| {
+            b.iter(|| {
+                black_box(
+                    surface(black_box(&x), black_box(&y), black_box(&z))
+                        .benchmark_render_gpu_with_diagnostics()
+                        .expect("direct GPU surface export"),
+                )
+            });
+        });
+        group.finish();
+
+        let (x, y, z) = scatter_data(100_000);
+        let mut scatter_session = scatter3d(&x, &y, &z)
+            .benchmark_gpu_session()
+            .expect("retained GPU scatter session");
+        scatter_session
+            .render_no_readback()
+            .expect("prime retained GPU scatter");
+        let (surface_x, surface_y, surface_z) = surface_data(100);
+        let mut surface_session = surface(&surface_x, &surface_y, &surface_z)
+            .benchmark_gpu_session()
+            .expect("retained GPU surface session");
+        surface_session
+            .render_no_readback()
+            .expect("prime retained GPU surface");
+
+        let mut group = c.benchmark_group("3d/gpu/retained-camera-no-readback");
+        group.sample_size(10);
+        group.warm_up_time(Duration::from_millis(500));
+        group.measurement_time(Duration::from_secs(2));
+        let mut frame = 0_u64;
+        group.throughput(Throughput::Elements(100_000));
+        group.bench_function("scatter-100000-640x480", |b| {
+            b.iter(|| {
+                frame = frame.wrapping_add(1);
+                let camera = Camera3D::default().azimuth_deg((frame % 360) as f32);
+                black_box(
+                    scatter_session
+                        .render_camera_no_readback(camera)
+                        .expect("retained GPU scatter camera frame"),
+                )
+            });
+        });
+        group.throughput(Throughput::Elements(19_602));
+        group.bench_function("surface-100x100-640x480", |b| {
+            b.iter(|| {
+                frame = frame.wrapping_add(1);
+                let camera = Camera3D::default().azimuth_deg((frame % 360) as f32);
+                black_box(
+                    surface_session
+                        .render_camera_no_readback(camera)
+                        .expect("retained GPU surface camera frame"),
+                )
+            });
+        });
+        group.finish();
+    }
+    #[cfg(not(feature = "gpu"))]
+    let _ = c;
+}
+
+criterion_group!(
+    three_d_benches,
+    benchmark_scatter,
+    benchmark_surface,
+    benchmark_gpu_export
+);
 criterion_main!(three_d_benches);

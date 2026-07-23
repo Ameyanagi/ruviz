@@ -50,6 +50,8 @@ pub use plot::{
     ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle, SurfaceCapability,
     SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint, ViewportRect,
 };
+#[cfg(all(feature = "3d", feature = "gpu"))]
+pub use plot3d::GpuBenchmarkSession3D;
 #[cfg(feature = "3d")]
 pub use plot3d::{
     AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D,

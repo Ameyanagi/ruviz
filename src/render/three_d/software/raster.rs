@@ -37,6 +37,10 @@ impl SoftwareQuality3D {
             Self::Export => &EXPORT_SAMPLE_OFFSETS,
         }
     }
+
+    pub(crate) fn sample_count(self) -> u32 {
+        self.sample_offsets().len() as u32
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

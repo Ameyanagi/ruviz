@@ -16,6 +16,8 @@ pub struct RenderDiagnostics3D {
     pub primitives_culled: u64,
     pub readback_bytes: u64,
     pub actual_backend: String,
+    pub adapter_name: Option<String>,
+    pub sample_count: u32,
     pub fallback_reason: Option<String>,
     pub sampling_mode: String,
 }
@@ -37,6 +39,8 @@ impl Default for RenderDiagnostics3D {
             primitives_culled: 0,
             readback_bytes: 0,
             actual_backend: "unresolved".to_string(),
+            adapter_name: None,
+            sample_count: 0,
             fallback_reason: None,
             sampling_mode: "full".to_string(),
         }
@@ -53,6 +57,8 @@ mod tests {
             .expect("serialize 3D diagnostics");
         assert!(json.contains("\"scene_compiles\":0"));
         assert!(json.contains("\"actual_backend\":\"unresolved\""));
+        assert!(json.contains("\"adapter_name\":null"));
+        assert!(json.contains("\"sample_count\":0"));
         assert!(json.contains("\"sampling_mode\":\"full\""));
     }
 }

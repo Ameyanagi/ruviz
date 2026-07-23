@@ -22,6 +22,7 @@ pub(crate) struct LineGeometryBatch3D {
 
 /// A normalized mesh vertex with renderer-neutral interpolants.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "gpu", derive(bytemuck::Pod, bytemuck::Zeroable))]
 #[repr(C)]
 pub(crate) struct MeshVertex3D {
     pub(crate) position: [f32; 3],

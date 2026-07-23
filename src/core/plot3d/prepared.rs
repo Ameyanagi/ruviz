@@ -2,9 +2,13 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
+#[cfg(feature = "gpu")]
+use crate::core::Image;
 use crate::core::{Bounds3D, PlottingError, Result};
 use crate::plots::three_d::{Grid3DData, Points3DData};
 use crate::plots::{SurfaceSampling, SurfaceShading};
+#[cfg(feature = "gpu")]
+use crate::render::three_d::gpu::{GpuFrameOutput3D, Wgpu3DRenderer, render_with_shared_renderer};
 use crate::render::three_d::scene::{
     LineBatch3D, LineGeometryBatch3D, MeshBatch3D, MeshColor3D, MeshGeometryBatch3D, MeshStyle3D,
     MeshVertex3D, PointBatch3D, PointGeometryBatch3D, PointStyle3D, Scene3D, SceneGeometry3D,
@@ -113,11 +117,13 @@ impl Plot3D {
         self,
         options: SoftwareRenderOptions3D,
     ) -> Result<PreparedSoftwareFrame3D> {
+        let sample_count = options.quality.sample_count();
         let frame = self.resolve()?;
         let layout = Axis3Layout::resolve(&frame)?;
         let (scene, mut diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
         let output = render_scene(&scene, &layout, frame.figure.dpi, options)?;
         diagnostics.actual_backend = "cpu3d".to_string();
+        diagnostics.sample_count = sample_count;
         diagnostics.draw_calls = output.draw_calls;
         diagnostics.primitives_culled = output.primitives_culled;
         diagnostics.readback_bytes = 0;
@@ -128,6 +134,29 @@ impl Plot3D {
             diagnostics,
         })
     }
+
+    #[cfg(feature = "gpu")]
+    pub(super) fn render_gpu_layer(self) -> Result<PreparedGpuFrame3D> {
+        let frame = self.resolve()?;
+        let layout = Axis3Layout::resolve(&frame)?;
+        let (scene, mut diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
+        let output = render_with_shared_renderer(&scene, &layout, frame.figure.dpi)?;
+        diagnostics.actual_backend = "gpu3d".to_string();
+        diagnostics.adapter_name = Some(output.adapter_name);
+        diagnostics.sample_count = output.sample_count;
+        diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
+        diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
+        diagnostics.buffer_creations = output.resource_update.buffer_creations;
+        diagnostics.camera_uniform_writes = output.camera_uniform_writes;
+        diagnostics.draw_calls = output.draw_calls;
+        diagnostics.readback_bytes = output.readback_bytes;
+        Ok(PreparedGpuFrame3D {
+            frame,
+            layout,
+            layer: output.layer,
+            diagnostics,
+        })
+    }
 }
 
 pub(super) struct PreparedSoftwareFrame3D {
@@ -135,6 +164,81 @@ pub(super) struct PreparedSoftwareFrame3D {
     pub(super) layout: Axis3Layout,
     pub(super) output: SoftwareRenderOutput3D,
     pub(super) diagnostics: RenderDiagnostics3D,
+}
+
+#[cfg(feature = "gpu")]
+pub(super) struct PreparedGpuFrame3D {
+    pub(super) frame: ResolvedFrame3D,
+    pub(super) layout: Axis3Layout,
+    pub(super) layer: Image,
+    pub(super) diagnostics: RenderDiagnostics3D,
+}
+
+/// Retained no-readback GPU session used by the 3d performance contract.
+///
+/// This is intentionally hidden from the canonical plotting API. It keeps one
+/// prepared scene and renderer so benchmarks can measure camera-only frames
+/// without ingestion, geometry upload, static readback, or image composition.
+#[cfg(feature = "gpu")]
+#[doc(hidden)]
+pub struct GpuBenchmarkSession3D {
+    frame: ResolvedFrame3D,
+    scene: Arc<Scene3D>,
+    renderer: Wgpu3DRenderer,
+    first_diagnostics: Option<RenderDiagnostics3D>,
+    sampling_mode: String,
+}
+
+#[cfg(feature = "gpu")]
+impl GpuBenchmarkSession3D {
+    pub(super) fn new(plot: Plot3D) -> Result<Self> {
+        let frame = plot.resolve()?;
+        let (scene, diagnostics) = PreparedSceneCache3D::default().prepare(&frame)?;
+        Ok(Self {
+            frame,
+            scene,
+            renderer: Wgpu3DRenderer::new()?,
+            sampling_mode: diagnostics.sampling_mode.clone(),
+            first_diagnostics: Some(diagnostics),
+        })
+    }
+
+    /// Submit and wait for one retained frame without reading pixels to the CPU.
+    pub fn render_no_readback(&mut self) -> Result<RenderDiagnostics3D> {
+        self.render_camera_no_readback(self.frame.camera)
+    }
+
+    /// Update only the camera, then submit and wait without CPU readback.
+    pub fn render_camera_no_readback(
+        &mut self,
+        camera: super::Camera3D,
+    ) -> Result<RenderDiagnostics3D> {
+        camera.validate()?;
+        self.frame.camera = camera;
+        let layout = Axis3Layout::resolve(&self.frame)?;
+        let output =
+            self.renderer
+                .render_without_readback(&self.scene, &layout, self.frame.figure.dpi)?;
+        let mut diagnostics = self.first_diagnostics.take().unwrap_or_default();
+        diagnostics.points_submitted = self.scene.point_count() as u64;
+        diagnostics.triangles_submitted = self.scene.triangle_count() as u64;
+        diagnostics.sampling_mode = self.sampling_mode.clone();
+        apply_no_readback_diagnostics(&mut diagnostics, output);
+        Ok(diagnostics)
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn apply_no_readback_diagnostics(diagnostics: &mut RenderDiagnostics3D, output: GpuFrameOutput3D) {
+    diagnostics.actual_backend = "gpu3d".to_string();
+    diagnostics.adapter_name = Some(output.adapter_name);
+    diagnostics.sample_count = output.sample_count;
+    diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
+    diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
+    diagnostics.buffer_creations = output.resource_update.buffer_creations;
+    diagnostics.camera_uniform_writes = output.camera_uniform_writes;
+    diagnostics.draw_calls = output.draw_calls;
+    diagnostics.readback_bytes = 0;
 }
 
 fn lower_geometry(
@@ -844,6 +948,172 @@ mod tests {
         assert!(!Arc::ptr_eq(&first, &second));
         assert_eq!(diagnostics.bvh_rebuilds, 1);
         assert_eq!(second.triangle_count(), 4);
+    }
+
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    #[test]
+    fn direct_gpu_camera_frame_reuses_geometry_and_appearance_resources() {
+        let base = surface(
+            &[0.0, 1.0, 2.0],
+            &[0.0, 1.0],
+            &[[0.0, 1.0, 0.0], [1.0, 2.0, 1.0]],
+        )
+        .finalize()
+        .resolve()
+        .expect("base");
+        let camera = surface(
+            &[0.0, 1.0, 2.0],
+            &[0.0, 1.0],
+            &[[0.0, 1.0, 0.0], [1.0, 2.0, 1.0]],
+        )
+        .azimuth_deg(15.0)
+        .finalize()
+        .resolve()
+        .expect("camera");
+        let mut prepared = PreparedSceneCache3D::default();
+        let (first_scene, _) = prepared.prepare(&base).expect("first scene");
+        let (camera_scene, diagnostics) = prepared.prepare(&camera).expect("camera scene");
+        assert!(Arc::ptr_eq(&first_scene, &camera_scene));
+        assert_eq!(diagnostics.scene_compiles, 0);
+
+        let first_layout = Axis3Layout::resolve(&base).expect("first layout");
+        let camera_layout = Axis3Layout::resolve(&camera).expect("camera layout");
+        let mut renderer = Wgpu3DRenderer::new().expect("required direct 3d adapter");
+        let first = renderer
+            .render_to_image(&first_scene, &first_layout, base.figure.dpi)
+            .expect("first GPU frame");
+        assert!(first.resource_update.vertex_upload_bytes > 0);
+        assert!(first.resource_update.index_upload_bytes > 0);
+        assert!(first.resource_update.buffer_creations > 0);
+
+        let warm = renderer
+            .render_to_image(&camera_scene, &camera_layout, camera.figure.dpi)
+            .expect("warm camera GPU frame");
+        assert_eq!(warm.resource_update.vertex_upload_bytes, 0);
+        assert_eq!(warm.resource_update.index_upload_bytes, 0);
+        assert_eq!(warm.resource_update.buffer_creations, 0);
+        assert_eq!(warm.camera_uniform_writes, 1);
+    }
+
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    #[test]
+    fn direct_gpu_and_cpu_surface_layers_have_matching_projected_coverage() {
+        let frame = surface(
+            &[-1.0, 0.0, 1.0],
+            &[-1.0, 0.0, 1.0],
+            &[[0.0, 0.2, 0.0], [0.2, 1.0, 0.2], [0.0, 0.2, 0.0]],
+        )
+        .figure_size(2.4, 1.8)
+        .dpi(72)
+        .finalize()
+        .resolve()
+        .expect("frame");
+        let layout = Axis3Layout::resolve(&frame).expect("layout");
+        let (scene, _) = PreparedSceneCache3D::default()
+            .prepare(&frame)
+            .expect("scene");
+        let cpu = render_scene(
+            &scene,
+            &layout,
+            frame.figure.dpi,
+            SoftwareRenderOptions3D::export(),
+        )
+        .expect("CPU layer")
+        .layer;
+        let gpu = Wgpu3DRenderer::new()
+            .expect("required direct 3d adapter")
+            .render_to_image(&scene, &layout, frame.figure.dpi)
+            .expect("GPU layer")
+            .layer;
+        assert_eq!((cpu.width, cpu.height), (gpu.width, gpu.height));
+
+        let cpu_mask: Vec<_> = cpu
+            .pixels
+            .chunks_exact(4)
+            .map(|pixel| pixel[3] > 0)
+            .collect();
+        let gpu_mask: Vec<_> = gpu
+            .pixels
+            .chunks_exact(4)
+            .map(|pixel| pixel[3] > 0)
+            .collect();
+        let intersection = cpu_mask
+            .iter()
+            .zip(&gpu_mask)
+            .filter(|(cpu, gpu)| **cpu && **gpu)
+            .count();
+        let union = cpu_mask
+            .iter()
+            .zip(&gpu_mask)
+            .filter(|(cpu, gpu)| **cpu || **gpu)
+            .count();
+        assert!(union > 0);
+        assert!(
+            intersection as f64 / union as f64 >= 0.80,
+            "CPU/GPU surface coverage diverged: intersection={intersection}, union={union}"
+        );
+    }
+
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    #[test]
+    fn direct_gpu_resize_recreates_attachments_without_geometry_upload() {
+        let base = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 0.0]])
+            .figure_size(2.4, 1.8)
+            .dpi(72)
+            .finalize()
+            .resolve()
+            .expect("base");
+        let resized = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 0.0]])
+            .figure_size(3.2, 2.4)
+            .dpi(72)
+            .finalize()
+            .resolve()
+            .expect("resized");
+        let mut prepared = PreparedSceneCache3D::default();
+        let (scene, _) = prepared.prepare(&base).expect("scene");
+        let (resized_scene, _) = prepared.prepare(&resized).expect("resized scene");
+        assert!(Arc::ptr_eq(&scene, &resized_scene));
+        let layout = Axis3Layout::resolve(&base).expect("layout");
+        let resized_layout = Axis3Layout::resolve(&resized).expect("resized layout");
+        let mut renderer = Wgpu3DRenderer::new().expect("required direct 3d adapter");
+        renderer
+            .render_to_image(&scene, &layout, base.figure.dpi)
+            .expect("first frame");
+        let output = renderer
+            .render_to_image(&resized_scene, &resized_layout, resized.figure.dpi)
+            .expect("resized frame");
+        assert_eq!(output.resource_update.vertex_upload_bytes, 0);
+        assert_eq!(output.resource_update.index_upload_bytes, 0);
+        assert_eq!(output.resource_update.buffer_creations, 1);
+        assert_eq!(
+            (output.layer.width, output.layer.height),
+            (resized_layout.canvas_width, resized_layout.canvas_height)
+        );
+    }
+
+    #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+    #[test]
+    fn direct_gpu_recreates_retained_state_after_device_loss() {
+        let frame = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 0.0]])
+            .finalize()
+            .resolve()
+            .expect("frame");
+        let layout = Axis3Layout::resolve(&frame).expect("layout");
+        let (scene, _) = PreparedSceneCache3D::default()
+            .prepare(&frame)
+            .expect("scene");
+        let mut renderer = Wgpu3DRenderer::new().expect("required direct 3d adapter");
+        renderer
+            .render_to_image(&scene, &layout, frame.figure.dpi)
+            .expect("first frame");
+        renderer.mark_device_lost_for_test();
+        let recovered = renderer
+            .render_to_image(&scene, &layout, frame.figure.dpi)
+            .expect("recovered frame");
+        assert!(recovered.resource_update.vertex_upload_bytes > 0);
+        assert!(recovered.resource_update.index_upload_bytes > 0);
+        assert!(recovered.resource_update.buffer_creations > 0);
+        assert_eq!(recovered.camera_uniform_writes, 1);
     }
 
     #[cfg(feature = "parallel")]

@@ -40,7 +40,8 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | 3D-05 | In progress: automatic camera-projected Axis3 viewport, panes, box, grid, ticks, labels, title, DPI scaling, and collision nudging exist; theme/view goldens remain |
 | 3D-06 | In progress: deterministic tiled depth rendering for mesh/line/points, 24-bit depth ties, top-left fill, perspective-correct attributes, shading, 1x/4x sampling, and a committed exact isolated-layer hash exist; the full exact-golden/property corpus remains |
 | 3D-07 | In progress: Image/PNG and hybrid SVG/PDF output are live and tested, with large-offset orthographic/perspective semantic probes; whole-image goldens and broader semantic parity remain |
-| 3D-08 through 3D-09 | Not started |
+| 3D-08 | In progress: independent direct-wgpu offscreen mesh, instanced line, and instanced point pipelines render through queried RGBA/depth/MSAA attachments and pass the local required-Metal-adapter coverage probe; cross-vendor required-adapter jobs and the full differential corpus remain |
+| 3D-09 | In progress: explicit `render_gpu()`, truthful `gpu3d` diagnostics, bounded geometry/appearance caches, persistent device/pipelines/attachments, one-write camera frames, static readback, resize recreation, and next-frame device-loss recreation exist; Auto routing, stress tests, and direct presentation remain |
 | 3D-10 | In progress: backend-neutral screen rays and lazy CPU surface-triangle BVH picking exist; camera interaction, point/line picking, and frontend adapters remain |
 | 3D-11 through 3D-14 | Not started |
 
@@ -602,6 +603,8 @@ triangles_submitted
 primitives_culled
 readback_bytes
 actual_backend
+adapter_name
+sample_count
 fallback_reason
 sampling_mode
 ```
@@ -1180,6 +1183,68 @@ Documentation must state:
   because those modules live in `src/`. Before 3D-14, teach the checker to
   exclude test-only syntax (or provide an audited branch baseline), then remove
   any genuine production findings and wire the corrected check into CI.
+- Re-audited the existing wgpu feature before M3. The reusable boundary is
+  wgpu's instance/adapter/device/queue request machinery, not the existing 2D
+  `GpuBackend`, `DeviceSelector`, pipeline cache, or compute renderer. Those
+  layers impose guessed 4K-texture and 256-MiB-buffer admission thresholds,
+  use `Features::empty()` as if it were a capability, expose a color-only
+  format list to depth creation, and center the rendering path on compute plus
+  CPU readback. The 3D renderer therefore gets an independent
+  `render::three_d::gpu` context, exact attachment-format queries, explicit
+  depth/MSAA targets, direct render passes, and its own retention diagnostics.
+- Implemented the first direct-wgpu 3D path behind `3d,gpu`. The renderer owns
+  an independent device-loss-aware context, exact color/depth format checks,
+  four-sample MSAA when both attachments advertise it, persistent offscreen
+  and padded readback targets, one camera uniform, indexed mesh draws,
+  instanced screen-width line quads, and instanced SDF marker billboards.
+  `render_gpu()` is an explicit request and never relabels CPU output; the
+  canonical `render()` remains the deterministic CPU reference.
+- Split GPU retention by geometry and appearance identity. Camera/DPI changes
+  update the per-frame camera/layout uniform without rebuilding material
+  buffers; style changes can replace appearance without uploading geometry.
+  Caches retain only the current geometry and appearance to prevent unbounded
+  scene churn, while a shared static renderer reuses the device, pipelines,
+  attachments, and readback buffer across explicit static calls.
+- The local required-adapter job executed all four high-level primitives on
+  Apple Metal and asserted `actual_backend=gpu3d`, a non-empty adapter name,
+  queried sample count, draw/upload/readback counters, and visible output. A
+  retained second camera frame performed one camera uniform write with zero
+  vertex uploads, index uploads, or buffer creations.
+- Added a backend-neutral CPU/GPU semantic probe over an isolated surface
+  layer. It requires at least 0.80 projected coverage intersection-over-union
+  and passed on Metal. Visual inspection also confirmed the surface,
+  wireframe/line quads, and point billboards are present under the same Axis3.
+- WGSL validation caught and corrected illegal swizzle assignment before any
+  GPU success was reported. The required-adapter test failed hard on the
+  rejected submission, demonstrating that the path does not silently fall
+  back or claim `gpu3d` after validation failure.
+- Predefined line dash styles fit the direct GPU material's eight-entry
+  uniform. Longer custom patterns now return an explicit unsupported-GPU
+  error instead of being truncated; the deterministic CPU renderer remains
+  the reference for those patterns until a variable-length GPU material is
+  added.
+- Added a separately labeled `3d/gpu/scene-upload-export` Criterion profile.
+  It reuses the process device, pipelines, and attachments, but every
+  iteration still includes ingestion, scene lowering, geometry upload, one
+  static readback, Axis3 composition, and diagnostics; it is not a warm orbit
+  measurement. On the same Apple M4 release setup, the quick profile measured
+  100K scatter at a 15.69 ms midpoint and a 100x100 surface at 6.54 ms,
+  compared with the earlier CPU cold/export midpoints of 35.13 ms and 9.02 ms.
+- Added a retained `3d/gpu/retained-camera-no-readback` session and Criterion
+  profile. It resolves and uploads the scene once, then measures Axis3 camera
+  layout, one uniform write, direct draw submission, and GPU completion without
+  image composition or texture readback. Its invariant test requires zero warm
+  scene/triangulation/normal/BVH/upload/buffer/readback work. On Apple M4 the
+  quick midpoint was 6.67 ms for 100K scatter and 1.60 ms for a 100x100
+  surface, both within the provisional 16.7 ms orbit budget at these sizes.
+- Completed the local M3 checkpoint matrix with `3d,gpu`: all 1,328 library
+  tests, all 11 public 3d API tests, and all four required-adapter integration
+  tests passed. The adapter tests exercise mixed and individual mesh, line,
+  wireframe, and point draws; PNG and hybrid SVG export; truthful adapter,
+  sample-count, upload, draw, and readback diagnostics; and a retained warm
+  camera frame with no readback or resource upload. The dedicated resize and
+  forced-device-loss unit probes also passed, as did the serde diagnostics
+  schema probe.
 
 ## Primary references
 
