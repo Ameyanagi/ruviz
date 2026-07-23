@@ -31,7 +31,7 @@ pub(crate) struct ResolvedFrame3D {
 }
 
 impl Plot3D {
-    pub(super) fn resolve(mut self) -> Result<ResolvedFrame3D> {
+    pub(crate) fn resolve(mut self) -> Result<ResolvedFrame3D> {
         if let Some(error) = self.pending_error.take() {
             return Err(error);
         }

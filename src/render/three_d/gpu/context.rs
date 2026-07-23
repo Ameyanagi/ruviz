@@ -18,11 +18,11 @@ pub(super) struct GpuContext3D {
 
 impl GpuContext3D {
     pub(super) fn new() -> Result<Self> {
-        pollster::block_on(Self::new_async())
+        pollster::block_on(Self::from_instance_async(Self::create_instance(), None))
     }
 
-    async fn new_async() -> Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+    pub(super) fn create_instance() -> wgpu::Instance {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             flags: if cfg!(debug_assertions) {
                 wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION
@@ -32,12 +32,25 @@ impl GpuContext3D {
             memory_budget_thresholds: Default::default(),
             backend_options: Default::default(),
             display: None,
-        });
+        })
+    }
+
+    pub(super) fn for_surface(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> Result<Self> {
+        pollster::block_on(Self::from_instance_async(instance, Some(surface)))
+    }
+
+    async fn from_instance_async(
+        instance: wgpu::Instance,
+        compatible_surface: Option<&wgpu::Surface<'_>>,
+    ) -> Result<Self> {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
-                compatible_surface: None,
+                compatible_surface,
             })
             .await
             .map_err(|error| PlottingError::GpuNotAvailable(error.to_string()))?;
@@ -108,6 +121,14 @@ impl GpuContext3D {
             adapter_name: adapter_info.name,
             lost,
         })
+    }
+
+    pub(super) fn adapter(&self) -> &wgpu::Adapter {
+        &self._adapter
+    }
+
+    pub(super) fn instance(&self) -> &wgpu::Instance {
+        &self._instance
     }
 
     pub(super) fn ensure_available(&self) -> Result<()> {

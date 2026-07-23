@@ -217,6 +217,16 @@ name = "legend_scatter_test"
 path = "gallery/basic/legend_scatter_test.rs"
 
 [[example]]
+name = "3d_surface"
+path = "examples/3d_surface.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "interactive_orbit3d"
+path = "examples/interactive_orbit3d.rs"
+required-features = ["3d", "interactive-gpu"]
+
+[[example]]
 name = "legend_rounded_test"
 path = "gallery/basic/legend_rounded_test.rs"
 

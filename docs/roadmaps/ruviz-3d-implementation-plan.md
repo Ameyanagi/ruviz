@@ -41,20 +41,19 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | 3D-06 | In progress: deterministic tiled depth rendering for mesh/line/points, 24-bit depth ties, top-left fill, perspective-correct attributes, shading, 1x/4x sampling, and a committed exact isolated-layer hash exist; the full exact-golden/property corpus remains |
 | 3D-07 | In progress: Image/PNG and hybrid SVG/PDF output are live and tested, with large-offset orthographic/perspective semantic probes; whole-image goldens and broader semantic parity remain |
 | 3D-08 | In progress: independent direct-wgpu offscreen mesh, instanced line, and instanced point pipelines render through queried RGBA/depth/MSAA attachments and pass the local required-Metal-adapter coverage probe; cross-vendor required-adapter jobs and the full differential corpus remain |
-| 3D-09 | In progress: explicit `render_gpu()`, truthful `gpu3d` diagnostics, bounded geometry/appearance caches, persistent device/pipelines/attachments, one-write camera frames, static readback, resize recreation, and next-frame device-loss recreation exist; Auto routing, stress tests, and direct presentation remain |
+| 3D-09 | In progress: explicit `render_gpu()`, truthful `gpu3d` diagnostics, bounded geometry/appearance caches, persistent device/pipelines/attachments, one-write camera frames, static readback, resize recreation, next-frame device-loss recreation, and native direct presentation exist; Auto routing and stress tests remain |
 | 3D-10 | Complete: one authoritative retained session provides orbit/pan/zoom/reset, portable camera snapshots, replacement-data keep-view, process-unique generation-safe point/line/surface picking, interactive CPU frames, and diagnosed GPU-readback frames |
-| 3D-11 | Complete for the correctness adapters: native winit and GPUI share the retained core controls, preserve 2D behavior, coalesce native redraw requests, and truthfully identify image-backed GPU readback |
+| 3D-11 | Complete: native winit now presents retained geometry and Axis3 directly through wgpu, while GPUI shares the retained core controls and truthfully identifies its image-backed GPU-readback fallback |
 | 3D-12 | In progress: main-thread Canvas2D and worker OffscreenCanvas adapters expose the same complete input/export API and compile under wasm `3d-gpu`; animation-frame/worker coalescing and browser smoke tests remain |
-| 3D-13 | Not started: native surface and asynchronous browser WebGPU presentation must prove zero per-frame readback and CPU texture upload |
+| 3D-13 | In progress: native winit surface presentation reports `gpu3d-surface`, zero readback, and zero warm camera-frame text-atlas uploads; asynchronous browser WebGPU presentation and native-display smoke evidence remain |
 | 3D-14 | Not started |
 
 `render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
 deterministic CPU 3D backend. `save` selects PNG, hybrid SVG, or hybrid PDF from
-the extension. With `interactive-gpu`, native `show` opens the retained winit
-correctness adapter and explicitly uses `gpu3d-readback-fallback`; without that
-feature it returns an interaction-unavailable error. GPUI and web expose their
-own image-backed correctness adapters. No 3D call routes through the 2D series
-match graph, and none of these adapters is the direct-presentation endpoint.
+the extension. With `interactive-gpu`, native `show` opens the retained direct
+wgpu surface adapter; without that feature it returns an
+interaction-unavailable error. GPUI and web currently expose image-backed
+correctness adapters. No 3D call routes through the 2D series match graph.
 
 ## Decisions
 
@@ -1329,6 +1328,53 @@ Documentation must state:
   focused winit mapping tests, and all 47 GPUI library tests. The only emitted
   warning is the already recorded repository-level `.clippy.toml` Rust 1.87
   versus Cargo Rust 1.92 mismatch.
+- The native direct-presentation audit found that a surface-only scene pass
+  would silently omit Axis3 because panes/grid and box/ticks/text were composed
+  around the GPU image after readback. The implemented surface path therefore
+  retains the existing RGBA scene target as a sampled GPU texture, then draws
+  GPU pane/grid primitives, the scene texture, GPU box/tick primitives, and a
+  retained text atlas into an sRGB swapchain. It requests a
+  surface-compatible adapter and never blocks on `device.poll` while
+  presenting.
+- Native camera frames update the camera uniform and small screen-space Axis3
+  vertex buffers. Text glyphs are rasterized into a straight-alpha sRGB atlas
+  only when text, theme, font, or DPI changes; a camera-only layout change
+  reuses the atlas and reports zero presentation texture upload. Diagnostics
+  now separate presentation vertex and texture uploads, surface presents and
+  reconfigurations, and queue waits from geometry uploads and readback.
+- A local Apple Metal native-display smoke opened
+  `examples/interactive_orbit3d.rs`, created the surface-compatible adapter,
+  compiled the BGRA presentation shaders, uploaded the retained text atlas,
+  and presented continuously for ten seconds without a validation or runtime
+  error. Four pure presentation layout/format/atlas tests and all five
+  required-adapter offscreen GPU tests also pass, as does the complete
+  1,387-test `3d,interactive-gpu` library suite. Cross-platform display runners
+  are still required before closing 3D-13.
+- The wgpu 29 surface API returns `CurrentSurfaceTexture` statuses rather than
+  the older `Result<SurfaceTexture, SurfaceError>`. The native presenter skips
+  timeout/occluded frames, reconfigures outdated/suboptimal surfaces at safe
+  texture-lifetime boundaries, recreates a lost surface, and rebuilds the
+  surface-compatible device/renderer/compositor after device loss.
+- The browser audit confirmed that the existing `3d-gpu` compile row is not a
+  WebGPU implementation: native synchronous 3d GPU modules remain excluded
+  and Canvas2D still performs `ImageData`/`putImageData`. The direct browser
+  path must be an async per-JavaScript-realm session, choose the backend before
+  claiming the canvas context, render Axis3 and data to a WebGPU surface
+  without blocking, and batch pointer/resize work into at most one submission
+  per animation frame. Worker GPU handles remain worker-local.
+- Browser acceptance counters must distinguish zero interactive readback and
+  zero CPU framebuffer upload from legitimate one-time colormap/text-atlas
+  texture uploads. A mandatory Chromium WebGPU lane must instrument
+  `putImageData`, `copyTextureToBuffer`, `mapAsync`, and texture uploads, while
+  a burst test proves main/worker event coalescing and latest-camera wins.
+- The M5 audit found that 3D-14 remains blocked after direct presentation by
+  incomplete warm/update benchmark integration, Axis3/export whole-image
+  goldens, cross-vendor GPU evidence, browser smoke tests, feature/platform CI,
+  package consumers, documentation/gallery/migration material, structured
+  performance artifacts, and prerelease publishing semantics. It also found
+  that Cargo auto-discovered `examples/3d_surface.rs` without its required
+  feature; the example is now explicitly registered with
+  `required-features = ["3d"]`.
 
 ## Primary references
 

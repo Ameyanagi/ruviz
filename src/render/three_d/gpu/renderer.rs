@@ -51,6 +51,7 @@ pub(crate) struct Wgpu3DRenderer {
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     initial_buffer_creations: u64,
+    attachment_generation: u64,
 }
 
 static SHARED_RENDERER: OnceLock<Mutex<Wgpu3DRenderer>> = OnceLock::new();
@@ -76,6 +77,10 @@ pub(crate) fn render_with_shared_renderer(
 impl Wgpu3DRenderer {
     pub(crate) fn new() -> Result<Self> {
         let context = GpuContext3D::new()?;
+        Self::from_context(context)
+    }
+
+    pub(super) fn from_context(context: GpuContext3D) -> Result<Self> {
         let pipelines = PipelineLibrary3D::new(&context.device, context.sample_count);
         let camera_buffer = context
             .device
@@ -102,6 +107,7 @@ impl Wgpu3DRenderer {
             camera_buffer,
             camera_bind_group,
             initial_buffer_creations: 1,
+            attachment_generation: 0,
         })
     }
 
@@ -111,7 +117,7 @@ impl Wgpu3DRenderer {
         layout: &Axis3Layout,
         dpi: f32,
     ) -> Result<GpuRenderOutput3D> {
-        let (layer, frame) = self.render_internal(scene, layout, dpi, true)?;
+        let (layer, frame) = self.render_internal(scene, layout, dpi, true, true)?;
         let layer = layer.ok_or_else(|| {
             PlottingError::RenderError("direct 3d GPU export produced no image".to_string())
         })?;
@@ -136,8 +142,42 @@ impl Wgpu3DRenderer {
         layout: &Axis3Layout,
         dpi: f32,
     ) -> Result<GpuFrameOutput3D> {
-        self.render_internal(scene, layout, dpi, false)
+        self.render_internal(scene, layout, dpi, false, true)
             .map(|(_, frame)| frame)
+    }
+
+    pub(super) fn render_to_texture(
+        &mut self,
+        scene: &Arc<Scene3D>,
+        layout: &Axis3Layout,
+        dpi: f32,
+    ) -> Result<GpuFrameOutput3D> {
+        if self.context.is_lost() {
+            return Err(PlottingError::GpuNotAvailable(
+                "the direct 3d surface device was lost".to_string(),
+            ));
+        }
+        self.render_internal(scene, layout, dpi, false, false)
+            .map(|(_, frame)| frame)
+    }
+
+    pub(super) fn context(&self) -> &GpuContext3D {
+        &self.context
+    }
+
+    pub(super) fn color_view(&self) -> Result<&wgpu::TextureView> {
+        self.attachments
+            .as_ref()
+            .map(|attachments| &attachments.color_view)
+            .ok_or_else(|| {
+                PlottingError::RenderError(
+                    "direct 3d presentation has no resolved color attachment".to_string(),
+                )
+            })
+    }
+
+    pub(super) const fn attachment_generation(&self) -> u64 {
+        self.attachment_generation
     }
 
     fn render_internal(
@@ -146,6 +186,7 @@ impl Wgpu3DRenderer {
         layout: &Axis3Layout,
         dpi: f32,
         readback: bool,
+        wait_for_completion: bool,
     ) -> Result<(Option<Image>, GpuFrameOutput3D)> {
         if self.context.is_lost() {
             *self = Self::new()?;
@@ -184,6 +225,12 @@ impl Wgpu3DRenderer {
                 .buffer_creations
                 .saturating_add(attachments.creation_count);
             self.attachments = Some(attachments);
+            self.attachment_generation =
+                self.attachment_generation.checked_add(1).ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "direct 3d attachment generation space was exhausted".to_string(),
+                    )
+                })?;
         }
 
         let camera = CameraUniformGpu {
@@ -337,7 +384,7 @@ impl Wgpu3DRenderer {
                 layout.canvas_height,
                 attachments.padded_bytes_per_row,
             )?)
-        } else {
+        } else if wait_for_completion {
             self.context
                 .device
                 .poll(wgpu::PollType::Wait {
@@ -347,6 +394,8 @@ impl Wgpu3DRenderer {
                 .map_err(|error| {
                     PlottingError::RenderError(format!("3d GPU poll failed: {error}"))
                 })?;
+            None
+        } else {
             None
         };
         self.context.ensure_available()?;
@@ -409,7 +458,9 @@ impl OffscreenAttachments3D {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: COLOR_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());

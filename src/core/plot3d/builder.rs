@@ -14,7 +14,7 @@ use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme};
 use super::{AxisAspect3D, Camera3D, Point3D};
 
 #[derive(Debug, Default)]
-pub(super) struct Plot3D {
+pub(crate) struct Plot3D {
     pub(super) series: Vec<Series3D>,
     pub(super) camera: Camera3D,
     pub(super) figure: FigureConfig,
@@ -618,7 +618,7 @@ impl Scatter3DBuilder {
         }
     }
 
-    pub(super) fn finalize(mut self) -> Plot3D {
+    pub(crate) fn finalize(mut self) -> Plot3D {
         if let Some(data) = self.data.take() {
             self.plot.series.push(Series3D::Scatter {
                 data,

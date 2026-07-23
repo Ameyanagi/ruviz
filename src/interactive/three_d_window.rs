@@ -1,18 +1,15 @@
-use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use softbuffer::{Context as SoftbufferContext, Surface as SoftbufferSurface};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::core::{InputEvent3D, InteractivePlot3DSession, PlottingError, PointerButton3D, Result};
-
-type WindowSurface = SoftbufferSurface<OwnedDisplayHandle, Arc<Window>>;
+use crate::render::three_d::gpu::SurfacePresenter3D;
 
 const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(350);
 const DOUBLE_CLICK_DISTANCE_PX: f64 = 5.0;
@@ -20,25 +17,20 @@ const LINE_SCROLL_DELTA_PX: f32 = 50.0;
 
 /// Show a retained 3d session in the native winit adapter.
 ///
-/// This adapter currently presents the diagnosed GPU-readback fallback through
-/// softbuffer. The direct-surface adapter is a separate performance gate.
+/// Geometry and Axis3 are composed directly into a retained wgpu surface. No
+/// presented frame performs GPU readback or uploads a CPU-rendered frame.
 pub fn show_interactive_3d(session: InteractivePlot3DSession) -> Result<()> {
     let (width, height) = session.size_px();
     let title = session.title().unwrap_or("ruviz 3d").to_string();
     let event_loop = EventLoop::new()
         .map_err(|error| PlottingError::RenderError(format!("3D event loop: {error}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);
-    let context = SoftbufferContext::new(event_loop.owned_display_handle()).map_err(|error| {
-        PlottingError::RenderError(format!("3D softbuffer display context: {error}"))
-    })?;
     let mut app = ThreeDWindowApp {
         session,
         title,
         requested_size: PhysicalSize::new(width.max(1), height.max(1)),
-        context,
         window: None,
-        surface: None,
-        surface_size: None,
+        presenter: None,
         cursor: PhysicalPosition::new(0.0, 0.0),
         last_left_click: None,
         error: None,
@@ -53,10 +45,8 @@ struct ThreeDWindowApp {
     session: InteractivePlot3DSession,
     title: String,
     requested_size: PhysicalSize<u32>,
-    context: SoftbufferContext<OwnedDisplayHandle>,
     window: Option<Arc<Window>>,
-    surface: Option<WindowSurface>,
-    surface_size: Option<(u32, u32)>,
+    presenter: Option<SurfacePresenter3D>,
     cursor: PhysicalPosition<f64>,
     last_left_click: Option<(Instant, PhysicalPosition<f64>)>,
     error: Option<PlottingError>,
@@ -84,7 +74,9 @@ impl ThreeDWindowApp {
         self.requested_size = size;
         self.session
             .resize(size.width, size.height, scale_factor as f32)?;
-        self.surface_size = None;
+        if let Some(presenter) = &mut self.presenter {
+            presenter.resize(size.width, size.height)?;
+        }
         self.request_redraw();
         Ok(())
     }
@@ -99,50 +91,15 @@ impl ThreeDWindowApp {
         }
         self.session
             .resize(size.width, size.height, window.scale_factor() as f32)?;
-        let (image, diagnostics) = self.session.render_gpu_readback()?;
-        debug_assert_eq!(diagnostics.actual_backend, "gpu3d-readback-fallback");
-
-        if self.surface.is_none() {
-            self.surface = Some(
-                SoftbufferSurface::new(&self.context, Arc::clone(window)).map_err(|error| {
-                    PlottingError::RenderError(format!("3D softbuffer surface: {error}"))
-                })?,
-            );
-        }
-        let width = NonZeroU32::new(size.width).ok_or(PlottingError::InvalidDimensions {
-            width: size.width,
-            height: size.height,
+        let presenter = self.presenter.as_mut().ok_or_else(|| {
+            PlottingError::RenderError("direct 3d surface presenter was not retained".to_string())
         })?;
-        let height = NonZeroU32::new(size.height).ok_or(PlottingError::InvalidDimensions {
-            width: size.width,
-            height: size.height,
-        })?;
-        let surface = self.surface.as_mut().ok_or_else(|| {
-            PlottingError::RenderError("3D softbuffer surface was not retained".to_string())
-        })?;
-        if self.surface_size != Some((size.width, size.height)) {
-            surface.resize(width, height).map_err(|error| {
-                PlottingError::RenderError(format!("3D softbuffer resize: {error}"))
-            })?;
-            self.surface_size = Some((size.width, size.height));
+        let diagnostics = self.session.present_direct(presenter)?;
+        if let Some(diagnostics) = diagnostics {
+            debug_assert_eq!(diagnostics.actual_backend, "gpu3d-surface");
+            debug_assert_eq!(diagnostics.readback_bytes, 0);
         }
-        let mut buffer = surface.buffer_mut().map_err(|error| {
-            PlottingError::RenderError(format!("3D softbuffer acquire: {error}"))
-        })?;
-        if buffer.len() != image.pixels.len() / 4 {
-            return Err(PlottingError::RenderError(format!(
-                "3D presentation size mismatch: {} pixels for {} surface entries",
-                image.pixels.len() / 4,
-                buffer.len()
-            )));
-        }
-        for (destination, rgba) in buffer.iter_mut().zip(image.pixels.chunks_exact(4)) {
-            *destination =
-                u32::from(rgba[2]) | (u32::from(rgba[1]) << 8) | (u32::from(rgba[0]) << 16);
-        }
-        buffer
-            .present()
-            .map_err(|error| PlottingError::RenderError(format!("3D softbuffer present: {error}")))
+        Ok(())
     }
 
     fn pointer_button(button: MouseButton) -> Option<PointerButton3D> {
@@ -179,7 +136,20 @@ impl ApplicationHandler for ThreeDWindowApp {
             Ok(window) => {
                 let window = Arc::new(window);
                 self.requested_size = window.inner_size();
-                self.window = Some(window);
+                match SurfacePresenter3D::new(
+                    Arc::clone(&window),
+                    self.requested_size.width.max(1),
+                    self.requested_size.height.max(1),
+                ) {
+                    Ok(presenter) => {
+                        self.presenter = Some(presenter);
+                        self.window = Some(window);
+                    }
+                    Err(error) => {
+                        self.fail(event_loop, error);
+                        return;
+                    }
+                }
                 self.request_redraw();
             }
             Err(error) => self.fail(

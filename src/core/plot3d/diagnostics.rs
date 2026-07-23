@@ -15,6 +15,11 @@ pub struct RenderDiagnostics3D {
     pub triangles_submitted: u64,
     pub primitives_culled: u64,
     pub readback_bytes: u64,
+    pub presentation_vertex_upload_bytes: u64,
+    pub presentation_texture_upload_bytes: u64,
+    pub surface_presents: u64,
+    pub surface_reconfigurations: u64,
+    pub queue_waits: u64,
     pub actual_backend: String,
     pub adapter_name: Option<String>,
     pub sample_count: u32,
@@ -38,6 +43,11 @@ impl Default for RenderDiagnostics3D {
             triangles_submitted: 0,
             primitives_culled: 0,
             readback_bytes: 0,
+            presentation_vertex_upload_bytes: 0,
+            presentation_texture_upload_bytes: 0,
+            surface_presents: 0,
+            surface_reconfigurations: 0,
+            queue_waits: 0,
             actual_backend: "unresolved".to_string(),
             adapter_name: None,
             sample_count: 0,
@@ -60,5 +70,7 @@ mod tests {
         assert!(json.contains("\"adapter_name\":null"));
         assert!(json.contains("\"sample_count\":0"));
         assert!(json.contains("\"sampling_mode\":\"full\""));
+        assert!(json.contains("\"presentation_texture_upload_bytes\":0"));
+        assert!(json.contains("\"surface_presents\":0"));
     }
 }

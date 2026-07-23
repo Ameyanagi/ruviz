@@ -10,6 +10,8 @@ use crate::render::three_d::software::raster::{SoftwareRenderOptions3D, render_s
 
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 use crate::render::three_d::gpu::Wgpu3DRenderer;
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
+use crate::render::three_d::gpu::{SurfacePresentOutcome3D, SurfacePresenter3D};
 
 use super::Camera3D;
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
@@ -421,6 +423,52 @@ impl InteractivePlot3DSession {
         diagnostics.draw_calls = output.draw_calls;
         diagnostics.readback_bytes = output.readback_bytes;
         Ok((image, diagnostics))
+    }
+
+    /// Present one frame directly to a native wgpu surface.
+    ///
+    /// `None` means the surface was temporarily unavailable or occluded. A
+    /// presented frame always reports zero readback bytes; the retained text
+    /// atlas reports zero texture uploads on camera-only warm frames.
+    #[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
+    pub(crate) fn present_direct(
+        &mut self,
+        presenter: &mut SurfacePresenter3D,
+    ) -> Result<Option<RenderDiagnostics3D>> {
+        let layout = Axis3Layout::resolve(&self.frame)?;
+        let outcome =
+            presenter.present(&self.scene, &layout, &self.frame.figure, &self.frame.theme)?;
+        let SurfacePresentOutcome3D::Presented(output) = outcome else {
+            return Ok(None);
+        };
+        let mut diagnostics = RenderDiagnostics3D {
+            points_submitted: self.scene.point_count() as u64,
+            triangles_submitted: self.scene.triangle_count() as u64,
+            actual_backend: "gpu3d-surface".to_string(),
+            adapter_name: Some(output.scene.adapter_name),
+            sample_count: output.scene.sample_count,
+            fallback_reason: None,
+            readback_bytes: 0,
+            presentation_vertex_upload_bytes: output.presentation.vertex_upload_bytes,
+            presentation_texture_upload_bytes: output.presentation.texture_upload_bytes,
+            surface_presents: 1,
+            surface_reconfigurations: output.presentation.surface_reconfigurations,
+            queue_waits: 0,
+            ..RenderDiagnostics3D::default()
+        };
+        diagnostics.vertex_upload_bytes = output.scene.resource_update.vertex_upload_bytes;
+        diagnostics.index_upload_bytes = output.scene.resource_update.index_upload_bytes;
+        diagnostics.buffer_creations = output
+            .scene
+            .resource_update
+            .buffer_creations
+            .saturating_add(output.presentation.buffer_creations);
+        diagnostics.camera_uniform_writes = output.scene.camera_uniform_writes;
+        diagnostics.draw_calls = output
+            .scene
+            .draw_calls
+            .saturating_add(output.presentation.draw_calls);
+        Ok(Some(diagnostics))
     }
 
     fn advance_camera_generation(&mut self) -> Result<()> {
