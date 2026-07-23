@@ -190,6 +190,9 @@ jobs:
       - name: Build release
         run: cargo build --release --all-features
 
+      - name: Verify ruviz-web 3D GPU wasm release surface
+        run: cargo check -p ruviz-web --target wasm32-unknown-unknown --no-default-features --features 3d-gpu --locked
+
       # Tests already run in CI workflow (check-ci job waits for it)
 
       - name: Build documentation
@@ -442,8 +445,6 @@ jobs:
     name: Publish ruviz to crates.io
     runs-on: ubuntu-latest
     needs: [check-ci, build-release]
-    # Only publish on non-prerelease tags
-    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -479,7 +480,6 @@ jobs:
     name: Verify packaged ruviz crates
     runs-on: ubuntu-latest
     needs: [check-ci, publish-ruviz]
-    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -520,8 +520,7 @@ jobs:
   publish-ruviz-web:
     name: Publish ruviz-web to crates.io
     runs-on: ubuntu-latest
-    needs: [check-ci, publish-ruviz]
-    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
+    needs: [check-ci, publish-ruviz, verify-packaged-crates]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -579,7 +578,6 @@ jobs:
     name: Publish ruviz-gpui to crates.io
     runs-on: ubuntu-latest
     needs: [check-ci, verify-packaged-crates]
-    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -619,7 +617,6 @@ jobs:
     name: Publish ruviz JS SDK to npm
     runs-on: ubuntu-latest
     needs: [check-ci, publish-ruviz, publish-ruviz-web]
-    if: ${{ !contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') }}
     permissions:
       contents: read
       id-token: write
@@ -702,7 +699,13 @@ jobs:
         if: steps.npm-version.outputs.published != 'true'
         # npm Trusted Publishing is configured for the `ruviz` package, so
         # GitHub OIDC supplies publish authentication and provenance here.
-        run: cd packages/ruviz-web && npm publish --access public --provenance
+        run: |
+          cd packages/ruviz-web
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            npm publish --access public --provenance --tag next
+          else
+            npm publish --access public --provenance
+          fi
 
       - name: Skip npm publish
         if: steps.npm-version.outputs.published == 'true'
@@ -793,7 +796,7 @@ jobs:
     name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [check-ci, build-release, publish-ruviz, verify-packaged-crates, publish-ruviz-web, publish-ruviz-gpui, publish-npm-web, publish-python]
-    if: ${{ always() && needs.build-release.result == 'success' && (needs.publish-ruviz.result == 'success' || needs.publish-ruviz.result == 'skipped') && (needs.verify-packaged-crates.result == 'success' || (contains((github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag) || github.ref_name, '-') && needs.verify-packaged-crates.result == 'skipped')) && (needs.publish-ruviz-web.result == 'success' || needs.publish-ruviz-web.result == 'skipped') && (needs.publish-ruviz-gpui.result == 'success' || needs.publish-ruviz-gpui.result == 'skipped') && (needs.publish-npm-web.result == 'success' || needs.publish-npm-web.result == 'skipped') && needs.publish-python.result == 'success' }}
+    if: ${{ always() && needs.build-release.result == 'success' && needs.publish-ruviz.result == 'success' && needs.verify-packaged-crates.result == 'success' && needs.publish-ruviz-web.result == 'success' && needs.publish-ruviz-gpui.result == 'success' && needs.publish-npm-web.result == 'success' && needs.publish-python.result == 'success' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

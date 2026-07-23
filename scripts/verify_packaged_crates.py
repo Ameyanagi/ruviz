@@ -488,10 +488,14 @@ def write_consumer(
     ruviz_gpui: ExtractedCrate,
 ) -> None:
     dependencies = [
-        f'ruviz = {{ version = "={ruviz.version}" }}',
+        (
+            f'ruviz = {{ version = "={ruviz.version}", default-features = false, '
+            'features = ["3d", "gpu"] }'
+        ),
         (
             "ruviz-gpui = { path = "
-            f"{toml_string(ruviz_gpui.root)}, default-features = false }}"
+            f"{toml_string(ruviz_gpui.root)}, default-features = false, "
+            'features = ["3d-gpu"] }'
         ),
     ]
     patch = ""
@@ -524,6 +528,9 @@ fn embed<V: 'static>(cx: &mut Context<V>) -> Entity<RuvizPlot> {
 
 fn main() {
     let _ = embed::<RuvizPlot>;
+    let _ = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+        .title("packaged 3d consumer");
+    let _ = std::mem::size_of::<ruviz_gpui::RuvizPlot3D>();
 }
 """
     (directory / "src").mkdir(parents=True)
@@ -657,6 +664,24 @@ def validate_metadata(
                 f"Cargo resolve graph has no usable node for {package['name']}"
             )
         return node
+
+    def require_features(package: dict[str, Any], required: set[str]) -> None:
+        features = node_for(package).get("features")
+        if not isinstance(features, list) or not all(
+            isinstance(feature, str) for feature in features
+        ):
+            raise VerificationError(
+                f"Cargo resolve graph has no usable feature list for {package['name']}"
+            )
+        missing = sorted(required.difference(features))
+        if missing:
+            raise VerificationError(
+                f"{package['name']} packaged consumer did not enable required "
+                f"features: {', '.join(missing)}"
+            )
+
+    require_features(core, {"3d", "gpu"})
+    require_features(adapter, {"3d", "3d-gpu", "gpu"})
 
     def require_normal_edge(
         package: dict[str, Any], dependency_name: str, expected_id: str

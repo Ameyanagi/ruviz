@@ -271,6 +271,41 @@ class WorkspaceContractTests(unittest.TestCase):
 
 
 class PackagingModeTests(unittest.TestCase):
+    def test_external_consumer_enables_packaged_3d_gpu_surfaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            consumer = root / "consumer"
+            ruviz = ExtractedCrate(
+                "ruviz",
+                "1.2.3",
+                root / "ruviz.crate",
+                root / "ruviz-1.2.3",
+                {},
+                None,
+            )
+            adapter = ExtractedCrate(
+                "ruviz-gpui",
+                "1.2.3",
+                root / "ruviz-gpui.crate",
+                root / "ruviz-gpui-1.2.3",
+                {},
+                None,
+            )
+
+            verify_packaged_crates.write_consumer(
+                consumer,
+                mode="ci",
+                ruviz=ruviz,
+                ruviz_gpui=adapter,
+            )
+
+            manifest = (consumer / "Cargo.toml").read_text(encoding="utf-8")
+            source = (consumer / "src/main.rs").read_text(encoding="utf-8")
+            self.assertIn('features = ["3d", "gpu"]', manifest)
+            self.assertIn('features = ["3d-gpu"]', manifest)
+            self.assertIn("scatter3d", source)
+            self.assertIn("RuvizPlot3D", source)
+
     def test_package_command_uses_exactly_one_lockfile_mode(self) -> None:
         for locked, expected, rejected in (
             (True, "--locked", "--exclude-lockfile"),
@@ -522,9 +557,14 @@ class MetadataSourceTests(unittest.TestCase):
                             },
                         ],
                     },
-                    {"id": ids["ruviz"], "deps": []},
+                    {
+                        "id": ids["ruviz"],
+                        "deps": [],
+                        "features": ["3d", "gpu"],
+                    },
                     {
                         "id": ids["ruviz-gpui"],
+                        "features": ["3d", "3d-gpu", "gpu"],
                         "deps": [
                             {
                                 "name": "gpui",
@@ -715,6 +755,36 @@ class MetadataSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(VerificationError, "normal ruviz edge"):
             self.validate(metadata, "ci")
 
+    def test_packaged_consumer_requires_core_3d_gpu_features(self) -> None:
+        metadata = self.metadata(mode="ci")
+        core_id = next(
+            package["id"]
+            for package in metadata["packages"]
+            if package["name"] == "ruviz"
+        )
+        core_node = next(
+            node for node in metadata["resolve"]["nodes"] if node["id"] == core_id
+        )
+        core_node["features"] = ["3d"]
+
+        with self.assertRaisesRegex(VerificationError, "required features: gpu"):
+            self.validate(metadata, "ci")
+
+    def test_packaged_consumer_requires_gpui_3d_gpu_feature(self) -> None:
+        metadata = self.metadata(mode="ci")
+        adapter_id = next(
+            package["id"]
+            for package in metadata["packages"]
+            if package["name"] == "ruviz-gpui"
+        )
+        adapter_node = next(
+            node for node in metadata["resolve"]["nodes"] if node["id"] == adapter_id
+        )
+        adapter_node["features"] = ["3d", "gpu"]
+
+        with self.assertRaisesRegex(VerificationError, "required features: 3d-gpu"):
+            self.validate(metadata, "ci")
+
 
 class NormalizedDependencyTests(unittest.TestCase):
     def extracted(self, manifest: dict) -> ExtractedCrate:
@@ -795,7 +865,9 @@ location searched: crates.io index
 
 class WorkflowIntegrationTests(unittest.TestCase):
     def test_ci_has_one_packaged_crate_gate(self) -> None:
-        jobs = parse_workflow_jobs(SCRIPT_PATH.parents[1] / ".github/workflows/ci.yml")
+        workflow_path = SCRIPT_PATH.parents[1] / ".github/workflows/ci.yml"
+        workflow_source = workflow_path.read_text(encoding="utf-8")
+        jobs = parse_workflow_jobs(workflow_path)
         packaged = jobs["packaged-crates"]
 
         self.assertEqual(packaged["needs"], ["fmt", "clippy"])
@@ -809,17 +881,53 @@ class WorkflowIntegrationTests(unittest.TestCase):
             ],
             "uv run python scripts/verify_packaged_crates.py --mode ci",
         )
+        self.assertIn("os: [ubuntu-latest, macos-14]", workflow_source)
+        self.assertEqual(
+            step_named(packaged, "Install Linux desktop build dependencies")["if"],
+            "runner.os == 'Linux'",
+        )
         self.assertTrue(
             {"test-fast", "test-feature-contract", "test-visual-heavy"}.issubset(jobs),
             "P01 feature lanes must remain present",
         )
 
-    def test_release_gate_uses_resolved_sha_and_blocks_gpui_publish(self) -> None:
+        clippy_3d = step_named(
+            jobs["clippy"], "Run clippy for the 3D GPU feature surface"
+        )["run"]
+        self.assertIn("--no-default-features --features 3d,gpu", clippy_3d)
+
+        required_adapter = jobs["test-3d-gpu-required-adapter"]
+        adapter_run = step_named(
+            required_adapter, "Run direct 3D GPU suite with a required adapter"
+        )["run"]
+        self.assertIn("--features 3d,gpu --test three_d_gpu_test", adapter_run)
+
+        platform = jobs["platform-build"]
+        self.assertIn(
+            "--features 3d,interactive-gpu",
+            step_named(platform, "Check 3D interactive GPU desktop build")["run"],
+        )
+        self.assertIn(
+            "--features 3d-gpu",
+            step_named(platform, "Check ruviz-gpui 3D GPU desktop build")["run"],
+        )
+
+        wasm = jobs["wasm-web"]
+        web_check = step_named(wasm, "Check ruviz-web")["run"]
+        self.assertIn("--target wasm32-unknown-unknown", web_check)
+        self.assertIn("--features 3d-gpu", web_check)
+        browser_3d = step_named(wasm, "Run Chromium 3D WebGPU smoke test")["run"]
+        self.assertIn("tests/3d.spec.js", browser_3d)
+        self.assertIn("--project=chromium", browser_3d)
+
+    def test_release_gate_uses_resolved_sha_and_blocks_registry_publish(self) -> None:
         jobs = parse_workflow_jobs(
             SCRIPT_PATH.parents[1] / ".github/workflows/release.yml"
         )
         verify_job = jobs["verify-packaged-crates"]
+        web_job = jobs["publish-ruviz-web"]
         gpui_job = jobs["publish-ruviz-gpui"]
+        npm_job = jobs["publish-npm-web"]
         release_job = jobs["create-github-release"]
 
         self.assertEqual(verify_job["needs"], ["check-ci", "publish-ruviz"])
@@ -836,16 +944,42 @@ class WorkflowIntegrationTests(unittest.TestCase):
             "--expected-vcs-sha ${{ needs.check-ci.outputs.release_sha }}", verify_run
         )
         self.assertEqual(gpui_job["needs"], ["check-ci", "verify-packaged-crates"])
+        self.assertEqual(
+            web_job["needs"],
+            ["check-ci", "publish-ruviz", "verify-packaged-crates"],
+        )
         self.assertIn("verify-packaged-crates", release_job["needs"])
         self.assertIn(
             "needs.verify-packaged-crates.result == 'success'",
             release_job["if"],
         )
-        self.assertIn(
-            "needs.verify-packaged-crates.result == 'skipped'",
-            release_job["if"],
-        )
-        self.assertIn("contains(", release_job["if"])
+        self.assertNotIn("skipped", release_job["if"])
+        self.assertNotIn("contains(", release_job["if"])
+
+        for job in (
+            jobs["publish-ruviz"],
+            verify_job,
+            web_job,
+            gpui_job,
+            npm_job,
+        ):
+            self.assertNotIn(
+                "if",
+                job,
+                "Cargo and npm prereleases must run the same publish gates as stable releases",
+            )
+
+        npm_publish = step_named(npm_job, "Publish npm package")["run"]
+        self.assertIn('[[ "${RELEASE_TAG}" == *-* ]]', npm_publish)
+        self.assertIn("npm publish --access public --provenance --tag next", npm_publish)
+        self.assertIn("npm publish --access public --provenance", npm_publish)
+
+        build_release = jobs["build-release"]
+        wasm_check = step_named(
+            build_release, "Verify ruviz-web 3D GPU wasm release surface"
+        )["run"]
+        self.assertIn("--target wasm32-unknown-unknown", wasm_check)
+        self.assertIn("--features 3d-gpu", wasm_check)
 
         publish_steps = [
             (job_name, step)

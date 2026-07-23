@@ -21,8 +21,6 @@ WASM_PACK_ARGS=(
   "${PACKAGE_DIR}/generated/raw"
   --out-name
   ruviz_web_raw
-  --features
-  3d-gpu
 )
 
 # The notebook widget bundle is checked into the repo, so it needs a
@@ -30,6 +28,8 @@ WASM_PACK_ARGS=(
 if [[ "${RUVIZ_WASM_PACK_NO_OPT:-0}" == "1" ]]; then
   WASM_PACK_ARGS+=(--no-opt)
 fi
+
+WASM_PACK_ARGS+=(--features 3d-gpu)
 
 "${WASM_PACK_BIN}" "${WASM_PACK_ARGS[@]}"
 
