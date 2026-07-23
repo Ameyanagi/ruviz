@@ -1,9 +1,10 @@
 # ruviz 3D implementation plan
 
-Status: living implementation plan  
-Branch: `feat/3d-implementation`  
-Base: `42533c6` (`v0.5.0`, current `main` when this branch was created)  
+Status: M5 alpha implementation complete; scheduled external hardware evidence remains
+Branch: `feat/3d-implementation`
+Base: `42533c6` (`v0.5.0`, current `main` when this branch was created)
 Started: 2026-07-23
+Completed: 2026-07-24
 
 This document is the source of truth for the first ruviz 3D implementation. It
 records decisions as they are made so that discoveries do not remain only in
@@ -46,7 +47,7 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | 3D-11 | Complete: native winit now presents retained geometry and Axis3 directly through wgpu, while GPUI shares the retained core controls and truthfully identifies its image-backed GPU-readback fallback |
 | 3D-12 | Complete for M4: matching Canvas2D and direct-WebGPU adapters exist for main-thread canvas and worker OffscreenCanvas, the shipped WASM build contains them, and a 500-event Chromium burst test proves latest-pointer/one-frame coalescing |
 | 3D-13 | Complete for the alpha implementation: native winit and Chromium main/worker sessions present retained Axis3 scenes as `gpu3d-surface` with zero readback, zero CPU framebuffer upload, no Canvas2D paint, retained legend/colorbar overlays, and cumulative present/upload diagnostics; broader hardware results remain scheduled evidence |
-| 3D-14 | In progress: docs, Matplotlib/Makie migrations, Rust/TypeScript/Python examples, gallery/goldens, raw local benchmark artifact, package consumers, platform/feature CI, and prerelease release semantics are implemented; final integrated verification and Greptile review remain |
+| 3D-14 | Complete for the alpha: docs, Matplotlib/Makie migrations, Rust/TypeScript/Python examples, gallery/goldens, raw local benchmark artifact, package consumers, platform/feature CI, prerelease release semantics, integrated local verification, and Greptile review are complete |
 
 `render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
 deterministic CPU 3D backend. `save` selects PNG, hybrid SVG, or hybrid PDF from
@@ -1541,6 +1542,19 @@ Documentation must state:
   locked optional slot, retries cleanly after an initialization error, and a
   16-thread contention regression proves the initializer runs exactly once.
   Both fixes pass Rust 1.92 and strict all-target/all-feature Clippy.
+- The first post-fix Greptile follow-up
+  `db738a80-66bb-4c3c-ab64-d822994572c7` failed inside the external service
+  without producing code comments (correlation
+  `104c75f3-3ff2-4e7c-8993-211ff386fae8`). The unchanged-commit retry
+  `83a06284-ed74-4d83-befc-64ee41e6a762` completed at confidence 4/5,
+  reported the branch safe to merge, and produced no review comments. Its
+  summary retained three non-blocking P2 alpha notes: software depth uses the
+  deterministic linear NDC-depth convention; raw WebGPU creation initially
+  uses scale factor 1 before the high-level TypeScript mount applies the
+  requested device scale; and an occluded/timeout WebGPU surface keeps its
+  frame dirty but waits for the next host request rather than polling
+  continuously. These do not affect data correctness or crash safety and
+  remain explicit post-alpha polish/performance tradeoffs.
 
 ## Primary references
 
