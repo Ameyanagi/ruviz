@@ -37,6 +37,41 @@ fn canonical_functions_accept_common_numeric_inputs() {
         .expect("integer line");
 }
 
+#[cfg(feature = "ndarray_support")]
+#[test]
+fn ndarray_vectors_views_and_matrices_use_the_same_3d_api() {
+    use ndarray::{Array1, array};
+
+    let x = Array1::from_vec(vec![0_f32, 1.0, 2.0]);
+    let y = Array1::from_vec(vec![0_f32, 1.0, 2.0]);
+    let z = Array1::from_vec(vec![0_f32, 1.0, 0.0]);
+    scatter3d(&x.view(), &y.view(), &z.view())
+        .validate()
+        .expect("ndarray point views");
+
+    let grid = array![[0_f32, 1.0, 0.0], [1.0, 2.0, 1.0]];
+    surface(&x, &array![0_f32, 1.0], &grid)
+        .validate()
+        .expect("ndarray surface");
+}
+
+#[cfg(any(feature = "nalgebra_support", feature = "nalgebra"))]
+#[test]
+fn nalgebra_vectors_and_matrices_use_the_same_3d_api() {
+    let x = nalgebra::DVector::from_vec(vec![0.0, 1.0, 2.0]);
+    let y = nalgebra::DVector::from_vec(vec![0.0, 1.0, 2.0]);
+    let z = nalgebra::DVector::from_vec(vec![0.0, 1.0, 0.0]);
+    line3d(&x, &y, &z)
+        .validate()
+        .expect("nalgebra point vectors");
+
+    let grid_y = nalgebra::DVector::from_vec(vec![0.0, 1.0]);
+    let grid = nalgebra::DMatrix::from_row_slice(2, 3, &[0.0, 1.0, 0.0, 1.0, 2.0, 1.0]);
+    wireframe(&x, &grid_y, &grid)
+        .validate()
+        .expect("nalgebra surface matrix");
+}
+
 #[test]
 fn builders_chain_multiple_3d_series_without_an_end_call() {
     scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
@@ -167,6 +202,61 @@ fn png_and_hybrid_svg_terminals_are_live() {
     assert!(svg.contains("data:image/png;base64,"));
     assert!(svg.contains("Hybrid 3d"));
     assert_eq!(svg.matches("<image ").count(), 1);
+}
+
+#[test]
+fn one_call_surface_pick_returns_source_indices_and_data_coordinates() {
+    let hit = surface(&[-1.0, 1.0], &[-1.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]])
+        .figure_size(2.4, 1.8)
+        .dpi(72)
+        .pick(95.0, 52.5)
+        .expect("pick")
+        .expect("surface hit");
+    assert_eq!(hit.primitive, ruviz::core::PickPrimitive3D::SurfaceTriangle);
+    assert_eq!(hit.series_index, 0);
+    assert!(hit.source_indices == [0, 1, 3] || hit.source_indices == [0, 3, 2]);
+    assert!(hit.point.x.abs() <= 1.0e-4);
+    assert!(hit.point.y.abs() <= 1.0e-4);
+    assert!(hit.point.z.abs() <= 1.0e-4);
+    assert!((hit.barycentric.iter().sum::<f32>() - 1.0).abs() <= 1.0e-5);
+
+    assert!(
+        surface(&[-1.0, 1.0], &[-1.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]],)
+            .figure_size(2.4, 1.8)
+            .dpi(72)
+            .pick(0.0, 0.0)
+            .expect("outside pick")
+            .is_none()
+    );
+}
+
+#[test]
+fn large_offsets_and_both_projection_modes_render_semantically() {
+    let x = [1.0e12, 1.0e12 + 1.0];
+    let y = [-1.0e12, -1.0e12 + 1.0];
+    let z = [[4.0e12, 4.0e12 + 0.5], [4.0e12 + 0.5, 4.0e12 + 1.0]];
+    let orthographic = surface(&x, &y, &z)
+        .figure_size(2.0, 1.5)
+        .dpi(72)
+        .render()
+        .expect("large-offset orthographic render");
+    let perspective = surface(&x, &y, &z)
+        .perspective_deg(45.0)
+        .figure_size(2.0, 1.5)
+        .dpi(72)
+        .render()
+        .expect("large-offset perspective render");
+    assert_eq!(
+        (orthographic.width, orthographic.height),
+        (perspective.width, perspective.height)
+    );
+    assert_ne!(orthographic.pixels, perspective.pixels);
+    assert!(
+        orthographic
+            .pixels
+            .chunks_exact(4)
+            .any(|pixel| pixel[..3] != [255, 255, 255])
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]

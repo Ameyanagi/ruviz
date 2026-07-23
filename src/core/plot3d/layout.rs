@@ -233,6 +233,47 @@ impl Axis3Layout {
     pub(crate) fn project_local(&self, local: Vec3) -> Result<ScreenPoint3D> {
         project_local(local, self.camera, self.viewport)
     }
+
+    pub(crate) fn screen_ray_local(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+    ) -> Result<Option<(Vec3, Vec3)>> {
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return Err(PlottingError::InvalidInput(
+                "3D pick coordinates must be finite".to_string(),
+            ));
+        }
+        let viewport = self.viewport;
+        if screen_x < viewport.x as f32
+            || screen_x >= viewport.right()
+            || screen_y < viewport.y as f32
+            || screen_y >= viewport.bottom()
+        {
+            return Ok(None);
+        }
+        let ndc_x = (screen_x - viewport.x as f32) / viewport.width as f32 * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen_y - viewport.y as f32) / viewport.height as f32 * 2.0;
+        let unproject = |depth| -> Result<Vec3> {
+            let homogeneous =
+                self.camera.inverse_view_projection * Vec3::new(ndc_x, ndc_y, depth).extend(1.0);
+            if !homogeneous.is_finite() || homogeneous.w.abs() <= f32::EPSILON {
+                return Err(PlottingError::InvalidTopology3D {
+                    reason: "3D pick unprojection produced an invalid divisor".to_string(),
+                });
+            }
+            Ok((homogeneous.truncate() / homogeneous.w) / self.camera.axis_aspect)
+        };
+        let origin = unproject(0.0)?;
+        let far = unproject(1.0)?;
+        let direction = far - origin;
+        if !direction.is_finite() || direction.length_squared() <= f32::EPSILON {
+            return Err(PlottingError::InvalidTopology3D {
+                reason: "3D pick unprojection produced a degenerate ray".to_string(),
+            });
+        }
+        Ok(Some((origin, direction.normalize())))
+    }
 }
 
 fn axis_viewport(frame: &ResolvedFrame3D, canvas_width: u32, canvas_height: u32) -> Viewport3D {
@@ -447,5 +488,27 @@ mod tests {
         let orthographic = Axis3Layout::resolve(&orthographic).expect("layout");
         let perspective = Axis3Layout::resolve(&perspective).expect("layout");
         assert_ne!(orthographic.box_edges, perspective.box_edges);
+    }
+
+    #[test]
+    fn local_screen_ray_passes_through_the_projected_center() {
+        let frame = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+            .finalize()
+            .resolve()
+            .expect("frame");
+        let layout = Axis3Layout::resolve(&frame).expect("layout");
+        let center = layout.project_local(Vec3::ZERO).expect("center");
+        let (origin, direction) = layout
+            .screen_ray_local(center.x, center.y)
+            .expect("ray")
+            .expect("inside viewport");
+        let parameter = -origin.dot(direction);
+        assert!((origin + direction * parameter).length() <= 1.0e-4);
+        assert!(
+            layout
+                .screen_ray_local(0.0, 0.0)
+                .expect("outside")
+                .is_none()
+        );
     }
 }

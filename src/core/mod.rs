@@ -52,8 +52,9 @@ pub use plot::{
 };
 #[cfg(feature = "3d")]
 pub use plot3d::{
-    AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, Point3D, ProjectedPoint3D, Projection3D,
-    RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D, Surface3DBuilder, Wireframe3DBuilder,
+    AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D,
+    ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D,
+    Surface3DBuilder, Wireframe3DBuilder,
 };
 pub use position::Position;
 pub use style::PlotStyle;

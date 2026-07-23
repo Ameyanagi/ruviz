@@ -125,7 +125,7 @@ impl Bounds3D {
         )
     }
 
-    fn denormalize(self, point: Vec3, aspect: Vec3) -> Point3D {
+    pub(crate) fn denormalize(self, point: Vec3, aspect: Vec3) -> Point3D {
         Point3D::new(
             denormalize_axis(point.x, self.min.x, self.max.x, aspect.x),
             denormalize_axis(point.y, self.min.y, self.max.y, aspect.y),

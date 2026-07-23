@@ -23,6 +23,9 @@ pub(super) struct Plot3D {
     pub(super) xlabel: Option<String>,
     pub(super) ylabel: Option<String>,
     pub(super) zlabel: Option<String>,
+    pub(super) xlim: Option<(f64, f64)>,
+    pub(super) ylim: Option<(f64, f64)>,
+    pub(super) zlim: Option<(f64, f64)>,
     pub(super) pending_error: Option<PlottingError>,
 }
 
@@ -239,6 +242,24 @@ macro_rules! impl_common_builder {
                 self
             }
 
+            /// Set finite ascending x-axis limits.
+            pub fn xlim(mut self, minimum: f64, maximum: f64) -> Self {
+                self.plot.xlim = Some((minimum, maximum));
+                self
+            }
+
+            /// Set finite ascending y-axis limits.
+            pub fn ylim(mut self, minimum: f64, maximum: f64) -> Self {
+                self.plot.ylim = Some((minimum, maximum));
+                self
+            }
+
+            /// Set finite ascending z-axis limits.
+            pub fn zlim(mut self, minimum: f64, maximum: f64) -> Self {
+                self.plot.zlim = Some((minimum, maximum));
+                self
+            }
+
             /// Replace the 3D camera.
             pub fn camera(mut self, camera: Camera3D) -> Self {
                 self.plot.camera = camera;
@@ -352,6 +373,15 @@ macro_rules! impl_common_builder {
             /// Return the combined data-space bounds after validation.
             pub fn data_bounds(self) -> Result<Bounds3D> {
                 self.finalize().validate_and_bounds()
+            }
+
+            /// Pick the nearest surface triangle at a full-canvas pixel.
+            ///
+            /// Coordinates use the same top-left-origin pixel system as the
+            /// image returned by [`Self::render`]. A point outside the Axis3
+            /// viewport or over empty space returns `Ok(None)`.
+            pub fn pick(self, screen_x: f32, screen_y: f32) -> Result<Option<super::PickHit3D>> {
+                self.finalize().pick_at(screen_x, screen_y)
             }
 
             /// Compile the retained scene and return structured benchmark counters.

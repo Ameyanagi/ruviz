@@ -32,15 +32,17 @@ ray-marching design after the mesh/scatter pipeline is stable.
 
 | Work item | Status on `feat/3d-implementation` |
 | --- | --- |
-| 3D-00 | In progress: exact `3d` feature, exports, canonical compile contract, concrete builders, and a dedicated Criterion target exist; deterministic dataset manifest remains |
-| 3D-01 | In progress: serializable diagnostics, retained-scene counters, and cold compile/render benchmarks exist; committed dataset hashes and warm-update runner integration remain |
+| 3D-00 | Complete: exact `3d` feature, exports, canonical compile contract, concrete builders, a dedicated Criterion target, and a deterministic hashed dataset manifest exist |
+| 3D-01 | In progress: serializable diagnostics, retained-scene counters, committed dataset hashes, and cold compile/render benchmarks exist; warm-update runner integration remains |
 | 3D-02 | Complete for the linear MVP: f64 bounds/normalization, typed camera validation, orthographic/perspective projection, unprojection, screen rays, and homogeneous six-plane clipping are tested |
-| 3D-03 | In progress: common 1D/2D ingestion, structured point/grid diagnostics, multi-series builders, and retained lowering exist; compile-fail and extended ecosystem-input matrices remain |
-| 3D-04 | In progress: coherent owned frames, stable dirty-domain keys, normalized primitive lowering, and geometry/appearance retention exist; BVH preparation remains |
+| 3D-03 | Complete for the linear MVP: common 1D/2D ingestion, structured diagnostics, multi-series builders, explicit limits, retained lowering, compile-pass/fail contracts, and ndarray/nalgebra input probes exist |
+| 3D-04 | Complete for the linear MVP: coherent owned frames, stable dirty-domain keys, normalized primitive lowering, geometry/appearance retention, and lazy deterministic surface BVH preparation exist |
 | 3D-05 | In progress: automatic camera-projected Axis3 viewport, panes, box, grid, ticks, labels, title, DPI scaling, and collision nudging exist; theme/view goldens remain |
-| 3D-06 | In progress: deterministic tiled depth rendering for mesh/line/points, 24-bit depth ties, top-left fill, perspective-correct attributes, shading, and 1x/4x sampling exist; the full exact-golden/property corpus remains |
-| 3D-07 | In progress: Image/PNG and hybrid SVG/PDF output are live and tested; whole-image goldens and broader semantic parity remain |
-| 3D-08 through 3D-14 | Not started |
+| 3D-06 | In progress: deterministic tiled depth rendering for mesh/line/points, 24-bit depth ties, top-left fill, perspective-correct attributes, shading, 1x/4x sampling, and a committed exact isolated-layer hash exist; the full exact-golden/property corpus remains |
+| 3D-07 | In progress: Image/PNG and hybrid SVG/PDF output are live and tested, with large-offset orthographic/perspective semantic probes; whole-image goldens and broader semantic parity remain |
+| 3D-08 through 3D-09 | Not started |
+| 3D-10 | In progress: backend-neutral screen rays and lazy CPU surface-triangle BVH picking exist; camera interaction, point/line picking, and frontend adapters remain |
+| 3D-11 through 3D-14 | Not started |
 
 `render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
 deterministic CPU 3D backend. `save` selects PNG, hybrid SVG, or hybrid PDF from
@@ -929,6 +931,8 @@ Required checks:
 - WASM CPU and WebGPU compile checks;
 - packaged external consumer with `features = ["3d"]`;
 - registered examples and deterministic gallery freshness.
+- final `greptile review --agent`; actionable findings are fixed or explicitly
+  recorded in this plan before the alpha is declared complete.
 
 Scheduled or dedicated hardware checks:
 
@@ -1134,6 +1138,48 @@ Documentation must state:
   builder-to-image measurements including ingestion, scene compilation, 4x
   sampling, Axis3 text, and image composition, so they are deliberately not
   labeled as the later retained warm-frame measurements.
+- Added a deterministic benchmark dataset manifest and generator. Each case
+  hashes the dimensions and little-endian `f64` bit patterns with FNV-1a so
+  performance results cannot silently change their workload. The committed
+  cases cover 100K/1M/10M scatter and 100/512/1024 square surfaces, with fixed
+  viewport and camera contracts.
+- Added a `trybuild` API matrix designed as a small-model gate. The canonical
+  call compiles through labels, explicit limits, camera, render, PNG bytes,
+  SVG, save, and show; missing `z`, matrix scatter input, implicit surface
+  grids, one-dimensional surface `z`, and unitless camera angles fail to
+  compile. Runtime ecosystem probes also cover ndarray arrays/views and
+  nalgebra vectors/matrices behind their existing feature flags.
+- The compile matrix exposed that the first builder slice omitted explicit
+  `xlim`, `ylim`, and `zlim`. Added those controls with finite ascending
+  validation. Limit changes invalidate geometry and layout because
+  normalization and ticks change, but do not invalidate appearance.
+- Implemented a lazy deterministic triangle BVH for retained surface geometry.
+  Normal rendering does not build it, camera-only changes reuse the exact BVH
+  allocation, and geometry changes invalidate it. CPU screen picking returns
+  the series, triangle/source indices, barycentric coordinates, data-space
+  position, and ray distance; point and line picking remain M4 work.
+- Added an exact four-sample raster-layer hash over a mixed
+  triangle/line/point depth scene. The probe locks down depth ties, top-left
+  fill, clipping, shading, line coverage, marker coverage, and deterministic
+  compositing without coupling the fixture to font rasterization.
+- Added a large-offset semantic render probe for both orthographic and
+  perspective cameras. Both outputs contain non-background geometry, keep the
+  requested dimensions, and differ by projection as expected after f64
+  normalization.
+- Added the requested final Greptile gate: after the complete M5 alpha
+  implementation, run `greptile review --agent`, address actionable findings,
+  and record the result in this plan.
+- Verified this slice with the no-default, `3d`, `3d,parallel`, and
+  all-features compile rows; strict 3D Clippy; rustdoc with warnings denied;
+  the small-model `trybuild` matrix; ndarray, nalgebra, PDF, and parallel
+  determinism probes; and the complete no-default 3D library suite. The library
+  suite passed 1,304 tests with zero failures.
+- The planned production-unwrap checker is not yet a valid release gate for
+  this long-lived branch. It diffs all 3D work against `main` and lexically
+  reports test-only `expect` calls inside `#[cfg(test)]` modules as production
+  because those modules live in `src/`. Before 3D-14, teach the checker to
+  exclude test-only syntax (or provide an audited branch baseline), then remove
+  any genuine production findings and wire the corrected check into CI.
 
 ## Primary references
 

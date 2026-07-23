@@ -19,6 +19,7 @@ use crate::render::three_d::software::raster::{
 use super::RenderDiagnostics3D;
 use super::builder::{Plot3D, Series3D};
 use super::layout::Axis3Layout;
+use super::picking::Bvh3D;
 use super::resolve::{CacheKey3D, ResolvedFrame3D};
 
 #[derive(Default)]
@@ -26,8 +27,10 @@ pub(crate) struct PreparedSceneCache3D {
     geometry_key: Option<CacheKey3D>,
     appearance_key: Option<CacheKey3D>,
     view_key: Option<CacheKey3D>,
+    bvh_key: Option<CacheKey3D>,
     geometry: Option<Arc<SceneGeometry3D>>,
     scene: Option<Arc<Scene3D>>,
+    bvh: Option<Arc<Bvh3D>>,
 }
 
 impl PreparedSceneCache3D {
@@ -41,6 +44,8 @@ impl PreparedSceneCache3D {
             let geometry = Arc::new(lower_geometry(frame, &mut diagnostics)?);
             self.geometry = Some(Arc::clone(&geometry));
             self.geometry_key = Some(frame.keys.geometry);
+            self.bvh_key = None;
+            self.bvh = None;
             geometry
         } else {
             Arc::clone(
@@ -72,6 +77,29 @@ impl PreparedSceneCache3D {
         diagnostics.triangles_submitted = scene.triangle_count() as u64;
         diagnostics.sampling_mode = sampling_mode(&frame.series).to_string();
         Ok((scene, diagnostics))
+    }
+
+    pub(crate) fn prepare_with_bvh(
+        &mut self,
+        frame: &ResolvedFrame3D,
+    ) -> Result<(Arc<Scene3D>, Arc<Bvh3D>, RenderDiagnostics3D)> {
+        let (scene, mut diagnostics) = self.prepare(frame)?;
+        if self.bvh_key != Some(frame.keys.geometry) || self.bvh.is_none() {
+            let bvh = Arc::new(Bvh3D::build(&scene.geometry)?);
+            self.bvh = Some(Arc::clone(&bvh));
+            self.bvh_key = Some(frame.keys.geometry);
+            diagnostics.bvh_rebuilds = 1;
+        }
+        let bvh =
+            Arc::clone(
+                self.bvh
+                    .as_ref()
+                    .ok_or_else(|| PlottingError::InvalidTopology3D {
+                        reason: "3D BVH cache did not retain the prepared acceleration structure"
+                            .to_string(),
+                    })?,
+            );
+        Ok((scene, bvh, diagnostics))
     }
 }
 
@@ -770,6 +798,52 @@ mod tests {
         assert!(!Arc::ptr_eq(&first.geometry, &second.geometry));
         assert!(!Arc::ptr_eq(&first, &second));
         assert_eq!(diagnostics.scene_compiles, 1);
+    }
+
+    #[test]
+    fn bvh_is_lazy_and_camera_changes_reuse_it() {
+        let base = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]])
+            .finalize()
+            .resolve()
+            .expect("base");
+        let camera = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]])
+            .azimuth_deg(15.0)
+            .finalize()
+            .resolve()
+            .expect("camera");
+        let mut cache = PreparedSceneCache3D::default();
+        let (_, render_diagnostics) = cache.prepare(&base).expect("render preparation");
+        assert_eq!(render_diagnostics.bvh_rebuilds, 0);
+        let (_, first_bvh, first_diagnostics) = cache.prepare_with_bvh(&base).expect("first BVH");
+        assert_eq!(first_diagnostics.bvh_rebuilds, 1);
+        assert_eq!(first_bvh.triangle_count(), 2);
+        let (_, second_bvh, second_diagnostics) =
+            cache.prepare_with_bvh(&camera).expect("camera BVH");
+        assert!(Arc::ptr_eq(&first_bvh, &second_bvh));
+        assert_eq!(second_diagnostics.bvh_rebuilds, 0);
+        assert_eq!(second_diagnostics.scene_compiles, 0);
+    }
+
+    #[test]
+    fn data_changes_invalidate_the_lazy_bvh() {
+        let base = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]])
+            .finalize()
+            .resolve()
+            .expect("base");
+        let changed = surface(
+            &[0.0, 1.0, 2.0],
+            &[0.0, 1.0],
+            &[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        )
+        .finalize()
+        .resolve()
+        .expect("changed");
+        let mut cache = PreparedSceneCache3D::default();
+        let (_, first, _) = cache.prepare_with_bvh(&base).expect("first BVH");
+        let (_, second, diagnostics) = cache.prepare_with_bvh(&changed).expect("changed BVH");
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(diagnostics.bvh_rebuilds, 1);
+        assert_eq!(second.triangle_count(), 4);
     }
 
     #[cfg(feature = "parallel")]

@@ -1,0 +1,15 @@
+error[E0061]: this function takes 3 arguments but 2 arguments were supplied
+ --> tests/ui/3d/fail/missing_z.rs:6:13
+  |
+6 |     let _ = scatter3d(&x, &y);
+  |             ^^^^^^^^^-------- argument #3 of type `&_` is missing
+  |
+note: function defined here
+ --> src/lib.rs
+  |
+  | pub fn scatter3d<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Scatter3DBuilder
+  |        ^^^^^^^^^
+help: provide the argument
+  |
+6 |     let _ = scatter3d(&x, &y, /* z */);
+  |                             +++++++++

@@ -1,0 +1,47 @@
+error[E0277]: the trait bound `[[{float}; 2]; 2]: NumericData1D` is not satisfied
+ --> tests/ui/3d/fail/surface_implicit_grid.rs:5:21
+  |
+5 |     let _ = surface(&z);
+  |             ------- ^^ the trait `Data1D<f64>` is not implemented for `[[{float}; 2]; 2]`
+  |             |
+  |             required by a bound introduced by this call
+  |
+help: the following other types implement trait `Data1D<T>`
+ --> src/data/traits.rs
+  |
+  | impl<T, const N: usize> Data1D<T> for [T; N] {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `[T; N]`
+...
+  | impl<T, const N: usize> Data1D<T> for &[T; N] {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[T; N]`
+...
+  | impl<T> Data1D<T> for &[T] {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^ `&[T]`
+...
+  | impl<T> Data1D<T> for [T] {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^ `[T]`
+  = note: required for `[[{float}; 2]; 2]` to implement `NumericData1D`
+note: required by a bound in `surface`
+ --> src/lib.rs
+  |
+  | pub fn surface<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Surface3DBuilder
+  |        ------- required by a bound in this function
+  | where
+  |     X: NumericData1D + ?Sized,
+  |        ^^^^^^^^^^^^^ required by this bound in `surface`
+
+error[E0061]: this function takes 3 arguments but 1 argument was supplied
+ --> tests/ui/3d/fail/surface_implicit_grid.rs:5:13
+  |
+5 |     let _ = surface(&z);
+  |             ^^^^^^^---- two arguments of type `&_` and `&_` are missing
+  |
+note: function defined here
+ --> src/lib.rs
+  |
+  | pub fn surface<X, Y, Z>(x: &X, y: &Y, z: &Z) -> Surface3DBuilder
+  |        ^^^^^^^
+help: provide the arguments
+  |
+5 |     let _ = surface(&z, /* y */, /* z */);
+  |                       ++++++++++++++++++

@@ -965,4 +965,49 @@ mod tests {
             5.0
         ));
     }
+
+    #[test]
+    fn isolated_depth_layer_has_a_stable_export_hash() {
+        let viewport = Viewport3D {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 8,
+        };
+        let triangle = triangle([(0.5, 0.5), (7.5, 0.5), (0.5, 7.5)], 0.6, Color::BLUE, 8);
+        let line_material = Arc::new(LineMaterial3D {
+            color: Color::GREEN,
+            width: 1.5,
+            dash_pattern: None,
+        });
+        let line = RasterPrimitive3D::Line(RasterLine3D {
+            start: vertex(0.5, 7.0, 0.4),
+            end: vertex(7.0, 0.5, 0.4),
+            material: line_material,
+            primitive_id: 4,
+            bounds: line_bounds(Vec2::new(0.5, 7.0), Vec2::new(7.0, 0.5), 0.75, viewport)
+                .expect("line bounds"),
+        });
+        let point = RasterPrimitive3D::Point(RasterPoint3D {
+            center: vertex(4.0, 4.0, 0.2),
+            material: PointMaterial3D {
+                color: Color::RED,
+                radius: 1.5,
+                marker: MarkerStyle::Circle,
+            },
+            primitive_id: 1,
+            bounds: point_bounds(Vec2::new(4.0, 4.0), 1.5, viewport).expect("point bounds"),
+        });
+        let pixels = raster_test_primitives(vec![triangle, line, point], &EXPORT_SAMPLE_OFFSETS);
+        assert_eq!(fnv1a64(&pixels), 0x3591_6942_3a5e_c98f);
+    }
+
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for &byte in bytes {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
 }

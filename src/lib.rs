@@ -835,8 +835,9 @@ pub mod prelude {
     };
     #[cfg(feature = "3d")]
     pub use crate::core::{
-        AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, Point3D, ProjectedPoint3D, Projection3D,
-        RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D, Surface3DBuilder, Wireframe3DBuilder,
+        AxisAspect3D, Bounds3D, Camera3D, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D,
+        ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D,
+        Surface3DBuilder, Wireframe3DBuilder,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,

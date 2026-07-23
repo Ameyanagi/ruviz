@@ -331,6 +331,11 @@ name = "interactive_benchmark_runner"
 path = "examples/performance/interactive_benchmark_runner.rs"
 required-features = ["serde", "animation"]
 
+[[example]]
+name = "3d_dataset_manifest"
+path = "examples/performance/3d_dataset_manifest.rs"
+required-features = ["3d"]
+
 # GPU examples (require gpu feature)
 [[example]]
 name = "gpu_api_test"

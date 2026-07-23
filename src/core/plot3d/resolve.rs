@@ -1,4 +1,4 @@
-use crate::core::{Bounds3D, FigureConfig, PlottingError, Result};
+use crate::core::{Bounds3D, FigureConfig, PlottingError, Point3D, Result};
 use crate::plots::{SurfaceSampling, SurfaceShading};
 use crate::render::{Color, ColorMap, LineStyle, Theme};
 
@@ -50,9 +50,11 @@ impl Plot3D {
                 None => combined = Some(bounds),
             }
         }
-        let bounds = combined.ok_or(PlottingError::EmptyDataSet)?;
+        let data_bounds = combined.ok_or(PlottingError::EmptyDataSet)?;
+        let bounds = apply_limits(data_bounds, self.xlim, self.ylim, self.zlim)?;
         let keys = frame_keys(
             &self.series,
+            bounds,
             self.camera,
             &self.figure,
             &self.theme,
@@ -79,6 +81,7 @@ impl Plot3D {
 
 fn frame_keys(
     series: &[Series3D],
+    bounds: Bounds3D,
     camera: Camera3D,
     figure: &FigureConfig,
     theme: &Theme,
@@ -172,6 +175,8 @@ fn frame_keys(
             }
         }
     }
+    hash_bounds(&mut geometry, bounds);
+    hash_bounds(&mut layout, bounds);
     hash_theme_appearance(&mut appearance, theme);
     hash_layout(&mut layout, figure, theme, title, xlabel, ylabel, zlabel);
 
@@ -186,6 +191,50 @@ fn frame_keys(
         appearance: CacheKey3D(appearance.finish()),
         layout: CacheKey3D(layout.finish()),
         view: CacheKey3D(view.finish()),
+    }
+}
+
+fn apply_limits(
+    data_bounds: Bounds3D,
+    xlim: Option<(f64, f64)>,
+    ylim: Option<(f64, f64)>,
+    zlim: Option<(f64, f64)>,
+) -> Result<Bounds3D> {
+    for (axis, limits) in [("x", xlim), ("y", ylim), ("z", zlim)] {
+        if let Some((minimum, maximum)) = limits
+            && (!minimum.is_finite() || !maximum.is_finite() || minimum > maximum)
+        {
+            return Err(PlottingError::InvalidTopology3D {
+                reason: format!(
+                    "{axis} limits must be finite and ascending, got ({minimum}, {maximum})"
+                ),
+            });
+        }
+    }
+    Bounds3D::new(
+        Point3D::new(
+            xlim.map_or(data_bounds.min.x, |limits| limits.0),
+            ylim.map_or(data_bounds.min.y, |limits| limits.0),
+            zlim.map_or(data_bounds.min.z, |limits| limits.0),
+        ),
+        Point3D::new(
+            xlim.map_or(data_bounds.max.x, |limits| limits.1),
+            ylim.map_or(data_bounds.max.y, |limits| limits.1),
+            zlim.map_or(data_bounds.max.z, |limits| limits.1),
+        ),
+    )
+}
+
+fn hash_bounds(hasher: &mut StableHasher3D, bounds: Bounds3D) {
+    for value in [
+        bounds.min.x,
+        bounds.min.y,
+        bounds.min.z,
+        bounds.max.x,
+        bounds.max.y,
+        bounds.max.z,
+    ] {
+        hasher.f64(value);
     }
 }
 
@@ -434,5 +483,36 @@ mod tests {
             .resolve()
             .expect("flat");
         assert_ne!(smooth.keys.geometry, flat.keys.geometry);
+    }
+
+    #[test]
+    fn explicit_limits_override_bounds_and_invalidate_geometry_and_layout() {
+        let base = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+            .finalize()
+            .resolve()
+            .expect("base");
+        let limited = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+            .xlim(-2.0, 2.0)
+            .ylim(-3.0, 3.0)
+            .zlim(-4.0, 4.0)
+            .finalize()
+            .resolve()
+            .expect("limited");
+        assert_eq!(limited.bounds.min, Point3D::new(-2.0, -3.0, -4.0));
+        assert_eq!(limited.bounds.max, Point3D::new(2.0, 3.0, 4.0));
+        assert_ne!(base.keys.geometry, limited.keys.geometry);
+        assert_ne!(base.keys.layout, limited.keys.layout);
+        assert_eq!(base.keys.appearance, limited.keys.appearance);
+        assert_eq!(base.keys.view, limited.keys.view);
+    }
+
+    #[test]
+    fn invalid_explicit_limits_are_rejected_at_the_terminal() {
+        let error = scatter3d(&[0.0], &[0.0], &[0.0])
+            .xlim(2.0, -2.0)
+            .validate()
+            .expect_err("descending limits");
+        assert!(matches!(error, PlottingError::InvalidTopology3D { .. }));
+        assert!(error.to_string().contains("x limits"));
     }
 }
