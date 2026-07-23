@@ -8194,7 +8194,9 @@ dependencies = [
  "js-sys",
  "ruviz",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
+ "wgpu 29.0.1",
 ]
 
 [[package]]

@@ -14,6 +14,9 @@ pub use diagnostics::RenderDiagnostics3D;
 pub use interaction::{
     CameraSnapshot3D, InputEvent3D, InteractionResult3D, InteractivePlot3DSession, PointerButton3D,
 };
+#[cfg(feature = "gpu")]
+#[doc(hidden)]
+pub use interaction::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D};
 pub use picking::{PickHit3D, PickPrimitive3D};
 #[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
 pub use prepared::GpuBenchmarkSession3D;

@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Mutex, OnceLock};
 
 use bytemuck::{Pod, Zeroable};
 use futures_intrusive::channel::shared::oneshot_channel;
@@ -9,6 +11,8 @@ use crate::core::plot3d::layout::Axis3Layout;
 use crate::core::{PlottingError, Result};
 use crate::render::three_d::scene::Scene3D;
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::context::validate_format;
 use super::context::{COLOR_FORMAT, DEPTH_FORMAT, GpuContext3D};
 use super::pipelines::PipelineLibrary3D;
 use super::resources::{ResourceCache3D, ResourceUpdate3D};
@@ -52,10 +56,13 @@ pub(crate) struct Wgpu3DRenderer {
     camera_bind_group: wgpu::BindGroup,
     initial_buffer_creations: u64,
     attachment_generation: u64,
+    readback_enabled: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 static SHARED_RENDERER: OnceLock<Mutex<Wgpu3DRenderer>> = OnceLock::new();
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn render_with_shared_renderer(
     scene: &Arc<Scene3D>,
     layout: &Axis3Layout,
@@ -75,12 +82,27 @@ pub(crate) fn render_with_shared_renderer(
 }
 
 impl Wgpu3DRenderer {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new() -> Result<Self> {
         let context = GpuContext3D::new()?;
-        Self::from_context(context)
+        Self::from_context_with_readback(context)
     }
 
-    pub(super) fn from_context(context: GpuContext3D) -> Result<Self> {
+    pub(crate) fn from_context(context: GpuContext3D) -> Result<Self> {
+        Self::from_context_internal(context, false)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn from_context_with_readback(context: GpuContext3D) -> Result<Self> {
+        validate_format(
+            context.adapter(),
+            COLOR_FORMAT,
+            wgpu::TextureUsages::COPY_SRC,
+        )?;
+        Self::from_context_internal(context, true)
+    }
+
+    fn from_context_internal(context: GpuContext3D, readback_enabled: bool) -> Result<Self> {
         let pipelines = PipelineLibrary3D::new(&context.device, context.sample_count);
         let camera_buffer = context
             .device
@@ -108,9 +130,11 @@ impl Wgpu3DRenderer {
             camera_bind_group,
             initial_buffer_creations: 1,
             attachment_generation: 0,
+            readback_enabled,
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn render_to_image(
         &mut self,
         scene: &Arc<Scene3D>,
@@ -136,6 +160,7 @@ impl Wgpu3DRenderer {
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn render_without_readback(
         &mut self,
         scene: &Arc<Scene3D>,
@@ -146,7 +171,7 @@ impl Wgpu3DRenderer {
             .map(|(_, frame)| frame)
     }
 
-    pub(super) fn render_to_texture(
+    pub(crate) fn render_to_texture(
         &mut self,
         scene: &Arc<Scene3D>,
         layout: &Axis3Layout,
@@ -161,11 +186,11 @@ impl Wgpu3DRenderer {
             .map(|(_, frame)| frame)
     }
 
-    pub(super) fn context(&self) -> &GpuContext3D {
+    pub(crate) fn context(&self) -> &GpuContext3D {
         &self.context
     }
 
-    pub(super) fn color_view(&self) -> Result<&wgpu::TextureView> {
+    pub(crate) fn color_view(&self) -> Result<&wgpu::TextureView> {
         self.attachments
             .as_ref()
             .map(|attachments| &attachments.color_view)
@@ -176,7 +201,7 @@ impl Wgpu3DRenderer {
             })
     }
 
-    pub(super) const fn attachment_generation(&self) -> u64 {
+    pub(crate) const fn attachment_generation(&self) -> u64 {
         self.attachment_generation
     }
 
@@ -189,7 +214,16 @@ impl Wgpu3DRenderer {
         wait_for_completion: bool,
     ) -> Result<(Option<Image>, GpuFrameOutput3D)> {
         if self.context.is_lost() {
-            *self = Self::new()?;
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                *self = Self::new()?;
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                return Err(PlottingError::GpuNotAvailable(
+                    "the direct 3d WebGPU device was lost".to_string(),
+                ));
+            }
         }
         self.context.ensure_available()?;
         validate_dimensions(
@@ -220,6 +254,7 @@ impl Wgpu3DRenderer {
                 layout.canvas_width,
                 layout.canvas_height,
                 self.context.sample_count,
+                self.readback_enabled,
             )?;
             resource_update.buffer_creations = resource_update
                 .buffer_creations
@@ -352,6 +387,11 @@ impl Wgpu3DRenderer {
         }
 
         if readback {
+            let readback_buffer = attachments.readback.as_ref().ok_or_else(|| {
+                PlottingError::RenderError(
+                    "direct 3d renderer was created without readback support".to_string(),
+                )
+            })?;
             encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &attachments.color,
@@ -360,7 +400,7 @@ impl Wgpu3DRenderer {
                     aspect: wgpu::TextureAspect::All,
                 },
                 wgpu::TexelCopyBufferInfo {
-                    buffer: &attachments.readback,
+                    buffer: readback_buffer,
                     layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
                         bytes_per_row: Some(attachments.padded_bytes_per_row),
@@ -378,7 +418,11 @@ impl Wgpu3DRenderer {
         let layer = if readback {
             Some(readback_image(
                 &self.context.device,
-                &attachments.readback,
+                attachments.readback.as_ref().ok_or_else(|| {
+                    PlottingError::RenderError(
+                        "direct 3d renderer was created without readback support".to_string(),
+                    )
+                })?,
                 submission,
                 layout.canvas_width,
                 layout.canvas_height,
@@ -425,7 +469,7 @@ struct OffscreenAttachments3D {
     msaa_color_view: Option<wgpu::TextureView>,
     _depth: wgpu::Texture,
     depth_view: wgpu::TextureView,
-    readback: wgpu::Buffer,
+    readback: Option<wgpu::Buffer>,
     padded_bytes_per_row: u32,
     width: u32,
     height: u32,
@@ -434,18 +478,30 @@ struct OffscreenAttachments3D {
 }
 
 impl OffscreenAttachments3D {
-    fn new(device: &wgpu::Device, width: u32, height: u32, sample_count: u32) -> Result<Self> {
+    fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        sample_count: u32,
+        readback_enabled: bool,
+    ) -> Result<Self> {
         let unpadded = width.checked_mul(4).ok_or(PlottingError::GpuMemoryError {
             requested: usize::MAX,
             available: None,
         })?;
         let padded_bytes_per_row = unpadded.div_ceil(COPY_ROW_ALIGNMENT) * COPY_ROW_ALIGNMENT;
-        let readback_size = u64::from(padded_bytes_per_row)
-            .checked_mul(u64::from(height))
-            .ok_or(PlottingError::GpuMemoryError {
-                requested: usize::MAX,
-                available: None,
-            })?;
+        let readback_size = if readback_enabled {
+            Some(
+                u64::from(padded_bytes_per_row)
+                    .checked_mul(u64::from(height))
+                    .ok_or(PlottingError::GpuMemoryError {
+                        requested: usize::MAX,
+                        available: None,
+                    })?,
+            )
+        } else {
+            None
+        };
         let extent = wgpu::Extent3d {
             width,
             height,
@@ -459,8 +515,12 @@ impl OffscreenAttachments3D {
             dimension: wgpu::TextureDimension::D2,
             format: COLOR_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | if readback_enabled {
+                    wgpu::TextureUsages::COPY_SRC
+                } else {
+                    wgpu::TextureUsages::empty()
+                },
             view_formats: &[],
         });
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
@@ -491,11 +551,13 @@ impl OffscreenAttachments3D {
             view_formats: &[],
         });
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ruviz direct 3d readback"),
-            size: readback_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
+        let readback = readback_size.map(|size| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ruviz direct 3d readback"),
+                size,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            })
         });
         Ok(Self {
             color,
@@ -509,7 +571,7 @@ impl OffscreenAttachments3D {
             width,
             height,
             sample_count,
-            creation_count: 1,
+            creation_count: u64::from(readback_enabled),
         })
     }
 

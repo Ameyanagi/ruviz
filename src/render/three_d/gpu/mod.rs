@@ -1,12 +1,16 @@
 //! Direct retained wgpu renderer for 3d scenes.
+#![cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
 
 mod context;
 mod pipelines;
-#[cfg(feature = "interactive-gpu")]
 mod presenter;
 mod renderer;
 mod resources;
 
-#[cfg(feature = "interactive-gpu")]
+pub(crate) use context::GpuContext3D;
+pub(crate) use presenter::{PresentationCompositor3D, select_surface_format};
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 pub(crate) use presenter::{PresentedFrame3D, SurfacePresentOutcome3D, SurfacePresenter3D};
-pub(crate) use renderer::{GpuFrameOutput3D, Wgpu3DRenderer, render_with_shared_renderer};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use renderer::render_with_shared_renderer;
+pub(crate) use renderer::{GpuFrameOutput3D, Wgpu3DRenderer};

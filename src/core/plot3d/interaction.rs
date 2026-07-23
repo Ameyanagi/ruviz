@@ -8,13 +8,15 @@ use crate::render::three_d::overlay::compose_image;
 use crate::render::three_d::scene::Scene3D;
 use crate::render::three_d::software::raster::{SoftwareRenderOptions3D, render_scene};
 
-#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
-use crate::render::three_d::gpu::Wgpu3DRenderer;
+#[cfg(feature = "gpu")]
+use crate::render::three_d::gpu::{
+    GpuContext3D, PresentationCompositor3D, Wgpu3DRenderer, select_surface_format,
+};
 #[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 use crate::render::three_d::gpu::{SurfacePresentOutcome3D, SurfacePresenter3D};
 
 use super::Camera3D;
-#[cfg(all(feature = "gpu", not(target_arch = "wasm32")))]
+#[cfg(feature = "gpu")]
 use super::RenderDiagnostics3D;
 use super::builder::Plot3D;
 use super::layout::Axis3Layout;
@@ -418,6 +420,7 @@ impl InteractivePlot3DSession {
         };
         diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
         diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
+        diagnostics.texture_upload_bytes = output.resource_update.texture_upload_bytes;
         diagnostics.buffer_creations = output.resource_update.buffer_creations;
         diagnostics.camera_uniform_writes = output.camera_uniform_writes;
         diagnostics.draw_calls = output.draw_calls;
@@ -458,6 +461,7 @@ impl InteractivePlot3DSession {
         };
         diagnostics.vertex_upload_bytes = output.scene.resource_update.vertex_upload_bytes;
         diagnostics.index_upload_bytes = output.scene.resource_update.index_upload_bytes;
+        diagnostics.texture_upload_bytes = output.scene.resource_update.texture_upload_bytes;
         diagnostics.buffer_creations = output
             .scene
             .resource_update
@@ -476,6 +480,199 @@ impl InteractivePlot3DSession {
             PlottingError::RenderError("3D camera generation space was exhausted".to_string())
         })?;
         Ok(())
+    }
+}
+
+/// Result of one direct native or browser surface presentation attempt.
+///
+/// This integration enum is public only so platform adapter crates can own the
+/// actual surface without exposing ruviz's retained scene internals.
+#[cfg(feature = "gpu")]
+#[doc(hidden)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "boxing diagnostics would add a heap allocation to every presented frame"
+)]
+pub enum GpuSurfacePresentStatus3D {
+    Presented(RenderDiagnostics3D),
+    Skipped,
+    RecreateSurface,
+}
+
+/// Cross-target retained 3d renderer for an adapter-owned wgpu surface.
+///
+/// Browser adapters construct this asynchronously after creating their canvas
+/// surface. Interactive frames submit GPU work and present without readback,
+/// blocking polls, or CPU framebuffer uploads.
+#[cfg(feature = "gpu")]
+#[doc(hidden)]
+pub struct GpuSurfaceSession3D {
+    session: InteractivePlot3DSession,
+    renderer: Wgpu3DRenderer,
+    compositor: PresentationCompositor3D,
+    configuration: wgpu::SurfaceConfiguration,
+    presentation_format: wgpu::TextureFormat,
+    pending_surface_reconfigurations: u64,
+}
+
+#[cfg(feature = "gpu")]
+impl GpuSurfaceSession3D {
+    pub async fn new(
+        session: InteractivePlot3DSession,
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> Result<Self> {
+        let (width, height) = session.size_px();
+        let context = GpuContext3D::from_instance_async(instance, Some(surface)).await?;
+        let capabilities = surface.get_capabilities(context.adapter());
+        let formats = select_surface_format(&capabilities.formats)?;
+        let mut configuration = surface
+            .get_default_config(context.adapter(), width.max(1), height.max(1))
+            .ok_or_else(|| {
+                PlottingError::UnsupportedGpuFeature(
+                    "the selected adapter cannot present to this 3d canvas".to_string(),
+                )
+            })?;
+        configuration.format = formats.surface;
+        configuration.view_formats = if formats.view == formats.surface {
+            Vec::new()
+        } else {
+            vec![formats.view]
+        };
+        configuration.present_mode = wgpu::PresentMode::AutoVsync;
+        configuration.desired_maximum_frame_latency = 2;
+        surface.configure(context.device(), &configuration);
+        let renderer = Wgpu3DRenderer::from_context(context)?;
+        let compositor = PresentationCompositor3D::new(renderer.context().device(), formats.view);
+        Ok(Self {
+            session,
+            renderer,
+            compositor,
+            configuration,
+            presentation_format: formats.view,
+            pending_surface_reconfigurations: 1,
+        })
+    }
+
+    pub fn handle_input(&mut self, event: InputEvent3D) -> Result<InteractionResult3D> {
+        self.session.handle_input(event)
+    }
+
+    pub fn camera_snapshot(&self) -> CameraSnapshot3D {
+        self.session.camera_snapshot()
+    }
+
+    pub fn resize(
+        &mut self,
+        surface: &wgpu::Surface<'_>,
+        width: u32,
+        height: u32,
+        scale_factor: f32,
+    ) -> Result<()> {
+        self.session.resize(width, height, scale_factor)?;
+        if self.configuration.width != width || self.configuration.height != height {
+            self.configuration.width = width;
+            self.configuration.height = height;
+            surface.configure(self.renderer.context().device(), &self.configuration);
+            self.pending_surface_reconfigurations =
+                self.pending_surface_reconfigurations.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    pub fn present(&mut self, surface: &wgpu::Surface<'_>) -> Result<GpuSurfacePresentStatus3D> {
+        if self.renderer.context().is_lost() {
+            return Ok(GpuSurfacePresentStatus3D::RecreateSurface);
+        }
+        let (surface_texture, reconfigure_after_present) = match surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) => (texture, false),
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => (texture, true),
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(GpuSurfacePresentStatus3D::Skipped);
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                surface.configure(self.renderer.context().device(), &self.configuration);
+                self.pending_surface_reconfigurations =
+                    self.pending_surface_reconfigurations.saturating_add(1);
+                return Ok(GpuSurfacePresentStatus3D::Skipped);
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                return Ok(GpuSurfacePresentStatus3D::RecreateSurface);
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(PlottingError::RenderError(
+                    "direct 3d surface acquisition hit a validation error".to_string(),
+                ));
+            }
+        };
+        let layout = Axis3Layout::resolve(&self.session.frame)?;
+        let scene_output = match self.renderer.render_to_texture(
+            &self.session.scene,
+            &layout,
+            self.session.frame.figure.dpi,
+        ) {
+            Ok(output) => output,
+            Err(_) if self.renderer.context().is_lost() => {
+                drop(surface_texture);
+                return Ok(GpuSurfacePresentStatus3D::RecreateSurface);
+            }
+            Err(error) => return Err(error),
+        };
+        let target_view = surface_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("ruviz 3d sRGB surface view"),
+                format: Some(self.presentation_format),
+                ..Default::default()
+            });
+        let mut presentation = self.compositor.compose(
+            self.renderer.context(),
+            self.renderer.color_view()?,
+            self.renderer.attachment_generation(),
+            &target_view,
+            &layout,
+            &self.session.frame.figure,
+            &self.session.frame.theme,
+        )?;
+        presentation.surface_reconfigurations = self.pending_surface_reconfigurations;
+        self.pending_surface_reconfigurations = 0;
+        surface_texture.present();
+        if reconfigure_after_present {
+            surface.configure(self.renderer.context().device(), &self.configuration);
+            presentation.surface_reconfigurations =
+                presentation.surface_reconfigurations.saturating_add(1);
+        }
+        let mut diagnostics = RenderDiagnostics3D {
+            points_submitted: self.session.scene.point_count() as u64,
+            triangles_submitted: self.session.scene.triangle_count() as u64,
+            actual_backend: "gpu3d-surface".to_string(),
+            adapter_name: Some(scene_output.adapter_name),
+            sample_count: scene_output.sample_count,
+            fallback_reason: None,
+            readback_bytes: 0,
+            presentation_vertex_upload_bytes: presentation.vertex_upload_bytes,
+            presentation_texture_upload_bytes: presentation.texture_upload_bytes,
+            surface_presents: 1,
+            surface_reconfigurations: presentation.surface_reconfigurations,
+            queue_waits: 0,
+            ..RenderDiagnostics3D::default()
+        };
+        diagnostics.vertex_upload_bytes = scene_output.resource_update.vertex_upload_bytes;
+        diagnostics.index_upload_bytes = scene_output.resource_update.index_upload_bytes;
+        diagnostics.texture_upload_bytes = scene_output.resource_update.texture_upload_bytes;
+        diagnostics.buffer_creations = scene_output
+            .resource_update
+            .buffer_creations
+            .saturating_add(presentation.buffer_creations);
+        diagnostics.camera_uniform_writes = scene_output.camera_uniform_writes;
+        diagnostics.draw_calls = scene_output
+            .draw_calls
+            .saturating_add(presentation.draw_calls);
+        Ok(GpuSurfacePresentStatus3D::Presented(diagnostics))
+    }
+
+    pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
+        self.session.render()?.encode_png()
     }
 }
 

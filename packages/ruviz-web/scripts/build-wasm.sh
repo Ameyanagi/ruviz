@@ -21,6 +21,8 @@ WASM_PACK_ARGS=(
   "${PACKAGE_DIR}/generated/raw"
   --out-name
   ruviz_web_raw
+  --features
+  3d-gpu
 )
 
 # The notebook widget bundle is checked into the repo, so it needs a

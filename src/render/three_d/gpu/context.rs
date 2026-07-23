@@ -6,7 +6,7 @@ use crate::core::{PlottingError, Result};
 pub(super) const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 pub(super) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
-pub(super) struct GpuContext3D {
+pub(crate) struct GpuContext3D {
     pub(super) _instance: wgpu::Instance,
     pub(super) _adapter: wgpu::Adapter,
     pub(super) device: Arc<wgpu::Device>,
@@ -17,11 +17,12 @@ pub(super) struct GpuContext3D {
 }
 
 impl GpuContext3D {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn new() -> Result<Self> {
         pollster::block_on(Self::from_instance_async(Self::create_instance(), None))
     }
 
-    pub(super) fn create_instance() -> wgpu::Instance {
+    pub(crate) fn create_instance() -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             flags: if cfg!(debug_assertions) {
@@ -35,6 +36,7 @@ impl GpuContext3D {
         })
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn for_surface(
         instance: wgpu::Instance,
         surface: &wgpu::Surface<'_>,
@@ -42,7 +44,7 @@ impl GpuContext3D {
         pollster::block_on(Self::from_instance_async(instance, Some(surface)))
     }
 
-    async fn from_instance_async(
+    pub(crate) async fn from_instance_async(
         instance: wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
     ) -> Result<Self> {
@@ -60,7 +62,6 @@ impl GpuContext3D {
             COLOR_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         )?;
-        validate_format(&adapter, COLOR_FORMAT, wgpu::TextureUsages::COPY_SRC)?;
         validate_format(
             &adapter,
             DEPTH_FORMAT,
@@ -123,15 +124,19 @@ impl GpuContext3D {
         })
     }
 
-    pub(super) fn adapter(&self) -> &wgpu::Adapter {
+    pub(crate) fn adapter(&self) -> &wgpu::Adapter {
         &self._adapter
     }
 
-    pub(super) fn instance(&self) -> &wgpu::Instance {
+    pub(crate) fn instance(&self) -> &wgpu::Instance {
         &self._instance
     }
 
-    pub(super) fn ensure_available(&self) -> Result<()> {
+    pub(crate) fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub(crate) fn ensure_available(&self) -> Result<()> {
         if self.is_lost() {
             Err(PlottingError::GpuNotAvailable(
                 "the direct 3d wgpu device was lost".to_string(),
@@ -141,7 +146,7 @@ impl GpuContext3D {
         }
     }
 
-    pub(super) fn is_lost(&self) -> bool {
+    pub(crate) fn is_lost(&self) -> bool {
         self.lost.load(Ordering::Acquire)
     }
 
@@ -151,7 +156,7 @@ impl GpuContext3D {
     }
 }
 
-fn validate_format(
+pub(super) fn validate_format(
     adapter: &wgpu::Adapter,
     format: wgpu::TextureFormat,
     required_usage: wgpu::TextureUsages,

@@ -8,6 +8,7 @@ pub struct RenderDiagnostics3D {
     pub bvh_rebuilds: u64,
     pub vertex_upload_bytes: u64,
     pub index_upload_bytes: u64,
+    pub texture_upload_bytes: u64,
     pub buffer_creations: u64,
     pub camera_uniform_writes: u64,
     pub draw_calls: u64,
@@ -36,6 +37,7 @@ impl Default for RenderDiagnostics3D {
             bvh_rebuilds: 0,
             vertex_upload_bytes: 0,
             index_upload_bytes: 0,
+            texture_upload_bytes: 0,
             buffer_creations: 0,
             camera_uniform_writes: 0,
             draw_calls: 0,
@@ -71,6 +73,7 @@ mod tests {
         assert!(json.contains("\"sample_count\":0"));
         assert!(json.contains("\"sampling_mode\":\"full\""));
         assert!(json.contains("\"presentation_texture_upload_bytes\":0"));
+        assert!(json.contains("\"texture_upload_bytes\":0"));
         assert!(json.contains("\"surface_presents\":0"));
     }
 }

@@ -44,8 +44,8 @@ ray-marching design after the mesh/scatter pipeline is stable.
 | 3D-09 | In progress: explicit `render_gpu()`, truthful `gpu3d` diagnostics, bounded geometry/appearance caches, persistent device/pipelines/attachments, one-write camera frames, static readback, resize recreation, next-frame device-loss recreation, and native direct presentation exist; Auto routing and stress tests remain |
 | 3D-10 | Complete: one authoritative retained session provides orbit/pan/zoom/reset, portable camera snapshots, replacement-data keep-view, process-unique generation-safe point/line/surface picking, interactive CPU frames, and diagnosed GPU-readback frames |
 | 3D-11 | Complete: native winit now presents retained geometry and Axis3 directly through wgpu, while GPUI shares the retained core controls and truthfully identifies its image-backed GPU-readback fallback |
-| 3D-12 | In progress: main-thread Canvas2D and worker OffscreenCanvas adapters expose the same complete input/export API and compile under wasm `3d-gpu`; animation-frame/worker coalescing and browser smoke tests remain |
-| 3D-13 | In progress: native winit surface presentation reports `gpu3d-surface`, zero readback, and zero warm camera-frame text-atlas uploads; asynchronous browser WebGPU presentation and native-display smoke evidence remain |
+| 3D-12 | Complete for M4: matching Canvas2D and direct-WebGPU adapters exist for main-thread canvas and worker OffscreenCanvas, the shipped WASM build contains them, and a 500-event Chromium burst test proves latest-pointer/one-frame coalescing |
+| 3D-13 | Complete for M4: native winit and Chromium main/worker sessions present retained Axis3 scenes as `gpu3d-surface` with zero readback, zero CPU framebuffer upload, no Canvas2D paint, and cumulative present/upload diagnostics; broader platform evidence remains an M5 gate |
 | 3D-14 | Not started |
 
 `render`, `render_png_bytes`, `save`, and `render_to_svg` now execute the
@@ -729,11 +729,12 @@ but it is not the performance endpoint.
 
 Current frontend facts:
 
-- the native/GPUI image path still consumes a CPU image;
+- native winit presents directly through wgpu;
+- the GPUI image path still consumes a CPU image;
 - the macOS GPUI "surface fast path" converts CPU RGBA into YUV and is not a
   direct wgpu texture bridge;
-- the web crate currently paints through Canvas2D/ImageData and does not create
-  a WebGPU canvas surface.
+- the web crate retains Canvas2D/ImageData as a correctness fallback and also
+  exposes direct WebGPU canvas and worker-owned OffscreenCanvas sessions.
 
 Therefore:
 
@@ -1367,6 +1368,54 @@ Documentation must state:
   texture uploads. A mandatory Chromium WebGPU lane must instrument
   `putImageData`, `copyTextureToBuffer`, `mapAsync`, and texture uploads, while
   a burst test proves main/worker event coalescing and latest-camera wins.
+- The first direct-browser code audit found a browser-fatal surface-format
+  assumption before runtime testing: wgpu's WebGPU backend advertises base
+  canvas formats such as `Rgba8Unorm` and `Bgra8Unorm`, not necessarily their
+  sRGB-suffixed variants. Requiring an advertised `*Srgb` format rejects a
+  valid browser before `configure`. The browser path must configure an
+  advertised base format, request its sRGB view in `view_formats`, and render
+  the compositor through that explicit view. A capability-list unit test and
+  Chromium screenshot smoke are required before this checkpoint is complete.
+- The same audit confirmed that surface-only renderers must not merely report
+  zero readback: they must omit the MAP_READ buffer and COPY_SRC texture usage
+  entirely. The renderer now reserves those resources only for the explicit
+  native image-readback constructor; direct native/browser surface sessions
+  use render-attachment plus texture-binding usage only.
+- Browser API review simplified the generated contract for small models:
+  `WebGPU3DCanvasSession.create(canvas, plot)` and
+  `OffscreenWebGPU3DCanvasSession.create(canvas, plot)` are typed async
+  factories returning `Promise<...>`; JavaScript uses the standard `WebGPU`
+  acronym spelling; and `JsPlot3D.title(...)` matches the Rust and TypeScript
+  builders. The generated declarations confirm these exact signatures.
+- The npm/WASM build scripts previously used `ruviz-web`'s empty default
+  feature set, so all 3d bindings disappeared from the distributable artifact.
+  Both wasm-pack and pinned raw-bindgen builds now explicitly enable
+  `3d-gpu`. The release build contains `JsPlot3D`,
+  `WebGPU3DCanvasSession`, and `OffscreenWebGPU3DCanvasSession`; TypeScript and
+  the multi-page Vite demo build successfully with the 3d artifact.
+- Replaced the browser-fatal sRGB capability assumption with a base/view
+  selection contract. The surface uses the browser's preferred advertised
+  `Rgba8Unorm` or `Bgra8Unorm` format, permits its sRGB-suffixed view through
+  `view_formats`, builds the compositor for that view, and explicitly acquires
+  it for presentation. Unit coverage includes wgpu's actual WebGPU capability
+  list (`Rgba8Unorm`, `Bgra8Unorm`, `Rgba16Float`).
+- Added a permanent `/3d.html` WebGPU demo and Chromium Playwright gate for
+  both main-thread canvas and worker-owned OffscreenCanvas. On local Chromium,
+  both adapters initialized and presented as `gpu3d-surface`; a burst of 500
+  pointer moves collapsed to one applied move and one presented frame; GPU
+  readback, CPU framebuffer upload, and instrumented Canvas2D `putImageData`
+  calls remained zero; the authoritative CPU PNG export changed after orbit;
+  and explicit teardown completed cleanly. The test passed in 0.823 seconds.
+- Browser counters are cumulative rather than last-frame snapshots, allowing
+  the smoke test to assert exactly one additional surface presentation for the
+  coalesced burst. Texture diagnostics now include the one-time 1 KiB
+  colormap upload per mesh as well as presentation-atlas uploads, while warm
+  camera frames remain zero-texture-upload frames.
+- Remaining browser hardening after the M4 gate is intentionally tracked for
+  M5/follow-up: share adapter/device/pipelines per JavaScript realm, preserve a
+  camera snapshot across device-loss recreation, expose typed retry state for
+  skipped frames, and consider merging scene/compositor command submission
+  after measuring whether the current two-submit design misses frame budgets.
 - The M5 audit found that 3D-14 remains blocked after direct presentation by
   incomplete warm/update benchmark integration, Axis3/export whole-image
   goldens, cross-vendor GPU evidence, browser smoke tests, feature/platform CI,

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ruviz 3d WebGPU demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        background: #08111f;
+        color: #e5eefc;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 36px 0 52px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(2rem, 6vw, 4.5rem);
+        letter-spacing: -0.05em;
+      }
+
+      .lede {
+        max-width: 720px;
+        margin: 0 0 28px;
+        color: #9db0ca;
+        line-height: 1.6;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 18px;
+      }
+
+      section {
+        border: 1px solid #243551;
+        border-radius: 18px;
+        background: #0d192b;
+        padding: 14px;
+        box-shadow: 0 24px 80px rgb(0 0 0 / 28%);
+      }
+
+      h2 {
+        margin: 2px 2px 12px;
+        font-size: 1rem;
+        font-weight: 650;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        border-radius: 12px;
+        background: #fff;
+        touch-action: none;
+      }
+
+      .status {
+        min-height: 2.5em;
+        margin: 10px 2px 0;
+        color: #9db0ca;
+        font: 0.8rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ruviz 3d</h1>
+      <p class="lede">
+        Retained WebGPU surfaces with direct presentation, depth-tested geometry, and one render
+        submission per animation frame. Drag to orbit and use the wheel to zoom.
+      </p>
+      <div class="grid">
+        <section>
+          <h2>Main-thread WebGPU</h2>
+          <canvas id="main-3d" width="640" height="400"></canvas>
+          <div id="main-3d-status" class="status">initializing</div>
+        </section>
+        <section>
+          <h2>Worker OffscreenCanvas WebGPU</h2>
+          <canvas id="worker-3d" width="640" height="400"></canvas>
+          <div id="worker-3d-status" class="status">initializing</div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/3d.js"></script>
+  </body>
+</html>

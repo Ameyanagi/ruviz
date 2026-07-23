@@ -146,6 +146,7 @@ impl Plot3D {
         diagnostics.sample_count = output.sample_count;
         diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
         diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
+        diagnostics.texture_upload_bytes = output.resource_update.texture_upload_bytes;
         diagnostics.buffer_creations = output.resource_update.buffer_creations;
         diagnostics.camera_uniform_writes = output.camera_uniform_writes;
         diagnostics.draw_calls = output.draw_calls;
@@ -235,6 +236,7 @@ fn apply_no_readback_diagnostics(diagnostics: &mut RenderDiagnostics3D, output: 
     diagnostics.sample_count = output.sample_count;
     diagnostics.vertex_upload_bytes = output.resource_update.vertex_upload_bytes;
     diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
+    diagnostics.texture_upload_bytes = output.resource_update.texture_upload_bytes;
     diagnostics.buffer_creations = output.resource_update.buffer_creations;
     diagnostics.camera_uniform_writes = output.camera_uniform_writes;
     diagnostics.draw_calls = output.draw_calls;

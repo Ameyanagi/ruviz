@@ -59,6 +59,9 @@ pub use plot3d::{
     ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D,
     Surface3DBuilder, Wireframe3DBuilder,
 };
+#[cfg(all(feature = "3d", feature = "gpu"))]
+#[doc(hidden)]
+pub use plot3d::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D};
 pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;

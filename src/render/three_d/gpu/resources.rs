@@ -15,6 +15,7 @@ use super::pipelines::PipelineLibrary3D;
 pub(crate) struct ResourceUpdate3D {
     pub(crate) vertex_upload_bytes: u64,
     pub(crate) index_upload_bytes: u64,
+    pub(crate) texture_upload_bytes: u64,
     pub(crate) buffer_creations: u64,
 }
 
@@ -125,11 +126,16 @@ impl ResourceCache3D {
 
         let appearance_key = arc_key(scene);
         if !self.appearances.contains_key(&appearance_key) {
-            let (resources, appearance_creations) =
+            let (resources, appearance_update) =
                 create_appearance_resources(device, queue, pipelines, Arc::clone(scene))?;
             self.appearances.clear();
             self.appearances.insert(appearance_key, resources);
-            update.buffer_creations = update.buffer_creations.saturating_add(appearance_creations);
+            update.texture_upload_bytes = update
+                .texture_upload_bytes
+                .saturating_add(appearance_update.texture_upload_bytes);
+            update.buffer_creations = update
+                .buffer_creations
+                .saturating_add(appearance_update.buffer_creations);
         }
         Ok(update)
     }
@@ -263,8 +269,8 @@ fn create_appearance_resources(
     queue: &wgpu::Queue,
     pipelines: &PipelineLibrary3D,
     scene: Arc<Scene3D>,
-) -> Result<(AppearanceResources3D, u64)> {
-    let mut creations = 0_u64;
+) -> Result<(AppearanceResources3D, ResourceUpdate3D)> {
+    let mut update = ResourceUpdate3D::default();
     let mut points = Vec::with_capacity(scene.points.len());
     for batch in &scene.points {
         let uniform = PointMaterialUniformGpu {
@@ -282,7 +288,7 @@ fn create_appearance_resources(
             &pipelines.point_material_layout,
             &uniform,
         ));
-        creations = creations.saturating_add(1);
+        update.buffer_creations = update.buffer_creations.saturating_add(1);
     }
 
     let mut lines = Vec::with_capacity(scene.lines.len());
@@ -317,7 +323,7 @@ fn create_appearance_resources(
             &pipelines.line_material_layout,
             &uniform,
         ));
-        creations = creations.saturating_add(1);
+        update.buffer_creations = update.buffer_creations.saturating_add(1);
     }
 
     let mut meshes = Vec::with_capacity(scene.meshes.len());
@@ -352,7 +358,10 @@ fn create_appearance_resources(
             &uniform,
             &texels,
         ));
-        creations = creations.saturating_add(1);
+        update.buffer_creations = update.buffer_creations.saturating_add(1);
+        update.texture_upload_bytes = update
+            .texture_upload_bytes
+            .saturating_add(COLORMAP_UPLOAD_BYTES);
     }
 
     Ok((
@@ -362,11 +371,12 @@ fn create_appearance_resources(
             lines,
             meshes,
         },
-        creations,
+        update,
     ))
 }
 
 const COLORMAP_TEXEL_COUNT: usize = 256;
+const COLORMAP_UPLOAD_BYTES: u64 = (COLORMAP_TEXEL_COUNT * 4) as u64;
 
 fn create_mesh_material(
     device: &wgpu::Device,

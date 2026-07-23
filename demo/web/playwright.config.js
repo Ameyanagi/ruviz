@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { platform } from "node:os";
 
 const previewPort = Number.parseInt(process.env.RUVIZ_WEB_PREVIEW_PORT ?? "4173", 10);
 if (!Number.isInteger(previewPort) || previewPort < 1 || previewPort > 65535) {
@@ -6,6 +7,16 @@ if (!Number.isInteger(previewPort) || previewPort < 1 || previewPort > 65535) {
 }
 
 const previewBaseUrl = `http://127.0.0.1:${previewPort}`;
+const chromiumWebGpuArgs =
+  platform() === "linux"
+    ? [
+        "--no-sandbox",
+        "--use-angle=vulkan",
+        "--enable-features=Vulkan",
+        "--disable-vulkan-surface",
+        "--enable-unsafe-webgpu",
+      ]
+    : ["--enable-unsafe-webgpu"];
 
 export default defineConfig({
   testDir: "./tests",
@@ -30,7 +41,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: {
+          args: chromiumWebGpuArgs,
+        },
+      },
     },
     {
       name: "firefox",

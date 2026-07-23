@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 use winit::window::Window;
 
 use crate::core::plot3d::layout::{Axis3Layout, OverlayLine3D, OverlayText3D};
@@ -28,34 +29,40 @@ pub(crate) struct PresentationUpdate3D {
     pub(crate) surface_reconfigurations: u64,
 }
 
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 pub(crate) struct PresentedFrame3D {
     pub(crate) scene: GpuFrameOutput3D,
     pub(crate) presentation: PresentationUpdate3D,
 }
 
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 pub(crate) enum SurfacePresentOutcome3D {
     Presented(PresentedFrame3D),
     Skipped,
 }
 
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 pub(crate) struct SurfacePresenter3D {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     configuration: wgpu::SurfaceConfiguration,
+    presentation_format: wgpu::TextureFormat,
     renderer: Wgpu3DRenderer,
     compositor: PresentationCompositor3D,
     pending_surface_reconfigurations: u64,
 }
 
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 impl SurfacePresenter3D {
     pub(crate) fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self> {
         validate_surface_dimensions(width, height)?;
-        let (surface, configuration, renderer, compositor) =
+        let (surface, configuration, presentation_format, renderer, compositor) =
             create_surface_stack(Arc::clone(&window), width, height)?;
         Ok(Self {
             window,
             surface,
             configuration,
+            presentation_format,
             renderer,
             compositor,
             pending_surface_reconfigurations: 1,
@@ -63,13 +70,15 @@ impl SurfacePresenter3D {
     }
 
     fn rebuild_gpu(&mut self) -> Result<()> {
-        let (surface, configuration, renderer, compositor) = create_surface_stack(
-            Arc::clone(&self.window),
-            self.configuration.width,
-            self.configuration.height,
-        )?;
+        let (surface, configuration, presentation_format, renderer, compositor) =
+            create_surface_stack(
+                Arc::clone(&self.window),
+                self.configuration.width,
+                self.configuration.height,
+            )?;
         self.surface = surface;
         self.configuration = configuration;
+        self.presentation_format = presentation_format;
         self.renderer = renderer;
         self.compositor = compositor;
         self.pending_surface_reconfigurations =
@@ -118,7 +127,11 @@ impl SurfacePresenter3D {
         };
         let target_view = surface_texture
             .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("ruviz 3d sRGB surface view"),
+                format: Some(self.presentation_format),
+                ..Default::default()
+            });
         let mut update = self.compositor.compose(
             self.renderer.context(),
             self.renderer.color_view()?,
@@ -187,6 +200,7 @@ impl SurfacePresenter3D {
     }
 }
 
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 fn create_surface_stack(
     window: Arc<Window>,
     width: u32,
@@ -194,6 +208,7 @@ fn create_surface_stack(
 ) -> Result<(
     wgpu::Surface<'static>,
     wgpu::SurfaceConfiguration,
+    wgpu::TextureFormat,
     Wgpu3DRenderer,
     PresentationCompositor3D,
 )> {
@@ -206,7 +221,7 @@ fn create_surface_stack(
         })?;
     let context = GpuContext3D::for_surface(instance, &surface)?;
     let capabilities = surface.get_capabilities(context.adapter());
-    let format = select_surface_format(&capabilities.formats)?;
+    let formats = select_surface_format(&capabilities.formats)?;
     let mut configuration = surface
         .get_default_config(context.adapter(), width, height)
         .ok_or_else(|| {
@@ -214,21 +229,27 @@ fn create_surface_stack(
                 "the selected adapter cannot present to this 3d window".to_string(),
             )
         })?;
-    configuration.format = format;
+    configuration.format = formats.surface;
+    configuration.view_formats = if formats.view == formats.surface {
+        Vec::new()
+    } else {
+        vec![formats.view]
+    };
     configuration.present_mode = wgpu::PresentMode::AutoVsync;
     configuration.desired_maximum_frame_latency = 2;
     surface.configure(&context.device, &configuration);
     let renderer = Wgpu3DRenderer::from_context(context)?;
-    let compositor =
-        PresentationCompositor3D::new(&renderer.context().device, configuration.format);
-    Ok((surface, configuration, renderer, compositor))
+    let compositor = PresentationCompositor3D::new(&renderer.context().device, formats.view);
+    Ok((surface, configuration, formats.view, renderer, compositor))
 }
 
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 struct AcquiredSurfaceTexture3D {
     texture: wgpu::SurfaceTexture,
     reconfigure_after_present: bool,
 }
 
+#[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 fn validate_surface_dimensions(width: u32, height: u32) -> Result<()> {
     if width == 0 || height == 0 {
         Err(PlottingError::InvalidDimensions { width, height })
@@ -237,14 +258,26 @@ fn validate_surface_dimensions(width: u32, height: u32) -> Result<()> {
     }
 }
 
-fn select_surface_format(formats: &[wgpu::TextureFormat]) -> Result<wgpu::TextureFormat> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SurfaceFormatSelection3D {
+    pub(crate) surface: wgpu::TextureFormat,
+    pub(crate) view: wgpu::TextureFormat,
+}
+
+pub(crate) fn select_surface_format(
+    formats: &[wgpu::TextureFormat],
+) -> Result<SurfaceFormatSelection3D> {
     formats
         .iter()
         .copied()
-        .find(wgpu::TextureFormat::is_srgb)
+        .find_map(|surface| {
+            let view = surface.add_srgb_suffix();
+            view.is_srgb()
+                .then_some(SurfaceFormatSelection3D { surface, view })
+        })
         .ok_or_else(|| {
             PlottingError::UnsupportedGpuFeature(
-                "direct 3d presentation requires an sRGB surface format".to_string(),
+                "direct 3d presentation requires an sRGB-compatible surface format".to_string(),
             )
         })
 }
@@ -300,7 +333,7 @@ impl VertexBufferState {
     }
 }
 
-struct PresentationCompositor3D {
+pub(crate) struct PresentationCompositor3D {
     solid_pipeline: wgpu::RenderPipeline,
     texture_pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
@@ -314,7 +347,7 @@ struct PresentationCompositor3D {
 }
 
 impl PresentationCompositor3D {
-    fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ruviz 3d presentation texture layout"),
             entries: &[
@@ -365,7 +398,7 @@ impl PresentationCompositor3D {
         }
     }
 
-    fn compose(
+    pub(crate) fn compose(
         &mut self,
         context: &GpuContext3D,
         scene_view: &wgpu::TextureView,
@@ -1128,16 +1161,31 @@ mod tests {
     }
 
     #[test]
-    fn surface_format_selection_requires_srgb_and_accepts_bgra() {
+    fn surface_format_selection_uses_preferred_base_with_srgb_view() {
         assert_eq!(
             select_surface_format(&[
                 wgpu::TextureFormat::Bgra8Unorm,
                 wgpu::TextureFormat::Bgra8UnormSrgb,
             ])
             .expect("sRGB"),
-            wgpu::TextureFormat::Bgra8UnormSrgb
+            SurfaceFormatSelection3D {
+                surface: wgpu::TextureFormat::Bgra8Unorm,
+                view: wgpu::TextureFormat::Bgra8UnormSrgb,
+            }
         );
-        assert!(select_surface_format(&[wgpu::TextureFormat::Rgba8Unorm]).is_err());
+        assert_eq!(
+            select_surface_format(&[
+                wgpu::TextureFormat::Rgba8Unorm,
+                wgpu::TextureFormat::Bgra8Unorm,
+                wgpu::TextureFormat::Rgba16Float,
+            ])
+            .expect("WebGPU"),
+            SurfaceFormatSelection3D {
+                surface: wgpu::TextureFormat::Rgba8Unorm,
+                view: wgpu::TextureFormat::Rgba8UnormSrgb,
+            }
+        );
+        assert!(select_surface_format(&[wgpu::TextureFormat::Rgba16Float]).is_err());
     }
 
     #[test]

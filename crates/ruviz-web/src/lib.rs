@@ -44,6 +44,8 @@ mod wasm {
     use std::{mem, sync::OnceLock};
 
     use js_sys::Reflect;
+    #[cfg(feature = "3d-gpu")]
+    use ruviz::core::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D, RenderDiagnostics3D};
     use ruviz::{
         core::{
             Image, ImageTarget, InteractivePlotSession, IntoPlot, Plot, PlotInputEvent,
@@ -1284,8 +1286,8 @@ mod wasm {
             Ok(())
         }
 
-        pub fn set_title(&mut self, title: String) {
-            self.title = (!title.is_empty()).then_some(title);
+        pub fn title(&mut self, title: &str) {
+            self.title = (!title.is_empty()).then(|| title.to_string());
         }
     }
 
@@ -1582,6 +1584,454 @@ mod wasm {
                 .render()
                 .and_then(|image| image.encode_png())
                 .map_err(js_err)
+        }
+
+        pub fn destroy(&mut self) {
+            self.browser.destroy();
+        }
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    struct BrowserWebGpu3DSession {
+        surface: Option<wgpu::Surface<'static>>,
+        gpu: Option<GpuSurfaceSession3D>,
+        selected: Option<PickHit3D>,
+        last_diagnostics: Option<RenderDiagnostics3D>,
+        totals: RenderDiagnostics3D,
+        render_pending: bool,
+        needs_recreate: bool,
+        scale_factor: f32,
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    impl BrowserWebGpu3DSession {
+        async fn new(
+            instance: wgpu::Instance,
+            surface: wgpu::Surface<'static>,
+            session: InteractivePlot3DSession,
+        ) -> Result<Self, JsValue> {
+            let gpu = GpuSurfaceSession3D::new(session, instance, &surface)
+                .await
+                .map_err(js_err)?;
+            Ok(Self {
+                surface: Some(surface),
+                gpu: Some(gpu),
+                selected: None,
+                last_diagnostics: None,
+                totals: RenderDiagnostics3D::default(),
+                render_pending: true,
+                needs_recreate: false,
+                scale_factor: 1.0,
+            })
+        }
+
+        fn apply(&mut self, event: InputEvent3D) -> Result<(), JsValue> {
+            let result = self
+                .gpu
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .handle_input(event)
+                .map_err(js_err)?;
+            if let Some(hit) = result.picked {
+                self.selected = Some(hit);
+            }
+            self.render_pending |= result.request_redraw;
+            Ok(())
+        }
+
+        fn resize(&mut self, width: u32, height: u32, scale_factor: f32) -> Result<(), JsValue> {
+            self.scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+                scale_factor
+            } else {
+                1.0
+            };
+            let surface = self
+                .surface
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d surface was destroyed"))?;
+            self.gpu
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .resize(surface, width.max(1), height.max(1), self.scale_factor)
+                .map_err(js_err)?;
+            self.render_pending = true;
+            Ok(())
+        }
+
+        fn render(&mut self) -> Result<bool, JsValue> {
+            if !self.render_pending {
+                return Ok(false);
+            }
+            let surface = self
+                .surface
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d surface was destroyed"))?;
+            let status = self
+                .gpu
+                .as_mut()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .present(surface)
+                .map_err(js_err)?;
+            match status {
+                GpuSurfacePresentStatus3D::Presented(diagnostics) => {
+                    debug_assert_eq!(diagnostics.readback_bytes, 0);
+                    self.totals.readback_bytes = self
+                        .totals
+                        .readback_bytes
+                        .saturating_add(diagnostics.readback_bytes);
+                    self.totals.vertex_upload_bytes = self
+                        .totals
+                        .vertex_upload_bytes
+                        .saturating_add(diagnostics.vertex_upload_bytes);
+                    self.totals.index_upload_bytes = self
+                        .totals
+                        .index_upload_bytes
+                        .saturating_add(diagnostics.index_upload_bytes);
+                    self.totals.texture_upload_bytes = self
+                        .totals
+                        .texture_upload_bytes
+                        .saturating_add(diagnostics.texture_upload_bytes);
+                    self.totals.presentation_vertex_upload_bytes = self
+                        .totals
+                        .presentation_vertex_upload_bytes
+                        .saturating_add(diagnostics.presentation_vertex_upload_bytes);
+                    self.totals.presentation_texture_upload_bytes = self
+                        .totals
+                        .presentation_texture_upload_bytes
+                        .saturating_add(diagnostics.presentation_texture_upload_bytes);
+                    self.totals.surface_presents = self
+                        .totals
+                        .surface_presents
+                        .saturating_add(diagnostics.surface_presents);
+                    self.last_diagnostics = Some(diagnostics);
+                    self.render_pending = false;
+                    Ok(true)
+                }
+                GpuSurfacePresentStatus3D::Skipped => Ok(false),
+                GpuSurfacePresentStatus3D::RecreateSurface => {
+                    self.needs_recreate = true;
+                    Err(JsValue::from_str(
+                        "the WebGPU 3d surface or device was lost; recreate the session",
+                    ))
+                }
+            }
+        }
+
+        fn selected_series(&self) -> i32 {
+            self.selected.map_or(-1, |hit| hit.series_index as i32)
+        }
+
+        fn selected_source(&self) -> i32 {
+            self.selected
+                .and_then(|hit| hit.sources().first().copied())
+                .map_or(-1, |index| index as i32)
+        }
+
+        fn export_png(&self) -> Result<Vec<u8>, JsValue> {
+            self.gpu
+                .as_ref()
+                .ok_or_else(|| JsValue::from_str("the WebGPU 3d session was destroyed"))?
+                .render_png_bytes()
+                .map_err(js_err)
+        }
+
+        fn destroy(&mut self) {
+            self.gpu = None;
+            self.surface = None;
+            self.selected = None;
+            self.last_diagnostics = None;
+            self.totals = RenderDiagnostics3D::default();
+            self.render_pending = false;
+        }
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    fn webgpu_instance() -> wgpu::Instance {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::BROWSER_WEBGPU,
+            flags: if cfg!(debug_assertions) {
+                wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION
+            } else {
+                wgpu::InstanceFlags::default()
+            },
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
+            display: None,
+        })
+    }
+
+    /// Main-thread direct WebGPU adapter for retained 3d plots.
+    ///
+    /// Input methods only mark the retained frame dirty. Hosts call `render`
+    /// once per animation frame, so pointer bursts coalesce into one submit.
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen(js_name = WebGPU3DCanvasSession)]
+    pub struct WebGpu3DCanvasSession {
+        canvas: HtmlCanvasElement,
+        browser: BrowserWebGpu3DSession,
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen]
+    impl WebGpu3DCanvasSession {
+        pub async fn create(
+            canvas: HtmlCanvasElement,
+            plot: &JsPlot3D,
+        ) -> Result<WebGpu3DCanvasSession, JsValue> {
+            ensure_default_browser_fonts()?;
+            let mut session = plot.build_session()?;
+            session
+                .resize(canvas.width().max(1), canvas.height().max(1), 1.0)
+                .map_err(js_err)?;
+            let instance = webgpu_instance();
+            let surface: wgpu::Surface<'static> = instance
+                .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+                .map_err(js_err)?;
+            let browser = BrowserWebGpu3DSession::new(instance, surface, session).await?;
+            let mut adapter = Self { canvas, browser };
+            let _ = adapter.browser.render()?;
+            Ok(adapter)
+        }
+
+        pub fn resize(
+            &mut self,
+            width: u32,
+            height: u32,
+            scale_factor: f32,
+        ) -> Result<(), JsValue> {
+            self.canvas.set_width(width.max(1));
+            self.canvas.set_height(height.max(1));
+            self.browser.resize(width, height, scale_factor)
+        }
+
+        pub fn pointer_down(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerDown {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn pointer_move(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerMove { x, y })
+        }
+
+        pub fn pointer_up(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerUp {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn double_click(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::DoubleClick {
+                x,
+                y,
+                button: PointerButton3D::Left,
+            })
+        }
+
+        pub fn wheel(&mut self, delta_y: f32) -> Result<(), JsValue> {
+            self.browser
+                .apply(InputEvent3D::Wheel { delta_y: -delta_y })
+        }
+
+        pub fn reset_view(&mut self) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::Escape)
+        }
+
+        /// Submit at most one dirty frame.
+        pub fn render(&mut self) -> Result<bool, JsValue> {
+            self.browser.render()
+        }
+
+        pub fn selected_series(&self) -> i32 {
+            self.browser.selected_series()
+        }
+
+        pub fn selected_source(&self) -> i32 {
+            self.browser.selected_source()
+        }
+
+        pub fn backend(&self) -> String {
+            self.browser.last_diagnostics.as_ref().map_or_else(
+                || "webgpu".to_string(),
+                |value| value.actual_backend.clone(),
+            )
+        }
+
+        pub fn readback_bytes(&self) -> u64 {
+            self.browser.totals.readback_bytes
+        }
+
+        pub fn cpu_frame_upload_bytes(&self) -> u64 {
+            0
+        }
+
+        pub fn texture_upload_bytes(&self) -> u64 {
+            self.browser
+                .totals
+                .texture_upload_bytes
+                .saturating_add(self.browser.totals.presentation_texture_upload_bytes)
+        }
+
+        pub fn vertex_upload_bytes(&self) -> u64 {
+            self.browser.totals.vertex_upload_bytes
+        }
+
+        pub fn index_upload_bytes(&self) -> u64 {
+            self.browser.totals.index_upload_bytes
+        }
+
+        pub fn surface_presents(&self) -> u64 {
+            self.browser.totals.surface_presents
+        }
+
+        pub fn needs_recreate(&self) -> bool {
+            self.browser.needs_recreate
+        }
+
+        pub fn export_png(&self) -> Result<Vec<u8>, JsValue> {
+            self.browser.export_png()
+        }
+
+        pub fn destroy(&mut self) {
+            self.browser.destroy();
+        }
+    }
+
+    /// Worker-owned OffscreenCanvas direct WebGPU adapter.
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen(js_name = OffscreenWebGPU3DCanvasSession)]
+    pub struct OffscreenWebGpu3DCanvasSession {
+        canvas: OffscreenCanvas,
+        browser: BrowserWebGpu3DSession,
+    }
+
+    #[cfg(feature = "3d-gpu")]
+    #[wasm_bindgen]
+    impl OffscreenWebGpu3DCanvasSession {
+        pub async fn create(
+            canvas: OffscreenCanvas,
+            plot: &JsPlot3D,
+        ) -> Result<OffscreenWebGpu3DCanvasSession, JsValue> {
+            ensure_default_browser_fonts()?;
+            let mut session = plot.build_session()?;
+            session
+                .resize(canvas.width().max(1), canvas.height().max(1), 1.0)
+                .map_err(js_err)?;
+            let instance = webgpu_instance();
+            let surface: wgpu::Surface<'static> = instance
+                .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas.clone()))
+                .map_err(js_err)?;
+            let browser = BrowserWebGpu3DSession::new(instance, surface, session).await?;
+            let mut adapter = Self { canvas, browser };
+            let _ = adapter.browser.render()?;
+            Ok(adapter)
+        }
+
+        pub fn resize(
+            &mut self,
+            width: u32,
+            height: u32,
+            scale_factor: f32,
+        ) -> Result<(), JsValue> {
+            self.canvas.set_width(width.max(1));
+            self.canvas.set_height(height.max(1));
+            self.browser.resize(width, height, scale_factor)
+        }
+
+        pub fn pointer_down(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerDown {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn pointer_move(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerMove { x, y })
+        }
+
+        pub fn pointer_up(&mut self, x: f32, y: f32, button: i16) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::PointerUp {
+                x,
+                y,
+                button: Browser3DSession::pointer_button(button)?,
+            })
+        }
+
+        pub fn double_click(&mut self, x: f32, y: f32) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::DoubleClick {
+                x,
+                y,
+                button: PointerButton3D::Left,
+            })
+        }
+
+        pub fn wheel(&mut self, delta_y: f32) -> Result<(), JsValue> {
+            self.browser
+                .apply(InputEvent3D::Wheel { delta_y: -delta_y })
+        }
+
+        pub fn reset_view(&mut self) -> Result<(), JsValue> {
+            self.browser.apply(InputEvent3D::Escape)
+        }
+
+        /// Submit at most one dirty frame.
+        pub fn render(&mut self) -> Result<bool, JsValue> {
+            self.browser.render()
+        }
+
+        pub fn selected_series(&self) -> i32 {
+            self.browser.selected_series()
+        }
+
+        pub fn selected_source(&self) -> i32 {
+            self.browser.selected_source()
+        }
+
+        pub fn backend(&self) -> String {
+            self.browser.last_diagnostics.as_ref().map_or_else(
+                || "webgpu".to_string(),
+                |value| value.actual_backend.clone(),
+            )
+        }
+
+        pub fn readback_bytes(&self) -> u64 {
+            self.browser.totals.readback_bytes
+        }
+
+        pub fn cpu_frame_upload_bytes(&self) -> u64 {
+            0
+        }
+
+        pub fn texture_upload_bytes(&self) -> u64 {
+            self.browser
+                .totals
+                .texture_upload_bytes
+                .saturating_add(self.browser.totals.presentation_texture_upload_bytes)
+        }
+
+        pub fn vertex_upload_bytes(&self) -> u64 {
+            self.browser.totals.vertex_upload_bytes
+        }
+
+        pub fn index_upload_bytes(&self) -> u64 {
+            self.browser.totals.index_upload_bytes
+        }
+
+        pub fn surface_presents(&self) -> u64 {
+            self.browser.totals.surface_presents
+        }
+
+        pub fn needs_recreate(&self) -> bool {
+            self.browser.needs_recreate
+        }
+
+        pub fn export_png(&self) -> Result<Vec<u8>, JsValue> {
+            self.browser.export_png()
         }
 
         pub fn destroy(&mut self) {
