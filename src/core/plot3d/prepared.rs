@@ -52,11 +52,11 @@ impl PreparedSceneCache3D {
             self.bvh = None;
             geometry
         } else {
-            Arc::clone(
-                self.geometry
-                    .as_ref()
-                    .expect("matching geometry key must retain geometry"),
-            )
+            Arc::clone(self.geometry.as_ref().ok_or_else(|| {
+                PlottingError::RenderError(
+                    "matching 3d geometry key did not retain geometry".to_string(),
+                )
+            })?)
         };
 
         let appearance_changed = self.appearance_key != Some(frame.keys.appearance);
@@ -66,11 +66,11 @@ impl PreparedSceneCache3D {
             self.appearance_key = Some(frame.keys.appearance);
             scene
         } else {
-            Arc::clone(
-                self.scene
-                    .as_ref()
-                    .expect("matching scene keys must retain a scene"),
-            )
+            Arc::clone(self.scene.as_ref().ok_or_else(|| {
+                PlottingError::RenderError(
+                    "matching 3d scene keys did not retain a scene".to_string(),
+                )
+            })?)
         };
 
         if self.view_key != Some(frame.keys.view) {

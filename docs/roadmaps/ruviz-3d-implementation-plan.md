@@ -1424,6 +1424,16 @@ Documentation must state:
   that Cargo auto-discovered `examples/3d_surface.rs` without its required
   feature; the example is now explicitly registered with
   `required-features = ["3d"]`.
+- The production panic-call gate originally excluded everything after an
+  inline `#[cfg(test)] mod tests` because it did not track the module's closing
+  brace. The checker now masks comments and Rust string forms, bounds only the
+  test module with lexical brace tracking, and has regression tests for raw
+  strings, nested comments, and production code after the test module. The
+  corrected gate exposed three real 3d-path assumptions: missing retained
+  prepared-scene entries now return `RenderError`, SVG image composition
+  propagates its formatting error, and homogeneous triangle clipping handles
+  an unexpectedly empty polygon without panicking. The checker tests, checker,
+  formatting check, and all-feature build pass.
 
 ## Primary references
 

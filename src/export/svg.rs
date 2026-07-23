@@ -475,7 +475,9 @@ impl SvgRenderer {
             self.content,
             r#"  <image x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" href="data:image/png;base64,{encoded}"/>"#
         )
-        .unwrap();
+        .map_err(|error| {
+            PlottingError::RenderError(format!("failed to compose embedded SVG image: {error}"))
+        })?;
         Ok(())
     }
 

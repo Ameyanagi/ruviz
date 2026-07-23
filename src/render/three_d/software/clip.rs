@@ -75,7 +75,10 @@ pub(crate) fn clip_triangle(triangle: [ClipVertex3D; 3]) -> Vec<[ClipVertex3D; 3
             break;
         }
         scratch.clear();
-        let mut previous = *polygon.last().expect("non-empty polygon");
+        let Some(&previous_vertex) = polygon.last() else {
+            break;
+        };
+        let mut previous = previous_vertex;
         let mut previous_distance = plane.distance(previous.clip_position);
         let mut previous_inside = previous_distance >= 0.0;
 
