@@ -2,7 +2,7 @@
 
 Curated visual showcase of the Rust examples and rustdoc media for `ruviz`.
 
-**Total Examples**: 40
+**Total Examples**: 41
 
 ## Gallery Categories
 
@@ -36,7 +36,7 @@ Styling, polar/radar, and layout-heavy visualizations.
 
 [View Advanced Techniques →](advanced/README.md)
 
-### 🧊 3D Plots (8 examples)
+### 🧊 3D Plots (9 examples)
 
 Fixed-camera scatter, line, surface, wireframe, theme, and projection examples.
 

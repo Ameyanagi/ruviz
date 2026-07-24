@@ -938,6 +938,8 @@ Work:
 - Add one six-preset surface contact sheet/generator.
 - Add one seven-view contact sheet/generator.
 - Add a technical scatter/line example and a presentation surface example.
+- Retain the working `doc_surface3d_animation` orbit as the baseline animated
+  example and regenerate it after preset layout changes.
 - Generate committed PNGs and the matching exact CPU golden fixtures.
 - Capture native GPU and browser WebGPU comparison images.
 - Document exact commands to run and open every example.

@@ -509,6 +509,11 @@ name = "generate_animation_gallery"
 path = "examples/generate_animation_gallery.rs"
 required-features = ["animation"]
 
+[[example]]
+name = "doc_surface3d_animation"
+path = "examples/doc_surface3d_animation.rs"
+required-features = ["3d", "animation"]
+
 # Benchmarks
 [[bench]]
 name = "memory_pool_benchmarks"

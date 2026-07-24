@@ -68,4 +68,14 @@ The canonical surface rendered through an explicit 40-degree perspective camera.
 
 Source: [examples/generate_3d_gallery.rs](../../../examples/generate_3d_gallery.rs)
 
+### Animated Surface Orbit
+
+A publication-themed surface completing a deterministic 360-degree orthographic orbit.
+
+![Animated Surface Orbit](../../assets/gallery/rust/3d/surface3d_orbit.gif)
+
+Source: [examples/doc_surface3d_animation.rs](../../../examples/doc_surface3d_animation.rs)
+
+Guide: [3D plots](../../guide/12_3d.md)
+
 [← Back to Gallery](../README.md)

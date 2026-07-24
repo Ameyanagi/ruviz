@@ -510,6 +510,21 @@ pub fn entries() -> Vec<GalleryEntry> {
             },
         },
         GalleryEntry {
+            category: "3d",
+            title: "Animated Surface Orbit",
+            summary: "A publication-themed surface completing a deterministic 360-degree orthographic orbit.",
+            asset_name: "surface3d_orbit.gif",
+            source_path: "examples/doc_surface3d_animation.rs",
+            guide: Some(("3D plots", "../../guide/12_3d.md")),
+            source: AssetSource::Example {
+                run: ExampleRun {
+                    name: "doc_surface3d_animation",
+                    features: Some("3d,animation"),
+                },
+                output_rel: "generated/examples/3d/surface3d_orbit.gif",
+            },
+        },
+        GalleryEntry {
             category: "animation",
             title: "Traveling Sine Wave",
             summary: "Animated sine wave generated with the `record!` macro.",
