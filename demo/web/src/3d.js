@@ -8,6 +8,8 @@ const mainCanvas = document.getElementById("main-3d");
 const workerCanvas = document.getElementById("worker-3d");
 const mainStatus = document.getElementById("main-3d-status");
 const workerStatus = document.getElementById("worker-3d-status");
+const mainReset = document.getElementById("main-3d-reset");
+const workerReset = document.getElementById("worker-3d-reset");
 
 function describeError(error) {
   return error instanceof Error ? error.message : String(error);
@@ -128,6 +130,7 @@ function bindCanvas(canvas, scheduler) {
     },
     { passive: false },
   );
+  canvas.addEventListener("dblclick", () => scheduler.reset());
 }
 
 function resizeMainCanvas(canvas, scheduler) {
@@ -186,6 +189,9 @@ function createWorkerInputScheduler(worker) {
       wheelDelta += delta;
       schedule();
     },
+    reset() {
+      worker.postMessage({ type: "reset" });
+    },
     metrics() {
       return { sentMoves };
     },
@@ -198,6 +204,7 @@ async function setupMain() {
   const session = await WebGPU3DCanvasSession.create(mainCanvas, plot3d("WebGPU surface"));
   const scheduler = createInputScheduler(session);
   bindCanvas(mainCanvas, scheduler);
+  mainReset.addEventListener("click", () => scheduler.reset());
   resizeMainCanvas(mainCanvas, scheduler);
   window.addEventListener("resize", () => resizeMainCanvas(mainCanvas, scheduler));
   mainStatus.textContent = `${session.backend()} | readback ${session.readback_bytes()} | CPU frame upload ${session.cpu_frame_upload_bytes()}`;
@@ -219,6 +226,7 @@ function setupWorker() {
   const offscreen = workerCanvas.transferControlToOffscreen();
   const worker = new Worker(new URL("./3d-worker.js", import.meta.url), { type: "module" });
   const scheduler = createWorkerInputScheduler(worker);
+  workerReset.addEventListener("click", () => scheduler.reset());
   worker.postMessage({ type: "initialize", canvas: offscreen, width, height, scale }, [offscreen]);
 
   worker.addEventListener("message", ({ data }) => {
@@ -240,6 +248,7 @@ function setupWorker() {
   workerCanvas.addEventListener("pointerup", (event) => {
     scheduler.pointerUp(...backingPoint(workerCanvas, event), event.button);
   });
+  workerCanvas.addEventListener("dblclick", () => scheduler.reset());
   workerCanvas.addEventListener(
     "wheel",
     (event) => {

@@ -124,6 +124,37 @@ The professional-polish gaps are concrete:
 - Non-uniform axis aspect is applied to positions, but surface normals are not
   currently transformed by the inverse aspect before lighting. That becomes
   visible when presets make aspect and lighting intentional.
+- The live browser WebGPU demo at a Retina/device-scale canvas can report
+  `gpu3d-surface`, zero readback, and zero CPU frame upload while still
+  presenting an over-scaled Axis3: the projected box and surface are clipped
+  on the right/bottom, the title intersects a box edge, and tick decorations
+  escape the canvas. The current Chromium smoke test verifies backend,
+  coalescing, and PNG mutation but does not assert visual fit. Treat this as a
+  P1 browser parity bug and do not use the current live demo as
+  professional-quality evidence.
+- The reported browser screenshot was reproduced by one coalesced
+  `wheelDelta = -300` gesture, which produces approximately `1.57x` camera
+  zoom. The scene raster is correctly clipped to the Axis3 viewport, while
+  panes, grid lines, box spines, and tick marks are composited without the
+  same clip in the CPU, SVG, and direct-GPU overlay paths. The demo also lacks
+  a discoverable reset control and passes an unbounded coalesced wheel delta
+  into the camera. Fix all three together: apply one shared viewport clip to
+  geometric Axis3 overlays, bound the per-frame wheel step, and expose reset
+  in the working browser examples.
+
+Resolution status on 2026-07-24:
+
+- Implemented the shared viewport clip for CPU/PNG, hybrid SVG, and direct
+  WebGPU presentation. Solid legend and colorbar decorations are kept in a
+  separate unclipped GPU layer.
+- Bounded one backend-neutral wheel event to `120px`, limiting one submitted
+  frame to approximately `1.20x` zoom even when the browser coalesces a much
+  larger gesture.
+- Added visible Reset view controls plus double-click reset to both the
+  main-thread and worker examples.
+- Verified exact reset by PNG hash, device-scale-2 Chromium direct-surface
+  presentation, zero readback, zero CPU upload, one focused browser test, 14
+  focused Rust tests, formatting, and strict all-feature Clippy.
 
 These findings define the implementation order: provenance and resolved
 style first, measured layout and fit second, renderer consumption third, then
@@ -643,6 +674,11 @@ Work:
 
 - Preserve the four working example outputs and the current eight 3d gallery
   images as before-state evidence.
+- Capture the browser demo at device scale `1` and `2` and record projected
+  box/title/tick bounds before changing resize or fit behavior.
+- Include a large coalesced wheel gesture in the before-state capture. Verify
+  that the raster and geometric overlay share the same scissor while title,
+  legend, colorbar, and reset controls remain outside that plot scissor.
 - Record current Axis3 layout time separately from geometry preparation and
   raster/present time.
 - Add diagnostics for layout solves, text metric cache hits/misses, collision
@@ -1182,6 +1218,9 @@ A preset is not considered complete merely because it renders.
   roles, and style values.
 - CPU, SVG, native GPU, and browser can serialize an identical resolved Axis3
   layout snapshot before backend rasterization.
+- Chromium device-scale `1` and `2` screenshots keep the projected box,
+  surface, title, and every tick decoration inside the canvas and match the
+  corresponding CPU layout snapshot within the documented tolerance.
 - Rear-spine width is at most `75%` of front-spine width and effective grid
   opacity is at most `75%` of rear-spine opacity in professional presets.
 - Lit CPU/GPU canonical-normal channel error is at most `1/255`; unlit output

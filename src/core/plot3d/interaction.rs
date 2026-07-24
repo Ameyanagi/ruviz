@@ -29,6 +29,7 @@ const ORBIT_DEGREES_PER_PIXEL: f32 = 0.25;
 const MIN_ZOOM: f32 = 0.02;
 const MAX_ZOOM: f32 = 100.0;
 const WHEEL_EXPONENT_PER_PIXEL: f32 = 0.0015;
+const MAX_WHEEL_DELTA_PER_EVENT_PX: f32 = 120.0;
 static NEXT_SCENE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Pointer button understood by the backend-neutral 3d controller.
@@ -316,7 +317,9 @@ impl InteractivePlot3DSession {
                     ));
                 }
                 let generation = self.camera_generation;
-                self.zoom_by((delta_y * WHEEL_EXPONENT_PER_PIXEL).exp())?;
+                let bounded_delta =
+                    delta_y.clamp(-MAX_WHEEL_DELTA_PER_EVENT_PX, MAX_WHEEL_DELTA_PER_EVENT_PX);
+                self.zoom_by((bounded_delta * WHEEL_EXPONENT_PER_PIXEL).exp())?;
                 let changed = self.camera_generation != generation;
                 Ok(InteractionResult3D {
                     camera_changed: changed,
@@ -718,6 +721,24 @@ mod tests {
         session.reset_view().expect("reset");
         assert_eq!(session.camera(), initial.camera);
         assert_eq!(session.scene_generation, initial.scene_generation);
+    }
+
+    #[test]
+    fn one_wheel_event_has_a_bounded_zoom_step() {
+        let mut session = scatter3d(&[0.0], &[0.0], &[0.0])
+            .interactive_session()
+            .expect("session");
+        session
+            .handle_input(InputEvent3D::Wheel { delta_y: 10_000.0 })
+            .expect("wheel");
+        let maximum_step = (MAX_WHEEL_DELTA_PER_EVENT_PX * WHEEL_EXPONENT_PER_PIXEL).exp();
+        assert!((session.camera().get_zoom() - maximum_step).abs() <= f32::EPSILON);
+
+        session.reset_view().expect("reset");
+        session
+            .handle_input(InputEvent3D::Wheel { delta_y: -10_000.0 })
+            .expect("wheel");
+        assert!((session.camera().get_zoom() - maximum_step.recip()).abs() <= f32::EPSILON);
     }
 
     #[test]

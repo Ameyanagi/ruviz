@@ -344,6 +344,7 @@ pub(crate) struct PresentationCompositor3D {
     scene_buffer: wgpu::Buffer,
     background_buffer: VertexBufferState,
     foreground_buffer: VertexBufferState,
+    decoration_buffer: VertexBufferState,
     text_buffer: VertexBufferState,
     text_atlas: Option<TextAtlas>,
     scene_bind_group: Option<(u64, wgpu::BindGroup)>,
@@ -395,6 +396,7 @@ impl PresentationCompositor3D {
             scene_buffer,
             background_buffer: VertexBufferState::default(),
             foreground_buffer: VertexBufferState::default(),
+            decoration_buffer: VertexBufferState::default(),
             text_buffer: VertexBufferState::default(),
             text_atlas: None,
             scene_bind_group: None,
@@ -412,7 +414,8 @@ impl PresentationCompositor3D {
         theme: &Theme,
     ) -> Result<PresentationUpdate3D> {
         let background = background_vertices(layout, figure, theme);
-        let foreground = foreground_vertices(layout, figure, theme);
+        let foreground = axis_vertices(layout, figure, theme);
+        let decorations = decoration_vertices(layout, figure, theme);
         let texture_upload_bytes =
             self.ensure_text_atlas(&context.device, &context.queue, layout, figure, theme)?;
         let text = self.text_atlas.as_ref().map_or_else(Vec::new, |atlas| {
@@ -430,6 +433,12 @@ impl PresentationCompositor3D {
             &context.queue,
             "ruviz 3d presentation foreground vertices",
             &foreground,
+        );
+        let (decoration_bytes, decoration_creations) = self.decoration_buffer.upload(
+            &context.device,
+            &context.queue,
+            "ruviz 3d presentation decoration vertices",
+            &decorations,
         );
         let (text_bytes, text_creations) = self.text_buffer.upload(
             &context.device,
@@ -495,6 +504,12 @@ impl PresentationCompositor3D {
             });
 
             if !background.is_empty() {
+                pass.set_scissor_rect(
+                    layout.viewport.x,
+                    layout.viewport.y,
+                    layout.viewport.width,
+                    layout.viewport.height,
+                );
                 pass.set_pipeline(&self.solid_pipeline);
                 if let Some(buffer) = &self.background_buffer.buffer {
                     pass.set_vertex_buffer(0, buffer.slice(..));
@@ -503,6 +518,7 @@ impl PresentationCompositor3D {
                 }
             }
 
+            pass.set_scissor_rect(0, 0, layout.canvas_width, layout.canvas_height);
             pass.set_pipeline(&self.texture_pipeline);
             pass.set_bind_group(0, scene_bind_group, &[]);
             pass.set_vertex_buffer(0, self.scene_buffer.slice(..));
@@ -510,6 +526,12 @@ impl PresentationCompositor3D {
             draw_calls = draw_calls.saturating_add(1);
 
             if !foreground.is_empty() {
+                pass.set_scissor_rect(
+                    layout.viewport.x,
+                    layout.viewport.y,
+                    layout.viewport.width,
+                    layout.viewport.height,
+                );
                 pass.set_pipeline(&self.solid_pipeline);
                 if let Some(buffer) = &self.foreground_buffer.buffer {
                     pass.set_vertex_buffer(0, buffer.slice(..));
@@ -518,9 +540,20 @@ impl PresentationCompositor3D {
                 }
             }
 
+            if !decorations.is_empty() {
+                pass.set_scissor_rect(0, 0, layout.canvas_width, layout.canvas_height);
+                pass.set_pipeline(&self.solid_pipeline);
+                if let Some(buffer) = &self.decoration_buffer.buffer {
+                    pass.set_vertex_buffer(0, buffer.slice(..));
+                    pass.draw(0..decorations.len() as u32, 0..1);
+                    draw_calls = draw_calls.saturating_add(1);
+                }
+            }
+
             if !text.is_empty()
                 && let (Some(buffer), Some(atlas)) = (&self.text_buffer.buffer, &self.text_atlas)
             {
+                pass.set_scissor_rect(0, 0, layout.canvas_width, layout.canvas_height);
                 pass.set_pipeline(&self.texture_pipeline);
                 pass.set_bind_group(0, &atlas.bind_group, &[]);
                 pass.set_vertex_buffer(0, buffer.slice(..));
@@ -533,10 +566,12 @@ impl PresentationCompositor3D {
         Ok(PresentationUpdate3D {
             vertex_upload_bytes: background_bytes
                 .saturating_add(foreground_bytes)
+                .saturating_add(decoration_bytes)
                 .saturating_add(text_bytes),
             texture_upload_bytes,
             buffer_creations: background_creations
                 .saturating_add(foreground_creations)
+                .saturating_add(decoration_creations)
                 .saturating_add(text_creations),
             draw_calls,
             surface_reconfigurations: 0,
@@ -818,7 +853,17 @@ fn background_vertices(
     vertices
 }
 
-fn foreground_vertices(
+fn axis_vertices(layout: &Axis3Layout, figure: &FigureConfig, theme: &Theme) -> Vec<SolidVertex> {
+    let mut vertices = Vec::new();
+    let color = linear_color(theme.foreground);
+    let width = (0.8 * figure.dpi / 72.0).max(0.75);
+    for line in layout.box_edges.iter().chain(&layout.tick_marks) {
+        push_solid_line(&mut vertices, *line, width, color, layout);
+    }
+    vertices
+}
+
+fn decoration_vertices(
     layout: &Axis3Layout,
     figure: &FigureConfig,
     theme: &Theme,
@@ -826,9 +871,6 @@ fn foreground_vertices(
     let mut vertices = Vec::new();
     let color = linear_color(theme.foreground);
     let width = (0.8 * figure.dpi / 72.0).max(0.75);
-    for line in layout.box_edges.iter().chain(&layout.tick_marks) {
-        push_solid_line(&mut vertices, *line, width, color, layout);
-    }
     if let Some(legend) = &layout.legend {
         push_solid_rect(
             &mut vertices,
@@ -1294,7 +1336,7 @@ mod tests {
             .expect("frame");
         let layout = Axis3Layout::resolve(&frame).expect("layout");
         let background = background_vertices(&layout, &frame.figure, &frame.theme);
-        let foreground = foreground_vertices(&layout, &frame.figure, &frame.theme);
+        let foreground = axis_vertices(&layout, &frame.figure, &frame.theme);
         assert!(!background.is_empty());
         assert!(!foreground.is_empty());
         assert!(background.iter().chain(&foreground).all(|vertex| {
@@ -1320,7 +1362,7 @@ mod tests {
             .resolve()
             .expect("frame");
         let mut layout = Axis3Layout::resolve(&frame).expect("layout");
-        let baseline = foreground_vertices(&layout, &frame.figure, &frame.theme).len();
+        let baseline = decoration_vertices(&layout, &frame.figure, &frame.theme).len();
         layout.colorbars.push(Colorbar3D {
             bounds: OverlayRect3D {
                 x: 550.0,
@@ -1333,7 +1375,7 @@ mod tests {
             tick_marks: Vec::new(),
             tick_labels: Vec::new(),
         });
-        let foreground = foreground_vertices(&layout, &frame.figure, &frame.theme);
+        let foreground = decoration_vertices(&layout, &frame.figure, &frame.theme);
         assert!(foreground.len() >= baseline + COLORBAR_SEGMENTS * 6);
         assert!(foreground.iter().all(|vertex| {
             vertex

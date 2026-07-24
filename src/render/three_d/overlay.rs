@@ -39,6 +39,13 @@ pub(crate) fn compose_svg(
         theme.background,
         true,
     );
+    let clip_id = renderer.add_clip_rect(
+        layout.viewport.x as f32,
+        layout.viewport.y as f32,
+        layout.viewport.width as f32,
+        layout.viewport.height as f32,
+    );
+    renderer.start_clip_group(&clip_id);
     for pane in &layout.panes {
         let points = pane.map(|point| (point.x, point.y));
         renderer.draw_filled_polygon(&points, pane_color(theme));
@@ -46,6 +53,7 @@ pub(crate) fn compose_svg(
     for line in &layout.grid_lines {
         draw_svg_line(&mut renderer, *line, grid_color(theme), grid_width(figure));
     }
+    renderer.end_group();
     renderer.draw_embedded_png(
         raster_layer,
         0.0,
@@ -53,12 +61,14 @@ pub(crate) fn compose_svg(
         layout.canvas_width as f32,
         layout.canvas_height as f32,
     )?;
+    renderer.start_clip_group(&clip_id);
     for line in &layout.box_edges {
         draw_svg_line(&mut renderer, *line, theme.foreground, axis_width(figure));
     }
     for line in &layout.tick_marks {
         draw_svg_line(&mut renderer, *line, theme.foreground, axis_width(figure));
     }
+    renderer.end_group();
     for text in &layout.tick_labels {
         draw_svg_text(
             &mut renderer,
@@ -96,12 +106,13 @@ fn draw_background_skia(
     figure: &FigureConfig,
     theme: &Theme,
 ) -> Result<()> {
+    let clip = viewport_clip(layout);
     for pane in &layout.panes {
         let points = pane.map(|point| (point.x, point.y));
-        renderer.draw_filled_polygon(&points, pane_color(theme))?;
+        renderer.draw_filled_polygon_clipped(&points, pane_color(theme), clip)?;
     }
     for line in &layout.grid_lines {
-        draw_skia_line(renderer, *line, grid_color(theme), grid_width(figure))?;
+        draw_skia_line_clipped(renderer, *line, grid_color(theme), grid_width(figure), clip)?;
     }
     Ok(())
 }
@@ -112,11 +123,12 @@ fn draw_foreground_skia(
     figure: &FigureConfig,
     theme: &Theme,
 ) -> Result<()> {
+    let clip = viewport_clip(layout);
     for line in &layout.box_edges {
-        draw_skia_line(renderer, *line, theme.foreground, axis_width(figure))?;
+        draw_skia_line_clipped(renderer, *line, theme.foreground, axis_width(figure), clip)?;
     }
     for line in &layout.tick_marks {
-        draw_skia_line(renderer, *line, theme.foreground, axis_width(figure))?;
+        draw_skia_line_clipped(renderer, *line, theme.foreground, axis_width(figure), clip)?;
     }
     for text in &layout.tick_labels {
         draw_skia_text(
@@ -384,6 +396,25 @@ fn draw_skia_line(
     )
 }
 
+fn draw_skia_line_clipped(
+    renderer: &mut SkiaRenderer,
+    line: OverlayLine3D,
+    color: Color,
+    width: f32,
+    clip: (f32, f32, f32, f32),
+) -> Result<()> {
+    renderer.draw_line_clipped(
+        line.start.x,
+        line.start.y,
+        line.end.x,
+        line.end.y,
+        color,
+        width,
+        LineStyle::Solid,
+        clip,
+    )
+}
+
 fn draw_svg_line(renderer: &mut SvgRenderer, line: OverlayLine3D, color: Color, width: f32) {
     renderer.draw_line(
         line.start.x,
@@ -434,6 +465,15 @@ fn clamped_text_position(text: &OverlayText3D, font_size: f32, layout: &Axis3Lay
     let y = (text.position.y - font_size * 0.5)
         .clamp(0.0, (layout.canvas_height as f32 - font_size).max(0.0));
     (x, y)
+}
+
+fn viewport_clip(layout: &Axis3Layout) -> (f32, f32, f32, f32) {
+    (
+        layout.viewport.x as f32,
+        layout.viewport.y as f32,
+        layout.viewport.width as f32,
+        layout.viewport.height as f32,
+    )
 }
 
 fn pane_color(theme: &Theme) -> Color {
@@ -494,6 +534,11 @@ mod tests {
         assert!(svg.contains("data:image/png;base64,"));
         assert!(svg.contains("A 3d plot"));
         assert!(svg.contains("<line "));
+        assert_eq!(
+            svg.matches("clip-path=").count(),
+            2,
+            "background and foreground Axis3 geometry share the plot viewport clip"
+        );
     }
 
     #[test]

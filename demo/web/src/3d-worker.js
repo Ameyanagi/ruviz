@@ -93,6 +93,10 @@ self.onmessage = async ({ data }) => {
         wheelDelta += data.delta;
         schedule();
         break;
+      case "reset":
+        session.reset_view();
+        schedule();
+        break;
       default:
         throw new Error(`unknown 3d worker message: ${data.type}`);
     }

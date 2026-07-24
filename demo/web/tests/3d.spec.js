@@ -29,6 +29,8 @@ test("direct 3d WebGPU renders and coalesces main and worker input", async ({
   await expect(page.locator("#worker-3d-status")).toContainText("gpu3d-surface", {
     timeout: DEMO_READY_TIMEOUT_MS,
   });
+  await expect(page.locator("#main-3d-reset")).toBeVisible();
+  await expect(page.locator("#worker-3d-reset")).toBeVisible();
 
   const canvas = page.locator("#main-3d");
   const result = await page.evaluate(async () => {
@@ -46,6 +48,14 @@ test("direct 3d WebGPU renders and coalesces main and worker input", async ({
       return value >>> 0;
     };
     const beforePngHash = hash(main.session.export_png());
+    main.scheduler.wheel(-10_000);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const boundedWheelPngHash = hash(main.session.export_png());
+    document.querySelector("#main-3d-reset").click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const resetPngHash = hash(main.session.export_png());
     const beforeSurfacePresents = Number(main.session.surface_presents());
     const start = main.scheduler.metrics();
     main.scheduler.pointerDown(180, 180, 0);
@@ -82,6 +92,8 @@ test("direct 3d WebGPU renders and coalesces main and worker input", async ({
       cpuFrameUploadBytes: Number(main.session.cpu_frame_upload_bytes()),
       needsRecreate: main.session.needs_recreate(),
       beforePngHash,
+      boundedWheelPngHash,
+      resetPngHash,
       afterPngHash: hash(png),
       pngSignature: Array.from(png.slice(0, 8)),
       putImageDataCalls: window.__ruvizPutImageDataCalls,
@@ -105,6 +117,8 @@ test("direct 3d WebGPU renders and coalesces main and worker input", async ({
   expect(result.cpuFrameUploadBytes).toBe(0);
   expect(result.needsRecreate).toBeFalsy();
   expect(result.putImageDataCalls).toBe(0);
+  expect(result.boundedWheelPngHash).not.toBe(result.beforePngHash);
+  expect(result.resetPngHash).toBe(result.beforePngHash);
   expect(result.beforePngHash).not.toBe(result.afterPngHash);
   expect(result.pngSignature).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
   expect(pageErrors).toEqual([]);

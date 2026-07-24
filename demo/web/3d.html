@@ -50,9 +50,31 @@
       }
 
       h2 {
-        margin: 2px 2px 12px;
+        margin: 0;
         font-size: 1rem;
         font-weight: 650;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 2px 2px 12px;
+      }
+
+      button {
+        border: 1px solid #385077;
+        border-radius: 999px;
+        background: #13233a;
+        color: #dce8fa;
+        padding: 5px 10px;
+        font: 600 0.72rem/1 ui-sans-serif, system-ui, sans-serif;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #1a3152;
       }
 
       canvas {
@@ -81,12 +103,18 @@
       </p>
       <div class="grid">
         <section>
-          <h2>Main-thread WebGPU</h2>
+          <div class="section-title">
+            <h2>Main-thread WebGPU</h2>
+            <button id="main-3d-reset" type="button">Reset view</button>
+          </div>
           <canvas id="main-3d" width="640" height="400"></canvas>
           <div id="main-3d-status" class="status">initializing</div>
         </section>
         <section>
-          <h2>Worker OffscreenCanvas WebGPU</h2>
+          <div class="section-title">
+            <h2>Worker OffscreenCanvas WebGPU</h2>
+            <button id="worker-3d-reset" type="button">Reset view</button>
+          </div>
           <canvas id="worker-3d" width="640" height="400"></canvas>
           <div id="worker-3d-status" class="status">initializing</div>
         </section>
