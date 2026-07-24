@@ -3,6 +3,8 @@
 Status: research complete; implementation proposed
 Date: 2026-07-24
 Branch: `feat/3d-implementation`
+Detailed plan:
+[ruviz 3d preset and professional-polish implementation plan](ruviz-3d-preset-implementation-plan.md)
 
 ## Question
 
