@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate normally distributed data
     let data: Vec<f64> = (0..1000)
         .map(|i| {

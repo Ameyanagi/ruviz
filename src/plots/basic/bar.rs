@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn test_resolved_edge_defaults_to_a_darker_stroke() {
         let theme = Theme::default();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
 
         let (color, width) = BarConfig::default()
             .resolved_edge(&theme, fill)
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn test_resolved_edge_honours_explicit_config() {
         let theme = Theme::default();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
 
         assert_eq!(
             BarConfig::new()
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn test_resolved_edge_is_disabled_by_zero_width() {
         let theme = Theme::default();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
 
         assert_eq!(
             BarConfig::new().edge_width(0.0).resolved_edge(&theme, fill),

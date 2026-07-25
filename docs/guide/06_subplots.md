@@ -460,10 +460,10 @@ subplots(2, 2, 1000, 800)?
 use ruviz::prelude::*;
 
 let colors = [
-    Color::new(76, 114, 176),   // Muted blue
-    Color::new(221, 132, 82),   // Muted orange
-    Color::new(85, 168, 104),   // Muted green
-    Color::new(196, 78, 82),    // Muted red
+    Color::from_rgb(76, 114, 176),   // Muted blue
+    Color::from_rgb(221, 132, 82),   // Muted orange
+    Color::from_rgb(85, 168, 104),   // Muted green
+    Color::from_rgb(196, 78, 82),    // Muted red
 ];
 
 let plots: Vec<_> = (0..4).map(|i| {

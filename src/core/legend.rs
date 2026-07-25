@@ -6,6 +6,7 @@
 //! 3. Multiple position options including automatic "best" positioning
 //! 4. Configurable frame styling
 
+#[allow(deprecated)]
 use crate::core::position::Position;
 use crate::core::units::RenderScale;
 use crate::render::{Color, LineStyle, MarkerStyle};
@@ -112,7 +113,14 @@ impl LegendPosition {
         }
     }
 
-    /// Convert from the old Position enum (backward compatibility)
+    /// Convert from the deprecated [`Position`] enum.
+    ///
+    /// The mapping is lossless. Note the Y-axis convention change: [`Position`]
+    /// measures Y downward from the top of the plot area, while
+    /// [`LegendPosition::Custom`] measures Y upward from the bottom (axes
+    /// coordinates, as matplotlib's `bbox_to_anchor` does), so custom
+    /// coordinates are flipped here.
+    #[allow(deprecated)]
     pub fn from_position(pos: Position) -> Self {
         match pos {
             Position::Best => LegendPosition::Best,
@@ -125,12 +133,22 @@ impl LegendPosition {
             Position::BottomLeft => LegendPosition::LowerLeft,
             Position::BottomCenter => LegendPosition::LowerCenter,
             Position::BottomRight => LegendPosition::LowerRight,
+            // `Position` Y grows downward, `LegendPosition::Custom` Y grows
+            // upward. Without this flip `Position::custom(0.1, 0.05)` — "just
+            // below the top-left corner" — rendered at the *bottom* left.
             Position::Custom { x, y } => LegendPosition::Custom {
                 x,
-                y,
+                y: 1.0 - y,
                 anchor: LegendAnchor::NorthWest,
             },
         }
+    }
+}
+
+#[allow(deprecated)]
+impl From<Position> for LegendPosition {
+    fn from(pos: Position) -> Self {
+        LegendPosition::from_position(pos)
     }
 }
 
@@ -588,7 +606,7 @@ impl Default for LegendStyle {
             corner_radius: 4.0,
             shadow: false,
             shadow_offset: (2.0, -2.0),
-            shadow_color: Color::new_rgba(0, 0, 0, 50),
+            shadow_color: Color::from_rgba(0, 0, 0, 50),
         }
     }
 }
@@ -1225,5 +1243,84 @@ mod tests {
 
         // Should not be upper right since data is there
         assert_ne!(best, LegendPosition::UpperRight);
+    }
+
+    /// `Position::custom(0.0, 0.0)` means "top-left of the plot area".
+    /// After conversion it must land on exactly the same pixel as
+    /// `LegendPosition::UpperLeft`.
+    ///
+    /// Regression test: `from_position` used to copy `y` straight through,
+    /// but `Legend::calculate_position` computes `top + (1.0 - y) * height`
+    /// for `Custom`, so the top-left corner rendered at the bottom left.
+    #[test]
+    #[allow(deprecated)]
+    fn custom_top_left_matches_upper_left_pixel() {
+        let plot_area = (100.0, 50.0, 700.0, 450.0);
+        let legend_size = (120.0, 80.0);
+        // `UpperLeft` insets by `border_axes_pad`, `Custom` anchors exactly;
+        // zero the pad so the two are directly comparable.
+        let spacing = LegendSpacing {
+            border_axes_pad: 0.0,
+            ..Default::default()
+        };
+
+        let upper_left = Legend {
+            position: LegendPosition::UpperLeft,
+            spacing,
+            ..Default::default()
+        }
+        .calculate_position(legend_size, plot_area);
+
+        let converted = LegendPosition::from(Position::custom(0.0, 0.0));
+        let custom = Legend {
+            position: converted,
+            spacing,
+            ..Default::default()
+        }
+        .calculate_position(legend_size, plot_area);
+
+        assert_eq!(custom, upper_left);
+        assert_eq!(custom, (100.0, 50.0));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn custom_position_stays_in_the_upper_half() {
+        // `Position::custom(0.1, 0.05)` is 5% down from the top; it used to
+        // render at 95% down, i.e. bottom-left.
+        let plot_area = (0.0, 0.0, 400.0, 200.0);
+        let legend = Legend {
+            position: LegendPosition::from(Position::custom(0.1, 0.05)),
+            spacing: LegendSpacing {
+                border_axes_pad: 0.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (x, y) = legend.calculate_position((50.0, 20.0), plot_area);
+        assert!((x - 40.0).abs() < 1e-4, "x = {x}");
+        assert!((y - 10.0).abs() < 1e-4, "y = {y}");
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn from_position_maps_every_named_variant() {
+        let cases = [
+            (Position::Best, LegendPosition::Best),
+            (Position::TopLeft, LegendPosition::UpperLeft),
+            (Position::TopCenter, LegendPosition::UpperCenter),
+            (Position::TopRight, LegendPosition::UpperRight),
+            (Position::CenterLeft, LegendPosition::CenterLeft),
+            (Position::Center, LegendPosition::Center),
+            (Position::CenterRight, LegendPosition::CenterRight),
+            (Position::BottomLeft, LegendPosition::LowerLeft),
+            (Position::BottomCenter, LegendPosition::LowerCenter),
+            (Position::BottomRight, LegendPosition::LowerRight),
+        ];
+
+        for (old, new) in cases {
+            assert_eq!(LegendPosition::from(old), new, "mapping {old}");
+        }
     }
 }

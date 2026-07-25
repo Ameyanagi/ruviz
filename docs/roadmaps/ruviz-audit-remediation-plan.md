@@ -41,6 +41,43 @@ The problems are concentrated in three places, and they are structural rather th
 Ordering below follows leverage, not severity: a core fix that resolves eight symptoms
 outranks a more severe fix that resolves one.
 
+## Standing priority: a simple, clean, consistent API (2026-07-26)
+
+ruviz is a library, so its public surface *is* the product. Public-API ergonomics outrank
+internal correctness cleanups unless a correctness bug is user-visible. **Consistency is a
+first-class requirement**: sibling plot types must take the same shape of arguments, return
+the same builder type, spell the same knob the same way, and support the same chain. Prefer a
+mechanism that makes divergence impossible — one generic builder, one shared macro — over
+fixing each plot type by hand.
+
+Judge every change by what a *downstream* developer sees, not what the crate's own tests see.
+Build a scratch crate with `ruviz = { path = ... }` and compile against it: that is how the
+prelude `Result` shadow (E0107 on every `Result<T, E>` after `use ruviz::prelude::*`) stayed
+invisible despite a green test suite.
+
+**This promotes the builder unification out of Phase 9 to run immediately after Phase 2**, and
+its "Large" tag was wrong. Measured 2026-07-26:
+
+- **15 of 19** public series methods already return `PlotBuilder<C>`. Only **four** diverge —
+  `histogram` (`series_api.rs:653`), `boxplot` (`:765`), `heatmap` (`:873`) and `error_bars`
+  (`:974`) return `PlotSeriesBuilder`.
+- **All four config types already exist**: `HistogramConfig` (`src/plots/histogram.rs:10`),
+  `BoxPlotConfig` (`src/plots/boxplot.rs:15`), `HeatmapConfig` (`src/plots/heatmap.rs:75`),
+  `ErrorBarConfig` (`src/plots/error/errorbar.rs:20`). Nothing new has to be designed.
+- `PlotSeriesBuilder` is a two-field struct (`plot`, `series`, `series_builders.rs:298`) whose
+  `impl std::ops::Deref` (`:738`) fakes inheritance from `Plot` with no `DerefMut` — which is
+  why `.histogram(&d, None).theme(..)` fails with E0507 rather than a missing-method error.
+- The cost of the divergence is concrete: roughly **60 config methods** exist only on
+  `PlotBuilder<C>`, so those four plot types silently lack them. `legend_best` is on
+  `PlotBuilder<C>` only; `legend(Position)` on `PlotSeriesBuilder` only.
+
+So the work is: switch those four to `PlotBuilder<C>` over their existing configs, then delete
+`PlotSeriesBuilder` and its `Deref`. Medium, not Large.
+
+Also in scope for "one obvious way to do it": four entry points currently draw a line plot —
+`Plot::new().line()`, `ruviz::line()` (`src/lib.rs:979`), `simple::line_plot` and
+`simple::line_plot_with_title` (`src/simple.rs:48,:63`).
+
 ## Completed (2026-07-25)
 
 Landed on `feat/3d-implementation`; 1300 lib tests, clippy, and `cargo fmt --check` clean.
@@ -113,7 +150,7 @@ Cheap now, breaking later. None of this requires new machinery.
 
 ### 2.2 Naming, settled once
 
-- `Color::new(r,g,b)` → `from_rgb` (`src/render/color.rs:48`); every peer library spells it that way.
+- `Color::from_rgb(r,g,b)` → `from_rgb` (`src/render/color.rs:48`); every peer library spells it that way.
 - Four spellings of one knob: `HeatmapConfig::colormap(ColorMap)`, `colormap_name(&str)`,
   quiver's `cmap<S: Into<String>>`, `HexbinConfig::cmap`. Standardise on
   `cmap(impl Into<ColorMapSpec>)` accepting both forms.

@@ -477,7 +477,7 @@ fn viewport_clip(layout: &Axis3Layout) -> (f32, f32, f32, f32) {
 }
 
 fn pane_color(theme: &Theme) -> Color {
-    Color::new_rgba(
+    Color::from_rgba(
         theme.grid_color.r,
         theme.grid_color.g,
         theme.grid_color.b,
@@ -486,7 +486,7 @@ fn pane_color(theme: &Theme) -> Color {
 }
 
 fn grid_color(theme: &Theme) -> Color {
-    Color::new_rgba(
+    Color::from_rgba(
         theme.grid_color.r,
         theme.grid_color.g,
         theme.grid_color.b,

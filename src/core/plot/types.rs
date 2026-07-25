@@ -1591,7 +1591,7 @@ mod marker_edge_tests {
     #[test]
     fn test_marker_edge_derives_its_colour_from_the_fill() {
         let theme = Theme::default();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
         let edge = MarkerEdge {
             color: None,
             width: 0.5,
@@ -1613,7 +1613,7 @@ mod marker_edge_tests {
         };
 
         assert_eq!(
-            edge.resolve(&theme, Color::new(31, 119, 180)),
+            edge.resolve(&theme, Color::from_rgb(31, 119, 180)),
             Some((Color::BLACK, 1.5)),
             "an explicit marker edge colour must not be recoloured"
         );
@@ -1628,7 +1628,7 @@ mod marker_edge_tests {
         };
 
         assert_eq!(
-            edge.resolve(&theme, Color::new(31, 119, 180)),
+            edge.resolve(&theme, Color::from_rgb(31, 119, 180)),
             None,
             "a zero-width edge is no edge, not a hairline"
         );

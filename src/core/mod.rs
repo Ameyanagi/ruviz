@@ -28,7 +28,7 @@ pub use config::{
     SpacingConfig, SpineConfig, TypographyConfig,
 };
 pub use constants::{dimensions, dpi, font_scales, font_sizes, line_widths, margins, spacing};
-pub use error::{PlottingError, Result};
+pub use error::{PlotResult, PlottingError, Result};
 pub use grid_style::GridStyle;
 pub use layout::{
     ComputedMarginsPixels, LayoutCalculator, LayoutConfig, LayoutRect, MeasuredDimensions,
@@ -46,10 +46,15 @@ pub use plot::{
     BuilderWhen, DirtyDomain, DirtyDomains, FramePacing, FrameStats, HitResult, Image, ImageTarget,
     InsetAnchor, InsetLayout, InteractiveFrame, InteractiveFrameWithGeneration,
     InteractivePlotSession, InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Plot,
-    PlotBuilder, PlotInput, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy,
-    ReactiveSubscription, ReactiveValue, RenderTargetKind, SeriesStyle, SurfaceCapability,
-    SurfaceTarget, TextEngineMode, TickDirection, TickSides, ViewportPoint, ViewportRect,
+    PlotBuilder, PlotInputEvent, PlotSource, PreparedPlot, QualityPolicy, ReactiveSubscription,
+    ReactiveValue, RenderTargetKind, SurfaceCapability, SurfaceTarget, TextEngineMode,
+    TickDirection, TickSides, ViewportPoint, ViewportRect,
 };
+// `PlotInput` and `SeriesStyle` are internal representations of a half-built series
+// (`SeriesStyle` alone has 18 public fields, including reactive-animation plumbing).
+// Re-exporting them froze every internal refactor into a breaking change, so they are
+// crate-visible here and absent from `crate::prelude`.
+pub(crate) use plot::{PlotInput, SeriesStyle};
 #[cfg(all(feature = "3d", feature = "gpu", not(target_arch = "wasm32")))]
 pub use plot3d::GpuBenchmarkSession3D;
 #[cfg(feature = "3d")]
@@ -62,6 +67,7 @@ pub use plot3d::{
 #[cfg(all(feature = "3d", feature = "gpu"))]
 #[doc(hidden)]
 pub use plot3d::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D};
+#[allow(deprecated)]
 pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;

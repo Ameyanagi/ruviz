@@ -2,14 +2,12 @@
 // too_many_arguments: Many rendering functions require multiple parameters for
 // flexibility. Consider config structs for future additions, but current API is ergonomic.
 #![allow(clippy::too_many_arguments)]
-#![allow(unconditional_recursion)]
 // Allow unused code during development
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 #![allow(unused_mut)]
 #![allow(unreachable_code)]
-#![allow(unreachable_patterns)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # Ruviz - High-Performance Rust Plotting Library
@@ -23,7 +21,8 @@
 //! - **Performance-Oriented**: Built for release-mode plotting workloads
 //!   with benchmarkable output paths
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
-//! - **30+ Plotting Primitives and Layouts**: Distribution, categorical, polar, regression, and layout helpers
+//! - **21 Plot Types (25 with the `3d` feature)**: basic, distribution, continuous,
+//!   composition, polar and vector families, plus subplot layout helpers
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: Streaming-friendly data structures and
 //!   practical downsampling workflows
@@ -262,15 +261,21 @@
 //! | Category | Plot Types |
 //! |----------|------------|
 //! | **Basic** | Line, Scatter, Bar |
-//! | **Distribution** | Histogram, Box Plot, Violin, KDE, ECDF |
-//! | **Continuous** | Heatmap, Contour, Fill Between |
+//! | **Distribution** | Histogram, Box Plot, Violin, Boxen, KDE, ECDF |
+//! | **Continuous** | Heatmap, Contour, Fill Between, Area |
+//! | **Discrete** | Step, Stem |
 //! | **Error** | Error Bars |
-//! | **Composition** | Pie |
+//! | **Composition** | Pie, Donut |
 //! | **Polar** | Polar Plot, Radar/Spider Chart |
+//! | **Vector** | Quiver |
+//! | **3D** (`3d` feature) | Scatter3D, Line3D, Surface3D, Wireframe3D |
 //!
-//! Lower-level utilities in [`plots`] expose additional configs and computation
-//! helpers for specialized workflows. See the [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md)
-//! for current coverage details.
+//! That is the complete list: 21 types from [`Plot`], 4 more from `Plot3D`.
+//! [`plots`] also exposes compute helpers (hexbin, strip/swarm, grouped and
+//! stacked bar, stacked area, 2D KDE, dendrogram, regression) that have **no**
+//! builder method and cannot be drawn — see the [`plots`] module docs. See the
+//! [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md)
+//! for details.
 //!
 //! <details>
 //! <summary>Plot Types Code Examples</summary>
@@ -352,7 +357,6 @@
 //! **Box Plot**
 //! ```rust,no_run
 //! use ruviz::prelude::*;
-//! use ruviz::plots::boxplot::BoxPlotConfig;
 //!
 //! let data = vec![
 //!     1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
@@ -820,18 +824,31 @@ pub mod interactive;
 pub mod animation;
 
 /// Convenience re-exports for common usage
+///
+/// # What is deliberately *not* here
+///
+/// - [`crate::core::Result`] — a one-parameter alias. Glob-importing it shadows
+///   [`std::result::Result`], so every ordinary `Result<T, E>` in the importing
+///   scope fails with `E0107`. Use [`PlotResult`](crate::core::PlotResult), which
+///   is exported here, or import `ruviz::core::Result` explicitly.
+/// - `PlotInput` / `SeriesStyle` — internal representations of a half-built
+///   series. They are crate-internal so that refactoring them is not a breaking
+///   change.
 pub mod prelude {
     pub use crate::axes::AxisScale;
+    // `Position` is deprecated in favour of `LegendPosition` but stays in the
+    // prelude so existing `use ruviz::prelude::*` code keeps resolving it.
+    #[allow(deprecated)]
     pub use crate::core::{
         Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FillStyle,
         FramePacing, FrameStats, GridSpec, HatchPattern, HitResult, Image, ImageTarget,
         InsetAnchor, InsetLayout, InteractiveFrame, InteractivePlotSession,
         InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem,
-        LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInput, PlotInputEvent, PlotSource,
-        Position, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
-        RenderTargetKind, Result, SeriesStyle, ShapeStyle, SubplotFigure, SurfaceCapability,
-        SurfaceTarget, TextAlign, TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint,
-        ViewportRect, subplots, subplots_default,
+        LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInputEvent, PlotResult, PlotSource,
+        PlottingError, Position, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
+        RenderTargetKind, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget, TextAlign,
+        TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect, subplots,
+        subplots_default,
     };
     #[cfg(feature = "3d")]
     pub use crate::core::{
@@ -843,11 +860,13 @@ pub mod prelude {
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,
     };
+    #[allow(deprecated)]
     pub use crate::plots::{
-        BoxenConfig, BoxenOrientation, ContourConfig, HeatmapConfig, HeatmapOrigin, Interpolation,
-        PieConfig, PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, PolarPlotConfig,
-        QuiverConfig, QuiverPivot, RadarConfig, StemMarker, StemOrientation, StepWhere,
-        ViolinConfig,
+        BandwidthMethod, BinMethod, BoxPlotConfig, BoxenConfig, BoxenOrientation, ContourConfig,
+        EcdfConfig, EcdfStat, HeatmapConfig, HeatmapOrigin, HistogramConfig, Interpolation,
+        KdeConfig, OutlierMethod, PieConfig, PlotArea, PlotCompute, PlotConfig, PlotData,
+        PlotRender, PolarPlotConfig, QuiverConfig, QuiverPivot, RadarConfig, StemMarker,
+        StemOrientation, StepWhere, ViolinConfig, WhiskerMethod,
     };
     #[cfg(feature = "3d")]
     pub use crate::plots::{
@@ -855,8 +874,8 @@ pub mod prelude {
         Wireframe3DConfig,
     };
     pub use crate::render::{
-        Color, ColorMap, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle, MarkerStyle,
-        Theme,
+        Color, ColorMap, ColorMapSpec, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle,
+        MarkerStyle, Theme,
     };
 
     // Top-level convenience functions
@@ -1052,4 +1071,66 @@ where
     V: NumericData1D,
 {
     Plot::new().bar(categories, values)
+}
+
+#[cfg(test)]
+mod prelude_contract_tests {
+    //! Pins the two properties the prelude has to keep: it must not shadow
+    //! `std::result::Result`, and every config type named in a public signature
+    //! must be reachable from it.
+    use crate::prelude::*;
+
+    /// If `crate::core::Result` (one generic parameter) ever re-enters the
+    /// prelude glob, this fails to compile with `E0107`.
+    fn two_parameter_result_still_resolves() -> Result<u32, std::num::ParseIntError> {
+        "42".parse()
+    }
+
+    /// The non-colliding alias the prelude offers instead.
+    fn plot_result_is_exported() -> PlotResult<()> {
+        Ok(())
+    }
+
+    /// Every family config reachable from the prelude alone. `.histogram()` and
+    /// `.boxplot()` take `Option<HistogramConfig>` / `Option<BoxPlotConfig>`, so a
+    /// user whose only import is the prelude must be able to name them.
+    fn family_configs_resolve(
+        _histogram: HistogramConfig,
+        _bin: BinMethod,
+        _boxplot: BoxPlotConfig,
+        _outlier: OutlierMethod,
+        _whisker: WhiskerMethod,
+        _kde: KdeConfig,
+        _ecdf: EcdfConfig,
+        _ecdf_stat: EcdfStat,
+        _bandwidth: BandwidthMethod,
+    ) {
+    }
+
+    /// The error type itself, not just its alias, has to be nameable so callers
+    /// can `match` on what `PlotResult` returns.
+    fn error_type_is_exported(err: PlottingError) -> &'static str {
+        match err {
+            PlottingError::EmptyDataSet => "empty",
+            _ => "other",
+        }
+    }
+
+    #[test]
+    fn prelude_contract_holds() {
+        assert_eq!(two_parameter_result_still_resolves().unwrap(), 42);
+        assert!(plot_result_is_exported().is_ok());
+        assert_eq!(error_type_is_exported(PlottingError::EmptyDataSet), "empty");
+        family_configs_resolve(
+            HistogramConfig::default(),
+            BinMethod::Uniform,
+            BoxPlotConfig::default(),
+            OutlierMethod::IQR,
+            WhiskerMethod::Tukey,
+            KdeConfig::default(),
+            EcdfConfig::default(),
+            EcdfStat::Proportion,
+            BandwidthMethod::Scott,
+        );
+    }
 }

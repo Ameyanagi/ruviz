@@ -6,6 +6,11 @@ use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
 use crate::render::{Color, LineStyle, MarkerStyle, SkiaRenderer, Theme};
 
 /// Configuration for box plots
+///
+/// Style knobs left as `None` fall back to the crate defaults in
+/// [`crate::core::style_utils::defaults`]. Every one of them is resolved into
+/// [`BoxPlotData`], which is what renderers read — see the geometry contract
+/// documented there.
 #[derive(Debug, Clone)]
 pub struct BoxPlotConfig {
     /// Method for calculating outliers
@@ -73,6 +78,27 @@ pub enum WhiskerMethod {
 }
 
 /// Computed box plot statistics
+///
+/// # The style fields are the geometry contract
+///
+/// [`calculate_box_plot`] resolves every optional style knob on
+/// [`BoxPlotConfig`] against the crate defaults and stores the concrete value
+/// here. [`BoxPlotData::render_styled`] is the reference implementation that
+/// consumes them, and **any** backend drawing a box plot must read them from
+/// this struct rather than re-deriving constants:
+///
+/// | Field | Meaning | Default |
+/// | --- | --- | --- |
+/// | [`width_ratio`](Self::width_ratio) | box width as a fraction of the category slot | `0.5` |
+/// | [`cap_width`](Self::cap_width) | whisker cap width as a fraction of the box width | `0.5` |
+/// | [`fill_alpha`](Self::fill_alpha) | opacity of the box fill | `0.7` |
+/// | [`edge_width`](Self::edge_width) | box outline width, in points | `0.8` |
+/// | [`whisker_width`](Self::whisker_width) | whisker/cap stroke width; `None` = `theme.line_width` | `None` |
+/// | [`median_width`](Self::median_width) | median stroke width; `None` = `theme.line_width * 1.5` | `None` |
+/// | [`flier_size`](Self::flier_size) | outlier marker size | `6.0` |
+///
+/// A backend that hardcodes `0.3`/`0.6`/`4.0` instead makes the matching
+/// setters silent no-ops.
 #[derive(Debug, Clone)]
 pub struct BoxPlotData {
     /// Minimum value (or lower whisker)
@@ -937,11 +963,82 @@ mod tests {
         assert!(!boxplot.is_empty());
     }
 
+    // ------------------------------------------------------------------
+    // The style fields must reach pixels (plan item 2.4)
+    //
+    // These lock `BoxPlotData::render_styled` — the reference geometry — to the
+    // resolved config. A backend that hardcodes its own constants will not be
+    // caught here, but it now has an executable spec to match.
+    // ------------------------------------------------------------------
+
+    fn render_box(config: &BoxPlotConfig) -> Vec<u8> {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 40.0];
+        let boxplot = calculate_box_plot(&data, config).unwrap();
+        let theme = Theme::default();
+        let mut renderer = SkiaRenderer::new(160, 160, theme.clone()).unwrap();
+        // Use the plot's own declared bounds so both orientations get an area
+        // that actually contains their geometry.
+        let ((x_min, x_max), (y_min, y_max)) = boxplot.data_bounds();
+        let area = PlotArea::new(0.0, 0.0, 160.0, 160.0, x_min, x_max, y_min, y_max);
+        boxplot
+            .render(&mut renderer, &area, &theme, Color::from_rgb(0, 90, 200))
+            .unwrap();
+        renderer.into_image().pixels
+    }
+
+    #[test]
+    fn test_every_box_plot_style_field_changes_the_rendered_image() {
+        let baseline = render_box(&BoxPlotConfig::new());
+
+        let variants: [(&str, BoxPlotConfig); 8] = [
+            ("width_ratio", BoxPlotConfig::new().width_ratio(0.9)),
+            ("cap_width", BoxPlotConfig::new().cap_width(0.1)),
+            ("fill_alpha", BoxPlotConfig::new().fill_alpha(0.1)),
+            (
+                "edge_color",
+                BoxPlotConfig::new().edge_color(Color::from_rgb(255, 0, 0)),
+            ),
+            ("edge_width", BoxPlotConfig::new().edge_width(4.0)),
+            ("whisker_width", BoxPlotConfig::new().whisker_width(5.0)),
+            ("median_width", BoxPlotConfig::new().median_width(6.0)),
+            ("flier_size", BoxPlotConfig::new().flier_size(16.0)),
+        ];
+
+        for (name, config) in variants {
+            assert_ne!(
+                baseline,
+                render_box(&config),
+                "BoxPlotConfig::{name} produced a byte-identical image"
+            );
+        }
+    }
+
+    #[test]
+    fn test_box_plot_orientation_changes_the_rendered_image() {
+        let vertical = render_box(&BoxPlotConfig::new());
+        let horizontal = render_box(&BoxPlotConfig::new().orientation(BoxOrientation::Horizontal));
+        assert_ne!(vertical, horizontal);
+    }
+
+    #[test]
+    fn test_box_plot_defaults_resolve_to_the_documented_constants() {
+        let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let boxplot = calculate_box_plot(&data, &BoxPlotConfig::new()).unwrap();
+
+        assert_eq!(boxplot.width_ratio, defaults::BOXPLOT_WIDTH_RATIO);
+        assert_eq!(boxplot.cap_width, defaults::BOXPLOT_CAP_WIDTH);
+        assert_eq!(boxplot.fill_alpha, defaults::BOXPLOT_FILL_ALPHA);
+        assert_eq!(boxplot.edge_width, defaults::PATCH_LINE_WIDTH);
+        assert_eq!(boxplot.flier_size, defaults::FLIER_SIZE);
+        assert_eq!(boxplot.whisker_width, None);
+        assert_eq!(boxplot.median_width, None);
+    }
+
     #[test]
     fn test_styling_fields() {
         let config = BoxPlotConfig::new()
             .fill_alpha(0.5)
-            .edge_color(Color::new(255, 0, 0))
+            .edge_color(Color::from_rgb(255, 0, 0))
             .edge_width(2.0)
             .width_ratio(0.8)
             .whisker_width(1.5)

@@ -160,7 +160,7 @@ fn test_backend_consistency_multi_series() {
     // WHEN: Rendering with multiple series
     let result = Plot::new()
         .title("Backend Consistency - Multi-Series")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .line(&x, &x.to_vec())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
@@ -312,7 +312,7 @@ fn test_png_and_svg_bar_geometry_agree() {
             .ticks(false)
             .grid(false)
             .bar(&["A", "B", "C", "D"], &[3.0f64, 5.0, 2.0, 4.0])
-            .color(Color::new(31, 119, 180))
+            .color(Color::from_rgb(31, 119, 180))
     };
     chart().save(&png_path).expect("bar PNG should save");
     chart()

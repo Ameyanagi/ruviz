@@ -1,10 +1,10 @@
-use ruviz::core::{Position, Result};
+use ruviz::core::LegendPosition;
 use ruviz::prelude::*;
 use ruviz::render::{Theme, ThemeVariant};
 use std::f64::consts::PI;
 
 /// Comprehensive showcase of scientific plotting themes
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     println!("Scientific Themes Showcase");
     std::fs::create_dir_all("generated/examples").ok();
 
@@ -24,7 +24,7 @@ fn main() -> Result<()> {
         .xlabel("Angle (radians)")
         .ylabel("Amplitude")
         .xlim(0.0, 2.0 * PI)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .theme(Theme::ieee())
         .line(&x, &y_sin)
         .label("sin(x)")
@@ -39,7 +39,7 @@ fn main() -> Result<()> {
         .xlabel("x")
         .ylabel("exp(x/10)")
         .xlim(0.0, 2.0 * PI)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .theme(Theme::nature())
         .scatter(&x, &y_exp)
         .label("exp(x/10)")
@@ -69,7 +69,7 @@ fn main() -> Result<()> {
         .title("Paul Tol Accessibility Theme")
         .xlabel("Time")
         .ylabel("Signal")
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .theme(Theme::paul_tol())
         .line(&x_multi, &y1)
         .label("Series 1")
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
             .xlabel("x")
             .ylabel("y")
             .xlim(0.0, 2.0 * PI)
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .theme(variant.to_theme())
             .line(&x, &y_sin)
             .label("sin(x)")

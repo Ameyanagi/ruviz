@@ -95,10 +95,10 @@ impl RealTimeRenderer {
             performance_monitor: PerformanceMonitor::new(),
             last_device_scale: 1.0,
 
-            hover_highlight_color: Color::new_rgba(255, 165, 0, 180), // Orange with transparency
-            selection_highlight_color: Color::new_rgba(255, 0, 0, 120), // Red with transparency
-            brush_color: Color::new_rgba(0, 100, 255, 60),            // Blue with high transparency
-            brush_outline_color: Color::new_rgba(96, 208, 255, 220),
+            hover_highlight_color: Color::from_rgba(255, 165, 0, 180), // Orange with transparency
+            selection_highlight_color: Color::from_rgba(255, 0, 0, 120), // Red with transparency
+            brush_color: Color::from_rgba(0, 100, 255, 60), // Blue with high transparency
+            brush_outline_color: Color::from_rgba(96, 208, 255, 220),
             annotation_renderer: AnnotationRenderer::new(),
 
             quality_mode: RenderQuality::Interactive,
@@ -797,7 +797,7 @@ impl RealTimeRenderer {
 
         let tooltip_rect = Rectangle::new(left, top, left + tooltip_width, top + tooltip_height);
 
-        let tooltip_color = Color::new_rgba(255, 255, 220, 200); // Light yellow
+        let tooltip_color = Color::from_rgba(255, 255, 220, 200); // Light yellow
         self.draw_selection_rectangle(pixel_data, tooltip_rect, tooltip_color)?;
 
         let Some(size) =
@@ -819,7 +819,7 @@ impl RealTimeRenderer {
             (left + TOOLTIP_PADDING_X) as f32,
             (top + TOOLTIP_PADDING_Y) as f32,
             &font,
-            Color::new_rgba(24, 24, 24, 255),
+            Color::from_rgba(24, 24, 24, 255),
         ) {
             log::debug!(
                 "Skipping legacy tooltip text render after text rasterization failed: {err}"

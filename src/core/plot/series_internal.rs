@@ -682,7 +682,7 @@ impl Plot {
         y_max: f64,
         mode: RenderExecutionMode,
     ) -> Result<Option<SeriesRasterPlan>> {
-        let color = series.color_with_alpha(Color::new(0, 0, 0));
+        let color = series.color_with_alpha(Color::from_rgb(0, 0, 0));
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
@@ -847,7 +847,7 @@ impl Plot {
 
                         let (cell_x, cell_y, cell_width, cell_height) =
                             data.cell_screen_rect(&heatmap_plot_area, row_idx, col_idx);
-                        let text = format!("{:.2}", value);
+                        let text = data.format_annotation(value);
                         let text_color = data.get_text_color(cell_color);
                         let text_x = cell_x + cell_width / 2.0;
                         let font_size = (cell_height * 0.3)
@@ -999,9 +999,9 @@ impl Plot {
         y_max: f64,
         mode: RenderExecutionMode,
     ) -> Result<()> {
-        let base_color = series.color.unwrap_or(Color::new(0, 0, 0));
+        let base_color = series.color.unwrap_or(Color::from_rgb(0, 0, 0));
         let alpha = series.alpha.unwrap_or(1.0);
-        let color = series.color_with_alpha(Color::new(0, 0, 0)); // Default black
+        let color = series.color_with_alpha(Color::from_rgb(0, 0, 0)); // Default black
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
@@ -1107,9 +1107,11 @@ impl Plot {
                         PlottingError::RenderError(format!("Box plot calculation failed: {}", e))
                     })?;
 
-                // Box plot positioning
+                // Box plot positioning. Every geometry constant below comes from
+                // `box_data`, which `calculate_box_plot` resolved from the
+                // user's `BoxPlotConfig` — see the contract on `BoxPlotData`.
                 let x_center = 0.5; // Center the box plot
-                let box_width = 0.3; // Box width
+                let box_width = box_data.width_ratio;
 
                 // Map coordinates to pixels
                 let (x_center_px, _) = crate::render::skia::map_data_to_pixels(
@@ -1171,14 +1173,28 @@ impl Plot {
                 let box_top = q3_y.min(q1_y); // Use the smaller y value as top
 
                 // Validate dimensions before drawing
+                let edge_color = box_data.edge_color.unwrap_or(color);
+                let whisker_width_px = box_data
+                    .whisker_width
+                    .map(|w| self.render_scale().points_to_pixels(w))
+                    .unwrap_or(line_width);
+                let median_width_px = box_data
+                    .median_width
+                    .map(|w| self.render_scale().points_to_pixels(w))
+                    .unwrap_or(line_width * 1.5);
+
                 if box_width > 0.0
                     && box_height > 0.0
                     && box_width.is_finite()
                     && box_height.is_finite()
                 {
-                    renderer.draw_rectangle_clipped(
-                        box_left, box_top, box_width, box_height, color,
-                        false, // outline only
+                    renderer.draw_rectangle_styled_clipped(
+                        box_left,
+                        box_top,
+                        box_width,
+                        box_height,
+                        Some(color.with_alpha(box_data.fill_alpha * alpha)),
+                        Some((edge_color, box_data.edge_width)),
                         clip_rect,
                     )?;
                 }
@@ -1190,8 +1206,8 @@ impl Plot {
                         median_y,
                         box_right,
                         median_y,
-                        color,
-                        line_width * 1.5, // thicker median line
+                        edge_color,
+                        median_width_px,
                         line_style.clone(),
                         clip_rect,
                     )?;
@@ -1204,8 +1220,8 @@ impl Plot {
                         q1_y,
                         x_center_px,
                         lower_whisker_y,
-                        color,
-                        line_width,
+                        edge_color,
+                        whisker_width_px,
                         line_style.clone(),
                         clip_rect,
                     )?;
@@ -1218,23 +1234,23 @@ impl Plot {
                         q3_y,
                         x_center_px,
                         upper_whisker_y,
-                        color,
-                        line_width,
+                        edge_color,
+                        whisker_width_px,
                         line_style.clone(),
                         clip_rect,
                     )?;
                 }
 
                 // Draw whisker caps - validate coordinates
-                let cap_width = box_half_width * 0.6;
+                let cap_width = box_half_width * box_data.cap_width;
                 if x_center_px.is_finite() && lower_whisker_y.is_finite() && cap_width.is_finite() {
                     renderer.draw_line_clipped(
                         x_center_px - cap_width,
                         lower_whisker_y,
                         x_center_px + cap_width,
                         lower_whisker_y,
-                        color,
-                        line_width,
+                        edge_color,
+                        whisker_width_px,
                         line_style.clone(),
                         clip_rect,
                     )?;
@@ -1246,16 +1262,21 @@ impl Plot {
                         upper_whisker_y,
                         x_center_px + cap_width,
                         upper_whisker_y,
-                        color,
-                        line_width,
+                        edge_color,
+                        whisker_width_px,
                         line_style.clone(),
                         clip_rect,
                     )?;
                 }
 
                 // Draw outliers - validate coordinates
-                let outlier_marker_size = self.render_scale().points_to_pixels(4.0);
-                for &outlier in &box_data.outliers {
+                let outlier_marker_size = self.render_scale().points_to_pixels(box_data.flier_size);
+                let outliers: &[f64] = if box_data.show_outliers {
+                    &box_data.outliers
+                } else {
+                    &[]
+                };
+                for &outlier in outliers {
                     let (_, outlier_y) = crate::render::skia::map_data_to_pixels(
                         0.0, outlier, x_min, x_max, y_min, y_max, plot_area,
                     );
@@ -1621,7 +1642,7 @@ impl Plot {
         y_max: f64,
         mode: RenderExecutionMode,
     ) -> Result<()> {
-        let color = series.color_with_alpha(Color::new(0, 0, 0));
+        let color = series.color_with_alpha(Color::from_rgb(0, 0, 0));
         let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
         let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
         let clip_rect = (

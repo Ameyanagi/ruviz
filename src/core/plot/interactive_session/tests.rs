@@ -1330,7 +1330,7 @@ fn test_incremental_streaming_uses_scaled_geometry_and_displayed_hit_data() {
     stream.push_many(vec![(1.0, -10.0), (10.0, 0.0)]);
     let plot: Plot = Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(220, 20, 20))
+        .color(Color::from_rgb(220, 20, 20))
         .into_plot()
         .xscale(crate::axes::AxisScale::Log)
         .yscale(crate::axes::AxisScale::symlog(1.0))
@@ -2260,7 +2260,7 @@ fn test_draw_rect_outline_clamps_to_buffer_bounds() {
         &mut pixels,
         (4, 4),
         ViewportRect::from_points(ViewportPoint::new(-1.0, -1.0), ViewportPoint::new(3.0, 3.0)),
-        Color::new_rgba(255, 128, 64, 255),
+        Color::from_rgba(255, 128, 64, 255),
         2,
     );
 
@@ -3460,7 +3460,7 @@ fn test_incremental_line_render_preserves_markers() {
 
     let plot: Plot = Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(220, 20, 20))
+        .color(Color::from_rgb(220, 20, 20))
         .width(1.0)
         .marker(MarkerStyle::Square)
         .marker_size(18.0)
@@ -3599,7 +3599,7 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
     );
     let event_x = Observable::new(vec![2.0, 6.0, 9.5]);
     let event_y = Observable::new(vec![1.1, -1.3, 1.4]);
-    let accent = Observable::new(Color::new(42, 157, 143));
+    let accent = Observable::new(Color::from_rgb(42, 157, 143));
 
     let plot: Plot = Plot::new()
         .line(&x, &vec![1.2; x.len()])
@@ -3616,12 +3616,12 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
         .into();
     let plot: Plot = plot
         .line_source(x.clone(), baseline.clone())
-        .color(Color::new(38, 70, 83))
+        .color(Color::from_rgb(38, 70, 83))
         .line_width(1.6)
         .into();
     let plot: Plot = plot
         .scatter_source(event_x.clone(), event_y.clone())
-        .color(Color::new(231, 111, 81))
+        .color(Color::from_rgb(231, 111, 81))
         .marker(MarkerStyle::Diamond)
         .marker_size(9.0)
         .xlim(0.0, 12.0)
@@ -3649,7 +3649,7 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
     );
     event_x.set(vec![1.0, 4.5, 10.5]);
     event_y.set(vec![1.5, -1.4, 1.7]);
-    accent.set(Color::new(231, 111, 81));
+    accent.set(Color::from_rgb(231, 111, 81));
 
     session
         .render_to_surface(render_target())
@@ -3668,7 +3668,7 @@ fn test_dashboard_like_reactive_updates_do_not_drift_manual_ylim() {
 fn test_surface_frame_pixels_honor_manual_ylim() {
     let plot: Plot = Plot::new()
         .scatter(&[0.5], &[1.0])
-        .color(Color::new(220, 20, 20))
+        .color(Color::from_rgb(220, 20, 20))
         .marker(MarkerStyle::Square)
         .marker_size(18.0)
         .ticks(false)
@@ -3676,7 +3676,7 @@ fn test_surface_frame_pixels_honor_manual_ylim() {
         .into();
     let plot: Plot = plot
         .scatter(&[0.5], &[-1.0])
-        .color(Color::new(20, 20, 220))
+        .color(Color::from_rgb(20, 20, 220))
         .marker(MarkerStyle::Square)
         .marker_size(18.0)
         .ticks(false)
@@ -3786,7 +3786,7 @@ fn test_surface_frame_pixels_honor_manual_ylim() {
 fn test_surface_frame_clips_series_pixels_to_plot_area_after_zoom() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 5.0, 10.0], &[0.0, 5.0, 10.0])
-        .color(Color::new(220, 20, 20))
+        .color(Color::from_rgb(220, 20, 20))
         .line_width(18.0)
         .ticks(false)
         .grid(false)

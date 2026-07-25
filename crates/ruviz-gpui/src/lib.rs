@@ -142,7 +142,7 @@ mod platform_impl {
     const MENU_EDGE_MARGIN_PX: f32 = 8.0;
 
     type ContextMenuActionHandler =
-        Arc<dyn Fn(GpuiContextMenuActionContext) -> Result<()> + Send + Sync>;
+        Arc<dyn Fn(GpuiContextMenuActionContext) -> PlotResult<()> + Send + Sync>;
     type PlotPointerEventHandler = Arc<dyn Fn(PlotPointerEvent) + Send + Sync>;
 
     #[derive(Clone, Default)]
@@ -711,7 +711,7 @@ mod platform_impl {
 
         pub fn on_context_menu_action<F>(mut self, handler: F) -> Self
         where
-            F: Fn(GpuiContextMenuActionContext) -> Result<()> + Send + Sync + 'static,
+            F: Fn(GpuiContextMenuActionContext) -> PlotResult<()> + Send + Sync + 'static,
         {
             self.context_menu_action_handler = Some(Arc::new(handler));
             self
@@ -743,7 +743,7 @@ mod platform_impl {
             self
         }
 
-        fn validate(&self) -> Result<()> {
+        fn validate(&self) -> PlotResult<()> {
             if self.options.context_menu.enabled
                 && !self.options.context_menu.custom_items.is_empty()
                 && self.context_menu_action_handler.is_none()
@@ -756,7 +756,7 @@ mod platform_impl {
             Ok(())
         }
 
-        pub fn try_build<V>(self, cx: &mut Context<V>) -> Result<Entity<RuvizPlot>>
+        pub fn try_build<V>(self, cx: &mut Context<V>) -> PlotResult<Entity<RuvizPlot>>
         where
             V: 'static,
         {
@@ -927,14 +927,14 @@ mod platform_impl {
             &mut self,
             annotation: Annotation,
             cx: &mut Context<Self>,
-        ) -> Result<AnnotationId> {
+        ) -> PlotResult<AnnotationId> {
             let id = self.session.add_annotation(annotation)?;
             cx.notify();
             Ok(id)
         }
 
         /// Returns a copy of a dynamic annotation owned by this plot session.
-        pub fn annotation(&self, id: AnnotationId) -> Result<Annotation> {
+        pub fn annotation(&self, id: AnnotationId) -> PlotResult<Annotation> {
             self.session.annotation(id)
         }
 
@@ -944,7 +944,7 @@ mod platform_impl {
             id: AnnotationId,
             annotation: Annotation,
             cx: &mut Context<Self>,
-        ) -> Result<()> {
+        ) -> PlotResult<()> {
             self.session.update_annotation(id, annotation)?;
             cx.notify();
             Ok(())
@@ -955,7 +955,7 @@ mod platform_impl {
             &mut self,
             id: AnnotationId,
             cx: &mut Context<Self>,
-        ) -> Result<bool> {
+        ) -> PlotResult<bool> {
             let removed = self.session.remove_annotation(id)?;
             cx.notify();
             Ok(removed)
@@ -1079,14 +1079,14 @@ mod platform_impl {
             cx.notify();
         }
 
-        pub fn set_current_view_as_home(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        pub fn set_current_view_as_home(&mut self, cx: &mut Context<Self>) -> PlotResult<()> {
             self.interaction_state.home_view_bounds =
                 Some(self.session.viewport_snapshot()?.visible_bounds);
             cx.notify();
             Ok(())
         }
 
-        pub fn go_to_home_view(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        pub fn go_to_home_view(&mut self, cx: &mut Context<Self>) -> PlotResult<()> {
             let Some(home_view_bounds) = self.interaction_state.home_view_bounds else {
                 return Ok(());
             };
@@ -1098,17 +1098,17 @@ mod platform_impl {
             Ok(())
         }
 
-        pub fn save_png(&mut self, window: &Window, _cx: &mut Context<Self>) -> Result<()> {
+        pub fn save_png(&mut self, window: &Window, _cx: &mut Context<Self>) -> PlotResult<()> {
             let image = self.capture_visible_view_image(window)?;
             self.spawn_save_png_dialog(image)
         }
 
-        pub fn copy_image(&mut self, window: &Window, _cx: &mut Context<Self>) -> Result<()> {
+        pub fn copy_image(&mut self, window: &Window, _cx: &mut Context<Self>) -> PlotResult<()> {
             let image = self.capture_visible_view_image(window)?;
             self.copy_image_to_clipboard(&image)
         }
 
-        pub fn copy_cursor_coordinates(&self) -> Result<()> {
+        pub fn copy_cursor_coordinates(&self) -> PlotResult<()> {
             let cursor_position_px = self.current_cursor_position_px().ok_or_else(|| {
                 PlottingError::InvalidInput(
                     "cursor coordinates are unavailable until the pointer enters the plot area"
@@ -1121,7 +1121,7 @@ mod platform_impl {
         pub(crate) fn copy_cursor_coordinates_at(
             &self,
             cursor_position_px: ViewportPoint,
-        ) -> Result<()> {
+        ) -> PlotResult<()> {
             let cursor_data_position = self
                 .session
                 .screen_to_data(cursor_position_px)?
@@ -1136,7 +1136,7 @@ mod platform_impl {
             ))
         }
 
-        pub fn copy_visible_bounds(&self) -> Result<()> {
+        pub fn copy_visible_bounds(&self) -> PlotResult<()> {
             let snapshot = self.session.viewport_snapshot()?;
             self.copy_text_to_clipboard(&format!(
                 "x=[{:.6}, {:.6}], y=[{:.6}, {:.6}]",

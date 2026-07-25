@@ -5,7 +5,7 @@
 use ruviz::prelude::*;
 use ruviz::render::LineStyle;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 
     // Create different y values for each line (offset for visibility)

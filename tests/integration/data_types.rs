@@ -81,7 +81,7 @@ mod data_integration_tests {
                 .label("cos(x)")
                 .color(Color::BLUE)
             .title("ndarray Mathematical Operations")
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .save("test_ndarray_math.png");
         
         assert!(result2.is_ok(), "ndarray math integration failed: {:?}", result2.err());
@@ -149,7 +149,7 @@ mod data_integration_tests {
                 .label("Category B")
                 .color(Color::BLUE)
             .title("polars Grouped Data")
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .save("test_polars_grouped.png");
         
         assert!(result2.is_ok(), "polars grouped integration failed: {:?}", result2.err());
@@ -187,7 +187,7 @@ mod data_integration_tests {
                 .label("Slice Data")
                 .color(Color::GREEN)
             .title("Mixed Data Types")
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .save("test_mixed_data_types.png");
         
         assert!(result.is_ok(), "Mixed data types failed: {:?}", result.err());
@@ -334,7 +334,7 @@ mod data_integration_tests {
             .title("Environmental Monitoring")
             .xlabel("Time (minutes)")
             .ylabel("Measurement")
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .save("test_timeseries.png");
         
         assert!(result1.is_ok(), "Time series scenario failed: {:?}", result1.err());
@@ -358,7 +358,7 @@ mod data_integration_tests {
             .title("Electrical Measurements")
             .xlabel("Voltage (V)")
             .ylabel("Current (A) / Power (W)")
-            .legend(Position::TopLeft)
+            .legend(LegendPosition::UpperLeft)
             .save("test_experimental.png");
         
         assert!(result2.is_ok(), "Experimental scenario failed: {:?}", result2.err());

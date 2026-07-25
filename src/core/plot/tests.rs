@@ -2490,7 +2490,7 @@ fn test_png_and_svg_resolve_identical_outside_legend_rect() {
 fn test_legacy_position_api_keeps_inside_layout_behavior() {
     let legacy = Plot::new()
         .size_px(640, 480)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .line(&[0.0, 1.0], &[0.0, 1.0])
         .label("Legacy")
         .end_series();
@@ -3246,7 +3246,7 @@ fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
 
 #[test]
 fn test_render_to_svg_preserves_line_marker_shape() {
-    let marker_color = Color::new(17, 119, 51);
+    let marker_color = Color::from_rgb(17, 119, 51);
     let plot = Plot::new()
         .line(&[0.0, 1.0], &[0.0, 1.0])
         .color(marker_color)
@@ -4043,7 +4043,7 @@ fn test_edged_marker_batch_matches_across_the_sprite_threshold() {
             .scatter(&x, &y)
             .marker(MarkerStyle::Square)
             .marker_size(10.0)
-            .edge_color(Color::new(255, 0, 0))
+            .edge_color(Color::from_rgb(255, 0, 0))
             .edge_width(2.0)
             .into_plot()
             .benchmark_save_png_bytes_with_diagnostics()
@@ -4796,7 +4796,7 @@ fn test_streaming_with_styling() {
 
     let plot = Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(255, 0, 0))
+        .color(Color::from_rgb(255, 0, 0))
         .width(3.0)
         .label("Styled Streaming")
         .title("Styled Streaming Plot")
@@ -4804,7 +4804,10 @@ fn test_streaming_with_styling() {
         .ylabel("Y Axis")
         .end_series();
 
-    assert_eq!(plot.series_mgr.series[0].color, Some(Color::new(255, 0, 0)));
+    assert_eq!(
+        plot.series_mgr.series[0].color,
+        Some(Color::from_rgb(255, 0, 0))
+    );
     assert_eq!(plot.series_mgr.series[0].line_width, Some(3.0));
 
     let result = plot.render();
@@ -4820,11 +4823,14 @@ fn test_streaming_scatter_with_styling() {
 
     let plot = Plot::new()
         .scatter_streaming(&stream)
-        .color(Color::new(0, 255, 0))
+        .color(Color::from_rgb(0, 255, 0))
         .marker_size(10.0)
         .end_series();
 
-    assert_eq!(plot.series_mgr.series[0].color, Some(Color::new(0, 255, 0)));
+    assert_eq!(
+        plot.series_mgr.series[0].color,
+        Some(Color::from_rgb(0, 255, 0))
+    );
     assert_eq!(plot.series_mgr.series[0].marker_size, Some(10.0));
 
     let result = plot.render();
@@ -6227,11 +6233,11 @@ fn test_svg_text_annotation_uses_resolved_typography_and_full_text_style() {
         .build();
     let style = crate::core::TextStyle {
         font_size: 10.0,
-        color: Color::new_rgba(20, 30, 40, 200),
+        color: Color::from_rgba(20, 30, 40, 200),
         align: crate::core::TextAlign::Right,
         valign: crate::core::TextVAlign::Bottom,
         rotation: 25.0,
-        background: Some(Color::new_rgba(240, 230, 220, 128)),
+        background: Some(Color::from_rgba(240, 230, 220, 128)),
         padding: 3.0,
         border_color: Some(Color::BLUE),
         border_width: 2.0,

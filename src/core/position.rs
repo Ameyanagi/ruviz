@@ -1,6 +1,31 @@
 /// Position enumeration for legend and label placement
 ///
-/// Supports common positioning options for legends, labels, and other UI elements
+/// # Deprecated
+///
+/// [`crate::core::legend::LegendPosition`] is the canonical legend-placement
+/// vocabulary. It is a strict superset of this enum: it carries the same nine
+/// inside placements (spelled `UpperLeft`/`LowerRight`/… , matching matplotlib's
+/// `loc=` names), plus `OutsideRight`/`OutsideLeft`/`OutsideUpper`/`OutsideLower`
+/// and an anchored `Custom`, none of which `Position` can express.
+///
+/// Convert with `LegendPosition::from(pos)`; the mapping is lossless.
+///
+/// ```rust
+/// #![allow(deprecated)]
+/// use ruviz::core::{LegendPosition, Position};
+///
+/// assert_eq!(
+///     LegendPosition::from(Position::TopRight),
+///     LegendPosition::UpperRight
+/// );
+/// ```
+///
+/// Note that `Position` uses screen-space Y (`0.0` = top) while `LegendPosition`
+/// uses axes-space Y (`0.0` = bottom); the conversion flips it for you.
+#[deprecated(
+    since = "0.6.0",
+    note = "use `LegendPosition` (via `Plot::legend_position`); it is the canonical legend-placement enum and additionally expresses the `Outside*` placements. Convert with `LegendPosition::from(position)`"
+)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Position {
     /// Automatic best position (minimizes data overlap) - matplotlib loc=0
@@ -27,6 +52,7 @@ pub enum Position {
     Custom { x: f32, y: f32 },
 }
 
+#[allow(deprecated)]
 impl Position {
     /// Convert position to normalized coordinates (0.0-1.0)
     /// Returns (x, y) where (0,0) is top-left and (1,1) is bottom-right
@@ -146,6 +172,7 @@ impl Position {
     }
 }
 
+#[allow(deprecated)]
 impl Default for Position {
     /// Default position is Best (automatic optimal positioning)
     fn default() -> Self {
@@ -153,6 +180,7 @@ impl Default for Position {
     }
 }
 
+#[allow(deprecated)]
 impl std::fmt::Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -172,6 +200,7 @@ impl std::fmt::Display for Position {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

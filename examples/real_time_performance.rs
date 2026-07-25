@@ -15,7 +15,7 @@
 use ruviz::prelude::*;
 use std::time::Instant;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
         .block_on(async_main())
 }
 
-async fn async_main() -> Result<()> {
+async fn async_main() -> PlotResult<()> {
     println!("Starting real-time performance demo...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
@@ -50,7 +50,7 @@ async fn async_main() -> Result<()> {
         .title(format!("Large Dataset Explorer - {} points", initial_size))
         .xlabel("Time (s)")
         .ylabel("Signal Amplitude")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .line(&dataset.x_data, &dataset.y_data)
         .into();
 
@@ -114,7 +114,7 @@ fn generate_large_dataset(n_points: usize) -> PerformanceDataset {
 }
 
 #[allow(dead_code)]
-fn run_static_performance_benchmark(dataset: &PerformanceDataset) -> Result<()> {
+fn run_static_performance_benchmark(dataset: &PerformanceDataset) -> PlotResult<()> {
     println!("\nRunning static rendering benchmark...");
 
     let plot: Plot = Plot::new()

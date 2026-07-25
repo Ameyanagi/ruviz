@@ -1,7 +1,43 @@
 use std::fmt;
 
-/// Result type alias for plotting operations
+/// Result type alias for plotting operations.
+///
+/// # Not in the prelude
+///
+/// This alias takes a **single** generic parameter, so glob-importing it shadows
+/// [`std::result::Result`] and makes every ordinary two-parameter `Result<T, E>`
+/// in the importing scope fail with `E0107`. It is therefore deliberately absent
+/// from [`crate::prelude`]. Reach it explicitly:
+///
+/// ```rust
+/// use ruviz::core::Result;
+///
+/// fn plot_something() -> Result<()> {
+///     Ok(())
+/// }
+/// ```
+///
+/// or use [`PlotResult`], the identical alias under a name that does not collide
+/// with `std`, which *is* re-exported from the prelude.
 pub type Result<T> = std::result::Result<T, PlottingError>;
+
+/// Non-colliding spelling of [`Result`]: `PlotResult<T> = Result<T, PlottingError>`.
+///
+/// Prefer this in code that does `use ruviz::prelude::*`, because it leaves
+/// [`std::result::Result`] untouched:
+///
+/// ```rust
+/// use ruviz::prelude::*;
+///
+/// fn plot_something() -> PlotResult<()> {
+///     Ok(())
+/// }
+///
+/// fn parse_something() -> Result<u32, std::num::ParseIntError> {
+///     "42".parse()
+/// }
+/// ```
+pub type PlotResult<T> = std::result::Result<T, PlottingError>;
 
 /// Errors produced by plotting, validation, rendering, and export operations.
 ///
@@ -747,6 +783,23 @@ mod tests {
         };
 
         assert_eq!(described, "empty");
+    }
+
+    #[test]
+    fn plot_result_alias_matches_result_alias() {
+        // `PlotResult<T>` exists so downstream code can `use ruviz::prelude::*`
+        // without shadowing `std::result::Result`. Pin that the two aliases are
+        // the same type so they can never drift apart.
+        fn as_result(value: PlotResult<u32>) -> PlotResult<u32> {
+            value
+        }
+
+        assert_eq!(as_result(Ok(7)).unwrap(), 7);
+        assert!(as_result(Err(PlottingError::EmptyDataSet)).is_err());
+
+        // And that ordinary two-parameter `Result` still works alongside it.
+        let parsed: std::result::Result<u32, std::num::ParseIntError> = "42".parse();
+        assert_eq!(parsed.unwrap(), 42);
     }
 
     #[test]

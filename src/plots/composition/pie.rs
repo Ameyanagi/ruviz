@@ -64,11 +64,11 @@ impl Default for PieConfig {
             inner_radius: 0.0,
             start_angle: 90.0, // Start at top (12 o'clock)
             counter_clockwise: true,
-            text_color: Color::new(0, 0, 0),
+            text_color: Color::from_rgb(0, 0, 0),
             label_font_size: 10.0,
             label_distance: 0.6,
             shadow: 0.0,
-            edge_color: Some(Color::new(255, 255, 255)),
+            edge_color: Some(Color::from_rgb(255, 255, 255)),
             edge_width: 1.0,
         }
     }
@@ -340,7 +340,7 @@ pub fn render_pie(
 
     // Draw shadow if configured
     if config.shadow > 0.0 {
-        let shadow_color = Color::new(100, 100, 100).with_alpha(0.3);
+        let shadow_color = Color::from_rgb(100, 100, 100).with_alpha(0.3);
         for wedge in &pie_data.wedges {
             let mut shadow_wedge = *wedge;
             // Offset shadow
@@ -470,6 +470,13 @@ impl PlotRender for PieData {
         self.render_styled(renderer, area, theme, color, 1.0, None)
     }
 
+    /// # The `color` argument is deliberately ignored
+    ///
+    /// A pie needs one colour *per wedge*, so a single series colour cannot
+    /// describe it: honouring it would paint every wedge the same and erase the
+    /// chart. Wedge colours come from [`PieConfig::colors`], falling back to the
+    /// theme palette. This means a generic `.color(..)` on the pie builder is a
+    /// no-op — use `PieConfig::colors` instead.
     fn render_styled(
         &self,
         renderer: &mut SkiaRenderer,
@@ -517,7 +524,7 @@ impl PlotRender for PieData {
 
         // Draw shadow if configured
         if config.shadow > 0.0 {
-            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3 * alpha);
+            let shadow_color = Color::from_rgb(100, 100, 100).with_alpha(0.3 * alpha);
             for wedge in &screen_data.wedges {
                 let polygon = wedge.as_polygon(segments);
                 let shadow_polygon: Vec<(f32, f32)> = polygon
@@ -653,9 +660,9 @@ mod tests {
 
     #[test]
     fn test_pie_per_value_config_tracks_filtered_values() {
-        let red = Color::new(255, 0, 0);
-        let green = Color::new(0, 255, 0);
-        let blue = Color::new(0, 0, 255);
+        let red = Color::from_rgb(255, 0, 0);
+        let green = Color::from_rgb(0, 255, 0);
+        let blue = Color::from_rgb(0, 0, 255);
         let values = vec![30.0, -10.0, 20.0];
         let config = PieConfig::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
             .explode(vec![0.0, 0.5, 0.0])
@@ -746,6 +753,42 @@ mod tests {
     fn test_pie_config_implements_plot_config() {
         fn assert_plot_config<T: PlotConfig>() {}
         assert_plot_config::<PieConfig>();
+    }
+
+    /// `PieConfig::clockwise` was reported as an inert setter (plan item 2.4).
+    /// It is not: `PieData::from_values` reads `counter_clockwise`, and
+    /// `render_styled` re-derives the wedges from the stored config, so the
+    /// direction reaches the pixels. This test guards the render path that
+    /// `test_pie_clockwise_reverses_direction` does not cover.
+    #[test]
+    fn test_clockwise_changes_the_rendered_image() {
+        fn render(config: PieConfig) -> Vec<u8> {
+            let values = vec![10.0, 20.0, 70.0];
+            let data = PieData::compute(&values, &config);
+            let mut renderer = SkiaRenderer::new(160, 160, Theme::default()).unwrap();
+            let area = PlotArea::new(0.0, 0.0, 160.0, 160.0, 0.0, 1.0, 0.0, 1.0);
+            data.render(
+                &mut renderer,
+                &area,
+                &Theme::default(),
+                Color::from_rgb(0, 0, 0),
+            )
+            .unwrap();
+            renderer.into_image().pixels
+        }
+
+        let ccw = render(PieConfig::default().labels(false).percentages(false));
+        let cw = render(
+            PieConfig::default()
+                .labels(false)
+                .percentages(false)
+                .clockwise(),
+        );
+
+        assert_ne!(
+            ccw, cw,
+            "PieConfig::clockwise produced a byte-identical image"
+        );
     }
 
     #[test]

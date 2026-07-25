@@ -26,7 +26,10 @@ pub struct RegPlotConfig {
     pub order: usize,
     /// Number of points for regression line
     pub n_points: usize,
-    /// Fit through origin
+    /// Constrain the fit to pass through `(0, 0)`
+    ///
+    /// The constant term is dropped from the design matrix, so the fitted
+    /// polynomial is `c1*x + c2*x^2 + ...` with `c0 == 0`.
     pub fit_through_origin: bool,
 }
 
@@ -89,7 +92,9 @@ impl RegPlotConfig {
         self
     }
 
-    /// Fit through origin
+    /// Constrain the fit to pass through the origin
+    ///
+    /// See [`RegPlotConfig::fit_through_origin`].
     pub fn through_origin(mut self, through: bool) -> Self {
         self.fit_through_origin = through;
         self
@@ -139,12 +144,13 @@ pub fn compute_regplot(x: &[f64], y: &[f64], config: &RegPlotConfig) -> RegPlotD
     }
 
     // Fit regression
-    let reg_result = if config.order == 1 {
-        linear_regression(x, y)
+    let coefficients = if config.fit_through_origin {
+        fit_through_origin(x, y, config.order, n)
+    } else if config.order == 1 {
+        linear_regression(x, y).coefficients
     } else {
-        polynomial_regression(x, y, config.order)
+        polynomial_regression(x, y, config.order).coefficients
     };
-    let coefficients = reg_result.coefficients.clone();
 
     // Generate line points
     let x_min = x.iter().copied().fold(f64::INFINITY, f64::min);
@@ -177,15 +183,23 @@ pub fn compute_regplot(x: &[f64], y: &[f64], config: &RegPlotConfig) -> RegPlotD
         0.0
     };
 
-    // Compute confidence interval (simplified approximation)
-    let (ci_lower, ci_upper) = if config.ci.is_some() {
-        // Standard error approximation
-        let mse = ss_res / (n - coefficients.len()) as f64;
-        let se = mse.sqrt();
-        let t_crit = 1.96; // Approximate for 95% CI
+    // Compute confidence interval (constant-width normal approximation).
+    //
+    // The band width tracks `config.ci`: it used to be hardcoded at the 95%
+    // critical value, so `ci(Some(80.0))` silently drew a 95% band.
+    let (ci_lower, ci_upper) = if let Some(level) = config.ci {
+        // Through-origin fits estimate one fewer parameter.
+        let n_params = if config.fit_through_origin {
+            config.order
+        } else {
+            coefficients.len()
+        };
+        let dof = n.saturating_sub(n_params).max(1) as f64;
+        let se = (ss_res / dof).sqrt();
+        let z = normal_two_sided_critical_value(level);
 
-        let lower: Vec<f64> = line_y.iter().map(|&y| y - t_crit * se).collect();
-        let upper: Vec<f64> = line_y.iter().map(|&y| y + t_crit * se).collect();
+        let lower: Vec<f64> = line_y.iter().map(|&y| y - z * se).collect();
+        let upper: Vec<f64> = line_y.iter().map(|&y| y + z * se).collect();
         (Some(lower), Some(upper))
     } else {
         (None, None)
@@ -210,6 +224,169 @@ fn evaluate_polynomial(coeffs: &[f64], x: f64) -> f64 {
         .enumerate()
         .map(|(i, &c)| c * x.powi(i as i32))
         .sum()
+}
+
+/// Least-squares fit of `c1*x + c2*x^2 + ... + cd*x^d` — no constant term.
+///
+/// Backs [`RegPlotConfig::fit_through_origin`]. Returns coefficients in the
+/// same ascending-power layout as the unconstrained fits, with `c0 == 0.0`, so
+/// [`evaluate_polynomial`] works unchanged.
+///
+/// `degree == 1` reduces to the closed form `b = Σxy / Σx²`; higher degrees go
+/// through the normal equations for the reduced design matrix.
+fn fit_through_origin(x: &[f64], y: &[f64], degree: usize, n: usize) -> Vec<f64> {
+    let degree = degree.max(1);
+    let mut coefficients = vec![0.0; degree + 1];
+
+    if degree == 1 {
+        let sum_xy: f64 = (0..n).map(|i| x[i] * y[i]).sum();
+        let sum_xx: f64 = (0..n).map(|i| x[i] * x[i]).sum();
+        coefficients[1] = if sum_xx > 0.0 { sum_xy / sum_xx } else { 0.0 };
+        return coefficients;
+    }
+
+    // Normal equations for the design matrix whose columns are x^1..x^degree.
+    let mut xtx = vec![vec![0.0; degree]; degree];
+    let mut xty = vec![0.0; degree];
+
+    for k in 0..n {
+        let mut powers = vec![0.0; degree];
+        let mut power = 1.0;
+        for slot in powers.iter_mut() {
+            power *= x[k];
+            *slot = power;
+        }
+        for i in 0..degree {
+            xty[i] += powers[i] * y[k];
+            for j in 0..degree {
+                xtx[i][j] += powers[i] * powers[j];
+            }
+        }
+    }
+
+    for (index, value) in gauss_solve(&mut xtx, &mut xty).into_iter().enumerate() {
+        coefficients[index + 1] = value;
+    }
+
+    coefficients
+}
+
+/// Gaussian elimination with partial pivoting.
+///
+/// A singular pivot leaves that unknown at zero rather than producing an
+/// infinity, so a degenerate fit collapses to a flatter curve instead of a NaN
+/// plot.
+#[allow(clippy::needless_range_loop)]
+fn gauss_solve(a: &mut [Vec<f64>], b: &mut [f64]) -> Vec<f64> {
+    let n = b.len();
+
+    for i in 0..n {
+        let mut max_row = i;
+        for k in (i + 1)..n {
+            if a[k][i].abs() > a[max_row][i].abs() {
+                max_row = k;
+            }
+        }
+        a.swap(i, max_row);
+        b.swap(i, max_row);
+
+        if a[i][i].abs() < 1e-12 {
+            continue;
+        }
+
+        for k in (i + 1)..n {
+            let factor = a[k][i] / a[i][i];
+            for j in i..n {
+                a[k][j] -= factor * a[i][j];
+            }
+            b[k] -= factor * b[i];
+        }
+    }
+
+    let mut solution = vec![0.0; n];
+    for i in (0..n).rev() {
+        if a[i][i].abs() < 1e-12 {
+            continue;
+        }
+        solution[i] = b[i];
+        for j in (i + 1)..n {
+            solution[i] -= a[i][j] * solution[j];
+        }
+        solution[i] /= a[i][i];
+    }
+
+    solution
+}
+
+/// Two-sided standard-normal critical value for a confidence `level` in percent.
+///
+/// `95.0` returns ≈ 1.9600, `99.0` ≈ 2.5758, `68.0` ≈ 0.9945.
+///
+/// Uses the Beasley-Springer-Moro / Acklam rational approximation to the
+/// inverse normal CDF (absolute error < 1.15e-9 over the open unit interval),
+/// which is far more accurate than the band ever needs and avoids a dependency.
+fn normal_two_sided_critical_value(level: f64) -> f64 {
+    let level = level.clamp(0.0, 99.999_9);
+    // Two-sided: the upper tail holds (100 - level)/2 of the mass.
+    let p = 1.0 - (100.0 - level) / 200.0;
+    inverse_standard_normal_cdf(p)
+}
+
+/// Acklam's rational approximation to the inverse standard normal CDF.
+fn inverse_standard_normal_cdf(p: f64) -> f64 {
+    const A: [f64; 6] = [
+        -3.969683028665376e+01,
+        2.209460984245205e+02,
+        -2.759285104469687e+02,
+        1.383_577_518_672_69e2,
+        -3.066479806614716e+01,
+        2.506628277459239e+00,
+    ];
+    const B: [f64; 5] = [
+        -5.447609879822406e+01,
+        1.615858368580409e+02,
+        -1.556989798598866e+02,
+        6.680131188771972e+01,
+        -1.328068155288572e+01,
+    ];
+    const C: [f64; 6] = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e+00,
+        -2.549732539343734e+00,
+        4.374664141464968e+00,
+        2.938163982698783e+00,
+    ];
+    const D: [f64; 4] = [
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e+00,
+        3.754408661907416e+00,
+    ];
+    const P_LOW: f64 = 0.02425;
+
+    if p <= 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if p >= 1.0 {
+        return f64::INFINITY;
+    }
+
+    if p < P_LOW {
+        let q = (-2.0 * p.ln()).sqrt();
+        return (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0);
+    }
+    if p > 1.0 - P_LOW {
+        let q = (-2.0 * (1.0 - p).ln()).sqrt();
+        return -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0);
+    }
+
+    let q = p - 0.5;
+    let r = q * q;
+    (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
+        / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
 }
 
 /// Configuration for residual plot
@@ -352,6 +529,114 @@ mod tests {
 
         assert!(data.ci_lower.is_some());
         assert!(data.ci_upper.is_some());
+    }
+
+    // ------------------------------------------------------------------
+    // fit_through_origin (plan item 2.4)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_through_origin_forces_a_zero_intercept() {
+        // y = 2x + 10: the unconstrained fit has a large intercept.
+        let x: Vec<f64> = (1..=10).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|xi| 2.0 * xi + 10.0).collect();
+
+        let free = compute_regplot(&x, &y, &RegPlotConfig::default());
+        let forced = compute_regplot(&x, &y, &RegPlotConfig::default().through_origin(true));
+
+        assert!(
+            (free.coefficients[0] - 10.0).abs() < 1e-9,
+            "unconstrained intercept: {}",
+            free.coefficients[0]
+        );
+        assert_eq!(forced.coefficients[0], 0.0);
+        assert!(
+            (free.coefficients[1] - forced.coefficients[1]).abs() > 1e-6,
+            "through-origin produced the same slope as the free fit"
+        );
+    }
+
+    #[test]
+    fn test_through_origin_recovers_an_exact_proportional_fit() {
+        let x: Vec<f64> = (1..=20).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|xi| 3.5 * xi).collect();
+
+        let data = compute_regplot(&x, &y, &RegPlotConfig::default().through_origin(true));
+
+        assert_eq!(data.coefficients[0], 0.0);
+        assert!((data.coefficients[1] - 3.5).abs() < 1e-9);
+        assert!(data.r_squared > 0.999_999);
+    }
+
+    #[test]
+    fn test_through_origin_matches_the_closed_form_least_squares_slope() {
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = vec![2.2, 3.8, 6.1, 8.4, 9.7];
+        let expected = x.iter().zip(&y).map(|(a, b)| a * b).sum::<f64>()
+            / x.iter().map(|a| a * a).sum::<f64>();
+
+        let data = compute_regplot(&x, &y, &RegPlotConfig::default().through_origin(true));
+        assert!((data.coefficients[1] - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_through_origin_works_for_higher_orders() {
+        // y = 4x^2 + x, exactly representable without a constant term.
+        let x: Vec<f64> = (1..=15).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|xi| 4.0 * xi * xi + xi).collect();
+
+        let data = compute_regplot(
+            &x,
+            &y,
+            &RegPlotConfig::default().order(2).through_origin(true),
+        );
+
+        assert_eq!(data.coefficients.len(), 3);
+        assert_eq!(data.coefficients[0], 0.0);
+        assert!((data.coefficients[1] - 1.0).abs() < 1e-6);
+        assert!((data.coefficients[2] - 4.0).abs() < 1e-6);
+        assert!(data.r_squared > 0.999_999);
+    }
+
+    #[test]
+    fn test_through_origin_line_passes_through_zero() {
+        let x: Vec<f64> = (1..=10).map(|i| i as f64).collect();
+        let y: Vec<f64> = x.iter().map(|xi| 2.0 * xi + 10.0).collect();
+        let data = compute_regplot(&x, &y, &RegPlotConfig::default().through_origin(true));
+
+        assert!(evaluate_polynomial(&data.coefficients, 0.0).abs() < 1e-12);
+    }
+
+    // ------------------------------------------------------------------
+    // Confidence level actually reaching the band
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_confidence_level_changes_the_band_width() {
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = vec![2.0, 4.0, 5.0, 4.0, 5.0];
+
+        let width = |level: f64| {
+            let data = compute_regplot(&x, &y, &RegPlotConfig::default().ci(Some(level)));
+            data.ci_upper.unwrap()[0] - data.ci_lower.unwrap()[0]
+        };
+
+        let narrow = width(50.0);
+        let standard = width(95.0);
+        let wide = width(99.0);
+
+        assert!(
+            narrow < standard && standard < wide,
+            "50%={narrow} 95%={standard} 99%={wide}"
+        );
+    }
+
+    #[test]
+    fn test_normal_critical_values_match_the_published_table() {
+        assert!((normal_two_sided_critical_value(95.0) - 1.959_964).abs() < 1e-5);
+        assert!((normal_two_sided_critical_value(99.0) - 2.575_829).abs() < 1e-5);
+        assert!((normal_two_sided_critical_value(90.0) - 1.644_854).abs() < 1e-5);
+        assert!((normal_two_sided_critical_value(50.0) - 0.674_490).abs() < 1e-5);
     }
 
     #[test]

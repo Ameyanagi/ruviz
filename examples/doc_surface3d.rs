@@ -5,7 +5,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = [-1.5, -0.5, 0.5, 1.5];
     let y = [-1.0, 0.0, 1.0];
     let z = [

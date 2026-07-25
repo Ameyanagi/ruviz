@@ -16,9 +16,10 @@ use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, Theme};
-use crate::stats::kde::{KdeResult, kde_1d};
+use crate::stats::kde::{KdeResult, kde_1d, scotts_rule, silvermans_rule};
 
 /// Configuration for violin plot
+#[allow(deprecated)] // the derives touch the deprecated `scale` field
 #[derive(Debug, Clone)]
 pub struct ViolinConfig {
     /// Number of points for KDE evaluation
@@ -36,6 +37,15 @@ pub struct ViolinConfig {
     /// Split violin (show half on each side for comparison)
     pub split: bool,
     /// Scale method for width
+    ///
+    /// Not yet implemented; every violin is width-normalised
+    /// ([`ViolinScale::Width`]). Honouring `Area`/`Count` requires a normaliser
+    /// shared across all violins in a figure, which the per-series render path
+    /// does not have.
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Violins are always width-normalised (ViolinScale::Width)"
+    )]
     pub scale: ViolinScale,
     /// Maximum width of violin (in plot units)
     pub width: f64,
@@ -60,15 +70,31 @@ pub struct ViolinConfig {
 /// Bandwidth selection method
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BandwidthMethod {
-    /// Scott's rule (default)
+    /// Scott's rule: `1.06 * sigma * n^(-1/5)` (default)
     Scott,
-    /// Silverman's rule
+    /// Silverman's robust rule: `0.9 * min(sigma, IQR/1.34) * n^(-1/5)`
     Silverman,
     /// Fixed bandwidth value
     Fixed(f64),
 }
 
+impl BandwidthMethod {
+    /// Resolve this method to a concrete, strictly positive bandwidth.
+    ///
+    /// A non-finite or non-positive [`BandwidthMethod::Fixed`] value falls back
+    /// to Scott's rule rather than producing a degenerate density.
+    pub fn resolve(self, data: &[f64]) -> f64 {
+        match self {
+            BandwidthMethod::Fixed(bw) if bw.is_finite() && bw > 0.0 => bw,
+            BandwidthMethod::Fixed(_) | BandwidthMethod::Scott => scotts_rule(data),
+            BandwidthMethod::Silverman => silvermans_rule(data),
+        }
+    }
+}
+
 /// Scaling method for violin width
+///
+/// Only [`ViolinScale::Width`] is implemented; see [`ViolinConfig::scale`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViolinScale {
     /// Same area for all violins
@@ -87,6 +113,7 @@ pub enum Orientation {
 }
 
 impl Default for ViolinConfig {
+    #[allow(deprecated)] // `scale` still has to be populated while it exists
     fn default() -> Self {
         Self {
             n_points: 100,
@@ -103,7 +130,7 @@ impl Default for ViolinConfig {
             fill_alpha: 0.7,
             line_color: None,
             line_width: 1.0,
-            inner_color: Color::new(51, 51, 51), // Dark gray instead of pure black
+            inner_color: Color::from_rgb(51, 51, 51), // Dark gray instead of pure black
             category: None,
             x_position: 0.5, // Default center position for single violin
         }
@@ -146,7 +173,10 @@ impl ViolinConfig {
         self
     }
 
-    /// Show/hide data points
+    /// Show/hide the individual observations inside the violin
+    ///
+    /// Points are drawn on the violin's centre line, seaborn's
+    /// `inner="point"` convention.
     pub fn points(mut self, show: bool) -> Self {
         self.show_points = show;
         self
@@ -159,6 +189,14 @@ impl ViolinConfig {
     }
 
     /// Set scale method
+    ///
+    /// Currently inert: violins are always width-normalised. See
+    /// [`ViolinConfig::scale`].
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Violins are always width-normalised (ViolinScale::Width)"
+    )]
+    #[allow(deprecated)]
     pub fn scale(mut self, scale: ViolinScale) -> Self {
         self.scale = scale;
         self
@@ -262,11 +300,11 @@ impl ViolinData {
         let min = sorted[0];
         let max = sorted[n - 1];
 
-        // Compute KDE
-        let bandwidth = match config.bandwidth {
-            BandwidthMethod::Fixed(bw) => Some(bw),
-            _ => None, // Use Scott's rule by default
-        };
+        // Compute KDE. Every arm resolves to an explicit bandwidth so the
+        // selected rule is the rule that actually runs — `Silverman` used to
+        // fall through to `kde_1d`'s Scott default and silently compute a
+        // different estimator than the one it named.
+        let bandwidth = Some(config.bandwidth.resolve(&sorted));
         let kde = kde_1d(&sorted, bandwidth, Some(config.n_points));
 
         // Compute quartiles
@@ -287,7 +325,56 @@ impl ViolinData {
     pub fn max_density(&self) -> f64 {
         self.kde.density.iter().copied().fold(0.0, f64::max)
     }
+
+    /// Draw the individual observations on the violin's centre line.
+    ///
+    /// This backs [`ViolinConfig::points`] (seaborn's `inner="point"`). Points
+    /// sit on the centre line rather than being jittered so the same input
+    /// always produces the same image.
+    fn draw_points(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        center: f64,
+        color: Color,
+        alpha: f32,
+    ) -> Result<()> {
+        if !self.config.show_points || self.data.is_empty() {
+            return Ok(());
+        }
+
+        let clip_rect = (area.x, area.y, area.width, area.height);
+        let size = renderer
+            .render_scale()
+            .points_to_pixels(VIOLIN_POINT_SIZE_PT);
+        let point_color =
+            color.with_alpha((f32::from(color.a) / 255.0) * alpha.clamp(0.0, 1.0) * 0.75);
+
+        for &value in &self.data {
+            if !value.is_finite() {
+                continue;
+            }
+            let (px, py) = match self.config.orientation {
+                Orientation::Vertical => area.data_to_screen(center, value),
+                Orientation::Horizontal => area.data_to_screen(value, center),
+            };
+            renderer.draw_marker_clipped(
+                px,
+                py,
+                size,
+                crate::render::MarkerStyle::Circle,
+                point_color,
+                clip_rect,
+            )?;
+        }
+
+        Ok(())
+    }
 }
+
+/// Marker size, in points, for the observations drawn by
+/// [`ViolinConfig::points`].
+const VIOLIN_POINT_SIZE_PT: f32 = 2.5;
 
 /// Calculate percentile from sorted data
 fn percentile(sorted: &[f64], p: f64) -> f64 {
@@ -494,9 +581,11 @@ impl PlotRender for ViolinData {
             )?;
         }
 
-        // Draw inner elements (box, quartiles, median)
+        // Draw inner elements (points, box, quartiles, median)
         let center = 0.5;
         let (q1, median, q3) = self.quartiles;
+
+        self.draw_points(renderer, area, center, line_color, 1.0)?;
 
         if config.show_box {
             // Draw thin box for IQR (seaborn-style: ~5% of half-width)
@@ -554,7 +643,7 @@ impl PlotRender for ViolinData {
                 my,
                 median_marker_size_px,
                 crate::render::MarkerStyle::Circle,
-                Color::new(255, 255, 255),
+                Color::from_rgb(255, 255, 255),
             )?;
         }
 
@@ -631,9 +720,12 @@ impl PlotRender for ViolinData {
             )?;
         }
 
-        // Draw inner elements (box, quartiles, median)
+        // Draw inner elements (points, box, quartiles, median)
         let center = 0.5;
         let (q1, median, q3) = self.quartiles;
+
+        // `line_color` already carries the series alpha, so do not apply it twice.
+        self.draw_points(renderer, area, center, line_color, 1.0)?;
 
         if config.show_box {
             // Draw thin box for IQR (seaborn-style: ~5% of half-width)
@@ -691,7 +783,7 @@ impl PlotRender for ViolinData {
                 my,
                 median_marker_size_px,
                 crate::render::MarkerStyle::Circle,
-                Color::new(255, 255, 255),
+                Color::from_rgb(255, 255, 255),
             )?;
         }
 
@@ -781,6 +873,114 @@ mod tests {
         let result = Violin::compute(&data, &config);
 
         assert!(result.is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // Bandwidth method wiring (plan item 2.4)
+    // ------------------------------------------------------------------
+
+    fn skewed_sample() -> Vec<f64> {
+        // Log-normal-ish: sigma and IQR/1.34 disagree, so Scott and Silverman
+        // must land on different bandwidths.
+        (1..=200).map(|i| ((i as f64) / 20.0).exp()).collect()
+    }
+
+    #[test]
+    fn test_silverman_is_not_silently_scott() {
+        let data = skewed_sample();
+
+        let scott = ViolinData::from_values(&data, &ViolinConfig::new()).unwrap();
+        let silverman = ViolinData::from_values(
+            &data,
+            &ViolinConfig::new().bandwidth(BandwidthMethod::Silverman),
+        )
+        .unwrap();
+
+        assert!(
+            (scott.kde.bandwidth - silverman.kde.bandwidth).abs() > 1e-9,
+            "Silverman ({}) collapsed onto Scott ({})",
+            silverman.kde.bandwidth,
+            scott.kde.bandwidth
+        );
+    }
+
+    #[test]
+    fn test_bandwidth_methods_resolve_to_their_named_estimator() {
+        let data = skewed_sample();
+        let mut sorted = data.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        assert_eq!(
+            BandwidthMethod::Scott.resolve(&sorted),
+            crate::stats::kde::scotts_rule(&sorted)
+        );
+        assert_eq!(
+            BandwidthMethod::Silverman.resolve(&sorted),
+            crate::stats::kde::silvermans_rule(&sorted)
+        );
+        assert_eq!(BandwidthMethod::Fixed(0.25).resolve(&sorted), 0.25);
+    }
+
+    #[test]
+    fn test_fixed_bandwidth_reaches_the_kde() {
+        let data = skewed_sample();
+        let violin = ViolinData::from_values(
+            &data,
+            &ViolinConfig::new().bandwidth(BandwidthMethod::Fixed(0.5)),
+        )
+        .unwrap();
+        assert!((violin.kde.bandwidth - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_degenerate_fixed_bandwidth_falls_back_instead_of_producing_nan() {
+        let data = skewed_sample();
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let violin = ViolinData::from_values(
+                &data,
+                &ViolinConfig::new().bandwidth(BandwidthMethod::Fixed(bad)),
+            )
+            .unwrap();
+            assert!(violin.kde.bandwidth.is_finite() && violin.kde.bandwidth > 0.0);
+            assert!(violin.kde.density.iter().all(|d| d.is_finite()));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // show_points (plan item 2.4)
+    // ------------------------------------------------------------------
+
+    fn render_violin(config: ViolinConfig) -> crate::core::Result<crate::core::plot::Image> {
+        let data: Vec<f64> = (0..60).map(|i| i as f64 / 6.0).collect();
+        let violin = ViolinData::from_values(&data, &config).unwrap();
+        let mut renderer = SkiaRenderer::new(200, 200, Theme::default())?;
+        let ((_, _), (y_min, y_max)) = violin.data_bounds();
+        let area = PlotArea::new(0.0, 0.0, 200.0, 200.0, 0.0, 1.0, y_min, y_max);
+        violin.render(
+            &mut renderer,
+            &area,
+            &Theme::default(),
+            Color::from_rgb(0, 0, 255),
+        )?;
+        Ok(renderer.into_image())
+    }
+
+    #[test]
+    fn test_show_points_changes_the_rendered_image() {
+        let without = render_violin(ViolinConfig::new().points(false)).unwrap();
+        let with = render_violin(ViolinConfig::new().points(true)).unwrap();
+
+        assert_ne!(
+            without.pixels, with.pixels,
+            "ViolinConfig::points(true) produced a byte-identical image"
+        );
+    }
+
+    #[test]
+    fn test_show_points_is_off_by_default() {
+        let default = render_violin(ViolinConfig::new()).unwrap();
+        let explicit_off = render_violin(ViolinConfig::new().points(false)).unwrap();
+        assert_eq!(default.pixels, explicit_off.pixels);
     }
 
     #[test]

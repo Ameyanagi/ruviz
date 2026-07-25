@@ -29,6 +29,7 @@
 //!
 //! ![Line plot](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_plot.png)
 
+use crate::core::Result;
 use crate::prelude::*;
 use std::path::Path;
 

@@ -1019,7 +1019,7 @@ mod tests {
             &[-1.0, 0.0, 1.0],
             &[[0.0, 0.2, 0.0], [0.2, 1.0, 0.2], [0.0, 0.2, 0.0]],
         )
-        .figure_size(2.4, 1.8)
+        .size(2.4, 1.8)
         .dpi(72)
         .finalize()
         .resolve()
@@ -1074,13 +1074,13 @@ mod tests {
     #[test]
     fn direct_gpu_resize_recreates_attachments_without_geometry_upload() {
         let base = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 0.0]])
-            .figure_size(2.4, 1.8)
+            .size(2.4, 1.8)
             .dpi(72)
             .finalize()
             .resolve()
             .expect("base");
         let resized = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 0.0]])
-            .figure_size(3.2, 2.4)
+            .size(3.2, 2.4)
             .dpi(72)
             .finalize()
             .resolve()
@@ -1142,7 +1142,7 @@ mod tests {
             &[0.0, 1.0, 2.0],
             &[[0.0, 0.5, 0.0], [0.5, 1.0, 0.5], [0.0, 0.5, 0.0]],
         )
-        .figure_size(2.0, 1.5)
+        .size(2.0, 1.5)
         .dpi(72)
         .finalize()
         .resolve()

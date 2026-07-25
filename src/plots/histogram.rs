@@ -428,7 +428,7 @@ mod tests {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let histogram = calculate_histogram(&data, &HistogramConfig::new().bins(5)).unwrap();
         let theme = Theme::default();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
 
         let (edge_color, edge_width) = histogram
             .resolved_edge(&theme, fill)
@@ -446,19 +446,19 @@ mod tests {
     fn test_resolved_edge_honours_explicit_config() {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let theme = Theme::default();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
 
         let explicit = calculate_histogram(
             &data,
             &HistogramConfig::new()
                 .bins(5)
-                .edge_color(Color::new(255, 255, 255))
+                .edge_color(Color::from_rgb(255, 255, 255))
                 .edge_width(2.0),
         )
         .unwrap();
         assert_eq!(
             explicit.resolved_edge(&theme, fill),
-            Some((Color::new(255, 255, 255), 2.0))
+            Some((Color::from_rgb(255, 255, 255), 2.0))
         );
 
         let disabled =

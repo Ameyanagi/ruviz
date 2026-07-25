@@ -15,7 +15,7 @@ use ruviz::record;
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     println!("Generating animation gallery images in parallel...\n");
 
     let output_dir = util::docs_assets_root().join("rustdoc");
@@ -32,7 +32,7 @@ fn main() -> Result<()> {
     let total = 7;
 
     // Define all generators
-    type AnimationGenerator = Box<dyn Fn(&str, RecordConfig) -> Result<()> + Send + Sync>;
+    type AnimationGenerator = Box<dyn Fn(&str, RecordConfig) -> PlotResult<()> + Send + Sync>;
 
     let generators: Vec<(&str, AnimationGenerator)> = vec![
         ("sine wave", Box::new(generate_sine_wave)),
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     ];
 
     // Run all generators in parallel
-    let results: Vec<Result<()>> = generators
+    let results: Vec<PlotResult<()>> = generators
         .into_par_iter()
         .map(|(name, generator)| {
             let result = generator(&output_dir, config.clone());
@@ -65,7 +65,7 @@ fn main() -> Result<()> {
 }
 
 /// Generate animated sine wave
-fn generate_sine_wave(output_dir: &str, config: RecordConfig) -> Result<()> {
+fn generate_sine_wave(output_dir: &str, config: RecordConfig) -> PlotResult<()> {
     println!("  Generating sine wave animation...");
 
     let path = format!("{}/animation_sine_wave.gif", output_dir);
@@ -94,7 +94,7 @@ fn generate_sine_wave(output_dir: &str, config: RecordConfig) -> Result<()> {
 }
 
 /// Generate growing scatter plot
-fn generate_growing_scatter(output_dir: &str, config: RecordConfig) -> Result<()> {
+fn generate_growing_scatter(output_dir: &str, config: RecordConfig) -> PlotResult<()> {
     println!("  Generating growing scatter animation...");
 
     let path = format!("{}/animation_growing_scatter.gif", output_dir);
@@ -124,7 +124,7 @@ fn generate_growing_scatter(output_dir: &str, config: RecordConfig) -> Result<()
 }
 
 /// Generate animated bar chart
-fn generate_animated_bars(output_dir: &str, config: RecordConfig) -> Result<()> {
+fn generate_animated_bars(output_dir: &str, config: RecordConfig) -> PlotResult<()> {
     println!("  Generating animated bar chart...");
 
     let path = format!("{}/animation_bars.gif", output_dir);
@@ -159,7 +159,7 @@ fn generate_animated_bars(output_dir: &str, config: RecordConfig) -> Result<()> 
 }
 
 /// Generate spiral animation
-fn generate_spiral(output_dir: &str, config: RecordConfig) -> Result<()> {
+fn generate_spiral(output_dir: &str, config: RecordConfig) -> PlotResult<()> {
     println!("  Generating spiral animation...");
 
     let path = format!("{}/animation_spiral.gif", output_dir);
@@ -193,7 +193,7 @@ fn generate_spiral(output_dir: &str, config: RecordConfig) -> Result<()> {
 }
 
 /// Generate signal composition example
-fn generate_signal_composition(output_dir: &str, config: RecordConfig) -> Result<()> {
+fn generate_signal_composition(output_dir: &str, config: RecordConfig) -> PlotResult<()> {
     println!("  Generating signal composition animation...");
 
     let path = format!("{}/animation_composition.gif", output_dir);
@@ -229,7 +229,7 @@ fn generate_signal_composition(output_dir: &str, config: RecordConfig) -> Result
 }
 
 /// Generate wave interference animation with multiple series
-fn generate_wave_interference(output_dir: &str, config: RecordConfig) -> Result<()> {
+fn generate_wave_interference(output_dir: &str, config: RecordConfig) -> PlotResult<()> {
     println!("  Generating wave interference animation...");
 
     let path = format!("{}/animation_interference.gif", output_dir);
@@ -274,7 +274,7 @@ fn generate_wave_interference(output_dir: &str, config: RecordConfig) -> Result<
 }
 
 /// Generate easing demo with bouncing circles
-fn generate_easing_demo(output_dir: &str, config: RecordConfig) -> Result<()> {
+fn generate_easing_demo(output_dir: &str, config: RecordConfig) -> PlotResult<()> {
     println!("  Generating easing demo animation...");
 
     let path = format!("{}/animation_easing.gif", output_dir);

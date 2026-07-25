@@ -590,7 +590,7 @@ impl Annotation {
         Annotation::HLine {
             y,
             style: LineStyle::Dashed,
-            color: Color::new(128, 128, 128),
+            color: Color::from_rgb(128, 128, 128),
             width: 1.0,
         }
     }
@@ -610,7 +610,7 @@ impl Annotation {
         Annotation::VLine {
             x,
             style: LineStyle::Dashed,
-            color: Color::new(128, 128, 128),
+            color: Color::from_rgb(128, 128, 128),
             width: 1.0,
         }
     }
@@ -692,7 +692,7 @@ impl Annotation {
         Annotation::HSpan {
             x_min,
             x_max,
-            style: ShapeStyle::default().fill(Color::new_rgba(128, 128, 128, 50)),
+            style: ShapeStyle::default().fill(Color::from_rgba(128, 128, 128, 50)),
         }
     }
 
@@ -701,7 +701,7 @@ impl Annotation {
         Annotation::VSpan {
             y_min,
             y_max,
-            style: ShapeStyle::default().fill(Color::new_rgba(128, 128, 128, 50)),
+            style: ShapeStyle::default().fill(Color::from_rgba(128, 128, 128, 50)),
         }
     }
 }

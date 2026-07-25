@@ -497,7 +497,7 @@ fn test_draw_pixel_aligned_solid_rectangle_blends_transparent_fill() {
     let mut renderer = SkiaRenderer::new(6, 6, theme).unwrap();
     renderer
         .pixmap
-        .fill(crate::render::Color::new(0, 0, 255).to_tiny_skia_color());
+        .fill(crate::render::Color::from_rgb(0, 0, 255).to_tiny_skia_color());
 
     renderer
         .draw_pixel_aligned_solid_rectangle(
@@ -505,7 +505,7 @@ fn test_draw_pixel_aligned_solid_rectangle_blends_transparent_fill() {
             1.0,
             4.0,
             4.0,
-            crate::render::Color::new_rgba(255, 0, 0, 128),
+            crate::render::Color::from_rgba(255, 0, 0, 128),
         )
         .expect("transparent pixel-aligned fill should composite successfully");
 
@@ -531,14 +531,14 @@ fn test_draw_circle_cached_path_matches_legacy_circle_pixels() {
     reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
     candidate
-        .draw_circle(22.5, 19.25, 6.0, Color::new(30, 120, 220), true)
+        .draw_circle(22.5, 19.25, 6.0, Color::from_rgb(30, 120, 220), true)
         .expect("cached circle should render");
     legacy_draw_circle(
         &mut reference,
         22.5,
         19.25,
         6.0,
-        Color::new(30, 120, 220),
+        Color::from_rgb(30, 120, 220),
         true,
     );
 
@@ -554,7 +554,7 @@ fn test_draw_markers_clipped_sprite_compositor_stays_in_parity_for_supported_mar
     let theme = Theme::default();
     let points = marker_parity_points();
     let clip_rect = (6.25, 5.5, 46.5, 44.25);
-    let color = Color::new_rgba(35, 140, 220, 216);
+    let color = Color::from_rgba(35, 140, 220, 216);
 
     for style in [
         MarkerStyle::Circle,
@@ -591,7 +591,7 @@ fn test_draw_markers_clipped_uses_scanline_blit_for_supported_filled_markers() {
     let theme = Theme::default();
     let points = marker_parity_points();
     let clip_rect = (0.0, 0.0, 64.0, 56.0);
-    let color = Color::new_rgba(35, 140, 220, 216);
+    let color = Color::from_rgba(35, 140, 220, 216);
 
     for style in [
         MarkerStyle::Circle,
@@ -627,7 +627,7 @@ fn test_draw_markers_clipped_uses_vector_fallback_for_line_based_markers() {
     let theme = Theme::default();
     let points = marker_parity_points();
     let clip_rect = (6.25, 5.5, 46.5, 44.25);
-    let color = Color::new_rgba(180, 60, 220, 216);
+    let color = Color::from_rgba(180, 60, 220, 216);
 
     for style in [
         MarkerStyle::Plus,
@@ -675,7 +675,7 @@ fn test_draw_pixel_aligned_solid_rectangle_fallback_matches_legacy_rect_fill() {
             4.5,
             5.75,
             6.25,
-            Color::new_rgba(200, 80, 20, 180),
+            Color::from_rgba(200, 80, 20, 180),
         )
         .expect("fallback rectangle should render");
     legacy_draw_composited_rect(
@@ -684,7 +684,7 @@ fn test_draw_pixel_aligned_solid_rectangle_fallback_matches_legacy_rect_fill() {
         4.5,
         5.75,
         6.25,
-        Color::new_rgba(200, 80, 20, 180),
+        Color::from_rgba(200, 80, 20, 180),
     );
 
     assert_exact_rgba_pixels(
@@ -703,7 +703,7 @@ fn test_draw_solid_rectangle_matches_legacy_fill_pixels() {
     reference.pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
     candidate
-        .draw_solid_rectangle(3.25, 4.5, 5.75, 6.25, Color::new(40, 150, 210))
+        .draw_solid_rectangle(3.25, 4.5, 5.75, 6.25, Color::from_rgb(40, 150, 210))
         .expect("solid rectangle should render");
     legacy_draw_solid_rect(
         &mut reference,
@@ -711,7 +711,7 @@ fn test_draw_solid_rectangle_matches_legacy_fill_pixels() {
         4.5,
         5.75,
         6.25,
-        Color::new(40, 150, 210),
+        Color::from_rgb(40, 150, 210),
     );
 
     assert_exact_rgba_pixels(
@@ -834,7 +834,7 @@ fn test_draw_polyline_clipped_keeps_pixels_inside_clip_rect() {
     renderer
         .draw_polyline_clipped(
             &[(20.0, 20.0), (100.0, 100.0)],
-            Color::new(220, 20, 20),
+            Color::from_rgb(220, 20, 20),
             18.0,
             LineStyle::Solid,
             (
@@ -1343,7 +1343,7 @@ fn translucent_text_annotation_background_uses_source_over_compositing() {
     let style = crate::core::TextStyle::default()
         .font_size(12.0)
         .color(Color::TRANSPARENT)
-        .background(Color::new_rgba(255, 0, 0, 128))
+        .background(Color::from_rgba(255, 0, 0, 128))
         .padding(4.0);
     let image = render_text_annotation("MMMMMMMM", style, 72.0);
     let pixel = image_pixel_rgba(&image, 160, 160);

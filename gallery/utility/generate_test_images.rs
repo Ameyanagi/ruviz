@@ -41,9 +41,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .title("Multiple Series")
         .line(&x_data, &y_data)
-        .color(Color::new(255, 0, 0))
+        .color(Color::from_rgb(255, 0, 0))
         .line(&x_data, &y2_data)
-        .color(Color::new(0, 0, 255))
+        .color(Color::from_rgb(0, 0, 255))
         .save("generated/bench/03_multi_series.png")?;
 
     // 4. Test different themes (simplified - just use default for now)

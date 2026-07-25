@@ -54,7 +54,7 @@ fn basic_streaming() {
     // Create a plot from streaming data
     let plot = Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(31, 119, 180))
+        .color(Color::from_rgb(31, 119, 180))
         .xlabel("X")
         .ylabel("Y");
     #[cfg(feature = "typst-math")]
@@ -73,7 +73,7 @@ fn basic_streaming() {
 
     Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(31, 119, 180))
+        .color(Color::from_rgb(31, 119, 180))
         .title("Atomically Replaced Streaming Frame")
         .xlabel("X")
         .ylabel("Y")
@@ -110,7 +110,7 @@ fn ring_buffer_demo() {
 
     Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(255, 127, 14))
+        .color(Color::from_rgb(255, 127, 14))
         .title("Ring Buffer (last 5 points)")
         .save("generated/examples/streaming_ringbuffer.png")
         .expect("Failed to save plot");
@@ -143,7 +143,7 @@ fn simulated_realtime() {
 
     Plot::new()
         .line_streaming(&stream)
-        .color(Color::new(44, 160, 44))
+        .color(Color::from_rgb(44, 160, 44))
         .title("Simulated Real-time Sensor Data")
         .xlabel("Time (s)")
         .ylabel("Signal")

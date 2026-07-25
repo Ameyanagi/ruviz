@@ -265,7 +265,7 @@ fn create_performance_plot(results: &[BenchmarkResult]) -> Result<()> {
         .title("GPU vs CPU Performance Scaling")
         .xlabel("Dataset Size (points)")
         .ylabel("Throughput (Million points/sec)")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .size(12.0, 6.0)
         .dpi(150)
         .line(&point_counts, &cpu_throughput)

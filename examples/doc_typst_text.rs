@@ -5,7 +5,7 @@
 use ruviz::prelude::*;
 
 #[cfg(feature = "typst-math")]
-fn run() -> Result<()> {
+fn run() -> PlotResult<()> {
     let x: Vec<f64> = (0..80).map(|i| i as f64 * 0.05).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
@@ -24,7 +24,7 @@ fn run() -> Result<()> {
 }
 
 #[cfg(not(feature = "typst-math"))]
-fn run() -> Result<()> {
+fn run() -> PlotResult<()> {
     eprintln!(
         "This example requires the `typst-math` feature. Run with: \
          cargo run --example doc_typst_text --features typst-math"
@@ -32,6 +32,6 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     run()
 }

@@ -14,7 +14,7 @@ use crate::core::Result;
 use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
-use crate::render::{Color, ColorMap, LineStyle, Theme};
+use crate::render::{Color, ColorMap, ColorMapSpec, LineStyle, Theme};
 use crate::stats::contour::{ContourLevel, auto_levels, contour_lines};
 
 /// Interpolation method for smoothing contour data
@@ -88,8 +88,9 @@ impl Default for ContourConfig {
             // This eliminates blocky appearance without significant performance cost
             interpolation: ContourInterpolation::Linear,
             interpolation_factor: 2,
-            // Colorbar disabled by default for backward compatibility
-            colorbar: false,
+            // Anything carrying a colour scale gets a colorbar by default, so
+            // filled contours read the same way heatmaps do.
+            colorbar: true,
             colorbar_label: None,
             colorbar_tick_font_size: 10.0,
             colorbar_label_font_size: 11.0,
@@ -151,9 +152,11 @@ impl ContourConfig {
         self
     }
 
-    /// Set colormap
-    pub fn cmap(mut self, cmap: &str) -> Self {
-        self.cmap = cmap.to_string();
+    /// Set colormap.
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`] value.
+    pub fn cmap(mut self, cmap: impl Into<ColorMapSpec>) -> Self {
+        self.cmap = cmap.into().into_name();
         self
     }
 

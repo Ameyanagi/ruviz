@@ -7,7 +7,7 @@
 use ruviz::prelude::*;
 use std::f64::consts::PI;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate rose curve data
     let n_points = 200;
     let theta: Vec<f64> = (0..n_points)

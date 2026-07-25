@@ -31,7 +31,7 @@ ruviz = "0.5.0"
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Create some data
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
@@ -123,7 +123,7 @@ Then guard the call:
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
 
@@ -146,7 +146,7 @@ fn main() -> Result<()> {
 ```rust,check,features=typst-math
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
 
@@ -170,7 +170,7 @@ Let's create a more interesting plot with real data:
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate sine wave data
     let x: Vec<f64> = (0..100)
         .map(|i| i as f64 * 0.1)
@@ -271,22 +271,22 @@ Plot::new()
     // Linear
     .line(&x, &x.iter().map(|&v| v).collect::<Vec<_>>())
     .label("Linear")
-    .color(Color::new(0, 100, 200))
+    .color(Color::from_rgb(0, 100, 200))
 
     // Quadratic
     .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
     .label("Quadratic")
-    .color(Color::new(200, 0, 100))
+    .color(Color::from_rgb(200, 0, 100))
 
     // Cubic
     .line(&x, &x.iter().map(|&v| v.powi(3)).collect::<Vec<_>>())
     .label("Cubic")
-    .color(Color::new(0, 200, 100))
+    .color(Color::from_rgb(0, 200, 100))
 
     .title("Polynomial Functions")
     .xlabel("x")
     .ylabel("y")
-    .legend(Position::TopLeft)
+    .legend(LegendPosition::UpperLeft)
     .save("polynomials.png")?;
 ```
 
@@ -411,7 +411,7 @@ ruviz uses `Result` types for proper error handling:
 ```rust,check
 use ruviz::prelude::*;
 
-fn create_plot() -> Result<()> {
+fn create_plot() -> PlotResult<()> {
     let x = vec![1.0, 2.0, 3.0];
     let y = vec![1.0, 4.0];  // Mismatched length!
 

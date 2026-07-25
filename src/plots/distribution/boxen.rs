@@ -428,7 +428,7 @@ impl PlotRender for BoxenData {
                     y,
                     x2,
                     y,
-                    Color::new(255, 255, 255).with_alpha(alpha),
+                    Color::from_rgb(255, 255, 255).with_alpha(alpha),
                     median_line_width_px,
                     LineStyle::Solid,
                 )?;
@@ -441,7 +441,7 @@ impl PlotRender for BoxenData {
                     y1,
                     x,
                     y2,
-                    Color::new(255, 255, 255).with_alpha(alpha),
+                    Color::from_rgb(255, 255, 255).with_alpha(alpha),
                     median_line_width_px,
                     LineStyle::Solid,
                 )?;
@@ -490,7 +490,7 @@ pub(crate) fn adjust_saturation(color: Color, factor: f32) -> Color {
     let blend = |c: u8| -> u8 {
         ((c as f32 * factor + gray as f32 * (1.0 - factor)).clamp(0.0, 255.0)) as u8
     };
-    Color::new_rgba(blend(color.r), blend(color.g), blend(color.b), color.a)
+    Color::from_rgba(blend(color.r), blend(color.g), blend(color.b), color.a)
 }
 
 #[cfg(test)]
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn test_adjust_saturation() {
-        let color = Color::new(100, 150, 200);
+        let color = Color::from_rgb(100, 150, 200);
         let adjusted = super::adjust_saturation(color, 0.5);
         // Should be blended toward gray
         assert!(adjusted.r > 0 && adjusted.r < 255);

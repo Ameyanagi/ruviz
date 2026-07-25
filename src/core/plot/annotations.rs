@@ -1,13 +1,15 @@
 use super::*;
 
 impl Plot {
-    /// Configure legend with position
+    /// Enable the legend and place it.
     ///
-    /// For matplotlib-compatible position codes, use `legend_position()` with `LegendPosition`.
-    /// For automatic positioning (like matplotlib's `plt.legend()`), use `legend_best()`.
-    pub fn legend(mut self, position: Position) -> Self {
+    /// Accepts a [`LegendPosition`] (canonical) or the deprecated
+    /// [`Position`](crate::core::Position), which converts losslessly.
+    /// For automatic positioning (like matplotlib's `plt.legend()`), pass
+    /// [`LegendPosition::Best`] or use `legend_best()`.
+    pub fn legend(mut self, position: impl Into<LegendPosition>) -> Self {
         self.layout.legend.enabled = true;
-        self.layout.legend.position = LegendPosition::from_position(position);
+        self.layout.legend.position = position.into();
         self
     }
 
@@ -581,7 +583,7 @@ impl Plot {
     /// Plot::new()
     ///     .line(&x, &mean)
     ///     .fill_between_labeled(&x, &lower, &upper, Color::BLUE, "95% CI")
-    ///     .legend(Position::TopRight)
+    ///     .legend(LegendPosition::UpperRight)
     ///     .save("ci.png")?;
     /// ```
     pub fn fill_between_labeled(

@@ -7,7 +7,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // New API: add_series() for explicit named series binding
     // This is the recommended approach for clarity
     Plot::new()

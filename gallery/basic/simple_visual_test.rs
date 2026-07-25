@@ -14,7 +14,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Plot::new()
         .title("Visual Test - Cosmic-Text Rendering")
         .line(&x_data, &y_data)
-        .color(Color::new(255, 0, 0)) // Bright red line
+        .color(Color::from_rgb(255, 0, 0)) // Bright red line
         .save("gallery/basic/simple_visual_test.png")?;
 
     println!("✅ Created gallery/basic/simple_visual_test.png");

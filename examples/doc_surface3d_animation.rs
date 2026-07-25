@@ -43,7 +43,7 @@ fn rgb_pixels(image: &ruviz::core::Image) -> Vec<u8> {
     rgb
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     ruviz::render::register_font_bytes(FONT_BYTES.to_vec())?;
 
     let output = std::env::args()
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
 
         let image = surface(&x, &y, &z)
             .title("Damped radial surface — 360° orbit")
-            .colormap(ColorMap::coolwarm())
+            .cmap(ColorMap::coolwarm())
             .shading(SurfaceShading::Smooth)
             .sampling(SurfaceSampling::Full)
             .theme(theme)
@@ -75,7 +75,7 @@ fn main() -> Result<()> {
                     .axis_aspect(AxisAspect3D::Equal)
                     .orthographic(),
             )
-            .figure_size(6.4, 4.8)
+            .size(6.4, 4.8)
             .dpi(100)
             .render()?;
 

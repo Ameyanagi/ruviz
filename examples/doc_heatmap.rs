@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Create sample 2D data
     let data: Vec<Vec<f64>> = (0..10)
         .map(|i| {

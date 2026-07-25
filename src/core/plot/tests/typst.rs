@@ -192,7 +192,7 @@ fn public_typst_annotation_plain_newline_renders_multiline_with_alignment_and_ro
             .font_size(16.0)
             .align(align)
             .rotation(rotation)
-            .background(Color::new(240, 200, 180))
+            .background(Color::from_rgb(240, 200, 180))
             .padding(3.0);
         Plot::new()
             .line(&[0.0, 1.0], &[0.0, 1.0])

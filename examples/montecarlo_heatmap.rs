@@ -39,7 +39,7 @@ fn synthetic_absorbed_energy(rows: usize, cols: usize) -> Vec<Vec<f64>> {
         .collect()
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let rows = 96;
     let cols = 120;
     let data = synthetic_absorbed_energy(rows, cols);

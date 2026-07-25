@@ -6,7 +6,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate sample data with a bimodal distribution
     let data: Vec<f64> = (0..400)
         .map(|i| {

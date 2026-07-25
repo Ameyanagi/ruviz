@@ -4,7 +4,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let values = vec![
         vec![0.0, 0.1, 0.2],
         vec![1.0, 1.1, 1.2],

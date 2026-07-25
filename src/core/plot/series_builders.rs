@@ -844,10 +844,13 @@ impl PlotSeriesBuilder {
         self
     }
 
-    /// Configure legend with position
-    pub fn legend(mut self, position: Position) -> Self {
+    /// Enable the legend and place it.
+    ///
+    /// Accepts a [`LegendPosition`] (canonical) or the deprecated
+    /// [`Position`](crate::core::Position), which converts losslessly.
+    pub fn legend(mut self, position: impl Into<LegendPosition>) -> Self {
         self.plot.layout.legend.enabled = true;
-        self.plot.layout.legend.position = LegendPosition::from_position(position);
+        self.plot.layout.legend.position = position.into();
         self
     }
 

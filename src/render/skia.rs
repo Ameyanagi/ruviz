@@ -2292,7 +2292,7 @@ impl SkiaRenderer {
             legend_bg.top(),
             legend_bg.width(),
             legend_bg.height(),
-            Some(Color::new_rgba(255, 255, 255, 200)),
+            Some(Color::from_rgba(255, 255, 255, 200)),
             Some((LEGACY_LEGEND_EDGE_COLOR, LEGACY_LEGEND_EDGE_WIDTH_PT)),
         )?;
 
@@ -2325,7 +2325,7 @@ impl SkiaRenderer {
                 legend_x + 20.0,
                 legend_y,
                 legend_size,
-                Color::new_rgba(0, 0, 0, 255),
+                Color::from_rgba(0, 0, 0, 255),
             )?;
 
             legend_y += legend_spacing;
@@ -2334,13 +2334,17 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Draw legend with configurable position
+    /// Draw legend with configurable position.
+    ///
+    /// Accepts a [`LegendPosition`](crate::core::LegendPosition) or the
+    /// deprecated [`Position`](crate::core::Position), which converts losslessly.
     pub fn draw_legend_positioned(
         &mut self,
         legend_items: &[(String, Color)],
         plot_area: Rect,
-        position: crate::core::Position,
+        position: impl Into<crate::core::LegendPosition>,
     ) -> Result<()> {
+        let position = position.into();
         if legend_items.is_empty() {
             return Ok(());
         }
@@ -2354,40 +2358,45 @@ impl SkiaRenderer {
         let center_x = plot_area.left() + plot_area.width() / 2.0;
         let center_y = plot_area.top() + plot_area.height() / 2.0;
 
+        use crate::core::LegendPosition as LP;
         let (legend_x, legend_y) = match position {
-            // Best defaults to TopRight in legacy method; full best positioning in draw_legend_full
-            crate::core::Position::Best | crate::core::Position::TopRight => (
+            // `Best` defaults to upper-right in this legacy helper; full best
+            // positioning lives in `draw_legend_full`. The `Outside*` variants
+            // have no margin to expand into here, so they fall back to the
+            // nearest inside placement.
+            LP::Best | LP::UpperRight | LP::Right | LP::OutsideRight | LP::OutsideUpper => (
                 plot_area.right() - legend_width - 10.0,
                 plot_area.top() + 10.0,
             ),
-            crate::core::Position::TopLeft => (plot_area.left() + 10.0, plot_area.top() + 10.0),
-            crate::core::Position::TopCenter => {
-                (center_x - legend_width / 2.0, plot_area.top() + 10.0)
-            }
-            crate::core::Position::CenterLeft => {
-                (plot_area.left() + 10.0, center_y - legend_height / 2.0)
-            }
-            crate::core::Position::Center => (
+            LP::UpperLeft | LP::OutsideLeft => (plot_area.left() + 10.0, plot_area.top() + 10.0),
+            LP::UpperCenter => (center_x - legend_width / 2.0, plot_area.top() + 10.0),
+            LP::CenterLeft => (plot_area.left() + 10.0, center_y - legend_height / 2.0),
+            LP::Center => (
                 center_x - legend_width / 2.0,
                 center_y - legend_height / 2.0,
             ),
-            crate::core::Position::CenterRight => (
+            LP::CenterRight => (
                 plot_area.right() - legend_width - 10.0,
                 center_y - legend_height / 2.0,
             ),
-            crate::core::Position::BottomLeft => (
+            LP::LowerLeft => (
                 plot_area.left() + 10.0,
                 plot_area.bottom() - legend_height - 10.0,
             ),
-            crate::core::Position::BottomCenter => (
+            LP::LowerCenter | LP::OutsideLower => (
                 center_x - legend_width / 2.0,
                 plot_area.bottom() - legend_height - 10.0,
             ),
-            crate::core::Position::BottomRight => (
+            LP::LowerRight => (
                 plot_area.right() - legend_width - 10.0,
                 plot_area.bottom() - legend_height - 10.0,
             ),
-            crate::core::Position::Custom { x, y } => (x, y),
+            // `Custom` is a fraction of the plot area with Y growing upward,
+            // matching `Legend::calculate_position`.
+            LP::Custom { x, y, .. } => (
+                plot_area.left() + x * plot_area.width(),
+                plot_area.top() + (1.0 - y) * plot_area.height(),
+            ),
         };
 
         // Draw legend background (simple rectangle)
@@ -2405,7 +2414,7 @@ impl SkiaRenderer {
             legend_bg.top(),
             legend_bg.width(),
             legend_bg.height(),
-            Some(Color::new_rgba(255, 255, 255, 200)),
+            Some(Color::from_rgba(255, 255, 255, 200)),
             Some((LEGACY_LEGEND_EDGE_COLOR, LEGACY_LEGEND_EDGE_WIDTH_PT)),
         )?;
 
@@ -2439,7 +2448,7 @@ impl SkiaRenderer {
                 legend_x + 20.0,
                 item_y,
                 legend_size,
-                Color::new_rgba(0, 0, 0, 255),
+                Color::from_rgba(0, 0, 0, 255),
             )?;
 
             item_y += legend_spacing;
@@ -3317,7 +3326,7 @@ mod legend_patch_tests {
         // A transparent fill renders as the near-white panel, so it needs the
         // dark neutral even though its own channels are dark.
         assert_eq!(
-            legacy_legend_swatch_edge(Color::new_rgba(0, 0, 0, 0)),
+            legacy_legend_swatch_edge(Color::from_rgba(0, 0, 0, 0)),
             LEGACY_LEGEND_SWATCH_EDGE_DARK
         );
     }

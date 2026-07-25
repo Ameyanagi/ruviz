@@ -1621,7 +1621,7 @@ impl SvgRenderer {
             y,
             legend_width,
             legend_height,
-            Color::new_rgba(255, 255, 255, 230),
+            Color::from_rgba(255, 255, 255, 230),
             true,
         );
         self.draw_rectangle(
@@ -1629,7 +1629,7 @@ impl SvgRenderer {
             y,
             legend_width,
             legend_height,
-            Color::new_rgba(0, 0, 0, 100),
+            Color::from_rgba(0, 0, 0, 100),
             false,
         );
 

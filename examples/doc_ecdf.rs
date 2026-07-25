@@ -6,7 +6,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Generate sample data from a normal-like distribution
     let data: Vec<f64> = (0..200)
         .map(|i| {

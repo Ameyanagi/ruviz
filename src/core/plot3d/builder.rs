@@ -7,6 +7,7 @@ use crate::plots::{
     Line3DConfig, Scatter3DConfig, Surface3DConfig, SurfaceSampling, SurfaceShading,
     Wireframe3DConfig,
 };
+use crate::render::color::ColorMapSpec;
 use crate::render::three_d::overlay::{compose_image, compose_svg};
 use crate::render::three_d::software::raster::SoftwareRenderOptions3D;
 use crate::render::{Color, ColorMap, LineStyle, MarkerStyle, Theme};
@@ -388,10 +389,41 @@ macro_rules! impl_common_builder {
             }
 
             /// Set figure size in inches.
-            pub fn figure_size(mut self, width: f32, height: f32) -> Self {
+            ///
+            /// Same vocabulary as the 2D builder's `Plot::size`.
+            ///
+            /// The final pixel dimensions are `width × dpi` by `height × dpi`;
+            /// use [`Self::size_px`] to specify pixels directly.
+            pub fn size(mut self, width: f32, height: f32) -> Self {
                 self.plot.figure.width = width;
                 self.plot.figure.height = height;
                 self
+            }
+
+            /// Set figure size in pixels, at the reference DPI (100).
+            ///
+            /// Same vocabulary as the 2D builder's `Plot::size_px`. Call
+            /// `.dpi()` afterwards to change output resolution without
+            /// changing layout proportions.
+            pub fn size_px(mut self, width: u32, height: u32) -> Self {
+                use crate::core::units::REFERENCE_DPI;
+                self.plot.figure.width = width as f32 / REFERENCE_DPI;
+                self.plot.figure.height = height as f32 / REFERENCE_DPI;
+                self
+            }
+
+            /// Set figure size in inches.
+            ///
+            /// # Deprecated
+            ///
+            /// Renamed to [`Self::size`] so 2D and 3D share one sizing
+            /// vocabulary (`size` / `size_px`).
+            #[deprecated(
+                since = "0.6.0",
+                note = "renamed: use `size(width_in, height_in)` (or `size_px(width_px, height_px)`)"
+            )]
+            pub fn figure_size(self, width: f32, height: f32) -> Self {
+                self.size(width, height)
             }
 
             /// Set output dots per inch.
@@ -866,10 +898,33 @@ impl Surface3DBuilder {
         self
     }
 
-    /// Set the z-value colormap.
-    pub fn colormap(mut self, colormap: ColorMap) -> Self {
-        self.config.colormap = colormap;
+    /// Set the z-value colour scale.
+    ///
+    /// Accepts either a name or a [`ColorMap`] value — this is the one
+    /// spelling used by every colour-scaled plot type:
+    ///
+    /// ```rust,ignore
+    /// surface.cmap("plasma");
+    /// surface.cmap(ColorMap::plasma());
+    /// ```
+    ///
+    /// An unrecognised name falls back to `viridis`.
+    pub fn cmap(mut self, cmap: impl Into<ColorMapSpec>) -> Self {
+        self.config.colormap = cmap.into().resolve();
         self
+    }
+
+    /// Set the z-value colormap.
+    ///
+    /// # Deprecated
+    ///
+    /// Renamed to [`Self::cmap`], which also accepts a colormap name.
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed: use `cmap(colormap)`, which also accepts a name such as `cmap(\"viridis\")`"
+    )]
+    pub fn colormap(self, colormap: ColorMap) -> Self {
+        self.cmap(colormap)
     }
 
     /// Set the surface shading model.
@@ -1018,7 +1073,7 @@ mod tests {
     #[test]
     fn transparent_styles_are_rejected_for_the_opaque_mvp() {
         let error = Scatter3DBuilder::from_data(&[0.0], &[0.0], &[0.0])
-            .color(Color::new_rgba(255, 0, 0, 128))
+            .color(Color::from_rgba(255, 0, 0, 128))
             .validate()
             .expect_err("transparent scatter");
         assert!(error.to_string().contains("transparency is unsupported"));

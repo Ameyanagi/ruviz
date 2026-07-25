@@ -249,7 +249,7 @@ impl Default for StackPlotConfig {
             labels: vec![],
             baseline: StackBaseline::Zero,
             show_lines: false,
-            line_color: Color::new(255, 255, 255),
+            line_color: Color::from_rgb(255, 255, 255),
             line_width: 0.5,
         }
     }

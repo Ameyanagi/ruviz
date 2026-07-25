@@ -9,7 +9,7 @@ use polars::prelude::*;
 
 mod util;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     #[allow(unused_mut)]
     let mut outputs: Vec<std::path::PathBuf> = Vec::new();
 

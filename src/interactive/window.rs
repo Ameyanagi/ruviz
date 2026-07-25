@@ -995,14 +995,14 @@ impl InteractiveWindow {
             width,
             height,
             menu.panel_bounds,
-            Color::new_rgba(28, 31, 36, 244),
+            Color::from_rgba(28, 31, 36, 244),
         );
         draw_rgba_rectangle_outline(
             pixel_data,
             width,
             height,
             menu.panel_bounds,
-            Color::new_rgba(116, 126, 140, 255),
+            Color::from_rgba(116, 126, 140, 255),
             1,
         );
 
@@ -1027,7 +1027,7 @@ impl InteractiveWindow {
                             menu.panel_bounds.max.x - MENU_PADDING_X_PX,
                             y + 1.0,
                         ),
-                        Color::new_rgba(74, 84, 96, 200),
+                        Color::from_rgba(74, 84, 96, 200),
                     );
                 }
                 _ => {
@@ -1045,7 +1045,7 @@ impl InteractiveWindow {
                                 bounds.max.x - 4.0,
                                 bounds.max.y - 2.0,
                             ),
-                            Color::new_rgba(56, 86, 120, 220),
+                            Color::from_rgba(56, 86, 120, 220),
                         );
                     }
                 }
@@ -1069,9 +1069,9 @@ impl InteractiveWindow {
                 continue;
             };
             let text_color = if entry.enabled {
-                Color::new_rgba(240, 244, 248, 255)
+                Color::from_rgba(240, 244, 248, 255)
             } else {
-                Color::new_rgba(126, 134, 144, 255)
+                Color::from_rgba(126, 134, 144, 255)
             };
             if let Err(err) = text_renderer.render_text_mut(
                 &mut pixmap,

@@ -74,12 +74,12 @@ fn configure_surface(
         .xlabel("x")
         .ylabel("y")
         .zlabel("height")
-        .colormap(ColorMap::viridis())
+        .cmap(ColorMap::viridis())
         .shading(SurfaceShading::Smooth)
         .sampling(SurfaceSampling::Full)
         .theme(stable_theme(theme))
         .camera(camera)
-        .figure_size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
+        .size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
         .dpi(FIGURE_DPI)
 }
 
@@ -100,11 +100,11 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
     let second_y: Vec<f64> = first_y.iter().map(|&value| -value).collect();
     let second_z: Vec<f64> = first_z.iter().map(|&value| -value).collect();
     scatter3d(&first_x, &first_y, &first_z)
-        .color(Color::new(0, 114, 178))
+        .color(Color::from_rgb(0, 114, 178))
         .marker(MarkerStyle::Circle)
         .marker_size(7.0)
         .scatter3d(&second_x, &second_y, &second_z)
-        .color(Color::new(230, 159, 0))
+        .color(Color::from_rgb(230, 159, 0))
         .marker(MarkerStyle::Diamond)
         .marker_size(6.0)
         .title("Orthographic scatter")
@@ -113,7 +113,7 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
         .zlabel("z")
         .theme(stable_theme(Theme::light()))
         .camera(base_camera())
-        .figure_size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
+        .size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
         .dpi(FIGURE_DPI)
         .save(output_path(output_directory, "scatter3d.png"))?;
 
@@ -127,7 +127,7 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
         .map(|&t| -1.0 + 2.0 * t / (6.0 * std::f64::consts::PI))
         .collect();
     line3d(&line_x, &line_y, &line_z)
-        .color(Color::new(0, 114, 178))
+        .color(Color::from_rgb(0, 114, 178))
         .line_width(2.0)
         .title("Perspective helix")
         .xlabel("x")
@@ -141,7 +141,7 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
                 .axis_aspect(AxisAspect3D::Equal)
                 .perspective_deg(38.0),
         )
-        .figure_size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
+        .size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
         .dpi(FIGURE_DPI)
         .save(output_path(output_directory, "line3d.png"))?;
 
@@ -160,7 +160,7 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
         .xlabel("x")
         .ylabel("y")
         .zlabel("height")
-        .color(Color::new(0, 114, 178))
+        .color(Color::from_rgb(0, 114, 178))
         .line_width(0.8)
         .sampling(SurfaceSampling::MaxGrid {
             rows: 15,
@@ -174,7 +174,7 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
                 .axis_aspect(AxisAspect3D::Equal)
                 .orthographic(),
         )
-        .figure_size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
+        .size(FIGURE_WIDTH_IN, FIGURE_HEIGHT_IN)
         .dpi(FIGURE_DPI)
         .save(output_path(output_directory, "wireframe3d.png"))?;
 
@@ -186,7 +186,7 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
         base_camera(),
     )
     .title("Dark theme surface")
-    .colormap(ColorMap::plasma())
+    .cmap(ColorMap::plasma())
     .save(output_path(output_directory, "surface3d_dark.png"))?;
 
     configure_surface(
@@ -197,7 +197,7 @@ pub fn generate_three_d_gallery(output_directory: &Path) -> ruviz::core::Result<
         base_camera(),
     )
     .title("Publication theme surface")
-    .colormap(ColorMap::coolwarm())
+    .cmap(ColorMap::coolwarm())
     .save(output_path(output_directory, "surface3d_publication.png"))?;
 
     configure_surface(

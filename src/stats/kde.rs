@@ -142,19 +142,92 @@ fn gaussian_kernel(x: f64) -> f64 {
     (-0.5 * x * x).exp() / (2.0 * PI).sqrt()
 }
 
-/// Scott's rule for bandwidth selection
-fn scotts_rule(data: &[f64]) -> f64 {
+/// Sample standard deviation (Bessel-corrected). Returns `None` for `n < 2`.
+fn sample_std_dev(data: &[f64]) -> Option<f64> {
     let n = data.len() as f64;
     if n < 2.0 {
-        return 1.0;
+        return None;
     }
-
     let mean = data.iter().sum::<f64>() / n;
     let variance = data.iter().map(|&x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
-    let std_dev = variance.sqrt();
+    Some(variance.sqrt())
+}
 
-    // Scott's rule: h = 1.06 * sigma * n^(-1/5)
-    1.06 * std_dev * n.powf(-0.2)
+/// Interquartile range using linear interpolation between order statistics.
+///
+/// Matches the percentile convention used elsewhere in the crate
+/// (`crate::plots::statistics::percentile`).
+fn interquartile_range(data: &[f64]) -> f64 {
+    if data.len() < 2 {
+        return 0.0;
+    }
+    let mut sorted: Vec<f64> = data.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let quantile = |p: f64| -> f64 {
+        let idx = p * (sorted.len() - 1) as f64;
+        let lower = idx.floor() as usize;
+        let upper = idx.ceil() as usize;
+        let frac = idx - lower as f64;
+        sorted[lower] * (1.0 - frac) + sorted[upper] * frac
+    };
+
+    quantile(0.75) - quantile(0.25)
+}
+
+/// Scott's rule for bandwidth selection.
+///
+/// `h = 1.06 * sigma * n^(-1/5)`
+///
+/// Scott, D. W. (1992). *Multivariate Density Estimation*, eq. 6.42 — the
+/// normal-reference bandwidth that minimises AMISE for Gaussian data.
+///
+/// Returns `1.0` for fewer than two points, and for zero-variance samples,
+/// so callers always receive a strictly positive bandwidth.
+pub fn scotts_rule(data: &[f64]) -> f64 {
+    let n = data.len() as f64;
+    let Some(std_dev) = sample_std_dev(data) else {
+        return 1.0;
+    };
+
+    let bandwidth = 1.06 * std_dev * n.powf(-0.2);
+    if bandwidth > 0.0 { bandwidth } else { 1.0 }
+}
+
+/// Silverman's rule of thumb for bandwidth selection.
+///
+/// `h = 0.9 * min(sigma, IQR / 1.34) * n^(-1/5)`
+///
+/// Silverman, B. W. (1986). *Density Estimation for Statistics and Data
+/// Analysis*, eq. 3.31. This is the **robust** form: the `IQR / 1.34` term is
+/// an outlier-resistant scale estimate (1.34 ≈ the IQR of a standard normal),
+/// and the 0.9 factor trades a little efficiency at the normal for much better
+/// behaviour on skewed or heavy-tailed samples.
+///
+/// It is deliberately *not* the `(4/3)^(1/5) * sigma * n^(-1/5)` ≈
+/// `1.06 * sigma * n^(-1/5)` normal-reference form, because that is
+/// numerically identical to [`scotts_rule`] and would make the two methods
+/// indistinguishable.
+///
+/// Returns `1.0` for fewer than two points, and for degenerate samples where
+/// both scale estimates collapse to zero.
+pub fn silvermans_rule(data: &[f64]) -> f64 {
+    let n = data.len() as f64;
+    let Some(std_dev) = sample_std_dev(data) else {
+        return 1.0;
+    };
+
+    let iqr_scale = interquartile_range(data) / 1.34;
+    // A zero IQR (>50% ties) must not zero out the bandwidth, so it only
+    // participates when it is positive.
+    let scale = if iqr_scale > 0.0 {
+        std_dev.min(iqr_scale)
+    } else {
+        std_dev
+    };
+
+    let bandwidth = 0.9 * scale * n.powf(-0.2);
+    if bandwidth > 0.0 { bandwidth } else { 1.0 }
 }
 
 #[cfg(test)]
@@ -199,5 +272,71 @@ mod tests {
         let data: Vec<f64> = (0..1000).map(|i| (i as f64 - 500.0) / 100.0).collect();
         let bw = scotts_rule(&data);
         assert!(bw > 0.0);
+    }
+
+    #[test]
+    fn test_silvermans_rule_matches_the_published_formula() {
+        let data: Vec<f64> = (0..1000).map(|i| (i as f64 - 500.0) / 100.0).collect();
+        let n = data.len() as f64;
+
+        let mean = data.iter().sum::<f64>() / n;
+        let sigma = (data.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+        let iqr = interquartile_range(&data);
+        let expected = 0.9 * sigma.min(iqr / 1.34) * n.powf(-0.2);
+
+        assert!((silvermans_rule(&data) - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_silvermans_rule_is_not_scotts_rule() {
+        // The whole point of the two names: they must produce different numbers.
+        let data: Vec<f64> = (0..500).map(|i| (i as f64 * 0.37).sin() * 10.0).collect();
+        let scott = scotts_rule(&data);
+        let silverman = silvermans_rule(&data);
+
+        assert!(scott > 0.0 && silverman > 0.0);
+        assert!(
+            (scott - silverman).abs() > 1e-9,
+            "Silverman ({silverman}) silently collapsed onto Scott ({scott})"
+        );
+    }
+
+    #[test]
+    fn test_silvermans_rule_is_robust_to_outliers() {
+        // One extreme point inflates sigma but barely moves the IQR, so the
+        // robust rule must react far less than the normal-reference rule.
+        let mut data: Vec<f64> = (0..200).map(|i| i as f64 / 200.0).collect();
+        let scott_clean = scotts_rule(&data);
+        let silverman_clean = silvermans_rule(&data);
+
+        data.push(1_000.0);
+        let scott_dirty = scotts_rule(&data);
+        let silverman_dirty = silvermans_rule(&data);
+
+        let scott_growth = scott_dirty / scott_clean;
+        let silverman_growth = silverman_dirty / silverman_clean;
+        assert!(
+            silverman_growth < scott_growth,
+            "silverman_growth={silverman_growth} scott_growth={scott_growth}"
+        );
+    }
+
+    #[test]
+    fn test_bandwidth_rules_stay_positive_on_degenerate_input() {
+        assert_eq!(scotts_rule(&[]), 1.0);
+        assert_eq!(silvermans_rule(&[]), 1.0);
+        assert_eq!(scotts_rule(&[3.0]), 1.0);
+        assert_eq!(silvermans_rule(&[3.0]), 1.0);
+        assert_eq!(scotts_rule(&[7.0; 50]), 1.0);
+        assert_eq!(silvermans_rule(&[7.0; 50]), 1.0);
+    }
+
+    #[test]
+    fn test_silvermans_rule_survives_a_zero_iqr() {
+        // >50% ties give IQR = 0; falling back to sigma keeps the KDE finite.
+        let mut data = vec![5.0; 60];
+        data.extend([0.0, 1.0, 9.0, 10.0]);
+        let bw = silvermans_rule(&data);
+        assert!(bw > 0.0 && bw.is_finite());
     }
 }

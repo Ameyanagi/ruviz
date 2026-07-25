@@ -31,7 +31,7 @@
 //!     .line(&x, &y2)
 //!     .color(Color::BLUE)
 //!     .label("Series 2")
-//!     .legend(Position::TopRight)
+//!     .legend(LegendPosition::UpperRight)
 //!     .save("multi.png")?;
 //! ```
 //!
@@ -500,7 +500,8 @@ mod series_manager;
 mod tests;
 mod types;
 
-pub use builder::{BuilderWhen, IntoPlot, PlotBuilder, PlotInput, SeriesStyle};
+pub use builder::{BuilderWhen, IntoPlot, PlotBuilder};
+pub(crate) use builder::{PlotInput, SeriesStyle};
 pub use config::{
     BackendFallbackReason, BackendOperation, BackendResolution, BackendType, GridMode,
     TickDirection, TickSides,
@@ -527,8 +528,8 @@ use crate::{
         Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig,
         LayoutMeasurements, Legend, LegendItem, LegendItemType, LegendPosition, MarginConfig,
         MeasuredDimensions, PlotConfig, PlotContent, PlotLayout, PlotStyle, PlottingError,
-        Position, REFERENCE_DPI, RenderScale, ResolvedLayout, Result, ShapeStyle, StyleResolver,
-        TextStyle, pt_to_px,
+        REFERENCE_DPI, RenderScale, ResolvedLayout, Result, ShapeStyle, StyleResolver, TextStyle,
+        pt_to_px,
     },
     data::{
         Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,

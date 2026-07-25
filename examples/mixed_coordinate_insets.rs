@@ -91,7 +91,7 @@ fn mixed_radar_plot() -> Plot {
         .into()
 }
 
-fn save_plot(name: &str, plot: Plot, outputs: &mut Vec<PathBuf>) -> Result<()> {
+fn save_plot(name: &str, plot: Plot, outputs: &mut Vec<PathBuf>) -> PlotResult<()> {
     let png_path = util::example_output_path_in("mixed_coordinate_insets", &format!("{name}.png"));
     let svg_path = util::example_output_path_in("mixed_coordinate_insets", &format!("{name}.svg"));
 
@@ -103,7 +103,7 @@ fn save_plot(name: &str, plot: Plot, outputs: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let mut outputs = Vec::new();
 
     save_plot("mixed_polar_inset", mixed_polar_plot(), &mut outputs)?;

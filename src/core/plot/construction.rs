@@ -704,9 +704,16 @@ impl Plot {
     ///
     /// # Deprecation
     ///
-    /// Prefer `size(width, height)` which takes dimensions in inches for
-    /// DPI-independent sizing, or `size_pixels(width, height)` for pixel-based sizing.
-    #[deprecated(since = "0.2.0", note = "Use size() or size_pixels() instead")]
+    /// Prefer [`Plot::size`], which takes dimensions in inches for
+    /// DPI-independent sizing, or [`Plot::size_px`] for pixel-based sizing.
+    ///
+    /// Note that neither replacement rescales DPI for you: this method's
+    /// implicit DPI bump is exactly the behaviour it is deprecated for. To
+    /// reproduce it, call `.size_px(w, h).dpi(d)` with the DPI you want.
+    #[deprecated(
+        since = "0.2.0",
+        note = "use `size(width_in, height_in)` for inches or `size_px(width_px, height_px)` for pixels"
+    )]
     pub fn dimensions(mut self, width: u32, height: u32) -> Self {
         self.display.dimensions = (width.max(100), height.max(100));
 

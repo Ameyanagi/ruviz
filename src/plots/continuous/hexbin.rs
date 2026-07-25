@@ -13,7 +13,7 @@
 use crate::core::Result;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
-use crate::render::{Color, ColorMap, LineStyle, Theme};
+use crate::render::{Color, ColorMap, ColorMapSpec, LineStyle, Theme};
 use std::collections::HashMap;
 
 /// Configuration for hexbin plot
@@ -84,9 +84,11 @@ impl HexbinConfig {
         self
     }
 
-    /// Set colormap
-    pub fn cmap(mut self, cmap: &str) -> Self {
-        self.cmap = cmap.to_string();
+    /// Set colormap.
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`] value.
+    pub fn cmap(mut self, cmap: impl Into<ColorMapSpec>) -> Self {
+        self.cmap = cmap.into().into_name();
         self
     }
 

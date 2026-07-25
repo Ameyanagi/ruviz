@@ -1,7 +1,7 @@
 use ruviz::prelude::*;
 use ruviz::render::PooledRenderer;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     const POINTS: usize = 100_000;
     let x_data: Vec<f64> = (0..POINTS).map(|i| i as f64 * 0.001).collect();
     let y_data: Vec<f64> = x_data.iter().map(|value| (value * 0.5).sin()).collect();
@@ -45,7 +45,7 @@ fn transform_once(
     x_data: &[f64],
     y_data: &[f64],
     label: &str,
-) -> Result<usize> {
+) -> PlotResult<usize> {
     let started = std::time::Instant::now();
     let (screen_x, screen_y) = renderer.transform_coordinates_pooled(
         &x_data,

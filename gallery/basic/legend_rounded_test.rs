@@ -1,5 +1,5 @@
+use ruviz::core::LegendPosition;
 use ruviz::core::Plot;
-use ruviz::core::Position;
 use ruviz::render::{Color, LineStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -28,7 +28,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .label("sin(x/2)")
         .color(Color::GREEN)
         .style(LineStyle::Dotted)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .legend_corner_radius(6.0)
         .save("gallery/basic/legend_rounded_test.png")?;
 

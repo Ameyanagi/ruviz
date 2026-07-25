@@ -35,7 +35,7 @@ mod multi_series_integration_tests {
             .title("Function Comparison")
             .xlabel("x")
             .ylabel("f(x)")
-            .legend(Position::TopLeft)
+            .legend(LegendPosition::UpperLeft)
             .grid(true)
             .save("test_multi_series_integration.png");
         
@@ -70,7 +70,7 @@ mod multi_series_integration_tests {
             .line(&x, &y2).label("Quadratic")  
             .line(&x, &y3).label("Cubic")
             .line(&x, &y4).label("Even")
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .title("Automatic Colors")
             .save("test_auto_colors.png");
             
@@ -101,7 +101,7 @@ mod multi_series_integration_tests {
             .bar(&categories, &values)
                 .label("Categories")
                 .color(Color::GREEN)
-            .legend(Position::BottomRight)
+            .legend(LegendPosition::LowerRight)
             .title("Mixed Plot Types")
             .save("test_mixed_types.png");
             
@@ -117,10 +117,10 @@ mod multi_series_integration_tests {
         let y2 = vec![3.0, 2.0, 1.0];
         
         let positions = [
-            Position::TopLeft,
-            Position::TopRight, 
-            Position::BottomLeft,
-            Position::BottomRight,
+            LegendPosition::UpperLeft,
+            LegendPosition::UpperRight, 
+            LegendPosition::LowerLeft,
+            LegendPosition::LowerRight,
         ];
         
         for (i, &pos) in positions.iter().enumerate() {
@@ -195,7 +195,7 @@ mod multi_series_integration_tests {
         }
         
         let result = plot
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .save("test_many_series.png");
             
         assert!(result.is_ok(), "Many series test failed: {:?}", result.err());
@@ -244,7 +244,7 @@ mod multi_series_integration_tests {
             .title("Environmental Sensor Data")
             .xlabel("Time (minutes)")
             .ylabel("Measurement Value")
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .grid(true)
             .save("test_complex_scenario.png");
             
@@ -278,7 +278,7 @@ mod multi_series_integration_tests {
             .line(&x, &y3)
             .label("Baseline")
             .color(Color::from_hex("#D81B60").unwrap())
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .title("Grouped Series Scope")
             .save("test_grouped_series_scope.png");
 
@@ -304,7 +304,7 @@ mod multi_series_integration_tests {
                     .scatter(&x, &y_scatter)
                     .line(&x, &y_line)
             })
-            .legend(Position::TopLeft)
+            .legend(LegendPosition::UpperLeft)
             .title("Grouped Mixed Types")
             .save("test_grouped_mixed_types.png");
 

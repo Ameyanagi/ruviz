@@ -244,8 +244,8 @@ impl Default for LegendFrame {
     fn default() -> Self {
         Self {
             visible: true,
-            background: Color::new_rgba(255, 255, 255, 204),  // 80% opaque
-            border_color: Color::new_rgba(0, 0, 0, 128),      // 50% black
+            background: Color::from_rgba(255, 255, 255, 204),  // 80% opaque
+            border_color: Color::from_rgba(0, 0, 0, 128),      // 50% black
             border_width: 0.8,
             corner_radius: 0.0,  // Sharp corners by default
             shadow: false,

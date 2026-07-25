@@ -350,7 +350,7 @@ mod tests {
         let theme = Theme::light();
         let resolver = StyleResolver::new(&theme);
 
-        let fill = Color::new(100, 150, 200);
+        let fill = Color::from_rgb(100, 150, 200);
 
         // Auto-derived (30% darker)
         let edge = resolver.edge_color(fill, None);
@@ -364,7 +364,7 @@ mod tests {
         let theme = Theme::light();
         let resolver = StyleResolver::new(&theme);
 
-        let fill = Color::new(100, 150, 200);
+        let fill = Color::from_rgb(100, 150, 200);
 
         // 50% darker
         let edge = resolver.edge_color_with_factor(fill, None, 0.5);

@@ -1,10 +1,9 @@
-use ruviz::core::Result;
 use ruviz::prelude::*;
 use std::thread;
 use std::time::Instant;
 
 /// Parallel rendering demonstration showing multi-threaded performance
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     println!("Parallel Rendering Demo");
     println!("=======================");
     std::fs::create_dir_all("generated/examples").ok();

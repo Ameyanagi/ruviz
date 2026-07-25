@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_color_reexport() {
-        let color = Color::new(255, 128, 64);
+        let color = Color::from_rgb(255, 128, 64);
         assert_eq!(color.r, 255);
         assert_eq!(color.g, 128);
         assert_eq!(color.b, 64);

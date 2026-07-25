@@ -652,9 +652,11 @@ impl Plot {
                                 ))
                             })?;
 
-                        // Transform coordinates for box plot elements
+                        // Transform coordinates for box plot elements. Every
+                        // geometry constant comes from `box_data` — see the
+                        // contract on `BoxPlotData`.
                         let x_center = 0.5; // Center the box plot
-                        let box_width = 0.3; // Box width
+                        let box_width = box_data.width_ratio;
 
                         // Map Y coordinates to plot area
                         let q1_y = map_data_to_pixels_scaled(
@@ -736,7 +738,12 @@ impl Plot {
 
                         // Transform outliers
                         let mut outliers = Vec::new();
-                        for &outlier in &box_data.outliers {
+                        let visible_outliers: &[f64] = if box_data.show_outliers {
+                            &box_data.outliers
+                        } else {
+                            &[]
+                        };
+                        for &outlier in visible_outliers {
                             let outlier_y = map_data_to_pixels_scaled(
                                 0.0,
                                 outlier,
@@ -755,6 +762,7 @@ impl Plot {
                             });
                         }
 
+                        let edge_color = box_data.edge_color.unwrap_or(color);
                         let box_render_data = crate::render::parallel::BoxPlotRenderData {
                             x_center: x_center_px,
                             box_left,
@@ -765,9 +773,20 @@ impl Plot {
                             lower_whisker_y,
                             upper_whisker_y,
                             outliers,
-                            box_color: color,
-                            line_color: color,
+                            box_color: color.with_alpha(box_data.fill_alpha),
+                            line_color: edge_color,
                             outlier_color: color,
+                            cap_width: box_data.cap_width,
+                            edge_width: box_data.edge_width,
+                            whisker_width: box_data
+                                .whisker_width
+                                .map(|w| self.render_scale().points_to_pixels(w))
+                                .unwrap_or(line_width),
+                            median_width: box_data
+                                .median_width
+                                .map(|w| self.render_scale().points_to_pixels(w))
+                                .unwrap_or(line_width * 1.5),
+                            flier_size: self.render_scale().points_to_pixels(box_data.flier_size),
                         };
 
                         RenderSeriesType::BoxPlot {
@@ -1208,16 +1227,18 @@ impl Plot {
                     }
                 }
                 RenderSeriesType::BoxPlot { box_data } => {
-                    // Draw box plot components
+                    // Draw box plot components. Widths and sizes come from the
+                    // resolved `BoxPlotData`, so the parallel backend matches
+                    // the raster and SVG ones.
 
                     // Draw the box (IQR)
-                    renderer.draw_rectangle_clipped(
+                    renderer.draw_rectangle_styled_clipped(
                         box_data.box_left,
                         box_data.q3_y,
                         box_data.box_right - box_data.box_left,
                         box_data.q1_y - box_data.q3_y,
-                        box_data.box_color,
-                        false, // outline only
+                        Some(box_data.box_color),
+                        Some((box_data.line_color, box_data.edge_width)),
                         clip_rect,
                     )?;
 
@@ -1228,7 +1249,7 @@ impl Plot {
                         box_data.box_right,
                         box_data.median_y,
                         box_data.line_color,
-                        2.0, // median line width
+                        box_data.median_width,
                         LineStyle::Solid,
                         clip_rect,
                     )?;
@@ -1240,7 +1261,7 @@ impl Plot {
                         box_data.x_center,
                         box_data.lower_whisker_y,
                         box_data.line_color,
-                        1.0,
+                        box_data.whisker_width,
                         LineStyle::Solid,
                         clip_rect,
                     )?;
@@ -1252,20 +1273,21 @@ impl Plot {
                         box_data.x_center,
                         box_data.upper_whisker_y,
                         box_data.line_color,
-                        1.0,
+                        box_data.whisker_width,
                         LineStyle::Solid,
                         clip_rect,
                     )?;
 
                     // Draw whisker caps
-                    let cap_width = (box_data.box_right - box_data.box_left) * 0.3;
+                    let cap_width =
+                        (box_data.box_right - box_data.box_left) * 0.5 * box_data.cap_width;
                     renderer.draw_line_clipped(
                         box_data.x_center - cap_width,
                         box_data.lower_whisker_y,
                         box_data.x_center + cap_width,
                         box_data.lower_whisker_y,
                         box_data.line_color,
-                        1.0,
+                        box_data.whisker_width,
                         LineStyle::Solid,
                         clip_rect,
                     )?;
@@ -1276,7 +1298,7 @@ impl Plot {
                         box_data.x_center + cap_width,
                         box_data.upper_whisker_y,
                         box_data.line_color,
-                        1.0,
+                        box_data.whisker_width,
                         LineStyle::Solid,
                         clip_rect,
                     )?;
@@ -1286,7 +1308,7 @@ impl Plot {
                         renderer.draw_marker_clipped(
                             outlier.x,
                             outlier.y,
-                            4.0, // outlier marker size
+                            box_data.flier_size,
                             MarkerStyle::Circle,
                             box_data.outlier_color,
                             clip_rect,

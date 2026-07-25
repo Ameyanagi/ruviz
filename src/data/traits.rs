@@ -741,7 +741,10 @@ fn collect_polars_series(
 #[cfg(feature = "polars_support")]
 impl NumericData1D for polars::prelude::Series {
     fn len(&self) -> usize {
-        self.len()
+        // `Series::len` is not inherent — it arrives through
+        // `Deref<Target = dyn SeriesTrait>`. A bare `self.len()` therefore
+        // resolves to *this* method and recurses forever, so deref explicitly.
+        (**self).len()
     }
 
     fn try_collect_f64_with_policy(

@@ -14,7 +14,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // === PATTERN 1: Modifier Pattern (Recommended) ===
     // Attach error bars to Line and Scatter series using .with_yerr() / .with_xerr()
 

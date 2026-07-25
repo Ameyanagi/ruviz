@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn test_styled_shape_auto_edge() {
         let shape = TestShape {
-            fill: Color::new(100, 150, 200),
+            fill: Color::from_rgb(100, 150, 200),
             edge: None,
             edge_width: 0.8,
             alpha: 1.0,
@@ -567,7 +567,7 @@ mod tests {
     #[test]
     fn test_styled_shape_fill_with_alpha() {
         let shape = TestShape {
-            fill: Color::new(100, 150, 200),
+            fill: Color::from_rgb(100, 150, 200),
             edge: None,
             edge_width: 0.8,
             alpha: 0.5,

@@ -4,28 +4,33 @@ Comprehensive guide to all plot types available in ruviz.
 
 ## Overview
 
-ruviz provides **30+ plot types** across multiple categories, achieving parity with matplotlib, seaborn, and Makie.jl for scientific and data visualization.
+ruviz provides **21 drawable plot types** from the `Plot` builder, plus 4 more from
+`Plot3D` when the `3d` feature is enabled.
 
-The examples below mix the high-level `Plot` builder with lower-level helpers from
-`ruviz::plots::*`. For the low-level examples, the symbol names and signatures
-match the current exported APIs.
+`ruviz::plots::*` additionally exposes compute helpers for several more chart
+families. Those helpers are correct and usable, but they have **no renderer and
+no `Plot` builder method**, so they cannot produce an image. They are marked
+⚠️ **compute only** below.
+
+The examples further down mix the high-level `Plot` builder with those low-level
+helpers; the symbol names and signatures match the current exported APIs.
 
 ### Quick Reference by Category
 
-| Category | Plot Types |
-|----------|------------|
-| **Basic** | Line, Scatter, Bar, Histogram, Box Plot, Heatmap |
-| **Distribution** | Violin, KDE (1D/2D), Boxen, ECDF, Strip, Swarm |
-| **Categorical** | Grouped Bar, Stacked Bar, Horizontal Bar |
-| **Composition** | Pie, Donut, Area, Stacked Area |
-| **Continuous** | Contour, Hexbin, Fill Between |
-| **Error** | Error Bars (symmetric/asymmetric) |
-| **Discrete** | Step, Stem |
-| **Regression** | Regression Plot, Residual Plot |
-| **Polar** | Polar Plot, Radar/Spider Chart |
-| **Composite** | Joint Plot, Pair Plot |
-| **Vector** | Quiver Plot |
-| **Hierarchical** | Dendrogram |
+| Category | Drawable from `Plot` | ⚠️ Compute only — no `Plot` builder |
+|----------|----------------------|--------------------------------------|
+| **Basic** | Line, Scatter, Bar, Histogram, Box Plot, Heatmap | Grouped Bar, Stacked Bar, Horizontal Bar |
+| **Distribution** | Violin, KDE (1D), Boxen, ECDF | KDE 2D, Strip, Swarm |
+| **Composition** | Pie, Donut, Area | Stacked Area |
+| **Continuous** | Contour, Fill Between | Hexbin |
+| **Error** | Error Bars (symmetric/asymmetric) | — |
+| **Discrete** | Step, Stem | — |
+| **Polar** | Polar Plot, Radar/Spider Chart | — |
+| **Vector** | Quiver Plot | — |
+| **Regression** | — | Regression Plot, Residual Plot |
+| **Composite** | — | Joint Plot, Pair Plot |
+| **Hierarchical** | — | Dendrogram |
+| **3D** (`3d` feature) | Scatter3D, Line3D, Surface3D, Wireframe3D | — |
 
 ---
 
@@ -206,6 +211,9 @@ let ecdf = compute_ecdf(&data, &config);
 
 ### Strip Plots
 
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
+
 **Use for**: Jittered categorical scatter plots
 
 ```rust
@@ -220,6 +228,9 @@ let strip_points = compute_strip_points(&categories, &values, None, &config);
 ```
 
 ### Swarm Plots (Beeswarm)
+
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
 
 **Use for**: Non-overlapping categorical scatter
 
@@ -240,6 +251,9 @@ let swarm_points = compute_swarm_points(&categories, &values, None, &config);
 
 ### Grouped Bar Charts
 
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
+
 **Use for**: Side-by-side comparison of multiple series
 
 ```rust
@@ -256,6 +270,9 @@ let bars = compute_grouped_bars(&groups, 3, &config);
 
 ### Stacked Bar Charts
 
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
+
 **Use for**: Part-to-whole relationships across categories
 
 ```rust
@@ -266,6 +283,9 @@ let bars = compute_stacked_bars(&groups, 3, &config);
 ```
 
 ### Horizontal Bar Charts
+
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
 
 **Use for**: Long category labels, ranked data
 
@@ -327,6 +347,9 @@ let area = area_polygon(&x, &y, config.baseline);
 
 ### Stacked Area Charts
 
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
+
 **Use for**: Part-to-whole over continuous axis
 
 ```rust
@@ -356,6 +379,9 @@ let contour = compute_contour_plot(&x, &y, &z_data, &config);
 ```
 
 ### Hexbin Plots
+
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
 
 **Use for**: Large scatter datasets, 2D histogram with hexagonal bins
 
@@ -433,6 +459,9 @@ Plot::new()
 
 ### Regression Plot
 
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
+
 **Use for**: Scatter with fitted regression line and confidence interval
 
 ```rust
@@ -448,6 +477,9 @@ let reg = compute_regplot(&x, &y, &config);
 ```
 
 ### Residual Plot
+
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
 
 **Use for**: Regression diagnostics, checking model fit
 
@@ -509,6 +541,9 @@ let radar = compute_radar_chart(&values, &config);
 
 ### Joint Plot Helpers
 
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
+
 **Use for**: Joint-plot style layout and marginal histogram helpers
 
 ```rust
@@ -528,6 +563,9 @@ let y_hist = compute_marginal_histogram(&y, config.bins);
 ```
 
 ### Pair Plot Helpers
+
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
 
 **Use for**: Scatterplot-matrix layout and labeling helpers
 
@@ -581,6 +619,9 @@ Plot::new()
 
 ### Dendrograms
 
+> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
+> `Plot` builder method and no renderer behind it.
+
 **Use for**: Hierarchical clustering visualization
 
 ```rust
@@ -593,7 +634,6 @@ let linkage_result = linkage(&distances, LinkageMethod::Single);
 
 let config = DendrogramConfig::new()
     .orientation(DendrogramOrientation::Top)
-    .color_threshold(5.0)
     .labels(sample_labels);
 
 let dendro = compute_dendrogram(&linkage_result, &config);

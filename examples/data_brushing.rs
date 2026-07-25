@@ -15,7 +15,7 @@
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
         .block_on(async_main())
 }
 
-async fn async_main() -> Result<()> {
+async fn async_main() -> PlotResult<()> {
     println!("Starting data brushing example...");
     println!("Controls:");
     println!("  - Mouse wheel: Zoom in/out");
@@ -70,7 +70,7 @@ async fn async_main() -> Result<()> {
             .title("Time Series View")
             .xlabel("Time")
             .ylabel("Value")
-            .legend(Position::TopLeft);
+            .legend(LegendPosition::UpperLeft);
 
         // Plot 2: Phase space (derivative vs value)
         let phase_plot = Plot::new()
@@ -78,7 +78,7 @@ async fn async_main() -> Result<()> {
             .title("Phase Space View")
             .xlabel("Value")
             .ylabel("Derivative")
-            .legend(Position::TopRight);
+            .legend(LegendPosition::UpperRight);
 
         // Plot 3: Correlation plot
         let correlation_plot = Plot::new()
@@ -86,7 +86,7 @@ async fn async_main() -> Result<()> {
             .title("Value vs Noise Correlation")
             .xlabel("Value")
             .ylabel("Noise Component")
-            .legend(Position::BottomRight);
+            .legend(LegendPosition::LowerRight);
 
         // Plot 4: Histogram of values
         // Note: This would use the histogram API once implemented
@@ -95,7 +95,7 @@ async fn async_main() -> Result<()> {
             .title("Value Distribution")
             .xlabel("Value Bins")
             .ylabel("Frequency")
-            .legend(Position::TopLeft);
+            .legend(LegendPosition::UpperLeft);
 
         // Save static versions
         time_plot.save("generated/examples/data_brushing_time_series.png")?;
@@ -178,7 +178,7 @@ fn generate_correlated_data(n_points: usize) -> CorrelatedData {
 }
 
 /// Create a demo plot with simulated brushing functionality
-fn create_brushing_demo_plot(data: &CorrelatedData) -> Result<Plot> {
+fn create_brushing_demo_plot(data: &CorrelatedData) -> PlotResult<Plot> {
     // For demonstration, create a plot that shows multiple data series
     // In a real implementation, this would have actual brushing interactivity
 
@@ -188,7 +188,7 @@ fn create_brushing_demo_plot(data: &CorrelatedData) -> Result<Plot> {
         .title("Interactive Data Brushing Demo\n(Multi-plot brushing coming soon)")
         .xlabel("Time")
         .ylabel("Value")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .into();
 
     // Add instructions as plot title

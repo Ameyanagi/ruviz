@@ -624,6 +624,12 @@ pub struct BarInstance {
 }
 
 /// Box plot render data for parallel rendering
+///
+/// The style fields mirror the geometry contract documented on
+/// [`BoxPlotData`](crate::plots::BoxPlotData): they are the values
+/// `calculate_box_plot` resolved from the user's `BoxPlotConfig`, already
+/// converted to device pixels where applicable. Hardcoding constants here
+/// instead would make the matching setters silent no-ops on this backend.
 #[derive(Debug, Clone)]
 pub struct BoxPlotRenderData {
     pub x_center: f32,
@@ -638,6 +644,16 @@ pub struct BoxPlotRenderData {
     pub box_color: Color,
     pub line_color: Color,
     pub outlier_color: Color,
+    /// Whisker cap width as a fraction of the box half-width
+    pub cap_width: f32,
+    /// Box edge width, in points
+    pub edge_width: f32,
+    /// Whisker/cap stroke width, in device pixels
+    pub whisker_width: f32,
+    /// Median stroke width, in device pixels
+    pub median_width: f32,
+    /// Outlier marker size, in device pixels
+    pub flier_size: f32,
 }
 
 /// Data bounds for coordinate transformation

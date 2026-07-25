@@ -1,9 +1,8 @@
-use ruviz::core::Result;
 use ruviz::prelude::*;
 use std::time::Instant;
 
 /// Scientific plotting showcase demonstrating publication-quality multi-panel figures
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     println!("Scientific Plotting Showcase");
     std::fs::create_dir_all("generated/examples").ok();
 

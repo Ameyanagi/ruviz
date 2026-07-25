@@ -26,7 +26,7 @@
 use crate::core::error::Result;
 use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
-use crate::render::{Color, LineStyle, SkiaRenderer, Theme};
+use crate::render::{Color, ColorMapSpec, LineStyle, SkiaRenderer, Theme};
 use crate::stats::kde::{kde_1d, kde_2d};
 
 // =============================================================================
@@ -48,6 +48,7 @@ use crate::stats::kde::{kde_1d, kde_2d};
 ///     .fill(true)
 ///     .fill_alpha(0.3);
 /// ```
+#[allow(deprecated)] // the derives touch the deprecated `shade` field
 #[derive(Debug, Clone)]
 pub struct KdeConfig {
     /// Bandwidth method (None = Scott's rule)
@@ -63,8 +64,18 @@ pub struct KdeConfig {
     /// Line width
     pub line_width: f32,
     /// Whether to shade based on density
+    ///
+    /// Not implemented. Filling the area under the curve is [`KdeConfig::fill`]
+    /// plus [`KdeConfig::fill_alpha`]; density-proportional shading has no
+    /// renderer behind it.
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Use KdeConfig::fill / KdeConfig::fill_alpha to fill under the curve"
+    )]
     pub shade: bool,
-    /// Vertical line at specific value
+    /// Vertical reference lines drawn at these x values
+    ///
+    /// See [`KdeConfig::vertical_line`].
     pub vertical_lines: Vec<f64>,
     /// Cumulative distribution
     pub cumulative: bool,
@@ -73,6 +84,7 @@ pub struct KdeConfig {
 }
 
 impl Default for KdeConfig {
+    #[allow(deprecated)] // `shade` still has to be populated while it exists
     fn default() -> Self {
         Self {
             bandwidth: None,
@@ -146,9 +158,18 @@ impl KdeConfig {
         self
     }
 
-    /// Add vertical line
+    /// Add a vertical reference line at `x`
+    ///
+    /// The line is drawn dashed, in the series colour, spanning the full height
+    /// of the plot area. Call repeatedly to add several.
     pub fn vertical_line(mut self, x: f64) -> Self {
         self.vertical_lines.push(x);
+        self
+    }
+
+    /// Replace the whole set of vertical reference lines
+    pub fn vertical_lines(mut self, xs: impl IntoIterator<Item = f64>) -> Self {
+        self.vertical_lines = xs.into_iter().collect();
         self
     }
 }
@@ -195,6 +216,57 @@ pub struct KdeData {
 /// Deprecated alias for backward compatibility
 #[deprecated(since = "0.1.0", note = "Use KdeData instead")]
 pub type KdePlotData = KdeData;
+
+/// Width, in points, of the reference lines drawn by
+/// [`KdeConfig::vertical_line`].
+const KDE_VERTICAL_LINE_WIDTH_PT: f32 = 1.0;
+
+impl KdeData {
+    /// Draw the configured vertical reference lines across the plot area.
+    ///
+    /// Backs [`KdeConfig::vertical_line`]. Lines outside the visible x range are
+    /// skipped rather than clamped to the border, so an off-screen reference
+    /// does not masquerade as an axis spine.
+    fn draw_vertical_lines(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        color: Color,
+    ) -> Result<()> {
+        if self.config.vertical_lines.is_empty() {
+            return Ok(());
+        }
+
+        let clip_rect = (area.x, area.y, area.width, area.height);
+        let width = renderer
+            .render_scale()
+            .points_to_pixels(KDE_VERTICAL_LINE_WIDTH_PT);
+        let top = area.y;
+        let bottom = area.y + area.height;
+
+        for &x in &self.config.vertical_lines {
+            if !x.is_finite() {
+                continue;
+            }
+            let (px, _) = area.data_to_screen(x, 0.0);
+            if !px.is_finite() || px < area.x || px > area.x + area.width {
+                continue;
+            }
+            renderer.draw_line_clipped(
+                px,
+                top,
+                px,
+                bottom,
+                color,
+                width,
+                LineStyle::Dashed,
+                clip_rect,
+            )?;
+        }
+
+        Ok(())
+    }
+}
 
 // =============================================================================
 // KDE Computation
@@ -395,6 +467,8 @@ impl PlotRender for KdeData {
             .points_to_pixels(self.config.line_width);
         renderer.draw_polyline(&points, color, line_width, LineStyle::Solid)?;
 
+        self.draw_vertical_lines(renderer, area, color)?;
+
         Ok(())
     }
 
@@ -442,6 +516,8 @@ impl PlotRender for KdeData {
         // Draw the line
         let actual_color = color.with_alpha((f32::from(color.a) / 255.0) * alpha.clamp(0.0, 1.0));
         renderer.draw_polyline(&points, actual_color, actual_line_width, LineStyle::Solid)?;
+
+        self.draw_vertical_lines(renderer, area, actual_color)?;
 
         Ok(())
     }
@@ -516,9 +592,11 @@ impl Kde2dPlotConfig {
         self
     }
 
-    /// Set colormap
-    pub fn cmap(mut self, cmap: &str) -> Self {
-        self.cmap = cmap.to_string();
+    /// Set colormap.
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`](crate::render::ColorMap) value.
+    pub fn cmap(mut self, cmap: impl Into<ColorMapSpec>) -> Self {
+        self.cmap = cmap.into().into_name();
         self
     }
 }
@@ -681,6 +759,79 @@ mod tests {
         assert!(!config.cumulative);
         assert_eq!(config.clip, Some((0.0, 10.0)));
         assert_eq!(config.vertical_lines.len(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // vertical_lines (plan item 2.4)
+    // ------------------------------------------------------------------
+
+    fn render_kde(config: KdeConfig) -> crate::core::Result<crate::core::plot::Image> {
+        let data: Vec<f64> = (0..80).map(|i| (i as f64) / 8.0).collect();
+        let kde_data = compute_kde(&data, &config);
+        let mut renderer = SkiaRenderer::new(200, 200, Theme::default())?;
+        let ((x_min, x_max), (y_min, y_max)) = kde_data.data_bounds();
+        let area = PlotArea::new(0.0, 0.0, 200.0, 200.0, x_min, x_max, y_min, y_max);
+        kde_data.render(
+            &mut renderer,
+            &area,
+            &Theme::default(),
+            Color::from_rgb(200, 0, 0),
+        )?;
+        Ok(renderer.into_image())
+    }
+
+    #[test]
+    fn test_vertical_lines_change_the_rendered_image() {
+        let without = render_kde(KdeConfig::new().fill(false)).unwrap();
+        let with = render_kde(KdeConfig::new().fill(false).vertical_line(5.0)).unwrap();
+
+        assert_ne!(
+            without.pixels, with.pixels,
+            "KdeConfig::vertical_line produced a byte-identical image"
+        );
+    }
+
+    #[test]
+    fn test_more_vertical_lines_draw_more_ink() {
+        fn ink(image: &crate::core::plot::Image) -> usize {
+            image
+                .pixels
+                .chunks_exact(4)
+                .filter(|p| p[3] > 0 && (p[0] < 250 || p[1] < 250 || p[2] < 250))
+                .count()
+        }
+
+        let one = render_kde(KdeConfig::new().fill(false).vertical_line(3.0)).unwrap();
+        let three =
+            render_kde(KdeConfig::new().fill(false).vertical_lines([2.0, 5.0, 8.0])).unwrap();
+
+        assert!(
+            ink(&three) > ink(&one),
+            "three reference lines drew no more ink than one"
+        );
+    }
+
+    #[test]
+    fn test_offscreen_and_nonfinite_vertical_lines_are_skipped() {
+        let baseline = render_kde(KdeConfig::new().fill(false)).unwrap();
+        let offscreen = render_kde(KdeConfig::new().fill(false).vertical_lines([
+            -1_000.0,
+            1_000.0,
+            f64::NAN,
+            f64::INFINITY,
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            baseline.pixels, offscreen.pixels,
+            "an off-screen reference line was clamped onto the plot border"
+        );
+    }
+
+    #[test]
+    fn test_vertical_lines_setter_replaces_the_whole_set() {
+        let config = KdeConfig::new().vertical_line(1.0).vertical_lines([7.0]);
+        assert_eq!(config.vertical_lines, vec![7.0]);
     }
 
     // Backward compatibility tests

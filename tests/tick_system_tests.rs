@@ -244,7 +244,7 @@ fn test_scatter_with_improved_ticks() {
         .grid(true)
         .grid_major_only()
         .scatter(&x_data, &y_data)
-        .color(Color::new(255, 0, 0)) // Red dots
+        .color(Color::from_rgb(255, 0, 0)) // Red dots
         .marker_size(8.0)
         .save("generated/tests/render/scatter_improved_ticks.png");
 

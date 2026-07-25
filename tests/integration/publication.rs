@@ -327,7 +327,7 @@ mod publication_integration_tests {
             .line(&x, &y2).label("Quadratic")
             .line(&x, &y3).label("Cubic")
             .title("Color-blind Friendly Palette")
-            .legend(Position::TopLeft)
+            .legend(LegendPosition::UpperLeft)
             .save("test_colorblind_friendly.png");
         
         assert!(result.is_ok(), "Color-blind friendly theme failed: {:?}", result.err());

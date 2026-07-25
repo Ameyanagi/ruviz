@@ -34,7 +34,7 @@ Create and save a PNG:
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
 
@@ -65,7 +65,7 @@ you render, save, or start another series.
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let linear = x.clone();
     let quadratic: Vec<f64> = x.iter().map(|&v| v * v).collect();
@@ -75,7 +75,7 @@ fn main() -> Result<()> {
         .label("Linear")
         .line(&x, &quadratic)
         .label("Quadratic")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .theme(Theme::publication())
         .save("series.png")?;
 
@@ -88,7 +88,7 @@ Top-level helpers are available for line, scatter, and bar plots:
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0];
     let y = vec![0.0, 1.0, 4.0];
 
@@ -105,17 +105,22 @@ The `ruviz::simple` module also provides file-oriented helper functions such as
 
 ## Plot Types
 
-The root `Plot` builder currently exposes:
+The root `Plot` builder exposes 21 plot types, and that list is complete:
 
 - Basic: line, scatter, bar, histogram, box plot, heatmap
 - Distribution: KDE, ECDF, violin, boxen
 - Composition and polar: pie, donut styling, radar, polar line
-- Continuous, discrete, and error plots: contour, area, step, stem, symmetric/asymmetric error bars
+- Continuous, discrete, and error plots: contour, area, fill between, step, stem, symmetric/asymmetric error bars
 - Vector: quiver
 - Layout helpers: subplots, legends, grid/tick controls, annotations, insets
 
-Some lower-level modules contain additional experimental plot implementations
-that do not yet have a high-level `Plot::new().type(...)` builder method.
+Anything not in that list has no builder method and cannot be drawn, even
+though the source tree contains partial implementations of it. Specifically,
+**hexbin, strip, swarm, grouped bar, stacked bar, stacked area, rug, 2D KDE,
+dendrogram, joint plot, pair plot, regression plot and residual plot have no
+`Plot` builder**, and Sankey diagrams and streamplots are not implemented at
+all. The compute functions for some of these are public and usable on their
+own, but they will not render.
 
 ## Export
 
@@ -188,7 +193,7 @@ selector, those two values use its selected sans-serif fallback:
 ```rust,check,features=typst-math
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 
@@ -220,7 +225,7 @@ typst-math = ["ruviz/typst-math"]
 ```rust,check
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();
 

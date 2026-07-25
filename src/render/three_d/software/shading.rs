@@ -21,7 +21,7 @@ pub(super) fn shade(color: Color, normal: Vec3, shading: SurfaceShading, two_sid
         diffuse.max(0.0)
     };
     let intensity = 0.35 + 0.65 * diffuse;
-    Color::new_rgba(
+    Color::from_rgba(
         scale_channel(color.r, intensity),
         scale_channel(color.g, intensity),
         scale_channel(color.b, intensity),
@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn unlit_color_is_unchanged() {
-        let color = Color::new(120, 180, 240);
+        let color = Color::from_rgb(120, 180, 240);
         assert_eq!(
             shade(color, Vec3::new(1.0, 0.0, 0.0), SurfaceShading::Unlit, true),
             color
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn two_sided_lighting_is_symmetric() {
-        let color = Color::new(120, 180, 240);
+        let color = Color::from_rgb(120, 180, 240);
         assert_eq!(
             shade(color, Vec3::Z, SurfaceShading::Smooth, true),
             shade(color, -Vec3::Z, SurfaceShading::Smooth, true)

@@ -93,7 +93,7 @@ fn hybrid_svg_has_one_depth_layer_and_vector_axis_text() {
             .elevation_deg(31.0)
             .orthographic(),
     )
-    .figure_size(4.0, 3.0)
+    .size(4.0, 3.0)
     .dpi(80)
     .render_to_svg()
     .expect("hybrid SVG");

@@ -51,7 +51,7 @@ z[y_index][x_index]
 
 ```rust,ignore,reason=abridged-migration-snippet
 surface(&x, &y, &z)
-    .colormap(ColorMap::viridis())
+    .cmap(ColorMap::viridis())
     .sampling(SurfaceSampling::MaxGrid {
         rows: 100,
         columns: 100,

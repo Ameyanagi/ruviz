@@ -192,7 +192,7 @@ mod large_dataset_integration_tests {
                 .label("sin(0.1x)·cos(x)")
                 .color(Color::GREEN)
             .title(&format!("Large Multi-Series ({} points each)", size))
-            .legend(Position::TopRight)
+            .legend(LegendPosition::UpperRight)
             .save("test_large_multi_series.png");
         
         let duration = start.elapsed();

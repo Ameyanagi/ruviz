@@ -1,3 +1,4 @@
+use ruviz::core::LegendPosition;
 /// Gallery Example: Legend Features
 ///
 /// This example demonstrates all legend features implemented in ruviz:
@@ -7,7 +8,6 @@
 /// - Multi-column (horizontal) layout
 /// - Frame styling with background and border
 use ruviz::core::Plot;
-use ruviz::core::Position;
 use ruviz::render::{Color, LineStyle, MarkerStyle, Theme};
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -38,7 +38,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .label("Dotted line")
         .color(Color::GREEN)
         .style(LineStyle::Dotted)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .legend_corner_radius(5.0)
         .save("gallery/publication/legend_line_styles.png")?;
 
@@ -66,7 +66,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .label("Triangle markers")
         .color(Color::GREEN)
         .marker(MarkerStyle::Triangle)
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .legend_corner_radius(4.0)
         .save("gallery/publication/legend_scatter_markers.png")?;
 
@@ -88,7 +88,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .label("decay")
         .color(Color::GREEN)
         .style(LineStyle::Dotted)
-        .legend(Position::BottomCenter)
+        .legend(LegendPosition::LowerCenter)
         .legend_columns(3)
         .legend_corner_radius(4.0)
         .save("gallery/publication/legend_horizontal.png")?;
@@ -113,9 +113,9 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .style(LineStyle::Dashed)
         .scatter(&x_scatter, &y2)
         .label("Scatter D")
-        .color(Color::new(255, 165, 0))
+        .color(Color::from_rgb(255, 165, 0))
         .marker(MarkerStyle::Diamond)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .legend_columns(2)
         .legend_corner_radius(6.0)
         .save("gallery/publication/legend_mixed.png")?;

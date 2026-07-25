@@ -236,7 +236,7 @@ To benchmark ruviz in your application:
 use std::time::Instant;
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let x: Vec<f64> = (0..100_000).map(|i| i as f64).collect();
     let y: Vec<f64> = x.iter().map(|v| v.sin()).collect();
 
@@ -392,7 +392,7 @@ Plot::new()
 use ruviz::{core::plot::Image, prelude::*};
 
 // Async endpoint example
-async fn generate_plot(data: Vec<(f64, f64)>) -> Result<Image> {
+async fn generate_plot(data: Vec<(f64, f64)>) -> PlotResult<Image> {
     let (x, y): (Vec<_>, Vec<_>) = data.into_iter().unzip();
 
     Plot::new()

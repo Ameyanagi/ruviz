@@ -721,7 +721,7 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
         min: ViewportPoint::new(left, top),
         max: ViewportPoint::new(left + tooltip_width, top + tooltip_height),
     };
-    draw_rect(pixels, size_px, rect, Color::new_rgba(255, 255, 220, 220));
+    draw_rect(pixels, size_px, rect, Color::from_rgba(255, 255, 220, 220));
 
     let Some(size) = tiny_skia::IntSize::from_wh(size_px.0, size_px.1) else {
         log::debug!("Skipping tooltip text render because overlay size is invalid");
@@ -738,7 +738,7 @@ pub(super) fn draw_tooltip_overlay(pixels: &mut [u8], size_px: (u32, u32), toolt
         (left + TOOLTIP_PADDING_X) as f32,
         (top + TOOLTIP_PADDING_Y) as f32,
         &font,
-        Color::new_rgba(24, 24, 24, 255),
+        Color::from_rgba(24, 24, 24, 255),
     ) {
         log::debug!("Skipping tooltip text render after text rasterization failed: {err}");
         return;

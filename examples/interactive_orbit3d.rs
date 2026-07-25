@@ -1,6 +1,6 @@
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let points = 2_000;
     let t: Vec<f64> = (0..points)
         .map(|index| index as f64 * 12.0 * std::f64::consts::TAU / points as f64)

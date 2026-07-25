@@ -191,7 +191,7 @@ fn cpu_render_is_deterministic_and_reports_the_actual_backend() {
             .xlabel("x")
             .ylabel("y")
             .zlabel("z")
-            .figure_size(2.4, 1.8)
+            .size(2.4, 1.8)
             .dpi(72)
             .benchmark_render_with_diagnostics()
             .expect("software render")
@@ -231,7 +231,7 @@ fn auto_render_truthfully_reports_cpu_when_gpu_feature_is_disabled() {
 #[test]
 fn png_and_hybrid_svg_terminals_are_live() {
     let png = scatter3d(&[0.0, 1.0], &[0.0, 1.0], &[1.0, 0.0])
-        .figure_size(2.0, 1.5)
+        .size(2.0, 1.5)
         .dpi(72)
         .render_png_bytes()
         .expect("PNG");
@@ -239,7 +239,7 @@ fn png_and_hybrid_svg_terminals_are_live() {
 
     let svg = line3d(&[0.0, 1.0], &[0.0, 1.0], &[1.0, 0.0])
         .title("Hybrid 3d")
-        .figure_size(2.0, 1.5)
+        .size(2.0, 1.5)
         .dpi(72)
         .render_to_svg()
         .expect("SVG");
@@ -251,7 +251,7 @@ fn png_and_hybrid_svg_terminals_are_live() {
 #[test]
 fn one_call_surface_pick_returns_source_indices_and_data_coordinates() {
     let hit = surface(&[-1.0, 1.0], &[-1.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]])
-        .figure_size(2.4, 1.8)
+        .size(2.4, 1.8)
         .dpi(72)
         .pick(95.0, 52.5)
         .expect("pick")
@@ -266,7 +266,7 @@ fn one_call_surface_pick_returns_source_indices_and_data_coordinates() {
 
     assert!(
         surface(&[-1.0, 1.0], &[-1.0, 1.0], &[[0.0, 0.0], [0.0, 0.0]],)
-            .figure_size(2.4, 1.8)
+            .size(2.4, 1.8)
             .dpi(72)
             .pick(0.0, 0.0)
             .expect("outside pick")
@@ -280,13 +280,13 @@ fn large_offsets_and_both_projection_modes_render_semantically() {
     let y = [-1.0e12, -1.0e12 + 1.0];
     let z = [[4.0e12, 4.0e12 + 0.5], [4.0e12 + 0.5, 4.0e12 + 1.0]];
     let orthographic = surface(&x, &y, &z)
-        .figure_size(2.0, 1.5)
+        .size(2.0, 1.5)
         .dpi(72)
         .render()
         .expect("large-offset orthographic render");
     let perspective = surface(&x, &y, &z)
         .perspective_deg(45.0)
-        .figure_size(2.0, 1.5)
+        .size(2.0, 1.5)
         .dpi(72)
         .render()
         .expect("large-offset perspective render");
@@ -310,12 +310,12 @@ fn save_selects_png_and_svg_from_the_extension() {
     let png = directory.path().join("plot.png");
     let svg = directory.path().join("plot.svg");
     scatter3d(&[0.0], &[0.0], &[0.0])
-        .figure_size(1.5, 1.2)
+        .size(1.5, 1.2)
         .dpi(72)
         .save(&png)
         .expect("save PNG");
     scatter3d(&[0.0], &[0.0], &[0.0])
-        .figure_size(1.5, 1.2)
+        .size(1.5, 1.2)
         .dpi(72)
         .save(&svg)
         .expect("save SVG");
@@ -337,7 +337,7 @@ fn hybrid_pdf_save_uses_the_same_depth_tested_layer() {
     let directory = tempfile::tempdir().expect("tempdir");
     let pdf = directory.path().join("plot.pdf");
     surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [1.0, 0.0]])
-        .figure_size(2.0, 1.5)
+        .size(2.0, 1.5)
         .dpi(72)
         .save(&pdf)
         .expect("save PDF");

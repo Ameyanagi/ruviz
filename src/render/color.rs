@@ -19,7 +19,7 @@ use std::fmt;
 ///
 /// Plot::new()
 ///     .line(&x, &y)
-///     .color(Color::new(255, 0, 128)) // Custom pink
+///     .color(Color::from_rgb(255, 0, 128)) // Custom pink
 ///     .end_series()
 ///     .save("custom_color.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -35,21 +35,24 @@ pub struct Color {
 }
 
 impl Color {
-    /// Create a new Color from RGB values (alpha = 255)
+    /// Create an opaque `Color` from RGB components (alpha = 255).
+    ///
+    /// This is the canonical RGB constructor; it pairs with
+    /// [`Color::from_rgba`] and [`Color::from_hex`].
     ///
     /// # Example
     ///
     /// ```rust
     /// use ruviz::render::Color;
     ///
-    /// let red = Color::new(255, 0, 0);
-    /// let purple = Color::new(128, 0, 128);
+    /// let red = Color::from_rgb(255, 0, 0);
+    /// let purple = Color::from_rgb(128, 0, 128);
     /// ```
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
+    pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
     }
 
-    /// Create a new Color from RGBA values
+    /// Create a `Color` from RGBA components.
     ///
     /// # Example
     ///
@@ -57,10 +60,32 @@ impl Color {
     /// use ruviz::render::Color;
     ///
     /// // Semi-transparent blue
-    /// let translucent_blue = Color::new_rgba(0, 0, 255, 128);
+    /// let translucent_blue = Color::from_rgba(0, 0, 255, 128);
     /// ```
-    pub fn new_rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+    pub const fn from_rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
+    }
+
+    /// Create a new Color from RGB values (alpha = 255)
+    ///
+    /// # Deprecated
+    ///
+    /// Renamed to [`Color::from_rgb`] so the constructor family reads
+    /// consistently (`from_rgb` / `from_rgba` / `from_hex`).
+    #[deprecated(since = "0.6.0", note = "renamed: use `Color::from_rgb(r, g, b)`")]
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self::from_rgb(r, g, b)
+    }
+
+    /// Create a new Color from RGBA values
+    ///
+    /// # Deprecated
+    ///
+    /// Renamed to [`Color::from_rgba`] for symmetry with
+    /// [`Color::from_rgb`].
+    #[deprecated(since = "0.6.0", note = "renamed: use `Color::from_rgba(r, g, b, a)`")]
+    pub const fn new_rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self::from_rgba(r, g, b, a)
     }
 
     /// Create a Color from hex string (supports #RGB, #RRGGBB, #RRGGBBAA)
@@ -129,22 +154,22 @@ impl Color {
             "gray" | "grey" => Some(Self::GRAY),
             "lightgray" | "lightgrey" | "light_gray" | "light_grey" => Some(Self::LIGHT_GRAY),
             "darkgray" | "darkgrey" | "dark_gray" | "dark_grey" => Some(Self::DARK_GRAY),
-            "pink" => Some(Self::new(255, 192, 203)),
-            "brown" => Some(Self::new(139, 69, 19)),
-            "lime" => Some(Self::new(0, 255, 0)),
-            "navy" => Some(Self::new(0, 0, 128)),
-            "teal" => Some(Self::new(0, 128, 128)),
-            "olive" => Some(Self::new(128, 128, 0)),
-            "maroon" => Some(Self::new(128, 0, 0)),
+            "pink" => Some(Self::from_rgb(255, 192, 203)),
+            "brown" => Some(Self::from_rgb(139, 69, 19)),
+            "lime" => Some(Self::from_rgb(0, 255, 0)),
+            "navy" => Some(Self::from_rgb(0, 0, 128)),
+            "teal" => Some(Self::from_rgb(0, 128, 128)),
+            "olive" => Some(Self::from_rgb(128, 128, 0)),
+            "maroon" => Some(Self::from_rgb(128, 0, 0)),
             "aqua" => Some(Self::CYAN),
             "fuchsia" => Some(Self::MAGENTA),
-            "silver" => Some(Self::new(192, 192, 192)),
-            "coral" => Some(Self::new(255, 127, 80)),
-            "salmon" => Some(Self::new(250, 128, 114)),
-            "gold" => Some(Self::new(255, 215, 0)),
-            "indigo" => Some(Self::new(75, 0, 130)),
-            "violet" => Some(Self::new(238, 130, 238)),
-            "crimson" => Some(Self::new(220, 20, 60)),
+            "silver" => Some(Self::from_rgb(192, 192, 192)),
+            "coral" => Some(Self::from_rgb(255, 127, 80)),
+            "salmon" => Some(Self::from_rgb(250, 128, 114)),
+            "gold" => Some(Self::from_rgb(255, 215, 0)),
+            "indigo" => Some(Self::from_rgb(75, 0, 130)),
+            "violet" => Some(Self::from_rgb(238, 130, 238)),
+            "crimson" => Some(Self::from_rgb(220, 20, 60)),
             _ => None,
         }
     }
@@ -222,14 +247,14 @@ impl Color {
                     .map_err(|_| ColorError::InvalidHex)?;
                 let b = u8::from_str_radix(&hex[2..3].repeat(2), 16)
                     .map_err(|_| ColorError::InvalidHex)?;
-                Ok(Self::new(r, g, b))
+                Ok(Self::from_rgb(r, g, b))
             }
             6 => {
                 // #RRGGBB format
                 let r = u8::from_str_radix(&hex[0..2], 16).map_err(|_| ColorError::InvalidHex)?;
                 let g = u8::from_str_radix(&hex[2..4], 16).map_err(|_| ColorError::InvalidHex)?;
                 let b = u8::from_str_radix(&hex[4..6], 16).map_err(|_| ColorError::InvalidHex)?;
-                Ok(Self::new(r, g, b))
+                Ok(Self::from_rgb(r, g, b))
             }
             8 => {
                 // #RRGGBBAA format
@@ -237,7 +262,7 @@ impl Color {
                 let g = u8::from_str_radix(&hex[2..4], 16).map_err(|_| ColorError::InvalidHex)?;
                 let b = u8::from_str_radix(&hex[4..6], 16).map_err(|_| ColorError::InvalidHex)?;
                 let a = u8::from_str_radix(&hex[6..8], 16).map_err(|_| ColorError::InvalidHex)?;
-                Ok(Self::new_rgba(r, g, b, a))
+                Ok(Self::from_rgba(r, g, b, a))
             }
             _ => Err(ColorError::InvalidLength),
         }
@@ -286,7 +311,7 @@ impl Color {
     /// ```rust
     /// use ruviz::render::Color;
     ///
-    /// let blue = Color::new(100, 150, 200);
+    /// let blue = Color::from_rgb(100, 150, 200);
     /// let dark_blue = blue.darken(0.3); // 30% darker
     /// assert!(dark_blue.r < blue.r);
     /// assert!(dark_blue.g < blue.g);
@@ -313,7 +338,7 @@ impl Color {
     /// ```rust
     /// use ruviz::render::Color;
     ///
-    /// let blue = Color::new(100, 150, 200);
+    /// let blue = Color::from_rgb(100, 150, 200);
     /// let light_blue = blue.lighten(0.3); // 30% lighter
     /// assert!(light_blue.r > blue.r);
     /// assert!(light_blue.g > blue.g);
@@ -615,7 +640,7 @@ impl ColorMap {
         let c2 = self.colors[index + 1];
 
         // Linear interpolation
-        Color::new_rgba(
+        Color::from_rgba(
             (c1.r as f64 + (c2.r as f64 - c1.r as f64) * frac) as u8,
             (c1.g as f64 + (c2.g as f64 - c1.g as f64) * frac) as u8,
             (c1.b as f64 + (c2.b as f64 - c1.b as f64) * frac) as u8,
@@ -721,13 +746,13 @@ impl ColorMap {
         Self::new(
             "hot".to_string(),
             vec![
-                Color::new(0, 0, 0),       // Black
-                Color::new(128, 0, 0),     // Dark red
-                Color::new(255, 0, 0),     // Red
-                Color::new(255, 128, 0),   // Orange
-                Color::new(255, 255, 0),   // Yellow
-                Color::new(255, 255, 128), // Light yellow
-                Color::new(255, 255, 255), // White
+                Color::from_rgb(0, 0, 0),       // Black
+                Color::from_rgb(128, 0, 0),     // Dark red
+                Color::from_rgb(255, 0, 0),     // Red
+                Color::from_rgb(255, 128, 0),   // Orange
+                Color::from_rgb(255, 255, 0),   // Yellow
+                Color::from_rgb(255, 255, 128), // Light yellow
+                Color::from_rgb(255, 255, 255), // White
             ],
         )
     }
@@ -737,9 +762,9 @@ impl ColorMap {
         Self::new(
             "cool".to_string(),
             vec![
-                Color::new(0, 255, 255),   // Cyan
-                Color::new(128, 128, 255), // Light blue
-                Color::new(255, 0, 255),   // Magenta
+                Color::from_rgb(0, 255, 255),   // Cyan
+                Color::from_rgb(128, 128, 255), // Light blue
+                Color::from_rgb(255, 0, 255),   // Magenta
             ],
         )
     }
@@ -749,11 +774,11 @@ impl ColorMap {
         Self::new(
             "gray".to_string(),
             vec![
-                Color::new(0, 0, 0),       // Black
-                Color::new(64, 64, 64),    // Dark gray
-                Color::new(128, 128, 128), // Gray
-                Color::new(192, 192, 192), // Light gray
-                Color::new(255, 255, 255), // White
+                Color::from_rgb(0, 0, 0),       // Black
+                Color::from_rgb(64, 64, 64),    // Dark gray
+                Color::from_rgb(128, 128, 128), // Gray
+                Color::from_rgb(192, 192, 192), // Light gray
+                Color::from_rgb(255, 255, 255), // White
             ],
         )
     }
@@ -763,15 +788,15 @@ impl ColorMap {
         Self::new(
             "jet".to_string(),
             vec![
-                Color::new(0, 0, 128),     // Dark blue
-                Color::new(0, 0, 255),     // Blue
-                Color::new(0, 128, 255),   // Light blue
-                Color::new(0, 255, 255),   // Cyan
-                Color::new(128, 255, 128), // Light green
-                Color::new(255, 255, 0),   // Yellow
-                Color::new(255, 128, 0),   // Orange
-                Color::new(255, 0, 0),     // Red
-                Color::new(128, 0, 0),     // Dark red
+                Color::from_rgb(0, 0, 128),     // Dark blue
+                Color::from_rgb(0, 0, 255),     // Blue
+                Color::from_rgb(0, 128, 255),   // Light blue
+                Color::from_rgb(0, 255, 255),   // Cyan
+                Color::from_rgb(128, 255, 128), // Light green
+                Color::from_rgb(255, 255, 0),   // Yellow
+                Color::from_rgb(255, 128, 0),   // Orange
+                Color::from_rgb(255, 0, 0),     // Red
+                Color::from_rgb(128, 0, 0),     // Dark red
             ],
         )
     }
@@ -845,6 +870,130 @@ impl ColorMap {
     }
 }
 
+// ============================================================================
+// ColorMapSpec — one spelling for "which colour scale?"
+// ============================================================================
+
+/// How a plot's colour scale was requested.
+///
+/// Every configuration that carries a colour scale takes `impl Into<ColorMapSpec>`
+/// through a single method named `cmap`, so all of these compile and mean the
+/// same thing:
+///
+/// ```rust
+/// use ruviz::render::{ColorMap, ColorMapSpec};
+///
+/// let by_name: ColorMapSpec = "plasma".into();
+/// let by_owned_name: ColorMapSpec = String::from("plasma").into();
+/// let by_value: ColorMapSpec = ColorMap::plasma().into();
+///
+/// assert_eq!(by_name.name(), "plasma");
+/// assert_eq!(by_owned_name.name(), "plasma");
+/// assert_eq!(by_value.name(), "plasma");
+/// ```
+///
+/// An unknown name is *not* an error at call time — it resolves to
+/// [`ColorMapSpec::FALLBACK`] (`viridis`) when the plot is rendered, matching
+/// the behaviour the string-typed configs already had.
+#[derive(Debug, Clone)]
+pub enum ColorMapSpec {
+    /// A colormap named at the call site, resolved via [`ColorMap::by_name`].
+    Named(String),
+    /// An explicit colormap value.
+    Map(ColorMap),
+}
+
+impl ColorMapSpec {
+    /// Name used when a requested colormap name is not recognised.
+    pub const FALLBACK: &'static str = "viridis";
+
+    /// The name of the requested colormap.
+    pub fn name(&self) -> &str {
+        match self {
+            ColorMapSpec::Named(name) => name,
+            ColorMapSpec::Map(map) => map.name(),
+        }
+    }
+
+    /// Resolve to a concrete [`ColorMap`], falling back to `viridis` when a
+    /// name is not recognised.
+    pub fn resolve(&self) -> ColorMap {
+        match self {
+            ColorMapSpec::Named(name) => ColorMap::by_name(name).unwrap_or_else(ColorMap::viridis),
+            ColorMapSpec::Map(map) => map.clone(),
+        }
+    }
+
+    /// Resolve to a concrete [`ColorMap`], or `None` when the name is not
+    /// recognised. Use this where a wrong colour scale should be reported
+    /// rather than silently substituted.
+    pub fn try_resolve(&self) -> Option<ColorMap> {
+        match self {
+            ColorMapSpec::Named(name) => ColorMap::by_name(name),
+            ColorMapSpec::Map(map) => Some(map.clone()),
+        }
+    }
+
+    /// Consume the spec, yielding the colormap name.
+    ///
+    /// Configs that still store a `String` colormap field use this so they can
+    /// accept both spellings without changing their storage.
+    pub fn into_name(self) -> String {
+        match self {
+            ColorMapSpec::Named(name) => name,
+            ColorMapSpec::Map(map) => map.name().to_string(),
+        }
+    }
+}
+
+impl Default for ColorMapSpec {
+    fn default() -> Self {
+        ColorMapSpec::Named(Self::FALLBACK.to_string())
+    }
+}
+
+impl From<ColorMap> for ColorMapSpec {
+    fn from(map: ColorMap) -> Self {
+        ColorMapSpec::Map(map)
+    }
+}
+
+impl From<&ColorMap> for ColorMapSpec {
+    fn from(map: &ColorMap) -> Self {
+        ColorMapSpec::Map(map.clone())
+    }
+}
+
+impl From<String> for ColorMapSpec {
+    fn from(name: String) -> Self {
+        ColorMapSpec::Named(name)
+    }
+}
+
+impl From<&str> for ColorMapSpec {
+    fn from(name: &str) -> Self {
+        ColorMapSpec::Named(name.to_string())
+    }
+}
+
+impl From<&String> for ColorMapSpec {
+    fn from(name: &String) -> Self {
+        ColorMapSpec::Named(name.clone())
+    }
+}
+
+impl From<ColorMapSpec> for ColorMap {
+    fn from(spec: ColorMapSpec) -> Self {
+        spec.resolve()
+    }
+}
+
+impl fmt::Display for ColorMapSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 impl fmt::Display for ColorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -865,7 +1014,7 @@ mod tests {
 
     #[test]
     fn test_color_creation() {
-        let color = Color::new(255, 128, 64);
+        let color = Color::from_rgb(255, 128, 64);
         assert_eq!(color.r, 255);
         assert_eq!(color.g, 128);
         assert_eq!(color.b, 64);
@@ -881,19 +1030,25 @@ mod tests {
     #[test]
     fn test_hex_parsing() {
         // #RGB format
-        assert_eq!(Color::from_hex("#f0a").unwrap(), Color::new(255, 0, 170));
+        assert_eq!(
+            Color::from_hex("#f0a").unwrap(),
+            Color::from_rgb(255, 0, 170)
+        );
 
         // #RRGGBB format
         assert_eq!(
             Color::from_hex("#ff8040").unwrap(),
-            Color::new(255, 128, 64)
+            Color::from_rgb(255, 128, 64)
         );
-        assert_eq!(Color::from_hex("ff8040").unwrap(), Color::new(255, 128, 64)); // Without #
+        assert_eq!(
+            Color::from_hex("ff8040").unwrap(),
+            Color::from_rgb(255, 128, 64)
+        ); // Without #
 
         // #RRGGBBAA format
         assert_eq!(
             Color::from_hex("#ff804080").unwrap(),
-            Color::new_rgba(255, 128, 64, 128)
+            Color::from_rgba(255, 128, 64, 128)
         );
 
         // Invalid formats
@@ -904,9 +1059,9 @@ mod tests {
 
     #[test]
     fn test_predefined_colors() {
-        assert_eq!(Color::RED, Color::new(255, 0, 0));
-        assert_eq!(Color::BLUE, Color::new(0, 0, 255));
-        assert_eq!(Color::WHITE, Color::new(255, 255, 255));
+        assert_eq!(Color::RED, Color::from_rgb(255, 0, 0));
+        assert_eq!(Color::BLUE, Color::from_rgb(0, 0, 255));
+        assert_eq!(Color::WHITE, Color::from_rgb(255, 255, 255));
         assert_eq!(Color::TRANSPARENT.a, 0);
     }
 
@@ -923,7 +1078,7 @@ mod tests {
 
     #[test]
     fn test_rgba_f32_conversion() {
-        let color = Color::new_rgba(255, 128, 64, 128);
+        let color = Color::from_rgba(255, 128, 64, 128);
         let (r, g, b, a) = color.to_rgba_f32();
         assert!((r - 1.0).abs() < f32::EPSILON);
         assert!((g - 0.502).abs() < 0.01);
@@ -934,7 +1089,7 @@ mod tests {
     #[test]
     fn test_color_display() {
         assert_eq!(Color::RED.to_string(), "#ff0000");
-        assert_eq!(Color::new_rgba(255, 128, 64, 128).to_string(), "#ff804080");
+        assert_eq!(Color::from_rgba(255, 128, 64, 128).to_string(), "#ff804080");
     }
 
     #[test]
@@ -950,14 +1105,14 @@ mod tests {
         let cmap = ColorMap::new(
             "test".to_string(),
             vec![
-                Color::new(0, 0, 0),       // Black
-                Color::new(255, 255, 255), // White
+                Color::from_rgb(0, 0, 0),       // Black
+                Color::from_rgb(255, 255, 255), // White
             ],
         );
 
         // Test endpoints
-        assert_eq!(cmap.sample(0.0), Color::new(0, 0, 0));
-        assert_eq!(cmap.sample(1.0), Color::new(255, 255, 255));
+        assert_eq!(cmap.sample(0.0), Color::from_rgb(0, 0, 0));
+        assert_eq!(cmap.sample(1.0), Color::from_rgb(255, 255, 255));
 
         // Test middle (should be gray)
         let mid = cmap.sample(0.5);
@@ -1068,7 +1223,7 @@ mod tests {
 
     #[test]
     fn test_color_darken() {
-        let color = Color::new(100, 150, 200);
+        let color = Color::from_rgb(100, 150, 200);
 
         // 0% darkening = unchanged
         let same = color.darken(0.0);
@@ -1089,13 +1244,13 @@ mod tests {
         assert_eq!(black.b, 0);
 
         // Alpha preserved
-        let with_alpha = Color::new_rgba(100, 150, 200, 128).darken(0.5);
+        let with_alpha = Color::from_rgba(100, 150, 200, 128).darken(0.5);
         assert_eq!(with_alpha.a, 128);
     }
 
     #[test]
     fn test_color_lighten() {
-        let color = Color::new(100, 150, 200);
+        let color = Color::from_rgb(100, 150, 200);
 
         // 0% lightening = unchanged
         let same = color.lighten(0.0);
@@ -1116,7 +1271,7 @@ mod tests {
         assert_eq!(white.b, 255);
 
         // Alpha preserved
-        let with_alpha = Color::new_rgba(100, 150, 200, 128).lighten(0.5);
+        let with_alpha = Color::from_rgba(100, 150, 200, 128).lighten(0.5);
         assert_eq!(with_alpha.a, 128);
     }
 
@@ -1146,5 +1301,41 @@ mod tests {
             source_over_premultiplied_rgba(destination, [10, 20, 30, 255]),
             [10, 20, 30, 255]
         );
+    }
+
+    #[test]
+    fn deprecated_constructors_forward_to_the_new_names() {
+        #[allow(deprecated)]
+        let old = Color::new(12, 34, 56);
+        assert_eq!(old, Color::from_rgb(12, 34, 56));
+
+        #[allow(deprecated)]
+        let old_rgba = Color::new_rgba(12, 34, 56, 78);
+        assert_eq!(old_rgba, Color::from_rgba(12, 34, 56, 78));
+    }
+
+    #[test]
+    fn colormap_spec_accepts_names_and_values() {
+        let from_str: ColorMapSpec = "plasma".into();
+        let from_string: ColorMapSpec = String::from("plasma").into();
+        let from_map: ColorMapSpec = ColorMap::plasma().into();
+
+        assert_eq!(from_str.name(), "plasma");
+        assert_eq!(from_string.name(), "plasma");
+        assert_eq!(from_map.name(), "plasma");
+
+        for spec in [from_str, from_string, from_map] {
+            assert_eq!(spec.resolve().sample(0.5), ColorMap::plasma().sample(0.5));
+            assert_eq!(spec.clone().into_name(), "plasma");
+            assert!(spec.try_resolve().is_some());
+        }
+    }
+
+    #[test]
+    fn colormap_spec_falls_back_for_unknown_names() {
+        let spec: ColorMapSpec = "not-a-colormap".into();
+        assert!(spec.try_resolve().is_none());
+        assert_eq!(spec.resolve().name(), ColorMapSpec::FALLBACK);
+        assert_eq!(ColorMapSpec::default().name(), ColorMapSpec::FALLBACK);
     }
 }

@@ -1,26 +1,67 @@
 //! Dendrogram implementations
 //!
 //! Provides hierarchical clustering visualization.
+//!
+//! # Compute-only
+//!
+//! This module computes tree geometry; it has no renderer and no `Plot` builder
+//! method. [`compute_dendrogram`] returns [`DendrogramPlotData`] and
+//! [`dendrogram_lines`] turns each link into line segments, which the caller
+//! draws itself (typically via `Plot::line`).
+//!
+//! Consequently the styling fields on [`DendrogramConfig`] have nothing behind
+//! them. The ones that no function in this crate reads are marked
+//! `#[deprecated]` so the compiler says so at the call site, rather than the
+//! caller discovering it from an unchanged image.
 
 use crate::render::Color;
 use crate::stats::clustering::Linkage;
 
 /// Configuration for dendrogram
+///
+/// Only [`DendrogramConfig::show_labels`] and [`DendrogramConfig::labels`] are
+/// consumed by [`compute_dendrogram`]; [`DendrogramConfig::orientation`] is what
+/// you pass to [`dendrogram_lines`]. The remaining fields are inert — see the
+/// module docs.
+#[allow(deprecated)] // the derives touch the deprecated fields below
 #[derive(Debug, Clone)]
 pub struct DendrogramConfig {
     /// Orientation
+    ///
+    /// Not read by [`compute_dendrogram`]; pass it to [`dendrogram_lines`]
+    /// yourself.
     pub orientation: DendrogramOrientation,
     /// Line color
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Dendrograms are compute-only — style the segments from dendrogram_lines on the series you draw them with"
+    )]
     pub color: Option<Color>,
     /// Line width
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Dendrograms are compute-only — style the segments from dendrogram_lines on the series you draw them with"
+    )]
     pub line_width: f32,
     /// Show leaf labels
     pub show_labels: bool,
     /// Label font size
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Dendrograms are compute-only — set the font size on whatever draws DendrogramPlotData::labels"
+    )]
     pub label_size: f32,
     /// Truncate at this number of leaves
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. compute_dendrogram always returns the full tree"
+    )]
     pub truncate_mode: Option<TruncateMode>,
     /// Distance threshold for color coding
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. compute_dendrogram does not colour clusters; compare DendrogramLink::join_y yourself"
+    )]
     pub color_threshold: Option<f64>,
     /// Leaf labels
     pub labels: Vec<String>,
@@ -45,6 +86,8 @@ pub enum TruncateMode {
 }
 
 impl Default for DendrogramConfig {
+    // The inert fields still have to be populated while they exist.
+    #[allow(deprecated)]
     fn default() -> Self {
         Self {
             orientation: DendrogramOrientation::Top,
@@ -72,12 +115,26 @@ impl DendrogramConfig {
     }
 
     /// Set color
+    ///
+    /// Currently inert; see [`DendrogramConfig::color`].
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Dendrograms are compute-only — style the segments from dendrogram_lines on the series you draw them with"
+    )]
+    #[allow(deprecated)]
     pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
     }
 
     /// Set line width
+    ///
+    /// Currently inert; see [`DendrogramConfig::line_width`].
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Dendrograms are compute-only — style the segments from dendrogram_lines on the series you draw them with"
+    )]
+    #[allow(deprecated)]
     pub fn line_width(mut self, width: f32) -> Self {
         self.line_width = width.max(0.1);
         self
@@ -89,7 +146,22 @@ impl DendrogramConfig {
         self
     }
 
+    /// Show or hide the leaf labels
+    ///
+    /// When disabled, [`DendrogramPlotData::labels`] comes back empty.
+    pub fn show_labels(mut self, show: bool) -> Self {
+        self.show_labels = show;
+        self
+    }
+
     /// Set color threshold
+    ///
+    /// Currently inert; see [`DendrogramConfig::color_threshold`].
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. compute_dendrogram does not colour clusters; compare DendrogramLink::join_y yourself"
+    )]
+    #[allow(deprecated)]
     pub fn color_threshold(mut self, threshold: f64) -> Self {
         self.color_threshold = Some(threshold);
         self
@@ -286,6 +358,27 @@ mod tests {
         // Should have n-1 links for n leaves
         assert_eq!(data.links.len(), 3);
         assert_eq!(data.leaf_order.len(), 4);
+    }
+
+    #[test]
+    fn test_show_labels_gates_the_only_label_output() {
+        let points = vec![vec![0.0, 0.0], vec![1.0, 0.0], vec![5.0, 0.0]];
+        let distances = pdist_euclidean(&points);
+        let linkage_result = linkage(&distances, LinkageMethod::Single);
+
+        let with = compute_dendrogram(
+            &linkage_result,
+            &DendrogramConfig::new().labels(vec!["a".into(), "b".into(), "c".into()]),
+        );
+        let without = compute_dendrogram(
+            &linkage_result,
+            &DendrogramConfig::new()
+                .labels(vec!["a".into(), "b".into(), "c".into()])
+                .show_labels(false),
+        );
+
+        assert_eq!(with.labels.len(), 3);
+        assert!(without.labels.is_empty());
     }
 
     #[test]

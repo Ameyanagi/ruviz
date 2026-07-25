@@ -341,7 +341,7 @@ When reporting performance or rendering issues, please include:
    ```rust
    use ruviz::prelude::*;
 
-   fn main() -> Result<()> {
+   fn main() -> PlotResult<()> {
        let x = vec![/* your data */];
        let y = vec![/* your data */];
 

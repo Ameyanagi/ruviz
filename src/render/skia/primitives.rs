@@ -1659,7 +1659,7 @@ mod tests {
     #[test]
     fn test_draw_rectangle_filled_uses_exact_requested_color() {
         let mut renderer = white_canvas(64, 64, 100.0);
-        let requested = Color::new(31, 119, 180);
+        let requested = Color::from_rgb(31, 119, 180);
         renderer
             .draw_rectangle(10.0, 10.0, 40.0, 40.0, requested, true)
             .expect("filled rectangle should render");
@@ -1675,7 +1675,7 @@ mod tests {
     #[test]
     fn test_draw_rectangle_filled_has_no_implicit_border() {
         let mut renderer = white_canvas(64, 64, 100.0);
-        let requested = Color::new(31, 119, 180);
+        let requested = Color::from_rgb(31, 119, 180);
         renderer
             .draw_rectangle(10.0, 10.0, 40.0, 40.0, requested, true)
             .expect("filled rectangle should render");
@@ -1694,7 +1694,7 @@ mod tests {
     fn test_draw_rectangle_filled_preserves_requested_alpha() {
         let mut renderer = white_canvas(64, 64, 100.0);
         renderer
-            .draw_rectangle(10.0, 10.0, 40.0, 40.0, Color::new_rgba(0, 0, 0, 128), true)
+            .draw_rectangle(10.0, 10.0, 40.0, 40.0, Color::from_rgba(0, 0, 0, 128), true)
             .expect("translucent rectangle should render");
 
         let image = renderer.into_image();
@@ -1709,7 +1709,7 @@ mod tests {
 
     #[test]
     fn test_draw_rectangle_styled_fill_only_matches_plain_fill() {
-        let color = Color::new_rgba(200, 40, 40, 190);
+        let color = Color::from_rgba(200, 40, 40, 190);
 
         let mut plain = white_canvas(48, 48, 100.0);
         plain
@@ -1730,7 +1730,7 @@ mod tests {
 
     #[test]
     fn test_draw_rectangle_styled_edge_width_scales_with_dpi() {
-        let edge = Color::new(0, 0, 0);
+        let edge = Color::from_rgb(0, 0, 0);
 
         let mut low_dpi = white_canvas(64, 64, 72.0);
         low_dpi
@@ -1763,7 +1763,7 @@ mod tests {
 
     #[test]
     fn test_filled_square_marker_has_no_edge_unless_one_is_asked_for() {
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
         let mut renderer = white_canvas(64, 64, 100.0);
         renderer
             .draw_marker_styled_clipped(
@@ -1787,8 +1787,8 @@ mod tests {
 
     #[test]
     fn test_filled_square_marker_strokes_a_requested_edge() {
-        let fill = Color::new(31, 119, 180);
-        let edge = Color::new(255, 0, 0);
+        let fill = Color::from_rgb(31, 119, 180);
+        let edge = Color::from_rgb(255, 0, 0);
         let mut renderer = white_canvas(64, 64, 100.0);
         renderer
             .draw_marker_styled_clipped(
@@ -1819,8 +1819,8 @@ mod tests {
 
     #[test]
     fn test_filled_circle_marker_strokes_a_requested_edge() {
-        let fill = Color::new(31, 119, 180);
-        let edge = Color::new(255, 0, 0);
+        let fill = Color::from_rgb(31, 119, 180);
+        let edge = Color::from_rgb(255, 0, 0);
 
         let mut bare = white_canvas(64, 64, 100.0);
         bare.draw_marker_styled_clipped(
@@ -1864,7 +1864,7 @@ mod tests {
 
     #[test]
     fn test_marker_edge_is_ignored_by_line_drawn_styles() {
-        let color = Color::new(31, 119, 180);
+        let color = Color::from_rgb(31, 119, 180);
 
         let mut bare = white_canvas(48, 48, 100.0);
         bare.draw_marker_styled_clipped(
@@ -1886,7 +1886,7 @@ mod tests {
                 16.0,
                 MarkerStyle::Plus,
                 color,
-                Some((Color::new(255, 0, 0), 3.0)),
+                Some((Color::from_rgb(255, 0, 0), 3.0)),
                 whole_canvas(48.0, 48.0),
             )
             .expect("plus marker should render");
@@ -1902,8 +1902,8 @@ mod tests {
     fn test_marker_edge_width_scales_with_dpi() {
         // Transparent fill, so only the edge inks the canvas and its thickness
         // can be measured directly.
-        let transparent = Color::new_rgba(0, 0, 0, 0);
-        let edge = Color::new(0, 0, 0);
+        let transparent = Color::from_rgba(0, 0, 0, 0);
+        let edge = Color::from_rgb(0, 0, 0);
 
         let mut low_dpi = white_canvas(64, 64, 72.0);
         low_dpi
@@ -1953,8 +1953,8 @@ mod tests {
         let points: Vec<Point2f> = (0..40)
             .map(|i| Point2f::new(8.0 + (i % 10) as f32 * 8.0, 12.0 + (i / 10) as f32 * 16.0))
             .collect();
-        let fill = Color::new(31, 119, 180);
-        let edge = Some((Color::new(255, 0, 0), 1.0));
+        let fill = Color::from_rgb(31, 119, 180);
+        let edge = Some((Color::from_rgb(255, 0, 0), 1.0));
         let clip = whole_canvas(96.0, 80.0);
 
         let mut batched = white_canvas(96, 80, 100.0);
@@ -2009,7 +2009,7 @@ mod tests {
         let points: Vec<Point2f> = (0..40)
             .map(|i| Point2f::new(10.0 + (i % 10) as f32 * 18.7, 15.0 + (i / 10) as f32 * 27.3))
             .collect();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
         let clip = whole_canvas(200.0, 120.0);
 
         let mut batched = white_canvas(200, 120, 100.0);
@@ -2050,7 +2050,7 @@ mod tests {
         // too few phases an edged batch showed ~10x the boundary noise of the
         // edgeless one. Asking for an edge must not cost accuracy.
         let edgeless = sprite_vs_vector_worst_delta(None);
-        let edged = sprite_vs_vector_worst_delta(Some((Color::new(22, 84, 126), 0.8)));
+        let edged = sprite_vs_vector_worst_delta(Some((Color::from_rgb(22, 84, 126), 0.8)));
 
         assert!(
             edged <= edgeless.max(32),
@@ -2073,7 +2073,7 @@ mod tests {
                 )
             })
             .collect();
-        let fill = Color::new(31, 119, 180);
+        let fill = Color::from_rgb(31, 119, 180);
         let clip = whole_canvas(200.0, 120.0);
 
         let mut batched = white_canvas(200, 120, 100.0);
@@ -2112,8 +2112,8 @@ mod tests {
         let points: Vec<Point2f> = (0..40)
             .map(|i| Point2f::new(20.0 + (i % 8) as f32 * 24.0, 24.0 + (i / 8) as f32 * 28.0))
             .collect();
-        let fill = Color::new(31, 119, 180);
-        let edge = Some((Color::new(255, 0, 0), 10.0));
+        let fill = Color::from_rgb(31, 119, 180);
+        let edge = Some((Color::from_rgb(255, 0, 0), 10.0));
         let clip = whole_canvas(220.0, 170.0);
 
         let mut batched = white_canvas(220, 170, 100.0);
@@ -2165,7 +2165,7 @@ mod tests {
                 &points,
                 9.0,
                 MarkerStyle::Circle,
-                Color::new(31, 119, 180),
+                Color::from_rgb(31, 119, 180),
                 None,
                 clip,
             )

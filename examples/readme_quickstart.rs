@@ -2,7 +2,7 @@ mod util;
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Simple quadratic function
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&x| x * x).collect();

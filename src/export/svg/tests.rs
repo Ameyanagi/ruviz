@@ -207,9 +207,12 @@ fn test_plain_svg_named_font_family_escapes_control_characters() {
 #[test]
 fn test_color_conversion() {
     let renderer = SvgRenderer::new(100.0, 100.0);
-    assert_eq!(renderer.color_to_svg(Color::new(255, 0, 0)), "rgb(255,0,0)");
     assert_eq!(
-        renderer.color_to_svg(Color::new_rgba(255, 0, 0, 128)),
+        renderer.color_to_svg(Color::from_rgb(255, 0, 0)),
+        "rgb(255,0,0)"
+    );
+    assert_eq!(
+        renderer.color_to_svg(Color::from_rgba(255, 0, 0, 128)),
         "rgba(255,0,0,0.502)"
     );
 }
@@ -701,7 +704,7 @@ fn styled_text_defaults_to_center_middle_and_scales_decoration() {
             align: TextAlign::Center,
             valign: TextVAlign::Middle,
             rotation: 0.0,
-            background: Some(Color::new_rgba(255, 0, 0, 128)),
+            background: Some(Color::from_rgba(255, 0, 0, 128)),
             padding: 3.0,
             border_color: Some(Color::BLUE),
             border_width: 1.5,
@@ -744,13 +747,13 @@ fn styled_text_honors_alignment_counter_clockwise_rotation_and_font_family() {
     renderer.set_render_scale(RenderScale::new(144.0));
     let style = TextStyle {
         font_size: 10.0,
-        color: Color::new_rgba(10, 20, 30, 200),
+        color: Color::from_rgba(10, 20, 30, 200),
         align: TextAlign::Right,
         valign: TextVAlign::Bottom,
         rotation: 30.0,
-        background: Some(Color::new(240, 230, 220)),
+        background: Some(Color::from_rgb(240, 230, 220)),
         padding: 2.0,
-        border_color: Some(Color::new_rgba(40, 50, 60, 128)),
+        border_color: Some(Color::from_rgba(40, 50, 60, 128)),
         border_width: 2.0,
     };
     renderer
@@ -790,7 +793,7 @@ fn styled_multiline_text_uses_explicit_tspans_and_block_decoration() {
     let style = TextStyle::default()
         .font_size(12.0)
         .color(Color::BLACK)
-        .background(Color::new(240, 230, 220))
+        .background(Color::from_rgb(240, 230, 220))
         .padding(2.0)
         .rotation(20.0);
     renderer

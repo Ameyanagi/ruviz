@@ -22,7 +22,7 @@ pub(crate) mod three_d;
 pub mod typst_text;
 
 pub use backend::Renderer;
-pub use color::{Color, ColorError, ColorMap};
+pub use color::{Color, ColorError, ColorMap, ColorMapSpec};
 pub use cosmic_text_renderer::CosmicTextRenderer;
 #[cfg(feature = "gpu")]
 pub use gpu::{GpuBackend, GpuRenderer, initialize_gpu_backend, is_gpu_available};

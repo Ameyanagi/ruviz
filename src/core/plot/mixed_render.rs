@@ -1079,26 +1079,37 @@ impl Plot {
         let q3 = map_y(box_data.q3);
         let lower_whisker = map_y(box_data.min);
         let upper_whisker = map_y(box_data.max);
-        let half_width = plot_area.width() * 0.15;
+        // Same geometry contract as the raster path: every constant comes from
+        // `box_data`, which `calculate_box_plot` resolved from `BoxPlotConfig`.
+        let half_width = plot_area.width() * box_data.width_ratio * 0.5;
         let left = x_center - half_width;
         let right = x_center + half_width;
-        let cap_width = half_width * 0.6;
+        let cap_width = half_width * box_data.cap_width;
+        let edge_color = box_data.edge_color.unwrap_or(color);
+        let whisker_width = box_data
+            .whisker_width
+            .map(|w| self.render_scale().points_to_pixels(w))
+            .unwrap_or(line_width);
+        let median_width = box_data
+            .median_width
+            .map(|w| self.render_scale().points_to_pixels(w))
+            .unwrap_or(line_width * 1.5);
 
-        svg.draw_rectangle(
+        svg.draw_rectangle_styled(
             left,
             q1.min(q3),
             right - left,
             (q1 - q3).abs(),
-            color,
-            false,
+            Some(color.with_alpha(box_data.fill_alpha)),
+            Some((edge_color, box_data.edge_width)),
         );
         svg.draw_line(
             left,
             median,
             right,
             median,
-            color,
-            line_width * 1.5,
+            edge_color,
+            median_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1106,8 +1117,8 @@ impl Plot {
             q1,
             x_center,
             lower_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1115,8 +1126,8 @@ impl Plot {
             q3,
             x_center,
             upper_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1124,8 +1135,8 @@ impl Plot {
             lower_whisker,
             x_center + cap_width,
             lower_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style.clone(),
         );
         svg.draw_line(
@@ -1133,19 +1144,21 @@ impl Plot {
             upper_whisker,
             x_center + cap_width,
             upper_whisker,
-            color,
-            line_width,
+            edge_color,
+            whisker_width,
             line_style,
         );
-        let outlier_size = self.render_scale().points_to_pixels(4.0);
-        for &outlier in &box_data.outliers {
-            svg.draw_marker(
-                x_center,
-                map_y(outlier),
-                outlier_size,
-                MarkerStyle::Circle,
-                color,
-            );
+        if box_data.show_outliers {
+            let outlier_size = self.render_scale().points_to_pixels(box_data.flier_size);
+            for &outlier in &box_data.outliers {
+                svg.draw_marker(
+                    x_center,
+                    map_y(outlier),
+                    outlier_size,
+                    MarkerStyle::Circle,
+                    color,
+                );
+            }
         }
         Ok(())
     }
@@ -1238,7 +1251,7 @@ impl Plot {
                     y,
                     x2,
                     y,
-                    Color::new(255, 255, 255),
+                    Color::from_rgb(255, 255, 255),
                     median_width,
                     LineStyle::Solid,
                 );
@@ -1271,7 +1284,7 @@ impl Plot {
                     y1,
                     x,
                     y2,
-                    Color::new(255, 255, 255),
+                    Color::from_rgb(255, 255, 255),
                     median_width,
                     LineStyle::Solid,
                 );
@@ -1452,7 +1465,7 @@ impl Plot {
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
         if data.config.shadow > 0.0 {
-            let shadow_color = Color::new(100, 100, 100).with_alpha(0.3 * alpha);
+            let shadow_color = Color::from_rgb(100, 100, 100).with_alpha(0.3 * alpha);
             for wedge in &screen_data.wedges {
                 let polygon: Vec<(f32, f32)> = wedge
                     .as_polygon(segments)

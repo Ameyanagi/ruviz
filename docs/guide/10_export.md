@@ -334,12 +334,12 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
         .line(&x, &y_exp)
             .label("Exponential Decay")
-            .color(Color::new(76, 114, 176))
+            .color(Color::from_rgb(76, 114, 176))
             .line_width(2.0)
 
         .line(&x, &y_decay)
             .label("Damped Oscillation")
-            .color(Color::new(221, 132, 82))
+            .color(Color::from_rgb(221, 132, 82))
             .line_width(2.0)
             .line_style(LineStyle::Dashed)
 
@@ -350,7 +350,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlim(0.0, 10.0)
         .ylim(-0.2, 1.0)
         .grid(true)
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
 
         .save("journal_figure_1.png")?;
 

@@ -4,7 +4,7 @@
 use ruviz::prelude::*;
 use std::time::Instant;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     println!("Profiling small dataset rendering (1K points)");
     println!("==============================================\n");
 

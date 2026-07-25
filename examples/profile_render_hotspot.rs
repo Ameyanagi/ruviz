@@ -125,7 +125,7 @@ fn build_heatmap(rows: usize, cols: usize) -> Plot {
         .into_plot()
 }
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let (case, operation, iterations) = parse_args();
     let plot = match case {
         Case::Line(points) => {

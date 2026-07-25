@@ -7,7 +7,7 @@ use ruviz::core::BackendOperation;
 use ruviz::prelude::*;
 use std::time::Instant;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     std::fs::create_dir_all("generated/examples")?;
 
     for point_count in [10_000, 100_000, 1_000_000] {
@@ -17,7 +17,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn diagnose_size(point_count: usize) -> Result<()> {
+fn diagnose_size(point_count: usize) -> PlotResult<()> {
     let x: Vec<f64> = (0..point_count).map(|i| i as f64 * 0.00001).collect();
     let y: Vec<f64> = x
         .iter()

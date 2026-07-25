@@ -9,7 +9,7 @@ mod util;
 
 use ruviz::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     // Ensure output directory exists
     std::fs::create_dir_all(util::docs_assets_root().join("rustdoc"))?;
 
@@ -30,7 +30,7 @@ fn main() -> Result<()> {
 }
 
 /// Generate a plot with Japanese labels
-fn generate_japanese_plot() -> Result<()> {
+fn generate_japanese_plot() -> PlotResult<()> {
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     let y: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
 
@@ -49,7 +49,7 @@ fn generate_japanese_plot() -> Result<()> {
 }
 
 /// Generate a plot with Chinese labels
-fn generate_chinese_plot() -> Result<()> {
+fn generate_chinese_plot() -> PlotResult<()> {
     let categories = vec!["一月", "二月", "三月", "四月", "五月", "六月"];
     let values = vec![28.0, 45.0, 38.0, 52.0, 47.0, 63.0];
 
@@ -68,7 +68,7 @@ fn generate_chinese_plot() -> Result<()> {
 }
 
 /// Generate a plot with Korean labels
-fn generate_korean_plot() -> Result<()> {
+fn generate_korean_plot() -> PlotResult<()> {
     let x: Vec<f64> = (0..50).map(|i| i as f64).collect();
     let y1: Vec<f64> = x.iter().map(|&v| v * 1.5 + 10.0).collect();
     let y2: Vec<f64> = x.iter().map(|&v| v * 2.0 + 5.0).collect();
@@ -90,7 +90,7 @@ fn generate_korean_plot() -> Result<()> {
 }
 
 /// Generate a subplot comparing multiple languages
-fn generate_multilang_comparison() -> Result<()> {
+fn generate_multilang_comparison() -> PlotResult<()> {
     let x: Vec<f64> = (0..50).map(|i| i as f64 * 0.2).collect();
     let y_sin: Vec<f64> = x.iter().map(|&v| v.sin()).collect();
     let y_cos: Vec<f64> = x.iter().map(|&v| v.cos()).collect();

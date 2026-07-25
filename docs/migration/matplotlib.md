@@ -50,7 +50,7 @@ Plot::new()
 | `plt.title('text')` | `.title("text")` | Method chaining |
 | `plt.xlabel('text')` | `.xlabel("text")` | |
 | `plt.ylabel('text')` | `.ylabel("text")` | |
-| `plt.legend()` | `.legend(Position::TopRight)` | Explicit position |
+| `plt.legend()` | `.legend(LegendPosition::UpperRight)` | Explicit position |
 | `plt.grid(True)` | `.grid(true)` | |
 | `plt.xlim(0, 10)` | `.xlim(0.0, 10.0)` | |
 | `plt.ylim(0, 10)` | `.ylim(0.0, 10.0)` | |
@@ -76,7 +76,7 @@ Plot::new()
     .line(&x, &y1).label("Linear")
     .line(&x, &y2).label("Quadratic")
     .line(&x, &y3).label("Cubic")
-    .legend(Position::TopLeft)
+    .legend(LegendPosition::UpperLeft)
     .save("multi_series.png")?;
 ```
 
@@ -91,7 +91,7 @@ plt.plot(x, y, color='red', linewidth=2, linestyle='--', marker='o')
 ```rust
 Plot::new()
     .line(&x, &y)
-    .color(Color::new(255, 0, 0))
+    .color(Color::from_rgb(255, 0, 0))
     .line_width(2.0)
     .line_style(LineStyle::Dashed)
     .marker(MarkerStyle::Circle)
@@ -304,18 +304,18 @@ Plot::new()
     .size(10.0, 6.0)
     .dpi(300)
     .line(&x, &y_sin)
-        .color(Color::new(0, 0, 255))
+        .color(Color::from_rgb(0, 0, 255))
         .line_width(2.0)
         .label("sin(x)")
     .line(&x, &y_cos)
-        .color(Color::new(255, 0, 0))
+        .color(Color::from_rgb(255, 0, 0))
         .line_style(LineStyle::Dashed)
         .line_width(2.0)
         .label("cos(x)")
     .title("Trigonometric Functions")
     .xlabel("x (radians)")
     .ylabel("y")
-    .legend(Position::TopRight)
+    .legend(LegendPosition::UpperRight)
     .grid(true)
     .save("trig.png")?;
 ```
@@ -393,7 +393,7 @@ Plot::new()
 **A**: Yes, but differently:
 ```rust
 // Custom colors
-.color(Color::new(255, 128, 0))
+.color(Color::from_rgb(255, 128, 0))
 .color(Color::from_hex("#FF8000")?)
 
 let viridis_like = Theme::builder()

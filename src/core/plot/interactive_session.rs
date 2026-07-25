@@ -2610,7 +2610,7 @@ impl InteractivePlotSession {
                 &mut pixels,
                 size_px,
                 hit,
-                Color::new_rgba(255, 165, 0, 180),
+                Color::from_rgba(255, 165, 0, 180),
                 hit_clip,
             );
         }
@@ -2619,7 +2619,7 @@ impl InteractivePlotSession {
                 &mut pixels,
                 size_px,
                 hit,
-                Color::new_rgba(255, 0, 0, 180),
+                Color::from_rgba(255, 0, 0, 180),
                 hit_clip,
             );
         }
@@ -2628,8 +2628,8 @@ impl InteractivePlotSession {
                 &mut pixels,
                 size_px,
                 region,
-                Color::new_rgba(0, 100, 255, 72),
-                Color::new_rgba(96, 208, 255, 220),
+                Color::from_rgba(0, 100, 255, 72),
+                Color::from_rgba(96, 208, 255, 220),
             );
         }
         if let Some(tooltip) = &state.tooltip {

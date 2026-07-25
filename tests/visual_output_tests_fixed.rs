@@ -720,7 +720,7 @@ fn test_grouped_series_fixed_color_visual() -> std::result::Result<(), Box<dyn s
                 .line(&x, &y1)
                 .line(&x, &y2)
         })
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .save("generated/tests/render/22_grouped_fixed_color_visual.png")?;
     assert_default_output("generated/tests/render/22_grouped_fixed_color_visual.png");
 
@@ -749,7 +749,7 @@ fn test_grouped_series_auto_palette_color_visual()
         })
         .line(&x, &outside)
         .label("Outside Group")
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .save("generated/tests/render/23_grouped_auto_palette_color_visual.png")?;
     assert_default_output("generated/tests/render/23_grouped_auto_palette_color_visual.png");
 

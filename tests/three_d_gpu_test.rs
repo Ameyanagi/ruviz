@@ -12,7 +12,7 @@ fn required_adapter_executes_direct_mesh_line_and_point_draws() {
         .wireframe(&x, &y, &z)
         .line3d(&x, &y, &[0.0, 1.0, 0.0])
         .scatter3d(&x, &y, &[0.0, 1.0, 0.0])
-        .figure_size(2.4, 1.8)
+        .size(2.4, 1.8)
         .dpi(72)
         .benchmark_render_gpu_with_diagnostics()
         .expect("required direct 3d adapter");

@@ -31,7 +31,7 @@ fn parity_plot() -> Surface3DBuilder {
     .xlabel("axis-x")
     .ylabel("axis-y")
     .zlabel("axis-z")
-    .figure_size(3.2, 2.4)
+    .size(3.2, 2.4)
     .dpi(80)
 }
 
@@ -114,7 +114,7 @@ fn aggressive_camera_clipping_is_deterministic_for_both_projection_modes() {
                 .color(Color::RED)
                 .marker_size(8.0)
                 .camera(camera)
-                .figure_size(2.0, 1.5)
+                .size(2.0, 1.5)
                 .dpi(72)
                 .benchmark_render_with_diagnostics()
                 .expect("clipped render")

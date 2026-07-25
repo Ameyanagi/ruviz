@@ -820,8 +820,10 @@ where
 
     /// Enable legend at a specific position
     ///
-    /// This method forwards to the inner Plot.
-    pub fn legend(mut self, position: crate::core::Position) -> Self {
+    /// Accepts a [`LegendPosition`](crate::core::LegendPosition) (canonical) or
+    /// the deprecated [`Position`](crate::core::Position), which converts
+    /// losslessly. This method forwards to the inner Plot.
+    pub fn legend(mut self, position: impl Into<crate::core::LegendPosition>) -> Self {
         self.plot = self.plot.legend(position);
         self
     }
@@ -1502,10 +1504,21 @@ impl PlotBuilder<crate::plots::ContourConfig> {
         self
     }
 
-    /// Set colormap by name (e.g., "viridis", "plasma", "magma")
-    pub fn colormap_name(mut self, name: &str) -> Self {
-        self.config.cmap = name.to_string();
+    /// Set the colormap.
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`](crate::render::ColorMap) value.
+    pub fn cmap(mut self, cmap: impl Into<crate::render::ColorMapSpec>) -> Self {
+        self.config.cmap = cmap.into().into_name();
         self
+    }
+
+    /// Set colormap by name (e.g., "viridis", "plasma", "magma")
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed: use `cmap(name)`, which also accepts a `ColorMap` value"
+    )]
+    pub fn colormap_name(self, name: &str) -> Self {
+        self.cmap(name)
     }
 
     /// Set contour line width
@@ -2132,6 +2145,19 @@ impl PlotBuilder<crate::plots::ViolinConfig> {
         self
     }
 
+    /// Choose how the KDE bandwidth is selected.
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .violin(&data)
+    ///     .bandwidth(BandwidthMethod::Silverman)
+    ///     .save("violin.png")?;
+    /// ```
+    pub fn bandwidth(mut self, method: crate::plots::BandwidthMethod) -> Self {
+        self.config.bandwidth = method;
+        self
+    }
+
     /// Set category name for this violin
     ///
     /// The category name is displayed on the X-axis instead of numeric values.
@@ -2291,8 +2317,10 @@ impl PlotBuilder<crate::plots::QuiverConfig> {
     }
 
     /// Set the colormap used when coloring arrows by magnitude.
-    pub fn cmap<S: Into<String>>(mut self, cmap: S) -> Self {
-        self.config.cmap = cmap.into();
+    ///
+    /// Accepts a name such as `"viridis"` or a [`ColorMap`](crate::render::ColorMap) value.
+    pub fn cmap(mut self, cmap: impl Into<crate::render::ColorMapSpec>) -> Self {
+        self.config.cmap = cmap.into().into_name();
         self
     }
 

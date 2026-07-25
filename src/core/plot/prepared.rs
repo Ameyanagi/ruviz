@@ -319,7 +319,8 @@ impl PreparedPlot {
                         if let Some(plan) =
                             prepared_geometry.get(series_index).and_then(Option::as_ref)
                         {
-                            let color = series.color_with_alpha(crate::render::Color::new(0, 0, 0));
+                            let color =
+                                series.color_with_alpha(crate::render::Color::from_rgb(0, 0, 0));
                             let line_width =
                                 plot.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
                             let line_style = series

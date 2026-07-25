@@ -44,7 +44,7 @@ fn stable_theme(mut theme: Theme) -> Theme {
     theme
 }
 
-pub fn register_golden_font() -> Result<()> {
+pub fn register_golden_font() -> PlotResult<()> {
     ruviz::render::register_font_bytes(GOLDEN_FONT_BYTES.to_vec())?;
 
     let font_system = ruviz::render::get_font_system().lock().map_err(|_| {
@@ -96,7 +96,7 @@ pub fn register_golden_font() -> Result<()> {
     Ok(())
 }
 
-pub fn generate_golden_images() -> Result<()> {
+pub fn generate_golden_images() -> PlotResult<()> {
     register_golden_font()?;
     println!("Generating deterministic golden images with {GOLDEN_FONT_FAMILY}...\n");
 
@@ -121,7 +121,7 @@ pub fn generate_golden_images() -> Result<()> {
         .title("Multi-Series Plot")
         .xlabel("X")
         .ylabel("Y")
-        .legend(Position::TopLeft)
+        .legend(LegendPosition::UpperLeft)
         .line(&x, &x.to_vec())
         .label("Linear")
         .line(&x, &x.iter().map(|&v| v * v).collect::<Vec<_>>())
@@ -352,7 +352,7 @@ pub fn generate_golden_images() -> Result<()> {
     let x_comp: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     stable_plot()
         .title("Complex Multi-Series")
-        .legend(Position::TopRight)
+        .legend(LegendPosition::UpperRight)
         .line(
             &x_comp,
             &x_comp.iter().map(|&t| t.sin()).collect::<Vec<_>>(),
@@ -378,6 +378,6 @@ pub fn generate_golden_images() -> Result<()> {
 }
 
 #[cfg(not(test))]
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     generate_golden_images()
 }

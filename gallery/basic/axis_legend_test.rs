@@ -1,5 +1,5 @@
+use ruviz::core::LegendPosition;
 use ruviz::core::Plot;
-use ruviz::core::Position;
 use ruviz::render::Theme;
 
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -22,7 +22,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .theme(Theme::publication())
         .line(&x_data, &y1) // First series
         .line(&x_data, &y2) // Second series
-        .legend(Position::TopRight) // Enable legend in top-right
+        .legend(LegendPosition::UpperRight) // Enable legend in top-right
         .save_with_size("gallery/basic/axis_legend_test.png", 1200, 900)?;
 
     println!("✅ Axis and legend test completed!");

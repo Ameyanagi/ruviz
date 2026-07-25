@@ -5,7 +5,9 @@
 //! tick marks, margins, and axis settings.
 
 use crate::axes::AxisScale;
-use crate::core::{GridStyle, LegendPosition, Position};
+#[allow(deprecated)]
+use crate::core::Position;
+use crate::core::{GridStyle, LegendPosition};
 
 use super::{LegendConfig, TickConfig};
 
@@ -84,12 +86,20 @@ impl LayoutManager {
         self.legend.enabled
     }
 
-    /// Set legend position
-    pub fn set_legend_position(&mut self, position: Position) {
-        self.legend.position = LegendPosition::from_position(position);
+    /// Set legend position.
+    ///
+    /// Accepts a [`LegendPosition`] (canonical) or the deprecated
+    /// [`Position`](crate::core::Position), which converts losslessly.
+    pub fn set_legend_position(&mut self, position: impl Into<LegendPosition>) {
+        self.legend.position = position.into();
     }
 
-    /// Get legend position
+    /// Get legend position, lossily narrowed to the legacy [`Position`] enum.
+    #[deprecated(
+        since = "0.6.0",
+        note = "lossy: the four `Outside*` placements all collapse to `Position::TopRight`. Use `legend_position_full()`, which returns `LegendPosition`"
+    )]
+    #[allow(deprecated)]
     pub fn legend_position(&self) -> Position {
         match self.legend.position {
             LegendPosition::Best => Position::Best,
@@ -102,7 +112,9 @@ impl LayoutManager {
             LegendPosition::LowerCenter => Position::BottomCenter,
             LegendPosition::UpperCenter => Position::TopCenter,
             LegendPosition::Center => Position::Center,
-            LegendPosition::Custom { x, y, .. } => Position::Custom { x, y },
+            // `LegendPosition::Custom` Y grows upward, `Position::Custom` Y
+            // grows downward — flip back, inverting `LegendPosition::from`.
+            LegendPosition::Custom { x, y, .. } => Position::Custom { x, y: 1.0 - y },
             LegendPosition::OutsideRight
             | LegendPosition::OutsideLeft
             | LegendPosition::OutsideUpper
@@ -249,11 +261,11 @@ mod tests {
     fn test_legend_config() {
         let mut layout = LayoutManager::new();
         layout.enable_legend(true);
-        layout.set_legend_position(Position::BottomLeft);
+        layout.set_legend_position(LegendPosition::LowerLeft);
         layout.set_legend_font_size(12.0);
 
         assert!(layout.legend_enabled());
-        assert_eq!(layout.legend_position(), Position::BottomLeft);
+        assert_eq!(layout.legend_position_full(), LegendPosition::LowerLeft);
         assert_eq!(layout.legend.font_size, Some(12.0));
     }
 
@@ -270,8 +282,7 @@ mod tests {
             assert_eq!(layout.legend_position_full(), position);
         }
 
-        layout.set_legend_position(Position::BottomCenter);
-        assert_eq!(layout.legend_position(), Position::BottomCenter);
+        layout.set_legend_position(LegendPosition::LowerCenter);
         assert_eq!(layout.legend_position_full(), LegendPosition::LowerCenter);
     }
 

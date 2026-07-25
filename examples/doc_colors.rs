@@ -5,7 +5,7 @@
 use ruviz::prelude::*;
 use ruviz::render::Color;
 
-fn main() -> Result<()> {
+fn main() -> PlotResult<()> {
     let palette = Color::default_palette();
     let x: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
 

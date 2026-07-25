@@ -831,7 +831,7 @@ fn background_vertices(
 ) -> Vec<SolidVertex> {
     let mut vertices = Vec::new();
     for pane in &layout.panes {
-        let color = linear_color(Color::new_rgba(
+        let color = linear_color(Color::from_rgba(
             theme.grid_color.r,
             theme.grid_color.g,
             theme.grid_color.b,
@@ -840,7 +840,7 @@ fn background_vertices(
         push_solid_triangle(&mut vertices, pane[0], pane[1], pane[2], color, layout);
         push_solid_triangle(&mut vertices, pane[0], pane[2], pane[3], color, layout);
     }
-    let grid_color = linear_color(Color::new_rgba(
+    let grid_color = linear_color(Color::from_rgba(
         theme.grid_color.r,
         theme.grid_color.g,
         theme.grid_color.b,
