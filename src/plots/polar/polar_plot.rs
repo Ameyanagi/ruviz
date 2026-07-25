@@ -297,10 +297,24 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
         };
     }
 
-    let mut points = Vec::with_capacity(n);
+    // Drop samples that cannot be plotted. A non-finite `r` or `theta` would
+    // otherwise become a NaN Cartesian point, and tiny-skia rejects any path
+    // containing one — the whole series would fail to render. Filtering here
+    // (rather than only inside `is_full_turn`) keeps the sweep classification
+    // and the geometry looking at exactly the same samples.
+    let finite_theta: Vec<f64> = (0..n)
+        .filter(|&i| r[i].is_finite() && theta[i].is_finite())
+        .map(|i| theta[i])
+        .collect();
+
+    let mut points = Vec::with_capacity(finite_theta.len());
     let mut r_max = 0.0_f64;
 
     for i in 0..n {
+        if !r[i].is_finite() || !theta[i].is_finite() {
+            continue;
+        }
+
         // Apply theta offset and direction
         let adjusted_theta = if config.theta_direction {
             theta[i] + config.theta_offset
@@ -316,7 +330,7 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
     // Ensure we have a valid r_max
     let r_max = if r_max > 0.0 { r_max } else { 1.0 };
 
-    let closed = is_full_turn(&theta[..n]);
+    let closed = is_full_turn(&finite_theta);
 
     // Generate fill polygon if enabled
     let fill_polygon = if config.fill && !points.is_empty() {
@@ -404,12 +418,16 @@ fn is_full_turn(theta: &[f64]) -> bool {
 
     let mut count = 0usize;
     let mut previous = 0.0_f64;
-    let mut sweep = 0.0_f64;
+    let mut cumulative = 0.0_f64;
+    let mut lowest = 0.0_f64;
+    let mut highest = 0.0_f64;
 
     for t in theta.iter().copied().filter(|t| t.is_finite()) {
         if count > 0 {
             let step = t - previous;
-            sweep += step - TAU * (step / TAU).round();
+            cumulative += step - TAU * (step / TAU).round();
+            lowest = lowest.min(cumulative);
+            highest = highest.max(cumulative);
         }
         count += 1;
         previous = t;
@@ -419,7 +437,13 @@ fn is_full_turn(theta: &[f64]) -> bool {
         return false;
     }
 
-    let sweep = sweep.abs();
+    // The widest excursion of the running phase, not its final value: a curve
+    // that completes a turn and then backtracks — `[0, π/2, π, 3π/2, 2π, 3π/2]`
+    // — is still closed, but its final sweep is only 3π/2 and would read as a
+    // partial arc, reintroducing the origin seam this function exists to avoid.
+    // Taking `highest - lowest` also keeps clockwise sweeps (which accumulate
+    // negatively) and multi-turn spirals correct.
+    let sweep = highest - lowest;
     // The residual gap back to the first sample closes the curve when it is no
     // wider than one sampling step.
     let mean_step = sweep / (count - 1) as f64;
@@ -773,6 +797,54 @@ mod tests {
         let theta: Vec<f64> = (0..n).map(|i| i as f64 * 2.0 * TAU / n as f64).collect();
         assert!(is_full_turn(&theta));
         assert!(is_full_turn(&wrapped_sweep(0.7, 2.0 * TAU, n)));
+    }
+
+    #[test]
+    fn test_is_full_turn_survives_backtracking() {
+        // A completed turn that then reverses is still closed. Classifying on the
+        // final signed sweep would see only 3π/2 here and reintroduce the seam.
+        assert!(is_full_turn(&[
+            0.0,
+            PI / 2.0,
+            PI,
+            3.0 * PI / 2.0,
+            TAU,
+            3.0 * PI / 2.0,
+        ]));
+
+        // ... but an out-and-back that never completes a turn stays partial.
+        assert!(!is_full_turn(&[0.0, PI / 2.0, PI, PI / 2.0, 0.0]));
+
+        // Same rule clockwise.
+        assert!(is_full_turn(&[
+            0.0,
+            -PI / 2.0,
+            -PI,
+            -3.0 * PI / 2.0,
+            -TAU,
+            -3.0 * PI / 2.0,
+        ]));
+    }
+
+    #[test]
+    fn test_compute_polar_plot_drops_non_finite_samples() {
+        // A NaN in either array must not reach the geometry: tiny-skia rejects a
+        // path containing a NaN, which would fail the whole series.
+        let config = PolarPlotConfig::default();
+        let data = compute_polar_plot(
+            &[1.0, 2.0, f64::NAN, 3.0, 4.0],
+            &[0.0, 1.0, 2.0, f64::INFINITY, 3.0],
+            &config,
+        );
+
+        assert_eq!(data.points.len(), 3, "non-finite pairs should be dropped");
+        assert!(
+            data.points
+                .iter()
+                .all(|p| p.x.is_finite() && p.y.is_finite()),
+            "no NaN or infinite coordinates may survive"
+        );
+        assert!(data.r_max.is_finite() && data.r_max > 0.0);
     }
 
     #[test]
