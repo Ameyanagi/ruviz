@@ -601,11 +601,37 @@ fn resolve_decorations(
     (legend, colorbars)
 }
 
+/// Target tick count handed to the shared locator.
+///
+/// `generate_ticks` gives up on nice numbers and rounds the raw endpoints
+/// instead whenever fewer than three nice ticks land inside the range. Its step
+/// is at most `2.5 * range / (target - 1)`, so a target of 9 keeps at least
+/// three ticks in range for every non-degenerate span and never returns more
+/// than nine.
+const COLORBAR_TICK_TARGET: usize = 9;
+
+/// Nice-number colorbar ticks, sharing the 2D locator so a 3D colorbar reads
+/// `0.2 / 0 / -0.2` instead of the raw data endpoints.
 fn colorbar_tick_values(range: (f64, f64)) -> Vec<f64> {
     if range.0.to_bits() == range.1.to_bits() {
-        vec![range.0]
+        return vec![range.0];
+    }
+    let (min, max) = if range.0 <= range.1 {
+        (range.0, range.1)
     } else {
-        vec![range.0, range.0 * 0.5 + range.1 * 0.5, range.1]
+        (range.1, range.0)
+    };
+    // `generate_ticks` normally drops ticks outside `[min, max]`, but its
+    // degenerate-range escape hatches return the raw endpoints, so filter again —
+    // a tick beyond the range would be drawn off the end of the bar.
+    let ticks: Vec<f64> = generate_ticks(min, max, COLORBAR_TICK_TARGET)
+        .into_iter()
+        .filter(|value| value.is_finite() && *value >= min && *value <= max)
+        .collect();
+    if ticks.len() < 2 {
+        vec![min, min * 0.5 + max * 0.5, max]
+    } else {
+        ticks
     }
 }
 
@@ -860,9 +886,55 @@ mod tests {
         assert!(legend.bounds.right() <= decorated.canvas_width as f32);
         let colorbar = decorated.colorbars.first().expect("colorbar");
         assert_eq!(colorbar.data_range, (0.0, 3.0));
-        assert_eq!(colorbar.tick_labels.len(), 3);
+        // Nice-number ticks over [0, 3] step by 0.5 instead of printing endpoints.
+        assert_eq!(colorbar.tick_labels.len(), colorbar.tick_marks.len());
+        let texts: Vec<&str> = colorbar
+            .tick_labels
+            .iter()
+            .map(|label| label.text.as_str())
+            .collect();
+        assert_eq!(texts, ["0", "0.5", "1", "1.5", "2", "2.5", "3"]);
         assert!(colorbar.bounds.right() <= decorated.canvas_width as f32);
         assert!(colorbar.bounds.bottom() <= decorated.canvas_height as f32);
+    }
+
+    #[test]
+    fn colorbar_ticks_are_round_numbers_inside_the_data_range() {
+        let range = (-0.217_057, 0.982_343);
+        let ticks = colorbar_tick_values(range);
+        assert!(ticks.len() >= 2, "expected at least two ticks: {ticks:?}");
+        for &tick in &ticks {
+            assert!(
+                tick >= range.0 && tick <= range.1,
+                "tick {tick} escaped the data range {range:?}"
+            );
+            // A "nice" tick is a small multiple of the step, so scaling by the
+            // step's magnitude must land on an integer.
+            let scaled = tick * 10.0;
+            assert!(
+                (scaled - scaled.round()).abs() < 1e-9,
+                "tick {tick} is not a round number"
+            );
+        }
+        // The raw endpoints must no longer be printed verbatim.
+        let labels = format_tick_labels(&ticks);
+        assert!(
+            labels.iter().all(|label| label.len() <= 4),
+            "expected short labels, got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn degenerate_colorbar_range_keeps_a_single_tick() {
+        assert_eq!(colorbar_tick_values((2.5, 2.5)), vec![2.5]);
+    }
+
+    #[test]
+    fn reversed_colorbar_range_still_yields_in_range_ticks() {
+        let range = (5.0, -5.0);
+        let ticks = colorbar_tick_values(range);
+        assert!(ticks.len() >= 2);
+        assert!(ticks.iter().all(|&tick| (-5.0..=5.0).contains(&tick)));
     }
 
     #[test]

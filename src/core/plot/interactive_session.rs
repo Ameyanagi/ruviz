@@ -1175,37 +1175,19 @@ impl GeometrySnapshot {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-struct AxisConstraints {
-    x_limits: Option<(f64, f64)>,
-    y_limits: Option<(f64, f64)>,
-    x_scale: AxisScale,
-    y_scale: AxisScale,
-}
+/// Turn raw data bounds into the axis range the static renderer would use.
+///
+/// Routed through [`Plot::apply_manual_axis_limits`] so an interactive session's
+/// initial view matches `Plot::render()` exactly, autoscale margin included.
+fn apply_axis_constraints(plot: &Plot, data_bounds: DataBounds) -> DataBounds {
+    let (x_min, x_max, y_min, y_max) = plot.apply_manual_axis_limits((
+        data_bounds.x_min,
+        data_bounds.x_max,
+        data_bounds.y_min,
+        data_bounds.y_max,
+    ));
 
-impl AxisConstraints {
-    fn from_plot(plot: &Plot) -> Self {
-        Self {
-            x_limits: plot.layout.x_limits,
-            y_limits: plot.layout.y_limits,
-            x_scale: plot.layout.x_scale.clone(),
-            y_scale: plot.layout.y_scale.clone(),
-        }
-    }
-
-    fn apply(self, data_bounds: DataBounds) -> DataBounds {
-        let (mut x_min, mut x_max) = self
-            .x_limits
-            .unwrap_or((data_bounds.x_min, data_bounds.x_max));
-        let (mut y_min, mut y_max) = self
-            .y_limits
-            .unwrap_or((data_bounds.y_min, data_bounds.y_max));
-
-        (x_min, x_max) = expand_degenerate_range(x_min, x_max, &self.x_scale);
-        (y_min, y_max) = expand_degenerate_range(y_min, y_max, &self.y_scale);
-
-        DataBounds::from_limits(x_min, x_max, y_min, y_max)
-    }
+    DataBounds::from_limits(x_min, x_max, y_min, y_max)
 }
 
 #[derive(Clone, Debug)]
@@ -1264,7 +1246,7 @@ impl InteractivePlotSession {
                 empty_bounds.3,
             )
         });
-        let initial_bounds = AxisConstraints::from_plot(prepared.plot()).apply(initial_data_bounds);
+        let initial_bounds = apply_axis_constraints(prepared.plot(), initial_data_bounds);
         let dirty = Arc::new(Mutex::new(DirtyDomains::with_all()));
         let dirty_epoch = Arc::new(AtomicU64::new(0));
         let mutation_epoch = Arc::new(AtomicU64::new(0));
@@ -2204,7 +2186,6 @@ impl InteractivePlotSession {
                 || dirty_before_render.data
                 || dirty_before_render.temporal
             {
-                let constraints = AxisConstraints::from_plot(source_plot);
                 let mut state = self
                     .inner
                     .state
@@ -2217,7 +2198,7 @@ impl InteractivePlotSession {
                     .and_then(|frame| compute_data_bounds_from_frame(source_plot, frame).ok())
                     .unwrap_or(state.data_bounds);
                 state.data_bounds = next_data_bounds;
-                state.base_bounds = constraints.apply(next_data_bounds);
+                state.base_bounds = apply_axis_constraints(source_plot, next_data_bounds);
                 let pending_visible_restore = state.pending_visible_restore.take();
                 if let Some(requested) = pending_visible_restore {
                     state.visible_bounds = normalize_visible_bounds(

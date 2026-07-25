@@ -3,7 +3,13 @@ use std::fmt;
 /// Result type alias for plotting operations
 pub type Result<T> = std::result::Result<T, PlottingError>;
 
+/// Errors produced by plotting, validation, rendering, and export operations.
+///
+/// This enum is `#[non_exhaustive]`: new variants are added in minor releases,
+/// so downstream `match` expressions must include a `_ => ...` arm. Constructing
+/// and matching individual existing variants keeps working as before.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PlottingError {
     /// Data arrays have mismatched lengths
     DataLengthMismatch {
@@ -726,6 +732,21 @@ mod tests {
         let plot_err = PlottingError::from(io_err);
 
         assert!(plot_err.source().is_some());
+    }
+
+    #[test]
+    fn test_non_exhaustive_downstream_match_shape() {
+        // `#[non_exhaustive]` cannot be observed from inside the defining crate,
+        // so this pins the pattern downstream crates must use: name the variants
+        // they care about and fall back to a wildcard arm.
+        let err = PlottingError::EmptyDataSet;
+        let described = match err {
+            PlottingError::EmptyDataSet => "empty",
+            PlottingError::NoDataSeries => "no series",
+            _ => "other",
+        };
+
+        assert_eq!(described, "empty");
     }
 
     #[test]

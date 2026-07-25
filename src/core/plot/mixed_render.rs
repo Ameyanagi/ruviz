@@ -1,11 +1,72 @@
 use super::*;
 
-fn adjust_boxen_saturation_svg(color: Color, factor: f32) -> Color {
-    let gray = ((color.r as f32 + color.g as f32 + color.b as f32) / 3.0) as u8;
-    let blend = |channel: u8| -> u8 {
-        (channel as f32 * factor + gray as f32 * (1.0 - factor)).clamp(0.0, 255.0) as u8
-    };
-    Color::new_rgba(blend(color.r), blend(color.g), blend(color.b), color.a)
+/// Pad one axis range by `margin` (a fraction of the span) on each side.
+///
+/// The padding is applied in the axis' own transform space so a log axis gets a
+/// constant *visual* margin and can never produce a non-positive lower bound.
+/// Scales whose transform is not reachable from here (`SymLog`) and log ranges
+/// that are not strictly positive are left untouched: skipping the margin is far
+/// safer than applying a linear one to a non-linear axis.
+///
+/// `pad_low` / `pad_high` implement matplotlib's `sticky_edges`: a bar or
+/// histogram baseline must keep sitting exactly on zero.
+fn padded_axis_range(
+    min: f64,
+    max: f64,
+    margin: f64,
+    scale: &crate::axes::AxisScale,
+    pad_low: bool,
+    pad_high: bool,
+) -> (f64, f64) {
+    if !margin.is_finite()
+        || margin <= 0.0
+        || !min.is_finite()
+        || !max.is_finite()
+        || max <= min
+        || (!pad_low && !pad_high)
+    {
+        return (min, max);
+    }
+
+    match scale {
+        crate::axes::AxisScale::Linear => {
+            let pad = (max - min) * margin;
+            if !pad.is_finite() || pad <= 0.0 {
+                return (min, max);
+            }
+            let low = if pad_low { min - pad } else { min };
+            let high = if pad_high { max + pad } else { max };
+            if low.is_finite() && high.is_finite() && high > low {
+                (low, high)
+            } else {
+                (min, max)
+            }
+        }
+        crate::axes::AxisScale::Log if min > 0.0 && max > 0.0 => {
+            let log_min = min.log10();
+            let log_max = max.log10();
+            let pad = (log_max - log_min) * margin;
+            if !pad.is_finite() || pad <= 0.0 {
+                return (min, max);
+            }
+            let low = if pad_low {
+                10.0_f64.powf(log_min - pad)
+            } else {
+                min
+            };
+            let high = if pad_high {
+                10.0_f64.powf(log_max + pad)
+            } else {
+                max
+            };
+            if low.is_finite() && low > 0.0 && high.is_finite() && high > low {
+                (low, high)
+            } else {
+                (min, max)
+            }
+        }
+        _ => (min, max),
+    }
 }
 
 impl Plot {
@@ -203,7 +264,9 @@ impl Plot {
         } else {
             (0.0, 1.0)
         };
-        self.apply_manual_axis_limits((x.0, x.1, y.0, y.1))
+        // The placeholder range is already a clean 0..1 (or 1..10 on log); an
+        // autoscale margin on synthetic bounds would only make the ticks ugly.
+        self.apply_axis_limits_without_margin((x.0, x.1, y.0, y.1))
     }
 
     pub(super) fn effective_main_panel_bounds_for_series(
@@ -395,18 +458,20 @@ impl Plot {
         y_min: f64,
         y_max: f64,
     ) -> crate::plots::PlotArea {
-        let size = plot_area.width().min(plot_area.height());
+        // The radar bounds already reserve room for the axis labels (they run to
+        // `RADAR_BOUNDS_RADIUS`, outside the `RADAR_LABEL_RADIUS` label ring), so
+        // the square just has to be the largest one that fits, centered on both
+        // axes. Shrinking it further and pushing it down for "title clearance"
+        // double-counts that reservation and leaves the chart small and low.
+        let size = plot_area.width().min(plot_area.height()).max(1.0);
         let x_offset = (plot_area.width() - size) * 0.5;
         let y_offset = (plot_area.height() - size) * 0.5;
-        // Leave headroom for the top axis label while keeping portrait insets centered.
-        let title_clearance = size * 0.20;
-        let adjusted_size = (size - title_clearance).max(1.0);
 
         crate::plots::PlotArea::new(
             plot_area.x() + x_offset,
-            plot_area.y() + y_offset + title_clearance,
-            adjusted_size,
-            adjusted_size,
+            plot_area.y() + y_offset,
+            size,
+            size,
             x_min,
             x_max,
             y_min,
@@ -689,14 +754,18 @@ impl Plot {
                     .unwrap_or_else(crate::render::ColorMap::viridis);
                 let width = render_scale
                     .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
+                let n_levels = data.levels.len();
                 for (index, level) in data.lines.iter().enumerate() {
-                    let line_color = data.config.line_color.unwrap_or_else(|| {
-                        if data.lines.len() > 1 {
-                            cmap.sample(index as f64 / (data.lines.len() - 1) as f64)
-                        } else {
-                            series.color.unwrap_or(default_color)
-                        }
-                    });
+                    // Same decision as the raster path (`contour_line_color`) so PNG,
+                    // SVG and PDF agree on contour line colour.
+                    let line_color = crate::plots::continuous::contour::contour_line_color(
+                        &data.config,
+                        &self.display.theme,
+                        &cmap,
+                        series.color.unwrap_or(default_color),
+                        index,
+                        n_levels,
+                    );
                     let line_color =
                         line_color.with_alpha((f32::from(line_color.a) / 255.0) * alpha);
                     for &(x1, y1, x2, y2) in &level.segments {
@@ -748,6 +817,9 @@ impl Plot {
                 );
             }
             (SeriesType::Histogram { .. }, ResolvedSeries::Histogram { data }) => {
+                // Same edge resolution as the raster path, so bin boundaries stay
+                // visible and PNG/SVG do not diverge.
+                let edge = data.resolved_edge(&self.display.theme, color);
                 for (index, &count) in data.counts.iter().enumerate() {
                     if count <= 0.0 {
                         continue;
@@ -760,13 +832,13 @@ impl Plot {
                     let (px_right, py_zero) = crate::render::skia::map_data_to_pixels(
                         x_right, 0.0, x_min, x_max, y_min, y_max, plot_area,
                     );
-                    svg.draw_rectangle(
+                    svg.draw_rectangle_styled(
                         px_left.min(px_right),
                         py.min(py_zero),
                         (px_right - px_left).abs(),
                         (py_zero - py).abs(),
-                        color,
-                        true,
+                        Some(color),
+                        edge,
                     );
                 }
             }
@@ -1079,9 +1151,13 @@ impl Plot {
             .points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
 
         for (index, boxen_box) in data.boxes.iter().enumerate() {
-            let saturation_factor =
-                1.0 - (index as f32 / data.boxes.len() as f32) * data.config.saturation;
-            let fill_color = adjust_boxen_saturation_svg(base_color, saturation_factor);
+            let saturation_factor = crate::plots::distribution::boxen::boxen_saturation_factor(
+                index,
+                data.boxes.len(),
+                data.config.saturation,
+            );
+            let fill_color =
+                crate::plots::distribution::boxen::adjust_saturation(base_color, saturation_factor);
             let points: Vec<(f32, f32)> =
                 crate::plots::distribution::boxen_rect(boxen_box, center, data.config.orient)
                     .iter()
@@ -1106,7 +1182,7 @@ impl Plot {
             }
         }
 
-        let median_half = data.config.width / 4.0;
+        let median_half = data.median_half_width();
         let median_width = self.render_scale().points_to_pixels(2.0);
         match data.config.orient {
             crate::plots::distribution::BoxenOrientation::Vertical => {
@@ -1437,7 +1513,10 @@ impl Plot {
             return Ok(());
         }
 
-        let area = Self::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
+        // Keep the SVG backend on the same bounds the raster bounds arm derives
+        // from the radar label radius.
+        let radius = crate::plots::polar::radar::RADAR_BOUNDS_RADIUS;
+        let area = Self::radar_plot_area(plot_area, -radius, radius, -radius, radius);
         let render_scale = svg.render_scale();
         let label_font_size = render_scale.points_to_pixels(data.config.label_font_size);
 
@@ -1447,7 +1526,9 @@ impl Plot {
                 .grid_style
                 .color
                 .with_alpha(self.layout.grid_style.alpha);
-            let grid_line_width = render_scale.points_to_pixels(self.layout.grid_style.line_width);
+            let grid_line_width = render_scale
+                .points_to_pixels(self.layout.grid_style.line_width)
+                .max(crate::core::style_utils::defaults::MIN_GRID_LINE_WIDTH_PX);
             for ring in &data.grid_rings {
                 if ring.len() < 2 {
                     continue;
@@ -1497,8 +1578,9 @@ impl Plot {
             }
         }
 
-        let scaled_line_width =
-            render_scale.points_to_pixels(plot_series.line_width.unwrap_or(data.config.line_width));
+        // Plot-level fallback; a per-series override wins over it (see
+        // `RadarConfig::series_line_width_or`), matching the raster path.
+        let base_line_width = plot_series.line_width.unwrap_or(data.config.line_width);
         let marker_size = plot_series.marker_size.unwrap_or(data.config.marker_size);
         let scaled_marker_size = render_scale.points_to_pixels(marker_size);
         let alpha = plot_series.alpha.unwrap_or(1.0);
@@ -1517,6 +1599,10 @@ impl Plot {
                 .unwrap_or_else(|| self.display.theme.get_color(series_idx));
             let series_alpha = (f32::from(series_color.a) / 255.0) * alpha;
             let stroke_color = series_color.with_alpha(series_alpha);
+            let scaled_line_width = render_scale.points_to_pixels(
+                data.config
+                    .series_line_width_or(series_idx, base_line_width),
+            );
 
             if data.config.fill && !series_data.polygon.is_empty() {
                 let polygon: Vec<(f32, f32)> = series_data
@@ -1526,7 +1612,8 @@ impl Plot {
                     .collect();
                 svg.draw_filled_polygon(
                     &polygon,
-                    series_color.with_alpha(data.config.fill_alpha * series_alpha),
+                    series_color
+                        .with_alpha(data.config.series_fill_alpha(series_idx) * series_alpha),
                 );
             }
 
@@ -1605,11 +1692,16 @@ impl Plot {
         }
 
         if data.points.len() > 1 {
-            let points: Vec<(f32, f32)> = data
+            let mut points: Vec<(f32, f32)> = data
                 .points
                 .iter()
                 .map(|point| area.data_to_screen(point.x, point.y))
                 .collect();
+            // Endpoint-exclusive sampling of a full turn stops one step short of
+            // the start; without this segment the outline gapes at the seam.
+            if let Some((_, (x, y))) = data.closing_segment() {
+                points.push(area.data_to_screen(x, y));
+            }
             let scaled_line_width =
                 render_scale.points_to_pixels(series.line_width.unwrap_or(data.config.line_width));
             svg.draw_polyline(&points, line_color, scaled_line_width, LineStyle::Solid);
@@ -1657,7 +1749,98 @@ impl Plot {
         Self::needs_cartesian_axes_for_series(&self.series_mgr.series)
     }
 
-    pub(super) fn apply_manual_axis_limits(
+    /// Do the plot's series pin the y range to zero by construction?
+    ///
+    /// Bars and histograms include the zero baseline in their data bounds and
+    /// must keep touching it, mirroring matplotlib's `sticky_edges`.
+    fn has_zero_sticky_y_edge(&self) -> bool {
+        self.series_mgr.series.iter().any(|series| {
+            matches!(
+                series.series_type,
+                SeriesType::Bar { .. } | SeriesType::Histogram { .. }
+            )
+        })
+    }
+
+    /// Do the plot's series pin every edge of the axes by construction?
+    ///
+    /// Grid-sampled field series fill the whole plot area by construction, so
+    /// matplotlib marks all four of their edges sticky and they reach the
+    /// spines exactly, with no autoscale margin band of background around them:
+    ///
+    /// - heatmaps (`imshow` sets `sticky_edges` on all four sides),
+    /// - contour and filled contour (`ContourSet` calls
+    ///   `autoscale_view(tight=True)`).
+    ///
+    /// Without this, a filled contour floats inside a bare gutter between the
+    /// fill and the frame.
+    fn has_image_sticky_edges(&self) -> bool {
+        self.series_mgr.series.iter().any(|series| {
+            matches!(
+                series.series_type,
+                SeriesType::Heatmap { .. } | SeriesType::Contour { .. }
+            )
+        })
+    }
+
+    /// Apply the matplotlib-style autoscale margin to auto-scaled axes.
+    ///
+    /// Without this, data sits exactly on the spines. The margin is skipped for
+    /// axes with explicit limits, for plots whose bounds are set by construction
+    /// (polar/radar/pie already reserve their own label room), for image-like
+    /// series that fill their axes, and on the sticky zero baseline of
+    /// bar/histogram charts.
+    pub(super) fn apply_autoscale_margins(
+        &self,
+        bounds: (f64, f64, f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        // Radar/polar/pie bounds are deliberately padded already; don't double-pad.
+        if !Self::has_cartesian_series(&self.series_mgr.series) {
+            return bounds;
+        }
+
+        // Heatmaps are sticky on all four edges (matplotlib `imshow`).
+        if self.has_image_sticky_edges() {
+            return bounds;
+        }
+
+        let (x_min, x_max, y_min, y_max) = bounds;
+        let config = &self.display.config;
+
+        let (x_min, x_max) = if self.layout.x_limits.is_some() {
+            (x_min, x_max)
+        } else {
+            padded_axis_range(
+                x_min,
+                x_max,
+                config.x_margin,
+                &self.layout.x_scale,
+                true,
+                true,
+            )
+        };
+
+        let (y_min, y_max) = if self.layout.y_limits.is_some() {
+            (y_min, y_max)
+        } else {
+            let sticky_zero = self.has_zero_sticky_y_edge();
+            padded_axis_range(
+                y_min,
+                y_max,
+                config.y_margin,
+                &self.layout.y_scale,
+                !(sticky_zero && y_min == 0.0),
+                !(sticky_zero && y_max == 0.0),
+            )
+        };
+
+        (x_min, x_max, y_min, y_max)
+    }
+
+    /// Override auto-computed bounds with any explicit axis limits.
+    ///
+    /// Explicit limits are used verbatim — no autoscale margin is added on top.
+    pub(super) fn apply_axis_limits_without_margin(
         &self,
         bounds: (f64, f64, f64, f64),
     ) -> (f64, f64, f64, f64) {
@@ -1679,6 +1862,24 @@ impl Plot {
             crate::axes::scale::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
 
         (x_min, x_max, y_min, y_max)
+    }
+
+    /// Finalize scanned data bounds into an axis range.
+    ///
+    /// Order is deliberate: degenerate (`min == max`) ranges are expanded first
+    /// so the autoscale margin has a real span to work from, then the margin is
+    /// applied, then explicit limits replace whatever was computed.
+    pub(super) fn apply_manual_axis_limits(
+        &self,
+        bounds: (f64, f64, f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        let (x_min, x_max) =
+            crate::axes::scale::expand_degenerate_range(bounds.0, bounds.1, &self.layout.x_scale);
+        let (y_min, y_max) =
+            crate::axes::scale::expand_degenerate_range(bounds.2, bounds.3, &self.layout.y_scale);
+
+        let margined = self.apply_autoscale_margins((x_min, x_max, y_min, y_max));
+        self.apply_axis_limits_without_margin(margined)
     }
 
     pub(super) fn effective_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
@@ -1737,7 +1938,8 @@ impl Plot {
             y_max += y_range * fraction;
         }
 
-        self.apply_manual_axis_limits((x_min, x_max, y_min, y_max))
+        // Already padded by `fraction`; skip the generic autoscale margin.
+        self.apply_axis_limits_without_margin((x_min, x_max, y_min, y_max))
     }
 
     /// Helper to render attached error bars on Line/Scatter series
@@ -1964,5 +2166,204 @@ impl Plot {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+mod autoscale_margin_tests {
+    use super::*;
+
+    fn line_plot() -> Plot {
+        Plot::new().line(&[0.0, 10.0], &[0.0, 100.0]).end_series()
+    }
+
+    #[test]
+    fn autoscale_margin_pads_five_percent_per_side() {
+        let plot = line_plot();
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve for a simple line plot");
+
+        // matplotlib default: 5% of the raw span added to each side.
+        assert!((x_min + 0.5).abs() < 1e-9, "x_min = {x_min}");
+        assert!((x_max - 10.5).abs() < 1e-9, "x_max = {x_max}");
+        assert!((y_min + 5.0).abs() < 1e-9, "y_min = {y_min}");
+        assert!((y_max - 105.0).abs() < 1e-9, "y_max = {y_max}");
+    }
+
+    #[test]
+    fn zero_margin_reproduces_edge_to_edge_bounds() {
+        let config = PlotConfig::builder().data_margins(0.0, 0.0).build();
+        let plot = Plot::new()
+            .plot_config(config)
+            .line(&[0.0, 10.0], &[0.0, 100.0])
+            .end_series();
+
+        let bounds = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve with margins disabled");
+
+        assert!((bounds.0 - 0.0).abs() < 1e-9);
+        assert!((bounds.1 - 10.0).abs() < 1e-9);
+        assert!((bounds.2 - 0.0).abs() < 1e-9);
+        assert!((bounds.3 - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn explicit_limits_are_never_padded() {
+        let plot = Plot::new()
+            .xlim(0.0, 10.0)
+            .ylim(0.0, 100.0)
+            .line(&[0.0, 10.0], &[0.0, 100.0])
+            .end_series();
+
+        let bounds = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve with explicit limits");
+
+        assert!((bounds.0 - 0.0).abs() < 1e-9);
+        assert!((bounds.1 - 10.0).abs() < 1e-9);
+        assert!((bounds.2 - 0.0).abs() < 1e-9);
+        assert!((bounds.3 - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn explicit_limits_on_one_axis_still_pad_the_other() {
+        let plot = Plot::new()
+            .ylim(0.0, 100.0)
+            .line(&[0.0, 10.0], &[0.0, 100.0])
+            .end_series();
+
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("bounds should resolve with one explicit axis");
+
+        assert!((x_min + 0.5).abs() < 1e-9);
+        assert!((x_max - 10.5).abs() < 1e-9);
+        assert!((y_min - 0.0).abs() < 1e-9);
+        assert!((y_max - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bar_chart_keeps_its_zero_baseline_sticky() {
+        let plot = Plot::new()
+            .bar(&["a", "b", "c"], &[1.0, 2.0, 3.0])
+            .end_series();
+
+        let (_, _, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("bar bounds should resolve");
+
+        // Bars must still sit exactly on y = 0 (matplotlib sticky_edges)...
+        assert!((y_min - 0.0).abs() < 1e-9, "y_min = {y_min}");
+        // ...while the far side still gets the usual headroom.
+        assert!((y_max - 3.15).abs() < 1e-9, "y_max = {y_max}");
+    }
+
+    #[test]
+    fn histogram_keeps_its_zero_baseline_sticky() {
+        let plot = Plot::new()
+            .histogram(&[1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0], None)
+            .end_series();
+
+        let (_, _, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("histogram bounds should resolve");
+
+        assert!((y_min - 0.0).abs() < 1e-9, "y_min = {y_min}");
+        assert!(y_max > 0.0);
+    }
+
+    #[test]
+    fn log_axis_margin_is_applied_in_log_space() {
+        let plot = Plot::new()
+            .yscale(crate::axes::AxisScale::Log)
+            .line(&[0.0, 1.0], &[1.0, 100.0])
+            .end_series();
+
+        let (_, _, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("log bounds should resolve");
+
+        // Two decades padded by 5% of the log span on each side.
+        assert!(y_min > 0.0, "log lower bound must stay positive: {y_min}");
+        assert!((y_min.log10() + 0.1).abs() < 1e-9, "y_min = {y_min}");
+        assert!((y_max.log10() - 2.1).abs() < 1e-9, "y_max = {y_max}");
+    }
+
+    #[test]
+    fn heatmap_fills_its_axes_without_a_margin_band() {
+        let values = vec![vec![0.0, 1.0], vec![1.0, 0.0]];
+        let plot = Plot::new().heatmap(&values, None).end_series();
+
+        let raw = plot
+            .calculate_data_bounds()
+            .expect("heatmap bounds should resolve");
+        let effective = plot
+            .effective_data_bounds()
+            .expect("heatmap bounds should resolve");
+
+        // Image-like series are sticky on all four edges (matplotlib `imshow`),
+        // so the cells reach the spines with no background band around them.
+        assert_eq!(raw, effective);
+    }
+
+    #[test]
+    fn contour_fills_its_axes_without_a_margin_band() {
+        let x = vec![0.0, 1.0, 2.0];
+        let y = vec![0.0, 1.0, 2.0];
+        let z = vec![0.0, 1.0, 2.0, 1.0, 2.0, 3.0, 2.0, 3.0, 4.0];
+        let plot: Plot = Plot::new().contour(&x, &y, &z).filled(true).into();
+
+        let raw = plot
+            .calculate_data_bounds()
+            .expect("contour bounds should resolve");
+        let effective = plot
+            .effective_data_bounds()
+            .expect("contour bounds should resolve");
+
+        // matplotlib's `ContourSet` calls `autoscale_view(tight=True)`, so the
+        // fill reaches the spines instead of floating in a white gutter.
+        assert_eq!(raw, effective);
+        assert!((effective.0 - 0.0).abs() < 1e-9, "x_min = {}", effective.0);
+        assert!((effective.1 - 2.0).abs() < 1e-9, "x_max = {}", effective.1);
+        assert!((effective.2 - 0.0).abs() < 1e-9, "y_min = {}", effective.2);
+        assert!((effective.3 - 2.0).abs() < 1e-9, "y_max = {}", effective.3);
+    }
+
+    #[test]
+    fn radar_bounds_reserve_room_for_axis_labels() {
+        let plot: Plot = Plot::new()
+            .radar(&["a", "b", "c", "d", "e"])
+            .add_series("s1", &[1.0, 2.0, 3.0, 4.0, 5.0])
+            .into();
+
+        let radius = crate::plots::polar::radar::RADAR_BOUNDS_RADIUS;
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("radar bounds should resolve");
+
+        // Set by construction, and NOT additionally padded by the 5% margin.
+        assert!((x_min + radius).abs() < 1e-9, "x_min = {x_min}");
+        assert!((x_max - radius).abs() < 1e-9, "x_max = {x_max}");
+        assert!((y_min + radius).abs() < 1e-9, "y_min = {y_min}");
+        assert!((y_max - radius).abs() < 1e-9, "y_max = {y_max}");
+    }
+
+    #[test]
+    fn padded_axis_range_skips_symlog() {
+        let scale = crate::axes::AxisScale::SymLog { linthresh: 1.0 };
+        let (min, max) = padded_axis_range(-10.0, 10.0, 0.05, &scale, true, true);
+        assert!((min + 10.0).abs() < 1e-9);
+        assert!((max - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn padded_axis_range_skips_non_positive_log_bounds() {
+        let scale = crate::axes::AxisScale::Log;
+        let (min, max) = padded_axis_range(0.0, 10.0, 0.05, &scale, true, true);
+        assert!((min - 0.0).abs() < 1e-9);
+        assert!((max - 10.0).abs() < 1e-9);
     }
 }

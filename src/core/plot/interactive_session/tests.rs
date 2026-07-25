@@ -851,6 +851,9 @@ fn test_interactive_log_auto_bounds_preserve_sub_epsilon_positive_range() {
         .ticks(false)
         .grid(false)
         .into();
+    // The interactive initial view mirrors the static render, autoscale margin
+    // included, so the expected x range is the padded one.
+    let (expected_min, expected_max, _, _) = plot.effective_data_bounds().unwrap();
     let session = plot.prepare_interactive();
     session
         .render_to_surface(render_target())
@@ -859,8 +862,11 @@ fn test_interactive_log_auto_bounds_preserve_sub_epsilon_positive_range() {
     let snapshot = session.viewport_snapshot().unwrap();
     assert_eq!(
         (snapshot.visible_bounds.min.x, snapshot.visible_bounds.max.x),
-        (min, max)
+        (expected_min, expected_max)
     );
+    // The padded range must stay strictly positive and still bracket the data.
+    assert!(expected_min > 0.0, "expected_min = {expected_min}");
+    assert!(expected_min < min && expected_max > max);
 }
 
 #[test]

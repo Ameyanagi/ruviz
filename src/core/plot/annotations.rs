@@ -567,6 +567,34 @@ impl Plot {
         self
     }
 
+    /// Add a fill between two curves that appears in the legend
+    ///
+    /// The band is drawn in `color` at 25% opacity, matching `area()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .line(&x, &mean)
+    ///     .fill_between_labeled(&x, &lower, &upper, Color::BLUE, "95% CI")
+    ///     .legend(Position::TopRight)
+    ///     .save("ci.png")?;
+    /// ```
+    pub fn fill_between_labeled(
+        self,
+        x: &[f64],
+        y1: &[f64],
+        y2: &[f64],
+        color: Color,
+        label: impl Into<String>,
+    ) -> Self {
+        let style = FillStyle::default()
+            .color(color)
+            .alpha(super::series_api::AREA_FILL_ALPHA)
+            .label(label);
+        self.fill_between_styled(x, y1, y2, style, false)
+    }
+
     /// Add a fill between with custom styling
     pub fn fill_between_styled(
         mut self,

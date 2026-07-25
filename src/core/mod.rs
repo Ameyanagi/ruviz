@@ -24,8 +24,8 @@ pub use annotation::{
     TextVAlign,
 };
 pub use config::{
-    ComputedMargins, FigureConfig, LineConfig, MarginConfig, PlotConfig, SpacingConfig,
-    SpineConfig, TypographyConfig,
+    ComputedMargins, DEFAULT_AUTOSCALE_MARGIN, FigureConfig, LineConfig, MarginConfig, PlotConfig,
+    SpacingConfig, SpineConfig, TypographyConfig,
 };
 pub use constants::{dimensions, dpi, font_scales, font_sizes, line_widths, margins, spacing};
 pub use error::{PlottingError, Result};

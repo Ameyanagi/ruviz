@@ -599,6 +599,19 @@ fn dark_pixel_run_right_from(image: &Image, x: u32, y: u32) -> usize {
     current
 }
 
+/// Pixel x of the middle configured major x tick, as `render()` places it.
+fn middle_x_tick_pixel(plot: &Plot, plot_area: tiny_skia::Rect) -> u32 {
+    let (x_min, x_max, y_min, y_max) = plot
+        .effective_data_bounds()
+        .expect("data bounds should be available");
+    let (x_ticks, _) = plot.configured_major_ticks(x_min, x_max, y_min, y_max);
+    assert!(!x_ticks.is_empty(), "plot should have at least one x tick");
+    let tick = x_ticks[x_ticks.len() / 2];
+    crate::render::skia::map_data_to_pixels(tick, 0.0, x_min, x_max, y_min, y_max, plot_area)
+        .0
+        .round() as u32
+}
+
 fn dark_pixel_run_down_from(image: &Image, x: u32, y: u32) -> usize {
     let mut current = 0;
     for sample_y in y..image.height {
@@ -629,8 +642,9 @@ fn compute_render_plot_area(plot: &Plot) -> tiny_skia::Rect {
 }
 
 fn compute_render_layout(plot: &Plot) -> ResolvedLayout {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -657,8 +671,9 @@ fn compute_render_layout(plot: &Plot) -> ResolvedLayout {
 }
 
 fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -709,8 +724,9 @@ fn compute_render_tick_probe_points(plot: &Plot) -> ((u32, u32), (u32, u32)) {
 }
 
 fn compute_layout_without_tick_measurements(plot: &Plot) -> ResolvedLayout {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
 
@@ -1960,6 +1976,67 @@ fn test_group_label_collapses_legend_to_single_item() {
 }
 
 #[test]
+fn test_labeled_fill_between_reaches_the_legend() {
+    let x = vec![0.0, 1.0, 2.0];
+    let lower = vec![0.0, 1.0, 2.0];
+    let upper = vec![1.0, 2.0, 3.0];
+
+    let plot = Plot::new()
+        .line(&x, &upper)
+        .label("mean")
+        .end_series()
+        .fill_between_labeled(&x, &lower, &upper, Color::BLUE, "95% CI");
+
+    let legend_items = plot.collect_legend_items();
+    assert_eq!(legend_items.len(), 2);
+    let band = legend_items
+        .iter()
+        .find(|item| item.label == "95% CI")
+        .expect("labelled fill should get a legend entry");
+    assert!(matches!(band.item_type, LegendItemType::Area { .. }));
+    // The swatch carries the band's own translucency, not a flat blue.
+    assert!(band.color.a < 255);
+}
+
+#[test]
+fn test_unlabeled_fill_between_stays_out_of_the_legend() {
+    let x = vec![0.0, 1.0, 2.0];
+    let lower = vec![0.0, 1.0, 2.0];
+    let upper = vec![1.0, 2.0, 3.0];
+
+    let plot = Plot::new()
+        .line(&x, &upper)
+        .label("mean")
+        .end_series()
+        .fill_between(&x, &lower, &upper);
+
+    let legend_items = plot.collect_legend_items();
+    assert_eq!(legend_items.len(), 1);
+    assert_eq!(legend_items[0].label, "mean");
+}
+
+#[test]
+fn test_headless_arrows_render_as_underlay() {
+    use crate::core::ArrowHead;
+
+    let stem = Annotation::arrow_styled(
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        ArrowStyle::new()
+            .head_style(ArrowHead::None)
+            .tail_style(ArrowHead::None),
+    );
+    // `stem()` emits headless arrows; they must paint below their own markers.
+    assert!(Plot::is_underlay_annotation(&stem));
+    assert!(!Plot::is_overlay_annotation(&stem));
+
+    let pointer = Annotation::arrow_styled(0.0, 0.0, 1.0, 1.0, ArrowStyle::new());
+    assert!(Plot::is_overlay_annotation(&pointer));
+}
+
+#[test]
 fn test_group_without_label_is_omitted_from_legend() {
     let x = vec![0.0, 1.0, 2.0];
     let y1 = vec![0.0, 1.0, 2.0];
@@ -2448,7 +2525,8 @@ fn test_png_annotation_hline_uses_log_y_scale() {
 
     let image = plot.render().unwrap();
     let plot_area = compute_render_plot_area(&plot);
-    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+    // Render uses the margined effective bounds, not the raw data bounds.
+    let (x_min, x_max, y_min, y_max) = plot.effective_data_bounds().unwrap();
     let (expected_x, expected_y) = crate::render::skia::map_data_to_pixels_scaled(
         0.5,
         10.0,
@@ -2734,8 +2812,9 @@ fn test_render_layout_uses_configured_major_ticks() {
         .major_ticks_y(3)
         .line(&[0.0, 1.0, 2.0, 3.0], &[1.0, 4.0, 9.0, 16.0])
         .end_series();
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -2770,6 +2849,9 @@ fn test_render_layout_uses_configured_major_ticks() {
 fn test_render_honors_top_and_right_tick_sides() {
     let base_plot = Plot::new()
         .size_px(400, 300)
+        // Grid off: the now-visible default grid draws a dark column at every
+        // tick, which would mask whether a top/right tick mark was emitted.
+        .grid(false)
         .line(&[0.0, 10.0, 20.0], &[0.0, 50.0, 100.0])
         .end_series();
     let all_sides = base_plot.clone().ticks_all_sides();
@@ -2781,31 +2863,38 @@ fn test_render_honors_top_and_right_tick_sides() {
         .render()
         .expect("bottom-left render should succeed");
 
-    assert!(image_pixel_is_dark(
+    // Radius 1: a tick centre can land on a sub-pixel boundary, so the drawn
+    // 1px line may sit one row/column off the rounded probe.
+    assert!(image_has_dark_pixel_near(
         &image_all_sides,
         top_probe.0,
-        top_probe.1
+        top_probe.1,
+        1
     ));
-    assert!(!image_pixel_is_dark(
+    assert!(!image_has_dark_pixel_near(
         &image_bottom_left,
         top_probe.0,
-        top_probe.1
+        top_probe.1,
+        1
     ));
-    assert!(image_pixel_is_dark(
+    assert!(image_has_dark_pixel_near(
         &image_all_sides,
         right_probe.0,
-        right_probe.1
+        right_probe.1,
+        1
     ));
-    assert!(!image_pixel_is_dark(
+    assert!(!image_has_dark_pixel_near(
         &image_bottom_left,
         right_probe.0,
-        right_probe.1
+        right_probe.1,
+        1
     ));
 }
 
 fn compute_categorical_render_top_tick_probe(plot: &Plot) -> (u32, u32) {
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -2854,6 +2943,8 @@ fn test_render_honors_top_ticks_for_categorical_bar() {
     let values = [2.0, 4.0, 3.0];
     let base_plot = Plot::new()
         .size_px(400, 300)
+        // Grid off: see test_render_honors_top_and_right_tick_sides.
+        .grid(false)
         .bar(&categories, &values)
         .end_series();
     let all_sides = base_plot.clone().ticks_all_sides();
@@ -2885,6 +2976,8 @@ fn test_render_to_renderer_honors_top_ticks_for_categorical_bar() {
     let values = [2.0, 4.0, 3.0];
     let base_plot = Plot::new()
         .size_px(400, 300)
+        // Grid off: see test_render_honors_top_and_right_tick_sides.
+        .grid(false)
         .bar(&categories, &values)
         .end_series();
     let all_sides = base_plot.clone().ticks_all_sides();
@@ -2936,8 +3029,9 @@ fn test_render_to_svg_uses_layout_positions_for_title_and_labels() {
 
     let svg = plot.render_to_svg().expect("SVG render should succeed");
 
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -3261,8 +3355,10 @@ fn test_rendered_axis_and_tick_geometry_follow_line_config() {
     let thin_axis_run = dark_pixel_run_right_from(&thin_image, thin_axis_x, thin_axis_y);
     let thick_axis_run = dark_pixel_run_right_from(&thick_image, thick_axis_x, thick_axis_y);
 
-    let thin_tick_x = (thin_area.left() + thin_area.width() * 0.5).round() as u32;
-    let thick_tick_x = (thick_area.left() + thick_area.width() * 0.5).round() as u32;
+    // Probe at a real tick position: the plot-area centre is not guaranteed to
+    // carry a tick once the autoscale margin widens the range.
+    let thin_tick_x = middle_x_tick_pixel(&thin_plot, thin_area);
+    let thick_tick_x = middle_x_tick_pixel(&thick_plot, thick_area);
     let thin_tick_y = thin_area.bottom().round() as u32;
     let thick_tick_y = thick_area.bottom().round() as u32;
     let thin_tick_run = dark_pixel_run_down_from(&thin_image, thin_tick_x, thin_tick_y);
@@ -3293,8 +3389,9 @@ fn test_render_to_svg_typst_uses_layout_anchor_contract() {
 
     let svg = plot.render_to_svg().expect("SVG render should succeed");
 
+    // Mirror render(): it draws with the margined effective bounds.
     let (x_min, x_max, y_min, y_max) = plot
-        .calculate_data_bounds()
+        .effective_data_bounds()
         .expect("data bounds should be available");
     let content = plot.create_plot_content(y_min, y_max);
     let mut measurement_renderer = crate::render::SkiaRenderer::new(
@@ -5209,7 +5306,8 @@ fn test_quiver_png_uses_log_x_scale_for_geometry() {
 
     let image = plot.render().unwrap();
     let plot_area = compute_render_plot_area(&plot);
-    let (x_min, x_max, y_min, y_max) = plot.calculate_data_bounds().unwrap();
+    // Render uses the margined effective bounds, not the raw data bounds.
+    let (x_min, x_max, y_min, y_max) = plot.effective_data_bounds().unwrap();
     let data_midpoint = (10.0_f64 * 100.0).sqrt();
     let (expected_x, expected_y) = crate::render::skia::map_data_to_pixels_scaled(
         data_midpoint,
@@ -5334,31 +5432,44 @@ fn test_auto_placed_insets_preserve_gap_with_mixed_sizes() {
 }
 
 #[test]
-fn test_radar_plot_area_centers_portrait_insets_before_title_clearance() {
+fn test_radar_plot_area_is_the_largest_centered_square() {
+    // Portrait plot area: the square is limited by the width and must sit in the
+    // vertical middle, not be pushed down by a redundant title clearance.
     let plot_area =
         tiny_skia::Rect::from_ltrb(100.0, 200.0, 300.0, 600.0).expect("valid test rect");
     let area = Plot::radar_plot_area(plot_area, -1.25, 1.25, -1.25, 1.25);
 
+    assert!(
+        (area.width - 200.0).abs() < 0.01,
+        "unexpected radar inset width: {}",
+        area.width
+    );
+    assert!(
+        (area.height - 200.0).abs() < 0.01,
+        "unexpected radar inset height: {}",
+        area.height
+    );
     assert!(
         (area.x - 100.0).abs() < 0.01,
         "unexpected radar inset x: {}",
         area.x
     );
     assert!(
-        (area.y - 340.0).abs() < 0.01,
+        (area.y - 300.0).abs() < 0.01,
         "unexpected radar inset y: {}",
         area.y
     );
-    assert!(
-        (area.width - 160.0).abs() < 0.01,
-        "unexpected radar inset width: {}",
-        area.width
-    );
-    assert!(
-        (area.height - 160.0).abs() < 0.01,
-        "unexpected radar inset height: {}",
-        area.height
-    );
+
+    // The square's center must coincide with the plot area's center on both axes.
+    assert!((area.x + area.width * 0.5 - 200.0).abs() < 0.01);
+    assert!((area.y + area.height * 0.5 - 400.0).abs() < 0.01);
+
+    // Landscape plot area: same contract, limited by height this time.
+    let landscape = tiny_skia::Rect::from_ltrb(0.0, 0.0, 640.0, 400.0).expect("valid test rect");
+    let area = Plot::radar_plot_area(landscape, -1.25, 1.25, -1.25, 1.25);
+    assert!((area.width - 400.0).abs() < 0.01);
+    assert!((area.x + area.width * 0.5 - 320.0).abs() < 0.01);
+    assert!((area.y + area.height * 0.5 - 200.0).abs() < 0.01);
 }
 
 #[test]
@@ -6049,6 +6160,102 @@ fn test_new_plot_preserves_established_default_grid_color() {
 }
 
 #[test]
+fn test_grid_layers_keep_minor_lines_subordinate_to_major() {
+    let style = GridStyle::default();
+    let x_major = [10.0f32, 20.0];
+    let y_major = [30.0f32];
+    let x_minor = [12.0f32, 14.0];
+    let y_minor = [32.0f32, 34.0];
+    // 4 px per point keeps both widths above the sub-pixel floor, so the
+    // major/minor comparison below is about the style, not the floor.
+    let to_px = |points: f32| points * 4.0;
+
+    let major_only = Plot::grid_layers(
+        &style,
+        &GridMode::MajorOnly,
+        &x_major,
+        &y_major,
+        &x_minor,
+        &y_minor,
+        to_px,
+    );
+    assert_eq!(major_only.len(), 1);
+    assert_eq!(major_only[0].x_pixels, x_major.to_vec());
+    assert_eq!(major_only[0].y_pixels, y_major.to_vec());
+    assert_eq!(major_only[0].color, style.effective_color());
+
+    let minor_only = Plot::grid_layers(
+        &style,
+        &GridMode::MinorOnly,
+        &x_major,
+        &y_major,
+        &x_minor,
+        &y_minor,
+        to_px,
+    );
+    assert_eq!(minor_only.len(), 1);
+    assert_eq!(minor_only[0].x_pixels, x_minor.to_vec());
+    assert_eq!(minor_only[0].color, style.effective_minor_color());
+
+    // `Both` must not concatenate the two tick sets into one stroke: that is
+    // what made `minor_alpha` / `minor_line_width` inert and drew minor lines at
+    // full major weight.
+    let both = Plot::grid_layers(
+        &style,
+        &GridMode::Both,
+        &x_major,
+        &y_major,
+        &x_minor,
+        &y_minor,
+        to_px,
+    );
+    assert_eq!(both.len(), 2, "Both must emit a minor and a major pass");
+
+    let (minor, major) = (&both[0], &both[1]);
+    assert_eq!(minor.x_pixels, x_minor.to_vec());
+    assert_eq!(minor.y_pixels, y_minor.to_vec());
+    assert_eq!(major.x_pixels, x_major.to_vec());
+    assert_eq!(major.y_pixels, y_major.to_vec());
+
+    // Minor is drawn first so major overdraws any coincident line, and it is
+    // strictly lighter and no thicker.
+    assert!(
+        minor.color.a < major.color.a,
+        "minor grid must be more transparent: {} vs {}",
+        minor.color.a,
+        major.color.a
+    );
+    assert!(
+        minor.width_px < major.width_px,
+        "minor grid must be thinner: {} vs {}",
+        minor.width_px,
+        major.width_px
+    );
+}
+
+#[test]
+fn test_grid_layers_floor_every_pass_at_one_device_pixel() {
+    let style = GridStyle::default();
+    let layers = Plot::grid_layers(
+        &style,
+        &GridMode::Both,
+        &[1.0],
+        &[2.0],
+        &[3.0],
+        &[4.0],
+        // A sub-pixel converter, as a low-DPI render produces for both widths.
+        |points| points * 0.1,
+    );
+    for layer in &layers {
+        assert!(
+            layer.width_px >= crate::core::style_utils::defaults::MIN_GRID_LINE_WIDTH_PX,
+            "grid stroke must not fall below one device pixel: {}",
+            layer.width_px
+        );
+    }
+}
+
+#[test]
 fn test_invalid_theme_base_font_does_not_poison_resolved_typography() {
     for invalid in [0.0, f32::NAN, f32::INFINITY] {
         let theme = Theme {
@@ -6361,3 +6568,69 @@ fn test_backend_getter_does_not_sample_reactive_style() {
 
 #[cfg(feature = "typst-math")]
 mod typst;
+
+/// Adjacent histogram bins of equal height must still read as separate bins.
+///
+/// The rectangle primitive draws an honest flat fill with no implicit border, so
+/// the bin boundaries only survive if the histogram render path asks for an edge
+/// explicitly. Without that edge, equal-height neighbours merge into one
+/// silhouette; this test fails the moment that happens again.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_histogram_adjacent_bins_keep_a_visible_boundary() {
+    // Four bins of exactly two samples each: every neighbour has the same height.
+    let samples: Vec<f64> = (0..8).map(|value| value as f64).collect();
+    let config = crate::plots::histogram::HistogramConfig::new().bins(4);
+
+    let png = Plot::new()
+        .size_px(400, 300)
+        .ticks(false)
+        .grid(false)
+        .histogram(&samples, Some(config))
+        .end_series()
+        .render_png_bytes()
+        .expect("histogram should render as PNG");
+    let image = decode_png_rgba(&png);
+
+    // A row three quarters down the canvas crosses every bar.
+    let row = image.height() * 3 / 4;
+    let scanline: Vec<[u8; 4]> = (0..image.width())
+        .map(|column| image.get_pixel(column, row).0)
+        .collect();
+
+    // The fill is whatever colour dominates the scanline outside the background.
+    let mut counts: std::collections::HashMap<[u8; 4], usize> = std::collections::HashMap::new();
+    for pixel in &scanline {
+        if pixel[0] < 240 || pixel[1] < 240 || pixel[2] < 240 {
+            *counts.entry(*pixel).or_default() += 1;
+        }
+    }
+    let (fill, fill_count) = counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .expect("the scanline should cross the histogram bars");
+    assert!(
+        fill_count > 100,
+        "expected a wide run of bar fill, got {fill_count} px"
+    );
+
+    let luminance = |pixel: &[u8; 4]| pixel[0] as i32 + pixel[1] as i32 + pixel[2] as i32;
+    let fill_luminance = luminance(&fill);
+
+    // Count maximal runs that are clearly darker than the fill: the two outer
+    // edges plus one boundary between each adjacent pair of bins.
+    let mut boundaries = 0usize;
+    let mut inside_dark = false;
+    for pixel in &scanline {
+        let dark = pixel[3] > 0 && luminance(pixel) < fill_luminance - 45;
+        if dark && !inside_dark {
+            boundaries += 1;
+        }
+        inside_dark = dark;
+    }
+
+    assert!(
+        boundaries >= 5,
+        "expected 4 bins to show 5 edges (2 outer + 3 shared), found {boundaries}"
+    );
+}

@@ -223,12 +223,38 @@ pub struct PolarPlotData {
     pub r_max: f64,
     /// Polygon vertices for fill (closed path)
     pub fill_polygon: Vec<(f64, f64)>,
+    /// Whether the sweep is a full turn, so the curve closes on itself instead of
+    /// through the origin
+    pub closed: bool,
     /// Angular axis labels (0°, 90°, etc.)
     pub theta_labels: Vec<PositionedLabel>,
     /// Radial axis labels
     pub r_labels: Vec<PositionedLabel>,
     /// Configuration used
     pub(crate) config: PolarPlotConfig,
+}
+
+/// Relative gap, as a fraction of `r_max`, below which a full-turn outline is
+/// already closed by its own samples.
+const CLOSING_SEGMENT_EPSILON: f64 = 1e-9;
+
+impl PolarPlotData {
+    /// Segment that closes the outline of a full-turn curve, if one is needed.
+    ///
+    /// Returns `None` for partial arcs (which close through the origin instead)
+    /// and for samplings that already repeat the first point at the end.
+    pub fn closing_segment(&self) -> Option<((f64, f64), (f64, f64))> {
+        if !self.closed {
+            return None;
+        }
+
+        let first = self.points.first()?;
+        let last = self.points.last()?;
+        let gap = ((last.x - first.x).powi(2) + (last.y - first.y).powi(2)).sqrt();
+
+        (gap > CLOSING_SEGMENT_EPSILON * self.r_max)
+            .then_some(((last.x, last.y), (first.x, first.y)))
+    }
 }
 
 /// Input for polar plot computation
@@ -264,6 +290,7 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
             points: vec![],
             r_max: 1.0,
             fill_polygon: vec![],
+            closed: false,
             theta_labels: vec![],
             r_labels: vec![],
             config: config.clone(),
@@ -289,11 +316,17 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
     // Ensure we have a valid r_max
     let r_max = if r_max > 0.0 { r_max } else { 1.0 };
 
+    let closed = is_full_turn(&theta[..n]);
+
     // Generate fill polygon if enabled
     let fill_polygon = if config.fill && !points.is_empty() {
         let mut polygon: Vec<(f64, f64)> = points.iter().map(|p| (p.x, p.y)).collect();
-        // Close through origin
-        polygon.push((0.0, 0.0));
+        // A full sweep already closes on itself; adding the origin would cut the
+        // fill with a degenerate out-and-back spike at the seam. Only a partial
+        // arc has to be closed through the centre.
+        if !closed {
+            polygon.push((0.0, 0.0));
+        }
         polygon
     } else {
         vec![]
@@ -338,10 +371,41 @@ pub fn compute_polar_plot(r: &[f64], theta: &[f64], config: &PolarPlotConfig) ->
         points,
         r_max,
         fill_polygon,
+        closed,
         theta_labels,
         r_labels,
         config: config.clone(),
     }
+}
+
+/// Angular slack, in radians, within which a sweep still counts as a full turn.
+const FULL_TURN_EPSILON: f64 = 1e-6;
+
+/// Minimum number of finite samples before a sweep can be called a full turn.
+/// Below this the mean spacing is too coarse to tell a closed curve from a wedge.
+const FULL_TURN_MIN_SAMPLES: usize = 3;
+
+/// Whether the sampled `theta` values sweep a complete turn, i.e. the curve
+/// closes on itself and needs no closing segment through the origin.
+///
+/// Both common samplings count as closed: endpoint-inclusive (`0..=2π`, where the
+/// span is already a full turn) and endpoint-exclusive (`i * 2π / n`, where the
+/// span falls one sample short). Non-finite samples are ignored.
+fn is_full_turn(theta: &[f64]) -> bool {
+    let (count, min, max) = theta.iter().copied().filter(|t| t.is_finite()).fold(
+        (0usize, f64::INFINITY, f64::NEG_INFINITY),
+        |(count, lo, hi), t| (count + 1, lo.min(t), hi.max(t)),
+    );
+
+    if count < FULL_TURN_MIN_SAMPLES {
+        return false;
+    }
+
+    let span = max - min;
+    // The residual gap back to the first sample closes the curve when it is no
+    // wider than one sampling step.
+    let mean_step = span / (count - 1) as f64;
+    span + mean_step >= std::f64::consts::TAU - FULL_TURN_EPSILON
 }
 
 /// Generate polar grid lines
@@ -481,6 +545,23 @@ impl PlotRender for PolarPlotData {
                     LineStyle::Solid,
                 )?;
             }
+
+            // Endpoint-exclusive sampling of a full turn stops one step short of
+            // the start; without this segment the outline gapes at the seam.
+            if let Some(segment) = self.closing_segment() {
+                let ((x1, y1), (x2, y2)) = segment;
+                let (sx1, sy1) = area.data_to_screen(x1, y1);
+                let (sx2, sy2) = area.data_to_screen(x2, y2);
+                renderer.draw_line(
+                    sx1,
+                    sy1,
+                    sx2,
+                    sy2,
+                    line_color,
+                    line_width_px,
+                    LineStyle::Solid,
+                )?;
+            }
         }
 
         // Draw markers if configured
@@ -540,6 +621,92 @@ mod tests {
 
         assert_eq!(data.points.len(), 3);
         assert!((data.r_max - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_full_turn_fill_has_no_origin_seam() {
+        // Endpoint-exclusive sampling of a limaçon: the curve closes on itself,
+        // so no origin vertex may be appended (it would cut a seam at 0°).
+        let n = 200;
+        let theta: Vec<f64> = (0..n).map(|i| i as f64 * 2.0 * PI / n as f64).collect();
+        let r: Vec<f64> = theta.iter().map(|&t| 2.0 + t.cos()).collect();
+        let config = PolarPlotConfig::default().fill(true);
+        let data = compute_polar_plot(&r, &theta, &config);
+
+        assert_eq!(data.fill_polygon.len(), n);
+        assert!(
+            !data
+                .fill_polygon
+                .iter()
+                .any(|&(x, y)| x.abs() < 1e-12 && y.abs() < 1e-12),
+            "full-turn fill must not close through the origin"
+        );
+
+        // Endpoint-inclusive sampling closes too.
+        let theta: Vec<f64> = (0..=n).map(|i| i as f64 * 2.0 * PI / n as f64).collect();
+        let r: Vec<f64> = theta.iter().map(|&t| 2.0 + t.cos()).collect();
+        let data = compute_polar_plot(&r, &theta, &config);
+        assert_eq!(data.fill_polygon.len(), n + 1);
+    }
+
+    #[test]
+    fn test_partial_arc_fill_closes_through_origin() {
+        // A half turn is a wedge: closing through the centre is correct.
+        let n = 50;
+        let theta: Vec<f64> = (0..n).map(|i| i as f64 * PI / (n - 1) as f64).collect();
+        let r: Vec<f64> = vec![1.0; n];
+        let config = PolarPlotConfig::default().fill(true);
+        let data = compute_polar_plot(&r, &theta, &config);
+
+        assert_eq!(data.fill_polygon.len(), n + 1);
+        let last = data.fill_polygon[n];
+        assert!(last.0.abs() < 1e-12 && last.1.abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_is_full_turn() {
+        assert!(is_full_turn(&[0.0, PI, 2.0 * PI]));
+        assert!(is_full_turn(&[0.0, 2.0 * PI / 3.0, 4.0 * PI / 3.0]));
+        assert!(!is_full_turn(&[0.0, PI / 2.0, PI]));
+        // Too few samples to distinguish a closed curve from a wedge.
+        assert!(!is_full_turn(&[0.0, PI]));
+        assert!(!is_full_turn(&[]));
+        // Non-finite samples are ignored.
+        assert!(is_full_turn(&[0.0, f64::NAN, PI, 2.0 * PI]));
+    }
+
+    #[test]
+    fn test_closing_segment() {
+        let n = 200;
+        // Endpoint-exclusive: outline stops one step short, so it needs closing.
+        let theta: Vec<f64> = (0..n).map(|i| i as f64 * 2.0 * PI / n as f64).collect();
+        let r: Vec<f64> = vec![1.0; n];
+        let config = PolarPlotConfig::default();
+        let data = compute_polar_plot(&r, &theta, &config);
+        let (from, to) = data.closing_segment().expect("full turn needs closing");
+        assert!((from.0 - data.points[n - 1].x).abs() < 1e-12);
+        assert!((to.0 - data.points[0].x).abs() < 1e-12);
+
+        // Endpoint-inclusive: the last sample already coincides with the first.
+        let theta: Vec<f64> = (0..=n).map(|i| i as f64 * 2.0 * PI / n as f64).collect();
+        let r: Vec<f64> = vec![1.0; n + 1];
+        let data = compute_polar_plot(&r, &theta, &config);
+        assert!(data.closing_segment().is_none());
+
+        // Partial arcs close through the origin, not back to the first point.
+        let theta: Vec<f64> = (0..n).map(|i| i as f64 * PI / n as f64).collect();
+        let r: Vec<f64> = vec![1.0; n];
+        let data = compute_polar_plot(&r, &theta, &config);
+        assert!(!data.closed);
+        assert!(data.closing_segment().is_none());
+    }
+
+    #[test]
+    fn test_fill_disabled_leaves_polygon_empty() {
+        let r = vec![1.0, 2.0, 3.0];
+        let theta = vec![0.0, PI / 2.0, PI];
+        let data = compute_polar_plot(&r, &theta, &PolarPlotConfig::default());
+        assert!(data.fill_polygon.is_empty());
     }
 
     #[test]

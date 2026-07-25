@@ -324,6 +324,8 @@ pub struct FillStyle {
     pub edge_width: f32,
     /// Hatch pattern (None for solid fill)
     pub hatch: Option<HatchPattern>,
+    /// Legend label (None keeps the fill out of the legend)
+    pub label: Option<String>,
 }
 
 impl Default for FillStyle {
@@ -334,6 +336,7 @@ impl Default for FillStyle {
             edge_color: None,
             edge_width: 0.0,
             hatch: None,
+            label: None,
         }
     }
 }
@@ -366,6 +369,15 @@ impl FillStyle {
     /// Set the hatch pattern
     pub fn hatch(mut self, pattern: HatchPattern) -> Self {
         self.hatch = Some(pattern);
+        self
+    }
+
+    /// Set the legend label.
+    ///
+    /// A labelled fill (a confidence band, say) gets its own legend entry;
+    /// unlabelled fills stay out of the legend, as before.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
         self
     }
 }

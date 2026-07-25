@@ -605,6 +605,11 @@ pub struct BarInstance {
     pub width: f32,
     pub height: f32,
     pub color: Color,
+    /// Optional explicit edge as `(colour, width_in_points)`.
+    ///
+    /// `None` means a flat fill with no stroke (matplotlib's `bar()` default).
+    /// Histograms populate it so adjacent bins stay distinguishable.
+    pub edge: Option<(Color, f32)>,
 }
 
 /// Box plot render data for parallel rendering

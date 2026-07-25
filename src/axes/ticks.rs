@@ -235,6 +235,14 @@ pub fn generate_log_minor_ticks(major_ticks: &[f64]) -> Vec<f64> {
     minor_ticks
 }
 
+/// Safety cap on the number of steps walked between the nice bounds.
+///
+/// Mirrors the iteration limit in `core::tick_formatter` so both tick
+/// generators degrade the same way on pathological ranges. Nice-number
+/// selection keeps the real count under ~92, so this is only ever reached by
+/// degenerate input.
+const MAX_TICK_STEPS: usize = 100;
+
 /// Internal function implementing nice number selection
 fn generate_nice_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
     let range = max - min;
@@ -268,18 +276,32 @@ fn generate_nice_ticks(min: f64, max: f64, max_ticks: usize) -> Vec<f64> {
     let start = (min / step).floor() * step;
     let end = (max / step).ceil() * step;
 
+    // At large magnitudes `step` can be smaller than one ULP of `start`
+    // (e.g. min = 1e16 with step = 0.5), so walking the axis would never
+    // advance. Fall back to the endpoints like the other degenerate cases.
+    if start + step <= start {
+        return vec![min, max];
+    }
+
+    // Bound the walk by an integer step count instead of accumulating, which
+    // also removes drift from repeated addition.
+    let steps = (end - start) / step;
+    if !steps.is_finite() || steps < 0.0 || steps > MAX_TICK_STEPS as f64 {
+        return vec![min, max];
+    }
+    let steps = steps.round() as usize;
+
     // Generate ticks
-    let mut ticks = Vec::new();
-    let mut tick = start;
+    let mut ticks = Vec::with_capacity(steps + 1);
     let epsilon = step * 1e-10;
 
-    while tick <= end + epsilon {
+    for i in 0..=steps {
+        let tick = start + (i as f64) * step;
         if tick >= min - epsilon && tick <= max + epsilon {
             // Clean up floating point errors by rounding to appropriate precision
             let clean_tick = clean_float(tick, step);
             ticks.push(clean_tick);
         }
-        tick += step;
     }
 
     ticks
@@ -336,6 +358,73 @@ mod tests {
         assert!(ticks.windows(2).all(|window| window[0] <= window[1]));
         assert!(ticks[0] >= 5.0);
         assert!(*ticks.last().unwrap() <= 10.0);
+    }
+
+    #[test]
+    fn test_generate_ticks_ordinary_ranges_unchanged() {
+        // Values captured from the accumulating implementation this loop replaced.
+        assert_eq!(generate_ticks(0.0, 10.0, 5), vec![0.0, 5.0, 10.0]);
+        assert_eq!(generate_ticks(0.0, 10.0, 3), vec![0.0, 5.0, 10.0]);
+        assert_eq!(
+            generate_ticks(0.0, 10.0, 10),
+            vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
+        );
+        assert_eq!(generate_ticks(-5.0, 5.0, 5), vec![-5.0, 0.0, 5.0]);
+        assert_eq!(
+            generate_ticks(-5.0, 5.0, 7),
+            vec![-4.0, -2.0, 0.0, 2.0, 4.0]
+        );
+        assert_eq!(generate_ticks(0.7, 9.3, 5), vec![5.0]);
+        assert_eq!(generate_ticks(0.7, 9.3, 8), vec![2.0, 4.0, 6.0, 8.0]);
+        assert_eq!(
+            generate_ticks(0.0, 100.0, 6),
+            vec![0.0, 20.0, 40.0, 60.0, 80.0, 100.0]
+        );
+        assert_eq!(generate_ticks(10.0, 5.0, 5), vec![6.0, 8.0, 10.0]);
+    }
+
+    #[test]
+    fn test_generate_ticks_step_below_ulp_terminates() {
+        // step = 0.5 at magnitude 1e16, where one ULP is 2.0: the walk cannot
+        // advance, so the generator must fall back to the endpoints.
+        let min = 1e16;
+        let max = 1e16 + 2.0;
+        let ticks = generate_ticks(min, max, 6);
+
+        assert_eq!(ticks, vec![min, max]);
+    }
+
+    #[test]
+    fn test_generate_ticks_unit_step_below_ulp_terminates() {
+        let min = 1e16;
+        let max = 1e16 + 5.0;
+        let ticks = generate_ticks(min, max, 6);
+
+        assert_eq!(ticks, vec![min, max]);
+    }
+
+    #[test]
+    fn test_generate_ticks_bounded_for_extreme_ranges() {
+        let cases = [
+            (0.0, f64::MAX),
+            (-f64::MAX, f64::MAX),
+            (1e300, 1e300 + 1.0),
+            (-1e16, -1e16 + 2.0),
+            (f64::MIN_POSITIVE, 1.0),
+        ];
+
+        for (min, max) in cases {
+            let ticks = generate_ticks(min, max, 6);
+            assert!(
+                ticks.len() <= MAX_TICK_STEPS + 1,
+                "unbounded tick count for ({min}, {max}): {}",
+                ticks.len()
+            );
+            assert!(
+                ticks.iter().all(|tick| tick.is_finite()),
+                "non-finite tick for ({min}, {max}): {ticks:?}"
+            );
+        }
     }
 
     #[test]

@@ -17,6 +17,18 @@ enum AnnotationRenderLayer {
     Overlay,
 }
 
+/// One grid drawing pass produced by [`Plot::grid_layers`].
+///
+/// Carries the tick pixel positions to stroke plus the stroke appearance for
+/// that pass, so major and minor grids keep their distinct weight and opacity.
+#[derive(Debug, Clone)]
+pub(crate) struct GridLayer {
+    pub x_pixels: Vec<f32>,
+    pub y_pixels: Vec<f32>,
+    pub color: Color,
+    pub width_px: f32,
+}
+
 impl Plot {
     pub(crate) fn axis_tick_metrics_px(&self) -> (f32, f32, f32, f32, f32) {
         let lines = &self.display.config.lines;
@@ -40,6 +52,15 @@ impl Plot {
             | Annotation::HSpan { .. }
             | Annotation::VSpan { .. }
             | Annotation::Rectangle { .. } => AnnotationRenderLayer::Underlay,
+            // Headless arrows are structural, not annotations pointing at something:
+            // `stem()` emits them as the stems under its own markers, so they must
+            // paint below the series rather than over it.
+            Annotation::Arrow { style, .. }
+                if style.head_style == crate::core::ArrowHead::None
+                    && style.tail_style == crate::core::ArrowHead::None =>
+            {
+                AnnotationRenderLayer::Underlay
+            }
             Annotation::Text { .. }
             | Annotation::Arrow { .. }
             | Annotation::HLine { .. }
@@ -202,19 +223,50 @@ impl Plot {
         }
     }
 
-    pub(crate) fn grid_tick_pixels(
-        major_pixels: &[f32],
-        minor_pixels: &[f32],
+    /// Convert a grid stroke width from points to device pixels.
+    ///
+    /// Floored at one device pixel: a sub-pixel grid stroke is antialiased into
+    /// a washed-out band and effectively disappears.
+    pub(crate) fn grid_stroke_px(points: f32, points_to_px: &impl Fn(f32) -> f32) -> f32 {
+        points_to_px(points).max(crate::core::style_utils::defaults::MIN_GRID_LINE_WIDTH_PX)
+    }
+
+    /// Split the grid into the passes the renderer has to draw.
+    ///
+    /// Major and minor grid lines are *not* interchangeable: [`GridStyle`]
+    /// carries a separate `minor_line_width` and `minor_alpha` so minor lines
+    /// read as subordinate. Concatenating both tick sets into a single draw call
+    /// throws that away and paints minor lines at full major weight, so each
+    /// pass is emitted separately with its own colour and stroke width.
+    ///
+    /// For [`GridMode::Both`] the minor pass comes first so that major lines
+    /// overdraw any coincident minor line.
+    pub(crate) fn grid_layers(
+        style: &GridStyle,
         mode: &GridMode,
-    ) -> Vec<f32> {
+        x_major: &[f32],
+        y_major: &[f32],
+        x_minor: &[f32],
+        y_minor: &[f32],
+        points_to_px: impl Fn(f32) -> f32,
+    ) -> Vec<GridLayer> {
+        let major = || GridLayer {
+            x_pixels: x_major.to_vec(),
+            y_pixels: y_major.to_vec(),
+            color: style.effective_color(),
+            width_px: Self::grid_stroke_px(style.line_width, &points_to_px),
+        };
+        let minor = || GridLayer {
+            x_pixels: x_minor.to_vec(),
+            y_pixels: y_minor.to_vec(),
+            color: style.effective_minor_color(),
+            width_px: Self::grid_stroke_px(style.minor_line_width, &points_to_px),
+        };
+
         match mode {
-            GridMode::MajorOnly => major_pixels.to_vec(),
-            GridMode::MinorOnly => minor_pixels.to_vec(),
-            GridMode::Both => major_pixels
-                .iter()
-                .chain(minor_pixels.iter())
-                .copied()
-                .collect(),
+            GridMode::MajorOnly => vec![major()],
+            GridMode::MinorOnly => vec![minor()],
+            GridMode::Both => vec![minor(), major()],
         }
     }
 
@@ -364,26 +416,25 @@ impl Plot {
 
         let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
         if self.layout.grid_style.visible && draw_axes {
-            let grid_color = self.layout.grid_style.effective_color();
-            let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
-            let grid_x_pixels = Self::grid_tick_pixels(
+            let layers = Self::grid_layers(
+                &self.layout.grid_style,
+                &self.layout.tick_config.grid_mode,
                 &x_tick_pixels,
-                &x_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
-            );
-            let grid_y_pixels = Self::grid_tick_pixels(
                 &y_tick_pixels,
+                &x_minor_tick_pixels,
                 &y_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
+                |points| self.line_width_px(points),
             );
-            renderer.draw_grid(
-                &grid_x_pixels,
-                &grid_y_pixels,
-                plot_area,
-                grid_color,
-                self.layout.grid_style.line_style.clone(),
-                grid_width_px,
-            )?;
+            for layer in &layers {
+                renderer.draw_grid(
+                    &layer.x_pixels,
+                    &layer.y_pixels,
+                    plot_area,
+                    layer.color,
+                    self.layout.grid_style.line_style.clone(),
+                    layer.width_px,
+                )?;
+            }
         }
 
         let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
@@ -2668,48 +2719,37 @@ impl Plot {
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         let draw_axes = Self::needs_cartesian_axes_for_series(&self.series_mgr.series);
         if self.layout.grid_style.visible && draw_axes {
-            let grid_color = self.layout.grid_style.effective_color();
-            let grid_width_px = self.line_width_px(self.layout.grid_style.line_width);
-            let grid_y_pixels = Self::grid_tick_pixels(
-                &y_tick_layout.pixel_positions,
-                &y_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
-            );
-            if bar_categories.is_some() {
-                // For bar charts, only draw horizontal grid lines
-                svg.draw_grid(
-                    &[], // no vertical grid lines for bar charts
-                    &grid_y_pixels,
-                    plot_left,
-                    plot_right,
-                    plot_top,
-                    plot_bottom,
-                    grid_color,
-                    self.layout.grid_style.line_style.clone(),
-                    grid_width_px,
-                );
+            // Bar charts only get horizontal grid lines.
+            let (x_major_pixels, x_minor_pixels): (&[f32], &[f32]) = if bar_categories.is_some() {
+                (&[], &[])
             } else {
-                // For other charts, compute X-axis ticks and draw full grid
                 let x_tick_layout = x_tick_layout.as_ref().ok_or_else(|| {
                     PlottingError::RenderError(
                         "missing x tick layout for non-categorical SVG grid".to_string(),
                     )
                 })?;
-                let grid_x_pixels = Self::grid_tick_pixels(
-                    &x_tick_layout.pixel_positions,
-                    &x_minor_tick_pixels,
-                    &self.layout.tick_config.grid_mode,
-                );
+                (&x_tick_layout.pixel_positions, &x_minor_tick_pixels)
+            };
+            let layers = Self::grid_layers(
+                &self.layout.grid_style,
+                &self.layout.tick_config.grid_mode,
+                x_major_pixels,
+                &y_tick_layout.pixel_positions,
+                x_minor_pixels,
+                &y_minor_tick_pixels,
+                |points| self.line_width_px(points),
+            );
+            for layer in &layers {
                 svg.draw_grid(
-                    &grid_x_pixels,
-                    &grid_y_pixels,
+                    &layer.x_pixels,
+                    &layer.y_pixels,
                     plot_left,
                     plot_right,
                     plot_top,
                     plot_bottom,
-                    grid_color,
+                    layer.color,
                     self.layout.grid_style.line_style.clone(),
-                    grid_width_px,
+                    layer.width_px,
                 );
             }
         }

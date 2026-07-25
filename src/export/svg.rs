@@ -346,6 +346,42 @@ impl SvgRenderer {
         }
     }
 
+    /// Draw a rectangle with an explicit fill and/or an explicit edge.
+    ///
+    /// Twin of [`SkiaRenderer::draw_rectangle_styled`](crate::render::SkiaRenderer::draw_rectangle_styled):
+    /// `edge` is `(colour, width_in_points)` and the width is scaled by this
+    /// renderer's [`RenderScale`], so PNG and SVG agree at every DPI.
+    pub fn draw_rectangle_styled(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        fill: Option<Color>,
+        edge: Option<(Color, f32)>,
+    ) {
+        if fill.is_none() && edge.is_none() {
+            return;
+        }
+        let fill_attr = match fill {
+            Some(color) => self.color_to_svg(color),
+            None => "none".to_string(),
+        };
+        let stroke_attr = match edge {
+            Some((color, width_pt)) => {
+                let stroke_color = self.color_to_svg(color);
+                let stroke_width = self.points_to_pixels(width_pt);
+                format!(r#" stroke="{stroke_color}" stroke-width="{stroke_width:.2}""#)
+            }
+            None => String::new(),
+        };
+        writeln!(
+            self.content,
+            r#"  <rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="{fill_attr}"{stroke_attr}/>"#
+        )
+        .unwrap();
+    }
+
     /// Draw a filled or stroked rectangle with rounded corners
     pub fn draw_rounded_rectangle(
         &mut self,

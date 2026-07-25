@@ -8,6 +8,12 @@ description = "GPUI component adapter for ruviz"
 repository = "https://github.com/Ameyanagi/ruviz"
 readme = "README.md"
 
+# Every feature here only forwards to a pure-Rust ruviz feature, so enabling all
+# of them adds no system dependency beyond what the default build (gpui + rfd)
+# already needs on the docs.rs Linux builder.
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
 gpu = ["ruviz/gpu"]

@@ -352,6 +352,20 @@ impl Plot {
             legend_items.extend(series.to_legend_items(palette_slot, &self.display.theme));
         }
 
+        // Labelled fills (confidence bands and friends) are annotations, not series,
+        // so they never reached the loop above.
+        for annotation in &self.annotations {
+            if let Annotation::FillBetween { style, .. } = annotation
+                && let Some(label) = &style.label
+            {
+                legend_items.push(LegendItem::area(
+                    label.clone(),
+                    style.color.with_alpha(style.alpha),
+                    style.edge_color,
+                ));
+            }
+        }
+
         legend_items
     }
 

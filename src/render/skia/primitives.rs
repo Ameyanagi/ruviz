@@ -4,6 +4,14 @@ use crate::{
     render::color::{scale_premultiplied_rgba, source_over_premultiplied_rgba},
 };
 
+/// Hairline width used by the legacy `draw_rectangle(.., filled = false)` path,
+/// in raw device pixels. Matches `tiny_skia::Stroke::default().width`.
+const LEGACY_OUTLINE_WIDTH_PX: f32 = 1.0;
+
+/// Lower bound on a rectangle edge stroke so a requested edge never vanishes.
+/// Mirrors the floor `draw_line` applies to its own stroke width.
+const MIN_RECT_EDGE_WIDTH_PX: f32 = 0.1;
+
 impl SkiaRenderer {
     /// Map renderer font size to Typst size units.
     pub(super) fn typst_size_pt(&self, size_px: f32) -> f32 {
@@ -344,6 +352,14 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Draw a rectangle that is either filled or outlined.
+    ///
+    /// A filled rectangle is painted with **exactly** `color` — the requested
+    /// RGB and the requested alpha, with no implicit tint and no implicit
+    /// border. Callers that want an edge must ask for one explicitly via
+    /// [`SkiaRenderer::draw_rectangle_styled`].
+    ///
+    /// `filled == false` keeps the legacy hairline outline (1 device pixel).
     pub fn draw_rectangle(
         &mut self,
         x: f32,
@@ -356,6 +372,7 @@ impl SkiaRenderer {
         self.draw_rectangle_with_mask(x, y, width, height, color, filled, None)
     }
 
+    /// [`SkiaRenderer::draw_rectangle`] restricted to a rectangular clip region.
     pub fn draw_rectangle_clipped(
         &mut self,
         x: f32,
@@ -370,6 +387,48 @@ impl SkiaRenderer {
         self.draw_rectangle_with_mask(x, y, width, height, color, filled, Some(mask.as_ref()))
     }
 
+    /// Draw a rectangle with an explicit fill and/or an explicit edge.
+    ///
+    /// * `fill` — painted verbatim (exact RGB, exact alpha). `None` skips the fill.
+    /// * `edge` — `(colour, width_in_points)`. The width is converted with the
+    ///   renderer's [`RenderScale`](crate::core::RenderScale), like every other
+    ///   stroke in this backend, so the edge is DPI-invariant.
+    ///
+    /// Passing `None` for both is a no-op.
+    pub fn draw_rectangle_styled(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        fill: Option<Color>,
+        edge: Option<(Color, f32)>,
+    ) -> Result<()> {
+        let edge = self.scaled_rect_edge(edge);
+        self.draw_rectangle_styled_with_mask(x, y, width, height, fill, edge, None)
+    }
+
+    /// [`SkiaRenderer::draw_rectangle_styled`] restricted to a rectangular clip region.
+    pub fn draw_rectangle_styled_clipped(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        fill: Option<Color>,
+        edge: Option<(Color, f32)>,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        let edge = self.scaled_rect_edge(edge);
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_rectangle_styled_with_mask(x, y, width, height, fill, edge, Some(mask.as_ref()))
+    }
+
+    /// Convert a point-denominated edge width into device pixels.
+    fn scaled_rect_edge(&self, edge: Option<(Color, f32)>) -> Option<(Color, f32)> {
+        edge.map(|(color, width_pt)| (color, self.points_to_pixels(width_pt)))
+    }
+
     fn draw_rectangle_with_mask(
         &mut self,
         x: f32,
@@ -380,6 +439,31 @@ impl SkiaRenderer {
         filled: bool,
         mask: Option<&Mask>,
     ) -> Result<()> {
+        let (fill, edge) = if filled {
+            (Some(color), None)
+        } else {
+            // Legacy hairline outline: raw device pixels, matching `Stroke::default()`.
+            (None, Some((color, LEGACY_OUTLINE_WIDTH_PX)))
+        };
+
+        self.draw_rectangle_styled_with_mask(x, y, width, height, fill, edge, mask)
+    }
+
+    /// Shared rectangle painter. `edge` widths are already in device pixels.
+    fn draw_rectangle_styled_with_mask(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        fill: Option<Color>,
+        edge: Option<(Color, f32)>,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
+        if fill.is_none() && edge.is_none() {
+            return Ok(());
+        }
+
         let rect = Rect::from_xywh(x, y, width, height).ok_or(PlottingError::RenderError(
             "Invalid rectangle dimensions".to_string(),
         ))?;
@@ -390,21 +474,11 @@ impl SkiaRenderer {
             "Failed to create rectangle path".to_string(),
         ))?;
 
-        if filled {
-            // Professional filled rectangle with subtle transparency and border
+        if let Some(fill_color) = fill {
             let mut fill_paint = Paint::default();
-
-            // Use slightly transparent fill for professional look
-            let (r, g, b, a) = color.to_rgba_f32();
-            let professional_alpha = (a * 0.85).min(1.0); // 85% opacity for better visual appeal
-            let fill_color = tiny_skia::Color::from_rgba(r, g, b, professional_alpha).ok_or(
-                PlottingError::RenderError("Invalid color for rectangle fill".to_string()),
-            )?;
-
-            fill_paint.set_color(fill_color);
+            fill_paint.set_color(fill_color.to_tiny_skia_color());
             fill_paint.anti_alias = true;
 
-            // Fill the rectangle
             self.fill_path_masked(
                 &path,
                 &fill_paint,
@@ -412,38 +486,19 @@ impl SkiaRenderer {
                 Transform::identity(),
                 mask,
             )?;
+        }
 
-            // Add professional border for definition
-            let mut border_paint = Paint::default();
+        if let Some((edge_color, edge_width_px)) = edge {
+            let mut edge_paint = Paint::default();
+            edge_paint.set_color(edge_color.to_tiny_skia_color());
+            edge_paint.anti_alias = true;
 
-            // Darker border color (20% darker than fill)
-            let border_r = (r * 0.8).max(0.0);
-            let border_g = (g * 0.8).max(0.0);
-            let border_b = (b * 0.8).max(0.0);
-            let border_color = tiny_skia::Color::from_rgba(border_r, border_g, border_b, a).ok_or(
-                PlottingError::RenderError("Invalid border color".to_string()),
-            )?;
-
-            border_paint.set_color(border_color);
-            border_paint.anti_alias = true;
-
-            // Professional border stroke (1.0px width)
             let stroke = Stroke {
-                width: 1.0,
-                line_cap: LineCap::Square,
-                line_join: LineJoin::Miter,
+                width: edge_width_px.max(MIN_RECT_EDGE_WIDTH_PX),
                 ..Stroke::default()
             };
 
-            self.stroke_path_masked(&path, &border_paint, &stroke, Transform::identity(), mask)?;
-        } else {
-            // Outline only
-            let mut paint = Paint::default();
-            paint.set_color(color.to_tiny_skia_color());
-            paint.anti_alias = true;
-
-            let stroke = Stroke::default();
-            self.stroke_path_masked(&path, &paint, &stroke, Transform::identity(), mask)?;
+            self.stroke_path_masked(&path, &edge_paint, &stroke, Transform::identity(), mask)?;
         }
 
         Ok(())
@@ -1405,5 +1460,161 @@ impl SkiaRenderer {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A renderer on an opaque white canvas, so composited results are exact.
+    fn white_canvas(width: u32, height: u32, dpi: f32) -> SkiaRenderer {
+        let mut renderer = SkiaRenderer::new(width, height, Theme::default()).unwrap();
+        renderer.set_render_scale(RenderScale::new(dpi));
+        renderer.pixmap.fill(Color::WHITE.to_tiny_skia_color());
+        renderer
+    }
+
+    fn pixel(image: &Image, x: u32, y: u32) -> [u8; 4] {
+        let idx = ((y * image.width + x) * 4) as usize;
+        [
+            image.pixels[idx],
+            image.pixels[idx + 1],
+            image.pixels[idx + 2],
+            image.pixels[idx + 3],
+        ]
+    }
+
+    /// Thickness in pixels of the left edge stroke along scanline `y`.
+    fn left_edge_thickness(image: &Image, y: u32) -> u32 {
+        let mut thickness = 0;
+        let mut seen_ink = false;
+        for x in 0..image.width {
+            let is_ink = pixel(image, x, y)[0] < 250;
+            if is_ink {
+                seen_ink = true;
+                thickness += 1;
+            } else if seen_ink {
+                break;
+            }
+        }
+        thickness
+    }
+
+    #[test]
+    fn test_draw_rectangle_filled_uses_exact_requested_color() {
+        let mut renderer = white_canvas(64, 64, 100.0);
+        let requested = Color::new(31, 119, 180);
+        renderer
+            .draw_rectangle(10.0, 10.0, 40.0, 40.0, requested, true)
+            .expect("filled rectangle should render");
+
+        let image = renderer.into_image();
+        assert_eq!(
+            pixel(&image, 30, 30),
+            [requested.r, requested.g, requested.b, 255],
+            "a filled rectangle must render the exact requested color, with no 0.85 alpha tint"
+        );
+    }
+
+    #[test]
+    fn test_draw_rectangle_filled_has_no_implicit_border() {
+        let mut renderer = white_canvas(64, 64, 100.0);
+        let requested = Color::new(31, 119, 180);
+        renderer
+            .draw_rectangle(10.0, 10.0, 40.0, 40.0, requested, true)
+            .expect("filled rectangle should render");
+
+        let image = renderer.into_image();
+        // The old primitive stroked a 1px border at 0.8x the fill; the pixel just
+        // inside the left edge would have been darker than the interior.
+        assert_eq!(
+            pixel(&image, 11, 30),
+            pixel(&image, 30, 30),
+            "the fill must be uniform: no implicit darker edge stroke"
+        );
+    }
+
+    #[test]
+    fn test_draw_rectangle_filled_preserves_requested_alpha() {
+        let mut renderer = white_canvas(64, 64, 100.0);
+        renderer
+            .draw_rectangle(10.0, 10.0, 40.0, 40.0, Color::new_rgba(0, 0, 0, 128), true)
+            .expect("translucent rectangle should render");
+
+        let image = renderer.into_image();
+        // 50% black over white composites to ~127. The old 0.85 multiplier would
+        // have produced ~146.
+        let channel = pixel(&image, 30, 30)[0];
+        assert!(
+            (126..=128).contains(&channel),
+            "requested alpha must survive unchanged, got channel {channel}"
+        );
+    }
+
+    #[test]
+    fn test_draw_rectangle_styled_fill_only_matches_plain_fill() {
+        let color = Color::new_rgba(200, 40, 40, 190);
+
+        let mut plain = white_canvas(48, 48, 100.0);
+        plain
+            .draw_rectangle(8.0, 8.0, 24.0, 24.0, color, true)
+            .expect("plain fill should render");
+
+        let mut styled = white_canvas(48, 48, 100.0);
+        styled
+            .draw_rectangle_styled(8.0, 8.0, 24.0, 24.0, Some(color), None)
+            .expect("styled fill should render");
+
+        assert_eq!(
+            plain.into_image().pixels,
+            styled.into_image().pixels,
+            "an edgeless styled rectangle must be identical to a plain filled one"
+        );
+    }
+
+    #[test]
+    fn test_draw_rectangle_styled_edge_width_scales_with_dpi() {
+        let edge = Color::new(0, 0, 0);
+
+        let mut low_dpi = white_canvas(64, 64, 72.0);
+        low_dpi
+            .draw_rectangle_styled(16.0, 16.0, 32.0, 32.0, None, Some((edge, 1.0)))
+            .expect("styled edge should render at 72 dpi");
+
+        let mut high_dpi = white_canvas(64, 64, 288.0);
+        high_dpi
+            .draw_rectangle_styled(16.0, 16.0, 32.0, 32.0, None, Some((edge, 1.0)))
+            .expect("styled edge should render at 288 dpi");
+
+        let thin = left_edge_thickness(&low_dpi.into_image(), 32);
+        let thick = left_edge_thickness(&high_dpi.into_image(), 32);
+
+        assert!(
+            (1..=2).contains(&thin),
+            "1pt at 72 dpi should be a hairline, got {thin}px"
+        );
+        assert!(thick >= 4, "1pt at 288 dpi should be ~4px, got {thick}px");
+        assert!(
+            thick > thin,
+            "edge width must scale with DPI: {thin}px at 72 dpi vs {thick}px at 288 dpi"
+        );
+    }
+
+    #[test]
+    fn test_draw_rectangle_styled_without_fill_or_edge_is_a_noop() {
+        let mut renderer = white_canvas(16, 16, 100.0);
+        renderer
+            .draw_rectangle_styled(2.0, 2.0, 8.0, 8.0, None, None)
+            .expect("empty style should be accepted");
+
+        let image = renderer.into_image();
+        assert!(
+            image
+                .pixels
+                .chunks_exact(4)
+                .all(|px| px.iter().all(|channel| *channel == 255)),
+            "a rectangle with neither fill nor edge must not touch the canvas"
+        );
     }
 }

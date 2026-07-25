@@ -1004,6 +1004,12 @@ impl Plot {
                 }
             }
             (SeriesType::Histogram { .. }, ResolvedSeries::Histogram { data: hist_data }) => {
+                // Histogram bars are adjacent, so the bin boundaries only read as
+                // boundaries if the bars carry an edge. Resolve it from the series
+                // data (the same source the standalone `HistogramData` renderer
+                // uses) instead of relying on a primitive-level implicit border.
+                let edge = hist_data.resolved_edge(&self.display.theme, color);
+
                 // Render histogram bars
                 for (i, &count) in hist_data.counts.iter().enumerate() {
                     if count > 0.0 {
@@ -1027,13 +1033,13 @@ impl Plot {
                             x_center, 0.0, x_min, x_max, y_min, y_max, plot_area,
                         );
 
-                        renderer.draw_rectangle_clipped(
+                        renderer.draw_rectangle_styled_clipped(
                             px - bar_width_px / 2.0,
                             py.min(py_zero),
                             bar_width_px,
                             (py - py_zero).abs(),
-                            color,
-                            true,
+                            Some(color),
+                            edge,
                             clip_rect,
                         )?;
                     }

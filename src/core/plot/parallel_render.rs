@@ -59,6 +59,19 @@ fn include_plot_data_bounds<T: crate::plots::traits::PlotData>(
     }
 }
 
+/// Reserve the square that a radar chart needs, including its axis label ring.
+///
+/// Radar polygons never leave the unit circle, so scanning their vertices clips
+/// the labels drawn at [`RADAR_LABEL_RADIUS`](crate::plots::polar::radar). Both
+/// backends derive their bounds from the same constant.
+fn include_radar_bounds(x_min: &mut f64, x_max: &mut f64, y_min: &mut f64, y_max: &mut f64) {
+    let radius = crate::plots::polar::radar::RADAR_BOUNDS_RADIUS;
+    *x_min = (*x_min).min(-radius);
+    *x_max = (*x_max).max(radius);
+    *y_min = (*y_min).min(-radius);
+    *y_max = (*y_max).max(radius);
+}
+
 fn include_point_bounds(
     x_val: f64,
     y_val: f64,
@@ -285,25 +298,25 @@ impl Plot {
         // Draw grid if enabled - using unified GridStyle (sequential - UI elements)
         // Skip grid for non-Cartesian plots (Pie, Radar, Polar)
         if self.layout.grid_style.visible && self.needs_cartesian_axes() {
-            let grid_color = self.layout.grid_style.effective_color();
-            let grid_x_pixels = Self::grid_tick_pixels(
+            let layers = Self::grid_layers(
+                &self.layout.grid_style,
+                &self.layout.tick_config.grid_mode,
                 &x_tick_pixels,
-                &x_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
-            );
-            let grid_y_pixels = Self::grid_tick_pixels(
                 &y_tick_pixels,
+                &x_minor_tick_pixels,
                 &y_minor_tick_pixels,
-                &self.layout.tick_config.grid_mode,
+                |points| self.dpi_scaled_line_width(points),
             );
-            renderer.draw_grid(
-                &grid_x_pixels,
-                &grid_y_pixels,
-                plot_area,
-                grid_color,
-                self.layout.grid_style.line_style.clone(),
-                self.dpi_scaled_line_width(self.layout.grid_style.line_width),
-            )?;
+            for layer in &layers {
+                renderer.draw_grid(
+                    &layer.x_pixels,
+                    &layer.y_pixels,
+                    plot_area,
+                    layer.color,
+                    self.layout.grid_style.line_style.clone(),
+                    layer.width_px,
+                )?;
+            }
         }
 
         let categorical_x_tick_pixels = Self::categorical_x_tick_pixels(
@@ -508,6 +521,7 @@ impl Plot {
                                     width: bar_width,
                                     height,
                                     color,
+                                    edge: None,
                                 }
                             })
                             .collect();
@@ -586,6 +600,10 @@ impl Plot {
                         )
                         .1;
 
+                        // Bins are adjacent, so they need an explicit edge to stay
+                        // readable as separate bins (see `HistogramData::resolved_edge`).
+                        let edge = hist_data.resolved_edge(&self.display.theme, color);
+
                         let bars = points
                             .iter()
                             .enumerate()
@@ -599,6 +617,7 @@ impl Plot {
                                     width: bar_width,
                                     height,
                                     color,
+                                    edge,
                                 }
                             })
                             .collect();
@@ -929,17 +948,23 @@ impl Plot {
                     }
                     SeriesType::Quiver { .. } => RenderSeriesType::Line { segments: vec![] },
                     SeriesType::Contour { data: contour_data } => {
-                        // Contour plots use line segment rendering
-                        let mut all_points = Vec::new();
-                        for level in &contour_data.lines {
+                        // Contour levels are disjoint segment soups, not one polyline:
+                        // flatten the endpoints for the parallel transform, then pair
+                        // them back up so no connector is drawn between segments.
+                        let mut poly_x = Vec::new();
+                        let mut poly_y = Vec::new();
+                        // Level index for each emitted segment, so each keeps its own colour.
+                        let mut segment_levels = Vec::new();
+                        for (level_index, level) in contour_data.lines.iter().enumerate() {
                             for &(x1, y1, x2, y2) in &level.segments {
-                                all_points.push((x1, y1));
-                                all_points.push((x2, y2));
+                                poly_x.push(x1);
+                                poly_y.push(y1);
+                                poly_x.push(x2);
+                                poly_y.push(y2);
+                                segment_levels.push(level_index);
                             }
                         }
 
-                        let poly_x: Vec<f64> = all_points.iter().map(|(x, _)| *x).collect();
-                        let poly_y: Vec<f64> = all_points.iter().map(|(_, y)| *y).collect();
                         let points = self
                             .render
                             .parallel_renderer
@@ -952,12 +977,40 @@ impl Plot {
                                 &self.layout.y_scale,
                             )?;
 
-                        let segments = self.render.parallel_renderer.process_polyline_parallel(
-                            &points,
-                            LineStyle::Solid,
-                            color,
-                            line_width,
-                        )?;
+                        // Same colour decision as the raster and SVG backends.
+                        let cmap = crate::render::ColorMap::by_name(&contour_data.config.cmap)
+                            .unwrap_or_else(crate::render::ColorMap::viridis);
+                        let n_levels = contour_data.levels.len();
+                        let effective_alpha =
+                            contour_data.config.alpha * series.alpha.unwrap_or(1.0).clamp(0.0, 1.0);
+                        let contour_width = self.dpi_scaled_line_width(
+                            series.line_width.unwrap_or(contour_data.config.line_width),
+                        );
+
+                        let segments = points
+                            .chunks_exact(2)
+                            .zip(segment_levels)
+                            .map(|(pair, level_index)| {
+                                let line_color =
+                                    crate::plots::continuous::contour::contour_line_color(
+                                        &contour_data.config,
+                                        &self.display.theme,
+                                        &cmap,
+                                        color,
+                                        level_index,
+                                        n_levels,
+                                    );
+                                crate::data::elements::LineSegment {
+                                    start: pair[0],
+                                    end: pair[1],
+                                    style: LineStyle::Solid,
+                                    color: line_color.with_alpha(
+                                        (f32::from(line_color.a) / 255.0) * effective_alpha,
+                                    ),
+                                    width: contour_width,
+                                }
+                            })
+                            .collect();
 
                         RenderSeriesType::Line { segments }
                     }
@@ -1126,8 +1179,14 @@ impl Plot {
                 RenderSeriesType::Bar { bars } => {
                     // Draw all bars
                     for bar in bars {
-                        renderer.draw_rectangle_clipped(
-                            bar.x, bar.y, bar.width, bar.height, bar.color, true, clip_rect,
+                        renderer.draw_rectangle_styled_clipped(
+                            bar.x,
+                            bar.y,
+                            bar.width,
+                            bar.height,
+                            Some(bar.color),
+                            bar.edge,
+                            clip_rect,
                         )?;
                     }
                 }
@@ -1600,21 +1659,12 @@ impl Plot {
                     y_min = y_min.min(0.0);
                     y_max = y_max.max(1.0);
                 }
-                SeriesType::Radar { data } => {
-                    // Radar charts use normalized coordinate space
-                    // Bounds are determined by the polygon coordinates
-                    for series_data in &data.series {
-                        for &(x_val, y_val) in &series_data.polygon {
-                            if x_val.is_finite() {
-                                x_min = x_min.min(x_val);
-                                x_max = x_max.max(x_val);
-                            }
-                            if y_val.is_finite() {
-                                y_min = y_min.min(y_val);
-                                y_max = y_max.max(y_val);
-                            }
-                        }
-                    }
+                SeriesType::Radar { .. } => {
+                    // Radar charts use a normalized coordinate space whose polygons
+                    // never exceed r = 1.0, but the axis labels sit further out at
+                    // `RADAR_LABEL_RADIUS`. Reserve room for them (matching the SVG
+                    // backend) instead of scanning polygon vertices.
+                    include_radar_bounds(&mut x_min, &mut x_max, &mut y_min, &mut y_max);
                 }
                 SeriesType::Polar { data } => {
                     // Polar plots need symmetric space centered at origin
@@ -1826,17 +1876,8 @@ impl Plot {
                         y_min = y_min.min(0.0);
                         y_max = y_max.max(1.0);
                     }
-                    SeriesType::Radar { data } => {
-                        for point in data.series.iter().flat_map(|series| &series.polygon) {
-                            if point.0.is_finite() {
-                                x_min = x_min.min(point.0);
-                                x_max = x_max.max(point.0);
-                            }
-                            if point.1.is_finite() {
-                                y_min = y_min.min(point.1);
-                                y_max = y_max.max(point.1);
-                            }
-                        }
+                    SeriesType::Radar { .. } => {
+                        include_radar_bounds(&mut x_min, &mut x_max, &mut y_min, &mut y_max);
                     }
                     SeriesType::Polar { data } => {
                         let label_margin = data.r_max * 1.5;
@@ -2061,19 +2102,8 @@ impl Plot {
                     y_min = y_min.min(0.0);
                     y_max = y_max.max(1.0);
                 }
-                SeriesType::Radar { data } => {
-                    for series_data in &data.series {
-                        for &(x_val, y_val) in &series_data.polygon {
-                            if x_val.is_finite() {
-                                x_min = x_min.min(x_val);
-                                x_max = x_max.max(x_val);
-                            }
-                            if y_val.is_finite() {
-                                y_min = y_min.min(y_val);
-                                y_max = y_max.max(y_val);
-                            }
-                        }
-                    }
+                SeriesType::Radar { .. } => {
+                    include_radar_bounds(&mut x_min, &mut x_max, &mut y_min, &mut y_max);
                 }
                 SeriesType::Polar { data } => {
                     let label_margin = data.r_max * 1.5;

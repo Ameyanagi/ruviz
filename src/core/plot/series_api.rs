@@ -1,5 +1,11 @@
 use super::*;
 
+/// Opacity of the band [`Plot::area`] paints under its curve.
+///
+/// Matches matplotlib's usual `fill_between` alpha for a curve-plus-band: light
+/// enough to read grid lines through, opaque enough to identify the series.
+pub(crate) const AREA_FILL_ALPHA: f32 = 0.25;
+
 impl Plot {
     fn collect_xy_for_derived_series<X, Y>(
         mut self,
@@ -55,6 +61,20 @@ impl Plot {
                 Vec::new()
             }
         }
+    }
+
+    /// Palette colour the next automatically coloured series will receive.
+    ///
+    /// Derived series such as [`Plot::area`] and [`Plot::stem`] push their fill
+    /// or stems as annotations *before* the series itself exists, so they
+    /// cannot read the colour back off the series. The palette slot a new
+    /// series is given is [`SeriesManager::auto_color_index`] — the same
+    /// counter the internal `add_*_series` helpers stamp onto the series they
+    /// push — so that is the index resolved here.
+    fn next_series_color(&self) -> Color {
+        self.display
+            .theme
+            .get_color(self.series_mgr.auto_color_index())
     }
 
     fn try_collect_numeric_input<D>(&mut self, data: &D) -> Option<Vec<f64>>
@@ -434,6 +454,9 @@ impl Plot {
     ///
     /// The fill is stored as a data-coordinate annotation and the visible curve
     /// is stored as a normal line series, preserving existing line styling APIs.
+    /// The fill inherits the palette colour the curve will be drawn in, at 25%
+    /// opacity. An explicit `.color()` on the returned builder restyles the
+    /// curve only — the fill keeps the palette colour.
     ///
     /// # Example
     ///
@@ -460,7 +483,11 @@ impl Plot {
         Y: NumericData1D,
     {
         let (plot, x_values, y_values) = self.collect_xy_for_derived_series(x_data, y_data);
-        let plot = plot.fill_to_baseline(&x_values, &y_values, baseline);
+        let fill_style = FillStyle::default()
+            .color(plot.next_series_color())
+            .alpha(AREA_FILL_ALPHA);
+        let baselines = vec![baseline; x_values.len()];
+        let plot = plot.fill_between_styled(&x_values, &y_values, &baselines, fill_style, false);
 
         PlotBuilder::new(
             plot,
@@ -473,6 +500,9 @@ impl Plot {
     ///
     /// Stems are rendered as annotation line segments and point heads are stored
     /// as a normal scatter series, so scatter marker styling remains available.
+    /// Stems inherit the palette colour the markers will be drawn in. An
+    /// explicit `.color()` on the returned builder restyles the markers only —
+    /// the stems keep the palette colour.
     ///
     /// # Example
     ///
@@ -500,6 +530,7 @@ impl Plot {
     {
         let (mut plot, x_values, y_values) = self.collect_xy_for_derived_series(x_data, y_data);
         let stem_style = ArrowStyle::new()
+            .color(plot.next_series_color())
             .head_style(crate::core::ArrowHead::None)
             .tail_style(crate::core::ArrowHead::None);
 
@@ -1579,5 +1610,126 @@ impl Plot {
             PlotInput::XY(r_vec, theta_vec),
             crate::plots::PolarPlotConfig::default(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{Annotation, ArrowStyle, FillStyle};
+    use crate::render::{Color, Theme};
+
+    const X: [f64; 3] = [0.0, 1.0, 2.0];
+    const Y: [f64; 3] = [1.0, 2.0, 3.0];
+
+    fn fill_styles(plot: &Plot) -> Vec<&FillStyle> {
+        plot.annotations
+            .iter()
+            .filter_map(|annotation| match annotation {
+                Annotation::FillBetween { style, .. } => Some(style),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn arrow_colors(plot: &Plot) -> Vec<Color> {
+        plot.annotations
+            .iter()
+            .filter_map(|annotation| match annotation {
+                Annotation::Arrow { style, .. } => Some(style.color),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_area_fill_inherits_series_palette_color() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new().area(&x, &y, 0.0).into();
+
+        let styles = fill_styles(&plot);
+        assert_eq!(styles.len(), 1);
+        assert_eq!(styles[0].color, plot.display.theme().get_color(0));
+        // The old default was Color::BLUE @ 0.3 regardless of the curve.
+        assert_ne!(styles[0].color, FillStyle::default().color);
+        assert!((styles[0].alpha - AREA_FILL_ALPHA).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_area_fill_still_spans_curve_to_baseline() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new().area(&x, &y, -1.0).into();
+
+        let Some(Annotation::FillBetween { x: fx, y1, y2, .. }) = plot
+            .annotations
+            .iter()
+            .find(|annotation| matches!(annotation, Annotation::FillBetween { .. }))
+        else {
+            panic!("area() must emit a FillBetween annotation");
+        };
+        assert_eq!(fx, &x);
+        assert_eq!(y1, &y);
+        assert_eq!(y2, &vec![-1.0; x.len()]);
+    }
+
+    #[test]
+    fn test_stem_lines_inherit_series_palette_color() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new().stem(&x, &y, 0.0).into();
+
+        let expected = plot.display.theme().get_color(0);
+        let colors = arrow_colors(&plot);
+        assert_eq!(colors.len(), x.len());
+        assert!(colors.iter().all(|color| *color == expected));
+        // The old default was the uncoloured ArrowStyle.
+        assert_ne!(colors[0], ArrowStyle::default().color);
+    }
+
+    #[test]
+    fn test_area_uses_the_slot_of_its_own_series_not_the_next_one() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new().line(&x, &y).line(&x, &y).into();
+        assert_eq!(plot.series_mgr.len(), 2);
+
+        let theme = plot.display.theme().clone();
+        let plot: Plot = plot.area(&x, &y, 0.0).into();
+
+        // The area's own line series is the third one, so slot 2.
+        let styles = fill_styles(&plot);
+        assert_eq!(styles.len(), 1);
+        assert_eq!(styles[0].color, theme.get_color(2));
+        assert_ne!(styles[0].color, theme.get_color(1));
+        assert_ne!(styles[0].color, theme.get_color(3));
+    }
+
+    #[test]
+    fn test_stem_uses_the_slot_of_its_own_series_not_the_next_one() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new().line(&x, &y).line(&x, &y).into();
+
+        let theme = plot.display.theme().clone();
+        let plot: Plot = plot.stem(&x, &y, 0.0).into();
+
+        let colors = arrow_colors(&plot);
+        assert_eq!(colors.len(), x.len());
+        assert!(colors.iter().all(|color| *color == theme.get_color(2)));
+        assert_ne!(colors[0], theme.get_color(1));
+        assert_ne!(colors[0], theme.get_color(3));
+    }
+
+    #[test]
+    fn test_derived_series_color_tracks_a_custom_theme() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new().theme(Theme::dark()).area(&x, &y, 0.0).into();
+
+        let expected = Theme::dark().get_color(0);
+        let styles = fill_styles(&plot);
+        assert_eq!(styles[0].color, expected);
     }
 }

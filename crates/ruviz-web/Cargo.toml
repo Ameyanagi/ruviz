@@ -8,6 +8,14 @@ description = "Browser runtime adapter for ruviz"
 repository = "https://github.com/Ameyanagi/ruviz"
 readme = "README.md"
 
+# This crate targets the browser: document the wasm build the npm pipeline ships
+# (`wasm-pack build --features 3d-gpu`), which also exposes the wasm32-only items.
+# `targets = []` keeps docs.rs from spending builds on native targets.
+[package.metadata.docs.rs]
+all-features = true
+default-target = "wasm32-unknown-unknown"
+targets = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

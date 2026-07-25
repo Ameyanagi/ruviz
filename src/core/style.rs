@@ -149,6 +149,7 @@ impl PlotStyle {
                 },
                 margins: MarginConfig::Auto { min: 0.4, max: 1.0 },
                 spines: SpineConfig::despine(), // Minimal style uses despine
+                ..PlotConfig::default()
             },
 
             PlotStyle::Publication => PlotConfig {
@@ -181,6 +182,7 @@ impl PlotStyle {
                 },
                 margins: MarginConfig::Auto { min: 0.4, max: 0.9 },
                 spines: SpineConfig::default(),
+                ..PlotConfig::default()
             },
 
             PlotStyle::IEEE => PlotConfig {
@@ -216,6 +218,7 @@ impl PlotStyle {
                     max: 0.6,
                 },
                 spines: SpineConfig::default(),
+                ..PlotConfig::default()
             },
 
             PlotStyle::Nature => PlotConfig {
@@ -248,6 +251,7 @@ impl PlotStyle {
                 },
                 margins: MarginConfig::Auto { min: 0.2, max: 0.5 },
                 spines: SpineConfig::default(),
+                ..PlotConfig::default()
             },
 
             PlotStyle::Presentation => PlotConfig {
@@ -280,6 +284,7 @@ impl PlotStyle {
                 },
                 margins: MarginConfig::Auto { min: 0.6, max: 1.5 },
                 spines: SpineConfig::default(),
+                ..PlotConfig::default()
             },
 
             PlotStyle::Dark => PlotConfig {
@@ -290,6 +295,7 @@ impl PlotStyle {
                 margins: MarginConfig::default(),
                 spines: SpineConfig::default(),
                 // Note: Dark colors are applied via Theme, not PlotConfig
+                ..PlotConfig::default()
             },
 
             PlotStyle::HighContrast => PlotConfig {
@@ -318,6 +324,7 @@ impl PlotStyle {
                 },
                 margins: MarginConfig::Auto { min: 0.5, max: 1.3 },
                 spines: SpineConfig::default(),
+                ..PlotConfig::default()
             },
 
             PlotStyle::Web => PlotConfig {
@@ -345,6 +352,7 @@ impl PlotStyle {
                 spacing: SpacingConfig::default(),
                 margins: MarginConfig::default(),
                 spines: SpineConfig::default(),
+                ..PlotConfig::default()
             },
 
             PlotStyle::Poster => PlotConfig {
@@ -377,6 +385,7 @@ impl PlotStyle {
                 },
                 margins: MarginConfig::Auto { min: 0.8, max: 2.0 },
                 spines: SpineConfig::default(),
+                ..PlotConfig::default()
             },
         }
     }

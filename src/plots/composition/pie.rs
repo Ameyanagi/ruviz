@@ -33,9 +33,10 @@ pub struct PieConfig {
     pub show_labels: bool,
     /// Inner radius for donut chart (0.0 = full pie)
     pub inner_radius: f64,
-    /// Start angle in degrees (0 = 3 o'clock, 90 = 12 o'clock)
+    /// Start angle in degrees, measured counter-clockwise from 3 o'clock
+    /// (0 = 3 o'clock, 90 = 12 o'clock), as in matplotlib
     pub start_angle: f64,
-    /// Whether to go counter-clockwise
+    /// Whether wedges advance counter-clockwise from `start_angle` (matplotlib's default)
     pub counter_clockwise: bool,
     /// Text color for labels
     pub text_color: Color,
@@ -183,8 +184,19 @@ pub struct PieData {
 impl PieData {
     /// Create pie data from values
     pub fn from_values(values: &[f64], cx: f64, cy: f64, radius: f64, config: &PieConfig) -> Self {
-        let positive_values: Vec<f64> = values.iter().filter(|&&v| v > 0.0).copied().collect();
+        let kept: Vec<usize> = values
+            .iter()
+            .enumerate()
+            .filter(|&(_, &v)| v > 0.0)
+            .map(|(index, _)| index)
+            .collect();
+        let positive_values: Vec<f64> = kept.iter().map(|&index| values[index]).collect();
         let total: f64 = positive_values.iter().sum();
+
+        // Per-value vectors the caller supplied are indexed by wedge, so they have
+        // to be filtered alongside the values: otherwise every entry after a
+        // dropped value binds to the wrong wedge.
+        let config = filter_per_value_config(config, &kept, values.len());
 
         let percentages: Vec<f64> = if total > 0.0 {
             positive_values.iter().map(|v| v / total * 100.0).collect()
@@ -192,10 +204,23 @@ impl PieData {
             vec![0.0; positive_values.len()]
         };
 
-        // Convert start angle to radians and adjust for convention
-        let start_angle_rad = config.start_angle * PI / 180.0 - PI / 2.0;
+        // Wedge angles live in screen space, where +y points down, so a positive
+        // sweep advances clockwise. `start_angle` is measured counter-clockwise
+        // from 3 o'clock (matplotlib's convention), hence the negation: the
+        // default of 90° starts at 12 o'clock.
+        let start_angle_rad = -config.start_angle.to_radians();
 
         let mut wedges = pie_wedges(&positive_values, cx, cy, radius, Some(start_angle_rad));
+
+        // `pie_wedges` always sweeps clockwise on screen. Mirroring each wedge
+        // about the start angle keeps the wedge order but sweeps the other way.
+        if config.counter_clockwise {
+            for wedge in &mut wedges {
+                let (start, end) = (wedge.start_angle, wedge.end_angle);
+                wedge.start_angle = 2.0 * start_angle_rad - end;
+                wedge.end_angle = 2.0 * start_angle_rad - start;
+            }
+        }
 
         // Compute normalized angles
         let mut start_angles = Vec::with_capacity(wedges.len());
@@ -224,7 +249,7 @@ impl PieData {
             percentages,
             start_angles,
             end_angles,
-            config: config.clone(),
+            config,
         }
     }
 
@@ -234,6 +259,33 @@ impl PieData {
         // Use unit circle coordinates for normalized computation
         Self::from_values(values, 0.5, 0.5, 0.5, config)
     }
+}
+
+/// Drop the entries of the per-value config vectors whose value was filtered out.
+///
+/// `kept` holds the indices of the values that became wedges. Labels and explode
+/// offsets are read with a bounds check, so a short vector filters cleanly; colors
+/// wrap modulo their length, so they are only realigned when the caller supplied
+/// exactly one per value.
+fn filter_per_value_config(config: &PieConfig, kept: &[usize], value_count: usize) -> PieConfig {
+    let mut filtered = config.clone();
+    if kept.len() == value_count {
+        return filtered;
+    }
+
+    filtered.labels = kept
+        .iter()
+        .filter_map(|&index| config.labels.get(index).cloned())
+        .collect();
+    filtered.explode = kept
+        .iter()
+        .filter_map(|&index| config.explode.get(index).copied())
+        .collect();
+    if let Some(colors) = config.colors.as_ref().filter(|c| c.len() == value_count) {
+        filtered.colors = Some(kept.iter().map(|&index| colors[index]).collect());
+    }
+
+    filtered
 }
 
 /// Render a pie chart
@@ -263,6 +315,10 @@ pub fn render_pie(
     if pie_data.wedges.is_empty() {
         return Ok(pie_data);
     }
+
+    // Use the resolved config: its per-wedge vectors are aligned with the wedges,
+    // which the caller's are not once a non-positive value has been dropped.
+    let config = &pie_data.config;
 
     // Get colors from config or theme palette
     let colors = if let Some(ref colors) = config.colors {
@@ -593,6 +649,97 @@ mod tests {
 
         // Should only have 2 wedges (negative value filtered)
         assert_eq!(data.wedges.len(), 2);
+    }
+
+    #[test]
+    fn test_pie_per_value_config_tracks_filtered_values() {
+        let red = Color::new(255, 0, 0);
+        let green = Color::new(0, 255, 0);
+        let blue = Color::new(0, 0, 255);
+        let values = vec![30.0, -10.0, 20.0];
+        let config = PieConfig::new(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+            .explode(vec![0.0, 0.5, 0.0])
+            .colors(vec![red, green, blue]);
+        let data = PieData::from_values(&values, 100.0, 100.0, 50.0, &config);
+
+        assert_eq!(data.values, vec![30.0, 20.0]);
+        // The dropped value must take its label, explode offset and color with it.
+        assert_eq!(data.config.labels, vec!["a".to_string(), "c".to_string()]);
+        assert_eq!(data.config.explode, vec![0.0, 0.0]);
+        assert_eq!(data.config.colors, Some(vec![red, blue]));
+        assert!(data.wedges.iter().all(|wedge| wedge.explode.abs() < 1e-10));
+
+        // Recomputing from already-filtered data is idempotent.
+        let again = PieData::from_values(&data.values, 0.0, 0.0, 1.0, &data.config);
+        assert_eq!(again.config.labels, data.config.labels);
+        assert_eq!(again.config.colors, data.config.colors);
+    }
+
+    #[test]
+    fn test_pie_all_values_positive_keeps_config_untouched() {
+        let values = vec![30.0, 20.0, 50.0];
+        let config = PieConfig::new(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        let data = PieData::from_values(&values, 100.0, 100.0, 50.0, &config);
+
+        assert_eq!(data.config.labels, config.labels);
+    }
+
+    #[test]
+    fn test_pie_starts_at_twelve_oclock_counter_clockwise() {
+        let values = vec![30.0, 20.0, 50.0];
+        let config = PieConfig::default();
+        let (cx, cy) = (100.0, 100.0);
+        let data = PieData::from_values(&values, cx, cy, 50.0, &config);
+
+        // Default start_angle of 90° is 12 o'clock: one boundary ray points up.
+        // Screen space has +y down, so "up" is -PI/2.
+        let boundary = data.wedges[0].end_angle;
+        assert!((boundary + PI / 2.0).abs() < 1e-9, "boundary: {boundary}");
+
+        // Counter-clockwise from the top puts the first wedge's midpoint in the
+        // upper-left quadrant (matplotlib's default direction).
+        let (mx, my) = data.wedges[0].centroid();
+        assert!(mx < cx, "midpoint x {mx} should be left of {cx}");
+        assert!(my < cy, "midpoint y {my} should be above {cy}");
+
+        // Wedges stay adjacent and cover the full turn.
+        for pair in data.wedges.windows(2) {
+            assert!((pair[0].start_angle - pair[1].end_angle).abs() < 1e-9);
+        }
+        let swept: f64 = data
+            .wedges
+            .iter()
+            .map(|wedge| (wedge.end_angle - wedge.start_angle).abs())
+            .sum();
+        assert!((swept - 2.0 * PI).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_pie_clockwise_reverses_direction() {
+        let values = vec![30.0, 20.0, 50.0];
+        let config = PieConfig::default().clockwise();
+        let (cx, cy) = (100.0, 100.0);
+        let data = PieData::from_values(&values, cx, cy, 50.0, &config);
+
+        // Still starts at 12 o'clock, but sweeps toward the upper-right.
+        assert!((data.wedges[0].start_angle + PI / 2.0).abs() < 1e-9);
+        let (mx, my) = data.wedges[0].centroid();
+        assert!(mx > cx, "midpoint x {mx} should be right of {cx}");
+        assert!(my < cy, "midpoint y {my} should be above {cy}");
+    }
+
+    #[test]
+    fn test_pie_start_angle_zero_is_three_oclock() {
+        let values = vec![25.0, 75.0];
+        let config = PieConfig::default().start_angle(0.0);
+        let (cx, cy) = (0.0, 0.0);
+        let data = PieData::from_values(&values, cx, cy, 1.0, &config);
+
+        // start_angle 0 is the +x axis; the first wedge sweeps counter-clockwise
+        // into the upper-right quadrant.
+        assert!(data.wedges[0].end_angle.abs() < 1e-9);
+        let (mx, my) = data.wedges[0].centroid();
+        assert!(mx > 0.0 && my < 0.0, "midpoint ({mx}, {my})");
     }
 
     #[test]

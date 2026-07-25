@@ -37,6 +37,33 @@ include = [
     "/LICENSE",
 ]
 
+# docs.rs builds on x86_64-unknown-linux-gnu with no project-specific system
+# packages installed, so `all-features = true` is not safe here: the
+# `window`/`interactive`/`interactive-gpu`/`full` features pull `rfd` with the
+# `gtk3` backend on Linux, which needs the GTK-3 development headers that our own
+# CI has to install by hand (.github/actions/install-linux-desktop-build-deps).
+# A failed docs.rs build publishes no documentation at all, so we enumerate the
+# pure-Rust features instead; every one below adds public API. `animation-hq-gif`
+# is also omitted: gifski gates no public item today and builds C sources.
+[package.metadata.docs.rs]
+features = [
+    "3d",
+    "animation",
+    "animation-video",
+    "gpu",
+    "nalgebra_support",
+    "ndarray_support",
+    "pdf",
+    "performance",
+    "polars_support",
+    "serde",
+    "svg",
+    "typst-math",
+]
+# Activates `#![cfg_attr(docsrs, feature(doc_cfg))]` in src/lib.rs so feature-gated
+# items are labelled with the feature that enables them.
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 # Core rendering
 tiny-skia = "0.12"

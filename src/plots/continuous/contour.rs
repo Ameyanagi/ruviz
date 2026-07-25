@@ -44,6 +44,10 @@ pub struct ContourConfig {
     pub line_width: f32,
     /// Line color for single color mode
     pub line_color: Option<Color>,
+    /// Stroke each contour line with the colormap colour of its level instead of
+    /// the theme foreground. Off by default: a colormap-sampled stroke is only
+    /// legible when the background happens to contrast with it.
+    pub color_lines_by_level: bool,
     /// Colormap name
     pub cmap: String,
     /// Show labels on contours
@@ -75,6 +79,7 @@ impl Default for ContourConfig {
             show_lines: true,
             line_width: 1.0,
             line_color: None,
+            color_lines_by_level: false,
             cmap: "viridis".to_string(),
             show_labels: false,
             label_fontsize: 10.0,
@@ -131,6 +136,18 @@ impl ContourConfig {
     /// Set line color
     pub fn line_color(mut self, color: Color) -> Self {
         self.line_color = Some(color);
+        self
+    }
+
+    /// Stroke each contour line with its level's colormap colour.
+    ///
+    /// Off by default, because a colormap-sampled stroke is only legible when the
+    /// background happens to contrast with it: on a filled contour each line
+    /// matches the band beneath it, and on a dark theme the dark end of a
+    /// sequential map vanishes into the background. Enable it when the level
+    /// encoding matters more than guaranteed contrast.
+    pub fn color_lines_by_level(mut self, enabled: bool) -> Self {
+        self.color_lines_by_level = enabled;
         self
     }
 
@@ -324,9 +341,53 @@ pub fn compute_contour_plot(
     }
 }
 
+/// Does a cell average belong to the half-open band `[level_low, level_high)`?
+///
+/// The topmost band is open-ended (`level_high` is `+inf`) and is treated as
+/// closed on the right so that even an infinite cell average is claimed. NaN
+/// averages belong to no band and stay unpainted, like matplotlib's masked
+/// values.
+fn cell_in_band(z_avg: f64, level_low: f64, level_high: f64) -> bool {
+    if z_avg.is_nan() {
+        return false;
+    }
+
+    z_avg >= level_low && (z_avg < level_high || level_high.is_infinite())
+}
+
+/// Colormap position for a filled band, in `[0, 1]`
+///
+/// Interior bands use their midpoint normalized over the level span. The two
+/// open-ended bands produced by [`contour_fill_regions`] map to the colormap
+/// floor and ceiling, so the fill keeps reading as one continuous ramp instead
+/// of introducing extra colors at the extremes.
+fn band_color_position(level_low: f64, level_high: f64, z_min: f64, z_max: f64) -> f64 {
+    if !level_low.is_finite() {
+        return 0.0;
+    }
+    if !level_high.is_finite() {
+        return 1.0;
+    }
+
+    let z_range = z_max - z_min;
+    if z_range > 0.0 {
+        (((level_low + level_high) / 2.0 - z_min) / z_range).clamp(0.0, 1.0)
+    } else {
+        0.5
+    }
+}
+
 /// Get filled contour regions between levels
 ///
-/// Returns polygons for each region between consecutive levels
+/// Returns polygons for each region as `(level_low, level_high, polygons)`.
+///
+/// Besides the bands between consecutive levels, the first and last entries are
+/// open-ended (`level_low` is `-inf`, `level_high` is `+inf`), mirroring
+/// matplotlib's `extend="both"`. Without them every cell below the lowest level
+/// or above the highest one - i.e. every local minimum and maximum - would match
+/// no band and be left unpainted, punching holes into the fill. Together the
+/// bands cover the whole value axis, so each cell with a non-NaN average is
+/// claimed by exactly one band.
 #[allow(clippy::type_complexity)]
 pub fn contour_fill_regions(data: &ContourPlotData) -> Vec<(f64, f64, Vec<Vec<(f64, f64)>>)> {
     // For filled contours, we need regions between each pair of levels
@@ -335,16 +396,23 @@ pub fn contour_fill_regions(data: &ContourPlotData) -> Vec<(f64, f64, Vec<Vec<(f
 
     let mut regions = Vec::new();
 
-    if data.levels.len() < 2 || data.x.is_empty() || data.y.is_empty() {
+    if data.levels.is_empty() || data.x.len() < 2 || data.y.len() < 2 {
         return regions;
     }
 
     let nx = data.x.len();
     let ny = data.y.len();
 
-    for i in 0..data.levels.len() - 1 {
-        let level_low = data.levels[i];
-        let level_high = data.levels[i + 1];
+    // Band bounds: (-inf, l0), [l0, l1), ... , [l_last, +inf)
+    // A single level still yields the two open-ended bands.
+    let mut bands: Vec<(f64, f64)> = Vec::with_capacity(data.levels.len() + 1);
+    bands.push((f64::NEG_INFINITY, data.levels[0]));
+    for pair in data.levels.windows(2) {
+        bands.push((pair[0], pair[1]));
+    }
+    bands.push((data.levels[data.levels.len() - 1], f64::INFINITY));
+
+    for (level_low, level_high) in bands {
         let mut polygons = Vec::new();
 
         // Create filled cells for this level range
@@ -357,7 +425,7 @@ pub fn contour_fill_regions(data: &ContourPlotData) -> Vec<(f64, f64, Vec<Vec<(f
 
                 let z_avg = (z00 + z10 + z01 + z11) / 4.0;
 
-                if z_avg >= level_low && z_avg < level_high {
+                if cell_in_band(z_avg, level_low, level_high) {
                     // This cell is in this level range
                     let x0 = data.x[ix];
                     let x1 = data.x[ix + 1];
@@ -442,6 +510,42 @@ fn draw_filled_contour_region(
     Ok(())
 }
 
+/// Resolve the stroke colour of one contour line.
+///
+/// Precedence:
+///
+/// 1. An explicit [`ContourConfig::line_color`] always wins.
+/// 2. [`ContourConfig::color_lines_by_level`] opts into colormap-by-level
+///    strokes; with a single level there is no gradient to sample, so it falls
+///    back to the series colour.
+/// 3. Otherwise the line strokes in `theme.foreground`.
+///
+/// `theme.foreground` is the default because it is the only choice that stays
+/// legible on every theme. Colormap-sampled strokes fail twice over: on a filled
+/// contour each line lands in almost exactly the colour of the band underneath
+/// it, and on an unfilled contour the dark end of a sequential map (viridis'
+/// purple, say) is indistinguishable from a dark theme's background.
+pub(crate) fn contour_line_color(
+    config: &ContourConfig,
+    theme: &Theme,
+    cmap: &ColorMap,
+    series_color: Color,
+    level_index: usize,
+    n_levels: usize,
+) -> Color {
+    if let Some(color) = config.line_color {
+        return color;
+    }
+    if config.color_lines_by_level {
+        return if n_levels > 1 {
+            cmap.sample(level_index as f64 / (n_levels - 1) as f64)
+        } else {
+            series_color
+        };
+    }
+    theme.foreground
+}
+
 /// Compute data range for contour plot
 pub fn contour_range(x: &[f64], y: &[f64]) -> ((f64, f64), (f64, f64)) {
     if x.is_empty() || y.is_empty() {
@@ -502,7 +606,7 @@ impl PlotRender for ContourPlotData {
         &self,
         renderer: &mut SkiaRenderer,
         area: &PlotArea,
-        _theme: &Theme,
+        theme: &Theme,
         color: Color,
     ) -> Result<()> {
         if self.is_empty() {
@@ -523,12 +627,7 @@ impl PlotRender for ContourPlotData {
                 // Calculate color based on level position
                 let z_min = self.levels.first().copied().unwrap_or(0.0);
                 let z_max = self.levels.last().copied().unwrap_or(1.0);
-                let z_range = z_max - z_min;
-                let t = if z_range > 0.0 {
-                    ((level_low + level_high) / 2.0 - z_min) / z_range
-                } else {
-                    0.5
-                };
+                let t = band_color_position(level_low, level_high, z_min, z_max);
 
                 let fill_color = cmap.sample(t).with_alpha(config.alpha);
 
@@ -541,15 +640,7 @@ impl PlotRender for ContourPlotData {
         // Draw contour lines if enabled
         if config.show_lines {
             for (i, level) in self.lines.iter().enumerate() {
-                // Determine line color
-                let line_color = config.line_color.unwrap_or_else(|| {
-                    if n_levels > 1 {
-                        let t = i as f64 / (n_levels - 1) as f64;
-                        cmap.sample(t)
-                    } else {
-                        color
-                    }
-                });
+                let line_color = contour_line_color(config, theme, &cmap, color, i, n_levels);
 
                 // Draw each contour segment (each segment is (x1, y1, x2, y2))
                 for &(x1, y1, x2, y2) in &level.segments {
@@ -603,12 +694,7 @@ impl PlotRender for ContourPlotData {
                 // Calculate color based on level position
                 let z_min = self.levels.first().copied().unwrap_or(0.0);
                 let z_max = self.levels.last().copied().unwrap_or(1.0);
-                let z_range = z_max - z_min;
-                let t = if z_range > 0.0 {
-                    ((level_low + level_high) / 2.0 - z_min) / z_range
-                } else {
-                    0.5
-                };
+                let t = band_color_position(level_low, level_high, z_min, z_max);
 
                 let fill_color = cmap.sample(t).with_alpha(effective_alpha);
 
@@ -621,15 +707,7 @@ impl PlotRender for ContourPlotData {
         // Draw contour lines if enabled
         if config.show_lines {
             for (i, level) in self.lines.iter().enumerate() {
-                // Determine line color using StyleResolver
-                let line_color = config.line_color.unwrap_or_else(|| {
-                    if n_levels > 1 {
-                        let t = i as f64 / (n_levels - 1) as f64;
-                        cmap.sample(t)
-                    } else {
-                        color
-                    }
-                });
+                let line_color = contour_line_color(config, theme, &cmap, color, i, n_levels);
                 let line_color =
                     line_color.with_alpha((f32::from(line_color.a) / 255.0) * effective_alpha);
 
@@ -874,6 +952,150 @@ mod tests {
         assert_eq!(data.shape, (0, 0));
     }
 
+    /// Map each fill polygon back to its grid cell index, assuming an integer
+    /// grid where `data.x[ix] == ix as f64`.
+    fn cell_claim_counts(data: &ContourPlotData) -> Vec<usize> {
+        let nx = data.x.len();
+        let ny = data.y.len();
+        let mut claims = vec![0usize; (nx - 1) * (ny - 1)];
+
+        for (_, _, polygons) in contour_fill_regions(data) {
+            for polygon in &polygons {
+                let x0 = polygon
+                    .iter()
+                    .map(|(px, _)| *px)
+                    .fold(f64::INFINITY, f64::min);
+                let y0 = polygon
+                    .iter()
+                    .map(|(_, py)| *py)
+                    .fold(f64::INFINITY, f64::min);
+                let ix = data
+                    .x
+                    .iter()
+                    .position(|v| (v - x0).abs() < 1e-12)
+                    .expect("polygon x corner on grid");
+                let iy = data
+                    .y
+                    .iter()
+                    .position(|v| (v - y0).abs() < 1e-12)
+                    .expect("polygon y corner on grid");
+                claims[iy * (nx - 1) + ix] += 1;
+            }
+        }
+
+        claims
+    }
+
+    #[test]
+    fn test_contour_fill_regions_cover_extremes() {
+        // z ranges 0..16, levels only span 2..6, so cells below the lowest
+        // level and above the highest one must still be filled.
+        let x: Vec<f64> = (0..5).map(|i| i as f64).collect();
+        let y: Vec<f64> = (0..5).map(|i| i as f64).collect();
+        let mut z = Vec::with_capacity(25);
+        for iy in 0..5 {
+            for ix in 0..5 {
+                z.push((ix * iy) as f64);
+            }
+        }
+
+        let config = ContourConfig::default()
+            .levels(vec![2.0, 4.0, 6.0])
+            .interpolation_factor(1);
+        let data = compute_contour_plot(&x, &y, &z, &config);
+        let regions = contour_fill_regions(&data);
+
+        let under = regions
+            .iter()
+            .find(|(low, _, _)| low.is_infinite() && low.is_sign_negative())
+            .expect("open-ended band below the lowest level");
+        assert!(!under.1.is_infinite());
+        assert!(
+            !under.2.is_empty(),
+            "cells below the lowest level must fill"
+        );
+
+        let over = regions
+            .iter()
+            .find(|(_, high, _)| high.is_infinite() && high.is_sign_positive())
+            .expect("open-ended band above the highest level");
+        assert!(!over.0.is_infinite());
+        assert!(
+            !over.2.is_empty(),
+            "cells above the highest level must fill"
+        );
+
+        assert!(cell_claim_counts(&data).iter().all(|c| *c == 1));
+    }
+
+    #[test]
+    fn test_contour_fill_regions_cover_every_cell_once() {
+        let (x, y, z) = make_test_grid();
+        let config = ContourConfig::default().n_levels(4).interpolation_factor(1);
+        let data = compute_contour_plot(&x, &y, &z, &config);
+
+        let claims = cell_claim_counts(&data);
+        assert!(
+            claims.iter().all(|c| *c == 1),
+            "every cell must be claimed by exactly one band, got {claims:?}"
+        );
+    }
+
+    #[test]
+    fn test_contour_fill_regions_single_level() {
+        let (x, y, z) = make_test_grid();
+        let config = ContourConfig::default()
+            .levels(vec![0.5])
+            .interpolation_factor(1);
+        let data = compute_contour_plot(&x, &y, &z, &config);
+        let regions = contour_fill_regions(&data);
+
+        // Only the two open-ended bands exist, and they still cover the grid.
+        assert_eq!(regions.len(), 2);
+        assert!(cell_claim_counts(&data).iter().all(|c| *c == 1));
+    }
+
+    #[test]
+    fn test_contour_fill_regions_skips_nan_cells() {
+        let (x, y, mut z) = make_test_grid();
+        z[5 * 10 + 5] = f64::NAN;
+
+        let config = ContourConfig::default().n_levels(4).interpolation_factor(1);
+        let data = compute_contour_plot(&x, &y, &z, &config);
+
+        // The four cells touching the NaN vertex stay unpainted; every other
+        // cell is still claimed exactly once.
+        let claims = cell_claim_counts(&data);
+        let unpainted = claims.iter().filter(|c| **c == 0).count();
+        assert_eq!(unpainted, 4);
+        assert!(claims.iter().all(|c| *c <= 1));
+    }
+
+    #[test]
+    fn test_band_color_position() {
+        // Open-ended bands clamp to the colormap floor and ceiling.
+        assert_eq!(band_color_position(f64::NEG_INFINITY, 0.0, 0.0, 1.0), 0.0);
+        assert_eq!(band_color_position(1.0, f64::INFINITY, 0.0, 1.0), 1.0);
+
+        // Interior bands keep using the normalized midpoint.
+        let t = band_color_position(0.0, 0.5, 0.0, 1.0);
+        assert!((t - 0.25).abs() < 1e-12);
+
+        // Degenerate level span falls back to the colormap midpoint.
+        assert_eq!(band_color_position(1.0, 1.0, 1.0, 1.0), 0.5);
+    }
+
+    #[test]
+    fn test_cell_in_band_membership() {
+        assert!(cell_in_band(-5.0, f64::NEG_INFINITY, 0.0));
+        assert!(!cell_in_band(0.0, f64::NEG_INFINITY, 0.0));
+        assert!(cell_in_band(0.0, 0.0, 1.0));
+        assert!(!cell_in_band(1.0, 0.0, 1.0));
+        assert!(cell_in_band(1.0, 1.0, f64::INFINITY));
+        assert!(cell_in_band(f64::INFINITY, 1.0, f64::INFINITY));
+        assert!(!cell_in_band(f64::NAN, f64::NEG_INFINITY, f64::INFINITY));
+    }
+
     #[test]
     fn test_contour_config_implements_plot_config() {
         fn assert_plot_config<T: PlotConfig>() {}
@@ -942,5 +1164,86 @@ mod tests {
 
         // Test is_empty
         assert!(!contour_data.is_empty());
+    }
+
+    #[test]
+    fn test_filled_contour_lines_use_theme_foreground() {
+        let theme = Theme::dark();
+        let cmap = ColorMap::viridis();
+        let config = ContourConfig::default().filled(true);
+
+        for level in 0..5 {
+            assert_eq!(
+                contour_line_color(&config, &theme, &cmap, Color::RED, level, 5),
+                theme.foreground,
+                "filled contour line {level} must contrast with the band it sits on"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unfilled_contour_lines_use_theme_foreground() {
+        // The dark end of viridis is ~#440154, which is invisible on a dark theme
+        // background — so an unfilled contour must follow the theme too.
+        let cmap = ColorMap::viridis();
+        let config = ContourConfig::default().filled(false);
+
+        for theme in [Theme::default(), Theme::dark()] {
+            for level in 0..5 {
+                assert_eq!(
+                    contour_line_color(&config, &theme, &cmap, Color::RED, level, 5),
+                    theme.foreground,
+                    "unfilled contour line {level} must contrast with the background"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_colormapped_contour_lines_are_opt_in() {
+        let theme = Theme::default();
+        let cmap = ColorMap::viridis();
+        let config = ContourConfig::default()
+            .filled(false)
+            .color_lines_by_level(true);
+
+        assert_eq!(
+            contour_line_color(&config, &theme, &cmap, Color::RED, 0, 5),
+            cmap.sample(0.0)
+        );
+        assert_eq!(
+            contour_line_color(&config, &theme, &cmap, Color::RED, 4, 5),
+            cmap.sample(1.0)
+        );
+    }
+
+    #[test]
+    fn test_single_level_colormapped_contour_uses_series_color() {
+        let theme = Theme::default();
+        let cmap = ColorMap::viridis();
+        let config = ContourConfig::default()
+            .filled(false)
+            .color_lines_by_level(true);
+
+        assert_eq!(
+            contour_line_color(&config, &theme, &cmap, Color::RED, 0, 1),
+            Color::RED
+        );
+    }
+
+    #[test]
+    fn test_explicit_contour_line_color_wins_over_theme() {
+        let theme = Theme::dark();
+        let cmap = ColorMap::viridis();
+
+        for filled in [true, false] {
+            let config = ContourConfig::default()
+                .filled(filled)
+                .line_color(Color::GREEN);
+            assert_eq!(
+                contour_line_color(&config, &theme, &cmap, Color::RED, 2, 5),
+                Color::GREEN
+            );
+        }
     }
 }

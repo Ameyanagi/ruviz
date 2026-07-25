@@ -75,6 +75,17 @@ struct MarkerSpriteKey {
 }
 
 const GLOBAL_MARKER_SPRITE_CACHE_LIMIT: usize = 4096;
+
+/// Frame colour for the legacy `draw_legend*` panels (matplotlib `legend.edgecolor`).
+const LEGACY_LEGEND_EDGE_COLOR: Color = Color {
+    r: 204,
+    g: 204,
+    b: 204,
+    a: 200,
+};
+/// Frame width for the legacy `draw_legend*` panels, in points.
+const LEGACY_LEGEND_EDGE_WIDTH_PT: f32 = 0.8;
+
 static GLOBAL_MARKER_SPRITE_CACHE: OnceLock<Mutex<HashMap<MarkerSpriteKey, Arc<MarkerSprite>>>> =
     OnceLock::new();
 
@@ -2205,13 +2216,14 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        self.draw_rectangle(
+        // Frame the panel explicitly: the fill primitive no longer adds a border.
+        self.draw_rectangle_styled(
             legend_bg.left(),
             legend_bg.top(),
             legend_bg.width(),
             legend_bg.height(),
-            Color::new_rgba(255, 255, 255, 200),
-            true,
+            Some(Color::new_rgba(255, 255, 255, 200)),
+            Some((LEGACY_LEGEND_EDGE_COLOR, LEGACY_LEGEND_EDGE_WIDTH_PT)),
         )?;
 
         // Draw legend items
@@ -2223,6 +2235,7 @@ impl SkiaRenderer {
                     position: None,
                 },
             )?;
+            // Swatch: flat fill so it matches the series colour exactly.
             self.draw_rectangle(
                 color_rect.left(),
                 color_rect.top(),
@@ -2312,13 +2325,14 @@ impl SkiaRenderer {
                 },
             )?;
 
-        self.draw_rectangle(
+        // Frame the panel explicitly: the fill primitive no longer adds a border.
+        self.draw_rectangle_styled(
             legend_bg.left(),
             legend_bg.top(),
             legend_bg.width(),
             legend_bg.height(),
-            Color::new_rgba(255, 255, 255, 200),
-            true,
+            Some(Color::new_rgba(255, 255, 255, 200)),
+            Some((LEGACY_LEGEND_EDGE_COLOR, LEGACY_LEGEND_EDGE_WIDTH_PT)),
         )?;
 
         // Draw legend items
@@ -2331,6 +2345,7 @@ impl SkiaRenderer {
                     position: None,
                 },
             )?;
+            // Swatch: flat fill so it matches the series colour exactly.
             self.draw_rectangle(
                 color_rect.left(),
                 color_rect.top(),
@@ -2395,6 +2410,10 @@ impl SkiaRenderer {
     /// Draw a bar handle in the legend
     ///
     /// Draws a filled rectangle to represent bar/histogram series.
+    ///
+    /// Flat fill on purpose: the handle must reproduce the series colour
+    /// exactly, and bars/histograms carry no edge unless one was requested
+    /// (see `LegendItemType::Area`, which strokes its own edge).
     fn draw_legend_bar_handle(
         &mut self,
         x: f32,
@@ -2686,6 +2705,7 @@ impl SkiaRenderer {
                     true,
                 )?;
             } else {
+                // Flat fill: a shadow must never gain an outline of its own.
                 self.draw_rectangle(
                     x + shadow_dx,
                     y + shadow_dy,
@@ -2697,7 +2717,9 @@ impl SkiaRenderer {
             }
         }
 
-        // Draw background with alpha applied
+        // Draw background with alpha applied. Flat fill in both branches: the
+        // frame border is drawn below from `style.edge_color`/`border_width`,
+        // which is also what the rounded branch has always done.
         let face_color = style.effective_face_color();
         if radius > 0.0 {
             self.draw_rounded_rectangle(x, y, width, height, radius, face_color, true)?;
