@@ -257,6 +257,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -393,6 +394,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -529,10 +531,14 @@ impl Plot {
         Y: NumericData1D,
     {
         let (mut plot, x_values, y_values) = self.collect_xy_for_derived_series(x_data, y_data);
+        // `series_structure()` is what puts the stems in the underlay so the
+        // markers drawn afterwards stay on top of them; the missing heads are
+        // only cosmetic and must not be used to infer that.
         let stem_style = ArrowStyle::new()
             .color(plot.next_series_color())
             .head_style(crate::core::ArrowHead::None)
-            .tail_style(crate::core::ArrowHead::None);
+            .tail_style(crate::core::ArrowHead::None)
+            .series_structure();
 
         for (&x, &y) in x_values.iter().zip(y_values.iter()) {
             plot = plot.arrow_styled(x, baseline, x, y, stem_style.clone());
@@ -682,6 +688,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -719,6 +726,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -786,6 +794,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -822,6 +831,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -899,6 +909,7 @@ impl Plot {
                     marker_style_source: None,
                     marker_size: None,
                     marker_size_source: None,
+                    marker_edge: None,
                     alpha: None,
                     alpha_source: None,
                     y_errors: None,
@@ -944,6 +955,7 @@ impl Plot {
                     marker_style_source: None,
                     marker_size: None,
                     marker_size_source: None,
+                    marker_edge: None,
                     alpha: None,
                     alpha_source: None,
                     y_errors: None,
@@ -1006,6 +1018,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -1044,6 +1057,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -1120,6 +1134,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -1166,6 +1181,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -1686,6 +1702,89 @@ mod tests {
         assert!(colors.iter().all(|color| *color == expected));
         // The old default was the uncoloured ArrowStyle.
         assert_ne!(colors[0], ArrowStyle::default().color);
+    }
+
+    fn arrows(plot: &Plot) -> Vec<&Annotation> {
+        plot.annotations
+            .iter()
+            .filter(|annotation| matches!(annotation, Annotation::Arrow { .. }))
+            .collect()
+    }
+
+    #[test]
+    fn test_stem_plot_draws_its_stems_under_its_markers() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new().stem(&x, &y, 0.0).into();
+
+        let stems = arrows(&plot);
+        assert_eq!(stems.len(), x.len());
+        // Rendering order is underlay annotations -> series -> overlay
+        // annotations, so classifying the stems as underlay is what keeps them
+        // beneath the marker series they belong to.
+        assert!(stems.iter().copied().all(Plot::is_underlay_annotation));
+        assert!(!stems.iter().copied().any(Plot::is_overlay_annotation));
+        assert_eq!(plot.series_mgr.len(), 1);
+    }
+
+    #[test]
+    fn test_user_headless_arrow_stays_in_the_overlay() {
+        use crate::core::ArrowHead;
+
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        // A plain pointer line drawn with the public API: no heads, but still a
+        // caller annotation, so it must paint over the data as it always did.
+        let plot: Plot = Plot::new()
+            .line(&x, &y)
+            .arrow_styled(
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                ArrowStyle::new()
+                    .head_style(ArrowHead::None)
+                    .tail_style(ArrowHead::None),
+            )
+            .into();
+
+        let user_arrows = arrows(&plot);
+        assert_eq!(user_arrows.len(), 1);
+        assert!(Plot::is_overlay_annotation(user_arrows[0]));
+        assert!(!Plot::is_underlay_annotation(user_arrows[0]));
+    }
+
+    #[test]
+    fn test_stem_provenance_is_not_inferred_from_the_arrow_head_style() {
+        use crate::core::ArrowHead;
+
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        // Both arrows are headless; only the stems are structural.
+        let plot: Plot = Plot::new()
+            .stem(&x, &y, 0.0)
+            .arrow_styled(
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                ArrowStyle::new()
+                    .head_style(ArrowHead::None)
+                    .tail_style(ArrowHead::None),
+            )
+            .into();
+
+        let all = arrows(&plot);
+        assert_eq!(all.len(), x.len() + 1);
+        let underlay = all
+            .iter()
+            .copied()
+            .filter(|arrow| Plot::is_underlay_annotation(arrow))
+            .count();
+        assert_eq!(underlay, x.len());
+        // The caller's arrow was pushed last and is the only overlay one.
+        let last = *all.last().expect("arrow annotations were pushed");
+        assert!(Plot::is_overlay_annotation(last));
     }
 
     #[test]

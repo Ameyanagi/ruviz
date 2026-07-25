@@ -179,6 +179,7 @@ fn test_marker_sprite_key(index: usize) -> MarkerSpriteKey {
         style: MarkerStyle::Circle,
         size_bits: index as u32,
         rgba_bits: 0,
+        edge_bits: None,
         phase_x: 0,
         phase_y: 0,
     }

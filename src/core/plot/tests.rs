@@ -430,6 +430,7 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         marker_style_source: None,
         marker_size: None,
         marker_size_source: None,
+        marker_edge: None,
         alpha: None,
         alpha_source: None,
         y_errors: None,
@@ -2016,10 +2017,15 @@ fn test_unlabeled_fill_between_stays_out_of_the_legend() {
 }
 
 #[test]
-fn test_headless_arrows_render_as_underlay() {
+fn test_user_headless_arrows_render_as_overlay() {
     use crate::core::ArrowHead;
 
-    let stem = Annotation::arrow_styled(
+    // A caller-built arrow with no heads is still a caller's annotation and
+    // belongs on top of the data. Provenance now rides on `ArrowStyle::origin`
+    // rather than being sniffed from the head style, so only `Plot::stem()`'s
+    // own arrows go into the underlay (covered by
+    // `series_api::tests::test_stem_plot_draws_its_stems_under_its_markers`).
+    let headless = Annotation::arrow_styled(
         0.0,
         0.0,
         0.0,
@@ -2028,12 +2034,126 @@ fn test_headless_arrows_render_as_underlay() {
             .head_style(ArrowHead::None)
             .tail_style(ArrowHead::None),
     );
-    // `stem()` emits headless arrows; they must paint below their own markers.
-    assert!(Plot::is_underlay_annotation(&stem));
-    assert!(!Plot::is_overlay_annotation(&stem));
+    assert!(Plot::is_overlay_annotation(&headless));
+    assert!(!Plot::is_underlay_annotation(&headless));
 
     let pointer = Annotation::arrow_styled(0.0, 0.0, 1.0, 1.0, ArrowStyle::new());
     assert!(Plot::is_overlay_annotation(&pointer));
+}
+
+/// The item type of the single legend key of a one-series plot.
+fn only_legend_item_type(plot: &Plot) -> crate::core::LegendItemType {
+    let mut items = plot.collect_legend_items();
+    assert_eq!(items.len(), 1, "expected exactly one legend item");
+    items.remove(0).item_type
+}
+
+#[test]
+fn test_bar_legend_key_carries_the_edge_the_bars_are_drawn_with() {
+    let categories = ["A", "B", "C"];
+    let values = [2.0, 4.0, 3.0];
+    let plot = Plot::new()
+        .bar(&categories, &values)
+        .label("bars")
+        .color(Color::BLUE)
+        .end_series();
+
+    let LegendItemType::Bar { edge } = only_legend_item_type(&plot) else {
+        panic!("a bar series must produce a bar legend key");
+    };
+    let (edge_color, edge_width) = edge.expect("bars carry a default edge, so the key must too");
+    // Same resolution the renderer uses: the fill darkened 30%, 0.8pt.
+    assert_eq!(edge_color, Color::BLUE.darken(0.3));
+    assert!((edge_width - 0.8).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_bar_legend_key_is_flat_when_the_bars_are_flat() {
+    let categories = ["A", "B"];
+    let values = [1.0, 2.0];
+    let plot = Plot::new()
+        .bar(&categories, &values)
+        .label("bars")
+        .edge_width(0.0)
+        .end_series();
+
+    assert!(
+        matches!(
+            only_legend_item_type(&plot),
+            LegendItemType::Bar { edge: None }
+        ),
+        "edge_width(0.0) draws flat bars, so the key must be flat as well"
+    );
+}
+
+#[test]
+fn test_histogram_legend_key_carries_the_bin_edge() {
+    let data = vec![0.1, 0.4, 0.6, 0.9, 1.2, 1.5, 1.9, 2.4];
+    let plot = Plot::new()
+        .histogram(&data, None)
+        .label("hist")
+        .end_series();
+
+    let LegendItemType::Histogram { edge } = only_legend_item_type(&plot) else {
+        panic!("a histogram series must produce a histogram legend key");
+    };
+    let (_, edge_width) = edge.expect("histogram bins are always stroked, so the key must be too");
+    assert!((edge_width - 0.8).abs() < f32::EPSILON);
+}
+
+#[test]
+fn test_svg_bars_carry_the_same_edge_as_raster_bars() {
+    // PNG bars regained their edge; the SVG twin must not stay flat.
+    let categories = ["A", "B", "C"];
+    let values = [2.0, 4.0, 3.0];
+    let svg = Plot::new()
+        .bar(&categories, &values)
+        .color(Color::BLUE)
+        .edge_color(Color::RED)
+        .end_series()
+        .render_to_svg()
+        .expect("bar SVG render should succeed");
+
+    assert!(
+        svg.contains(r#"fill="rgb(0,0,255)" stroke="rgb(255,0,0)""#),
+        "expected blue bars stroked in red in the SVG: {svg}"
+    );
+}
+
+#[test]
+fn test_svg_bars_are_flat_when_the_edge_is_switched_off() {
+    let categories = ["A", "B"];
+    let values = [1.0, 2.0];
+    let svg = Plot::new()
+        .bar(&categories, &values)
+        .color(Color::BLUE)
+        .edge_width(0.0)
+        .end_series()
+        .render_to_svg()
+        .expect("bar SVG render should succeed");
+
+    assert!(
+        !svg.contains(r#"fill="rgb(0,0,255)" stroke="#),
+        "edge_width(0.0) must leave the SVG bars unstroked: {svg}"
+    );
+}
+
+#[test]
+fn test_svg_scatter_markers_carry_a_requested_rim() {
+    let x = [0.0, 1.0, 2.0];
+    let y = [1.0, 3.0, 2.0];
+    let svg = Plot::new()
+        .scatter(&x, &y)
+        .color(Color::BLUE)
+        .edge_color(Color::RED)
+        .end_series()
+        .render_to_svg()
+        .expect("scatter SVG render should succeed");
+
+    assert!(
+        svg.contains(r#"stroke="rgb(255,0,0)""#),
+        "an explicit marker edge colour must reach the SVG: {svg}"
+    );
 }
 
 #[test]
@@ -3864,6 +3984,91 @@ fn test_reference_save_png_reports_marker_sprite_compositor_for_large_scatter() 
     assert!(diagnostics.used_marker_sprite_cache);
     assert!(!diagnostics.used_marker_sprite_fallback);
     assert!(diagnostics.used_marker_scanline_blit);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_reference_save_png_marker_edge_keeps_the_sprite_compositor() {
+    // The sprite cache is keyed on (style, size, colour, EDGE, phase), so the
+    // rim is part of the sprite's identity and an edged batch keeps the fast
+    // path. Dropping off the compositor is what used to make a marker rim
+    // expensive enough to be worth disabling by default.
+    let (x, y) = large_xy_data();
+    let plot = Plot::new()
+        .size_px(640, 480)
+        .ticks(false)
+        .grid(false)
+        .scatter(&x, &y)
+        .marker(MarkerStyle::Circle)
+        .marker_size(6.0)
+        .edge_color(Color::BLACK)
+        .into_plot();
+
+    let (png, _, diagnostics) = plot
+        .benchmark_save_png_bytes_with_diagnostics()
+        .expect("reference edged-scatter PNG render should produce diagnostics");
+
+    assert!(
+        diagnostics.used_marker_sprite_compositor,
+        "an edged marker batch must still use the sprite compositor"
+    );
+
+    // The rim has to actually be in the pixels, not just in the diagnostics.
+    let image = decode_png_rgba(&png);
+    let black_pixels = image
+        .pixels()
+        .filter(|p| p.0[3] == 255 && p.0[0] < 40 && p.0[1] < 40 && p.0[2] < 40)
+        .count();
+    assert!(
+        black_pixels > 200,
+        "the requested black rim must be painted through the sprite path, saw {black_pixels} px"
+    );
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn test_edged_marker_batch_matches_across_the_sprite_threshold() {
+    // The sprite compositor only engages at 32 points. An edged batch must look
+    // the same either side of that threshold, or the same series would render
+    // differently for want of one more point.
+    let render = |count: usize| {
+        // The 32nd point duplicates the 1st, so both batches draw the same
+        // geometry and only the code path differs.
+        let x: Vec<f64> = (0..count).map(|i| ((i % 31) % 8) as f64).collect();
+        let y: Vec<f64> = (0..count).map(|i| ((i % 31) / 8) as f64).collect();
+        Plot::new()
+            .size_px(320, 240)
+            .ticks(false)
+            .grid(false)
+            .scatter(&x, &y)
+            .marker(MarkerStyle::Square)
+            .marker_size(10.0)
+            .edge_color(Color::new(255, 0, 0))
+            .edge_width(2.0)
+            .into_plot()
+            .benchmark_save_png_bytes_with_diagnostics()
+            .expect("threshold scatter PNG render should succeed")
+    };
+
+    let (vector_png, _, vector_diagnostics) = render(31);
+    let (sprite_png, _, sprite_diagnostics) = render(32);
+    assert!(!vector_diagnostics.used_marker_sprite_compositor);
+    assert!(sprite_diagnostics.used_marker_sprite_compositor);
+
+    let red = |png: &[u8]| {
+        decode_png_rgba(png)
+            .pixels()
+            .filter(|p| p.0 == [255, 0, 0, 255])
+            .count()
+    };
+    let vector_red = red(&vector_png);
+    let sprite_red = red(&sprite_png);
+    assert!(vector_red > 0, "the vector path must paint the rim");
+    let delta = vector_red.abs_diff(sprite_red);
+    assert!(
+        delta * 20 <= vector_red,
+        "vector and sprite rims must agree within 5%: {vector_red} vs {sprite_red}"
+    );
 }
 
 #[test]

@@ -49,6 +49,13 @@ pub(super) struct MarkerBatch {
     size: f32,
     style: MarkerStyle,
     color: Color,
+    /// Marker rim as `(colour, width_in_points)`, or `None` for bare markers.
+    ///
+    /// The width stays in points here; the renderer scales it, so the rim is
+    /// DPI-invariant. An edged batch cannot use the marker sprite compositor
+    /// (its cache key has nowhere to record an edge), so keep this `None`
+    /// unless the series actually asked for a rim.
+    edge: Option<(Color, f32)>,
     clip_rect: ClipRect,
 }
 
@@ -58,6 +65,7 @@ impl MarkerBatch {
         size: f32,
         style: MarkerStyle,
         color: Color,
+        edge: Option<(Color, f32)>,
         clip_rect: ClipRect,
     ) -> Self {
         Self {
@@ -65,16 +73,18 @@ impl MarkerBatch {
             size,
             style,
             color,
+            edge,
             clip_rect,
         }
     }
 
     fn execute(&self, renderer: &mut SkiaRenderer) -> Result<()> {
-        renderer.draw_markers_clipped(
+        renderer.draw_markers_styled_clipped(
             self.points.as_ref(),
             self.size,
             self.style,
             self.color,
+            self.edge,
             self.clip_rect,
         )
     }
@@ -198,17 +208,20 @@ impl SeriesRasterPlan {
             )));
     }
 
+    /// Queue a marker batch. `edge` is `(colour, width_in_points)`, normally
+    /// `Plot::resolved_marker_edge`, and `None` for bare markers.
     pub(super) fn push_markers(
         &mut self,
         points: Arc<[Point2f]>,
         size: f32,
         style: MarkerStyle,
         color: Color,
+        edge: Option<(Color, f32)>,
         clip_rect: ClipRect,
     ) {
         self.batches
             .push(StaticRasterBatch::Markers(MarkerBatch::new(
-                points, size, style, color, clip_rect,
+                points, size, style, color, edge, clip_rect,
             )));
     }
 

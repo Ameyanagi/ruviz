@@ -462,11 +462,16 @@ impl Plot {
                             series.marker_style.unwrap_or(MarkerStyle::Circle),
                             color,
                             self.parallel_marker_size_px(series, 10.0),
+                            series
+                                .marker_edge
+                                .and_then(|edge| edge.resolve(&self.display.theme, color)),
                         )?;
 
                         RenderSeriesType::Scatter { markers }
                     }
-                    SeriesType::Bar { categories, .. } => {
+                    SeriesType::Bar {
+                        categories, config, ..
+                    } => {
                         let ResolvedSeries::Bar { values, .. } = resolved else {
                             unreachable!("resolved bars must match their declarative series");
                         };
@@ -487,8 +492,10 @@ impl Plot {
                                 &self.layout.y_scale,
                             )?;
 
-                        // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
-                        let bar_width_fraction = 0.8;
+                        // Bar width as a fraction of category spacing, read from
+                        // the config like the sequential path does rather than
+                        // hardcoded, so `.bar_width(..)` reaches both backends.
+                        let bar_width_fraction = config.width;
                         let data_range = (bounds.1 - bounds.0) as f32;
                         let pixels_per_unit = parallel_plot_area.width() / data_range;
                         let bar_width = bar_width_fraction * pixels_per_unit;
@@ -506,6 +513,10 @@ impl Plot {
                         )
                         .1;
 
+                        // Same resolution as the sequential path, so the two
+                        // backends cannot drift apart on bar edges.
+                        let edge = config.resolved_edge(&self.display.theme, color);
+
                         let bars = points
                             .iter()
                             .enumerate()
@@ -521,7 +532,7 @@ impl Plot {
                                     width: bar_width,
                                     height,
                                     color,
-                                    edge: None,
+                                    edge,
                                 }
                             })
                             .collect();
@@ -555,6 +566,9 @@ impl Plot {
                             series.marker_style.unwrap_or(MarkerStyle::Circle),
                             color,
                             self.parallel_marker_size_px(series, 8.0),
+                            series
+                                .marker_edge
+                                .and_then(|edge| edge.resolve(&self.display.theme, color)),
                         )?;
 
                         RenderSeriesType::Scatter { markers }
@@ -1152,24 +1166,27 @@ impl Plot {
                             marker.style == first.style
                                 && marker.color == first.color
                                 && marker.size.to_bits() == first.size.to_bits()
+                                && marker.edge == first.edge
                         }) {
                             let points: Vec<Point2f> =
                                 markers.iter().map(|marker| marker.position).collect();
-                            renderer.draw_markers_clipped(
+                            renderer.draw_markers_styled_clipped(
                                 &points,
                                 first.size,
                                 first.style,
                                 first.color,
+                                first.edge,
                                 clip_rect,
                             )?;
                         } else {
                             for marker in markers {
-                                renderer.draw_marker_clipped(
+                                renderer.draw_marker_styled_clipped(
                                     marker.position.x,
                                     marker.position.y,
                                     marker.size,
                                     marker.style,
                                     marker.color,
+                                    marker.edge,
                                     clip_rect,
                                 )?;
                             }
@@ -1462,7 +1479,9 @@ impl Plot {
                         }
                     }
                 }
-                SeriesType::Bar { categories, values } => {
+                SeriesType::Bar {
+                    categories, values, ..
+                } => {
                     let values = values.resolve_cow(0.0);
                     // Add 0.5-unit padding on each side for bar charts (matplotlib-compatible)
                     // This ensures bars at positions 0 and n-1 are fully visible
@@ -1930,7 +1949,9 @@ impl Plot {
                         }
                     }
                 }
-                SeriesType::Bar { categories, values } => {
+                SeriesType::Bar {
+                    categories, values, ..
+                } => {
                     let values = values.resolve_cow(0.0);
                     x_min = x_min.min(-0.5);
                     x_max = x_max.max(categories.len() as f64 - 0.5);

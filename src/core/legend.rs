@@ -203,20 +203,40 @@ pub enum LegendItemType {
     /// Line plot - draw a short line segment
     Line { style: LineStyle, width: f32 },
     /// Scatter plot - draw the marker
-    Scatter { marker: MarkerStyle, size: f32 },
+    ///
+    /// `edge` is the rim the plotted markers actually carry, as
+    /// `(colour, width_in_points)`; the backend scales the width with DPI so
+    /// the key matches the marker it stands for. `None` means bare markers.
+    Scatter {
+        marker: MarkerStyle,
+        size: f32,
+        edge: Option<(Color, f32)>,
+    },
     /// Line plot with markers - draw line segment with marker at center
+    ///
+    /// See [`LegendItemType::Scatter`] for the meaning of `marker_edge`.
     LineMarker {
         line_style: LineStyle,
         line_width: f32,
         marker: MarkerStyle,
         marker_size: f32,
+        marker_edge: Option<(Color, f32)>,
     },
     /// Bar chart - draw a filled rectangle
-    Bar,
+    ///
+    /// `edge` is the edge the bars are actually stroked with, as
+    /// `(colour, width_in_points)`. The width is in **points** so the backend
+    /// scales it with DPI exactly like the patch it stands for. `None` means
+    /// the bars are drawn flat and the key is flat too.
+    Bar { edge: Option<(Color, f32)> },
     /// Area/fill - draw a filled rectangle with optional edge
     Area { edge_color: Option<Color> },
     /// Histogram - same as bar
-    Histogram,
+    ///
+    /// See [`LegendItemType::Bar`] for the meaning of `edge`. Histogram bars
+    /// carry a default edge (see `HistogramData::resolved_edge`), so this is
+    /// normally `Some(..)`.
+    Histogram { edge: Option<(Color, f32)> },
     /// Error bars - draw line with error bar caps
     ErrorBar,
 }
@@ -232,17 +252,31 @@ impl LegendItem {
         }
     }
 
-    /// Create a legend item for a scatter series
+    /// Create a legend item for a scatter series with bare markers
     pub fn scatter(label: impl Into<String>, color: Color, marker: MarkerStyle, size: f32) -> Self {
+        Self::scatter_with_edge(label, color, marker, size, None)
+    }
+
+    /// Create a legend item for a scatter series with an explicit marker rim
+    ///
+    /// `edge` is `(colour, width_in_points)` and should be the rim the markers
+    /// themselves are stroked with, so the key matches what is plotted.
+    pub fn scatter_with_edge(
+        label: impl Into<String>,
+        color: Color,
+        marker: MarkerStyle,
+        size: f32,
+        edge: Option<(Color, f32)>,
+    ) -> Self {
         Self {
             label: label.into(),
             color,
-            item_type: LegendItemType::Scatter { marker, size },
+            item_type: LegendItemType::Scatter { marker, size, edge },
             has_error_bars: false,
         }
     }
 
-    /// Create a legend item for a line+marker series
+    /// Create a legend item for a line+marker series with bare markers
     pub fn line_marker(
         label: impl Into<String>,
         color: Color,
@@ -250,6 +284,30 @@ impl LegendItem {
         line_width: f32,
         marker: MarkerStyle,
         marker_size: f32,
+    ) -> Self {
+        Self::line_marker_with_edge(
+            label,
+            color,
+            line_style,
+            line_width,
+            marker,
+            marker_size,
+            None,
+        )
+    }
+
+    /// Create a legend item for a line+marker series with an explicit marker rim
+    ///
+    /// See [`LegendItem::scatter_with_edge`] for the meaning of `marker_edge`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn line_marker_with_edge(
+        label: impl Into<String>,
+        color: Color,
+        line_style: LineStyle,
+        line_width: f32,
+        marker: MarkerStyle,
+        marker_size: f32,
+        marker_edge: Option<(Color, f32)>,
     ) -> Self {
         Self {
             label: label.into(),
@@ -259,27 +317,52 @@ impl LegendItem {
                 line_width,
                 marker,
                 marker_size,
+                marker_edge,
             },
             has_error_bars: false,
         }
     }
 
-    /// Create a legend item for a bar series
+    /// Create a legend item for a bar series with no edge stroke
     pub fn bar(label: impl Into<String>, color: Color) -> Self {
+        Self::bar_with_edge(label, color, None)
+    }
+
+    /// Create a legend item for a bar series with an explicit edge
+    ///
+    /// `edge` is `(colour, width_in_points)` and should be the edge the bars
+    /// themselves are stroked with, so the key matches what is plotted.
+    pub fn bar_with_edge(
+        label: impl Into<String>,
+        color: Color,
+        edge: Option<(Color, f32)>,
+    ) -> Self {
         Self {
             label: label.into(),
             color,
-            item_type: LegendItemType::Bar,
+            item_type: LegendItemType::Bar { edge },
             has_error_bars: false,
         }
     }
 
-    /// Create a legend item for a histogram series
+    /// Create a legend item for a histogram series with no edge stroke
     pub fn histogram(label: impl Into<String>, color: Color) -> Self {
+        Self::histogram_with_edge(label, color, None)
+    }
+
+    /// Create a legend item for a histogram series with an explicit edge
+    ///
+    /// `edge` is `(colour, width_in_points)`, normally the value returned by
+    /// `HistogramData::resolved_edge`.
+    pub fn histogram_with_edge(
+        label: impl Into<String>,
+        color: Color,
+        edge: Option<(Color, f32)>,
+    ) -> Self {
         Self {
             label: label.into(),
             color,
-            item_type: LegendItemType::Histogram,
+            item_type: LegendItemType::Histogram { edge },
             has_error_bars: false,
         }
     }
@@ -310,7 +393,7 @@ impl LegendItem {
         Self {
             label,
             color,
-            item_type: LegendItemType::Bar,
+            item_type: LegendItemType::Bar { edge: None },
             has_error_bars: false,
         }
     }
@@ -319,6 +402,42 @@ impl LegendItem {
     pub fn with_error_bars(mut self, has_error_bars: bool) -> Self {
         self.has_error_bars = has_error_bars;
         self
+    }
+}
+
+// ============================================================================
+// Legacy Legend Swatch Contour
+// ============================================================================
+
+/// Dark neutral used to outline a light swatch on a legacy legend panel.
+pub(crate) const LEGACY_LEGEND_SWATCH_EDGE_DARK: Color = Color::from_gray(64);
+/// Light neutral used to outline a dark swatch on a legacy legend panel.
+pub(crate) const LEGACY_LEGEND_SWATCH_EDGE_LIGHT: Color = Color::from_gray(224);
+/// Width of the legacy legend swatch outline, in points.
+pub(crate) const LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT: f32 = 0.8;
+
+/// Pick a neutral outline that keeps a legacy legend swatch discernible.
+///
+/// The legacy `draw_legend*` panels are painted near-white by both the raster
+/// and the SVG backend, so a white or near-white series colour has no contour
+/// of its own and the key disappears. The swatch fill is never modified — a
+/// legend key must reproduce the series colour exactly — so the contour is
+/// supplied as a separate neutral stroke, chosen dark for light fills and
+/// light for dark fills.
+///
+/// `fill` is composited over the near-white panel first, so a translucent or
+/// fully transparent fill is treated as the light colour it actually renders
+/// as. Shared by both backends so a PNG and an SVG legend cannot disagree.
+pub(crate) fn legacy_legend_swatch_edge(fill: Color) -> Color {
+    let alpha = fill.a as f32 / 255.0;
+    let over_panel = |channel: u8| channel as f32 * alpha + 255.0 * (1.0 - alpha);
+    // Rec. 601 luma, good enough to split "light" from "dark".
+    let luma = 0.299 * over_panel(fill.r) + 0.587 * over_panel(fill.g) + 0.114 * over_panel(fill.b);
+
+    if luma > 128.0 {
+        LEGACY_LEGEND_SWATCH_EDGE_DARK
+    } else {
+        LEGACY_LEGEND_SWATCH_EDGE_LIGHT
     }
 }
 
@@ -938,6 +1057,48 @@ mod tests {
             line_marker.item_type,
             LegendItemType::LineMarker { .. }
         ));
+    }
+
+    #[test]
+    fn test_patch_items_default_to_no_edge() {
+        assert!(matches!(
+            LegendItem::bar("bars", Color::BLUE).item_type,
+            LegendItemType::Bar { edge: None }
+        ));
+        assert!(matches!(
+            LegendItem::histogram("hist", Color::BLUE).item_type,
+            LegendItemType::Histogram { edge: None }
+        ));
+        assert!(matches!(
+            LegendItem::from_tuple("legacy".to_string(), Color::BLUE).item_type,
+            LegendItemType::Bar { edge: None }
+        ));
+    }
+
+    #[test]
+    fn test_patch_items_carry_edge_colour_and_point_width() {
+        let edge = (Color::BLACK, 0.8);
+
+        let bar = LegendItem::bar_with_edge("bars", Color::BLUE, Some(edge));
+        match &bar.item_type {
+            LegendItemType::Bar { edge: Some(e) } => {
+                assert_eq!(e.0, Color::BLACK);
+                assert!((e.1 - 0.8).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Bar with edge, got {other:?}"),
+        }
+        // The fill must stay exactly the series colour.
+        assert_eq!(bar.color, Color::BLUE);
+
+        let hist = LegendItem::histogram_with_edge("hist", Color::RED, Some(edge));
+        match &hist.item_type {
+            LegendItemType::Histogram { edge: Some(e) } => {
+                assert_eq!(e.0, Color::BLACK);
+                assert!((e.1 - 0.8).abs() < f32::EPSILON);
+            }
+            other => panic!("expected Histogram with edge, got {other:?}"),
+        }
+        assert_eq!(hist.color, Color::RED);
     }
 
     #[test]

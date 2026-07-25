@@ -561,14 +561,25 @@ impl Plot {
                 if let Some(marker_style) = series.marker_style {
                     let marker_size =
                         render_scale.points_to_pixels(series.marker_size.unwrap_or(8.0));
+                    // Same rim the raster path strokes; `draw_marker_styled`
+                    // scales the point width itself.
+                    let marker_edge = self.resolved_marker_edge(series, color);
                     for &(px, py) in &points {
-                        svg.draw_marker(px, py, marker_size, marker_style, color);
+                        svg.draw_marker_styled(
+                            px,
+                            py,
+                            marker_size,
+                            marker_style,
+                            color,
+                            marker_edge,
+                        );
                     }
                 }
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
                 let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(10.0));
+                let marker_edge = self.resolved_marker_edge(series, color);
                 for (&x, &y) in x.iter().zip(y.iter()) {
                     let (px, py) = crate::render::skia::map_data_to_pixels_scaled(
                         x,
@@ -581,27 +592,40 @@ impl Plot {
                         &self.layout.x_scale,
                         &self.layout.y_scale,
                     );
-                    svg.draw_marker(px, py, marker_size, marker_style, color);
+                    svg.draw_marker_styled(px, py, marker_size, marker_style, color, marker_edge);
                 }
             }
-            (SeriesType::Bar { categories, .. }, ResolvedSeries::Bar { values, .. }) => {
-                let num_bars = categories.len();
-                let bar_width = plot_area.width() / num_bars as f32 * 0.7;
+            (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
+                // Same resolution the raster path uses, so PNG and SVG bars
+                // carry the identical edge. The width is in points and
+                // `draw_rectangle_styled` scales it, so it is DPI-invariant.
+                let edge = config.resolved_edge(&self.display.theme, color);
 
                 for (i, &value) in values.iter().enumerate() {
-                    let bar_x = plot_area.x()
-                        + (i as f32 + 0.5) * (plot_area.width() / num_bars as f32)
-                        - bar_width / 2.0;
-                    let (_, py) = crate::render::skia::map_data_to_pixels(
-                        0.0, value, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    let (_, py_zero) = crate::render::skia::map_data_to_pixels(
-                        0.0, 0.0, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    let bar_height = (py - py_zero).abs();
-                    let bar_y = py.min(py_zero);
+                    // Shared with the raster backend: SVG used to lay bars out
+                    // positionally (ignoring the real x-scale) at a different
+                    // width fraction, so a PNG and an SVG of the same chart put
+                    // their bars in different places.
+                    let (bar_x, bar_y, bar_width, bar_height) =
+                        super::series_internal::bar_pixel_rect(
+                            i,
+                            value,
+                            config.width,
+                            plot_area,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                        );
 
-                    svg.draw_rectangle(bar_x, bar_y, bar_width, bar_height, color, true);
+                    svg.draw_rectangle_styled(
+                        bar_x,
+                        bar_y,
+                        bar_width,
+                        bar_height,
+                        Some(color),
+                        edge,
+                    );
                 }
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
@@ -921,6 +945,7 @@ impl Plot {
         let half_cap = render_scale.logical_pixels_to_pixels(config.cap_size) * 0.5;
         let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
         let marker_size = render_scale.points_to_pixels(series.marker_size.unwrap_or(8.0));
+        let marker_edge = self.resolved_marker_edge(series, color);
 
         for (index, (&x_value, &y_value)) in x.iter().zip(y).enumerate() {
             if !x_value.is_finite() || !y_value.is_finite() {
@@ -929,7 +954,7 @@ impl Plot {
             let (px, py) = crate::render::skia::map_data_to_pixels(
                 x_value, y_value, x_min, x_max, y_min, y_max, plot_area,
             );
-            svg.draw_marker(px, py, marker_size, marker_style, color);
+            svg.draw_marker_styled(px, py, marker_size, marker_style, color, marker_edge);
 
             if let Some((lower, upper)) = y_errors.and_then(|errors| errors.bounds_at(index)) {
                 let lower = lower.abs();

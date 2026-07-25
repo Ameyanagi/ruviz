@@ -3,6 +3,10 @@ use crate::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
         LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
         SpacingConfig, SpineConfig, TextPosition, TickFormatter, find_best_position,
+        legend::{
+            LEGACY_LEGEND_SWATCH_EDGE_DARK, LEGACY_LEGEND_SWATCH_EDGE_LIGHT,
+            LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, legacy_legend_swatch_edge,
+        },
         plot::{Image, RenderDiagnostics, TextEngineMode, TickDirection, TickSides},
         pt_to_px,
     },
@@ -70,11 +74,26 @@ struct MarkerSpriteKey {
     style: MarkerStyle,
     size_bits: u32,
     rgba_bits: u32,
+    /// `(edge rgba, edge width in device pixels)`, `None` for a bare marker.
+    ///
+    /// The rim is baked into the sprite, so it has to be part of the identity of
+    /// the sprite. Without it an edged batch would have to fall off the sprite
+    /// compositor entirely, which is what used to make a marker rim expensive
+    /// enough to be worth disabling by default.
+    edge_bits: Option<(u32, u32)>,
     phase_x: u8,
     phase_y: u8,
 }
 
-const GLOBAL_MARKER_SPRITE_CACHE_LIMIT: usize = 4096;
+/// Entries the process-wide marker sprite cache holds before it starts evicting.
+///
+/// Sized from [`SkiaRenderer::marker_subpixel_phases`]: one hot marker — a
+/// single (style, size, colour, edge) tuple — occupies at most `phases²`
+/// entries once a dense scatter has visited every sub-pixel phase, so the limit
+/// has to be a multiple of that or a single series would evict the whole cache
+/// on every frame. Two hot markers fit.
+const GLOBAL_MARKER_SPRITE_CACHE_LIMIT: usize =
+    2 * (SkiaRenderer::marker_subpixel_phases() as usize).pow(2);
 
 /// Frame colour for the legacy `draw_legend*` panels (matplotlib `legend.edgecolor`).
 const LEGACY_LEGEND_EDGE_COLOR: Color = Color {
@@ -113,11 +132,24 @@ fn insert_global_marker_sprite(
 }
 
 impl MarkerSpriteKey {
-    fn new(style: MarkerStyle, size: f32, color: Color, phase_x: u8, phase_y: u8) -> Self {
+    fn new(
+        style: MarkerStyle,
+        size: f32,
+        color: Color,
+        edge: Option<(Color, f32)>,
+        phase_x: u8,
+        phase_y: u8,
+    ) -> Self {
         Self {
             style,
             size_bits: size.to_bits(),
             rgba_bits: u32::from_be_bytes([color.r, color.g, color.b, color.a]),
+            edge_bits: edge.map(|(color, width_px)| {
+                (
+                    u32::from_be_bytes([color.r, color.g, color.b, color.a]),
+                    width_px.to_bits(),
+                )
+            }),
             phase_x,
             phase_y,
         }
@@ -382,15 +414,21 @@ impl SkiaRenderer {
         Ok(Some(path))
     }
 
+    /// Fetch (or build) the cached raster for one marker.
+    ///
+    /// `edge` is `(colour, width in **device pixels**)` — already scaled by the
+    /// caller, exactly like the vector painter takes it — and is baked into the
+    /// sprite, so an edged batch keeps the sprite fast path.
     pub(crate) fn marker_sprite(
         &mut self,
         style: MarkerStyle,
         size: f32,
         color: Color,
+        edge: Option<(Color, f32)>,
         phase_x: u8,
         phase_y: u8,
     ) -> Result<Arc<MarkerSprite>> {
-        let key = MarkerSpriteKey::new(style, size, color, phase_x, phase_y);
+        let key = MarkerSpriteKey::new(style, size, color, edge, phase_x, phase_y);
         if let Some(sprite) = self.marker_sprite_cache.get(&key) {
             let sprite = Arc::clone(sprite);
             self.note_marker_sprite_cache();
@@ -406,14 +444,16 @@ impl SkiaRenderer {
 
             // Hold the global lock across creation to avoid duplicate same-key sprite work.
             // If parallel PNG workloads make unrelated misses contend here, switch to per-key slots.
-            let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
+            let sprite =
+                Arc::new(self.create_marker_sprite(style, size, color, edge, phase_x, phase_y)?);
             let sprite = insert_global_marker_sprite(&mut global_cache, key, sprite);
             self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
             self.note_marker_sprite_cache();
             return Ok(sprite);
         }
 
-        let sprite = Arc::new(self.create_marker_sprite(style, size, color, phase_x, phase_y)?);
+        let sprite =
+            Arc::new(self.create_marker_sprite(style, size, color, edge, phase_x, phase_y)?);
         self.marker_sprite_cache.insert(key, Arc::clone(&sprite));
         self.note_marker_sprite_cache();
         Ok(sprite)
@@ -424,10 +464,11 @@ impl SkiaRenderer {
         style: MarkerStyle,
         size: f32,
         color: Color,
+        edge: Option<(Color, f32)>,
         phase_x: u8,
         phase_y: u8,
     ) -> Result<MarkerSprite> {
-        let (origin, side) = Self::marker_sprite_geometry(style, size);
+        let (origin, side) = Self::marker_sprite_geometry(style, size, edge);
         let mut sprite_renderer = SkiaRenderer::new(side, side, self.theme.clone())?;
         sprite_renderer.set_render_scale(self.render_scale);
         sprite_renderer.set_text_engine_mode(self.text_engine_mode);
@@ -437,8 +478,9 @@ impl SkiaRenderer {
         let center_x = origin as f32 + phase_x as f32 * phase_step;
         let center_y = origin as f32 + phase_y as f32 * phase_step;
 
-        sprite_renderer
-            .draw_marker_with_mask_vector(center_x, center_y, size, style, color, None)?;
+        sprite_renderer.draw_marker_styled_with_mask_vector(
+            center_x, center_y, size, style, color, edge, None,
+        )?;
 
         Ok(MarkerSprite {
             width: side,
@@ -508,19 +550,47 @@ impl SkiaRenderer {
         Some(scanlines.into())
     }
 
+    /// Sub-pixel positions a cached marker sprite is rasterised at, per axis.
+    ///
+    /// The sprite compositor snaps every marker centre to the nearest phase, so
+    /// this is the only place the fast path disagrees with the vector painter:
+    /// a marker lands up to `1 / (2 * PHASES)` device pixels off its exact
+    /// position, and the anti-aliased boundary pixels shift with it.
+    ///
+    /// 64 (not 32) because a marker *rim* is a thin high-contrast feature and
+    /// therefore samples that error far more harshly than a bare fill does: at
+    /// 32 phases an edged batch showed ~10x the boundary noise of the same
+    /// batch drawn one marker at a time, with per-channel deltas past 32. At 64
+    /// the worst edged delta is the same as the worst edgeless one, i.e. the
+    /// rim no longer costs accuracy. Squaring this bounds the per-batch sprite
+    /// table and the cache limit below, so it cannot grow without thought.
     pub(crate) const fn marker_subpixel_phases() -> u8 {
-        32
+        64
     }
 
-    pub(crate) fn marker_sprite_geometry(style: MarkerStyle, size: f32) -> (i32, u32) {
+    /// Sprite origin and side length for one marker.
+    ///
+    /// `edge` is `(colour, width in device pixels)`; a rim straddles the shape's
+    /// boundary, so half of it lies outside the fill and the sprite has to be
+    /// padded for it or the rim would be clipped off at the sprite border.
+    pub(crate) fn marker_sprite_geometry(
+        style: MarkerStyle,
+        size: f32,
+        edge: Option<(Color, f32)>,
+    ) -> (i32, u32) {
         let radius = size * 0.5;
+        let edge_half = edge
+            .filter(|_| style.takes_edge())
+            .map(|(_, width_px)| width_px * 0.5)
+            .unwrap_or(0.0);
         let stroke_half = match style {
             MarkerStyle::SquareOpen => (size * 0.15).max(1.0) * 0.5,
             MarkerStyle::TriangleOpen | MarkerStyle::DiamondOpen => (size * 0.15).max(1.0) * 0.5,
             MarkerStyle::Plus | MarkerStyle::Cross => (size * 0.25).max(1.0) * 0.5,
             MarkerStyle::Star => (size * 0.22).max(1.0) * 0.5,
             _ => 0.5,
-        };
+        }
+        .max(edge_half);
         let padding = (radius + stroke_half + 3.0).ceil() as i32;
         let origin = padding + 1;
         let side = (origin * 2 + 2).max(4) as u32;
@@ -2235,14 +2305,18 @@ impl SkiaRenderer {
                     position: None,
                 },
             )?;
-            // Swatch: flat fill so it matches the series colour exactly.
-            self.draw_rectangle(
+            // Fill is exactly the series colour; the neutral edge is what keeps
+            // a white/near-white key visible on the near-white panel.
+            self.draw_rectangle_styled(
                 color_rect.left(),
                 color_rect.top(),
                 color_rect.width(),
                 color_rect.height(),
-                *color,
-                true,
+                Some(*color),
+                Some((
+                    legacy_legend_swatch_edge(*color),
+                    LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT,
+                )),
             )?;
 
             // Draw label text
@@ -2345,14 +2419,18 @@ impl SkiaRenderer {
                     position: None,
                 },
             )?;
-            // Swatch: flat fill so it matches the series colour exactly.
-            self.draw_rectangle(
+            // Fill is exactly the series colour; the neutral edge is what keeps
+            // a white/near-white key visible on the near-white panel.
+            self.draw_rectangle_styled(
                 color_rect.left(),
                 color_rect.top(),
                 color_rect.width(),
                 color_rect.height(),
-                *color,
-                true,
+                Some(*color),
+                Some((
+                    legacy_legend_swatch_edge(*color),
+                    LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT,
+                )),
             )?;
 
             // Draw label text
@@ -2393,6 +2471,11 @@ impl SkiaRenderer {
     /// Draw a scatter/marker handle in the legend
     ///
     /// Draws a single marker symbol centered in the handle area.
+    /// Draw a marker handle in the legend
+    ///
+    /// The fill is always exactly `color`. `edge` is the rim the plotted
+    /// markers carry, as `(colour, width_in_points)`; `draw_marker_styled`
+    /// scales the width, so the key matches the plot at any DPI.
     fn draw_legend_scatter_handle(
         &mut self,
         x: f32,
@@ -2401,19 +2484,21 @@ impl SkiaRenderer {
         color: Color,
         marker: &MarkerStyle,
         size: f32,
+        edge: Option<(Color, f32)>,
     ) -> Result<()> {
         // Draw marker at center of handle area
         let center_x = x + length / 2.0;
-        self.draw_marker(center_x, y, size, *marker, color)
+        self.draw_marker_styled(center_x, y, size, *marker, color, edge)
     }
 
     /// Draw a bar handle in the legend
     ///
     /// Draws a filled rectangle to represent bar/histogram series.
     ///
-    /// Flat fill on purpose: the handle must reproduce the series colour
-    /// exactly, and bars/histograms carry no edge unless one was requested
-    /// (see `LegendItemType::Area`, which strokes its own edge).
+    /// The fill is always exactly `color` — a legend key has to reproduce the
+    /// series colour. `edge` is the stroke the corresponding patch is drawn
+    /// with, as `(colour, width_in_points)`; the width goes through the render
+    /// scale so the key matches the plot at any DPI. `None` draws a flat patch.
     fn draw_legend_bar_handle(
         &mut self,
         x: f32,
@@ -2421,10 +2506,11 @@ impl SkiaRenderer {
         length: f32,
         height: f32,
         color: Color,
+        edge: Option<(Color, f32)>,
     ) -> Result<()> {
         // Draw filled rectangle centered vertically
         let rect_y = y - height / 2.0;
-        self.draw_rectangle(x, rect_y, length, height, color, true)
+        self.draw_rectangle_styled(x, rect_y, length, height, Some(color), edge)
     }
 
     /// Draw a line+marker handle in the legend
@@ -2440,11 +2526,12 @@ impl SkiaRenderer {
         line_width: f32,
         marker: &MarkerStyle,
         marker_size: f32,
+        marker_edge: Option<(Color, f32)>,
     ) -> Result<()> {
         // Draw line first
         self.draw_legend_line_handle(x, y, length, color, line_style, line_width)?;
         // Draw marker on top at center
-        self.draw_legend_scatter_handle(x, y, length, color, marker, marker_size)
+        self.draw_legend_scatter_handle(x, y, length, color, marker, marker_size, marker_edge)
     }
 
     /// Draw a legend handle based on the item type
@@ -2463,7 +2550,7 @@ impl SkiaRenderer {
                 let scaled_width = self.points_to_pixels(*width);
                 self.draw_legend_line_handle(x, y, handle_length, item.color, style, scaled_width)?;
             }
-            LegendItemType::Scatter { marker, size } => {
+            LegendItemType::Scatter { marker, size, edge } => {
                 let scaled_size = self.points_to_pixels(*size);
                 self.draw_legend_scatter_handle(
                     x,
@@ -2472,6 +2559,7 @@ impl SkiaRenderer {
                     item.color,
                     marker,
                     scaled_size,
+                    *edge,
                 )?;
             }
             LegendItemType::LineMarker {
@@ -2479,6 +2567,7 @@ impl SkiaRenderer {
                 line_width,
                 marker,
                 marker_size,
+                marker_edge,
             } => {
                 let scaled_line_width = self.points_to_pixels(*line_width);
                 let scaled_marker_size = self.points_to_pixels(*marker_size);
@@ -2491,14 +2580,16 @@ impl SkiaRenderer {
                     scaled_line_width,
                     marker,
                     scaled_marker_size,
+                    *marker_edge,
                 )?;
             }
-            LegendItemType::Bar | LegendItemType::Histogram => {
-                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)?;
+            LegendItemType::Bar { edge } | LegendItemType::Histogram { edge } => {
+                let edge = *edge;
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color, edge)?;
             }
             LegendItemType::Area { edge_color } => {
                 // Draw filled rectangle with optional edge
-                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color)?;
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color, None)?;
                 if let Some(edge) = edge_color {
                     // Draw edge around the rectangle
                     let rect_y = y - handle_height / 2.0;
@@ -3172,3 +3263,134 @@ impl SkiaRenderer {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod legend_patch_tests {
+    use super::*;
+
+    fn pixel_rgba(image: &Image, x: u32, y: u32) -> [u8; 4] {
+        let idx = ((y * image.width + x) * 4) as usize;
+        [
+            image.pixels[idx],
+            image.pixels[idx + 1],
+            image.pixels[idx + 2],
+            image.pixels[idx + 3],
+        ]
+    }
+
+    /// Any pixel in the box that is clearly darker than the white panel/fill.
+    fn has_dark_pixel(image: &Image, x0: u32, y0: u32, x1: u32, y1: u32) -> bool {
+        (y0..y1).any(|y| {
+            (x0..x1).any(|x| {
+                let pixel = pixel_rgba(image, x, y);
+                pixel[3] > 0 && pixel[0] < 200 && pixel[1] < 200 && pixel[2] < 200
+            })
+        })
+    }
+
+    fn handle_spacing(length: f32, height: f32) -> LegendSpacingPixels {
+        LegendSpacingPixels {
+            handle_length: length,
+            handle_height: height,
+            handle_text_pad: 10.0,
+            label_spacing: 7.0,
+            border_pad: 6.0,
+            border_axes_pad: 10.0,
+            column_spacing: 20.0,
+        }
+    }
+
+    #[test]
+    fn legacy_swatch_edge_contrasts_with_the_fill() {
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::WHITE),
+            LEGACY_LEGEND_SWATCH_EDGE_DARK
+        );
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::from_gray(250)),
+            LEGACY_LEGEND_SWATCH_EDGE_DARK
+        );
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::BLACK),
+            LEGACY_LEGEND_SWATCH_EDGE_LIGHT
+        );
+        // A transparent fill renders as the near-white panel, so it needs the
+        // dark neutral even though its own channels are dark.
+        assert_eq!(
+            legacy_legend_swatch_edge(Color::new_rgba(0, 0, 0, 0)),
+            LEGACY_LEGEND_SWATCH_EDGE_DARK
+        );
+    }
+
+    #[test]
+    fn legacy_legend_white_swatch_keeps_a_visible_contour() {
+        let mut renderer = SkiaRenderer::new(400, 200, Theme::default()).unwrap();
+        let plot_area = Rect::from_xywh(0.0, 0.0, 400.0, 200.0).unwrap();
+
+        renderer
+            .draw_legend(&[("white series".to_string(), Color::WHITE)], plot_area)
+            .expect("legacy legend should render");
+
+        let image = renderer.into_image();
+        // Swatch occupies (250, 22) .. (262, 34); the stroke straddles the edge.
+        // The panel frame (240/380, 15/45) and the label (x >= 270) stay outside.
+        assert!(
+            has_dark_pixel(&image, 246, 18, 267, 38),
+            "a white swatch on the near-white panel must still have a contour"
+        );
+        // ... while the fill stays exactly the series colour.
+        let interior = pixel_rgba(&image, 256, 28);
+        assert_eq!(
+            [interior[0], interior[1], interior[2]],
+            [255, 255, 255],
+            "the swatch fill must not be tinted"
+        );
+    }
+
+    #[test]
+    fn bar_and_histogram_handles_stroke_their_edge() {
+        for item in [
+            LegendItem::bar_with_edge("bars", Color::WHITE, Some((Color::BLACK, 1.5))),
+            LegendItem::histogram_with_edge("hist", Color::WHITE, Some((Color::BLACK, 1.5))),
+        ] {
+            let mut renderer = SkiaRenderer::new(60, 40, Theme::default()).unwrap();
+            renderer.pixmap.fill(Color::WHITE.to_tiny_skia_color());
+            renderer
+                .draw_legend_handle(&item, 10.0, 20.0, &handle_spacing(30.0, 14.0))
+                .expect("patch handle should render");
+
+            let image = renderer.into_image();
+            assert!(
+                has_dark_pixel(&image, 0, 0, 60, 40),
+                "{:?} handle must stroke its edge so the key matches the plot",
+                item.item_type
+            );
+            let interior = pixel_rgba(&image, 25, 20);
+            assert_eq!(
+                [interior[0], interior[1], interior[2]],
+                [255, 255, 255],
+                "the handle fill must stay exactly the series colour"
+            );
+        }
+    }
+
+    #[test]
+    fn bar_handle_without_edge_stays_flat() {
+        let mut renderer = SkiaRenderer::new(60, 40, Theme::default()).unwrap();
+        renderer.pixmap.fill(Color::WHITE.to_tiny_skia_color());
+        renderer
+            .draw_legend_handle(
+                &LegendItem::bar("bars", Color::WHITE),
+                10.0,
+                20.0,
+                &handle_spacing(30.0, 14.0),
+            )
+            .expect("patch handle should render");
+
+        let image = renderer.into_image();
+        assert!(
+            !has_dark_pixel(&image, 0, 0, 60, 40),
+            "a patch with no configured edge must not grow an implicit one"
+        );
+    }
+}

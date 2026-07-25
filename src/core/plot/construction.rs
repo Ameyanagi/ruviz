@@ -90,7 +90,9 @@ fn resolve_series_for_frame<'a>(
             x: resolve_plot_data(x_data, time, cache, acknowledgements),
             y: resolve_plot_data(y_data, time, cache, acknowledgements),
         },
-        SeriesType::Bar { categories, values } => ResolvedSeries::Bar {
+        SeriesType::Bar {
+            categories, values, ..
+        } => ResolvedSeries::Bar {
             categories,
             values: resolve_plot_data(values, time, cache, acknowledgements),
         },

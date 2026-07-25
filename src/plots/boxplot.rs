@@ -490,6 +490,18 @@ impl BoxPlotConfig {
         Self::default()
     }
 
+    /// Resolve the box edge against `theme` and the resolved fill colour.
+    ///
+    /// Returns `(colour, width_in_points)` — the same pair
+    /// [`BoxPlotData::render`] strokes the box with, so a legend key cannot
+    /// drift from the patch it stands for. `edge_color: None` derives the
+    /// colour by darkening the fill; see [`StyleResolver::patch_edge`].
+    pub fn resolved_edge(&self, theme: &Theme, fill: Color) -> Option<(Color, f32)> {
+        let resolver = StyleResolver::new(theme);
+        let width = resolver.patch_line_width(self.edge_width);
+        resolver.patch_edge(fill, self.edge_color, width)
+    }
+
     pub fn outlier_method(mut self, method: OutlierMethod) -> Self {
         self.outlier_method = method;
         self

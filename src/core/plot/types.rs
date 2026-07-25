@@ -271,6 +271,31 @@ impl Default for InsetLayout {
     }
 }
 
+/// Marker edge styling carried from a plot config to the renderer.
+///
+/// The fill colour is not known when a series is added (auto-palette series
+/// resolve their colour at render time), so a `None` colour is stored as-is and
+/// derived from the fill by [`MarkerEdge::resolve`] — the same
+/// "`edge_color: None` means darken the fill" convention histogram and bar edges
+/// use. The width is in **points**; the renderer converts it to device pixels,
+/// so the rim is DPI-invariant.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MarkerEdge {
+    /// Explicit edge colour, or `None` to derive it from the fill.
+    pub(super) color: Option<Color>,
+    /// Edge width in points.
+    pub(super) width: f32,
+}
+
+impl MarkerEdge {
+    /// Resolve to the `(colour, width_in_points)` pair the renderer takes.
+    ///
+    /// Returns `None` for a non-positive width: an invisible edge is no edge.
+    pub(super) fn resolve(self, theme: &Theme, fill: Color) -> Option<(Color, f32)> {
+        crate::core::style_utils::StyleResolver::new(theme).patch_edge(fill, self.color, self.width)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PlotSeries {
     /// Series type
@@ -299,6 +324,8 @@ pub(crate) struct PlotSeries {
     pub(super) marker_size: Option<f32>,
     /// Reactive marker size sampled at render time.
     pub(super) marker_size_source: Option<ReactiveValue<f32>>,
+    /// Marker edge styling, or `None` for bare markers.
+    pub(super) marker_edge: Option<MarkerEdge>,
     /// Alpha/transparency override
     pub(super) alpha: Option<f32>,
     /// Reactive alpha sampled at render time.
@@ -429,6 +456,10 @@ impl PlotSeries {
         let marker_style = self.marker_style.unwrap_or(MarkerStyle::Circle);
         let marker_size = self.marker_size.unwrap_or(6.0);
 
+        // The key carries the *same* resolved rim the renderer strokes the
+        // markers with, so a legend swatch cannot disagree with its series.
+        let marker_edge = self.marker_edge.and_then(|edge| edge.resolve(theme, color));
+
         let item_type = match &self.series_type {
             SeriesType::Line { .. } => {
                 if self.marker_style.is_some() || self.marker_style_source.is_some() {
@@ -437,6 +468,7 @@ impl PlotSeries {
                         line_width,
                         marker: marker_style,
                         marker_size,
+                        marker_edge,
                     }
                 } else {
                     LegendItemType::Line {
@@ -448,13 +480,30 @@ impl PlotSeries {
             SeriesType::Scatter { .. } => LegendItemType::Scatter {
                 marker: marker_style,
                 size: marker_size,
+                edge: marker_edge,
             },
-            SeriesType::Bar { .. } => LegendItemType::Bar,
+            // Patch keys carry the *same* resolved edge the renderer strokes the
+            // patch with, so the key and the plot cannot disagree. Each config
+            // owns that resolution (all of them funnel through
+            // `StyleResolver::patch_edge`) - never re-derive it here.
+            SeriesType::Bar { config, .. } => LegendItemType::Bar {
+                edge: config.resolved_edge(theme, color),
+            },
             SeriesType::ErrorBars { .. } | SeriesType::ErrorBarsXY { .. } => {
                 LegendItemType::ErrorBar
             }
-            SeriesType::Histogram { .. } => LegendItemType::Histogram,
-            SeriesType::BoxPlot { .. } => LegendItemType::Bar,
+            SeriesType::Histogram {
+                config, prepared, ..
+            } => LegendItemType::Histogram {
+                edge: match prepared {
+                    // Binned data is the exact thing that gets drawn; prefer it.
+                    Some(data) => data.resolved_edge(theme, color),
+                    None => config.resolved_edge(theme, color),
+                },
+            },
+            SeriesType::BoxPlot { config, .. } => LegendItemType::Bar {
+                edge: config.resolved_edge(theme, color),
+            },
             SeriesType::Heatmap { .. } => return None,
             SeriesType::Kde { .. }
             | SeriesType::Ecdf { .. }
@@ -463,8 +512,9 @@ impl PlotSeries {
                 style: line_style,
                 width: line_width,
             },
+            // These patches are drawn flat today, so their keys are flat too.
             SeriesType::Violin { .. } | SeriesType::Boxen { .. } | SeriesType::Pie { .. } => {
-                LegendItemType::Bar
+                LegendItemType::Bar { edge: None }
             }
             SeriesType::Contour { .. } => return None,
             SeriesType::Radar { .. } => LegendItemType::Area {
@@ -683,6 +733,7 @@ impl PlotSeries {
             marker_style_source: self.marker_style_source.clone(),
             marker_size: self.marker_size,
             marker_size_source: self.marker_size_source.clone(),
+            marker_edge: self.marker_edge,
             alpha: self.alpha,
             alpha_source: self.alpha_source.clone(),
             y_errors: self.y_errors.clone(),
@@ -823,6 +874,12 @@ pub(crate) enum SeriesType {
     Bar {
         categories: Vec<String>,
         values: PlotData,
+        /// Geometry and edge styling for the bars.
+        ///
+        /// Carried on the variant (like `Histogram`) because the renderer needs
+        /// the edge colour and width, which no other field on `PlotSeries`
+        /// records.
+        config: crate::plots::basic::BarConfig,
     },
     ErrorBars {
         x_data: PlotData,
@@ -1079,9 +1136,14 @@ impl SeriesType {
                 x_data: x_data.clone_without_static_values(),
                 y_data: y_data.clone_without_static_values(),
             },
-            SeriesType::Bar { categories, values } => SeriesType::Bar {
+            SeriesType::Bar {
+                categories,
+                values,
+                config,
+            } => SeriesType::Bar {
                 categories: categories.clone(),
                 values: values.clone_without_static_values(),
+                config: config.clone(),
             },
             SeriesType::ErrorBars {
                 x_data,
@@ -1133,9 +1195,14 @@ impl SeriesType {
                 x_data: PlotData::Static(x_data.resolve(time)),
                 y_data: PlotData::Static(y_data.resolve(time)),
             },
-            SeriesType::Bar { categories, values } => SeriesType::Bar {
+            SeriesType::Bar {
+                categories,
+                values,
+                config,
+            } => SeriesType::Bar {
                 categories: categories.clone(),
                 values: PlotData::Static(values.resolve(time)),
+                config: config.clone(),
             },
             SeriesType::ErrorBars {
                 x_data,
@@ -1394,7 +1461,9 @@ impl SeriesType {
                 x: ResolvedData::from_cow(x_data.resolve_cow(time)),
                 y: ResolvedData::from_cow(y_data.resolve_cow(time)),
             },
-            SeriesType::Bar { categories, values } => ResolvedSeries::Bar {
+            SeriesType::Bar {
+                categories, values, ..
+            } => ResolvedSeries::Bar {
                 categories,
                 values: ResolvedData::from_cow(values.resolve_cow(time)),
             },
@@ -1512,5 +1581,56 @@ impl Default for TickConfig {
             minor_ticks_y: 0,
             grid_mode: GridMode::MajorOnly,
         }
+    }
+}
+
+#[cfg(test)]
+mod marker_edge_tests {
+    use super::*;
+
+    #[test]
+    fn test_marker_edge_derives_its_colour_from_the_fill() {
+        let theme = Theme::default();
+        let fill = Color::new(31, 119, 180);
+        let edge = MarkerEdge {
+            color: None,
+            width: 0.5,
+        };
+
+        assert_eq!(
+            edge.resolve(&theme, fill),
+            Some((fill.darken(0.3), 0.5)),
+            "a marker edge with no explicit colour must darken the fill it bounds"
+        );
+    }
+
+    #[test]
+    fn test_marker_edge_keeps_an_explicit_colour() {
+        let theme = Theme::default();
+        let edge = MarkerEdge {
+            color: Some(Color::BLACK),
+            width: 1.5,
+        };
+
+        assert_eq!(
+            edge.resolve(&theme, Color::new(31, 119, 180)),
+            Some((Color::BLACK, 1.5)),
+            "an explicit marker edge colour must not be recoloured"
+        );
+    }
+
+    #[test]
+    fn test_marker_edge_of_zero_width_resolves_to_nothing() {
+        let theme = Theme::default();
+        let edge = MarkerEdge {
+            color: Some(Color::BLACK),
+            width: 0.0,
+        };
+
+        assert_eq!(
+            edge.resolve(&theme, Color::new(31, 119, 180)),
+            None,
+            "a zero-width edge is no edge, not a hairline"
+        );
     }
 }

@@ -52,13 +52,12 @@ impl Plot {
             | Annotation::HSpan { .. }
             | Annotation::VSpan { .. }
             | Annotation::Rectangle { .. } => AnnotationRenderLayer::Underlay,
-            // Headless arrows are structural, not annotations pointing at something:
-            // `stem()` emits them as the stems under its own markers, so they must
-            // paint below the series rather than over it.
-            Annotation::Arrow { style, .. }
-                if style.head_style == crate::core::ArrowHead::None
-                    && style.tail_style == crate::core::ArrowHead::None =>
-            {
+            // Arrows the library emits as series structure — `stem()` pushes its
+            // stems this way — paint below the series so they do not cover their
+            // own markers. Provenance is carried on the style, never inferred
+            // from the head style: a caller-built headless arrow is a normal
+            // pointer annotation and belongs in the overlay.
+            Annotation::Arrow { style, .. } if style.is_series_structure() => {
                 AnnotationRenderLayer::Underlay
             }
             Annotation::Text { .. }

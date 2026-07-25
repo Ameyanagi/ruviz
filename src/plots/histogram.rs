@@ -87,7 +87,7 @@ impl HistogramData {
     ) -> Option<(Color, f32)> {
         let resolver = StyleResolver::new(theme);
         let width = resolver.patch_line_width(width);
-        (width > 0.0).then(|| (resolver.edge_color(fill, self.edge_color), width))
+        resolver.patch_edge(fill, self.edge_color, width)
     }
 }
 
@@ -212,6 +212,18 @@ impl PlotConfig for HistogramConfig {}
 impl HistogramConfig {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Resolve the bar edge straight from the configuration, before binning.
+    ///
+    /// [`HistogramData::resolved_edge`] is the render-time twin. Both go
+    /// through [`StyleResolver::patch_edge`], and `compute_histogram` copies
+    /// `edge_color`/`edge_width` verbatim into the data, so a legend key built
+    /// from the config always matches the bars built from the data.
+    pub fn resolved_edge(&self, theme: &Theme, fill: Color) -> Option<(Color, f32)> {
+        let resolver = StyleResolver::new(theme);
+        let width = resolver.patch_line_width(self.edge_width);
+        resolver.patch_edge(fill, self.edge_color, width)
     }
 
     pub fn bins(mut self, bins: usize) -> Self {

@@ -2412,6 +2412,32 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
         self
     }
 
+    /// Set the marker edge colour
+    ///
+    /// Turns the edge on; see [`LineConfig::marker_edge_color`].
+    pub fn marker_edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).marker_edge_color(color);
+        self
+    }
+
+    /// Set the marker edge width in points
+    ///
+    /// A positive width turns the edge on and `0.0` turns it off; see
+    /// [`LineConfig::marker_edge_width`].
+    pub fn marker_edge_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).marker_edge_width(width);
+        self
+    }
+
+    /// Show or hide the marker edge
+    ///
+    /// Line markers follow the same default scatter markers do — bare unless
+    /// asked otherwise; see [`LineConfig::show_marker_edge`].
+    pub fn show_marker_edge(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_marker_edge(show);
+        self
+    }
+
     /// Finalize the line series and add it to the plot
     fn finalize(self) -> super::Plot {
         let (x_data, y_data) = match &self.input {
@@ -2486,16 +2512,32 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
 
     /// Set marker edge width
     ///
+    /// A positive width turns the edge on and `0.0` turns it off. Delegates to
+    /// [`ScatterConfig::edge_width`] so that rule lives in exactly one place.
+    ///
     /// # Arguments
-    /// * `width` - Edge width in points (default: 0.5)
+    /// * `width` - Edge width in points (default: 0.8)
     pub fn edge_width(mut self, width: f32) -> Self {
-        self.config.edge_width = width.max(0.0);
+        self.config = std::mem::take(&mut self.config).edge_width(width);
         self
     }
 
     /// Set marker edge color
+    ///
+    /// Turns the edge on; see [`ScatterConfig::edge_color`].
     pub fn edge_color(mut self, color: Color) -> Self {
-        self.config.edge_color = Some(color);
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Show or hide the marker edge
+    ///
+    /// Markers are bare by default; `.show_edge(true)` rims a filled marker
+    /// with its own fill darkened by 30%. A rim is drawn over the marker's
+    /// boundary, so it darkens overlapping neighbours and dominates markers of
+    /// a few points — see [`ScatterConfig::show_edge`].
+    pub fn show_edge(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_edge(show);
         self
     }
 

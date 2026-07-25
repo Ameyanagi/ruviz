@@ -6,6 +6,7 @@ use crate::core::plot::raster_batches::{
 use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
+use crate::core::plot::types::MarkerEdge;
 
 impl Plot {
     /// Add a new line to existing plot (for incremental updates)
@@ -46,6 +47,7 @@ impl Plot {
             marker_style_source: None,
             marker_size: None,
             marker_size_source: None,
+            marker_edge: None,
             alpha: None,
             alpha_source: None,
             y_errors: None,
@@ -89,6 +91,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -129,6 +132,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -169,6 +173,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -209,6 +214,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -249,6 +255,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -289,6 +296,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -336,6 +344,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -376,6 +385,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -423,6 +433,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha,
             alpha_source: style.alpha_source,
             y_errors: None,
@@ -478,6 +489,9 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: config
+                .resolved_marker_edge_spec()
+                .map(|(color, width)| MarkerEdge { color, width }),
             alpha: style.alpha.or(Some(config.alpha)),
             alpha_source: style.alpha_source,
             y_errors: style.y_errors,
@@ -542,6 +556,9 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: config
+                .resolved_edge_spec()
+                .map(|(color, width)| MarkerEdge { color, width }),
             alpha: style.alpha.or(Some(config.alpha)),
             alpha_source: style.alpha_source,
             y_errors: style.y_errors,
@@ -593,7 +610,11 @@ impl Plot {
         consume_palette_index: bool,
     ) -> Self {
         let series = PlotSeries {
-            series_type: SeriesType::Bar { categories, values },
+            series_type: SeriesType::Bar {
+                categories,
+                values,
+                config: config.clone(),
+            },
             streaming_source: None,
             label: style.label,
             color: style.color.or(config.color),
@@ -606,6 +627,7 @@ impl Plot {
             marker_style_source: style.marker_style_source,
             marker_size: style.marker_size,
             marker_size_source: style.marker_size_source,
+            marker_edge: None,
             alpha: style.alpha.or(Some(config.alpha)),
             alpha_source: style.alpha_source,
             y_errors: style.y_errors,
@@ -631,6 +653,22 @@ impl Plot {
             self.series_mgr.auto_color_index += 1;
         }
         self
+    }
+
+    /// Resolve a series' marker edge against the theme and its resolved fill.
+    ///
+    /// Returns `(colour, width_in_points)`; the renderer scales the width to
+    /// device pixels, so a marker rim is DPI-invariant. `None` means the series
+    /// asked for bare markers (`ScatterConfig::show_edge(false)` or a zero edge
+    /// width), or carries no marker edge configuration at all.
+    pub(super) fn resolved_marker_edge(
+        &self,
+        series: &PlotSeries,
+        fill: Color,
+    ) -> Option<(Color, f32)> {
+        series
+            .marker_edge
+            .and_then(|edge| edge.resolve(&self.display.theme, fill))
     }
 
     pub(super) fn build_prepared_series_raster_plan(
@@ -694,7 +732,15 @@ impl Plot {
                 );
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                    raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
+                    let marker_edge = self.resolved_marker_edge(series, color);
+                    raster_plan.push_markers(
+                        points,
+                        marker_size,
+                        marker_style,
+                        color,
+                        marker_edge,
+                        clip_rect,
+                    );
                 }
                 Some(raster_plan)
             }
@@ -712,8 +758,16 @@ impl Plot {
                     &self.layout.x_scale,
                     &self.layout.y_scale,
                 );
+                let marker_edge = self.resolved_marker_edge(series, color);
                 let mut raster_plan = SeriesRasterPlan::default();
-                raster_plan.push_markers(points, marker_size, marker_style, color, clip_rect);
+                raster_plan.push_markers(
+                    points,
+                    marker_size,
+                    marker_style,
+                    color,
+                    marker_edge,
+                    clip_rect,
+                );
                 Some(raster_plan)
             }
             (SeriesType::Heatmap { data }, ResolvedSeries::Other(_)) => {
@@ -977,28 +1031,29 @@ impl Plot {
             | (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { .. }) => unreachable!(
                 "cacheable line/scatter series should return before fallback rendering"
             ),
-            (SeriesType::Bar { .. }, ResolvedSeries::Bar { values, .. }) => {
-                // Bar width as fraction of category spacing (0.8 = 80%, matching matplotlib)
-                let bar_width_fraction = 0.8;
-                let data_range = (x_max - x_min) as f32;
-                let pixels_per_unit = plot_area.width() / data_range;
-                let bar_width = bar_width_fraction * pixels_per_unit;
+            (SeriesType::Bar { config, .. }, ResolvedSeries::Bar { values, .. }) => {
+                // The edge is configured in points, so it survives a DPI change.
+                // `edge_color: None` derives it by darkening the fill.
+                let edge = config.resolved_edge(&self.display.theme, color);
 
                 for (i, &value) in values.iter().enumerate() {
-                    let x = i as f64;
-                    let (px, py) = crate::render::skia::map_data_to_pixels(
-                        x, value, x_min, x_max, y_min, y_max, plot_area,
+                    let (bx, by, bw, bh) = bar_pixel_rect(
+                        i,
+                        value,
+                        config.width,
+                        plot_area,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
                     );
-                    let (_, py_zero) = crate::render::skia::map_data_to_pixels(
-                        x, 0.0, x_min, x_max, y_min, y_max, plot_area,
-                    );
-                    renderer.draw_rectangle_clipped(
-                        px - bar_width / 2.0,
-                        py.min(py_zero),
-                        bar_width,
-                        (py - py_zero).abs(),
-                        color,
-                        true,
+                    renderer.draw_rectangle_styled_clipped(
+                        bx,
+                        by,
+                        bw,
+                        bh,
+                        Some(color),
+                        edge,
                         clip_rect,
                     )?;
                 }
@@ -1237,18 +1292,20 @@ impl Plot {
                 // Draw markers at data points
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_edge = self.resolved_marker_edge(series, color);
 
                 for (&x_value, &y_value) in x.iter().zip(y.iter()) {
                     if x_value.is_finite() && y_value.is_finite() {
                         let (px, py) = crate::render::skia::map_data_to_pixels(
                             x_value, y_value, x_min, x_max, y_min, y_max, plot_area,
                         );
-                        renderer.draw_marker_clipped(
+                        renderer.draw_marker_styled_clipped(
                             px,
                             py,
                             marker_size,
                             marker_style,
                             color,
+                            marker_edge,
                             clip_rect,
                         )?;
                     }
@@ -1284,18 +1341,20 @@ impl Plot {
                 // Draw markers at data points
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_edge = self.resolved_marker_edge(series, color);
 
                 for (&x_value, &y_value) in x.iter().zip(y.iter()) {
                     if x_value.is_finite() && y_value.is_finite() {
                         let (px, py) = crate::render::skia::map_data_to_pixels(
                             x_value, y_value, x_min, x_max, y_min, y_max, plot_area,
                         );
-                        renderer.draw_marker_clipped(
+                        renderer.draw_marker_styled_clipped(
                             px,
                             py,
                             marker_size,
                             marker_style,
                             color,
+                            marker_edge,
                             clip_rect,
                         )?;
                     }
@@ -1605,13 +1664,15 @@ impl Plot {
                     .draw_polyline_clipped(&points, color, line_width, line_style, clip_rect)?;
                 if let Some(marker_style) = series.marker_style {
                     let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                    let marker_edge = self.resolved_marker_edge(series, color);
                     for &(px, py) in &points {
-                        renderer.draw_marker_clipped(
+                        renderer.draw_marker_styled_clipped(
                             px,
                             py,
                             marker_size,
                             marker_style,
                             color,
+                            marker_edge,
                             clip_rect,
                         )?;
                     }
@@ -1640,15 +1701,17 @@ impl Plot {
 
                 let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0));
                 let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_edge = self.resolved_marker_edge(series, color);
 
                 // Draw markers at transformed coordinates
                 for (&px, &py) in x_transformed.iter().zip(y_transformed.iter()) {
-                    renderer.draw_marker_clipped(
+                    renderer.draw_marker_styled_clipped(
                         px,
                         py,
                         marker_size,
                         marker_style,
                         color,
+                        marker_edge,
                         clip_rect,
                     )?;
                 }
@@ -1687,7 +1750,9 @@ impl Plot {
                     PlottingError::validate_data(&x_data)?;
                     PlottingError::validate_data(&y_data)?;
                 }
-                SeriesType::Bar { categories, values } => {
+                SeriesType::Bar {
+                    categories, values, ..
+                } => {
                     let values = values.resolve_cow(0.0);
                     if categories.len() != values.len() {
                         return Err(PlottingError::DataLengthMismatch {
@@ -2084,5 +2149,431 @@ impl Plot {
 
     pub(super) fn validate_runtime_inputs(&self) -> Result<()> {
         self.validate_runtime_inputs_for_series(&self.series_mgr.series)
+    }
+}
+
+/// Pixel rectangle `(x, y, width, height)` for one bar of a categorical series.
+///
+/// Categories sit one data unit apart, so a bar's width is `width_fraction` of a
+/// unit measured through the same x mapping that places the bar centres, and its
+/// body spans from the value to the zero baseline.
+///
+/// Both the raster backend and the SVG backend call this, so the same bar chart
+/// cannot land in a different place depending on the output format.
+pub(super) fn bar_pixel_rect(
+    index: usize,
+    value: f64,
+    width_fraction: f32,
+    plot_area: tiny_skia::Rect,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> (f32, f32, f32, f32) {
+    let data_range = (x_max - x_min) as f32;
+    let bar_width = width_fraction * (plot_area.width() / data_range);
+    let x = index as f64;
+    let (px, py) =
+        crate::render::skia::map_data_to_pixels(x, value, x_min, x_max, y_min, y_max, plot_area);
+    let (_, py_zero) =
+        crate::render::skia::map_data_to_pixels(x, 0.0, x_min, x_max, y_min, y_max, plot_area);
+    (
+        px - bar_width / 2.0,
+        py.min(py_zero),
+        bar_width,
+        (py - py_zero).abs(),
+    )
+}
+
+#[cfg(test)]
+mod marker_edge_series_tests {
+    use super::*;
+    use crate::render::MarkerStyle;
+
+    const FILL: Color = Color {
+        r: 31,
+        g: 119,
+        b: 180,
+        a: 255,
+    };
+    const RIM: Color = Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+
+    fn rim_pixels(image: &Image) -> usize {
+        image
+            .pixels
+            .chunks_exact(4)
+            .filter(|px| px[0] > 200 && px[1] < 120 && px[2] < 120)
+            .count()
+    }
+
+    fn xy() -> (Vec<f64>, Vec<f64>) {
+        let x: Vec<f64> = (0..8).map(|i| i as f64).collect();
+        let y: Vec<f64> = (0..8).map(|i| (i % 3) as f64).collect();
+        (x, y)
+    }
+
+    fn exact_fill_pixels(image: &Image) -> usize {
+        image
+            .pixels
+            .chunks_exact(4)
+            .filter(|px| px[0] == FILL.r && px[1] == FILL.g && px[2] == FILL.b)
+            .count()
+    }
+
+    fn square_scatter_plot(
+        size: f32,
+    ) -> impl Fn() -> crate::core::plot::PlotBuilder<crate::plots::basic::ScatterConfig> {
+        let x: Vec<f64> = (0..8).map(|i| i as f64).collect();
+        let y: Vec<f64> = (0..8).map(|i| (i % 3) as f64).collect();
+        move || {
+            Plot::new()
+                .size_px(240, 180)
+                .ticks(false)
+                .grid(false)
+                .scatter(&x, &y)
+                .marker(MarkerStyle::Square)
+                .marker_size(size)
+                .color(FILL)
+        }
+    }
+
+    #[test]
+    fn test_default_scatter_marker_is_exactly_its_series_colour() {
+        // A contrasting rim cannot be the default: it is stroked over the
+        // marker's own boundary, so it darkens every neighbour it overlaps and
+        // swallows markers of a few points whole. Default = fill and nothing
+        // else, matching matplotlib's `edgecolors='face'`.
+        let plot = square_scatter_plot(12.0);
+
+        let default = plot().render().expect("default scatter should render");
+        let bare = plot()
+            .show_edge(false)
+            .render()
+            .expect("bare scatter should render");
+
+        assert_eq!(
+            default.pixels, bare.pixels,
+            "a default scatter marker must render exactly as an edgeless one"
+        );
+        assert!(
+            exact_fill_pixels(&default) > 0,
+            "the marker must stay the exact requested colour, not a tint"
+        );
+    }
+
+    #[test]
+    fn test_opt_in_scatter_rim_replaces_boundary_fill_without_tinting_the_interior() {
+        // Asking for a rim must stroke a real boundary and leave the interior
+        // at the exact requested colour — never tint the whole marker.
+        let plot = square_scatter_plot(12.0);
+
+        let edged = plot()
+            .show_edge(true)
+            .render()
+            .expect("edged scatter should render");
+        let bare = plot().render().expect("default scatter should render");
+
+        assert_ne!(
+            edged.pixels, bare.pixels,
+            "show_edge(true) must reach the canvas"
+        );
+        assert!(
+            exact_fill_pixels(&edged) > 0,
+            "the marker interior must stay the exact requested colour, not a tint"
+        );
+        assert!(
+            exact_fill_pixels(&edged) < exact_fill_pixels(&bare),
+            "the rim must replace fill pixels at the marker boundary"
+        );
+    }
+
+    #[test]
+    fn test_small_default_markers_read_as_their_series_colour() {
+        // A 0.8pt rim on a 2pt marker is most of the marker, so a defaulted-on
+        // rim made small scatter render visibly darker than its own palette
+        // colour and than its own legend key.
+        for size in [2.0_f32, 3.0, 4.0] {
+            let image = square_scatter_plot(size)()
+                .render()
+                .unwrap_or_else(|_| panic!("scatter at marker_size {size} should render"));
+
+            let darker_than_fill = image
+                .pixels
+                .chunks_exact(4)
+                .filter(|px| px[2] < FILL.b && px[2] > 0 && px[1] < FILL.g)
+                .count();
+
+            assert!(
+                exact_fill_pixels(&image) > darker_than_fill,
+                "a {size}pt marker must read as its series colour, \
+                 got {} exact-fill vs {darker_than_fill} darker pixels",
+                exact_fill_pixels(&image)
+            );
+        }
+    }
+
+    #[test]
+    fn test_line_markers_carry_the_requested_rim() {
+        // `.line().marker(..)` had no way to ask for a marker edge at all, so
+        // the renderer's marker-edge hop was unreachable from the public API.
+        let (x, y) = xy();
+        let plot = || {
+            Plot::new()
+                .size_px(240, 180)
+                .ticks(false)
+                .grid(false)
+                .line(&x, &y)
+                .marker(MarkerStyle::Circle)
+                .marker_size(12.0)
+                .color(FILL)
+        };
+
+        let rimmed = plot()
+            .marker_edge_color(RIM)
+            .marker_edge_width(2.0)
+            .render()
+            .expect("rimmed line markers should render");
+        let bare = plot()
+            .show_marker_edge(false)
+            .render()
+            .expect("bare line markers should render");
+
+        assert!(
+            rim_pixels(&rimmed) > 0,
+            "an explicit line-marker edge colour must reach the canvas"
+        );
+        assert_eq!(
+            rim_pixels(&bare),
+            0,
+            "show_marker_edge(false) must reach the renderer as 'no edge'"
+        );
+    }
+
+    #[test]
+    fn test_scatter_legend_key_carries_the_same_rim_as_its_markers() {
+        // A legend key that does not carry the rim its markers carry is a key
+        // for a different series.
+        use crate::core::legend::LegendItemType;
+
+        let (x, y) = xy();
+        let plot = Plot::new()
+            .scatter(&x, &y)
+            .label("points")
+            .marker(MarkerStyle::Square)
+            .color(FILL)
+            .edge_color(RIM)
+            .edge_width(2.0)
+            .into_plot();
+
+        let series = plot.series_mgr.series().first().expect("one series");
+        let item = series
+            .to_legend_item(FILL, &Theme::default())
+            .expect("a labelled series produces a legend item");
+
+        match item.item_type {
+            LegendItemType::Scatter { edge, .. } => assert_eq!(
+                edge,
+                Some((RIM, 2.0)),
+                "the key must carry the rim the markers are stroked with"
+            ),
+            other => panic!("expected a scatter key, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_line_and_scatter_markers_resolve_the_same_default_edge() {
+        assert_eq!(
+            crate::plots::basic::LineConfig::default().resolved_marker_edge_spec(),
+            crate::plots::basic::ScatterConfig::default().resolved_edge_spec(),
+            "the same marker must not look different for coming from .line() vs .scatter()"
+        );
+    }
+}
+
+#[cfg(test)]
+mod bar_edge_tests {
+    use super::*;
+
+    const FILL: Color = Color {
+        r: 31,
+        g: 119,
+        b: 180,
+        a: 255,
+    };
+    const EDGE: Color = Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+
+    /// Pixels that are more red than blue: the fill, the background and the
+    /// spines all fail this, so it counts only the explicit red bar edge.
+    fn edge_pixels(image: &Image) -> usize {
+        image
+            .pixels
+            .chunks_exact(4)
+            .filter(|px| px[0] > 200 && px[1] < 120 && px[2] < 120)
+            .count()
+    }
+
+    fn bar_plot(dpi: u32) -> PlotBuilder<crate::plots::basic::BarConfig> {
+        let values = vec![1.0, 2.0];
+        Plot::new()
+            .size_px(240, 180)
+            .dpi(dpi)
+            .ticks(false)
+            .grid(false)
+            .bar(&["a", "b"], &values)
+            .color(FILL)
+    }
+
+    #[test]
+    fn test_bar_renders_an_explicit_edge_colour() {
+        let image = bar_plot(100)
+            .edge_color(EDGE)
+            .edge_width(3.0)
+            .render()
+            .expect("bar render should succeed");
+
+        assert!(
+            edge_pixels(&image) > 0,
+            "an explicitly configured bar edge colour must reach the canvas"
+        );
+    }
+
+    #[test]
+    fn test_bar_edge_width_zero_draws_no_edge() {
+        let image = bar_plot(100)
+            .edge_color(EDGE)
+            .edge_width(0.0)
+            .render()
+            .expect("bar render should succeed");
+
+        assert_eq!(
+            edge_pixels(&image),
+            0,
+            "edge_width(0.0) must suppress the edge even when a colour is set"
+        );
+    }
+
+    #[test]
+    fn test_default_bar_renders_a_derived_edge() {
+        let with_edge = bar_plot(100)
+            .render()
+            .expect("default bar render should succeed");
+        let without_edge = bar_plot(100)
+            .edge_width(0.0)
+            .render()
+            .expect("edgeless bar render should succeed");
+
+        assert_ne!(
+            with_edge.pixels, without_edge.pixels,
+            "a default bar must draw the derived edge BarConfig::default() configures"
+        );
+    }
+
+    #[test]
+    fn test_zero_valued_bar_leaves_no_mark() {
+        // A zero-height bar has no area, so its edge must not survive as a
+        // hairline along the baseline: that would mark a datum that is not
+        // there, and it would differ from the "no bar at all" case.
+        let drawn = Plot::new()
+            .size_px(240, 180)
+            .ticks(false)
+            .grid(false)
+            .bar(&["zero", "one"], &[0.0f64, 1.0])
+            .color(FILL)
+            .edge_color(EDGE)
+            .edge_width(3.0)
+            .render()
+            .expect("zero-valued bar render should succeed");
+
+        // Only the second bar has a body, so every red pixel must sit in the
+        // right-hand half of the plot.
+        let width = drawn.width as usize;
+        let left_half_edge = drawn
+            .pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(index, px)| {
+                index % width < width / 2 && px[0] > 200 && px[1] < 120 && px[2] < 120
+            })
+            .count();
+
+        assert_eq!(
+            left_half_edge, 0,
+            "a zero-valued bar must not paint its edge along the baseline"
+        );
+        assert!(
+            edge_pixels(&drawn) > 0,
+            "the non-zero bar must still carry its edge"
+        );
+    }
+
+    #[test]
+    fn test_bar_width_fraction_reaches_the_geometry() {
+        // `.bar_width(..)` used to be inert: both render paths hardcoded 0.8.
+        let narrow = bar_pixel_rect(
+            0,
+            1.0,
+            0.4,
+            tiny_skia::Rect::from_xywh(0.0, 0.0, 200.0, 100.0).expect("valid plot area"),
+            -0.5,
+            1.5,
+            0.0,
+            1.0,
+        );
+        let wide = bar_pixel_rect(
+            0,
+            1.0,
+            0.8,
+            tiny_skia::Rect::from_xywh(0.0, 0.0, 200.0, 100.0).expect("valid plot area"),
+            -0.5,
+            1.5,
+            0.0,
+            1.0,
+        );
+
+        assert!(
+            (wide.2 - narrow.2 * 2.0).abs() < 1e-3,
+            "doubling the width fraction must double the bar: {} vs {}",
+            narrow.2,
+            wide.2
+        );
+        assert!(
+            (narrow.0 + narrow.2 / 2.0 - (wide.0 + wide.2 / 2.0)).abs() < 1e-3,
+            "the bar centre must not move when only the width changes"
+        );
+    }
+
+    #[test]
+    fn test_bar_edge_width_scales_with_dpi() {
+        let low = bar_plot(100)
+            .edge_color(EDGE)
+            .edge_width(2.0)
+            .render()
+            .expect("bar render should succeed");
+        let high = bar_plot(200)
+            .edge_color(EDGE)
+            .edge_width(2.0)
+            .render()
+            .expect("bar render should succeed");
+
+        let low_count = edge_pixels(&low);
+        let high_count = edge_pixels(&high);
+
+        assert!(low_count > 0, "the low-DPI edge must be drawn at all");
+        // Doubling the DPI doubles the bar outline's length; if the stroke width
+        // were left in raw pixels the count would merely double with it.
+        assert!(
+            high_count > low_count * 3,
+            "edge width must scale with DPI: {low_count}px at 100 dpi vs {high_count}px at 200 dpi"
+        );
     }
 }

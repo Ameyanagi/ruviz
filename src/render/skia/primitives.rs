@@ -404,7 +404,7 @@ impl SkiaRenderer {
         fill: Option<Color>,
         edge: Option<(Color, f32)>,
     ) -> Result<()> {
-        let edge = self.scaled_rect_edge(edge);
+        let edge = self.scaled_edge(edge);
         self.draw_rectangle_styled_with_mask(x, y, width, height, fill, edge, None)
     }
 
@@ -419,14 +419,19 @@ impl SkiaRenderer {
         edge: Option<(Color, f32)>,
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
-        let edge = self.scaled_rect_edge(edge);
+        let edge = self.scaled_edge(edge);
         let mask = self.get_clip_mask(clip_rect)?;
         self.draw_rectangle_styled_with_mask(x, y, width, height, fill, edge, Some(mask.as_ref()))
     }
 
     /// Convert a point-denominated edge width into device pixels.
-    fn scaled_rect_edge(&self, edge: Option<(Color, f32)>) -> Option<(Color, f32)> {
-        edge.map(|(color, width_pt)| (color, self.points_to_pixels(width_pt)))
+    ///
+    /// A non-positive width means "no edge" — an edge that cannot be seen is not
+    /// an edge, and floored to `MIN_RECT_EDGE_WIDTH_PX` it would silently become
+    /// a hairline the caller never asked for.
+    fn scaled_edge(&self, edge: Option<(Color, f32)>) -> Option<(Color, f32)> {
+        edge.filter(|&(_, width_pt)| width_pt > 0.0)
+            .map(|(color, width_pt)| (color, self.points_to_pixels(width_pt)))
     }
 
     fn draw_rectangle_with_mask(
@@ -461,6 +466,14 @@ impl SkiaRenderer {
         mask: Option<&Mask>,
     ) -> Result<()> {
         if fill.is_none() && edge.is_none() {
+            return Ok(());
+        }
+
+        // A rectangle with no area encloses nothing, so it has neither an
+        // interior to fill nor a boundary to stroke. Without this, a zero-value
+        // bar (height == 0) would paint a hairline of the edge colour along the
+        // baseline — a mark for a datum that is not there.
+        if width <= 0.0 || height <= 0.0 {
             return Ok(());
         }
 
@@ -914,6 +927,24 @@ impl SkiaRenderer {
         self.draw_marker_with_mask(x, y, size, style, color, None)
     }
 
+    /// [`SkiaRenderer::draw_marker`] with an explicit marker edge.
+    ///
+    /// `edge` is `(colour, width_in_points)`; the width is converted through the
+    /// renderer's [`RenderScale`](crate::core::RenderScale), so the rim is
+    /// DPI-invariant. See [`SkiaRenderer::draw_marker_styled_clipped`].
+    pub fn draw_marker_styled(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        edge: Option<(Color, f32)>,
+    ) -> Result<()> {
+        let edge = self.scaled_edge(edge);
+        self.draw_marker_styled_with_mask_vector(x, y, size, style, color, edge, None)
+    }
+
     pub fn draw_marker_clipped(
         &mut self,
         x: f32,
@@ -927,6 +958,36 @@ impl SkiaRenderer {
         self.draw_marker_with_mask(x, y, size, style, color, Some(mask.as_ref()))
     }
 
+    /// [`SkiaRenderer::draw_marker_clipped`] with an explicit marker edge.
+    ///
+    /// `edge` is `(colour, width_in_points)`; the width is converted through the
+    /// renderer's [`RenderScale`](crate::core::RenderScale) like every other
+    /// stroke here, so the rim is DPI-invariant. Only the closed filled shapes
+    /// take an edge — the open styles already *are* an outline and the
+    /// line-drawn styles (plus/cross/star) have no interior to rim.
+    pub fn draw_marker_styled_clipped(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        edge: Option<(Color, f32)>,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        let edge = self.scaled_edge(edge);
+        let mask = self.get_clip_mask(clip_rect)?;
+        self.draw_marker_styled_with_mask_vector(
+            x,
+            y,
+            size,
+            style,
+            color,
+            edge,
+            Some(mask.as_ref()),
+        )
+    }
+
     pub fn draw_markers_clipped(
         &mut self,
         points: &[Point2f],
@@ -935,23 +996,46 @@ impl SkiaRenderer {
         color: Color,
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
-        if points.is_empty() || size <= 0.0 || color.a == 0 {
+        self.draw_markers_styled_clipped(points, size, style, color, None, clip_rect)
+    }
+
+    /// [`SkiaRenderer::draw_markers_clipped`] with an explicit marker edge.
+    ///
+    /// `edge` is `(colour, width_in_points)` — see
+    /// [`SkiaRenderer::draw_marker_styled_clipped`].
+    ///
+    /// The sprite compositor caches one raster per (style, size, colour, edge,
+    /// phase), so an edged batch keeps the fast path: the rim is baked into the
+    /// sprite exactly as the vector painter would stroke it.
+    pub fn draw_markers_styled_clipped(
+        &mut self,
+        points: &[Point2f],
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        edge: Option<(Color, f32)>,
+        clip_rect: (f32, f32, f32, f32),
+    ) -> Result<()> {
+        let edge = self.scaled_edge(edge);
+        if points.is_empty() || size <= 0.0 || (color.a == 0 && edge.is_none()) {
             return Ok(());
         }
 
         if Self::should_use_marker_sprite_compositor(points.len(), size, style) {
-            return self.draw_markers_with_sprite_compositor(points, size, style, color, clip_rect);
+            return self
+                .draw_markers_with_sprite_compositor(points, size, style, color, edge, clip_rect);
         }
 
         self.note_marker_sprite_fallback();
         let mask = self.get_clip_mask(clip_rect)?;
         for point in points {
-            self.draw_marker_with_mask_vector(
+            self.draw_marker_styled_with_mask_vector(
                 point.x,
                 point.y,
                 size,
                 style,
                 color,
+                edge,
                 Some(mask.as_ref()),
             )?;
         }
@@ -979,7 +1063,23 @@ impl SkiaRenderer {
         color: Color,
         mask: Option<&Mask>,
     ) -> Result<()> {
+        self.draw_marker_styled_with_mask_vector(x, y, size, style, color, None, mask)
+    }
+
+    /// Vector marker painter. `edge` widths are already in device pixels.
+    pub(crate) fn draw_marker_styled_with_mask_vector(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        edge: Option<(Color, f32)>,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
         let radius = size * 0.5;
+        // Only a closed filled shape has an interior for an edge to bound.
+        let edge = edge.filter(|_| style.takes_edge());
 
         match style {
             MarkerStyle::Circle | MarkerStyle::CircleOpen => {
@@ -987,13 +1087,26 @@ impl SkiaRenderer {
             }
             MarkerStyle::Square | MarkerStyle::SquareOpen => {
                 let half_size = radius;
+                if style.is_filled() {
+                    // Fill and rim in one pass so they share the same path.
+                    self.draw_rectangle_styled_with_mask(
+                        x - half_size,
+                        y - half_size,
+                        size,
+                        size,
+                        Some(color),
+                        edge,
+                        mask,
+                    )?;
+                    return Ok(());
+                }
                 self.draw_rectangle_with_mask(
                     x - half_size,
                     y - half_size,
                     size,
                     size,
                     color,
-                    style.is_filled(),
+                    false,
                     mask,
                 )?;
             }
@@ -1146,7 +1259,47 @@ impl SkiaRenderer {
             }
         }
 
+        // Squares return early — their fill and rim share a single rectangle
+        // pass. Everything else strokes the cached marker path it just filled.
+        if let Some((edge_color, edge_width_px)) = edge {
+            self.stroke_marker_outline(x, y, size, style, edge_color, edge_width_px, mask)?;
+        }
+
         Ok(())
+    }
+
+    /// Stroke a filled marker's outline. `edge_width_px` is in device pixels.
+    fn stroke_marker_outline(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        edge_color: Color,
+        edge_width_px: f32,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
+        let Some(path) = self.marker_path(style, size)? else {
+            return Ok(());
+        };
+        self.note_marker_path_cache();
+
+        let mut paint = Paint::default();
+        paint.set_color(edge_color.to_tiny_skia_color());
+        paint.anti_alias = true;
+
+        let stroke = Stroke {
+            width: edge_width_px.max(MIN_RECT_EDGE_WIDTH_PX),
+            ..Stroke::default()
+        };
+
+        self.stroke_path_masked(
+            path.as_ref(),
+            &paint,
+            &stroke,
+            Transform::from_translate(x, y),
+            mask,
+        )
     }
 
     fn should_use_marker_sprite_compositor(
@@ -1167,12 +1320,14 @@ impl SkiaRenderer {
             )
     }
 
+    /// `edge` widths are already in device pixels.
     fn draw_markers_with_sprite_compositor(
         &mut self,
         points: &[Point2f],
         size: f32,
         style: MarkerStyle,
         color: Color,
+        edge: Option<(Color, f32)>,
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
         let phase_count = Self::marker_subpixel_phases() as usize;
@@ -1192,7 +1347,7 @@ impl SkiaRenderer {
             let sprite = if let Some(sprite) = &sprites[slot] {
                 Arc::clone(sprite)
             } else {
-                let sprite = self.marker_sprite(style, size, color, phase_x, phase_y)?;
+                let sprite = self.marker_sprite(style, size, color, edge, phase_x, phase_y)?;
                 sprites[slot] = Some(Arc::clone(&sprite));
                 sprite
             };
@@ -1598,6 +1753,427 @@ mod tests {
         assert!(
             thick > thin,
             "edge width must scale with DPI: {thin}px at 72 dpi vs {thick}px at 288 dpi"
+        );
+    }
+
+    /// Full-canvas clip, so marker tests exercise the drawing, not the clipping.
+    fn whole_canvas(width: f32, height: f32) -> (f32, f32, f32, f32) {
+        (0.0, 0.0, width, height)
+    }
+
+    #[test]
+    fn test_filled_square_marker_has_no_edge_unless_one_is_asked_for() {
+        let fill = Color::new(31, 119, 180);
+        let mut renderer = white_canvas(64, 64, 100.0);
+        renderer
+            .draw_marker_styled_clipped(
+                32.0,
+                32.0,
+                20.0,
+                MarkerStyle::Square,
+                fill,
+                None,
+                whole_canvas(64.0, 64.0),
+            )
+            .expect("square marker should render");
+
+        let image = renderer.into_image();
+        assert_eq!(
+            pixel(&image, 24, 32),
+            [fill.r, fill.g, fill.b, 255],
+            "an edgeless square marker must be a flat fill all the way to its rim"
+        );
+    }
+
+    #[test]
+    fn test_filled_square_marker_strokes_a_requested_edge() {
+        let fill = Color::new(31, 119, 180);
+        let edge = Color::new(255, 0, 0);
+        let mut renderer = white_canvas(64, 64, 100.0);
+        renderer
+            .draw_marker_styled_clipped(
+                32.0,
+                32.0,
+                20.0,
+                MarkerStyle::Square,
+                fill,
+                Some((edge, 3.0)),
+                whole_canvas(64.0, 64.0),
+            )
+            .expect("edged square marker should render");
+
+        let image = renderer.into_image();
+        // The marker spans x 22..42; a 3pt (~4px at 100 dpi) stroke centred on
+        // the left boundary fully covers the pixel column at x = 22.
+        assert_eq!(
+            pixel(&image, 22, 32),
+            [edge.r, edge.g, edge.b, 255],
+            "the requested edge colour must be stroked on the marker boundary"
+        );
+        assert_eq!(
+            pixel(&image, 32, 32),
+            [fill.r, fill.g, fill.b, 255],
+            "the edge must not tint the interior fill"
+        );
+    }
+
+    #[test]
+    fn test_filled_circle_marker_strokes_a_requested_edge() {
+        let fill = Color::new(31, 119, 180);
+        let edge = Color::new(255, 0, 0);
+
+        let mut bare = white_canvas(64, 64, 100.0);
+        bare.draw_marker_styled_clipped(
+            32.0,
+            32.0,
+            20.0,
+            MarkerStyle::Circle,
+            fill,
+            None,
+            whole_canvas(64.0, 64.0),
+        )
+        .expect("circle marker should render");
+
+        let mut edged = white_canvas(64, 64, 100.0);
+        edged
+            .draw_marker_styled_clipped(
+                32.0,
+                32.0,
+                20.0,
+                MarkerStyle::Circle,
+                fill,
+                Some((edge, 3.0)),
+                whole_canvas(64.0, 64.0),
+            )
+            .expect("edged circle marker should render");
+
+        let edged = edged.into_image();
+        assert_ne!(
+            bare.into_image().pixels,
+            edged.pixels,
+            "a circle marker must honour an edge, not only the square path"
+        );
+        assert!(
+            edged
+                .pixels
+                .chunks_exact(4)
+                .any(|px| px[0] > px[2] && px[0] > 200),
+            "the edge colour must actually reach the canvas"
+        );
+    }
+
+    #[test]
+    fn test_marker_edge_is_ignored_by_line_drawn_styles() {
+        let color = Color::new(31, 119, 180);
+
+        let mut bare = white_canvas(48, 48, 100.0);
+        bare.draw_marker_styled_clipped(
+            24.0,
+            24.0,
+            16.0,
+            MarkerStyle::Plus,
+            color,
+            None,
+            whole_canvas(48.0, 48.0),
+        )
+        .expect("plus marker should render");
+
+        let mut edged = white_canvas(48, 48, 100.0);
+        edged
+            .draw_marker_styled_clipped(
+                24.0,
+                24.0,
+                16.0,
+                MarkerStyle::Plus,
+                color,
+                Some((Color::new(255, 0, 0), 3.0)),
+                whole_canvas(48.0, 48.0),
+            )
+            .expect("plus marker should render");
+
+        assert_eq!(
+            bare.into_image().pixels,
+            edged.into_image().pixels,
+            "a plus has no interior, so an edge request must be a no-op rather than a second stroke"
+        );
+    }
+
+    #[test]
+    fn test_marker_edge_width_scales_with_dpi() {
+        // Transparent fill, so only the edge inks the canvas and its thickness
+        // can be measured directly.
+        let transparent = Color::new_rgba(0, 0, 0, 0);
+        let edge = Color::new(0, 0, 0);
+
+        let mut low_dpi = white_canvas(64, 64, 72.0);
+        low_dpi
+            .draw_marker_styled_clipped(
+                32.0,
+                32.0,
+                24.0,
+                MarkerStyle::Square,
+                transparent,
+                Some((edge, 1.0)),
+                whole_canvas(64.0, 64.0),
+            )
+            .expect("marker edge should render at 72 dpi");
+
+        let mut high_dpi = white_canvas(64, 64, 288.0);
+        high_dpi
+            .draw_marker_styled_clipped(
+                32.0,
+                32.0,
+                24.0,
+                MarkerStyle::Square,
+                transparent,
+                Some((edge, 1.0)),
+                whole_canvas(64.0, 64.0),
+            )
+            .expect("marker edge should render at 288 dpi");
+
+        let thin = left_edge_thickness(&low_dpi.into_image(), 32);
+        let thick = left_edge_thickness(&high_dpi.into_image(), 32);
+
+        assert!(
+            (1..=2).contains(&thin),
+            "1pt at 72 dpi should be a hairline, got {thin}px"
+        );
+        assert!(thick >= 4, "1pt at 288 dpi should be ~4px, got {thick}px");
+        assert!(
+            thick > thin,
+            "marker edge width must scale with DPI: {thin}px at 72 dpi vs {thick}px at 288 dpi"
+        );
+    }
+
+    #[test]
+    fn test_edged_marker_batch_matches_the_single_marker_path() {
+        // 40 points is past the sprite compositor threshold. The sprite cache is
+        // keyed on the edge too, so an edged batch keeps the fast path and must
+        // still agree with drawing the markers one at a time.
+        let points: Vec<Point2f> = (0..40)
+            .map(|i| Point2f::new(8.0 + (i % 10) as f32 * 8.0, 12.0 + (i / 10) as f32 * 16.0))
+            .collect();
+        let fill = Color::new(31, 119, 180);
+        let edge = Some((Color::new(255, 0, 0), 1.0));
+        let clip = whole_canvas(96.0, 80.0);
+
+        let mut batched = white_canvas(96, 80, 100.0);
+        batched
+            .draw_markers_styled_clipped(&points, 9.0, MarkerStyle::Circle, fill, edge, clip)
+            .expect("batched edged markers should render");
+        assert!(
+            batched.render_diagnostics().used_marker_sprite_compositor,
+            "asking for an edge must not cost the sprite fast path"
+        );
+
+        let mut singly = white_canvas(96, 80, 100.0);
+        for point in &points {
+            singly
+                .draw_marker_styled_clipped(
+                    point.x,
+                    point.y,
+                    9.0,
+                    MarkerStyle::Circle,
+                    fill,
+                    edge,
+                    clip,
+                )
+                .expect("single edged marker should render");
+        }
+
+        // The sprite is composited from its own transparent canvas rather than
+        // painted straight onto the destination, so anti-aliased pixels may
+        // round by one; the rim must otherwise be the same rim.
+        let batched = batched.into_image().pixels;
+        let singly = singly.into_image().pixels;
+        assert_eq!(batched.len(), singly.len());
+        let worst = batched
+            .iter()
+            .zip(singly.iter())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            worst <= 1,
+            "batched and single-marker rendering must agree once an edge is requested, \
+             worst channel delta {worst}"
+        );
+    }
+
+    /// Worst per-channel difference between a sprite-composited batch and the
+    /// same markers drawn one at a time through the vector painter.
+    fn sprite_vs_vector_worst_delta(edge: Option<(Color, f32)>) -> u8 {
+        // Deliberately off-grid: the sprite compositor snaps every centre to
+        // the nearest sub-pixel phase, so integer positions hide the only
+        // disagreement the fast path can have with the vector painter.
+        let points: Vec<Point2f> = (0..40)
+            .map(|i| Point2f::new(10.0 + (i % 10) as f32 * 18.7, 15.0 + (i / 10) as f32 * 27.3))
+            .collect();
+        let fill = Color::new(31, 119, 180);
+        let clip = whole_canvas(200.0, 120.0);
+
+        let mut batched = white_canvas(200, 120, 100.0);
+        batched
+            .draw_markers_styled_clipped(&points, 8.0, MarkerStyle::Circle, fill, edge, clip)
+            .expect("batched markers should render");
+        assert!(batched.render_diagnostics().used_marker_sprite_compositor);
+
+        let mut singly = white_canvas(200, 120, 100.0);
+        for point in &points {
+            singly
+                .draw_marker_styled_clipped(
+                    point.x,
+                    point.y,
+                    8.0,
+                    MarkerStyle::Circle,
+                    fill,
+                    edge,
+                    clip,
+                )
+                .expect("single marker should render");
+        }
+
+        batched
+            .into_image()
+            .pixels
+            .iter()
+            .zip(singly.into_image().pixels.iter())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn test_a_marker_rim_does_not_amplify_sprite_phase_quantisation() {
+        // A rim is a thin high-contrast feature, so it samples the sprite
+        // compositor's sub-pixel snapping far more harshly than a bare fill: at
+        // too few phases an edged batch showed ~10x the boundary noise of the
+        // edgeless one. Asking for an edge must not cost accuracy.
+        let edgeless = sprite_vs_vector_worst_delta(None);
+        let edged = sprite_vs_vector_worst_delta(Some((Color::new(22, 84, 126), 0.8)));
+
+        assert!(
+            edged <= edgeless.max(32),
+            "an edged batch must not diverge from the vector path more than an \
+             edgeless one does: {edged} vs {edgeless}"
+        );
+    }
+
+    #[test]
+    fn test_marker_sprites_are_exact_on_a_subpixel_phase_boundary() {
+        // Centres that land exactly on a phase mean the sprite is rasterised at
+        // the position it is blitted to, so the fast path must be exact there —
+        // otherwise the divergence is not quantisation but a real geometry bug.
+        let phase = 1.0 / SkiaRenderer::marker_subpixel_phases() as f32;
+        let points: Vec<Point2f> = (0..40)
+            .map(|i| {
+                Point2f::new(
+                    10.0 + (i % 10) as f32 * 18.0 + (i % 10) as f32 * phase,
+                    15.0 + (i / 10) as f32 * 27.0 + (i / 10) as f32 * phase,
+                )
+            })
+            .collect();
+        let fill = Color::new(31, 119, 180);
+        let clip = whole_canvas(200.0, 120.0);
+
+        let mut batched = white_canvas(200, 120, 100.0);
+        batched
+            .draw_markers_styled_clipped(&points, 8.0, MarkerStyle::Circle, fill, None, clip)
+            .expect("batched markers should render");
+
+        let mut singly = white_canvas(200, 120, 100.0);
+        for point in &points {
+            singly
+                .draw_marker_styled_clipped(
+                    point.x,
+                    point.y,
+                    8.0,
+                    MarkerStyle::Circle,
+                    fill,
+                    None,
+                    clip,
+                )
+                .expect("single marker should render");
+        }
+
+        assert_eq!(
+            batched.into_image().pixels,
+            singly.into_image().pixels,
+            "on an exact phase the sprite compositor must be pixel-identical to \
+             the vector painter"
+        );
+    }
+
+    #[test]
+    fn test_wide_marker_rim_survives_the_sprite_border() {
+        // Half the rim lies outside the shape, so the sprite has to be padded
+        // for it; without that the outer half of a fat rim is clipped away at
+        // the sprite's own border and the batch stops matching the vector path.
+        let points: Vec<Point2f> = (0..40)
+            .map(|i| Point2f::new(20.0 + (i % 8) as f32 * 24.0, 24.0 + (i / 8) as f32 * 28.0))
+            .collect();
+        let fill = Color::new(31, 119, 180);
+        let edge = Some((Color::new(255, 0, 0), 10.0));
+        let clip = whole_canvas(220.0, 170.0);
+
+        let mut batched = white_canvas(220, 170, 100.0);
+        batched
+            .draw_markers_styled_clipped(&points, 8.0, MarkerStyle::Circle, fill, edge, clip)
+            .expect("batched fat-rim markers should render");
+        assert!(batched.render_diagnostics().used_marker_sprite_compositor);
+
+        let mut singly = white_canvas(220, 170, 100.0);
+        for point in &points {
+            singly
+                .draw_marker_styled_clipped(
+                    point.x,
+                    point.y,
+                    8.0,
+                    MarkerStyle::Circle,
+                    fill,
+                    edge,
+                    clip,
+                )
+                .expect("single fat-rim marker should render");
+        }
+
+        let count_red = |pixels: &[u8]| {
+            pixels
+                .chunks_exact(4)
+                .filter(|px| px[0] > 200 && px[1] < 60 && px[2] < 60)
+                .count()
+        };
+        let batched_red = count_red(&batched.into_image().pixels);
+        let singly_red = count_red(&singly.into_image().pixels);
+        assert!(batched_red > 0, "the fat rim must be painted");
+        assert!(
+            batched_red.abs_diff(singly_red) * 50 <= singly_red,
+            "the sprite must carry the whole rim: {batched_red} vs {singly_red}"
+        );
+    }
+
+    #[test]
+    fn test_edgeless_marker_batch_still_uses_the_sprite_compositor() {
+        let points: Vec<Point2f> = (0..40)
+            .map(|i| Point2f::new(8.0 + (i % 10) as f32 * 8.0, 12.0 + (i / 10) as f32 * 16.0))
+            .collect();
+        let clip = whole_canvas(96.0, 80.0);
+
+        let mut renderer = white_canvas(96, 80, 100.0);
+        renderer
+            .draw_markers_styled_clipped(
+                &points,
+                9.0,
+                MarkerStyle::Circle,
+                Color::new(31, 119, 180),
+                None,
+                clip,
+            )
+            .expect("edgeless markers should render");
+
+        assert!(
+            renderer.render_diagnostics().used_marker_sprite_compositor,
+            "asking for no edge must not cost the sprite fast path"
         );
     }
 

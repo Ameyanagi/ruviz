@@ -2,6 +2,7 @@
 //!
 //! Provides [`LineConfig`] for configuring line plot appearance.
 
+use crate::core::style_utils::defaults;
 use crate::plots::traits::PlotConfig;
 use crate::render::{Color, LineStyle, MarkerStyle};
 
@@ -35,6 +36,16 @@ pub struct LineConfig {
     pub marker_size: f32,
     /// Whether to show markers on data points
     pub show_markers: bool,
+    /// Marker edge color (None = auto-darken from the marker fill)
+    pub marker_edge_color: Option<Color>,
+    /// Marker edge width in points (default: `defaults::PATCH_LINE_WIDTH`, 0.8)
+    pub marker_edge_width: f32,
+    /// Whether to show an edge around the markers (default: **false**)
+    ///
+    /// Matches [`ScatterConfig::show_edge`](crate::plots::basic::ScatterConfig::show_edge)
+    /// so the same marker looks the same whether it came from `.line()` or
+    /// `.scatter()` — including the reasons it is off by default.
+    pub show_marker_edge: bool,
     /// Line alpha/transparency (0.0-1.0)
     pub alpha: f32,
     /// Whether to connect points with lines (true) or just markers (false)
@@ -50,6 +61,9 @@ impl Default for LineConfig {
             marker: None,
             marker_size: 6.0,
             show_markers: false,
+            marker_edge_color: None,
+            marker_edge_width: defaults::PATCH_LINE_WIDTH,
+            show_marker_edge: false,
             alpha: 1.0,
             draw_line: true,
         }
@@ -126,6 +140,45 @@ impl LineConfig {
     pub fn show_markers(mut self, show: bool) -> Self {
         self.show_markers = show;
         self
+    }
+
+    /// Set the marker edge colour explicitly
+    ///
+    /// If not set, the edge colour is auto-derived by darkening the marker
+    /// fill. Turns [`show_marker_edge`](LineConfig::show_marker_edge) on:
+    /// naming an edge colour is asking for an edge.
+    pub fn marker_edge_color(mut self, color: Color) -> Self {
+        self.marker_edge_color = Some(color);
+        self.show_marker_edge = true;
+        self
+    }
+
+    /// Set the marker edge width in points
+    ///
+    /// Turns [`show_marker_edge`](LineConfig::show_marker_edge) on for a
+    /// positive width and off for a zero one.
+    pub fn marker_edge_width(mut self, width: f32) -> Self {
+        self.marker_edge_width = width.max(0.0);
+        self.show_marker_edge = self.marker_edge_width > 0.0;
+        self
+    }
+
+    /// Show or hide the marker edge
+    pub fn show_marker_edge(mut self, show: bool) -> Self {
+        self.show_marker_edge = show;
+        self
+    }
+
+    /// The configured marker edge as `(colour override, width in points)`.
+    ///
+    /// Shares [`ScatterConfig::resolved_edge_spec`](crate::plots::basic::ScatterConfig::resolved_edge_spec)'s
+    /// rule, so a line marker and a scatter marker resolve identically.
+    pub fn resolved_marker_edge_spec(&self) -> Option<(Option<Color>, f32)> {
+        super::marker_edge_spec(
+            self.show_marker_edge,
+            self.marker_edge_color,
+            self.marker_edge_width,
+        )
     }
 
     /// Set transparency

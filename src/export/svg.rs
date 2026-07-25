@@ -6,6 +6,7 @@
 use crate::core::{
     Legend, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels, LegendStyle,
     PlottingError, RenderScale, Result, SpineConfig, TextAlign, TextStyle, find_best_position,
+    legend::{LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, legacy_legend_swatch_edge},
     plot::{TextEngineMode, TickDirection, TickSides},
 };
 use crate::render::{
@@ -363,6 +364,11 @@ impl SvgRenderer {
         if fill.is_none() && edge.is_none() {
             return;
         }
+        // Twin of the raster guard: a rectangle with no area has no interior to
+        // fill and no boundary to stroke, so a zero-value bar stays unmarked.
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
         let fill_attr = match fill {
             Some(color) => self.color_to_svg(color),
             None => "none".to_string(),
@@ -598,6 +604,86 @@ impl SvgRenderer {
         .unwrap();
     }
 
+    /// Vertices of the polygonal marker styles, or `None` for the round and
+    /// line-drawn ones.
+    ///
+    /// Shared by the fill pass and the edge pass so a rim can never sit on a
+    /// different outline than the shape it is rimming.
+    fn marker_polygon(x: f32, y: f32, radius: f32, style: MarkerStyle) -> Option<Vec<(f32, f32)>> {
+        match style {
+            MarkerStyle::Triangle | MarkerStyle::TriangleOpen => Some(vec![
+                (x, y - radius),
+                (x - radius * 0.866, y + radius * 0.5),
+                (x + radius * 0.866, y + radius * 0.5),
+            ]),
+            MarkerStyle::TriangleDown => Some(vec![
+                (x, y + radius),
+                (x - radius * 0.866, y - radius * 0.5),
+                (x + radius * 0.866, y - radius * 0.5),
+            ]),
+            MarkerStyle::Diamond | MarkerStyle::DiamondOpen => Some(vec![
+                (x, y - radius),
+                (x + radius, y),
+                (x, y + radius),
+                (x - radius, y),
+            ]),
+            _ => None,
+        }
+    }
+
+    /// Draw a marker with an optional edge (rim), matching the raster semantics.
+    ///
+    /// Twin of [`SkiaRenderer::draw_markers_styled_clipped`](crate::render::SkiaRenderer::draw_markers_styled_clipped):
+    /// `edge` is `(colour, width_in_points)` and the width is scaled by this
+    /// renderer's [`RenderScale`], so a PNG and an SVG rim are the same physical
+    /// thickness at every DPI. Only the closed filled styles take an edge — see
+    /// [`MarkerStyle::takes_edge`].
+    pub fn draw_marker_styled(
+        &mut self,
+        x: f32,
+        y: f32,
+        size: f32,
+        style: MarkerStyle,
+        color: Color,
+        edge: Option<(Color, f32)>,
+    ) {
+        self.draw_marker(x, y, size, style, color);
+
+        let Some((edge_color, width_pt)) = edge.filter(|_| style.takes_edge()) else {
+            return;
+        };
+        let width_px = self.points_to_pixels(width_pt);
+        if width_px <= 0.0 || edge_color.a == 0 {
+            return;
+        }
+
+        let radius = size / 2.0;
+        if let Some(points) = Self::marker_polygon(x, y, radius, style) {
+            self.draw_polygon_marker(&points, edge_color, Some(width_px));
+            return;
+        }
+        match style {
+            MarkerStyle::Circle => {
+                let color_str = self.color_to_svg(edge_color);
+                writeln!(
+                    self.content,
+                    r#"  <circle cx="{x:.2}" cy="{y:.2}" r="{radius:.2}" fill="none" stroke="{color_str}" stroke-width="{width_px:.2}"/>"#
+                )
+                .unwrap();
+            }
+            MarkerStyle::Square => self.draw_rectangle_styled(
+                x - radius,
+                y - radius,
+                size,
+                size,
+                None,
+                Some((edge_color, width_pt)),
+            ),
+            // `takes_edge` already rejected every other style.
+            _ => {}
+        }
+    }
+
     /// Draw a marker at a point, matching the raster marker semantics.
     pub fn draw_marker(&mut self, x: f32, y: f32, size: f32, style: MarkerStyle, color: Color) {
         let radius = size / 2.0;
@@ -611,53 +697,16 @@ impl SvgRenderer {
             MarkerStyle::SquareOpen => {
                 self.draw_rectangle(x - radius, y - radius, size, size, color, false)
             }
-            MarkerStyle::Triangle => self.draw_polygon_marker(
-                &[
-                    (x, y - radius),
-                    (x - radius * 0.866, y + radius * 0.5),
-                    (x + radius * 0.866, y + radius * 0.5),
-                ],
-                color,
-                None,
-            ),
-            MarkerStyle::TriangleOpen => self.draw_polygon_marker(
-                &[
-                    (x, y - radius),
-                    (x - radius * 0.866, y + radius * 0.5),
-                    (x + radius * 0.866, y + radius * 0.5),
-                ],
-                color,
-                Some((size * 0.15).max(1.0)),
-            ),
-            MarkerStyle::TriangleDown => self.draw_polygon_marker(
-                &[
-                    (x, y + radius),
-                    (x - radius * 0.866, y - radius * 0.5),
-                    (x + radius * 0.866, y - radius * 0.5),
-                ],
-                color,
-                None,
-            ),
-            MarkerStyle::Diamond => self.draw_polygon_marker(
-                &[
-                    (x, y - radius),
-                    (x + radius, y),
-                    (x, y + radius),
-                    (x - radius, y),
-                ],
-                color,
-                None,
-            ),
-            MarkerStyle::DiamondOpen => self.draw_polygon_marker(
-                &[
-                    (x, y - radius),
-                    (x + radius, y),
-                    (x, y + radius),
-                    (x - radius, y),
-                ],
-                color,
-                Some((size * 0.15).max(1.0)),
-            ),
+            MarkerStyle::Triangle | MarkerStyle::TriangleDown | MarkerStyle::Diamond => {
+                let points = Self::marker_polygon(x, y, radius, style)
+                    .expect("filled polygonal marker always has vertices");
+                self.draw_polygon_marker(&points, color, None)
+            }
+            MarkerStyle::TriangleOpen | MarkerStyle::DiamondOpen => {
+                let points = Self::marker_polygon(x, y, radius, style)
+                    .expect("open polygonal marker always has vertices");
+                self.draw_polygon_marker(&points, color, Some((size * 0.15).max(1.0)))
+            }
             MarkerStyle::Plus => {
                 let line_width = (size * 0.25).max(1.0);
                 self.draw_marker_line(x - radius, y, x + radius, y, color, line_width);
@@ -1588,8 +1637,20 @@ impl SvgRenderer {
         for (i, (label, color)) in items.iter().enumerate() {
             let item_y = y + 8.0 + i as f32 * item_height;
 
-            // Draw color swatch
-            self.draw_rectangle(x + 8.0, item_y, swatch_size, swatch_size, *color, true);
+            // Draw color swatch. The panel above is near-white, so a white or
+            // near-white series colour needs a neutral contour of its own to
+            // stay visible. The fill is left exactly as the series colour.
+            self.draw_rectangle_styled(
+                x + 8.0,
+                item_y,
+                swatch_size,
+                swatch_size,
+                Some(*color),
+                Some((
+                    legacy_legend_swatch_edge(*color),
+                    LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT,
+                )),
+            );
 
             // Draw label
             self.draw_text(
@@ -1633,6 +1694,11 @@ impl SvgRenderer {
     }
 
     /// Draw a scatter/marker handle in the legend
+    /// Draw a marker handle in the legend
+    ///
+    /// `edge` is `(colour, width_in_points)` — the rim the plotted markers
+    /// carry. `draw_marker_styled` scales the width through the same
+    /// [`RenderScale`] as the raster twin, so the key matches at any DPI.
     fn draw_legend_scatter_handle(
         &mut self,
         x: f32,
@@ -1641,15 +1707,28 @@ impl SvgRenderer {
         color: Color,
         marker: &MarkerStyle,
         size: f32,
+        edge: Option<(Color, f32)>,
     ) {
         let center_x = x + length / 2.0;
-        self.draw_marker(center_x, y, size, *marker, color);
+        self.draw_marker_styled(center_x, y, size, *marker, color, edge);
     }
 
     /// Draw a bar handle in the legend
-    fn draw_legend_bar_handle(&mut self, x: f32, y: f32, length: f32, height: f32, color: Color) {
+    ///
+    /// `edge` is `(colour, width_in_points)` — the very edge the patch it
+    /// stands for is stroked with. The width goes through the same
+    /// [`RenderScale`] as the raster twin, so the key stays faithful at any DPI.
+    fn draw_legend_bar_handle(
+        &mut self,
+        x: f32,
+        y: f32,
+        length: f32,
+        height: f32,
+        color: Color,
+        edge: Option<(Color, f32)>,
+    ) {
         let rect_y = y - height / 2.0;
-        self.draw_rectangle(x, rect_y, length, height, color, true);
+        self.draw_rectangle_styled(x, rect_y, length, height, Some(color), edge);
     }
 
     /// Draw a line+marker handle in the legend
@@ -1663,9 +1742,10 @@ impl SvgRenderer {
         line_width: f32,
         marker: &MarkerStyle,
         marker_size: f32,
+        marker_edge: Option<(Color, f32)>,
     ) {
         self.draw_legend_line_handle(x, y, length, color, line_style, line_width);
-        self.draw_legend_scatter_handle(x, y, length, color, marker, marker_size);
+        self.draw_legend_scatter_handle(x, y, length, color, marker, marker_size, marker_edge);
     }
 
     /// Draw a legend handle based on the item type
@@ -1684,7 +1764,7 @@ impl SvgRenderer {
                 let scaled_width = self.points_to_pixels(*width);
                 self.draw_legend_line_handle(x, y, handle_length, item.color, style, scaled_width);
             }
-            LegendItemType::Scatter { marker, size } => {
+            LegendItemType::Scatter { marker, size, edge } => {
                 let scaled_size = self.points_to_pixels(*size);
                 self.draw_legend_scatter_handle(
                     x,
@@ -1693,6 +1773,7 @@ impl SvgRenderer {
                     item.color,
                     marker,
                     scaled_size,
+                    *edge,
                 );
             }
             LegendItemType::LineMarker {
@@ -1700,6 +1781,7 @@ impl SvgRenderer {
                 line_width,
                 marker,
                 marker_size,
+                marker_edge,
             } => {
                 let scaled_line_width = self.points_to_pixels(*line_width);
                 let scaled_marker_size = self.points_to_pixels(*marker_size);
@@ -1712,13 +1794,14 @@ impl SvgRenderer {
                     scaled_line_width,
                     marker,
                     scaled_marker_size,
+                    *marker_edge,
                 );
             }
-            LegendItemType::Bar | LegendItemType::Histogram => {
-                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color);
+            LegendItemType::Bar { edge } | LegendItemType::Histogram { edge } => {
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color, *edge);
             }
             LegendItemType::Area { edge_color } => {
-                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color);
+                self.draw_legend_bar_handle(x, y, handle_length, handle_height, item.color, None);
                 if let Some(edge) = edge_color {
                     let rect_y = y - handle_height / 2.0;
                     self.draw_rectangle(x, rect_y, handle_length, handle_height, *edge, false);

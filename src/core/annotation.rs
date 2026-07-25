@@ -152,6 +152,23 @@ pub enum ArrowHead {
     Open,
 }
 
+/// Where an arrow annotation came from.
+///
+/// Provenance decides the render layer: structural arrows the library emits as
+/// part of a series (the stems of [`Plot::stem`](crate::core::Plot::stem)) paint
+/// *below* the series so they do not cover their own markers, while arrows the
+/// caller created stay on top of the data like every other annotation. This is
+/// tracked explicitly rather than inferred from the arrow head style, because a
+/// caller-drawn headless arrow is a perfectly normal pointer annotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ArrowOrigin {
+    /// Created by the caller through the public annotation API.
+    #[default]
+    User,
+    /// Emitted by the library as structural decoration for a data series.
+    SeriesStructure,
+}
+
 /// Style configuration for arrow annotations
 #[derive(Debug, Clone)]
 pub struct ArrowStyle {
@@ -169,6 +186,9 @@ pub struct ArrowStyle {
     pub head_length: f32,
     /// Arrow head width in points
     pub head_width: f32,
+    /// Provenance of the arrow; crate-internal so callers cannot demote their
+    /// own annotations below the data series.
+    pub(crate) origin: ArrowOrigin,
 }
 
 impl Default for ArrowStyle {
@@ -181,6 +201,7 @@ impl Default for ArrowStyle {
             tail_style: ArrowHead::None,
             head_length: 10.0,
             head_width: 6.0,
+            origin: ArrowOrigin::User,
         }
     }
 }
@@ -232,6 +253,20 @@ impl ArrowStyle {
     pub fn double_headed(mut self) -> Self {
         self.tail_style = self.head_style;
         self
+    }
+
+    /// Mark this arrow as structural decoration emitted for a data series.
+    ///
+    /// Crate-internal: only the library may claim this provenance, so a caller
+    /// can never accidentally push their own annotation under the data.
+    pub(crate) fn series_structure(mut self) -> Self {
+        self.origin = ArrowOrigin::SeriesStructure;
+        self
+    }
+
+    /// Whether this arrow was emitted by the library as series structure.
+    pub(crate) fn is_series_structure(&self) -> bool {
+        self.origin == ArrowOrigin::SeriesStructure
     }
 }
 
@@ -716,6 +751,34 @@ mod tests {
         assert!((style.line_width - 2.0).abs() < 0.001);
         assert_eq!(style.head_style, ArrowHead::Stealth);
         assert_eq!(style.tail_style, ArrowHead::Stealth);
+    }
+
+    #[test]
+    fn arrow_styles_built_through_the_public_api_are_user_owned() {
+        // Nothing a caller can express through the public builder — including a
+        // headless "pointer line" — may claim series-structure provenance.
+        let plain = ArrowStyle::new();
+        assert_eq!(plain.origin, ArrowOrigin::User);
+        assert!(!plain.is_series_structure());
+
+        let headless = ArrowStyle::new()
+            .head_style(ArrowHead::None)
+            .tail_style(ArrowHead::None);
+        assert!(!headless.is_series_structure());
+    }
+
+    #[test]
+    fn series_structure_arrows_keep_their_provenance_when_cloned() {
+        let stem = ArrowStyle::new()
+            .color(Color::RED)
+            .head_style(ArrowHead::None)
+            .tail_style(ArrowHead::None)
+            .series_structure();
+
+        assert!(stem.is_series_structure());
+        assert!(stem.clone().is_series_structure());
+        // Restyling must not launder the provenance away.
+        assert!(stem.line_width(2.0).is_series_structure());
     }
 
     #[test]

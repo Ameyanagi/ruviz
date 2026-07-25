@@ -103,6 +103,29 @@ impl<'a> StyleResolver<'a> {
         explicit.unwrap_or_else(|| fill.darken(0.3))
     }
 
+    /// Resolve a filled patch's edge into the `(colour, width_in_points)` pair
+    /// the backends stroke with.
+    ///
+    /// This is the single place both halves of the edge rule live:
+    /// - an `explicit` colour of `None` means "derive from the fill" (see
+    ///   [`Self::edge_color`]);
+    /// - a non-positive `width` means there is no edge at all, rather than a
+    ///   hairline floored to some minimum.
+    ///
+    /// Bars, histograms, box plots and marker rims all funnel through it, so
+    /// the raster, parallel and SVG backends cannot drift apart. The width
+    /// stays in **points**; each renderer converts it to device pixels, which
+    /// is what makes a patch edge the same physical thickness at every DPI.
+    #[inline]
+    pub fn patch_edge(
+        &self,
+        fill: Color,
+        explicit: Option<Color>,
+        width: f32,
+    ) -> Option<(Color, f32)> {
+        (width > 0.0).then(|| (self.edge_color(fill, explicit), width))
+    }
+
     /// Resolve edge color with custom darkening factor
     ///
     /// # Arguments
@@ -455,5 +478,37 @@ mod tests {
 
         // Colors should differ
         assert_ne!(light_resolver.background(), dark_resolver.background());
+    }
+
+    #[test]
+    fn test_patch_edge_derives_its_colour_from_the_fill() {
+        let theme = Theme::light();
+        assert_eq!(
+            StyleResolver::new(&theme).patch_edge(Color::BLUE, None, 0.8),
+            Some((Color::BLUE.darken(0.3), 0.8)),
+            "an unset edge colour must darken the fill"
+        );
+    }
+
+    #[test]
+    fn test_patch_edge_keeps_an_explicit_colour() {
+        let theme = Theme::light();
+        assert_eq!(
+            StyleResolver::new(&theme).patch_edge(Color::BLUE, Some(Color::RED), 1.5),
+            Some((Color::RED, 1.5)),
+            "an explicit edge colour must survive untouched"
+        );
+    }
+
+    #[test]
+    fn test_patch_edge_of_non_positive_width_is_no_edge() {
+        let theme = Theme::light();
+        let resolver = StyleResolver::new(&theme);
+        assert_eq!(
+            resolver.patch_edge(Color::BLUE, Some(Color::RED), 0.0),
+            None,
+            "a zero width must switch the edge off, not floor it to a hairline"
+        );
+        assert_eq!(resolver.patch_edge(Color::BLUE, None, -1.0), None);
     }
 }

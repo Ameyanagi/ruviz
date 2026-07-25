@@ -293,3 +293,96 @@ fn test_backend_error_handling() {
 
     assert!(result.is_err(), "Mismatched data should produce error");
 }
+
+/// The SVG bar layout used to be positional — evenly spaced across the plot
+/// area at a 0.7 width fraction — while the raster path mapped category indices
+/// through the real x-scale at 0.8. The same chart therefore put its bars in
+/// different places depending on the output format.
+#[test]
+fn test_png_and_svg_bar_geometry_agree() {
+    use std::io::Read;
+
+    let directory = tempfile::tempdir().expect("temp dir");
+    let png_path = directory.path().join("bars.png");
+    let svg_path = directory.path().join("bars.svg");
+
+    let chart = || {
+        Plot::new()
+            .size_px(800, 600)
+            .ticks(false)
+            .grid(false)
+            .bar(&["A", "B", "C", "D"], &[3.0f64, 5.0, 2.0, 4.0])
+            .color(Color::new(31, 119, 180))
+    };
+    chart().save(&png_path).expect("bar PNG should save");
+    chart()
+        .into_plot()
+        .export_svg(&svg_path)
+        .expect("bar SVG should export");
+
+    let mut svg = String::new();
+    std::fs::File::open(&svg_path)
+        .expect("open SVG")
+        .read_to_string(&mut svg)
+        .expect("read SVG");
+
+    // Every filled bar rect, in document order.
+    let svg_bars: Vec<(f32, f32)> = svg
+        .lines()
+        .filter(|line| line.contains("<rect") && line.contains(r#"fill="rgb(31,119,180)""#))
+        .map(|line| {
+            let attribute = |name: &str| -> f32 {
+                let needle = format!(r#"{name}=""#);
+                let start = line.find(&needle).expect("attribute present") + needle.len();
+                let rest = &line[start..];
+                let end = rest.find('"').expect("attribute terminated");
+                rest[..end].parse().expect("numeric attribute")
+            };
+            (attribute("x"), attribute("width"))
+        })
+        .collect();
+    assert_eq!(svg_bars.len(), 4, "every bar must reach the SVG");
+
+    let image = image::open(&png_path).expect("decode bar PNG").to_rgba8();
+    let (width, height) = image.dimensions();
+    let is_bar = |px: &image::Rgba<u8>| {
+        // Fill or its auto-darkened edge.
+        (px.0[0] == 31 && px.0[1] == 119 && px.0[2] == 180)
+            || (px.0[0] == 21 && px.0[1] == 83 && px.0[2] == 126)
+    };
+    let mut png_bars: Vec<(f32, f32)> = Vec::new();
+    let mut run: Option<(u32, u32)> = None;
+    for x in 0..width {
+        let occupied = (0..height).any(|y| is_bar(image.get_pixel(x, y)));
+        match (&mut run, occupied) {
+            (None, true) => run = Some((x, x)),
+            (Some(span), true) => span.1 = x,
+            (Some(span), false) => {
+                png_bars.push((span.0 as f32, (span.1 - span.0 + 1) as f32));
+                run = None;
+            }
+            (None, false) => {}
+        }
+    }
+    if let Some(span) = run {
+        png_bars.push((span.0 as f32, (span.1 - span.0 + 1) as f32));
+    }
+    assert_eq!(png_bars.len(), 4, "every bar must reach the PNG");
+
+    // The SVG rect is the bar body; the PNG span includes the stroke, which
+    // straddles the boundary by half its width on each side.
+    for (index, ((svg_x, svg_width), (png_x, png_width))) in
+        svg_bars.iter().zip(png_bars.iter()).enumerate()
+    {
+        let svg_centre = svg_x + svg_width / 2.0;
+        let png_centre = png_x + png_width / 2.0;
+        assert!(
+            (svg_centre - png_centre).abs() <= 1.5,
+            "bar {index} centre differs between PNG and SVG: {png_centre} vs {svg_centre}"
+        );
+        assert!(
+            (svg_width - png_width).abs() <= 3.0,
+            "bar {index} width differs between PNG and SVG: {png_width} vs {svg_width}"
+        );
+    }
+}

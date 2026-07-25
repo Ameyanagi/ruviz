@@ -409,12 +409,16 @@ impl ParallelRenderer {
     }
 
     /// Process scatter markers in parallel
+    ///
+    /// `edge` is the resolved marker edge as `(colour, width_in_points)`, or
+    /// `None` for bare markers.
     pub fn process_markers_parallel(
         &self,
         points: &[Point2f],
         marker_style: MarkerStyle,
         color: Color,
         size: f32,
+        edge: Option<(Color, f32)>,
     ) -> Result<Vec<MarkerInstance>> {
         if !self.chunked_processing || points.len() < self.chunk_size {
             // Sequential processing for small datasets
@@ -425,6 +429,7 @@ impl ParallelRenderer {
                     style: marker_style,
                     color,
                     size,
+                    edge,
                 })
                 .collect());
         }
@@ -440,6 +445,7 @@ impl ParallelRenderer {
                         style: marker_style,
                         color,
                         size,
+                        edge,
                     })
                     .collect::<Vec<MarkerInstance>>()
             })
@@ -595,6 +601,11 @@ pub struct MarkerInstance {
     pub style: MarkerStyle,
     pub color: Color,
     pub size: f32,
+    /// Optional explicit edge as `(colour, width_in_points)`.
+    ///
+    /// `None` means a bare marker. Scatter series populate it from
+    /// `ScatterConfig`'s `show_edge`/`edge_color`/`edge_width`.
+    pub edge: Option<(Color, f32)>,
 }
 
 /// Bar instance for parallel bar rendering

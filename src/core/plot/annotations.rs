@@ -410,6 +410,10 @@ impl Plot {
 
     /// Add an arrow annotation with custom styling
     ///
+    /// The arrow is drawn on top of the data series, including when both
+    /// [`ArrowHead::None`](crate::core::ArrowHead::None) ends are used to draw a
+    /// plain pointer line.
+    ///
     /// # Example
     ///
     /// ```rust,ignore

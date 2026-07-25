@@ -388,24 +388,42 @@ const FULL_TURN_MIN_SAMPLES: usize = 3;
 /// Whether the sampled `theta` values sweep a complete turn, i.e. the curve
 /// closes on itself and needs no closing segment through the origin.
 ///
+/// The sweep is the *ordered, unwrapped* angular travel: each consecutive step is
+/// folded into `[-π, π]` before being accumulated, so the running total follows the
+/// curve instead of jumping a turn at the 0/2π seam. Global extrema would not do:
+/// a narrow wedge straddling the seam, such as `[6.1, 6.2, 0.0, 0.1]`, spans 6.2 rad
+/// between its extremes but only sweeps ~0.28 rad, and must stay a partial arc.
+/// Clockwise sweeps accumulate negatively and are compared by magnitude; multi-turn
+/// spirals exceed a turn and count as closed.
+///
 /// Both common samplings count as closed: endpoint-inclusive (`0..=2π`, where the
-/// span is already a full turn) and endpoint-exclusive (`i * 2π / n`, where the
-/// span falls one sample short). Non-finite samples are ignored.
+/// sweep is already a full turn) and endpoint-exclusive (`i * 2π / n`, where the
+/// sweep falls one sample short). Non-finite samples are ignored.
 fn is_full_turn(theta: &[f64]) -> bool {
-    let (count, min, max) = theta.iter().copied().filter(|t| t.is_finite()).fold(
-        (0usize, f64::INFINITY, f64::NEG_INFINITY),
-        |(count, lo, hi), t| (count + 1, lo.min(t), hi.max(t)),
-    );
+    use std::f64::consts::TAU;
+
+    let mut count = 0usize;
+    let mut previous = 0.0_f64;
+    let mut sweep = 0.0_f64;
+
+    for t in theta.iter().copied().filter(|t| t.is_finite()) {
+        if count > 0 {
+            let step = t - previous;
+            sweep += step - TAU * (step / TAU).round();
+        }
+        count += 1;
+        previous = t;
+    }
 
     if count < FULL_TURN_MIN_SAMPLES {
         return false;
     }
 
-    let span = max - min;
+    let sweep = sweep.abs();
     // The residual gap back to the first sample closes the curve when it is no
     // wider than one sampling step.
-    let mean_step = span / (count - 1) as f64;
-    span + mean_step >= std::f64::consts::TAU - FULL_TURN_EPSILON
+    let mean_step = sweep / (count - 1) as f64;
+    sweep + mean_step >= TAU - FULL_TURN_EPSILON
 }
 
 /// Generate polar grid lines
@@ -592,7 +610,7 @@ impl PlotRender for PolarPlotData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64::consts::PI;
+    use std::f64::consts::{PI, TAU};
 
     #[test]
     fn test_polar_point_from_polar() {
@@ -673,6 +691,88 @@ mod tests {
         assert!(!is_full_turn(&[]));
         // Non-finite samples are ignored.
         assert!(is_full_turn(&[0.0, f64::NAN, PI, 2.0 * PI]));
+    }
+
+    /// Normalized angles wrapped into `[0, 2π)`, sampled endpoint-exclusively.
+    fn wrapped_sweep(start: f64, sweep: f64, n: usize) -> Vec<f64> {
+        (0..n)
+            .map(|i| (start + sweep * i as f64 / n as f64).rem_euclid(TAU))
+            .collect()
+    }
+
+    #[test]
+    fn test_is_full_turn_partial_arc_crossing_zero() {
+        // A ~0.28 rad wedge straddling the 0/2π seam. Its extremes are 6.2 rad
+        // apart, but it sweeps almost nothing: it must stay partial.
+        assert!(!is_full_turn(&[6.1, 6.2, 0.0, 0.1]));
+        // Same wedge swept clockwise.
+        assert!(!is_full_turn(&[0.1, 0.0, 6.2, 6.1]));
+        // A denser wedge across the seam, still partial.
+        assert!(!is_full_turn(&wrapped_sweep(6.0, 0.5, 32)));
+    }
+
+    #[test]
+    fn test_wrapping_partial_arc_fills_as_a_wedge() {
+        // The seam-crossing wedge must close through the origin; joining its
+        // endpoints directly would render a lens/chord instead.
+        let theta = vec![6.1, 6.2, 0.0, 0.1];
+        let r = vec![1.0; theta.len()];
+        let config = PolarPlotConfig::default().fill(true);
+        let data = compute_polar_plot(&r, &theta, &config);
+
+        assert!(!data.closed, "a 0.28 rad wedge is not a full turn");
+        assert!(data.closing_segment().is_none());
+        assert_eq!(data.fill_polygon.len(), theta.len() + 1);
+        let last = data.fill_polygon[theta.len()];
+        assert!(last.0.abs() < 1e-12 && last.1.abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_is_full_turn_not_starting_at_zero() {
+        // A genuine full turn whose samples start mid-circle and wrap at the seam.
+        let theta = wrapped_sweep(1.0, TAU, 180);
+        assert!(is_full_turn(&theta));
+
+        let r = vec![1.0; theta.len()];
+        let config = PolarPlotConfig::default().fill(true);
+        let data = compute_polar_plot(&r, &theta, &config);
+        assert!(data.closed);
+        // No origin vertex: a closed curve would show a seam through the centre.
+        assert_eq!(data.fill_polygon.len(), theta.len());
+        assert!(
+            !data
+                .fill_polygon
+                .iter()
+                .any(|&(x, y)| x.abs() < 1e-12 && y.abs() < 1e-12)
+        );
+    }
+
+    #[test]
+    fn test_is_full_turn_clockwise() {
+        // Decreasing angles sweep the same circle the other way round.
+        assert!(is_full_turn(&wrapped_sweep(0.0, -TAU, 180)));
+        assert!(is_full_turn(&wrapped_sweep(2.4, -TAU, 180)));
+        assert!(is_full_turn(&[0.0, -2.0 * PI / 3.0, -4.0 * PI / 3.0]));
+        // A clockwise quarter turn is still a wedge.
+        assert!(!is_full_turn(&wrapped_sweep(0.3, -PI / 2.0, 16)));
+    }
+
+    #[test]
+    fn test_is_full_turn_half_circle() {
+        let n = 50;
+        let theta: Vec<f64> = (0..n).map(|i| i as f64 * PI / (n - 1) as f64).collect();
+        assert!(!is_full_turn(&theta));
+        // Shifting the same half circle across the seam does not change it.
+        assert!(!is_full_turn(&wrapped_sweep(5.5, PI, n)));
+    }
+
+    #[test]
+    fn test_is_full_turn_multi_turn_spiral() {
+        // Two turns still close on themselves as far as the fill is concerned.
+        let n = 100;
+        let theta: Vec<f64> = (0..n).map(|i| i as f64 * 2.0 * TAU / n as f64).collect();
+        assert!(is_full_turn(&theta));
+        assert!(is_full_turn(&wrapped_sweep(0.7, 2.0 * TAU, n)));
     }
 
     #[test]
