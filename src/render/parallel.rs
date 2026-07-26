@@ -553,7 +553,13 @@ pub struct SeriesRenderData {
 #[derive(Debug, Clone)]
 pub enum RenderSeriesType {
     Polyline {
-        points: Vec<Point2f>,
+        /// One entry per contiguous run of samples the axes can represent.
+        ///
+        /// A sample with no position on its axis (non-finite anywhere,
+        /// non-positive on a log axis) breaks the line: the runs on either
+        /// side are drawn as separate sub-paths rather than joined across the
+        /// gap, which would invent a segment the user never supplied.
+        subpaths: Vec<Vec<Point2f>>,
         style: LineStyle,
         color: Color,
         width: f32,

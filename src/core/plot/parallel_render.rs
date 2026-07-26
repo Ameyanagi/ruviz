@@ -3,160 +3,574 @@ use crate::core::Point2f;
 use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
-use crate::render::skia::map_data_to_pixels_scaled;
 
-fn include_quiver_data_bounds(
-    data: &crate::plots::QuiverPlotData,
-    x_min: &mut f64,
-    x_max: &mut f64,
-    y_min: &mut f64,
-    y_max: &mut f64,
-) {
-    data.arrows
-        .iter()
-        .flat_map(|arrow| {
-            [
-                arrow.start,
-                arrow.end,
-                arrow.head[0],
-                arrow.head[1],
-                arrow.head[2],
-            ]
-        })
-        .for_each(|(x_val, y_val)| {
-            if x_val.is_finite() {
-                *x_min = (*x_min).min(x_val);
-                *x_max = (*x_max).max(x_val);
-            }
-            if y_val.is_finite() {
-                *y_min = (*y_min).min(y_val);
-                *y_max = (*y_max).max(y_val);
-            }
-        });
-}
+// ===========================================================================
+// Data bounds — one accumulator, one routine, one annotation pass
+// ===========================================================================
+//
+// Every 2D axis range in the crate comes out of [`BoundsAccumulator`]. There is
+// exactly one implementation per plot type, exactly one place where
+// annotations are folded in, and exactly one place where a plot type declares
+// its sticky edges. A new plot type therefore cannot end up with bounds that
+// differ between the raw-series path, the resolved-frame path and the SVG
+// path — which is how the three previous near-clones of this code drifted.
 
-fn include_plot_data_bounds<T: crate::plots::traits::PlotData>(
-    data: &T,
-    x_min: &mut f64,
-    x_max: &mut f64,
-    y_min: &mut f64,
-    y_max: &mut f64,
-) {
-    let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
-        crate::plots::traits::PlotData::data_bounds(data);
-
-    if series_x_min.is_finite() {
-        *x_min = (*x_min).min(series_x_min);
-    }
-    if series_x_max.is_finite() {
-        *x_max = (*x_max).max(series_x_max);
-    }
-    if series_y_min.is_finite() {
-        *y_min = (*y_min).min(series_y_min);
-    }
-    if series_y_max.is_finite() {
-        *y_max = (*y_max).max(series_y_max);
-    }
-}
-
-/// Reserve the square that a radar chart needs, including its axis label ring.
+/// The axis edges a plot type pins by construction (matplotlib `sticky_edges`).
 ///
-/// Radar polygons never leave the unit circle, so scanning their vertices clips
-/// the labels drawn at [`RADAR_LABEL_RADIUS`](crate::plots::polar::radar). Both
-/// backends derive their bounds from the same constant.
-fn include_radar_bounds(x_min: &mut f64, x_max: &mut f64, y_min: &mut f64, y_max: &mut f64) {
-    let radius = crate::plots::polar::radar::RADAR_BOUNDS_RADIUS;
-    *x_min = (*x_min).min(-radius);
-    *x_max = (*x_max).max(radius);
-    *y_min = (*y_min).min(-radius);
-    *y_max = (*y_max).max(radius);
+/// The autoscale margin (`Plot::apply_autoscale_margins`) is the only consumer:
+/// it asks the series what they pin instead of re-deriving the rule from
+/// `matches!` chains of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct StickyEdges {
+    /// The `y = 0` baseline must keep touching whichever y edge it lands on.
+    pub(super) y_zero_baseline: bool,
+    /// Every edge is pinned: the series fills its axes edge to edge.
+    pub(super) all_edges: bool,
+    /// Bounds are chosen by construction, so no autoscale margin applies.
+    pub(super) by_construction: bool,
 }
 
-fn include_point_bounds(
-    x_val: f64,
-    y_val: f64,
-    x_min: &mut f64,
-    x_max: &mut f64,
-    y_min: &mut f64,
-    y_max: &mut f64,
-) {
-    if x_val.is_finite() {
-        *x_min = (*x_min).min(x_val);
-        *x_max = (*x_max).max(x_val);
-    }
-    if y_val.is_finite() {
-        *y_min = (*y_min).min(y_val);
-        *y_max = (*y_max).max(y_val);
+impl StickyEdges {
+    /// An ordinary Cartesian series: nothing pinned, margin on all four sides.
+    pub(super) const NONE: Self = Self {
+        y_zero_baseline: false,
+        all_edges: false,
+        by_construction: false,
+    };
+
+    /// Bars and histograms: the zero baseline they are drawn from is sticky.
+    const ZERO_BASELINE: Self = Self {
+        y_zero_baseline: true,
+        all_edges: false,
+        by_construction: false,
+    };
+
+    /// Grid-sampled fields: `imshow`/`ContourSet` reach the spines exactly.
+    const ALL_EDGES: Self = Self {
+        y_zero_baseline: false,
+        all_edges: true,
+        by_construction: false,
+    };
+
+    /// Pie/radar/polar: the bounds already include their own label ring.
+    ///
+    /// Also the identity of [`Self::union`]'s `by_construction` fold, so a plot
+    /// with no series at all keeps its default axes untouched.
+    pub(super) const BY_CONSTRUCTION: Self = Self {
+        y_zero_baseline: false,
+        all_edges: false,
+        by_construction: true,
+    };
+
+    /// Combine the edges pinned by two series sharing one pair of axes.
+    ///
+    /// Pinning is contagious (`||`) because one sticky series is enough to
+    /// forbid a margin band on that edge, but "the bounds are entirely
+    /// self-determined" only survives if *every* series says so (`&&`).
+    fn union(self, other: Self) -> Self {
+        Self {
+            y_zero_baseline: self.y_zero_baseline || other.y_zero_baseline,
+            all_edges: self.all_edges || other.all_edges,
+            by_construction: self.by_construction && other.by_construction,
+        }
     }
 }
 
-fn include_x_bounds(x_val: f64, x_min: &mut f64, x_max: &mut f64) {
-    if x_val.is_finite() {
-        *x_min = (*x_min).min(x_val);
-        *x_max = (*x_max).max(x_val);
+/// The sticky edges of one plot type — the single source of truth for the rule.
+///
+/// This is the trait-shaped hook the audit asked for; it lives next to the
+/// bounds code so that adding a plot type means answering "what does it pin?"
+/// in the same match that answers "what is its extent?".
+fn sticky_edges_of(series_type: &SeriesType) -> StickyEdges {
+    match series_type {
+        // Bars and histograms include the zero baseline in their extent and
+        // must keep sitting exactly on it.
+        SeriesType::Bar { .. } | SeriesType::Histogram { .. } => StickyEdges::ZERO_BASELINE,
+        // Grid-sampled fields fill the axes by construction: `imshow` marks all
+        // four edges sticky and `ContourSet` calls `autoscale_view(tight=True)`.
+        // Without this a filled contour floats inside a bare gutter.
+        SeriesType::Heatmap { .. } | SeriesType::Contour { .. } => StickyEdges::ALL_EDGES,
+        // These reserve their own label ring inside `add_computed_series`;
+        // padding them again would shrink the figure a second time.
+        SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. } => {
+            StickyEdges::BY_CONSTRUCTION
+        }
+        _ => StickyEdges::NONE,
     }
 }
 
-fn include_y_bounds(y_val: f64, y_min: &mut f64, y_max: &mut f64) {
-    if y_val.is_finite() {
-        *y_min = (*y_min).min(y_val);
-        *y_max = (*y_max).max(y_val);
+/// Error bars attached to a series with `with_yerr` / `with_xerr`.
+///
+/// They live on `PlotSeries`, not on the series' data, so a bounds view that
+/// only sees resolved values has to be handed them explicitly — otherwise the
+/// whiskers fall outside the axis range and get clipped.
+#[derive(Clone, Copy, Default)]
+struct AttachedErrors<'a> {
+    x: Option<&'a ErrorValues>,
+    y: Option<&'a ErrorValues>,
+}
+
+impl<'a> AttachedErrors<'a> {
+    fn of(series: &'a PlotSeries) -> Self {
+        Self {
+            x: series.x_errors.as_ref(),
+            y: series.y_errors.as_ref(),
+        }
     }
 }
 
-fn include_annotation_data_bounds(
-    annotations: &[Annotation],
-    x_min: &mut f64,
-    x_max: &mut f64,
-    y_min: &mut f64,
-    y_max: &mut f64,
-) {
-    annotations.iter().for_each(|annotation| match annotation {
-        Annotation::Text { x, y, .. } => {
-            include_point_bounds(*x, *y, x_min, x_max, y_min, y_max);
+/// Running min/max over every series, annotation and error bar on one plot.
+///
+/// The accumulator carries the plot's [`AxisScale`]s and admits a coordinate
+/// only when [`AxisScale::is_valid_value`] accepts it — the same predicate the
+/// projection uses to decide whether a sample has a position at all. So the
+/// axis range is exactly the range of the samples that will be drawn: a bar's
+/// zero baseline or a non-positive data point does not drag a logarithmic axis
+/// down to a value it cannot represent, which is what used to make
+/// `.bar(..).yscale(Log)` fail range validation before it ever drew anything.
+///
+/// On a linear or symlog axis `is_valid_value` is exactly `is_finite`, so this
+/// is bit-identical to the previous behaviour there.
+#[derive(Debug, Clone, Copy)]
+struct BoundsAccumulator {
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    x_scale: AxisScale,
+    y_scale: AxisScale,
+    /// A finite coordinate was offered that this axis' scale cannot represent
+    /// — a zero or negative sample on a log axis. Used to tell "the plot has no
+    /// data" apart from "the plot's data does not fit on the axis it was given",
+    /// which deserve different answers.
+    x_rejected_by_scale: bool,
+    y_rejected_by_scale: bool,
+}
+
+impl BoundsAccumulator {
+    fn new(x_scale: AxisScale, y_scale: AxisScale) -> Self {
+        Self {
+            x_min: f64::INFINITY,
+            x_max: f64::NEG_INFINITY,
+            y_min: f64::INFINITY,
+            y_max: f64::NEG_INFINITY,
+            x_scale,
+            y_scale,
+            x_rejected_by_scale: false,
+            y_rejected_by_scale: false,
         }
-        Annotation::Arrow { x1, y1, x2, y2, .. } => {
-            include_point_bounds(*x1, *y1, x_min, x_max, y_min, y_max);
-            include_point_bounds(*x2, *y2, x_min, x_max, y_min, y_max);
+    }
+
+    fn from_bounds(bounds: (f64, f64, f64, f64), x_scale: AxisScale, y_scale: AxisScale) -> Self {
+        Self {
+            x_min: bounds.0,
+            x_max: bounds.1,
+            y_min: bounds.2,
+            y_max: bounds.3,
+            x_scale,
+            y_scale,
+            x_rejected_by_scale: false,
+            y_rejected_by_scale: false,
         }
-        Annotation::HLine { y, .. } => include_y_bounds(*y, y_min, y_max),
-        Annotation::VLine { x, .. } => include_x_bounds(*x, x_min, x_max),
-        Annotation::Rectangle {
-            x,
-            y,
-            width,
-            height,
-            ..
-        } => {
-            include_point_bounds(*x, *y, x_min, x_max, y_min, y_max);
-            include_point_bounds(*x + *width, *y + *height, x_min, x_max, y_min, y_max);
+    }
+
+    /// The axis, if any, that was offered data it cannot represent and kept
+    /// none of it. Returns the axis name and the setter that produced it.
+    fn axis_with_no_representable_data(&self) -> Option<(&'static str, &'static str)> {
+        if self.x_rejected_by_scale && !(self.x_min.is_finite() && self.x_max.is_finite()) {
+            return Some(("x", "xscale"));
         }
-        Annotation::FillBetween { x, y1, y2, .. } => {
-            x.iter()
-                .zip(y1.iter())
-                .zip(y2.iter())
-                .for_each(|((&x_val, &y1_val), &y2_val)| {
-                    include_point_bounds(x_val, y1_val, x_min, x_max, y_min, y_max);
-                    include_point_bounds(x_val, y2_val, x_min, x_max, y_min, y_max);
-                });
+        if self.y_rejected_by_scale && !(self.y_min.is_finite() && self.y_max.is_finite()) {
+            return Some(("y", "yscale"));
         }
-        Annotation::HSpan {
-            x_min: span_min,
-            x_max: span_max,
-            ..
-        } => {
-            include_x_bounds(*span_min, x_min, x_max);
-            include_x_bounds(*span_max, x_min, x_max);
+        None
+    }
+
+    fn bounds(&self) -> (f64, f64, f64, f64) {
+        (self.x_min, self.x_max, self.y_min, self.y_max)
+    }
+
+    /// The accumulated bounds, or `None` if no series contributed a finite one.
+    fn finite_bounds(&self) -> Option<(f64, f64, f64, f64)> {
+        (self.x_min.is_finite()
+            && self.x_max.is_finite()
+            && self.y_min.is_finite()
+            && self.y_max.is_finite())
+        .then(|| self.bounds())
+    }
+
+    fn include_x(&mut self, x: f64) {
+        if self.x_scale.is_valid_value(x) {
+            self.x_min = self.x_min.min(x);
+            self.x_max = self.x_max.max(x);
+        } else if x.is_finite() {
+            self.x_rejected_by_scale = true;
         }
-        Annotation::VSpan {
-            y_min: span_min,
-            y_max: span_max,
-            ..
-        } => {
-            include_y_bounds(*span_min, y_min, y_max);
-            include_y_bounds(*span_max, y_min, y_max);
+    }
+
+    fn include_y(&mut self, y: f64) {
+        if self.y_scale.is_valid_value(y) {
+            self.y_min = self.y_min.min(y);
+            self.y_max = self.y_max.max(y);
+        } else if y.is_finite() {
+            self.y_rejected_by_scale = true;
         }
-    });
+    }
+
+    fn include_point(&mut self, x: f64, y: f64) {
+        self.include_x(x);
+        self.include_y(y);
+    }
+
+    /// Include both endpoints of a span; the order of the arguments is free.
+    fn include_x_span(&mut self, a: f64, b: f64) {
+        self.include_x(a);
+        self.include_x(b);
+    }
+
+    fn include_y_span(&mut self, a: f64, b: f64) {
+        self.include_y(a);
+        self.include_y(b);
+    }
+
+    fn include_plot_data<T: crate::plots::traits::PlotData + ?Sized>(&mut self, data: &T) {
+        let ((x_min, x_max), (y_min, y_max)) = crate::plots::traits::PlotData::data_bounds(data);
+        self.include_x_span(x_min, x_max);
+        self.include_y_span(y_min, y_max);
+    }
+
+    // -- per-plot-type extents -------------------------------------------
+
+    /// Points, each optionally widened by its error bar.
+    ///
+    /// Line, scatter and both dedicated error-bar series share this routine: an
+    /// error bar is just a point with an extent. Folding the extent in here is
+    /// what keeps `with_yerr` whiskers inside the axis range instead of clipped
+    /// against the spine.
+    fn add_points_with_errors(
+        &mut self,
+        x: &[f64],
+        y: &[f64],
+        x_errors: Option<ErrorValuesRef<'_>>,
+        y_errors: Option<ErrorValuesRef<'_>>,
+    ) {
+        for (index, (&x_value, &y_value)) in x.iter().zip(y.iter()).enumerate() {
+            if x_value.is_finite() {
+                match finite_error_at(x_errors, index) {
+                    Some((lower, upper)) => self.include_x_span(x_value - lower, x_value + upper),
+                    None => self.include_x(x_value),
+                }
+            }
+            if y_value.is_finite() {
+                match finite_error_at(y_errors, index) {
+                    Some((lower, upper)) => self.include_y_span(y_value - lower, y_value + upper),
+                    None => self.include_y(y_value),
+                }
+            }
+        }
+    }
+
+    /// Categorical bars, with matplotlib's half-category padding on each side
+    /// so the first and last bar are fully inside the axes.
+    fn add_bars(&mut self, category_count: usize, values: &[f64]) {
+        self.include_x_span(-0.5, category_count as f64 - 0.5);
+        for &value in values {
+            if value.is_finite() {
+                // Bars run from the zero baseline to the value, so both ends count.
+                self.include_y_span(value.min(0.0), value.max(0.0));
+            }
+        }
+    }
+
+    fn add_histogram(&mut self, data: &crate::plots::histogram::HistogramData) {
+        if let (Some(&first), Some(&last)) = (data.bin_edges.first(), data.bin_edges.last()) {
+            self.include_x_span(first, last);
+        }
+        // Bars are drawn from the baseline, so the baseline is part of the data.
+        self.include_y(0.0);
+        for &count in &data.counts {
+            if count > 0.0 {
+                self.include_y(count);
+            }
+        }
+    }
+
+    fn add_box_plot(&mut self, data: &[f64]) -> Result<()> {
+        if data.is_empty() {
+            return Err(PlottingError::EmptyDataSet);
+        }
+        // One box occupies the unit cell centred on 0.5.
+        self.include_x_span(0.0, 1.0);
+        for &value in data {
+            self.include_y(value);
+        }
+        Ok(())
+    }
+
+    /// Series whose geometry lives in their own precomputed data type.
+    ///
+    /// These carry no reactive `PlotData`, so both the raw and the resolved
+    /// views reach exactly this code.
+    fn add_computed_series(&mut self, series_type: &SeriesType) {
+        match series_type {
+            SeriesType::Heatmap { data } => self.include_plot_data(data.as_ref()),
+            SeriesType::Boxen { data } => self.include_plot_data(data.as_ref()),
+            SeriesType::Kde { data } => {
+                self.add_points_with_errors(&data.x, &data.y, None, None);
+                // Density curves are filled down to zero.
+                self.include_y(0.0);
+            }
+            SeriesType::Ecdf { data } => {
+                self.add_points_with_errors(&data.x, &data.y, None, None);
+                // The step function starts at zero.
+                self.include_y(0.0);
+            }
+            SeriesType::Violin { data } => {
+                // The violin is as tall as its KDE evaluation range, which
+                // extends past the raw data by a few bandwidths.
+                //
+                // Every grid point is offered rather than just the two ends:
+                // the grid is monotone, so on a linear axis this is exactly the
+                // pair of endpoints, but on a log axis the low end can run past
+                // the axis, and then the floor has to be the smallest grid point
+                // the axis can actually show.
+                if data.kde.x.is_empty() {
+                    self.include_y_span(data.range.0, data.range.1);
+                } else {
+                    for &value in &data.kde.x {
+                        self.include_y(value);
+                    }
+                }
+                self.include_x_span(0.0, 1.0);
+            }
+            SeriesType::Quiver { data } => {
+                for arrow in &data.arrows {
+                    for (x, y) in [
+                        arrow.start,
+                        arrow.end,
+                        arrow.head[0],
+                        arrow.head[1],
+                        arrow.head[2],
+                    ] {
+                        self.include_point(x, y);
+                    }
+                }
+            }
+            SeriesType::Contour { data } => {
+                for &x in &data.x {
+                    self.include_x(x);
+                }
+                for &y in &data.y {
+                    self.include_y(y);
+                }
+            }
+            SeriesType::Pie { .. } => {
+                // Pie charts draw into a normalised unit square.
+                self.include_x_span(0.0, 1.0);
+                self.include_y_span(0.0, 1.0);
+            }
+            SeriesType::Radar { .. } => {
+                // Radar polygons never leave the unit circle, but the axis
+                // labels sit further out, so reserve the labelled square rather
+                // than scanning polygon vertices. Both backends use the same
+                // constant.
+                let radius = crate::plots::polar::radar::RADAR_BOUNDS_RADIUS;
+                self.include_x_span(-radius, radius);
+                self.include_y_span(-radius, radius);
+            }
+            SeriesType::Polar { data } => {
+                // Polar plots need a symmetric square centred on the origin, so
+                // an asymmetric curve (a cardioid, say) still renders centred
+                // with room for its labels. This *replaces* the range on
+                // purpose: the sample points must not pull the centre off.
+                let label_margin = data.r_max * 1.5;
+                self.x_min = -label_margin;
+                self.x_max = label_margin;
+                self.y_min = -label_margin;
+                self.y_max = label_margin;
+            }
+            SeriesType::Line { .. }
+            | SeriesType::Scatter { .. }
+            | SeriesType::Bar { .. }
+            | SeriesType::ErrorBars { .. }
+            | SeriesType::ErrorBarsXY { .. }
+            | SeriesType::Histogram { .. }
+            | SeriesType::BoxPlot { .. } => {
+                unreachable!("data-carrying series are accumulated from their resolved values")
+            }
+        }
+    }
+
+    /// Fold in every annotation drawn in data coordinates.
+    ///
+    /// Called from exactly one place (`Plot::finish_bounds`) so no caller can
+    /// forget it and silently clip an `HSpan` or a `FillBetween`.
+    fn include_annotations(&mut self, annotations: &[Annotation]) {
+        for annotation in annotations {
+            match annotation {
+                Annotation::Text { x, y, .. } => self.include_point(*x, *y),
+                Annotation::Arrow { x1, y1, x2, y2, .. } => {
+                    self.include_point(*x1, *y1);
+                    self.include_point(*x2, *y2);
+                }
+                Annotation::HLine { y, .. } => self.include_y(*y),
+                Annotation::VLine { x, .. } => self.include_x(*x),
+                Annotation::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                    ..
+                } => {
+                    self.include_point(*x, *y);
+                    self.include_point(*x + *width, *y + *height);
+                }
+                Annotation::FillBetween { x, y1, y2, .. } => {
+                    for ((&x_value, &y1_value), &y2_value) in x.iter().zip(y1).zip(y2) {
+                        self.include_point(x_value, y1_value);
+                        self.include_y(y2_value);
+                    }
+                }
+                Annotation::HSpan { x_min, x_max, .. } => self.include_x_span(*x_min, *x_max),
+                Annotation::VSpan { y_min, y_max, .. } => self.include_y_span(*y_min, *y_max),
+            }
+        }
+    }
+}
+
+/// The `(lower, upper)` extent of an error bar, or `None` when it has no usable
+/// value at `index` — a short/absent error array must leave the point itself in
+/// the bounds rather than dropping it.
+fn finite_error_at(errors: Option<ErrorValuesRef<'_>>, index: usize) -> Option<(f64, f64)> {
+    errors
+        .and_then(|errors| errors.bounds_at(index))
+        .filter(|(lower, upper)| lower.is_finite() && upper.is_finite())
+}
+
+/// One series' contribution to a plot's data bounds.
+///
+/// Implemented for every shape a caller has on hand — a raw `PlotSeries`, a
+/// resolved frame entry, or the two paired up — so all of them run the *same*
+/// per-plot-type code in [`BoundsAccumulator`]. Prefer the paired form: it is
+/// the only one that can see error bars attached with `with_yerr`/`with_xerr`.
+trait SeriesBoundsSource {
+    fn accumulate_bounds(&self, acc: &mut BoundsAccumulator) -> Result<()>;
+}
+
+impl<T: SeriesBoundsSource + ?Sized> SeriesBoundsSource for &T {
+    fn accumulate_bounds(&self, acc: &mut BoundsAccumulator) -> Result<()> {
+        (**self).accumulate_bounds(acc)
+    }
+}
+
+impl SeriesBoundsSource for PlotSeries {
+    fn accumulate_bounds(&self, acc: &mut BoundsAccumulator) -> Result<()> {
+        let attached = AttachedErrors::of(self);
+        match &self.series_type {
+            SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
+                acc.add_points_with_errors(
+                    &x_data.resolve_cow(0.0),
+                    &y_data.resolve_cow(0.0),
+                    attached.x.map(ErrorValuesRef::from),
+                    attached.y.map(ErrorValuesRef::from),
+                );
+            }
+            SeriesType::Bar {
+                categories, values, ..
+            } => acc.add_bars(categories.len(), &values.resolve_cow(0.0)),
+            SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            } => {
+                let y_errors = y_errors.resolve_cow(0.0);
+                acc.add_points_with_errors(
+                    &x_data.resolve_cow(0.0),
+                    &y_data.resolve_cow(0.0),
+                    attached.x.map(ErrorValuesRef::from),
+                    Some(effective_error_values(attached.y, &y_errors)),
+                );
+            }
+            SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            } => {
+                let x_errors = x_errors.resolve_cow(0.0);
+                let y_errors = y_errors.resolve_cow(0.0);
+                acc.add_points_with_errors(
+                    &x_data.resolve_cow(0.0),
+                    &y_data.resolve_cow(0.0),
+                    Some(effective_error_values(attached.x, &x_errors)),
+                    Some(effective_error_values(attached.y, &y_errors)),
+                );
+            }
+            SeriesType::Histogram { .. } => {
+                // A histogram that cannot be binned contributes no extent; the
+                // render path reports the error.
+                if let Ok(data) = self.series_type.histogram_data_at(0.0) {
+                    acc.add_histogram(&data);
+                }
+            }
+            SeriesType::BoxPlot { data, .. } => acc.add_box_plot(&data.resolve_cow(0.0))?,
+            series_type => acc.add_computed_series(series_type),
+        }
+        Ok(())
+    }
+}
+
+impl ResolvedSeries<'_> {
+    fn accumulate_bounds_with(
+        &self,
+        acc: &mut BoundsAccumulator,
+        attached: AttachedErrors<'_>,
+    ) -> Result<()> {
+        match self {
+            ResolvedSeries::Line { x, y } | ResolvedSeries::Scatter { x, y } => acc
+                .add_points_with_errors(
+                    x,
+                    y,
+                    attached.x.map(ErrorValuesRef::from),
+                    attached.y.map(ErrorValuesRef::from),
+                ),
+            ResolvedSeries::Bar { categories, values } => acc.add_bars(categories.len(), values),
+            ResolvedSeries::ErrorBars { x, y, y_errors } => acc.add_points_with_errors(
+                x,
+                y,
+                attached.x.map(ErrorValuesRef::from),
+                Some(effective_error_values(attached.y, y_errors)),
+            ),
+            ResolvedSeries::ErrorBarsXY {
+                x,
+                y,
+                x_errors,
+                y_errors,
+            } => acc.add_points_with_errors(
+                x,
+                y,
+                Some(effective_error_values(attached.x, x_errors)),
+                Some(effective_error_values(attached.y, y_errors)),
+            ),
+            ResolvedSeries::Histogram { data } => acc.add_histogram(data),
+            ResolvedSeries::BoxPlot { data, .. } => acc.add_box_plot(data)?,
+            ResolvedSeries::Other(series_type) => acc.add_computed_series(series_type),
+        }
+        Ok(())
+    }
+}
+
+impl SeriesBoundsSource for ResolvedSeries<'_> {
+    fn accumulate_bounds(&self, acc: &mut BoundsAccumulator) -> Result<()> {
+        self.accumulate_bounds_with(acc, AttachedErrors::default())
+    }
+}
+
+impl SeriesBoundsSource for (&PlotSeries, &ResolvedSeries<'_>) {
+    fn accumulate_bounds(&self, acc: &mut BoundsAccumulator) -> Result<()> {
+        let (series, resolved) = *self;
+        resolved.accumulate_bounds_with(acc, AttachedErrors::of(series))
+    }
 }
 
 impl Plot {
@@ -201,7 +615,7 @@ impl Plot {
         let dpi = render_scale.dpi();
         renderer.set_render_scale(render_scale);
 
-        let bounds = self.effective_data_bounds_from_resolved(resolved_series)?;
+        let bounds = self.effective_frame_bounds(resolved_series)?;
         self.validate_axis_scale_ranges_for_render(
             &self.series_mgr.series,
             bounds.0,
@@ -409,30 +823,48 @@ impl Plot {
                                 &self.layout.y_scale,
                             )?;
 
-                        // Process line segments in parallel
-                        let mut points = points;
-                        if series.marker_style.is_none()
-                            && series.x_errors.is_none()
-                            && series.y_errors.is_none()
-                            && let Some(canonicalized) = canonicalize_line_points_exact(&points)
-                        {
-                            points = canonicalized;
-                        }
+                        // Break the line at every sample the axes cannot
+                        // represent, using the same run splitter as the raster
+                        // backend so the two cannot disagree about where a line
+                        // stops and restarts.
+                        let subpaths =
+                            crate::core::plot::raster_batches::representable_sample_runs(
+                                x_data,
+                                y_data,
+                                &self.layout.x_scale,
+                                &self.layout.y_scale,
+                            )
+                            .into_iter()
+                            .map(|run| {
+                                let mut points = points[run].to_vec();
 
-                        if should_reduce_line_series(
-                            series,
-                            points.len(),
-                            parallel_plot_area.width(),
-                        ) && let Some(reduced) = reduce_line_points_for_raster(
-                            &points,
-                            parallel_plot_area.left,
-                            parallel_plot_area.width(),
-                        ) {
-                            points = reduced;
-                        }
+                                if series.marker_style.is_none()
+                                    && series.x_errors.is_none()
+                                    && series.y_errors.is_none()
+                                    && let Some(canonicalized) =
+                                        canonicalize_line_points_exact(&points)
+                                {
+                                    points = canonicalized;
+                                }
+
+                                if should_reduce_line_series(
+                                    series,
+                                    points.len(),
+                                    parallel_plot_area.width(),
+                                ) && let Some(reduced) = reduce_line_points_for_raster(
+                                    &points,
+                                    parallel_plot_area.left,
+                                    parallel_plot_area.width(),
+                                ) {
+                                    points = reduced;
+                                }
+
+                                points
+                            })
+                            .collect();
 
                         RenderSeriesType::Polyline {
-                            points,
+                            subpaths,
                             style: series.line_style.clone().unwrap_or(LineStyle::Solid),
                             color,
                             width: line_width,
@@ -476,60 +908,34 @@ impl Plot {
                             unreachable!("resolved bars must match their declarative series");
                         };
                         let values = values.as_ref();
-                        // Convert categories to x-coordinates
-                        let x_data: Vec<f64> = (0..categories.len()).map(|i| i as f64).collect();
-
-                        // Transform coordinates
-                        let points = self
-                            .render
-                            .parallel_renderer
-                            .transform_coordinates_parallel_scaled(
-                                &x_data,
-                                values,
-                                data_bounds.clone(),
-                                parallel_plot_area.clone(),
-                                &self.layout.x_scale,
-                                &self.layout.y_scale,
-                            )?;
-
-                        // Bar width as a fraction of category spacing, read from
-                        // the config like the sequential path does rather than
-                        // hardcoded, so `.bar_width(..)` reaches both backends.
-                        let bar_width_fraction = config.width;
-                        let data_range = (bounds.1 - bounds.0) as f32;
-                        let pixels_per_unit = parallel_plot_area.width() / data_range;
-                        let bar_width = bar_width_fraction * pixels_per_unit;
-
-                        let baseline_y = map_data_to_pixels_scaled(
-                            0.0,
-                            0.0,
-                            bounds.0,
-                            bounds.1,
-                            bounds.2,
-                            bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                        .1;
 
                         // Same resolution as the sequential path, so the two
                         // backends cannot drift apart on bar edges.
                         let edge = config.resolved_edge(&self.display.theme, color);
 
-                        let bars = points
+                        // Geometry comes from the one shared helper the raster
+                        // and SVG backends use, so a bar chart cannot land in a
+                        // different place depending on which backend drew it.
+                        let bars = values
                             .iter()
+                            .take(categories.len())
                             .enumerate()
-                            .map(|(i, point)| {
-                                let height = (baseline_y - point.y).abs();
+                            .map(|(i, &value)| {
+                                let (x, y, width, height) = super::series_internal::bar_pixel_rect(
+                                    i,
+                                    value,
+                                    config.width,
+                                    plot_area,
+                                    bounds.0,
+                                    bounds.1,
+                                    bounds.2,
+                                    bounds.3,
+                                    &self.layout.y_scale,
+                                );
                                 crate::render::parallel::BarInstance {
-                                    x: point.x - bar_width * 0.5,
-                                    y: if values[i] >= 0.0 {
-                                        point.y
-                                    } else {
-                                        baseline_y
-                                    },
-                                    width: bar_width,
+                                    x,
+                                    y,
+                                    width,
                                     height,
                                     color,
                                     edge,
@@ -581,54 +987,36 @@ impl Plot {
                             }
                         };
 
-                        // Convert histogram to bar format for parallel rendering
-                        let x_data: Vec<f64> = hist_data
-                            .bin_edges
-                            .windows(2)
-                            .map(|w| (w[0] + w[1]) / 2.0) // bin centers
-                            .collect();
-
-                        let points = self
-                            .render
-                            .parallel_renderer
-                            .transform_coordinates_parallel_scaled(
-                                &x_data,
-                                &hist_data.counts,
-                                data_bounds.clone(),
-                                parallel_plot_area.clone(),
-                                &self.layout.x_scale,
-                                &self.layout.y_scale,
-                            )?;
-
-                        // Create bar instances for histogram
-                        let baseline_y = map_data_to_pixels_scaled(
-                            0.0,
-                            0.0,
-                            bounds.0,
-                            bounds.1,
-                            bounds.2,
-                            bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                        .1;
-
                         // Bins are adjacent, so they need an explicit edge to stay
                         // readable as separate bins (see `HistogramData::resolved_edge`).
                         let edge = hist_data.resolved_edge(&self.display.theme, color);
 
-                        let bars = points
+                        // Geometry comes from the one shared helper. This arm
+                        // used to place bins centre-based from a *data*-space
+                        // width used as a pixel width, so every bin was the
+                        // wrong size and in the wrong place.
+                        let bars = hist_data
+                            .counts
                             .iter()
                             .enumerate()
-                            .map(|(i, point)| {
-                                let bar_width =
-                                    (hist_data.bin_edges[i + 1] - hist_data.bin_edges[i]) as f32;
-                                let height = (baseline_y - point.y).abs();
+                            .map(|(i, &count)| {
+                                let (x, y, width, height) =
+                                    super::series_internal::histogram_bar_pixel_rect(
+                                        hist_data.bin_edges[i],
+                                        hist_data.bin_edges[i + 1],
+                                        count,
+                                        plot_area,
+                                        bounds.0,
+                                        bounds.1,
+                                        bounds.2,
+                                        bounds.3,
+                                        &self.layout.x_scale,
+                                        &self.layout.y_scale,
+                                    );
                                 crate::render::parallel::BarInstance {
-                                    x: point.x - bar_width * 0.5,
-                                    y: point.y,
-                                    width: bar_width,
+                                    x,
+                                    y,
+                                    width,
                                     height,
                                     color,
                                     edge,
@@ -652,126 +1040,50 @@ impl Plot {
                                 ))
                             })?;
 
-                        // Transform coordinates for box plot elements. Every
-                        // geometry constant comes from `box_data` — see the
-                        // contract on `BoxPlotData`.
-                        let x_center = 0.5; // Center the box plot
-                        let box_width = box_data.width_ratio;
-
-                        // Map Y coordinates to plot area
-                        let q1_y = map_data_to_pixels_scaled(
-                            0.0,
-                            box_data.q1,
+                        // One shared projection with the raster and SVG
+                        // backends. This arm used to re-derive all five
+                        // quantiles itself; deriving them once is what keeps
+                        // the three backends from drifting apart again.
+                        let px = super::series_internal::BoxPlotPixels::new(
+                            &box_data,
+                            plot_area,
                             bounds.0,
                             bounds.1,
                             bounds.2,
                             bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
                             &self.layout.y_scale,
-                        )
-                        .1;
-                        let median_y = map_data_to_pixels_scaled(
-                            0.0,
-                            box_data.median,
-                            bounds.0,
-                            bounds.1,
-                            bounds.2,
-                            bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                        .1;
-                        let q3_y = map_data_to_pixels_scaled(
-                            0.0,
-                            box_data.q3,
-                            bounds.0,
-                            bounds.1,
-                            bounds.2,
-                            bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                        .1;
-                        let lower_whisker_y = map_data_to_pixels_scaled(
-                            0.0,
-                            box_data.min,
-                            bounds.0,
-                            bounds.1,
-                            bounds.2,
-                            bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                        .1;
-                        let upper_whisker_y = map_data_to_pixels_scaled(
-                            0.0,
-                            box_data.max,
-                            bounds.0,
-                            bounds.1,
-                            bounds.2,
-                            bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                        .1;
-
-                        // Map X coordinate
-                        let x_center_px = map_data_to_pixels_scaled(
-                            x_center,
-                            0.0,
-                            bounds.0,
-                            bounds.1,
-                            bounds.2,
-                            bounds.3,
-                            plot_area,
-                            &self.layout.x_scale,
-                            &self.layout.y_scale,
-                        )
-                        .0;
-                        let box_left = x_center_px - box_width * plot_area.width() * 0.5;
-                        let box_right = x_center_px + box_width * plot_area.width() * 0.5;
+                        );
 
                         // Transform outliers
-                        let mut outliers = Vec::new();
                         let visible_outliers: &[f64] = if box_data.show_outliers {
                             &box_data.outliers
                         } else {
                             &[]
                         };
-                        for &outlier in visible_outliers {
-                            let outlier_y = map_data_to_pixels_scaled(
-                                0.0,
-                                outlier,
-                                bounds.0,
-                                bounds.1,
-                                bounds.2,
-                                bounds.3,
-                                plot_area,
-                                &self.layout.x_scale,
-                                &self.layout.y_scale,
-                            )
-                            .1;
-                            outliers.push(crate::core::types::Point2f {
-                                x: x_center_px,
-                                y: outlier_y,
-                            });
-                        }
+                        let outliers = visible_outliers
+                            .iter()
+                            .map(|&outlier| crate::core::types::Point2f {
+                                x: px.x_center,
+                                y: super::series_internal::box_plot_value_y(
+                                    outlier,
+                                    plot_area,
+                                    bounds.2,
+                                    bounds.3,
+                                    &self.layout.y_scale,
+                                ),
+                            })
+                            .collect();
 
                         let edge_color = box_data.edge_color.unwrap_or(color);
                         let box_render_data = crate::render::parallel::BoxPlotRenderData {
-                            x_center: x_center_px,
-                            box_left,
-                            box_right,
-                            q1_y,
-                            median_y,
-                            q3_y,
-                            lower_whisker_y,
-                            upper_whisker_y,
+                            x_center: px.x_center,
+                            box_left: px.box_left,
+                            box_right: px.box_right,
+                            q1_y: px.q1_y,
+                            median_y: px.median_y,
+                            q3_y: px.q3_y,
+                            lower_whisker_y: px.lower_whisker_y,
+                            upper_whisker_y: px.upper_whisker_y,
                             outliers,
                             box_color: color.with_alpha(box_data.fill_alpha),
                             line_color: edge_color,
@@ -803,7 +1115,8 @@ impl Plot {
                             data_bounds.x_max,
                             data_bounds.y_min,
                             data_bounds.y_max,
-                        );
+                        )
+                        .with_scales(self.layout.x_scale, self.layout.y_scale);
                         let plot_left = parallel_plot_area.left;
                         let plot_top = parallel_plot_area.top;
                         let plot_right = parallel_plot_area.left + parallel_plot_area.width();
@@ -1155,14 +1468,26 @@ impl Plot {
         for processed in processed_series {
             match processed.series_type {
                 RenderSeriesType::Polyline {
-                    points,
+                    subpaths,
                     style,
                     color,
                     width,
                 } => {
-                    let points: Vec<(f32, f32)> =
-                        points.into_iter().map(|point| (point.x, point.y)).collect();
-                    renderer.draw_polyline_clipped(&points, color, width, style, clip_rect)?;
+                    // One draw call per sub-path: the gaps between them are
+                    // samples the axes cannot place, and must stay gaps.
+                    for subpath in subpaths {
+                        let points: Vec<(f32, f32)> = subpath
+                            .into_iter()
+                            .map(|point| (point.x, point.y))
+                            .collect();
+                        renderer.draw_polyline_clipped(
+                            &points,
+                            color,
+                            width,
+                            style.clone(),
+                            clip_rect,
+                        )?;
+                    }
                 }
                 RenderSeriesType::Line { segments } => {
                     // Draw all line segments
@@ -1375,6 +1700,7 @@ impl Plot {
                     dpi,
                     self.layout.tick_config.enabled,
                     false,
+                    &self.layout.y_scale,
                 )?;
             } else {
                 renderer.draw_axis_labels_at_scaled(
@@ -1453,292 +1779,122 @@ impl Plot {
         Ok(renderer.into_image())
     }
 
-    /// Expand already-computed data bounds with annotation geometry.
-    pub(super) fn expand_bounds_with_annotations(
-        &self,
-        bounds: (f64, f64, f64, f64),
-    ) -> (f64, f64, f64, f64) {
-        let (mut x_min, mut x_max, mut y_min, mut y_max) = bounds;
+    // =======================================================================
+    // Data bounds
+    // =======================================================================
 
-        include_annotation_data_bounds(
-            &self.annotations,
-            &mut x_min,
-            &mut x_max,
-            &mut y_min,
-            &mut y_max,
-        );
+    /// The union of the sticky edges declared by `series_list`.
+    ///
+    /// See [`StickyEdges`]; the autoscale margin consults this instead of
+    /// re-deriving "is it a bar? is it a heatmap?" for itself.
+    /// An empty list yields [`StickyEdges::BY_CONSTRUCTION`], the identity of
+    /// the `&&`-fold: with no series there is nothing to autoscale, so the
+    /// default axes must stay exactly as constructed rather than growing a
+    /// margin band around nothing.
+    pub(super) fn sticky_edges_for_series(series_list: &[PlotSeries]) -> StickyEdges {
+        series_list
+            .iter()
+            .map(|series| sticky_edges_of(&series.series_type))
+            .reduce(StickyEdges::union)
+            .unwrap_or(StickyEdges::BY_CONSTRUCTION)
+    }
 
-        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
-        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
+    /// The sticky edges of this plot's own series.
+    pub(super) fn sticky_edges(&self) -> StickyEdges {
+        Self::sticky_edges_for_series(&self.series_mgr.series)
+    }
 
+    /// Widen a degenerate (`min == max`) range so the axis has a span to scale.
+    fn normalize_degenerate_bounds(&self, bounds: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
+        let (x_min, x_max) =
+            crate::axes::expand_degenerate_range(bounds.0, bounds.1, &self.layout.x_scale);
+        let (y_min, y_max) =
+            crate::axes::expand_degenerate_range(bounds.2, bounds.3, &self.layout.y_scale);
         (x_min, x_max, y_min, y_max)
     }
 
-    /// Calculate data bounds across all series
-    pub(super) fn calculate_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
+    /// Scan a set of series into a [`BoundsAccumulator`].
+    ///
+    /// This is *the* bounds routine. Every caller differs only in the view it
+    /// supplies — raw series, resolved frame entries, or the two paired — and
+    /// each view runs the same per-plot-type code, so a plot type cannot end up
+    /// with subtly different bounds on different paths.
+    fn accumulate_series_bounds<S: SeriesBoundsSource>(
+        &self,
+        series: impl IntoIterator<Item = S>,
+    ) -> Result<BoundsAccumulator> {
         if let Some(err) = self.pending_ingestion_error() {
             return Err(err);
         }
 
-        let mut x_min = f64::INFINITY;
-        let mut x_max = f64::NEG_INFINITY;
-        let mut y_min = f64::INFINITY;
-        let mut y_max = f64::NEG_INFINITY;
-
-        for series in &self.series_mgr.series {
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
-                    let x_data = x_data.resolve_cow(0.0);
-                    let y_data = y_data.resolve_cow(0.0);
-                    for (&x_val, &y_val) in x_data.iter().zip(y_data.iter()) {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                }
-                SeriesType::Bar {
-                    categories, values, ..
-                } => {
-                    let values = values.resolve_cow(0.0);
-                    // Add 0.5-unit padding on each side for bar charts (matplotlib-compatible)
-                    // This ensures bars at positions 0 and n-1 are fully visible
-                    x_min = x_min.min(-0.5);
-                    x_max = x_max.max(categories.len() as f64 - 0.5);
-
-                    for &val in values.iter() {
-                        if val.is_finite() {
-                            y_min = y_min.min(val.min(0.0));
-                            y_max = y_max.max(val.max(0.0));
-                        }
-                    }
-                }
-                SeriesType::ErrorBars {
-                    x_data,
-                    y_data,
-                    y_errors,
-                } => {
-                    let x_data = x_data.resolve_cow(0.0);
-                    let y_data = y_data.resolve_cow(0.0);
-                    let y_errors = y_errors.resolve_cow(0.0);
-                    for ((&x_val, &y_val), &y_err) in
-                        x_data.iter().zip(y_data.iter()).zip(y_errors.iter())
-                    {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                SeriesType::ErrorBarsXY {
-                    x_data,
-                    y_data,
-                    x_errors,
-                    y_errors,
-                } => {
-                    let x_data = x_data.resolve_cow(0.0);
-                    let y_data = y_data.resolve_cow(0.0);
-                    let x_errors = x_errors.resolve_cow(0.0);
-                    let y_errors = y_errors.resolve_cow(0.0);
-                    for (((&x_val, &y_val), &x_err), &y_err) in x_data
-                        .iter()
-                        .zip(y_data.iter())
-                        .zip(x_errors.iter())
-                        .zip(y_errors.iter())
-                    {
-                        if x_val.is_finite() && x_err.is_finite() {
-                            x_min = x_min.min(x_val - x_err);
-                            x_max = x_max.max(x_val + x_err);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                SeriesType::Histogram { .. } => {
-                    if let Ok(hist_data) = series.series_type.histogram_data_at(0.0) {
-                        // X bounds from bin edges
-                        if !hist_data.bin_edges.is_empty() {
-                            x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
-                            x_max = x_max.max(*hist_data.bin_edges.last().unwrap());
-                        }
-
-                        // Y bounds from counts (include zero baseline)
-                        y_min = y_min.min(0.0);
-                        for &count in &hist_data.counts {
-                            if count.is_finite() && count > 0.0 {
-                                y_max = y_max.max(count);
-                            }
-                        }
-                    }
-                }
-                SeriesType::BoxPlot { data, .. } => {
-                    let data = data.resolve_cow(0.0);
-                    if data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-
-                    // Set x bounds for box plot (centered at 0.5)
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-
-                    // Y bounds include all data values
-                    for &value in data.iter() {
-                        if value.is_finite() {
-                            y_min = y_min.min(value);
-                            y_max = y_max.max(value);
-                        }
-                    }
-                }
-                SeriesType::Heatmap { data } => {
-                    let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
-                        crate::plots::traits::PlotData::data_bounds(data.as_ref());
-                    x_min = x_min.min(series_x_min);
-                    x_max = x_max.max(series_x_max);
-                    y_min = y_min.min(series_y_min);
-                    y_max = y_max.max(series_y_max);
-                }
-                SeriesType::Kde { data } => {
-                    // KDE bounds from x/y data
-                    for i in 0..data.x.len() {
-                        let x_val = data.x[i];
-                        let y_val = data.y[i];
-
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                    // Include zero baseline for density plots
-                    y_min = y_min.min(0.0);
-                }
-                SeriesType::Ecdf { data } => {
-                    // ECDF bounds from x/y data
-                    for i in 0..data.x.len() {
-                        let x_val = data.x[i];
-                        let y_val = data.y[i];
-
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                    // Include zero baseline for ECDF
-                    y_min = y_min.min(0.0);
-                }
-                SeriesType::Violin { data } => {
-                    // Violin bounds from KDE range (extends beyond data range by 3 bandwidths)
-                    // Use KDE's x values which represent the evaluation range
-                    let (kde_min, kde_max) = if !data.kde.x.is_empty() {
-                        (
-                            data.kde.x.first().copied().unwrap_or(data.range.0),
-                            data.kde.x.last().copied().unwrap_or(data.range.1),
-                        )
-                    } else {
-                        data.range
-                    };
-                    if kde_min.is_finite() {
-                        y_min = y_min.min(kde_min);
-                    }
-                    if kde_max.is_finite() {
-                        y_max = y_max.max(kde_max);
-                    }
-                    // X bounds for centered violin
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                }
-                SeriesType::Boxen { data } => {
-                    include_plot_data_bounds(
-                        data.as_ref(),
-                        &mut x_min,
-                        &mut x_max,
-                        &mut y_min,
-                        &mut y_max,
-                    );
-                }
-                SeriesType::Quiver { data } => {
-                    include_quiver_data_bounds(
-                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
-                    );
-                }
-                SeriesType::Contour { data } => {
-                    // Contour bounds from grid coordinates
-                    for &x_val in &data.x {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                    }
-                    for &y_val in &data.y {
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                }
-                SeriesType::Pie { .. } => {
-                    // Pie charts use normalized 0-1 coordinate space
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                    y_min = y_min.min(0.0);
-                    y_max = y_max.max(1.0);
-                }
-                SeriesType::Radar { .. } => {
-                    // Radar charts use a normalized coordinate space whose polygons
-                    // never exceed r = 1.0, but the axis labels sit further out at
-                    // `RADAR_LABEL_RADIUS`. Reserve room for them (matching the SVG
-                    // backend) instead of scanning polygon vertices.
-                    include_radar_bounds(&mut x_min, &mut x_max, &mut y_min, &mut y_max);
-                }
-                SeriesType::Polar { data } => {
-                    // Polar plots need symmetric space centered at origin
-                    // Use ONLY the label margin bounds, ignoring actual data points
-                    // This ensures asymmetric curves (like cardioid) still have centered labels
-                    let label_margin = data.r_max * 1.5;
-                    x_min = -label_margin;
-                    x_max = label_margin;
-                    y_min = -label_margin;
-                    y_max = label_margin;
-                }
-            }
+        let mut acc = BoundsAccumulator::new(self.layout.x_scale, self.layout.y_scale);
+        for source in series {
+            source.accumulate_bounds(&mut acc)?;
         }
-
-        include_annotation_data_bounds(
-            &self.annotations,
-            &mut x_min,
-            &mut x_max,
-            &mut y_min,
-            &mut y_max,
-        );
-
-        if !x_min.is_finite() || !x_max.is_finite() || !y_min.is_finite() || !y_max.is_finite() {
-            return Ok(self.empty_cartesian_bounds());
-        }
-
-        // Handle edge cases
-        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
-        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
-
-        Ok((x_min, x_max, y_min, y_max))
+        Ok(acc)
     }
 
+    /// Turn a scan into the plot's axis range.
+    ///
+    /// Annotations are folded in here and nowhere else, so no caller can drop
+    /// annotation-driven axis expansion and clip an `HSpan` or a `FillBetween`.
+    ///
+    /// Fails when an axis was offered data it cannot represent and nothing
+    /// survived — every sample on a log axis was zero or negative. Falling back
+    /// to the empty-plot placeholder there would draw a blank figure and say
+    /// nothing, which is the silent-loss failure this accumulator exists to
+    /// avoid. A plot with no data at all still gets the placeholder.
+    fn finish_bounds(&self, mut acc: BoundsAccumulator) -> Result<(f64, f64, f64, f64)> {
+        acc.include_annotations(&self.annotations);
+        if let Some(bounds) = acc.finite_bounds() {
+            return Ok(self.normalize_degenerate_bounds(bounds));
+        }
+        if let Some((axis, setter)) = acc.axis_with_no_representable_data() {
+            let shared = crate::axes::scale::LOG_SCALE_REQUIRES_POSITIVE;
+            return Err(PlottingError::InvalidInput(format!(
+                "Invalid {axis}-axis range: {shared} \
+                 (no sample can be placed on the logarithmic {axis} axis because every \
+                 {axis} value is zero or negative. Remove `.{setter}(AxisScale::Log)`, use \
+                 `.{setter}(AxisScale::SymLog {{ linthresh }})`, or supply positive data.)"
+            )));
+        }
+        Ok(self.empty_cartesian_bounds())
+    }
+
+    /// Fold this plot's annotations into an already-computed range.
+    ///
+    /// Kept for callers that hold bounds from elsewhere; it is idempotent
+    /// against `finish_bounds`, which has already applied it.
+    pub(super) fn expand_bounds_with_annotations(
+        &self,
+        bounds: (f64, f64, f64, f64),
+    ) -> (f64, f64, f64, f64) {
+        let mut acc =
+            BoundsAccumulator::from_bounds(bounds, self.layout.x_scale, self.layout.y_scale);
+        acc.include_annotations(&self.annotations);
+        self.normalize_degenerate_bounds(acc.bounds())
+    }
+
+    /// Data bounds across every series on the plot.
+    pub(super) fn calculate_data_bounds(&self) -> Result<(f64, f64, f64, f64)> {
+        self.calculate_data_bounds_for_series(&self.series_mgr.series)
+    }
+
+    /// Data bounds across an explicit list of series.
+    pub(super) fn calculate_data_bounds_for_series(
+        &self,
+        series_list: &[PlotSeries],
+    ) -> Result<(f64, f64, f64, f64)> {
+        let acc = self.accumulate_series_bounds(series_list)?;
+        self.finish_bounds(acc)
+    }
+
+    /// Data bounds across the entries of a resolved frame.
+    ///
+    /// Prefer [`Self::calculate_data_bounds_for_frame`] where the originating
+    /// series are also on hand: a resolved entry alone cannot see the error
+    /// bars attached with `with_yerr`/`with_xerr`, so their whiskers would fall
+    /// outside the range this returns.
     pub(super) fn calculate_data_bounds_from_resolved<'frame, 'data>(
         &self,
         resolved_series: impl IntoIterator<Item = &'frame ResolvedSeries<'data>>,
@@ -1746,425 +1902,291 @@ impl Plot {
     where
         'data: 'frame,
     {
-        if let Some(err) = self.pending_ingestion_error() {
-            return Err(err);
-        }
-
-        let mut x_min = f64::INFINITY;
-        let mut x_max = f64::NEG_INFINITY;
-        let mut y_min = f64::INFINITY;
-        let mut y_max = f64::NEG_INFINITY;
-
-        for resolved in resolved_series {
-            match resolved {
-                ResolvedSeries::Line { x, y } | ResolvedSeries::Scatter { x, y } => {
-                    for (&x_val, &y_val) in x.iter().zip(y.iter()) {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                }
-                ResolvedSeries::Bar { categories, values } => {
-                    x_min = x_min.min(-0.5);
-                    x_max = x_max.max(categories.len() as f64 - 0.5);
-                    for &value in values.iter() {
-                        if value.is_finite() {
-                            y_min = y_min.min(value.min(0.0));
-                            y_max = y_max.max(value.max(0.0));
-                        }
-                    }
-                }
-                ResolvedSeries::ErrorBars { x, y, y_errors } => {
-                    for ((&x_val, &y_val), &y_err) in x.iter().zip(y.iter()).zip(y_errors.iter()) {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                ResolvedSeries::ErrorBarsXY {
-                    x,
-                    y,
-                    x_errors,
-                    y_errors,
-                } => {
-                    for (((&x_val, &y_val), &x_err), &y_err) in x
-                        .iter()
-                        .zip(y.iter())
-                        .zip(x_errors.iter())
-                        .zip(y_errors.iter())
-                    {
-                        if x_val.is_finite() && x_err.is_finite() {
-                            x_min = x_min.min(x_val - x_err);
-                            x_max = x_max.max(x_val + x_err);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                ResolvedSeries::Histogram { data } => {
-                    if !data.bin_edges.is_empty() {
-                        x_min = x_min.min(*data.bin_edges.first().unwrap());
-                        x_max = x_max.max(*data.bin_edges.last().unwrap());
-                    }
-                    y_min = y_min.min(0.0);
-                    for &count in &data.counts {
-                        if count.is_finite() && count > 0.0 {
-                            y_max = y_max.max(count);
-                        }
-                    }
-                }
-                ResolvedSeries::BoxPlot { data, .. } => {
-                    if data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                    for &value in data.iter() {
-                        if value.is_finite() {
-                            y_min = y_min.min(value);
-                            y_max = y_max.max(value);
-                        }
-                    }
-                }
-                ResolvedSeries::Other(series) => match series {
-                    SeriesType::Heatmap { data } => {
-                        let ((sx_min, sx_max), (sy_min, sy_max)) =
-                            crate::plots::traits::PlotData::data_bounds(data.as_ref());
-                        x_min = x_min.min(sx_min);
-                        x_max = x_max.max(sx_max);
-                        y_min = y_min.min(sy_min);
-                        y_max = y_max.max(sy_max);
-                    }
-                    SeriesType::Kde { data } => {
-                        for (&x_val, &y_val) in data.x.iter().zip(&data.y) {
-                            if x_val.is_finite() {
-                                x_min = x_min.min(x_val);
-                                x_max = x_max.max(x_val);
-                            }
-                            if y_val.is_finite() {
-                                y_min = y_min.min(y_val);
-                                y_max = y_max.max(y_val);
-                            }
-                        }
-                        y_min = y_min.min(0.0);
-                    }
-                    SeriesType::Ecdf { data } => {
-                        for (&x_val, &y_val) in data.x.iter().zip(&data.y) {
-                            if x_val.is_finite() {
-                                x_min = x_min.min(x_val);
-                                x_max = x_max.max(x_val);
-                            }
-                            if y_val.is_finite() {
-                                y_min = y_min.min(y_val);
-                                y_max = y_max.max(y_val);
-                            }
-                        }
-                        y_min = y_min.min(0.0);
-                    }
-                    SeriesType::Violin { data } => {
-                        let (kde_min, kde_max) = if data.kde.x.is_empty() {
-                            data.range
-                        } else {
-                            (
-                                data.kde.x.first().copied().unwrap_or(data.range.0),
-                                data.kde.x.last().copied().unwrap_or(data.range.1),
-                            )
-                        };
-                        y_min = y_min.min(kde_min);
-                        y_max = y_max.max(kde_max);
-                        x_min = x_min.min(0.0);
-                        x_max = x_max.max(1.0);
-                    }
-                    SeriesType::Boxen { data } => include_plot_data_bounds(
-                        data.as_ref(),
-                        &mut x_min,
-                        &mut x_max,
-                        &mut y_min,
-                        &mut y_max,
-                    ),
-                    SeriesType::Quiver { data } => include_quiver_data_bounds(
-                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
-                    ),
-                    SeriesType::Contour { data } => {
-                        for &value in &data.x {
-                            if value.is_finite() {
-                                x_min = x_min.min(value);
-                                x_max = x_max.max(value);
-                            }
-                        }
-                        for &value in &data.y {
-                            if value.is_finite() {
-                                y_min = y_min.min(value);
-                                y_max = y_max.max(value);
-                            }
-                        }
-                    }
-                    SeriesType::Pie { .. } => {
-                        x_min = x_min.min(0.0);
-                        x_max = x_max.max(1.0);
-                        y_min = y_min.min(0.0);
-                        y_max = y_max.max(1.0);
-                    }
-                    SeriesType::Radar { .. } => {
-                        include_radar_bounds(&mut x_min, &mut x_max, &mut y_min, &mut y_max);
-                    }
-                    SeriesType::Polar { data } => {
-                        let label_margin = data.r_max * 1.5;
-                        x_min = -label_margin;
-                        x_max = label_margin;
-                        y_min = -label_margin;
-                        y_max = label_margin;
-                    }
-                    _ => unreachable!("PlotData-backed series resolve to dedicated variants"),
-                },
-            }
-        }
-
-        if !x_min.is_finite() || !x_max.is_finite() || !y_min.is_finite() || !y_max.is_finite() {
-            return Ok(self.empty_cartesian_bounds());
-        }
-
-        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
-        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
-
-        Ok((x_min, x_max, y_min, y_max))
+        let acc = self.accumulate_series_bounds(resolved_series)?;
+        self.finish_bounds(acc)
     }
 
-    pub(super) fn calculate_data_bounds_for_series(
+    /// Data bounds for a resolved frame, including attached error bars.
+    ///
+    /// `series_list` and `resolved_series` must be the parallel lists produced
+    /// by `resolve_frame`; extra entries on either side are ignored.
+    pub(super) fn calculate_data_bounds_for_frame(
         &self,
         series_list: &[PlotSeries],
+        resolved_series: &[ResolvedSeries<'_>],
     ) -> Result<(f64, f64, f64, f64)> {
-        if let Some(err) = self.pending_ingestion_error() {
-            return Err(err);
-        }
+        self.calculate_data_bounds_for_pairs(series_list.iter().zip(resolved_series))
+    }
 
-        let mut x_min = f64::INFINITY;
-        let mut x_max = f64::NEG_INFINITY;
-        let mut y_min = f64::INFINITY;
-        let mut y_max = f64::NEG_INFINITY;
+    /// Data bounds over an arbitrary selection of (series, resolved) pairs.
+    ///
+    /// Same routine as [`Self::calculate_data_bounds_for_frame`]; it exists so
+    /// callers that must *filter* the frame — the mixed-coordinate main panel,
+    /// which drops the polar/pie entries — can still pair each resolved entry
+    /// with its originating series, and therefore still see attached error
+    /// bars, without cloning either list.
+    pub(super) fn calculate_data_bounds_for_pairs<'frame, 'data>(
+        &self,
+        pairs: impl IntoIterator<Item = (&'frame PlotSeries, &'frame ResolvedSeries<'data>)>,
+    ) -> Result<(f64, f64, f64, f64)>
+    where
+        'data: 'frame,
+    {
+        let acc = self.accumulate_series_bounds(pairs)?;
+        self.finish_bounds(acc)
+    }
 
-        for series in series_list {
-            match &series.series_type {
-                SeriesType::Line { x_data, y_data } | SeriesType::Scatter { x_data, y_data } => {
-                    let x_data = x_data.resolve_cow(0.0);
-                    let y_data = y_data.resolve_cow(0.0);
-                    for (&x_val, &y_val) in x_data.iter().zip(y_data.iter()) {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                }
-                SeriesType::Bar {
-                    categories, values, ..
-                } => {
-                    let values = values.resolve_cow(0.0);
-                    x_min = x_min.min(-0.5);
-                    x_max = x_max.max(categories.len() as f64 - 0.5);
-                    for &value in values.iter() {
-                        if value.is_finite() {
-                            y_min = y_min.min(value.min(0.0));
-                            y_max = y_max.max(value.max(0.0));
-                        }
-                    }
-                }
-                SeriesType::ErrorBars {
-                    x_data,
-                    y_data,
-                    y_errors,
-                } => {
-                    let x_data = x_data.resolve_cow(0.0);
-                    let y_data = y_data.resolve_cow(0.0);
-                    let y_errors = y_errors.resolve_cow(0.0);
-                    for ((&x_val, &y_val), &y_err) in
-                        x_data.iter().zip(y_data.iter()).zip(y_errors.iter())
-                    {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                SeriesType::ErrorBarsXY {
-                    x_data,
-                    y_data,
-                    x_errors,
-                    y_errors,
-                } => {
-                    let x_data = x_data.resolve_cow(0.0);
-                    let y_data = y_data.resolve_cow(0.0);
-                    let x_errors = x_errors.resolve_cow(0.0);
-                    let y_errors = y_errors.resolve_cow(0.0);
-                    for (((&x_val, &y_val), &x_err), &y_err) in x_data
-                        .iter()
-                        .zip(y_data.iter())
-                        .zip(x_errors.iter())
-                        .zip(y_errors.iter())
-                    {
-                        if x_val.is_finite() && x_err.is_finite() {
-                            x_min = x_min.min(x_val - x_err);
-                            x_max = x_max.max(x_val + x_err);
-                        }
-                        if y_val.is_finite() && y_err.is_finite() {
-                            y_min = y_min.min(y_val - y_err);
-                            y_max = y_max.max(y_val + y_err);
-                        }
-                    }
-                }
-                SeriesType::Histogram { .. } => {
-                    if let Ok(hist_data) = series.series_type.histogram_data_at(0.0) {
-                        if !hist_data.bin_edges.is_empty() {
-                            x_min = x_min.min(*hist_data.bin_edges.first().unwrap());
-                            x_max = x_max.max(*hist_data.bin_edges.last().unwrap());
-                        }
-                        y_min = y_min.min(0.0);
-                        for &count in &hist_data.counts {
-                            if count.is_finite() && count > 0.0 {
-                                y_max = y_max.max(count);
-                            }
-                        }
-                    }
-                }
-                SeriesType::BoxPlot { data, .. } => {
-                    let data = data.resolve_cow(0.0);
-                    if data.is_empty() {
-                        return Err(PlottingError::EmptyDataSet);
-                    }
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                    for &value in data.iter() {
-                        if value.is_finite() {
-                            y_min = y_min.min(value);
-                            y_max = y_max.max(value);
-                        }
-                    }
-                }
-                SeriesType::Heatmap { data } => {
-                    let ((series_x_min, series_x_max), (series_y_min, series_y_max)) =
-                        crate::plots::traits::PlotData::data_bounds(data.as_ref());
-                    x_min = x_min.min(series_x_min);
-                    x_max = x_max.max(series_x_max);
-                    y_min = y_min.min(series_y_min);
-                    y_max = y_max.max(series_y_max);
-                }
-                SeriesType::Kde { data } => {
-                    for (&x_val, &y_val) in data.x.iter().zip(data.y.iter()) {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                    y_min = y_min.min(0.0);
-                }
-                SeriesType::Ecdf { data } => {
-                    for (&x_val, &y_val) in data.x.iter().zip(data.y.iter()) {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                    y_min = y_min.min(0.0);
-                }
-                SeriesType::Violin { data } => {
-                    let (kde_min, kde_max) = if !data.kde.x.is_empty() {
-                        (
-                            data.kde.x.first().copied().unwrap_or(data.range.0),
-                            data.kde.x.last().copied().unwrap_or(data.range.1),
-                        )
-                    } else {
-                        data.range
-                    };
-                    if kde_min.is_finite() {
-                        y_min = y_min.min(kde_min);
-                    }
-                    if kde_max.is_finite() {
-                        y_max = y_max.max(kde_max);
-                    }
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                }
-                SeriesType::Boxen { data } => {
-                    include_plot_data_bounds(
-                        data.as_ref(),
-                        &mut x_min,
-                        &mut x_max,
-                        &mut y_min,
-                        &mut y_max,
-                    );
-                }
-                SeriesType::Quiver { data } => {
-                    include_quiver_data_bounds(
-                        data, &mut x_min, &mut x_max, &mut y_min, &mut y_max,
-                    );
-                }
-                SeriesType::Contour { data } => {
-                    for &x_val in &data.x {
-                        if x_val.is_finite() {
-                            x_min = x_min.min(x_val);
-                            x_max = x_max.max(x_val);
-                        }
-                    }
-                    for &y_val in &data.y {
-                        if y_val.is_finite() {
-                            y_min = y_min.min(y_val);
-                            y_max = y_max.max(y_val);
-                        }
-                    }
-                }
-                SeriesType::Pie { .. } => {
-                    x_min = x_min.min(0.0);
-                    x_max = x_max.max(1.0);
-                    y_min = y_min.min(0.0);
-                    y_max = y_max.max(1.0);
-                }
-                SeriesType::Radar { .. } => {
-                    include_radar_bounds(&mut x_min, &mut x_max, &mut y_min, &mut y_max);
-                }
-                SeriesType::Polar { data } => {
-                    let label_margin = data.r_max * 1.5;
-                    x_min = -label_margin;
-                    x_max = label_margin;
-                    y_min = -label_margin;
-                    y_max = label_margin;
-                }
-            }
-        }
-
-        if !x_min.is_finite() || !x_max.is_finite() || !y_min.is_finite() || !y_max.is_finite() {
+    /// The axis range a resolved frame renders into.
+    ///
+    /// Drop-in replacement for `effective_data_bounds_from_resolved` that also
+    /// sees the error bars attached to each series, so `with_yerr` whiskers are
+    /// inside the axes instead of clipped against the spine.
+    pub(super) fn effective_frame_bounds(
+        &self,
+        resolved_series: &[ResolvedSeries<'_>],
+    ) -> Result<(f64, f64, f64, f64)> {
+        if resolved_series.is_empty() {
             return Ok(self.empty_cartesian_bounds());
         }
 
-        (x_min, x_max) = crate::axes::expand_degenerate_range(x_min, x_max, &self.layout.x_scale);
-        (y_min, y_max) = crate::axes::expand_degenerate_range(y_min, y_max, &self.layout.y_scale);
+        self.calculate_data_bounds_for_frame(&self.series_mgr.series, resolved_series)
+            .map(|bounds| self.apply_manual_axis_limits(bounds))
+    }
 
-        Ok((x_min, x_max, y_min, y_max))
+    /// The raw extent of a single resolved series, with no annotation pass.
+    ///
+    /// Insets carry their own coordinate space, so plot-level annotations must
+    /// not stretch them. Every other caller wants the annotated plot bounds.
+    pub(super) fn inset_bounds_from_resolved(
+        &self,
+        resolved: &ResolvedSeries<'_>,
+    ) -> Result<(f64, f64, f64, f64)> {
+        let acc = self.accumulate_series_bounds(std::iter::once(resolved))?;
+        Ok(match acc.finite_bounds() {
+            Some(bounds) => self.normalize_degenerate_bounds(bounds),
+            None => self.empty_cartesian_bounds(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    /// The bug this whole collapse exists to prevent: three bounds routines
+    /// that agree today and drift tomorrow. Every plot type is scanned through
+    /// all three views and the answers must match exactly.
+    fn assert_all_views_agree(plot: &Plot, what: &str) -> (f64, f64, f64, f64) {
+        let series = plot.snapshot_series(0.0);
+        let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+
+        let all = plot
+            .calculate_data_bounds()
+            .unwrap_or_else(|e| panic!("{what}: whole-plot bounds failed: {e}"));
+        let listed = plot
+            .calculate_data_bounds_for_series(&series)
+            .unwrap_or_else(|e| panic!("{what}: per-series bounds failed: {e}"));
+        let resolved = plot
+            .calculate_data_bounds_from_resolved(&frame.series)
+            .unwrap_or_else(|e| panic!("{what}: resolved bounds failed: {e}"));
+        let paired = plot
+            .calculate_data_bounds_for_frame(&plot.series_mgr.series, &frame.series)
+            .unwrap_or_else(|e| panic!("{what}: paired bounds failed: {e}"));
+
+        assert_eq!(all, listed, "{what}: series-list view diverged");
+        assert_eq!(all, paired, "{what}: paired frame view diverged");
+        // The resolved-only view cannot see attached error bars; everything
+        // else about it must be identical.
+        if plot
+            .series_mgr
+            .series
+            .iter()
+            .all(|s| s.x_errors.is_none() && s.y_errors.is_none())
+        {
+            assert_eq!(all, resolved, "{what}: resolved view diverged");
+        }
+        all
+    }
+
+    fn grid() -> Vec<Vec<f64>> {
+        vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]
+    }
+
+    #[test]
+    fn every_plot_type_agrees_across_all_bounds_views() {
+        let x = [1.0, 2.0, 3.0];
+        let y = [10.0, 20.0, 30.0];
+
+        assert_all_views_agree(&Plot::new().line(&x, &y).into_plot(), "line");
+        assert_all_views_agree(&Plot::new().scatter(&x, &y).into_plot(), "scatter");
+        assert_all_views_agree(
+            &Plot::new().bar(&["a", "b"], &[1.0, 2.0]).into_plot(),
+            "bar",
+        );
+        assert_all_views_agree(
+            &Plot::new()
+                .histogram(&[1.0, 2.0, 2.0, 3.0, 4.0])
+                .into_plot(),
+            "histogram",
+        );
+        assert_all_views_agree(
+            &Plot::new().boxplot(&[1.0, 2.0, 3.0, 4.0]).into_plot(),
+            "boxplot",
+        );
+        assert_all_views_agree(
+            &Plot::new().error_bars(&x, &y, &[1.0, 1.0, 1.0]).into_plot(),
+            "error_bars",
+        );
+        assert_all_views_agree(
+            &Plot::new()
+                .error_bars_xy(&x, &y, &[0.5, 0.5, 0.5], &[1.0, 1.0, 1.0])
+                .into_plot(),
+            "error_bars_xy",
+        );
+        assert_all_views_agree(&Plot::new().heatmap(&grid()).into_plot(), "heatmap");
+    }
+
+    #[test]
+    fn annotations_reach_every_bounds_view() {
+        let plot = Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .into_plot()
+            .axvspan(-5.0, 7.0);
+
+        let (x_min, x_max, ..) = assert_all_views_agree(&plot, "hspan-annotated line");
+        assert!(x_min <= -5.0, "hspan lower edge clipped: {x_min}");
+        assert!(x_max >= 7.0, "hspan upper edge clipped: {x_max}");
+    }
+
+    #[test]
+    fn attached_y_error_whiskers_are_inside_the_bounds() {
+        let plot = Plot::new()
+            .line(&[0.0, 1.0, 2.0], &[10.0, 10.0, 10.0])
+            .with_yerr(&[2.0, 2.0, 2.0])
+            .into_plot();
+
+        let (_, _, y_min, y_max) = plot
+            .calculate_data_bounds()
+            .expect("bounds should resolve for a line with attached y errors");
+
+        assert!(y_min <= 8.0, "lower whisker clipped: y_min = {y_min}");
+        assert!(y_max >= 12.0, "upper whisker clipped: y_max = {y_max}");
+    }
+
+    #[test]
+    fn attached_x_error_whiskers_are_inside_the_bounds() {
+        let plot = Plot::new()
+            .scatter(&[5.0], &[0.0])
+            .with_xerr(&[3.0])
+            .into_plot();
+
+        let (x_min, x_max, ..) = plot
+            .calculate_data_bounds()
+            .expect("bounds should resolve for a scatter with attached x errors");
+
+        assert!(x_min <= 2.0, "lower whisker clipped: x_min = {x_min}");
+        assert!(x_max >= 8.0, "upper whisker clipped: x_max = {x_max}");
+    }
+
+    #[test]
+    fn attached_asymmetric_errors_override_the_dedicated_series_values() {
+        // The renderer honours the attached override, so the bounds must too.
+        let plot = Plot::new()
+            .error_bars(&[0.0], &[0.0], &[0.25])
+            .with_yerr_asymmetric(&[0.5], &[1.5])
+            .into_plot();
+
+        let (_, _, y_min, y_max) = plot
+            .calculate_data_bounds()
+            .expect("bounds should resolve for overridden error bars");
+
+        assert!(y_min <= -0.5, "override lower ignored: y_min = {y_min}");
+        assert!(y_max >= 1.5, "override upper ignored: y_max = {y_max}");
+    }
+
+    #[test]
+    fn attached_errors_are_folded_in_on_the_resolved_frame_path() {
+        let plot = Plot::new()
+            .line(&[0.0, 1.0], &[10.0, 10.0])
+            .with_yerr(&[4.0, 4.0])
+            .into_plot();
+        let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+
+        let paired = plot
+            .calculate_data_bounds_for_frame(&plot.series_mgr.series, &frame.series)
+            .expect("paired bounds should resolve");
+
+        assert!(paired.2 <= 6.0, "lower whisker clipped: {}", paired.2);
+        assert!(paired.3 >= 14.0, "upper whisker clipped: {}", paired.3);
+
+        // ...and the range the frame actually renders into keeps them too.
+        let effective = plot
+            .effective_frame_bounds(&frame.series)
+            .expect("frame bounds should resolve");
+        assert!(effective.2 <= 6.0, "lower whisker clipped: {}", effective.2);
+        assert!(
+            effective.3 >= 14.0,
+            "upper whisker clipped: {}",
+            effective.3
+        );
+    }
+
+    #[test]
+    fn insets_do_not_inherit_plot_level_annotations() {
+        let plot = Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .into_plot()
+            .axvspan(-100.0, 100.0);
+        let frame = plot.resolve_frame(0.0).expect("frame should resolve");
+
+        let inset = plot
+            .inset_bounds_from_resolved(&frame.series[0])
+            .expect("inset bounds should resolve");
+
+        assert_eq!(inset, (0.0, 1.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn sticky_edges_are_declared_once_per_plot_type() {
+        let bars = Plot::new().bar(&["a"], &[1.0]).into_plot().sticky_edges();
+        assert!(bars.y_zero_baseline);
+        assert!(!bars.all_edges);
+
+        let heatmap = Plot::new().heatmap(&grid()).into_plot().sticky_edges();
+        assert!(heatmap.all_edges);
+
+        let line = Plot::new()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .into_plot()
+            .sticky_edges();
+        assert_eq!(line, StickyEdges::NONE);
+
+        // "By construction" only survives when every series agrees.
+        let mixed = Plot::new()
+            .pie(&[1.0, 2.0])
+            .into_plot()
+            .line(&[0.0, 1.0], &[0.0, 1.0])
+            .into_plot()
+            .sticky_edges();
+        assert!(!mixed.by_construction);
+    }
+
+    /// The autoscale margin used to skip a seriesless plot via
+    /// `!has_cartesian_series(&[])`, which is vacuously true. Folding sticky
+    /// edges must reproduce that: `by_construction` is an `&&`-fold, so its
+    /// identity is `true`, not `false`. Getting this wrong padded the default
+    /// empty axes from `0..1` to `-0.05..1.05`.
+    #[test]
+    fn sticky_edges_of_a_seriesless_plot_pin_the_default_axes() {
+        let empty = Plot::new().sticky_edges();
+        assert_eq!(empty, StickyEdges::BY_CONSTRUCTION);
+        assert!(empty.by_construction);
+
+        let plot = Plot::new();
+        assert_eq!(
+            plot.apply_autoscale_margins((0.0, 1.0, 0.0, 1.0)),
+            (0.0, 1.0, 0.0, 1.0),
+            "an empty plot must not grow a margin band around nothing"
+        );
     }
 }

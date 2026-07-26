@@ -211,13 +211,20 @@ fn bench_memory_pool_reuse(c: &mut Criterion) {
 
             let measurement_peak = get_peak_memory();
 
-            // Memory usage should not grow significantly after warmup
-            let growth_ratio = measurement_peak as f64 / warmup_peak as f64;
-            assert!(
-                growth_ratio < 1.5,
-                "Memory grew {}x after warmup, indicates poor pool reuse",
-                growth_ratio
-            );
+            // Memory usage should not grow significantly after warmup.
+            //
+            // A zero warmup peak means the tracking allocator observed nothing —
+            // the ratio would be 0/0 = NaN, and `NaN < 1.5` is false, so the
+            // assertion used to fail with "Memory grew NaNx" and take
+            // `cargo test --all-targets` down with it. An unavailable baseline is
+            // not evidence of poor reuse, so there is nothing to assert.
+            if warmup_peak > 0 {
+                let growth_ratio = measurement_peak as f64 / warmup_peak as f64;
+                assert!(
+                    growth_ratio < 1.5,
+                    "Memory grew {growth_ratio}x after warmup, indicates poor pool reuse"
+                );
+            }
         });
     });
 }

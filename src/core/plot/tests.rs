@@ -2712,14 +2712,45 @@ fn test_svg_line_uses_log_y_scale_for_geometry() {
 
 #[test]
 fn test_log_axis_rejects_non_positive_render_range() {
+    // An explicit limit a log axis cannot represent is the user asking for
+    // something impossible, and is still refused.
     let result = Plot::new()
-        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .line(&[1.0, 2.0], &[1.0, 10.0])
         .yscale(crate::axes::AxisScale::Log)
+        .ylim(0.0, 10.0)
         .render();
 
-    let err = result.expect_err("log scale should reject zero y range bound");
+    let err = result.expect_err("log scale should reject a zero y limit");
     assert!(matches!(err, PlottingError::InvalidInput(_)));
     assert!(err.to_string().contains("Invalid y-axis range"));
+}
+
+#[test]
+fn test_log_axis_autoscale_skips_samples_it_cannot_place() {
+    // Auto-scaled bounds are derived only from the samples the axis can place,
+    // so a zero in the data no longer drags the range down to a value a log
+    // axis has no position for. The zero itself is simply not drawn.
+    Plot::new()
+        .line(&[0.0, 1.0], &[0.0, 1.0])
+        .yscale(crate::axes::AxisScale::Log)
+        .render()
+        .expect("a log axis autoscales to the samples it can place");
+}
+
+#[test]
+fn test_log_axis_reports_data_it_cannot_place_at_all() {
+    // But a series whose every sample is off the axis would render a blank
+    // figure, so it is named instead of silently dropped.
+    let err = Plot::new()
+        .line(&[1.0, 2.0], &[-3.0, -1.0])
+        .yscale(crate::axes::AxisScale::Log)
+        .render()
+        .expect_err("a log axis with no placeable sample must say so");
+
+    assert!(matches!(err, PlottingError::InvalidInput(_)));
+    let message = err.to_string();
+    assert!(message.contains("logarithmic y axis"), "{message}");
+    assert!(message.contains("yscale"), "{message}");
 }
 
 #[test]
@@ -6825,4 +6856,57 @@ fn test_histogram_adjacent_bins_keep_a_visible_boundary() {
         boundaries >= 5,
         "expected 4 bins to show 5 edges (2 outer + 3 shared), found {boundaries}"
     );
+}
+
+/// A sample a log axis cannot place must break the line in *every* backend.
+///
+/// Before the shared run splitter, each backend answered this differently: the
+/// raster path handed a `NaN` pixel to tiny-skia, the SVG path wrote `NaN` into
+/// the `points` attribute, and the parallel path did neither. Joining across the
+/// gap draws a segment the user never supplied, so the line has to stop and
+/// restart instead.
+#[test]
+fn test_log_axis_gap_breaks_the_line_in_the_svg_backend() {
+    // The 0.0 sample has no position on a log y axis.
+    let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let y = [1.0, 10.0, 0.0, 100.0, 1000.0];
+
+    let svg = Plot::new()
+        .line(&x, &y)
+        .into_plot()
+        .yscale(crate::axes::AxisScale::Log)
+        .ylim(1.0, 1000.0)
+        .xlim(1.0, 5.0)
+        .render_to_svg()
+        .expect("log-axis line with a gap should render");
+
+    assert!(
+        !svg.contains("NaN"),
+        "no NaN coordinate may reach the SVG output"
+    );
+
+    let polylines = svg.matches("<polyline").count();
+    assert_eq!(
+        polylines, 2,
+        "the unrepresentable sample must split the series into two sub-paths, got {polylines}"
+    );
+}
+
+/// The same plot with every sample representable must stay a single sub-path —
+/// the splitter must not fragment ordinary series.
+#[test]
+fn test_log_axis_without_gaps_stays_one_polyline() {
+    let x = [1.0, 2.0, 3.0, 4.0, 5.0];
+    let y = [1.0, 10.0, 50.0, 100.0, 1000.0];
+
+    let svg = Plot::new()
+        .line(&x, &y)
+        .into_plot()
+        .yscale(crate::axes::AxisScale::Log)
+        .ylim(1.0, 1000.0)
+        .xlim(1.0, 5.0)
+        .render_to_svg()
+        .expect("log-axis line should render");
+
+    assert_eq!(svg.matches("<polyline").count(), 1);
 }

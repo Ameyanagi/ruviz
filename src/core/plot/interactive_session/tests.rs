@@ -1212,15 +1212,13 @@ fn test_heatmap_axis_hit_uses_scaled_screen_to_data_and_cell_geometry() {
                 .extent(1.0, 100.0, 1.0, 100.0)
                 .colorbar(false),
         )
-        .xscale(crate::axes::AxisScale::Log)
-        .yscale(crate::axes::AxisScale::Log)
         .xlim(1.0, 100.0)
         .ylim(1.0, 100.0)
         .into();
     let session = plot.prepare_interactive();
     session
         .render_to_surface(render_target())
-        .expect("log-axis heatmap frame should render");
+        .expect("heatmap frame should render");
     let screen_position = session
         .data_to_screen(ViewportPoint::new(10.0, 10.0))
         .unwrap()
@@ -1239,6 +1237,73 @@ fn test_heatmap_axis_hit_uses_scaled_screen_to_data_and_cell_geometry() {
             assert!(screen_rect.contains(screen_position));
         }
         other => panic!("expected scaled heatmap cell hit, got {other:?}"),
+    }
+}
+
+/// The hit test has always projected heatmap cell bounds scale-aware. The
+/// renderer used to project them linearly, so under a log axis the rectangle the
+/// user could click was not the rectangle they could see.
+///
+/// Both now go through the same scale-aware projection, so the cell the hit test
+/// reports must be the cell the axis says is there — checked here against the
+/// log positions the axis itself would produce.
+#[test]
+fn test_heatmap_cell_hit_agrees_with_a_logarithmic_axis() {
+    use crate::axes::AxisScale;
+
+    let values = vec![vec![1.0, 2.0]];
+    let plot: Plot = Plot::new()
+        .heatmap_with(
+            &values,
+            crate::plots::heatmap::HeatmapConfig::new()
+                .extent(1.0, 100.0, 1.0, 100.0)
+                .colorbar(false),
+        )
+        .xscale(AxisScale::Log)
+        .yscale(AxisScale::Log)
+        .xlim(1.0, 100.0)
+        .ylim(1.0, 100.0)
+        .into();
+    let session = plot.prepare_interactive();
+    session
+        .render_to_surface(render_target())
+        .expect("a log-axis heatmap must render, with its cells following the axis");
+
+    // x = 3 is inside the left cell (which spans 1..50.5) on either scale, but
+    // it sits at 24% of a log axis and at 2% of a linear one, so a linear
+    // projection could not produce the rectangle asserted below.
+    let screen_position = session
+        .data_to_screen(ViewportPoint::new(3.0, 3.0))
+        .unwrap()
+        .unwrap();
+
+    match session.hit_test(screen_position) {
+        HitResult::HeatmapCell {
+            row,
+            col,
+            value,
+            screen_rect,
+            ..
+        } => {
+            assert_eq!((row, col), (0, 0));
+            assert_eq!(value, 1.0);
+            assert!(screen_rect.contains(screen_position));
+
+            // The cell's own edges, projected by the axis, must be its corners.
+            let expected_min = session
+                .data_to_screen(ViewportPoint::new(1.0, 100.0))
+                .unwrap()
+                .unwrap();
+            let expected_max = session
+                .data_to_screen(ViewportPoint::new(50.5, 1.0))
+                .unwrap()
+                .unwrap();
+            assert!((screen_rect.min.x - expected_min.x).abs() < 1e-3);
+            assert!((screen_rect.min.y - expected_min.y).abs() < 1e-3);
+            assert!((screen_rect.max.x - expected_max.x).abs() < 1e-3);
+            assert!((screen_rect.max.y - expected_max.y).abs() < 1e-3);
+        }
+        other => panic!("expected a scaled heatmap cell hit, got {other:?}"),
     }
 }
 

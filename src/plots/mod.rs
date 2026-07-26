@@ -108,7 +108,9 @@ pub mod hierarchical;
 pub mod regression;
 
 // Core trait exports
-pub use traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, StyledShape};
+pub use traits::{
+    AxisScaleSupport, PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender, StyledShape,
+};
 
 // Basic plot config exports
 pub use basic::{BarConfig, BarOrientation, LineConfig, ScatterConfig};

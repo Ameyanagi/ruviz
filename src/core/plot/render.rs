@@ -75,12 +75,273 @@ impl Plot {
         Self::annotation_render_layer(annotation) == AnnotationRenderLayer::Overlay
     }
 
+    /// The one gate every output path passes through before a frame is
+    /// resolved.
+    ///
+    /// `save`, `render`/`render_at`, `render_to_svg`/`export_svg`,
+    /// `save_pdf_with_size` and `render_to_renderer` all call this first, so it
+    /// sits *above* the raster/vector split. Validation that must hold for the
+    /// figure regardless of how it is rasterised belongs here and not inside a
+    /// renderer: a check duplicated per backend is a check the backends will
+    /// eventually disagree about, which is exactly how `.export_svg()` came to
+    /// accept a figure `.save()` refused.
     pub(super) fn validate_before_frame_resolution(&self) -> Result<()> {
         self.validate_runtime_environment()?;
         if let Some(error) = self.pending_ingestion_error() {
             return Err(error);
         }
+        self.validate_aggregate_geometry_against_axis_scales(&self.series_mgr.series)?;
+        self.validate_annotation_shapes_against_axis_scales()?;
         Ok(())
+    }
+
+    /// Refuse annotation *shapes* whose defining coordinates an axis cannot place.
+    ///
+    /// The same split as [`Self::validate_aggregate_geometry_against_axis_scales`],
+    /// applied to annotations rather than to series.
+    ///
+    /// * A text label, an arrow or a reference line is a **mark at a
+    ///   position**. One the axis cannot place is skipped — by both backends,
+    ///   identically — exactly as an unplaceable scatter point is. Not checked.
+    /// * A rectangle, a span or a filled region is a **shape**, and the
+    ///   coordinates *are* what define it. A corner the axis cannot place does
+    ///   not make the shape smaller, it makes it undrawable.
+    ///
+    /// Left to the backends, the second case is where they part company: the
+    /// SVG renderer refuses the element and latches the fault, while tiny-skia
+    /// answers the same input with `Rect::from_xywh`/`PathBuilder::finish`
+    /// returning `None` and simply draws nothing. One would report and one
+    /// would go quiet — the divergence this tranche exists to remove. Refusing
+    /// here, above the split, means neither backend ever sees the `NaN` and the
+    /// user gets the message that names the axis and the fix.
+    fn validate_annotation_shapes_against_axis_scales(&self) -> Result<()> {
+        for annotation in &self.annotations {
+            match annotation {
+                Annotation::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                    ..
+                } => {
+                    Self::reject_unplaceable_values(
+                        [*x, *x + *width],
+                        &self.layout.x_scale,
+                        "x",
+                        "rectangle annotation",
+                    )?;
+                    Self::reject_unplaceable_values(
+                        [*y, *y + *height],
+                        &self.layout.y_scale,
+                        "y",
+                        "rectangle annotation",
+                    )?;
+                }
+                Annotation::HSpan { x_min, x_max, .. } => {
+                    Self::reject_unplaceable_values(
+                        [*x_min, *x_max],
+                        &self.layout.x_scale,
+                        "x",
+                        "horizontal span annotation",
+                    )?;
+                }
+                Annotation::VSpan { y_min, y_max, .. } => {
+                    Self::reject_unplaceable_values(
+                        [*y_min, *y_max],
+                        &self.layout.y_scale,
+                        "y",
+                        "vertical span annotation",
+                    )?;
+                }
+                Annotation::FillBetween { x, y1, y2, .. } => {
+                    // Both curves and the shared abscissa are outline vertices
+                    // of one closed polygon, so any of them can break it.
+                    Self::reject_unplaceable_values(
+                        x.iter().copied(),
+                        &self.layout.x_scale,
+                        "x",
+                        "filled region annotation",
+                    )?;
+                    Self::reject_unplaceable_values(
+                        y1.iter().chain(y2.iter()).copied(),
+                        &self.layout.y_scale,
+                        "y",
+                        "filled region annotation",
+                    )?;
+                }
+                Annotation::Text { .. }
+                | Annotation::Arrow { .. }
+                | Annotation::HLine { .. }
+                | Annotation::VLine { .. } => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuse aggregate geometry whose defining values an axis cannot place.
+    ///
+    /// Two kinds of series meet an unrepresentable sample very differently:
+    ///
+    /// * A **point or line** series is a set of independent samples. One that a
+    ///   log axis cannot place is simply not drawn and the polyline breaks at
+    ///   the gap, so the user still gets the rest of their data. Those series
+    ///   are deliberately *not* checked here.
+    /// * **Aggregate geometry** — a bar, a histogram's bins, a box plot's
+    ///   quartiles, a violin's density, a boxen's letter values — is *computed
+    ///   from* its values. A single non-positive value does not make the shape
+    ///   shorter, it makes it undefined: the box plot that motivated this
+    ///   rendered two orphan strokes and a flier, with no box at all, and
+    ///   reported success. Those are refused here.
+    ///
+    /// The scan runs on the **raw data** against the plot's scales, not on the
+    /// computed axis bounds, and that is the whole point. The bounds
+    /// accumulator admits only coordinates the scale can represent, so a range
+    /// derived from it can never look invalid — which is why
+    /// [`Self::validate_axis_scale_ranges_for_render`] stopped catching this
+    /// case, the raster backend fell over later on a `NaN` rectangle, and the
+    /// SVG backend happily wrote `height="NaN"`.
+    pub(crate) fn validate_aggregate_geometry_against_axis_scales(
+        &self,
+        series_list: &[PlotSeries],
+    ) -> Result<()> {
+        for series in series_list {
+            match &series.series_type {
+                SeriesType::Bar { values, config, .. } => {
+                    // The bar's baseline (`config.bottom`, zero by default) is
+                    // not data and is deliberately not checked: a log value
+                    // axis draws bars down to the axis floor, and refusing that
+                    // would make every log bar chart impossible.
+                    let (axis, scale) = match config.orientation {
+                        crate::plots::basic::BarOrientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::basic::BarOrientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        values.resolve_cow(0.0).iter().copied(),
+                        scale,
+                        axis,
+                        "bar",
+                    )?;
+                }
+                SeriesType::Histogram { data, config, .. } => {
+                    // Bins run along x. The counts are a derived height rising
+                    // from the baseline, exactly like a bar's, so the value
+                    // axis is not checked.
+                    let scale = &self.layout.x_scale;
+                    match config.range {
+                        // An explicit range *is* the outer pair of bin edges;
+                        // samples outside it are never binned, so only the
+                        // range itself has to be placeable.
+                        Some((low, high)) => Self::reject_unplaceable_values(
+                            [low, high].into_iter(),
+                            scale,
+                            "x",
+                            "histogram",
+                        )?,
+                        None => Self::reject_unplaceable_values(
+                            data.resolve_cow(0.0).iter().copied(),
+                            scale,
+                            "x",
+                            "histogram",
+                        )?,
+                    }
+                }
+                SeriesType::BoxPlot { data, config } => {
+                    let (axis, scale) = match config.orientation {
+                        crate::plots::boxplot::BoxOrientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::boxplot::BoxOrientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        data.resolve_cow(0.0).iter().copied(),
+                        scale,
+                        axis,
+                        "box plot",
+                    )?;
+                }
+                SeriesType::Violin { data } => {
+                    // The violin body is a kernel density estimate over the
+                    // whole sample, so every value shapes the outline; one the
+                    // axis cannot place does not shorten the body, it punches a
+                    // hole in it.
+                    let (axis, scale) = match data.config.orientation {
+                        crate::plots::distribution::Orientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::distribution::Orientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        data.data.iter().copied(),
+                        scale,
+                        axis,
+                        "violin",
+                    )?;
+                }
+                SeriesType::Boxen { data } => {
+                    // Only the letter-value bands and the median are checked.
+                    // Outliers are drawn one marker at a time, exactly like a
+                    // scatter point, so an unplaceable one is skippable and must
+                    // not cost the user the whole figure.
+                    let (axis, scale) = match data.config.orient {
+                        crate::plots::distribution::BoxenOrientation::Vertical => {
+                            ("y", &self.layout.y_scale)
+                        }
+                        crate::plots::distribution::BoxenOrientation::Horizontal => {
+                            ("x", &self.layout.x_scale)
+                        }
+                    };
+                    Self::reject_unplaceable_values(
+                        data.boxes
+                            .iter()
+                            .flat_map(|band| [band.lower, band.upper])
+                            .chain(std::iter::once(data.median)),
+                        scale,
+                        axis,
+                        "boxen",
+                    )?;
+                }
+                // Everything else is drawn sample by sample — a line, a scatter,
+                // an error bar, a heatmap cell, a contour vertex. An
+                // unrepresentable sample there is a gap in the drawing, not an
+                // undefined shape, so it is dropped by the projection and the
+                // geometry breaks at the hole instead of being refused.
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Build the refusal for one unplaceable aggregate value.
+    ///
+    /// The message opens with the shared `LOG_SCALE_REQUIRES_POSITIVE` wording
+    /// so it names the axis and points at `SymLog`, then says which value and
+    /// which plot type provoked it — the two things the previous "Invalid
+    /// rectangle dimensions" left the user to guess.
+    fn reject_unplaceable_values(
+        values: impl IntoIterator<Item = f64>,
+        scale: &AxisScale,
+        axis: &'static str,
+        plot_kind: &'static str,
+    ) -> Result<()> {
+        let Some(offender) = scale.first_unplaceable(values) else {
+            return Ok(());
+        };
+        let shared = crate::axes::scale::LOG_SCALE_REQUIRES_POSITIVE;
+        Err(PlottingError::InvalidInput(format!(
+            "Invalid {axis}-axis range: {shared} \
+             (the {plot_kind} value {offender} has no position on the logarithmic {axis} axis, \
+             and the shape is defined by it rather than drawn point by point, \
+             so it cannot simply be skipped. Use `.{axis}scale(AxisScale::SymLog {{ linthresh }})` \
+             or remove the non-positive values.)"
+        )))
     }
 
     fn render_image_with_mode(&self, mode: RenderExecutionMode) -> Result<Image> {
@@ -117,6 +378,14 @@ impl Plot {
         if !Self::needs_cartesian_axes_for_series(series_list) {
             return Ok(());
         }
+
+        // Belt and braces. `validate_before_frame_resolution` already ran this
+        // for every public entry point, and it is idempotent; repeating it in
+        // the one function both backends call means a future path that reaches
+        // a renderer without passing the entry gate still gets an error rather
+        // than a `NaN` rectangle.
+        self.validate_aggregate_geometry_against_axis_scales(series_list)?;
+        self.validate_annotation_shapes_against_axis_scales()?;
 
         self.layout
             .x_scale
@@ -512,6 +781,7 @@ impl Plot {
                 dpi,
                 self.layout.tick_config.enabled,
                 false,
+                &self.layout.y_scale,
             )?;
         } else if draw_axes {
             if let Some(ref categories) = bar_categories {
@@ -530,6 +800,7 @@ impl Plot {
                     dpi,
                     self.layout.tick_config.enabled,
                     false,
+                    &self.layout.y_scale,
                 )?;
             } else {
                 renderer.draw_axis_labels_at_scaled(
@@ -1257,7 +1528,7 @@ impl Plot {
                     Some(ColorbarMeasurementSpec {
                         vmin: data.vmin,
                         vmax: data.vmax,
-                        value_scale: data.config.value_scale.clone(),
+                        value_scale: data.config.value_scale,
                         label: data.config.colorbar_label.clone(),
                         tick_font_size: data.config.colorbar_tick_font_size,
                         label_font_size: data.config.colorbar_label_font_size,
@@ -1808,8 +2079,11 @@ impl Plot {
         }
 
         let (x_ticks, y_ticks) = self.configured_major_ticks(x_min, x_max, y_min, y_max);
-        let x_labels = crate::render::skia::format_tick_labels(&x_ticks);
-        let y_labels = crate::render::skia::format_tick_labels(&y_ticks);
+        // Must be the scale-aware formatter: the renderer draws a log axis as
+        // "10³", so measuring "1000" here would size the margins for a string
+        // that is never drawn.
+        let x_labels = crate::axes::format_tick_labels_for_scale(&x_ticks, &self.layout.x_scale);
+        let y_labels = crate::axes::format_tick_labels_for_scale(&y_ticks, &self.layout.y_scale);
         let measurements =
             self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
         let layout =
@@ -2527,7 +2801,12 @@ impl Plot {
         let dx = tip.0 - from.0;
         let dy = tip.1 - from.1;
         let len = (dx * dx + dy * dy).sqrt();
-        if len < 0.001 {
+        // `NaN < 0.001` is false, so an unplaceable endpoint used to fall
+        // straight through this guard and build a triangle out of `NaN`
+        // vertices. An arrow is a mark, not aggregate geometry: both backends
+        // skip it, rather than one refusing the document and the other quietly
+        // dropping the head.
+        if !len.is_finite() || len < 0.001 {
             return;
         }
 
@@ -2933,10 +3212,7 @@ impl Plot {
                 .unwrap_or_else(|| self.display.theme.get_color(idx));
             let inset_rect = inset_rects[idx];
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rect {
-                (
-                    inset_rect,
-                    self.calculate_data_bounds_from_resolved(std::slice::from_ref(resolved))?,
-                )
+                (inset_rect, self.inset_bounds_from_resolved(resolved)?)
             } else {
                 (plot_area, (x_min, x_max, y_min, y_max))
             };
@@ -2987,6 +3263,9 @@ impl Plot {
         )?;
         svg.end_group(); // End clip group
 
+        // Colorbars sit beside the plot area, so they belong outside its clip.
+        self.render_svg_colorbars(&mut svg, plot_area)?;
+
         // Draw title/xlabel/ylabel using layout-computed positions.
         if let Some(ref pos) = layout.title_pos
             && let Some(title) = frame.title.as_deref()
@@ -3036,6 +3315,12 @@ impl Plot {
             )?;
         }
 
+        // The renderer drops a shape whose dimensions are non-finite rather
+        // than printing `width="NaN"`, and latches why. `SvgRenderer::save`
+        // checks that latch, but this path hands the string back to the caller
+        // (and to `export_svg`'s own atomic write), so it has to check too —
+        // otherwise a refused element is silently missing from the document.
+        svg.check_geometry()?;
         Ok(svg.to_svg_string())
     }
 
@@ -3130,5 +3415,380 @@ impl Plot {
         }
 
         Ok(rgb_data)
+    }
+}
+
+/// One validity verdict for every backend.
+///
+/// These cover three regressions that arrived together, all from the same
+/// cause: a sample a log axis cannot place started projecting to `NaN` instead
+/// of being clamped, and the pre-render range check — which reads *projected*
+/// bounds — stopped seeing anything wrong, because a bounds accumulator that
+/// skips unrepresentable samples can never produce an invalid range.
+///
+/// 1. The backends disagreed. `.xscale(Log).histogram(&[0.0, ..])` was `Err`
+///    from `save()` and `Ok` from `export_svg()`.
+/// 2. The message regressed from one that named the axis and the fix to
+///    "Rendering error: Invalid rectangle dimensions", which names neither.
+/// 3. A log-y box plot over data containing a zero returned `Ok` and drew a
+///    figure with no box in it — two orphan strokes and a flier.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod log_axis_validity_tests {
+    use super::*;
+    use crate::axes::scale::LOG_SCALE_REQUIRES_POSITIVE;
+    use tempfile::tempdir;
+
+    /// Push one figure through every public output path and require the same
+    /// refusal from all of them.
+    ///
+    /// `$build` is re-evaluated per backend because each terminal method
+    /// consumes the builder — which is also what makes this a genuine parity
+    /// test rather than four looks at one cached result.
+    macro_rules! assert_every_backend_refuses {
+        ($axis:literal, $build:expr) => {{
+            let dir = tempdir().expect("a temporary directory");
+
+            let raster = $build
+                .save(dir.path().join("figure.png"))
+                .expect_err("save() must refuse this figure");
+            let vector = $build
+                .export_svg(dir.path().join("figure.svg"))
+                .expect_err("export_svg() must refuse this figure");
+            let svg_string = match $build.render_to_svg() {
+                Ok(_) => panic!("render_to_svg() must refuse this figure"),
+                Err(error) => error,
+            };
+            let image = match $build.render() {
+                Ok(_) => panic!("render() must refuse this figure"),
+                Err(error) => error,
+            };
+            let png_bytes = match $build.render_png_bytes() {
+                Ok(_) => panic!("render_png_bytes() must refuse this figure"),
+                Err(error) => error,
+            };
+            // The prepared runtime is a second front door to the raster
+            // backend: it resolves its own frame and caches it, so it has to
+            // pass the same gate rather than inherit it.
+            let prepared = match $build.into_plot().prepare().render_png_bytes() {
+                Ok(_) => panic!("PreparedPlot::render_png_bytes() must refuse this figure"),
+                Err(error) => error,
+            };
+
+            let message = raster.to_string();
+            assert_eq!(
+                message,
+                vector.to_string(),
+                "save() and export_svg() must fail identically; a check that lives inside \
+                 one backend is a check the backends will disagree about"
+            );
+            assert_eq!(message, svg_string.to_string(), "render_to_svg() disagreed");
+            assert_eq!(message, image.to_string(), "render() disagreed");
+            assert_eq!(
+                message,
+                png_bytes.to_string(),
+                "render_png_bytes() disagreed"
+            );
+            assert_eq!(
+                message,
+                prepared.to_string(),
+                "PreparedPlot::render_png_bytes() disagreed"
+            );
+
+            // The PDF pipeline renders through the SVG backend but writes the
+            // file itself, so it is its own entry point and needs its own gate.
+            #[cfg(feature = "pdf")]
+            {
+                let pdf = $build
+                    .save_pdf(dir.path().join("figure.pdf"))
+                    .expect_err("save_pdf() must refuse this figure");
+                assert_eq!(message, pdf.to_string(), "save_pdf() disagreed");
+            }
+
+            assert!(
+                matches!(raster, PlottingError::InvalidInput(_)),
+                "an unplottable figure is bad input, not a rendering failure: {raster:?}"
+            );
+            assert!(
+                message.contains(LOG_SCALE_REQUIRES_POSITIVE),
+                "the refusal must keep the wording that names the fix: {message}"
+            );
+            assert!(
+                message.contains(concat!("Invalid ", $axis, "-axis range")),
+                concat!("the refusal must name the ", $axis, " axis: {}"),
+                message
+            );
+            assert!(
+                message.contains("SymLog"),
+                "the refusal must point at the scale that can show these values: {message}"
+            );
+            assert!(
+                !message.contains("Invalid rectangle dimensions"),
+                "geometry-level fallout must never be what the user is shown: {message}"
+            );
+
+            message
+        }};
+    }
+
+    /// Regression: `.save()` returned `Err` and `.export_svg()` returned `Ok`
+    /// on the same figure.
+    #[test]
+    fn test_every_backend_refuses_a_histogram_a_log_x_axis_cannot_bin() {
+        let data = vec![0.0, 1.0, 10.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "x",
+            Plot::new()
+                .size_px(240, 180)
+                .histogram(&data)
+                .xscale(AxisScale::Log)
+        );
+        assert!(
+            message.contains("histogram"),
+            "the refusal must say which series provoked it: {message}"
+        );
+    }
+
+    #[test]
+    fn test_every_backend_refuses_a_bar_a_log_value_axis_cannot_size() {
+        let values = vec![1.0, 0.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .bar(&["a", "b", "c"], &values)
+                .yscale(AxisScale::Log)
+        );
+        assert!(message.contains("bar"), "{message}");
+    }
+
+    /// Regression: this returned `Ok` and rendered a figure with no box —
+    /// silently wrong output, the worst of the failure modes.
+    #[test]
+    fn test_every_backend_refuses_a_box_plot_a_log_value_axis_cannot_place() {
+        let data = vec![-1.0, 0.0, 1.0, 10.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .boxplot(&data)
+                .yscale(AxisScale::Log)
+        );
+        assert!(message.contains("box plot"), "{message}");
+    }
+
+    /// A violin's outline is a density estimate over every sample, and a
+    /// boxen's bands are letter values: same class of geometry, same refusal.
+    #[test]
+    fn test_every_backend_refuses_distribution_bodies_a_log_axis_cannot_place() {
+        // Symmetric about zero, so the sample set carries negatives (the
+        // violin's density is fitted to them) and the median is exactly zero
+        // (a letter-value band edge the boxen has to draw).
+        let data: Vec<f64> = (0..=60).map(|index| index as f64 - 30.0).collect();
+
+        let violin = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .violin(&data)
+                .yscale(AxisScale::Log)
+        );
+        assert!(violin.contains("violin"), "{violin}");
+
+        let boxen = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .boxen(&data)
+                .yscale(AxisScale::Log)
+        );
+        assert!(boxen.contains("boxen"), "{boxen}");
+    }
+
+    /// The counterpart requirement: a point series is a set of independent
+    /// samples, so one the axis cannot place is dropped and the line breaks at
+    /// the gap. Refusing here would cost the user the other 99% of their data.
+    #[test]
+    fn test_a_line_series_keeps_rendering_around_a_sample_the_log_axis_drops() {
+        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0];
+        let y = vec![10.0, 20.0, 0.0, 40.0, 50.0];
+        let dir = tempdir().expect("a temporary directory");
+
+        Plot::new()
+            .size_px(240, 180)
+            .line(&x, &y)
+            .yscale(AxisScale::Log)
+            .save(dir.path().join("line.png"))
+            .expect("a line series must still render around an unplaceable sample");
+
+        Plot::new()
+            .size_px(240, 180)
+            .line(&x, &y)
+            .yscale(AxisScale::Log)
+            .export_svg(dir.path().join("line.svg"))
+            .expect("both backends must agree that this figure is fine");
+
+        let svg = Plot::new()
+            .size_px(240, 180)
+            .line(&x, &y)
+            .yscale(AxisScale::Log)
+            .render_to_svg()
+            .expect("a line series must still render around an unplaceable sample");
+
+        // "Dropped" means dropped: the sample must not reach an output
+        // primitive, as `height="NaN"` and `y1="NaN"` are not valid SVG.
+        assert!(
+            !svg.contains("NaN"),
+            "no NaN may reach the SVG output for a skipped sample"
+        );
+        assert!(
+            svg.contains("<polyline") || svg.contains("<path"),
+            "the rest of the series must still be drawn"
+        );
+    }
+
+    /// The refusal is about the *log* axis, not about negative data. A scale
+    /// that can place every finite number must never lose a figure to it.
+    #[test]
+    fn test_aggregate_geometry_is_never_refused_on_a_scale_that_can_place_it() {
+        let values = vec![-5.0, 0.0, 5.0];
+        for scale in [AxisScale::Linear, AxisScale::symlog(1.0)] {
+            Plot::new()
+                .size_px(240, 180)
+                .bar(&["a", "b", "c"], &values)
+                .yscale(scale)
+                .render()
+                .unwrap_or_else(|error| panic!("{scale:?} refused a figure it can draw: {error}"));
+        }
+
+        let data = vec![-1.0, 0.0, 1.0, 10.0, 100.0];
+        Plot::new()
+            .size_px(240, 180)
+            .boxplot(&data)
+            .render()
+            .expect("the default linear axes must draw this box plot");
+    }
+
+    /// An explicit histogram range *is* the outer pair of bin edges. Samples
+    /// outside it are never binned, so they cannot make a bar unplaceable and
+    /// must not cost the user the figure.
+    #[test]
+    fn test_an_explicit_positive_histogram_range_survives_out_of_range_samples() {
+        let data = vec![-50.0, 0.0, 1.0, 10.0, 100.0];
+        let config = crate::plots::histogram::HistogramConfig::new()
+            .range(1.0, 100.0)
+            .bins(4);
+
+        Plot::new()
+            .size_px(240, 180)
+            .histogram_with(&data, config)
+            .xscale(AxisScale::Log)
+            .render()
+            .expect("only the bin edges have to be placeable on the axis");
+    }
+
+    /// The scan reads raw data against the configured scale, not the computed
+    /// bounds — which is exactly why it catches what the range check cannot.
+    ///
+    /// Pinning the axis to an explicitly valid positive range satisfies
+    /// `validate_axis_scale_ranges_for_render` outright, and the bounds
+    /// accumulator would have satisfied it anyway by skipping the samples it
+    /// cannot represent. The figure must still be refused.
+    #[test]
+    fn test_the_refusal_survives_an_explicitly_valid_axis_range() {
+        let data = vec![-1.0, 0.0, 1.0, 10.0, 100.0];
+        let message = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .boxplot(&data)
+                .ylim(1.0, 100.0)
+                .yscale(AxisScale::Log)
+        );
+        assert!(message.contains("box plot"), "{message}");
+    }
+
+    /// Annotation *shapes* are the same class of geometry as a bar, and they
+    /// used to split the backends worse than a bar did.
+    ///
+    /// A rectangle, a span or a filled region whose corner a log axis cannot
+    /// place projects to `NaN`. Left to the renderers, the SVG side refuses the
+    /// element and latches the fault while tiny-skia answers the same input
+    /// with `Rect::from_xywh`/`PathBuilder::finish` returning `None` and simply
+    /// drawing nothing — one reports, one goes quiet. Refusing above the split
+    /// is what makes them agree.
+    #[test]
+    fn test_every_backend_refuses_annotation_shapes_a_log_axis_cannot_place() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![10.0, 20.0, 30.0];
+
+        let rectangle = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .yscale(AxisScale::Log)
+                // Bottom edge sits on zero, which a log y axis cannot place.
+                .annotate(Annotation::rectangle(1.0, 0.0, 1.0, 5.0))
+        );
+        assert!(rectangle.contains("rectangle annotation"), "{rectangle}");
+
+        let span = assert_every_backend_refuses!(
+            "x",
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .xscale(AxisScale::Log)
+                .annotate(Annotation::hspan(0.0, 2.0))
+        );
+        assert!(span.contains("horizontal span annotation"), "{span}");
+
+        let fill = assert_every_backend_refuses!(
+            "y",
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .yscale(AxisScale::Log)
+                // The classic "fill down to zero" idiom, which a log axis has
+                // no floor for: both backends drew nothing at all before.
+                .fill_between(&x, &y, &[0.0, 0.0, 0.0])
+        );
+        assert!(fill.contains("filled region annotation"), "{fill}");
+    }
+
+    /// The counterpart: a mark is not a shape.
+    ///
+    /// Text, arrows and reference lines are drawn at a position rather than
+    /// built out of one, so both backends skip an unplaceable one — the same
+    /// answer they give an unplaceable scatter point. Refusing them would cost
+    /// the user the whole figure over a label.
+    #[test]
+    fn test_annotation_marks_are_skipped_rather_than_refused_on_a_log_axis() {
+        let x = vec![1.0, 2.0, 3.0];
+        let y = vec![10.0, 20.0, 30.0];
+        let build = || {
+            Plot::new()
+                .size_px(240, 180)
+                .line(&x, &y)
+                .yscale(AxisScale::Log)
+                .annotate(Annotation::text(2.0, 0.0, "unplaceable"))
+                .annotate(Annotation::hline(0.0))
+                .annotate(Annotation::vline(2.0))
+                // The head is a triangle built from the endpoints, and `NaN`
+                // slips through a bare `len < 0.001` test — so this covers the
+                // arrow head as well as the shaft.
+                .annotate(Annotation::arrow(1.0, 10.0, 3.0, 0.0))
+        };
+        let dir = tempdir().expect("a temporary directory");
+
+        build()
+            .save(dir.path().join("marks.png"))
+            .expect("an unplaceable mark must not cost the figure");
+        let svg = build()
+            .render_to_svg()
+            .expect("both backends must agree that this figure is fine");
+        assert!(
+            !svg.contains("NaN"),
+            "a skipped mark must not reach the SVG output: {svg}"
+        );
     }
 }

@@ -825,6 +825,86 @@ fn test_draw_axis_labels_at_handles_collapsed_ranges() {
         .expect("collapsed ranges should use centered label placement");
 }
 
+/// Every tick-label path in the crate must resolve to the one canonical
+/// formatter. `render::skia` used to carry its own copies, so a log axis was
+/// labelled "1000" here and "10³" in the layout/SVG paths.
+#[test]
+fn test_skia_tick_helpers_are_the_canonical_axes_implementations() {
+    let values = [1.0, 10.0, 1000.0];
+
+    assert_eq!(
+        super::format_tick_labels(&values),
+        crate::axes::format_tick_labels(&values)
+    );
+    assert_eq!(
+        super::format_tick_labels_for_scale(&values, &crate::axes::AxisScale::Log),
+        crate::axes::format_tick_labels_for_scale(&values, &crate::axes::AxisScale::Log)
+    );
+    assert_eq!(
+        super::format_tick_labels_for_scale(&values, &crate::axes::AxisScale::Log),
+        vec!["10⁰", "10¹", "10³"]
+    );
+    assert_eq!(
+        super::generate_ticks(0.0, 10.0, 6),
+        crate::axes::generate_ticks(0.0, 10.0, 6)
+    );
+    assert_eq!(
+        super::generate_minor_ticks(&[0.0, 1.0], 3),
+        crate::axes::generate_minor_ticks(&[0.0, 1.0], 3)
+    );
+}
+
+/// The categorical axis-label paths used to format and position y ticks with
+/// their own linear-only copy, so a bar chart with `.yscale(Log)` got decimal
+/// labels at linear positions while the numeric path got superscript decades.
+/// Both now take the scale, so they cannot disagree.
+#[test]
+fn test_categorical_axis_labels_honour_the_y_scale() {
+    let theme = Theme::default();
+    let mut renderer = SkiaRenderer::new(200, 160, theme).unwrap();
+    let plot_area = LayoutRect {
+        left: 30.0,
+        top: 10.0,
+        right: 190.0,
+        bottom: 140.0,
+    };
+    let y_ticks = [1.0, 10.0, 100.0];
+
+    renderer
+        .draw_axis_labels_at_categorical(
+            &plot_area,
+            &["a".to_string(), "b".to_string()],
+            -0.5,
+            1.5,
+            1.0,
+            100.0,
+            &y_ticks,
+            150.0,
+            28.0,
+            10.0,
+            Color::BLACK,
+            100.0,
+            true,
+            false,
+            &crate::axes::AxisScale::Log,
+        )
+        .expect("categorical labels should draw on a log y axis");
+
+    // A log y axis puts 10 at the midpoint of [1, 100]; a linear one would put
+    // it a tenth of the way up.
+    let midpoint = SkiaRenderer::y_label_center_scaled(
+        &plot_area,
+        10.0,
+        1.0,
+        100.0,
+        &crate::axes::AxisScale::Log,
+    );
+    assert!(
+        (midpoint - plot_area.center_y()).abs() < 0.5,
+        "log y tick 10 should land at the vertical centre, got {midpoint}"
+    );
+}
+
 #[test]
 fn test_draw_polyline_clipped_keeps_pixels_inside_clip_rect() {
     let theme = Theme::default();

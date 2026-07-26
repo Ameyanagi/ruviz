@@ -2,7 +2,7 @@ use crate::{
     core::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
         LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
-        SpacingConfig, SpineConfig, TextPosition, TickFormatter, find_best_position,
+        SpacingConfig, SpineConfig, TextPosition, find_best_position,
         legend::{
             LEGACY_LEGEND_SWATCH_EDGE_DARK, LEGACY_LEGEND_SWATCH_EDGE_LIGHT,
             LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, legacy_legend_swatch_edge,
@@ -28,7 +28,7 @@ pub use self::utils::{
     ColorbarTicks, calculate_plot_area, calculate_plot_area_config, calculate_plot_area_dpi,
     compute_colorbar_ticks, format_log_tick_label, format_tick_label, format_tick_labels,
     format_tick_labels_for_scale, generate_minor_ticks, generate_ticks, map_data_to_pixels,
-    map_data_to_pixels_scaled,
+    map_data_to_pixels_scaled, try_map_data_to_pixels_scaled,
 };
 pub(crate) use self::utils::{
     colorbar_major_label_anchor_center_from_top, colorbar_major_label_top,
@@ -671,15 +671,6 @@ impl SkiaRenderer {
         } else {
             let normalized = scale.normalized_position(x_value, x_min, x_max);
             plot_area.left + normalized as f32 * plot_area.width()
-        }
-    }
-
-    fn y_label_center(plot_area: &LayoutRect, y_value: f64, y_min: f64, y_max: f64) -> f32 {
-        let y_range = y_max - y_min;
-        if y_range.abs() < f64::EPSILON {
-            plot_area.center_y()
-        } else {
-            plot_area.bottom - ((y_value - y_min) as f32 / y_range as f32) * plot_area.height()
         }
     }
 
@@ -1332,6 +1323,14 @@ impl SkiaRenderer {
     /// Draw text at the specified position using cosmic-text (professional quality).
     /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        // Bucket 1 of the geometry policy in `primitives.rs`, and the exact
+        // twin of `SvgRenderer::draw_text`: a label the axes cannot place is
+        // skipped, not raised. Without this the glyph run is laid out at `NaN`
+        // and every glyph quantises to 0 on the way to the pixmap, blitting the
+        // label into the top-left corner where it reads as real content.
+        if !Self::all_finite(&[x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let config = FontConfig::new(self.font_config.family.clone(), size);
@@ -1371,6 +1370,10 @@ impl SkiaRenderer {
         size: f32,
         color: Color,
     ) -> Result<()> {
+        // See `draw_text`: an unplaceable label is skipped, not raised.
+        if !Self::all_finite(&[x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let config = FontConfig::new(self.font_config.family.clone(), size);
@@ -1423,6 +1426,10 @@ impl SkiaRenderer {
         color: Color,
         weight: FontWeight,
     ) -> Result<()> {
+        // See `draw_text`: an unplaceable label is skipped, not raised.
+        if !Self::all_finite(&[center_x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let config = FontConfig::new(self.font_config.family.clone(), size).weight(weight);
@@ -1529,341 +1536,6 @@ impl SkiaRenderer {
         Cow::Borrowed(text)
     }
 
-    /// Draw axis labels and tick values using spacing configuration
-    ///
-    /// Positions tick labels and axis labels using `spacing.tick_pad` and `spacing.label_pad`
-    /// for consistent, DPI-independent spacing.
-    pub fn draw_axis_labels(
-        &mut self,
-        plot_area: Rect,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi: f32,
-        spacing: &SpacingConfig,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7; // Tick labels slightly smaller than axis labels
-        let render_scale = RenderScale::new(dpi);
-
-        // Convert spacing config values from points to pixels
-        let tick_pad_px = pt_to_px(spacing.tick_pad, dpi);
-        let label_pad_px = pt_to_px(spacing.label_pad, dpi);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Generate ticks and format all labels with consistent precision
-        let x_ticks = generate_ticks(x_min, x_max, 5);
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        let x_labels = format_tick_labels(&x_ticks);
-        let y_labels = format_tick_labels(&y_ticks);
-
-        // Draw X-axis tick labels
-        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-            let x_pixel = plot_area.left()
-                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            let label_x = (x_pixel - text_width_estimate)
-                .max(0.0)
-                .min(self.width() as f32 - text_width_estimate * 2.0);
-            // Position tick labels with tick_pad below the axis
-            let label_y = (plot_area.bottom() + tick_pad_px + tick_size)
-                .min(self.height() as f32 - tick_size - 5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
-        }
-
-        // Draw Y-axis tick labels
-        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            // Position tick labels with tick_pad left of the axis
-            let label_x = (plot_area.left() - text_width_estimate - tick_pad_px).max(5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel - tick_size / 3.0,
-                tick_size,
-                color,
-            )?;
-        }
-
-        // Draw X-axis label: positioned label_pad below the tick labels
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        // X-label goes below tick labels: bottom + tick_pad + tick_size + label_pad
-        let x_label_y = plot_area.bottom() + tick_pad_px + tick_size + label_pad_px + label_size;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        // Draw Y-axis label (rotated 90 degrees counterclockwise)
-        // Position label_pad left of the tick labels
-        // Estimate tick label width (assume ~4 characters average)
-        let estimated_tick_width = 4.0 * char_width_estimate;
-        let y_label_x = plot_area.left() - tick_pad_px - estimated_tick_width - label_pad_px;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        // Draw border around plot area
-        self.draw_plot_border(plot_area, color, render_scale.reference_scale())?;
-
-        Ok(())
-    }
-
-    /// Draw axis labels with DPI scale (legacy compatibility)
-    pub fn draw_axis_labels_legacy(
-        &mut self,
-        plot_area: Rect,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi_scale: f32,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7;
-        let render_scale = RenderScale::from_reference_scale(dpi_scale);
-        let tick_offset_y = render_scale.logical_pixels_to_pixels(20.0);
-        let x_label_offset = render_scale.logical_pixels_to_pixels(50.0);
-        let y_label_offset = render_scale.logical_pixels_to_pixels(25.0);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Generate ticks and format all labels with consistent precision
-        let x_ticks = generate_ticks(x_min, x_max, 5);
-        let y_ticks = generate_ticks(y_min, y_max, 5);
-        let x_labels = format_tick_labels(&x_ticks);
-        let y_labels = format_tick_labels(&y_ticks);
-
-        for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-            let x_pixel = plot_area.left()
-                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            let label_x = (x_pixel - text_width_estimate)
-                .max(0.0)
-                .min(self.width() as f32 - text_width_estimate * 2.0);
-            let label_y =
-                (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
-        }
-
-        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            let label_x = (plot_area.left()
-                - text_width_estimate
-                - render_scale.logical_pixels_to_pixels(15.0))
-            .max(5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel - tick_size / 3.0,
-                tick_size,
-                color,
-            )?;
-        }
-
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        let x_label_y = plot_area.bottom() + x_label_offset;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        let y_label_x = plot_area.left() - y_label_offset;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        self.draw_plot_border(plot_area, color, dpi_scale)?;
-
-        Ok(())
-    }
-
-    /// Draw axis labels and tick values with provided major ticks
-    pub fn draw_axis_labels_with_ticks(
-        &mut self,
-        plot_area: Rect,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-        x_major_ticks: &[f64],
-        y_major_ticks: &[f64],
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi_scale: f32,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7; // Tick labels slightly smaller than axis labels
-        let render_scale = RenderScale::from_reference_scale(dpi_scale);
-
-        // Spacing constants are authored in logical pixels and resolved via RenderScale.
-        let tick_offset_y = render_scale.logical_pixels_to_pixels(25.0);
-        let x_label_offset = render_scale.logical_pixels_to_pixels(55.0);
-        let y_label_offset = render_scale.logical_pixels_to_pixels(50.0);
-        let y_tick_offset = render_scale.logical_pixels_to_pixels(15.0);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Format all tick labels with consistent precision
-        let x_labels = format_tick_labels(x_major_ticks);
-        let y_labels = format_tick_labels(y_major_ticks);
-
-        // Draw X-axis tick labels using provided major ticks
-        for (tick_value, label_text) in x_major_ticks.iter().zip(x_labels.iter()) {
-            let x_pixel = plot_area.left()
-                + (*tick_value - x_min) as f32 / (x_max - x_min) as f32 * plot_area.width();
-
-            // Center X-axis tick labels horizontally under the tick mark, with proper offset
-            // Ensure labels don't overflow canvas bounds
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate / 2.0;
-            let label_x = (x_pixel - text_width_estimate)
-                .max(0.0)
-                .min(self.width() as f32 - text_width_estimate * 2.0);
-            let label_y =
-                (plot_area.bottom() + tick_offset_y).min(self.height() as f32 - tick_size - 5.0); // Ensure within canvas
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(&label_snippet, label_x, label_y, tick_size, color)?;
-        }
-
-        // Draw Y-axis tick labels using provided major ticks
-        for (tick_value, label_text) in y_major_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            // Right-align Y-axis tick labels next to the tick mark with proper offset
-            // Ensure labels fit within the left margin space
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0); // Ensure minimum 5px from canvas edge
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel + tick_size * 0.3,
-                tick_size,
-                color,
-            )?;
-        }
-
-        // Draw X-axis label
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        let x_label_y = plot_area.bottom() + x_label_offset;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        // Draw Y-axis label (rotated 90 degrees counterclockwise)
-        // Calculate required margin based on rotated text dimensions
-        let estimated_text_width = y_label.len() as f32 * label_size * 0.8;
-        let improved_y_label_offset = (estimated_text_width * 0.6).max(y_label_offset);
-        let y_label_x = plot_area.left() - improved_y_label_offset;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        // Draw border around plot area
-        self.draw_plot_border(plot_area, color, dpi_scale)?;
-
-        Ok(())
-    }
-
-    /// Draw axis labels with categorical x-axis labels for bar charts (legacy style)
-    ///
-    /// Similar to `draw_axis_labels_with_ticks` but uses category names on x-axis
-    /// instead of numeric tick values.
-    ///
-    /// Uses the same data-to-pixel mapping as bar rendering to ensure precise alignment.
-    pub fn draw_axis_labels_with_categories(
-        &mut self,
-        plot_area: Rect,
-        categories: &[String],
-        y_min: f64,
-        y_max: f64,
-        y_major_ticks: &[f64],
-        x_label: &str,
-        y_label: &str,
-        color: Color,
-        label_size: f32,
-        dpi_scale: f32,
-    ) -> Result<()> {
-        let tick_size = label_size * 0.7;
-        let render_scale = RenderScale::from_reference_scale(dpi_scale);
-        let tick_offset_y = render_scale.logical_pixels_to_pixels(25.0);
-        let x_label_offset = render_scale.logical_pixels_to_pixels(55.0);
-        let y_label_offset = render_scale.logical_pixels_to_pixels(50.0);
-        let y_tick_offset = render_scale.logical_pixels_to_pixels(15.0);
-        let char_width_estimate = render_scale.logical_pixels_to_pixels(4.0);
-
-        // Draw X-axis category labels using same data-to-pixel mapping as bars
-        let n_categories = categories.len();
-        if n_categories > 0 {
-            // X-axis range with matplotlib-compatible padding: [-0.5, n-0.5]
-            let x_min = -0.5_f64;
-            let x_max = n_categories as f64 - 0.5;
-            let x_range = x_max - x_min;
-
-            for (i, category) in categories.iter().enumerate() {
-                // Position label at category index (same as bar center in data space)
-                let x_data = i as f64;
-                let x_center =
-                    plot_area.left() + ((x_data - x_min) / x_range) as f32 * plot_area.width();
-
-                // Estimate text width for centering
-                let text_width_estimate = category.len() as f32 * char_width_estimate / 2.0;
-                let label_x = (x_center - text_width_estimate)
-                    .max(0.0)
-                    .min(self.width() as f32 - text_width_estimate * 2.0);
-                let label_y = (plot_area.bottom() + tick_offset_y)
-                    .min(self.height() as f32 - tick_size - 5.0);
-
-                self.draw_text(category, label_x, label_y, tick_size, color)?;
-            }
-        }
-
-        // Draw Y-axis tick labels with consistent precision
-        let y_labels = format_tick_labels(y_major_ticks);
-        for (tick_value, label_text) in y_major_ticks.iter().zip(y_labels.iter()) {
-            let y_pixel = plot_area.bottom()
-                - (*tick_value - y_min) as f32 / (y_max - y_min) as f32 * plot_area.height();
-
-            let text_width_estimate = label_text.len() as f32 * char_width_estimate;
-            let label_x = (plot_area.left() - text_width_estimate - y_tick_offset).max(5.0);
-            let label_snippet = self.generated_label(label_text);
-            self.draw_text(
-                &label_snippet,
-                label_x,
-                y_pixel + tick_size * 0.3,
-                tick_size,
-                color,
-            )?;
-        }
-
-        // Draw X-axis label
-        let x_label_x =
-            plot_area.left() + plot_area.width() / 2.0 - x_label.len() as f32 * char_width_estimate;
-        let x_label_y = plot_area.bottom() + x_label_offset;
-        self.draw_text(x_label, x_label_x, x_label_y, label_size, color)?;
-
-        // Draw Y-axis label (rotated)
-        let estimated_text_width = y_label.len() as f32 * label_size * 0.8;
-        let improved_y_label_offset = (estimated_text_width * 0.6).max(y_label_offset);
-        let y_label_x = plot_area.left() - improved_y_label_offset;
-        let y_label_y = plot_area.top() + plot_area.height() / 2.0;
-        self.draw_text_rotated(y_label, y_label_x, y_label_y, label_size, color)?;
-
-        // Draw border around plot area
-        self.draw_plot_border(plot_area, color, dpi_scale)?;
-
-        Ok(())
-    }
-
     /// Draw border around plot area
     pub fn draw_plot_border(
         &mut self,
@@ -1956,6 +1628,12 @@ impl SkiaRenderer {
     /// Draw axis tick labels and border using layout positions
     ///
     /// Uses the computed positions from LayoutCalculator for precise placement.
+    /// Draw axis tick labels and border on a linear axis pair.
+    ///
+    /// Thin wrapper over [`Self::draw_axis_labels_at_scaled`] with linear
+    /// scales — it exists only so callers that genuinely have no scale to hand
+    /// keep working. It is deliberately not a second implementation.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_axis_labels_at(
         &mut self,
         plot_area: &LayoutRect,
@@ -1973,51 +1651,56 @@ impl SkiaRenderer {
         show_tick_labels: bool,
         draw_border: bool,
     ) -> Result<()> {
-        let render_scale = RenderScale::new(dpi);
-
-        // Convert LayoutRect to tiny_skia Rect for border drawing
-        let skia_plot_area = Rect::from_ltrb(
-            plot_area.left,
-            plot_area.top,
-            plot_area.right,
-            plot_area.bottom,
+        self.draw_axis_labels_at_scaled(
+            plot_area,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            x_ticks,
+            y_ticks,
+            xtick_baseline_y,
+            ytick_right_x,
+            tick_size,
+            color,
+            dpi,
+            show_tick_labels,
+            draw_border,
+            &crate::axes::AxisScale::Linear,
+            &crate::axes::AxisScale::Linear,
         )
-        .ok_or(PlottingError::InvalidData {
-            message: "Invalid plot area dimensions".to_string(),
-            position: None,
-        })?;
+    }
 
-        // Format all tick labels with consistent precision
-        let x_labels = format_tick_labels(x_ticks);
-        let y_labels = format_tick_labels(y_ticks);
+    /// Draw the y-axis tick labels.
+    ///
+    /// This is the single implementation shared by the numeric and both
+    /// categorical axis-label paths. It takes the scale by value rather than
+    /// defaulting to linear so that a caller physically cannot draw y ticks
+    /// without saying which scale they belong to — that omission is exactly how
+    /// the categorical paths ended up labelling a log axis "1000" while the
+    /// numeric path drew "10³".
+    fn draw_y_tick_labels(
+        &mut self,
+        plot_area: &LayoutRect,
+        y_ticks: &[f64],
+        y_min: f64,
+        y_max: f64,
+        y_scale: &crate::axes::AxisScale,
+        ytick_right_x: f32,
+        tick_size: f32,
+        color: Color,
+    ) -> Result<()> {
+        let y_labels = format_tick_labels_for_scale(y_ticks, y_scale);
 
-        if show_tick_labels {
-            // Draw X-axis tick labels using provided ticks
-            for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
-                let x_pixel = Self::x_label_center(plot_area, *tick_value, x_min, x_max);
+        for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
+            let y_pixel =
+                Self::y_label_center_scaled(plot_area, *tick_value, y_min, y_max, y_scale);
 
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (x_pixel - text_width / 2.0)
-                    .max(0.0)
-                    .min(self.width() as f32 - text_width);
-                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
-            }
-
-            // Draw Y-axis tick labels using provided ticks
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
-        }
-
-        if draw_border {
-            self.draw_plot_border(skia_plot_area, color, render_scale.reference_scale())?;
+            let label_snippet = self.generated_label(label_text);
+            let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
+            let label_x = (ytick_right_x - text_width).max(0.0);
+            let centered_y = y_pixel - text_height / 2.0;
+            self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
         }
 
         Ok(())
@@ -2056,10 +1739,8 @@ impl SkiaRenderer {
             position: None,
         })?;
 
-        let x_labels = format_tick_labels_for_scale(x_ticks, x_scale);
-        let y_labels = format_tick_labels_for_scale(y_ticks, y_scale);
-
         if show_tick_labels {
+            let x_labels = format_tick_labels_for_scale(x_ticks, x_scale);
             for (tick_value, label_text) in x_ticks.iter().zip(x_labels.iter()) {
                 let x_pixel =
                     Self::x_label_center_scaled(plot_area, *tick_value, x_min, x_max, x_scale);
@@ -2072,16 +1753,16 @@ impl SkiaRenderer {
                 self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
             }
 
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel =
-                    Self::y_label_center_scaled(plot_area, *tick_value, y_min, y_max, y_scale);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
+            self.draw_y_tick_labels(
+                plot_area,
+                y_ticks,
+                y_min,
+                y_max,
+                y_scale,
+                ytick_right_x,
+                tick_size,
+                color,
+            )?;
         }
 
         if draw_border {
@@ -2098,6 +1779,7 @@ impl SkiaRenderer {
     ///
     /// Uses the same data-to-pixel mapping as bar rendering to ensure precise alignment.
     /// With bar chart x-range [-0.5, n-0.5], category i maps to position i in data space.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_axis_labels_at_categorical(
         &mut self,
         plot_area: &LayoutRect,
@@ -2114,6 +1796,7 @@ impl SkiaRenderer {
         dpi: f32,
         show_tick_labels: bool,
         draw_border: bool,
+        y_scale: &crate::axes::AxisScale,
     ) -> Result<()> {
         let render_scale = RenderScale::new(dpi);
 
@@ -2145,16 +1828,16 @@ impl SkiaRenderer {
                 }
             }
 
-            let y_labels = format_tick_labels(y_ticks);
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
+            self.draw_y_tick_labels(
+                plot_area,
+                y_ticks,
+                y_min,
+                y_max,
+                y_scale,
+                ytick_right_x,
+                tick_size,
+                color,
+            )?;
         }
 
         if draw_border {
@@ -2197,6 +1880,7 @@ impl SkiaRenderer {
         dpi: f32,
         show_tick_labels: bool,
         draw_border: bool,
+        y_scale: &crate::axes::AxisScale,
     ) -> Result<()> {
         let render_scale = RenderScale::new(dpi);
 
@@ -2225,16 +1909,16 @@ impl SkiaRenderer {
                 self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
             }
 
-            let y_labels = format_tick_labels(y_ticks);
-            for (tick_value, label_text) in y_ticks.iter().zip(y_labels.iter()) {
-                let y_pixel = Self::y_label_center(plot_area, *tick_value, y_min, y_max);
-
-                let label_snippet = self.generated_label(label_text);
-                let (text_width, text_height) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (ytick_right_x - text_width).max(0.0);
-                let centered_y = y_pixel - text_height / 2.0;
-                self.draw_text(&label_snippet, label_x, centered_y, tick_size, color)?;
-            }
+            self.draw_y_tick_labels(
+                plot_area,
+                y_ticks,
+                y_min,
+                y_max,
+                y_scale,
+                ytick_right_x,
+                tick_size,
+                color,
+            )?;
         }
 
         if draw_border {
@@ -3049,130 +2733,24 @@ impl SkiaRenderer {
         label_font_size: Option<f32>,
         show_log_subticks: bool,
     ) -> Result<()> {
-        let tick_font_size_px = self.points_to_pixels(tick_font_size);
-        let label_font_size_px = label_font_size
-            .map(|size| self.points_to_pixels(size))
-            .unwrap_or(tick_font_size_px * 1.1);
-
-        // Draw the colorbar gradient (vertical, from vmax at top to vmin at bottom)
-        // Use one segment per pixel row to eliminate anti-aliasing artifacts
-        let num_segments = (height as usize).max(50);
-        let segment_height = height / num_segments as f32;
-
-        for i in 0..num_segments {
-            // Map segment to value (top = vmax, bottom = vmin)
-            let normalized = 1.0 - (i as f64 / (num_segments - 1).max(1) as f64);
-            let color = colormap.sample(normalized);
-            let segment_y = y + i as f32 * segment_height;
-
-            // Use solid rectangle with small overlap to ensure seamless gradient
-            // draw_solid_rectangle has 100% opacity and no anti-aliasing
-            self.draw_solid_rectangle(x, segment_y, width, segment_height + 0.5, color)?;
-        }
-
-        // Draw border around colorbar
-        let stroke_width = self.logical_pixels_to_pixels(1.0);
-        self.draw_rectangle_outline(x, y, width, height, foreground_color, stroke_width)?;
-
-        let ticks = compute_colorbar_ticks(vmin, vmax, value_scale, show_log_subticks);
-        let mut measured_major_labels = Vec::with_capacity(ticks.major_labels.len());
-        let mut max_label_width: f32 = 0.0;
-        for label_text in &ticks.major_labels {
-            let label_snippet = self.generated_label(label_text);
-            let (text_width, _) = self.measure_text(&label_snippet, tick_font_size_px)?;
-            let ink_center_from_top =
-                self.measure_text_ink_center_from_top(&label_snippet, tick_font_size_px)?;
-            max_label_width = max_label_width.max(text_width);
-            measured_major_labels.push((label_snippet, ink_center_from_top));
-        }
-
-        let rotated_label_width = if let Some(label_text) = label {
-            Some(self.measure_text(label_text, label_font_size_px)?.1)
-        } else {
-            None
-        };
-        let log_decade_base_center = matches!(value_scale, crate::axes::AxisScale::Log)
-            .then(|| self.measure_text_ink_center_from_top("10", tick_font_size_px))
-            .transpose()?;
-        let layout = compute_colorbar_layout_metrics(
-            width,
-            tick_font_size_px,
-            max_label_width,
-            rotated_label_width,
-        );
-
-        for minor_value in &ticks.minor_values {
-            let t = value_scale
-                .normalized_position(*minor_value, vmin, vmax)
-                .clamp(0.0, 1.0);
-            let tick_y = y + height * (1.0 - t as f32);
-
-            self.draw_line(
-                x + width,
-                tick_y,
-                x + width + layout.minor_tick_width,
-                tick_y,
-                foreground_color,
-                stroke_width * 0.8,
-                LineStyle::Solid,
-            )?;
-        }
-
-        for ((value, _), (label_text, ink_center_from_top)) in ticks
-            .major_values
-            .iter()
-            .zip(ticks.major_labels.iter())
-            .zip(measured_major_labels.iter())
-        {
-            // Map value to Y position (top = vmax, bottom = vmin)
-            let t = value_scale
-                .normalized_position(*value, vmin, vmax)
-                .clamp(0.0, 1.0);
-            let tick_y = y + height * (1.0 - t as f32);
-
-            // Draw tick mark
-            self.draw_line(
-                x + width,
-                tick_y,
-                x + width + layout.major_tick_width,
-                tick_y,
-                foreground_color,
-                stroke_width,
-                LineStyle::Solid,
-            )?;
-
-            let anchor_center = colorbar_major_label_anchor_center_from_top(
+        crate::render::colorbar::draw_colorbar(
+            self,
+            &crate::render::colorbar::ColorbarSpec {
+                colormap,
+                vmin,
+                vmax,
+                x,
+                y,
+                width,
+                height,
                 value_scale,
-                label_text,
-                *ink_center_from_top,
-                log_decade_base_center,
-            );
-            let label_y = colorbar_major_label_top(tick_y, anchor_center);
-            self.draw_text(
-                label_text,
-                x + layout.tick_label_x_offset,
-                label_y,
-                tick_font_size_px,
-                foreground_color,
-            )?;
-        }
-
-        // Draw colorbar label (rotated 90 degrees) if provided
-        if let Some((label, label_center_x_offset)) =
-            label.zip(layout.rotated_label_center_x_offset)
-        {
-            let label_x = x + label_center_x_offset;
-            let label_y = y + height / 2.0;
-            self.draw_text_rotated(
                 label,
-                label_x,
-                label_y,
-                label_font_size_px,
                 foreground_color,
-            )?;
-        }
-
-        Ok(())
+                tick_font_size,
+                label_font_size,
+                show_log_subticks,
+            },
+        )
     }
 
     /// Consume the renderer and convert to an `Image`.
@@ -3272,6 +2850,82 @@ impl SkiaRenderer {
 
 #[cfg(test)]
 mod tests;
+
+/// The raster backend's colorbar primitives.
+///
+/// The geometry lives in [`crate::render::colorbar::draw_colorbar`]; this only
+/// says how each primitive is put on a pixmap.
+impl crate::render::colorbar::ColorbarCanvas for SkiaRenderer {
+    fn colorbar_points_to_pixels(&self, points: f32) -> f32 {
+        self.points_to_pixels(points)
+    }
+
+    fn colorbar_logical_pixels_to_pixels(&self, pixels: f32) -> f32 {
+        self.logical_pixels_to_pixels(pixels)
+    }
+
+    fn colorbar_label_snippet<'a>(&self, text: &'a str) -> std::borrow::Cow<'a, str> {
+        self.generated_label(text)
+    }
+
+    fn colorbar_measure_text(&self, text: &str, size: f32) -> Result<(f32, f32)> {
+        self.measure_text(text, size)
+    }
+
+    fn colorbar_measure_ink_center_from_top(&self, text: &str, size: f32) -> Result<f32> {
+        self.measure_text_ink_center_from_top(text, size)
+    }
+
+    fn colorbar_fill_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        self.draw_solid_rectangle(x, y, width, height, color)
+    }
+
+    fn colorbar_stroke_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        stroke_width: f32,
+    ) -> Result<()> {
+        self.draw_rectangle_outline(x, y, width, height, color, stroke_width)
+    }
+
+    fn colorbar_line(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        stroke_width: f32,
+    ) -> Result<()> {
+        self.draw_line(x1, y1, x2, y2, color, stroke_width, LineStyle::Solid)
+    }
+
+    fn colorbar_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        self.draw_text(text, x, y, size, color)
+    }
+
+    fn colorbar_text_rotated(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+    ) -> Result<()> {
+        self.draw_text_rotated(text, x, y, size, color)
+    }
+}
 
 #[cfg(test)]
 mod legend_patch_tests {

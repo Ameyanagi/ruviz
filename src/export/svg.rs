@@ -39,6 +39,13 @@ pub struct SvgRenderer {
     text_renderer: TextRenderer,
     /// Font family for plain SVG text and Typst-rendered SVG text.
     font_family: FontFamily,
+    /// First shape that reached an emitter with a non-finite dimension.
+    ///
+    /// Latched rather than returned because most emitters are infallible by
+    /// signature; [`SvgRenderer::check_geometry`] and [`SvgRenderer::save`]
+    /// turn it into an `Err`. See the non-finite policy on
+    /// [`SvgRenderer::reject_shape`].
+    invalid_geometry: Option<String>,
 }
 
 impl SvgRenderer {
@@ -63,6 +70,7 @@ impl SvgRenderer {
             text_engine_mode: TextEngineMode::Plain,
             text_renderer: TextRenderer::new(),
             font_family,
+            invalid_geometry: None,
         }
     }
 
@@ -131,6 +139,117 @@ impl SvgRenderer {
         format!("clip{}", self.clip_id_counter)
     }
 
+    // ------------------------------------------------------------------
+    // Non-finite geometry policy
+    // ------------------------------------------------------------------
+    //
+    // `NaN` and `±inf` must never be formatted into an SVG attribute:
+    // `height="NaN"` is not valid SVG, and viewers disagree about how much of
+    // the document to discard when they meet one. Every emitter therefore
+    // checks the numbers it is about to print, and there are exactly two
+    // permitted responses. When you add an emitter, pick the bucket it belongs
+    // to and use the matching helper — do not invent a third answer.
+    //
+    // 1. **Open stroked geometry** — polylines, line segments, marker strokes,
+    //    text anchors. A non-finite coordinate is a *gap*: the sample has no
+    //    position on these axes, so the stroke is split around it (or the
+    //    single element is skipped) and everything else is still drawn. This is
+    //    the intended log-axis behaviour, matching
+    //    `raster_batches::representable_sample_runs`. Use [`Self::all_finite`]
+    //    / [`Self::finite_point_runs`]. No error is raised: a gap is data the
+    //    axes genuinely cannot show, not a bug.
+    //
+    // 2. **Shapes with defining dimensions** — rectangles, circles, images,
+    //    clip rects, and closed polygons. There is no meaningful partial shape:
+    //    a rect with a `NaN` height means unvalidated geometry got past the
+    //    series-level checks, i.e. an internal invariant failed. The element is
+    //    not emitted and the failure is latched by [`Self::reject_shape`], which
+    //    [`Self::check_geometry`] and [`Self::save`] surface as an `Err`.
+
+    /// Is every one of these numbers printable into an SVG attribute?
+    fn all_finite(values: &[f32]) -> bool {
+        values.iter().all(|value| value.is_finite())
+    }
+
+    /// Are all of these vertices printable into an SVG attribute?
+    fn all_points_finite(points: &[(f32, f32)]) -> bool {
+        points.iter().all(|&(x, y)| x.is_finite() && y.is_finite())
+    }
+
+    /// Split a vertex list at every non-finite point.
+    ///
+    /// Bucket 1 of the policy above: the surviving runs are stroked as separate
+    /// elements, so the line breaks at the hole instead of being drawn straight
+    /// through it. Runs shorter than two points are kept here and dropped by the
+    /// emitter, which already refuses a one-point polyline.
+    fn finite_point_runs(points: &[(f32, f32)]) -> Vec<&[(f32, f32)]> {
+        let mut runs = Vec::new();
+        let mut start = 0usize;
+        for (index, &(x, y)) in points.iter().enumerate() {
+            if x.is_finite() && y.is_finite() {
+                continue;
+            }
+            if index > start {
+                runs.push(&points[start..index]);
+            }
+            start = index + 1;
+        }
+        if points.len() > start {
+            runs.push(&points[start..]);
+        }
+        runs
+    }
+
+    /// Bucket 2 of the policy above: refuse a shape whose defining dimensions
+    /// are not all finite.
+    ///
+    /// Returns `false` when the caller must not emit the element. Only the first
+    /// rejection is kept — it is the one closest to the cause.
+    fn reject_shape(&mut self, element: &str, dims: &[(&str, f32)]) -> bool {
+        let Some((name, value)) = dims.iter().copied().find(|&(_, value)| !value.is_finite())
+        else {
+            return false;
+        };
+        self.latch_invalid_geometry(element, &format!("non-finite {name} ({value})"));
+        true
+    }
+
+    /// Bucket 2 for closed polygons, whose vertices *are* the defining shape.
+    fn reject_polygon(&mut self, element: &str, points: &[(f32, f32)]) -> bool {
+        let Some((index, &(x, y))) = points
+            .iter()
+            .enumerate()
+            .find(|&(_, &(x, y))| !x.is_finite() || !y.is_finite())
+        else {
+            return false;
+        };
+        self.latch_invalid_geometry(element, &format!("non-finite vertex {index} ({x}, {y})"));
+        true
+    }
+
+    fn latch_invalid_geometry(&mut self, element: &str, detail: &str) {
+        if self.invalid_geometry.is_some() {
+            return;
+        }
+        self.invalid_geometry = Some(format!(
+            "SVG <{element}> was given a {detail}. Geometry reached the emitter without \
+             being validated; this is an internal invariant failure in the renderer, not \
+             a limit of the supplied data."
+        ));
+    }
+
+    /// `Err` if any shape was refused for a non-finite dimension.
+    ///
+    /// The emitted SVG is always well formed — the offending element is simply
+    /// missing — so this is the only signal that something was dropped. Callers
+    /// that hand out an SVG string must check it; [`Self::save`] already does.
+    pub fn check_geometry(&self) -> Result<()> {
+        match &self.invalid_geometry {
+            Some(detail) => Err(PlottingError::RenderError(detail.clone())),
+            None => Ok(()),
+        }
+    }
+
     /// Convert Color to SVG color string
     fn color_to_svg(&self, color: Color) -> String {
         if color.a == 255 {
@@ -148,13 +267,18 @@ impl SvgRenderer {
 
     /// Convert LineStyle to SVG stroke-dasharray
     fn line_style_to_dasharray(&self, style: &LineStyle) -> Option<String> {
-        self.scaled_dash_pattern(style).map(|pattern| {
-            pattern
-                .iter()
-                .map(|v| self.format_dash_value(*v))
-                .collect::<Vec<_>>()
-                .join(",")
-        })
+        self.scaled_dash_pattern(style)
+            // A non-finite dash length would print as `stroke-dasharray="NaN"`.
+            // Dropping the attribute leaves a solid stroke, which is a far
+            // better failure than an unparseable one.
+            .filter(|pattern| Self::all_finite(pattern))
+            .map(|pattern| {
+                pattern
+                    .iter()
+                    .map(|v| self.format_dash_value(*v))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
     }
 
     /// Convert style to a scaled dash pattern using the shared render scale.
@@ -217,6 +341,11 @@ impl SvgRenderer {
     }
 
     fn set_root_svg_dimension(svg: &mut String, attribute: &str, value: f32) {
+        if !value.is_finite() {
+            // Leave the measured dimension the embedded document already has
+            // rather than overwriting it with `NaN`.
+            return;
+        }
         let Some(tag_end) = svg.find('>') else {
             return;
         };
@@ -329,6 +458,12 @@ impl SvgRenderer {
         color: Color,
         filled: bool,
     ) {
+        if self.reject_shape(
+            "rect",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        ) {
+            return;
+        }
         let color_str = self.color_to_svg(color);
         if filled {
             writeln!(
@@ -345,6 +480,36 @@ impl SvgRenderer {
             )
             .unwrap();
         }
+    }
+
+    /// Draw a filled rectangle with no anti-aliased edges.
+    ///
+    /// Twin of the raster backend's pixel-aligned solid rectangle: for geometry
+    /// that tiles — heatmap cells, filled contour bands — anti-aliased edges
+    /// leave a pale seam wherever two shapes meet.
+    pub fn draw_seamless_rectangle(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) {
+        if self.reject_shape(
+            "rect",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        ) {
+            return;
+        }
+        if width <= 0.0 || height <= 0.0 {
+            return;
+        }
+        let fill = self.color_to_svg(color);
+        writeln!(
+            self.content,
+            r#"  <rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="{fill}" shape-rendering="crispEdges"/>"#
+        )
+        .unwrap();
     }
 
     /// Draw a rectangle with an explicit fill and/or an explicit edge.
@@ -364,6 +529,14 @@ impl SvgRenderer {
         if fill.is_none() && edge.is_none() {
             return;
         }
+        // A bar or histogram column whose height could not be projected is the
+        // exact corruption this guard exists for: `<rect height="NaN">`.
+        if self.reject_shape(
+            "rect",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        ) {
+            return;
+        }
         // Twin of the raster guard: a rectangle with no area has no interior to
         // fill and no boundary to stroke, so a zero-value bar stays unmarked.
         if width <= 0.0 || height <= 0.0 {
@@ -373,7 +546,7 @@ impl SvgRenderer {
             Some(color) => self.color_to_svg(color),
             None => "none".to_string(),
         };
-        let stroke_attr = match edge {
+        let stroke_attr = match edge.filter(|&(_, width_pt)| width_pt.is_finite()) {
             Some((color, width_pt)) => {
                 let stroke_color = self.color_to_svg(color);
                 let stroke_width = self.points_to_pixels(width_pt);
@@ -399,6 +572,18 @@ impl SvgRenderer {
         color: Color,
         filled: bool,
     ) {
+        if self.reject_shape(
+            "rect",
+            &[
+                ("x", x),
+                ("y", y),
+                ("width", width),
+                ("height", height),
+                ("corner radius", corner_radius),
+            ],
+        ) {
+            return;
+        }
         let color_str = self.color_to_svg(color);
         // Clamp radius to half of the smallest dimension
         let max_radius = (width.min(height) / 2.0).max(0.0);
@@ -432,6 +617,11 @@ impl SvgRenderer {
         width: f32,
         style: LineStyle,
     ) {
+        // Open stroked geometry: a segment with an endpoint the axes cannot
+        // place is a gap, so it is dropped rather than drawn or raised.
+        if !Self::all_finite(&[x1, y1, x2, y2, width]) {
+            return;
+        }
         let color_str = self.color_to_svg(color);
         let dasharray = self.line_style_to_dasharray(&style);
 
@@ -447,7 +637,12 @@ impl SvgRenderer {
         .unwrap();
     }
 
-    /// Draw a polyline (connected line segments)
+    /// Draw a polyline (connected line segments).
+    ///
+    /// A vertex the axes cannot place (`NaN`/`±inf`) **breaks** the line: the
+    /// run before the hole and the run after it are emitted as separate
+    /// `<polyline>` elements, so the stroke shows the gap instead of inventing
+    /// a segment across it.
     pub fn draw_polyline(
         &mut self,
         points: &[(f32, f32)],
@@ -455,12 +650,32 @@ impl SvgRenderer {
         width: f32,
         style: LineStyle,
     ) {
+        if !width.is_finite() {
+            return;
+        }
+        if Self::all_points_finite(points) {
+            self.emit_polyline(points, color, width, &style);
+            return;
+        }
+        for run in Self::finite_point_runs(points) {
+            self.emit_polyline(run, color, width, &style);
+        }
+    }
+
+    /// Emit one `<polyline>`. Every vertex must already be finite.
+    fn emit_polyline(
+        &mut self,
+        points: &[(f32, f32)],
+        color: Color,
+        width: f32,
+        style: &LineStyle,
+    ) {
         if points.len() < 2 {
             return;
         }
 
         let color_str = self.color_to_svg(color);
-        let dasharray = self.line_style_to_dasharray(&style);
+        let dasharray = self.line_style_to_dasharray(style);
 
         let dash_attr = dasharray
             .map(|d| format!(r#" stroke-dasharray="{}""#, d))
@@ -481,8 +696,15 @@ impl SvgRenderer {
     }
 
     /// Draw a filled polygon.
+    ///
+    /// Unlike a polyline, a closed filled shape has no sensible "gap": dropping
+    /// a vertex silently redraws a different area, so a non-finite vertex is
+    /// refused (see the non-finite geometry policy).
     pub fn draw_filled_polygon(&mut self, points: &[(f32, f32)], color: Color) {
         if points.len() < 3 {
+            return;
+        }
+        if self.reject_polygon("polygon", points) {
             return;
         }
 
@@ -511,6 +733,13 @@ impl SvgRenderer {
         width: f32,
         height: f32,
     ) -> Result<()> {
+        if !Self::all_finite(&[x, y, width, height]) {
+            return Err(PlottingError::RenderError(format!(
+                "SVG <image> was given a non-finite placement ({x}, {y}, {width}x{height}). \
+                 Geometry reached the emitter without being validated; this is an internal \
+                 invariant failure in the renderer, not a limit of the supplied data."
+            )));
+        }
         let png = image.encode_png()?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(png);
         writeln!(
@@ -526,6 +755,11 @@ impl SvgRenderer {
     /// Draw a polygon outline.
     pub fn draw_polygon_outline(&mut self, points: &[(f32, f32)], color: Color, width: f32) {
         if points.len() < 3 {
+            return;
+        }
+        if self.reject_shape("polygon", &[("stroke width", width)])
+            || self.reject_polygon("polygon", points)
+        {
             return;
         }
 
@@ -546,6 +780,9 @@ impl SvgRenderer {
 
     /// Draw a filled circle
     pub fn draw_circle(&mut self, cx: f32, cy: f32, r: f32, color: Color, filled: bool) {
+        if self.reject_shape("circle", &[("cx", cx), ("cy", cy), ("r", r)]) {
+            return;
+        }
         let color_str = self.color_to_svg(color);
         if filled {
             writeln!(
@@ -570,6 +807,9 @@ impl SvgRenderer {
         color: Color,
         stroke_width: Option<f32>,
     ) {
+        if self.reject_polygon("polygon", points) {
+            return;
+        }
         let color_str = self.color_to_svg(color);
         let points_str = points
             .iter()
@@ -595,6 +835,11 @@ impl SvgRenderer {
     }
 
     fn draw_marker_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, color: Color, width: f32) {
+        // Open stroked geometry: skip, do not raise. `draw_marker` already
+        // refuses an unplaceable marker, so this is pure defence in depth.
+        if !Self::all_finite(&[x1, y1, x2, y2, width]) {
+            return;
+        }
         let color_str = self.color_to_svg(color);
         writeln!(
             self.content,
@@ -647,9 +892,18 @@ impl SvgRenderer {
         color: Color,
         edge: Option<(Color, f32)>,
     ) {
+        // A marker is point geometry: a sample the axes cannot place is simply
+        // not drawn (bucket 1). Caught here so the shape emitters below — which
+        // *do* raise — never see the non-finite centre.
+        if !Self::all_finite(&[x, y, size]) {
+            return;
+        }
         self.draw_marker(x, y, size, style, color);
 
-        let Some((edge_color, width_pt)) = edge.filter(|_| style.takes_edge()) else {
+        let Some((edge_color, width_pt)) = edge
+            .filter(|&(_, width_pt)| width_pt.is_finite())
+            .filter(|_| style.takes_edge())
+        else {
             return;
         };
         let width_px = self.points_to_pixels(width_pt);
@@ -685,7 +939,13 @@ impl SvgRenderer {
     }
 
     /// Draw a marker at a point, matching the raster marker semantics.
+    ///
+    /// A marker whose centre or size is not finite is a sample the axes cannot
+    /// place, so it is skipped — the same "gap" rule polylines follow.
     pub fn draw_marker(&mut self, x: f32, y: f32, size: f32, style: MarkerStyle, color: Color) {
+        if !Self::all_finite(&[x, y, size]) {
+            return;
+        }
         let radius = size / 2.0;
 
         match style {
@@ -755,6 +1015,12 @@ impl SvgRenderer {
         family: &FontFamily,
         style: &TextStyle,
     ) -> Result<()> {
+        // A label is anchored to geometry: if the anchor cannot be placed the
+        // label is skipped, exactly as an unplaceable marker is. Text carries no
+        // data of its own, so this is bucket 1, not a latched failure.
+        if !Self::all_finite(&[x, y, style.rotation]) {
+            return Ok(());
+        }
         let font_size = self.points_to_pixels(style.font_size.max(0.1));
         let padding = self.points_to_pixels(style.padding.max(0.0));
         let border_width = self.points_to_pixels(style.border_width.max(0.0));
@@ -900,6 +1166,10 @@ impl SvgRenderer {
     /// Draw text at specified position.
     /// `y` is interpreted as the top of the text rendering area.
     pub fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        // See `draw_styled_text`: an unplaceable label is skipped, not raised.
+        if !Self::all_finite(&[x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let color_str = self.color_to_svg(color);
@@ -979,6 +1249,10 @@ impl SvgRenderer {
         color: Color,
         weight: Option<FontWeight>,
     ) -> Result<()> {
+        // See `draw_styled_text`: an unplaceable label is skipped, not raised.
+        if !Self::all_finite(&[x, y, size]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let color_str = self.color_to_svg(color);
@@ -1075,6 +1349,10 @@ impl SvgRenderer {
         color: Color,
         angle: f32,
     ) -> Result<()> {
+        // See `draw_styled_text`: an unplaceable label is skipped, not raised.
+        if !Self::all_finite(&[x, y, size, angle]) {
+            return Ok(());
+        }
         match self.text_engine_mode {
             TextEngineMode::Plain => {
                 let color_str = self.color_to_svg(color);
@@ -1118,6 +1396,49 @@ impl SvgRenderer {
                 Ok(())
             }
         }
+    }
+
+    /// Draw a colorbar for heatmaps and filled contours.
+    ///
+    /// Twin of [`SkiaRenderer::draw_colorbar`](crate::render::SkiaRenderer::draw_colorbar):
+    /// both hand the same [`crate::render::colorbar::ColorbarSpec`] to the same
+    /// routine, so the SVG export carries the value scale the PNG shows instead
+    /// of dropping it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_colorbar(
+        &mut self,
+        colormap: &crate::render::ColorMap,
+        vmin: f64,
+        vmax: f64,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        value_scale: &crate::axes::AxisScale,
+        label: Option<&str>,
+        foreground_color: Color,
+        tick_font_size: f32,
+        label_font_size: Option<f32>,
+        show_log_subticks: bool,
+    ) -> Result<()> {
+        crate::render::colorbar::draw_colorbar(
+            self,
+            &crate::render::colorbar::ColorbarSpec {
+                colormap,
+                vmin,
+                vmax,
+                x,
+                y,
+                width,
+                height,
+                value_scale,
+                label,
+                foreground_color,
+                tick_font_size,
+                label_font_size,
+                show_log_subticks,
+            },
+        )
     }
 
     /// Draw grid lines
@@ -1679,6 +2000,9 @@ impl SvgRenderer {
         style: &LineStyle,
         width: f32,
     ) {
+        if !Self::all_finite(&[x, y, length, width]) {
+            return;
+        }
         let dash_attr = self
             .line_style_to_dasharray(style)
             .map(|pattern| format!(r#" stroke-dasharray="{}""#, pattern))
@@ -1758,6 +2082,13 @@ impl SvgRenderer {
     ) {
         let handle_length = spacing.handle_length;
         let handle_height = spacing.handle_height;
+
+        // Legend geometry comes from layout, never from data, so a non-finite
+        // value here means the layout itself is broken. Skipping the handle
+        // keeps the key readable; the individual emitters below still guard.
+        if !Self::all_finite(&[x, y, handle_length, handle_height]) {
+            return;
+        }
 
         match &item.item_type {
             LegendItemType::Line { style, width } => {
@@ -2099,6 +2430,19 @@ impl SvgRenderer {
     /// Add a clip path definition and return the ID
     pub fn add_clip_rect(&mut self, x: f32, y: f32, width: f32, height: f32) -> String {
         let clip_id = self.next_clip_id();
+        // A clip rect is a shape with defining dimensions, so a non-finite one
+        // is a latched failure. It still has to resolve to *something* — an
+        // empty `<clipPath>` hides the whole group — so fall back to the full
+        // canvas, which leaves the document readable while `check_geometry`
+        // reports the fault.
+        let (x, y, width, height) = if self.reject_shape(
+            "clipPath",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        ) {
+            (0.0, 0.0, self.width.max(0.0), self.height.max(0.0))
+        } else {
+            (x, y, width, height)
+        };
         writeln!(
             self.defs,
             r#"    <clipPath id="{}"><rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}"/></clipPath>"#,
@@ -2145,6 +2489,8 @@ impl SvgRenderer {
 
     /// Save to SVG file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        // Never write a file that is missing geometry we refused to draw.
+        self.check_geometry()?;
         let svg_string = self.to_svg_string();
         crate::export::write_bytes_atomic(path, svg_string.as_bytes())
     }
@@ -2160,5 +2506,248 @@ impl SvgRenderer {
     }
 }
 
+/// The SVG backend's colorbar primitives.
+///
+/// The geometry lives in [`crate::render::colorbar::draw_colorbar`]; this only
+/// says how each primitive becomes an SVG element.
+impl crate::render::colorbar::ColorbarCanvas for SvgRenderer {
+    fn colorbar_points_to_pixels(&self, points: f32) -> f32 {
+        self.points_to_pixels(points)
+    }
+
+    fn colorbar_logical_pixels_to_pixels(&self, pixels: f32) -> f32 {
+        self.logical_pixels_to_pixels(pixels)
+    }
+
+    fn colorbar_label_snippet<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        self.generated_label(text)
+    }
+
+    fn colorbar_measure_text(&self, text: &str, size: f32) -> Result<(f32, f32)> {
+        self.measure_text_for_layout(text, size)
+    }
+
+    fn colorbar_measure_ink_center_from_top(&self, text: &str, size: f32) -> Result<f32> {
+        match self.text_engine_mode {
+            TextEngineMode::Plain => {
+                let config = FontConfig::new(self.font_family.clone(), size);
+                self.text_renderer
+                    .measure_text_ink_center_from_top(text, &config)
+            }
+            #[cfg(feature = "typst-math")]
+            TextEngineMode::Typst => Ok(self.measure_text_for_layout(text, size)?.1 / 2.0),
+        }
+    }
+
+    fn colorbar_fill_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) -> Result<()> {
+        self.draw_rectangle(x, y, width, height, color, true);
+        Ok(())
+    }
+
+    fn colorbar_stroke_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+        stroke_width: f32,
+    ) -> Result<()> {
+        if self.reject_shape(
+            "rect",
+            &[
+                ("x", x),
+                ("y", y),
+                ("width", width),
+                ("height", height),
+                ("stroke width", stroke_width),
+            ],
+        ) {
+            return self.check_geometry();
+        }
+        let stroke = self.color_to_svg(color);
+        writeln!(
+            self.content,
+            r#"  <rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="none" stroke="{stroke}" stroke-width="{stroke_width:.2}"/>"#
+        )
+        .unwrap();
+        Ok(())
+    }
+
+    fn colorbar_line(
+        &mut self,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        stroke_width: f32,
+    ) -> Result<()> {
+        self.draw_line(x1, y1, x2, y2, color, stroke_width, LineStyle::Solid);
+        Ok(())
+    }
+
+    fn colorbar_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) -> Result<()> {
+        self.draw_text(text, x, y, size, color)
+    }
+
+    fn colorbar_text_rotated(
+        &mut self,
+        text: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        color: Color,
+    ) -> Result<()> {
+        self.draw_text_rotated(text, x, y, size, color, -90.0)
+    }
+}
+
 #[cfg(test)]
 mod tests;
+
+/// Regressions for the non-finite geometry policy documented on
+/// [`SvgRenderer::reject_shape`].
+///
+/// Kept in this file, next to the guards, so a change to the policy and the
+/// tests that pin it stay in the same diff.
+#[cfg(test)]
+mod non_finite_geometry_tests {
+    use super::*;
+    use crate::core::plot::Plot;
+
+    fn elements<'a>(svg: &'a str, tag: &str) -> Vec<&'a str> {
+        let prefix = format!("<{tag} ");
+        svg.lines()
+            .filter(|line| line.trim_start().starts_with(&prefix))
+            .collect()
+    }
+
+    /// The corruption this policy exists to stop: `height="NaN"` and
+    /// `y1="NaN"` are not valid SVG, and viewers disagree about how much of the
+    /// document to throw away when they meet one.
+    #[test]
+    fn test_a_non_finite_dimension_never_reaches_an_svg_attribute() {
+        let mut renderer = SvgRenderer::new(200.0, 200.0);
+        renderer.draw_rectangle(10.0, 10.0, 50.0, f32::NAN, Color::from_rgb(0, 0, 0), true);
+        renderer.draw_line(
+            0.0,
+            f32::NAN,
+            100.0,
+            f32::NAN,
+            Color::from_rgb(0, 0, 0),
+            1.0,
+            LineStyle::Solid,
+        );
+        renderer.draw_circle(f32::INFINITY, 10.0, 4.0, Color::from_rgb(0, 0, 0), true);
+
+        let svg = renderer.to_svg_string();
+        assert!(
+            !svg.contains("NaN") && !svg.contains("inf"),
+            "no non-finite number may be printed into the document: {svg}"
+        );
+        // The rect and the circle are shapes, so the failure is reported.
+        let error = renderer
+            .check_geometry()
+            .expect_err("a refused shape must be reported, not silently dropped");
+        assert!(
+            error.to_string().contains("internal invariant"),
+            "the message must read as an unvalidated-input bug: {error}"
+        );
+    }
+
+    /// Bucket 1. An unrepresentable sample inside a line is a *gap*: the runs
+    /// either side of it are stroked separately, so the line shows the hole
+    /// rather than a segment drawn straight across it.
+    #[test]
+    fn test_a_polyline_breaks_into_two_elements_at_an_interior_hole() {
+        let mut renderer = SvgRenderer::new(200.0, 200.0);
+        renderer.draw_polyline(
+            &[
+                (10.0, 10.0),
+                (20.0, 20.0),
+                (f32::NAN, f32::NAN),
+                (40.0, 40.0),
+                (50.0, 50.0),
+            ],
+            Color::from_rgb(0, 0, 0),
+            1.0,
+            LineStyle::Solid,
+        );
+
+        let svg = renderer.to_svg_string();
+        assert_eq!(
+            elements(&svg, "polyline").len(),
+            2,
+            "the hole must split the line into two elements: {svg}"
+        );
+        assert!(!svg.contains("NaN"), "no NaN may survive into the document");
+        renderer
+            .check_geometry()
+            .expect("a gap in a line is data the axes cannot show, not a failure");
+    }
+
+    /// A gap at either end trims the line instead of splitting it, and a line
+    /// with nothing left emits nothing at all.
+    #[test]
+    fn test_a_polyline_hole_at_the_edge_trims_rather_than_splits() {
+        let mut renderer = SvgRenderer::new(200.0, 200.0);
+        renderer.draw_polyline(
+            &[(f32::NAN, 0.0), (10.0, 10.0), (20.0, 20.0)],
+            Color::from_rgb(0, 0, 0),
+            1.0,
+            LineStyle::Solid,
+        );
+        renderer.draw_polyline(
+            &[(f32::NAN, 0.0), (f32::NAN, 1.0)],
+            Color::from_rgb(0, 0, 0),
+            1.0,
+            LineStyle::Solid,
+        );
+
+        let svg = renderer.to_svg_string();
+        assert_eq!(
+            elements(&svg, "polyline").len(),
+            1,
+            "a leading hole trims; a wholly unrepresentable line draws nothing: {svg}"
+        );
+    }
+
+    /// End to end. A line series whose samples are mostly representable on a
+    /// log axis must export the representable part — and the exported document
+    /// must not contain the literal `NaN` that the unrepresentable sample used
+    /// to project to.
+    ///
+    /// The limits are explicit so the test pins the emitter, not whatever
+    /// autoscaling decides to do with a non-positive sample.
+    #[test]
+    fn test_exported_svg_of_a_log_axis_line_contains_no_literal_nan() {
+        let x = vec![1.0_f64, 2.0, 3.0, 4.0];
+        let y = vec![1.0_f64, 0.0, 100.0, 1000.0];
+
+        let svg = Plot::new()
+            .line(&x, &y)
+            .yscale(crate::axes::AxisScale::Log)
+            .ylim(1.0, 1000.0)
+            .render_to_svg()
+            .expect("a line keeps its representable samples on a log axis");
+
+        assert!(
+            !svg.contains("NaN"),
+            "an unrepresentable sample must never be printed into the document"
+        );
+        // Checked on attribute values only: "inf" is too short to blanket-ban
+        // across a document that also carries user text.
+        assert!(
+            !svg.contains(r#"="inf"#) && !svg.contains(r#"="-inf"#),
+            "an unrepresentable sample must never be printed into the document"
+        );
+    }
+}

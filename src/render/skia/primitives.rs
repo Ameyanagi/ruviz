@@ -13,6 +13,104 @@ const LEGACY_OUTLINE_WIDTH_PX: f32 = 1.0;
 const MIN_RECT_EDGE_WIDTH_PX: f32 = 0.1;
 
 impl SkiaRenderer {
+    // ------------------------------------------------------------------
+    // Non-finite geometry policy
+    // ------------------------------------------------------------------
+    //
+    // Twin of the policy documented in [`crate::export::svg::SvgRenderer`]. The
+    // two backends answer a `NaN` the same way, because a chart that exports
+    // differently to PNG and SVG is worse than either answer on its own.
+    //
+    // `NaN`/`±inf` must never reach tiny-skia. `PathBuilder::finish` rejects a
+    // path whose bounds are not finite, so one bad vertex discards the *whole*
+    // path rather than the offending segment — an unchecked hole silently costs
+    // a complete series. The marker compositor is worse still: it quantises a
+    // `NaN` coordinate to 0 and paints the marker in the canvas corner, which
+    // reads as data.
+    //
+    // There are exactly two permitted answers. When you add a primitive, pick
+    // the bucket it belongs to and use the matching helper — do not invent a
+    // third.
+    //
+    // 1. **Open stroked and point geometry** — lines, polylines, markers. A
+    //    non-finite coordinate is a *gap*: the sample has no position on these
+    //    axes. A polyline is split around the hole and the surviving runs are
+    //    still stroked; a lone unplaceable point or marker is skipped. No error
+    //    is raised — a gap is data the axes genuinely cannot show, not a bug.
+    //    Use [`Self::all_finite`] / [`Self::finite_runs`].
+    //
+    // 2. **Shapes with defining dimensions** — rectangles, rounded rectangles,
+    //    circles, closed polygons. There is no meaningful partial shape: a rect
+    //    with a `NaN` height means unvalidated geometry got past the
+    //    series-level checks, i.e. an internal invariant failed. Raise via
+    //    [`Self::reject_non_finite`] / [`Self::reject_non_finite_vertices`],
+    //    which name the offending dimension so the message points at the bug
+    //    instead of merely asserting one exists.
+
+    /// Bucket 1: can every one of these numbers be rasterised?
+    pub(super) fn all_finite(values: &[f32]) -> bool {
+        values.iter().all(|value| value.is_finite())
+    }
+
+    /// Bucket 1: split a vertex list at every point `finite` rejects.
+    ///
+    /// The surviving runs are stroked as separate paths, so the stroke shows
+    /// the gap instead of inventing a segment across it — and, crucially,
+    /// instead of tiny-skia discarding every segment. Runs shorter than two
+    /// points are returned as-is and dropped by the emitters, which already
+    /// refuse them.
+    fn finite_runs<T>(points: &[T], finite: impl Fn(&T) -> bool) -> Vec<&[T]> {
+        let mut runs = Vec::new();
+        let mut start = 0usize;
+        for (index, point) in points.iter().enumerate() {
+            if finite(point) {
+                continue;
+            }
+            if index > start {
+                runs.push(&points[start..index]);
+            }
+            start = index + 1;
+        }
+        if points.len() > start {
+            runs.push(&points[start..]);
+        }
+        runs
+    }
+
+    /// Bucket 2: refuse a shape whose defining dimensions are not all finite.
+    ///
+    /// The message names the dimension and says the fault is an unvalidated
+    /// input reaching the backend, so it reads as the internal-invariant
+    /// failure it is rather than as a diagnostic about the caller's data — the
+    /// user-facing "use SymLog for non-positive values" message belongs to the
+    /// series-level validation that should have fired first.
+    fn reject_non_finite(primitive: &str, dims: &[(&str, f32)]) -> Result<()> {
+        let Some((name, value)) = dims.iter().copied().find(|&(_, v)| !v.is_finite()) else {
+            return Ok(());
+        };
+        Err(PlottingError::RenderError(format!(
+            "{primitive} was given a non-finite {name} ({value}). Geometry reached the raster \
+             backend without being validated; this is an internal invariant failure in the \
+             renderer, not a limit of the supplied data."
+        )))
+    }
+
+    /// Bucket 2 for closed polygons, whose vertices *are* the defining shape.
+    fn reject_non_finite_vertices(primitive: &str, vertices: &[(f32, f32)]) -> Result<()> {
+        let Some((index, &(x, y))) = vertices
+            .iter()
+            .enumerate()
+            .find(|&(_, &(x, y))| !x.is_finite() || !y.is_finite())
+        else {
+            return Ok(());
+        };
+        Err(PlottingError::RenderError(format!(
+            "{primitive} was given a non-finite vertex {index} ({x}, {y}). Geometry reached the \
+             raster backend without being validated; this is an internal invariant failure in \
+             the renderer, not a limit of the supplied data."
+        )))
+    }
+
     /// Map renderer font size to Typst size units.
     pub(super) fn typst_size_pt(&self, size_px: f32) -> f32 {
         size_px.max(0.1)
@@ -101,6 +199,13 @@ impl SkiaRenderer {
         style: LineStyle,
         mask: Option<&Mask>,
     ) -> Result<()> {
+        // Bucket 1: an endpoint the axes cannot place makes the segment a gap,
+        // so it is skipped. Without this, `PathBuilder::finish` below would
+        // fail and take the caller's whole draw call with it.
+        if !Self::all_finite(&[x1, y1, x2, y2, width]) {
+            return Ok(());
+        }
+
         let mut paint = Paint::default();
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
@@ -128,7 +233,11 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Draw a series of connected lines (polyline)
+    /// Draw a series of connected lines (polyline).
+    ///
+    /// A vertex the axes cannot place (`NaN`/`±inf`) **breaks** the line: the
+    /// run before the hole and the run after it are stroked as separate paths,
+    /// so the line shows the gap instead of inventing a segment across it.
     pub fn draw_polyline(
         &mut self,
         points: &[(f32, f32)],
@@ -147,6 +256,34 @@ impl SkiaRenderer {
         style: LineStyle,
         mask: Option<&Mask>,
     ) -> Result<()> {
+        if !width.is_finite() {
+            return Ok(());
+        }
+        if Self::all_finite_points(points) {
+            return self.stroke_polyline_run(points, color, width, &style, mask);
+        }
+        // Bucket 1: stroke each representable run on its own, so the hole
+        // becomes a gap rather than costing the whole series (tiny-skia would
+        // reject the entire path for one non-finite vertex).
+        for run in Self::finite_runs(points, |&(x, y)| x.is_finite() && y.is_finite()) {
+            self.stroke_polyline_run(run, color, width, &style, mask)?;
+        }
+        Ok(())
+    }
+
+    fn all_finite_points(points: &[(f32, f32)]) -> bool {
+        points.iter().all(|&(x, y)| x.is_finite() && y.is_finite())
+    }
+
+    /// Stroke one run of a polyline. Every vertex must already be finite.
+    fn stroke_polyline_run(
+        &mut self,
+        points: &[(f32, f32)],
+        color: Color,
+        width: f32,
+        style: &LineStyle,
+        mask: Option<&Mask>,
+    ) -> Result<()> {
         if points.len() < 2 {
             return Ok(());
         }
@@ -163,7 +300,7 @@ impl SkiaRenderer {
         };
 
         // Apply line style (dash lengths scale with DPI for physical consistency)
-        if let Some(dash_pattern) = self.scaled_dash_pattern(&style) {
+        if let Some(dash_pattern) = self.scaled_dash_pattern(style) {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
@@ -197,6 +334,8 @@ impl SkiaRenderer {
     }
 
     /// Draw a projected polyline clipped to a rectangular region.
+    ///
+    /// Breaks at non-finite vertices exactly like [`SkiaRenderer::draw_polyline`].
     pub fn draw_polyline_points_clipped(
         &mut self,
         points: &[Point2f],
@@ -205,7 +344,7 @@ impl SkiaRenderer {
         style: LineStyle,
         clip_rect: (f32, f32, f32, f32), // (x, y, width, height)
     ) -> Result<()> {
-        if points.len() < 2 {
+        if points.len() < 2 || !width.is_finite() {
             return Ok(());
         }
 
@@ -223,24 +362,33 @@ impl SkiaRenderer {
             stroke.dash = StrokeDash::new(dash_pattern, 0.0);
         }
 
-        let mut path = PathBuilder::new();
-        path.move_to(points[0].x, points[0].y);
+        // Bucket 1: one unplaceable sample must not cost the whole line.
+        for run in Self::finite_runs(points, |point| point.x.is_finite() && point.y.is_finite()) {
+            if run.len() < 2 {
+                continue;
+            }
 
-        for point in &points[1..] {
-            path.line_to(point.x, point.y);
+            let mut path = PathBuilder::new();
+            path.move_to(run[0].x, run[0].y);
+
+            for point in &run[1..] {
+                path.line_to(point.x, point.y);
+            }
+
+            let path = path.finish().ok_or(PlottingError::RenderError(
+                "Failed to create polyline path".to_string(),
+            ))?;
+
+            self.stroke_path_masked(
+                &path,
+                &paint,
+                &stroke,
+                Transform::identity(),
+                Some(mask.as_ref()),
+            )?;
         }
 
-        let path = path.finish().ok_or(PlottingError::RenderError(
-            "Failed to create polyline path".to_string(),
-        ))?;
-
-        self.stroke_path_masked(
-            &path,
-            &paint,
-            &stroke,
-            Transform::identity(),
-            Some(mask.as_ref()),
-        )
+        Ok(())
     }
 
     fn get_clip_mask(&mut self, clip_rect: (f32, f32, f32, f32)) -> Result<Arc<Mask>> {
@@ -323,6 +471,10 @@ impl SkiaRenderer {
         filled: bool,
         mask: Option<&Mask>,
     ) -> Result<()> {
+        // Bucket 2: a circle is defined by its centre and radius, so there is
+        // no partial circle to fall back to.
+        Self::reject_non_finite("circle", &[("cx", x), ("cy", y), ("radius", radius)])?;
+
         let mut paint = Paint::default();
         paint.set_color(color.to_tiny_skia_color());
         paint.anti_alias = true;
@@ -469,6 +621,21 @@ impl SkiaRenderer {
             return Ok(());
         }
 
+        // Bucket 2. This is the guard that used to be `Rect::from_xywh`
+        // returning `None` and reporting the anonymous "Invalid rectangle
+        // dimensions": a bar or histogram column whose height could not be
+        // projected arrived here as `NaN`.
+        Self::reject_non_finite(
+            "rectangle",
+            &[
+                ("x", x),
+                ("y", y),
+                ("width", width),
+                ("height", height),
+                ("edge width", edge.map_or(0.0, |(_, w)| w)),
+            ],
+        )?;
+
         // A rectangle with no area encloses nothing, so it has neither an
         // interior to fill nor a boundary to stroke. Without this, a zero-value
         // bar (height == 0) would paint a hairline of the edge colour along the
@@ -527,6 +694,12 @@ impl SkiaRenderer {
         height: f32,
         color: Color,
     ) -> Result<()> {
+        // Bucket 2: see the non-finite geometry policy at the top of this file.
+        Self::reject_non_finite(
+            "solid rectangle",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        )?;
+
         let rect = Rect::from_xywh(x, y, width, height).ok_or(PlottingError::RenderError(
             "Invalid rectangle dimensions".to_string(),
         ))?;
@@ -596,6 +769,14 @@ impl SkiaRenderer {
         height: f32,
         color: Color,
     ) -> Result<()> {
+        // Bucket 2, and it has to come first: `rect_bounds` folds "non-finite"
+        // and "zero area" into the same `None`, so without this a `NaN` cell
+        // would be silently skipped and the figure would be quietly wrong.
+        Self::reject_non_finite(
+            "solid rectangle",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        )?;
+
         let Some((x, y, width, height)) = Self::rect_bounds(x, y, width, height) else {
             return Ok(());
         };
@@ -636,6 +817,13 @@ impl SkiaRenderer {
         height: f32,
         color: Color,
     ) -> Result<()> {
+        // Bucket 2, before the pixel snapping: `NaN as u32` saturates to 0, so
+        // an unchecked tile would be painted in the canvas corner.
+        Self::reject_non_finite(
+            "pixel-aligned rectangle",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        )?;
+
         if color.a != u8::MAX {
             return self.draw_composited_solid_rectangle(x, y, width, height, color);
         }
@@ -674,6 +862,13 @@ impl SkiaRenderer {
         height: f32,
         color: Color,
     ) -> Result<()> {
+        // Bucket 2: `pixel_aligned_rect_bounds` cannot tell a degenerate tile
+        // from an unvalidated one, so the non-finite case is caught here.
+        Self::reject_non_finite(
+            "pixel-aligned rectangle outline",
+            &[("x", x), ("y", y), ("width", width), ("height", height)],
+        )?;
+
         if let Some((x, y, width, height)) = Self::pixel_aligned_rect_bounds(x, y, width, height) {
             self.draw_rectangle(x, y, width, height, color, false)?;
         }
@@ -692,6 +887,18 @@ impl SkiaRenderer {
         color: Color,
         filled: bool,
     ) -> Result<()> {
+        // Bucket 2: see the non-finite geometry policy at the top of this file.
+        Self::reject_non_finite(
+            "rounded rectangle",
+            &[
+                ("x", x),
+                ("y", y),
+                ("width", width),
+                ("height", height),
+                ("corner radius", corner_radius),
+            ],
+        )?;
+
         // Clamp radius to half of the smaller dimension
         let max_radius = (width.min(height) / 2.0).max(0.0);
         let radius = corner_radius.min(max_radius);
@@ -771,6 +978,9 @@ impl SkiaRenderer {
         if vertices.len() < 3 {
             return Ok(()); // Need at least 3 points
         }
+        // Bucket 2: unlike a polyline, a closed filled shape has no sensible
+        // "gap" — dropping a vertex silently fills a different area.
+        Self::reject_non_finite_vertices("filled polygon", vertices)?;
 
         let mut pb = PathBuilder::new();
         pb.move_to(vertices[0].0, vertices[0].1);
@@ -818,6 +1028,17 @@ impl SkiaRenderer {
         if vertices.len() < 3 {
             return Ok(()); // Need at least 3 points
         }
+        // Bucket 2: see `draw_filled_polygon`.
+        Self::reject_non_finite_vertices("filled polygon", vertices)?;
+        Self::reject_non_finite(
+            "polygon clip rectangle",
+            &[
+                ("x", clip_rect.0),
+                ("y", clip_rect.1),
+                ("width", clip_rect.2),
+                ("height", clip_rect.3),
+            ],
+        )?;
 
         // Create clip mask
         let mut mask = Mask::new(self.width, self.height).ok_or(PlottingError::RenderError(
@@ -886,6 +1107,9 @@ impl SkiaRenderer {
         if vertices.len() < 3 {
             return Ok(()); // Need at least 3 points
         }
+        // Bucket 2: a closed outline traces the same shape a fill would.
+        Self::reject_non_finite("polygon outline", &[("stroke width", width)])?;
+        Self::reject_non_finite_vertices("polygon outline", vertices)?;
 
         let mut pb = PathBuilder::new();
         pb.move_to(vertices[0].0, vertices[0].1);
@@ -1017,7 +1241,9 @@ impl SkiaRenderer {
         clip_rect: (f32, f32, f32, f32),
     ) -> Result<()> {
         let edge = self.scaled_edge(edge);
-        if points.is_empty() || size <= 0.0 || (color.a == 0 && edge.is_none()) {
+        // `size <= 0.0` is false for `NaN`, so the finiteness check is explicit.
+        if points.is_empty() || !size.is_finite() || size <= 0.0 || (color.a == 0 && edge.is_none())
+        {
             return Ok(());
         }
 
@@ -1077,6 +1303,13 @@ impl SkiaRenderer {
         edge: Option<(Color, f32)>,
         mask: Option<&Mask>,
     ) -> Result<()> {
+        // Bucket 1: a marker is point geometry, so a sample the axes cannot
+        // place is simply not drawn. Caught here so the shape emitters below —
+        // which *do* raise — never see the non-finite centre.
+        if !Self::all_finite(&[x, y, size]) {
+            return Ok(());
+        }
+
         let radius = size * 0.5;
         // Only a closed filled shape has an interior for an edge to bound.
         let edge = edge.filter(|_| style.takes_edge());
@@ -1341,6 +1574,11 @@ impl SkiaRenderer {
         self.note_marker_sprite_compositor();
 
         for point in points {
+            // Bucket 1: `NaN as i32` saturates to 0, so an unplaceable sample
+            // would otherwise be blitted into the top-left canvas corner.
+            if !point.x.is_finite() || !point.y.is_finite() {
+                continue;
+            }
             let (base_x, phase_x) = Self::quantize_marker_subpixel(point.x);
             let (base_y, phase_y) = Self::quantize_marker_subpixel(point.y);
             let slot = phase_y as usize * phase_count + phase_x as usize;
@@ -2191,6 +2429,246 @@ mod tests {
                 .chunks_exact(4)
                 .all(|px| px.iter().all(|channel| *channel == 255)),
             "a rectangle with neither fill nor edge must not touch the canvas"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Non-finite geometry policy
+    // ------------------------------------------------------------------
+
+    fn has_ink(image: &Image, x: u32, y: u32) -> bool {
+        pixel(image, x, y)[0] < 250
+    }
+
+    /// Bucket 1. A vertex the axes cannot represent is a *gap*: the runs either
+    /// side of it are still stroked, and nothing is drawn across it.
+    ///
+    /// tiny-skia rejects a whole path whose bounds are not finite, so before the
+    /// split this call failed outright — one unrepresentable sample on a log
+    /// axis cost the entire series.
+    #[test]
+    fn test_polyline_breaks_at_a_non_finite_vertex_instead_of_losing_the_line() {
+        let mut renderer = white_canvas(64, 32, 100.0);
+        let points = [
+            (4.0, 16.0),
+            (16.0, 16.0),
+            (f32::NAN, f32::NAN),
+            (44.0, 16.0),
+            (60.0, 16.0),
+        ];
+
+        renderer
+            .draw_polyline(&points, Color::from_rgb(0, 0, 0), 2.0, LineStyle::Solid)
+            .expect("a non-finite vertex must not fail the whole polyline");
+
+        let image = renderer.into_image();
+        assert!(
+            has_ink(&image, 10, 16),
+            "the run before the hole must still be stroked"
+        );
+        assert!(
+            has_ink(&image, 52, 16),
+            "the run after the hole must still be stroked"
+        );
+        assert!(
+            !has_ink(&image, 30, 16),
+            "the stroke must break at the hole, not run straight through it"
+        );
+    }
+
+    /// The same rule for the projected/clipped twin, so the two polyline
+    /// entry points cannot disagree about where a line breaks.
+    #[test]
+    fn test_clipped_point_polyline_breaks_at_a_non_finite_vertex() {
+        let mut renderer = white_canvas(64, 32, 100.0);
+        let points = [
+            Point2f::new(4.0, 16.0),
+            Point2f::new(16.0, 16.0),
+            Point2f::new(f32::NAN, 16.0),
+            Point2f::new(44.0, 16.0),
+            Point2f::new(60.0, 16.0),
+        ];
+
+        renderer
+            .draw_polyline_points_clipped(
+                &points,
+                Color::from_rgb(0, 0, 0),
+                2.0,
+                LineStyle::Solid,
+                (0.0, 0.0, 64.0, 32.0),
+            )
+            .expect("a non-finite vertex must not fail the whole polyline");
+
+        let image = renderer.into_image();
+        assert!(has_ink(&image, 10, 16), "first run must survive");
+        assert!(has_ink(&image, 52, 16), "second run must survive");
+        assert!(!has_ink(&image, 30, 16), "the hole must stay a hole");
+    }
+
+    /// Bucket 1. A single unplaceable endpoint is a gap, not a failure.
+    #[test]
+    fn test_line_with_a_non_finite_endpoint_is_skipped_not_failed() {
+        let mut renderer = white_canvas(32, 32, 100.0);
+        renderer
+            .draw_line(
+                4.0,
+                16.0,
+                f32::NAN,
+                16.0,
+                Color::from_rgb(0, 0, 0),
+                2.0,
+                LineStyle::Solid,
+            )
+            .expect("an unplaceable segment is a gap, not an error");
+
+        let image = renderer.into_image();
+        assert!(
+            image
+                .pixels
+                .chunks_exact(4)
+                .all(|px| px.iter().all(|channel| *channel == 255)),
+            "a segment with no endpoint must not paint anything"
+        );
+    }
+
+    /// Bucket 2. The message must name the dimension and read as an internal
+    /// invariant failure — the anonymous "Invalid rectangle dimensions" told a
+    /// user neither which axis was at fault nor what to do about it.
+    #[test]
+    fn test_rectangle_with_a_non_finite_height_names_the_dimension() {
+        let mut renderer = white_canvas(32, 32, 100.0);
+        let error = renderer
+            .draw_rectangle(4.0, 4.0, 8.0, f32::NAN, Color::from_rgb(0, 0, 0), true)
+            .expect_err("a rectangle with no height must not reach tiny-skia");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("height"),
+            "the message must name the offending dimension: {message}"
+        );
+        assert!(
+            message.contains("internal invariant"),
+            "the message must read as an unvalidated-input bug, not a user diagnostic: {message}"
+        );
+        assert!(
+            !message.contains("Invalid rectangle dimensions"),
+            "the anonymous message must be gone: {message}"
+        );
+    }
+
+    /// Bucket 2 through the styled entry point, which is what bars and
+    /// histogram columns use.
+    #[test]
+    fn test_styled_rectangle_with_a_non_finite_origin_names_the_dimension() {
+        let mut renderer = white_canvas(32, 32, 100.0);
+        let error = renderer
+            .draw_rectangle_styled(
+                f32::NAN,
+                4.0,
+                8.0,
+                8.0,
+                Some(Color::from_rgb(0, 0, 0)),
+                None,
+            )
+            .expect_err("a rectangle with no origin must not reach tiny-skia");
+
+        assert!(
+            error.to_string().contains("non-finite x"),
+            "the message must name x: {error}"
+        );
+    }
+
+    /// The pixel-aligned tile path folded "non-finite" into the same `None` as
+    /// "zero area" and quietly drew nothing, so a broken heatmap cell produced
+    /// a silently wrong figure instead of a failure.
+    #[test]
+    fn test_pixel_aligned_rectangle_refuses_a_non_finite_tile() {
+        let mut renderer = white_canvas(32, 32, 100.0);
+        let error = renderer
+            .draw_pixel_aligned_solid_rectangle(4.0, 4.0, f32::NAN, 8.0, Color::from_rgb(0, 0, 0))
+            .expect_err("an unvalidated tile must be reported, not silently skipped");
+
+        assert!(
+            error.to_string().contains("non-finite width"),
+            "the message must name width: {error}"
+        );
+    }
+
+    /// Bucket 1 for markers. `NaN as i32` saturates to 0, so an unguarded
+    /// sample was blitted into the top-left corner of the canvas and read as
+    /// real data.
+    #[test]
+    fn test_marker_batch_skips_unplaceable_points() {
+        let mut renderer = white_canvas(64, 64, 100.0);
+        let points: Vec<Point2f> = std::iter::once(Point2f::new(f32::NAN, f32::NAN))
+            .chain((0..64).map(|i| Point2f::new(32.0, 32.0 + (i % 3) as f32)))
+            .collect();
+
+        renderer
+            .draw_markers_clipped(
+                &points,
+                6.0,
+                MarkerStyle::Circle,
+                Color::from_rgb(0, 0, 0),
+                (0.0, 0.0, 64.0, 64.0),
+            )
+            .expect("unplaceable samples are skipped, not fatal");
+
+        let image = renderer.into_image();
+        assert!(
+            has_ink(&image, 32, 32),
+            "the placeable markers must still be drawn"
+        );
+        assert!(
+            !has_ink(&image, 0, 0),
+            "an unplaceable marker must not be painted in the canvas corner"
+        );
+    }
+
+    /// Bucket 1 for the single-marker vector path.
+    #[test]
+    fn test_single_marker_with_a_non_finite_centre_is_skipped() {
+        let mut renderer = white_canvas(32, 32, 100.0);
+        renderer
+            .draw_marker(
+                f32::NAN,
+                16.0,
+                6.0,
+                MarkerStyle::Circle,
+                Color::from_rgb(0, 0, 0),
+            )
+            .expect("unplaceable markers are skipped, not fatal");
+
+        let image = renderer.into_image();
+        assert!(
+            image
+                .pixels
+                .chunks_exact(4)
+                .all(|px| px.iter().all(|channel| *channel == 255)),
+            "an unplaceable marker must not touch the canvas"
+        );
+    }
+
+    /// Bucket 2 for closed shapes: dropping a vertex would silently fill a
+    /// different area, so the polygon is refused with the vertex named.
+    #[test]
+    fn test_filled_polygon_refuses_a_non_finite_vertex() {
+        let mut renderer = white_canvas(32, 32, 100.0);
+        let error = renderer
+            .draw_filled_polygon(
+                &[(4.0, 4.0), (28.0, 4.0), (16.0, f32::NAN)],
+                Color::from_rgb(0, 0, 0),
+            )
+            .expect_err("a polygon with an unplaceable corner must not be filled");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("vertex 2"),
+            "the message must name the offending vertex: {message}"
+        );
+        assert!(
+            message.contains("internal invariant"),
+            "the message must read as an unvalidated-input bug: {message}"
         );
     }
 }

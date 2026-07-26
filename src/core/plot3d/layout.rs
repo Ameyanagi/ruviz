@@ -1,7 +1,7 @@
 use glam::{Vec2, Vec3};
 
+use crate::axes::{format_tick_labels, generate_ticks};
 use crate::core::{PlottingError, Result};
-use crate::render::skia::{format_tick_labels, generate_ticks};
 use crate::render::{Color, ColorMap};
 
 use super::builder::Series3D;

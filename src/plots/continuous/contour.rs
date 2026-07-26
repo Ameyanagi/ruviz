@@ -335,7 +335,7 @@ pub fn compute_contour_plot(
         .unwrap_or_else(|| auto_levels(&z_2d, config.n_levels));
 
     // Compute contour lines for all levels at once
-    let lines = contour_lines(&interp_x, &interp_y, &z_2d, &levels);
+    let lines = contour_lines(&interp_x, &interp_y, &z_2d, &levels).unwrap_or_default();
 
     ContourPlotData {
         levels,
@@ -490,28 +490,101 @@ fn axis_aligned_rectangle_bounds(polygon: &[(f64, f64)]) -> Option<(f64, f64, f6
     }
 }
 
+/// One filled contour band: its colormap position in `[0, 1]`, and the polygons
+/// that make it up in data space.
+pub(crate) type FilledBand = (f64, Vec<Vec<(f64, f64)>>);
+
+impl ContourPlotData {
+    /// The filled bands this contour draws, as `(colormap position, polygons)`.
+    ///
+    /// Both raster entry points and the SVG backend read the fill from here, so
+    /// the three cannot colour the same band differently — and the SVG backend
+    /// cannot go on omitting the fill entirely, which is what it did while the
+    /// loop lived inline in the raster renderers.
+    ///
+    /// Returns nothing when [`ContourConfig::filled`] is off.
+    pub(crate) fn filled_bands(&self) -> Vec<FilledBand> {
+        if !self.config.filled {
+            return Vec::new();
+        }
+        let z_min = self.levels.first().copied().unwrap_or(0.0);
+        let z_max = self.levels.last().copied().unwrap_or(1.0);
+        contour_fill_regions(self)
+            .into_iter()
+            .map(|(level_low, level_high, polygons)| {
+                (
+                    band_color_position(level_low, level_high, z_min, z_max),
+                    polygons,
+                )
+            })
+            .collect()
+    }
+
+    /// Project one band polygon into the pixel shape a backend should draw.
+    ///
+    /// Band polygons are image geometry: a vertex the axis cannot place is
+    /// clipped to the axis rather than dropped, so a band whose cell starts at
+    /// zero on a log axis still covers what the axis can show of it.
+    ///
+    /// Most bands are single axis-aligned cells. Drawn as anti-aliased polygons
+    /// those leave a pale seam wherever two of them meet, so they come back as
+    /// [`BandShape::Rect`] and each backend draws them without anti-aliasing.
+    /// Deciding that here is what keeps the PNG and the SVG from disagreeing
+    /// about which bands are seamless.
+    pub(crate) fn band_shape(area: &PlotArea, polygon: &[(f64, f64)]) -> BandShape {
+        if let Some((min_x, min_y, max_x, max_y)) = axis_aligned_rectangle_bounds(polygon) {
+            let (x1, y1) = area.edge_data_to_screen(min_x, max_y);
+            let (x2, y2) = area.edge_data_to_screen(max_x, min_y);
+            return BandShape::Rect {
+                x: x1.min(x2),
+                y: y1.min(y2),
+                width: (x2 - x1).abs(),
+                height: (y2 - y1).abs(),
+            };
+        }
+
+        BandShape::Polygon(
+            polygon
+                .iter()
+                .map(|&(x, y)| area.edge_data_to_screen(x, y))
+                .collect(),
+        )
+    }
+}
+
+/// The pixel shape of one filled contour band.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum BandShape {
+    /// An axis-aligned cell, to be drawn without anti-aliased edges so adjacent
+    /// bands tile without seams.
+    Rect {
+        /// Left edge, in pixels.
+        x: f32,
+        /// Top edge, in pixels.
+        y: f32,
+        /// Width, in pixels.
+        width: f32,
+        /// Height, in pixels.
+        height: f32,
+    },
+    /// An arbitrary polygon.
+    Polygon(Vec<(f32, f32)>),
+}
+
 fn draw_filled_contour_region(
     renderer: &mut SkiaRenderer,
     area: &PlotArea,
     polygon: &[(f64, f64)],
     fill_color: Color,
 ) -> Result<()> {
-    if let Some((min_x, min_y, max_x, max_y)) = axis_aligned_rectangle_bounds(polygon) {
-        let (sx1, sy1) = area.data_to_screen(min_x, max_y);
-        let (sx2, sy2) = area.data_to_screen(max_x, min_y);
-        renderer.draw_pixel_aligned_solid_rectangle(
-            sx1.min(sx2),
-            sy1.min(sy2),
-            (sx2 - sx1).abs(),
-            (sy2 - sy1).abs(),
-            fill_color,
-        )?;
-    } else {
-        let screen_polygon: Vec<(f32, f32)> = polygon
-            .iter()
-            .map(|(x, y)| area.data_to_screen(*x, *y))
-            .collect();
-        renderer.draw_filled_polygon(&screen_polygon, fill_color)?;
+    match ContourPlotData::band_shape(area, polygon) {
+        BandShape::Rect {
+            x,
+            y,
+            width,
+            height,
+        } => renderer.draw_pixel_aligned_solid_rectangle(x, y, width, height, fill_color)?,
+        BandShape::Polygon(points) => renderer.draw_filled_polygon(&points, fill_color)?,
     }
 
     Ok(())
@@ -627,20 +700,10 @@ impl PlotRender for ContourPlotData {
         // Get colormap for level coloring
         let cmap = ColorMap::by_name(&config.cmap).unwrap_or_else(ColorMap::viridis);
 
-        // Draw filled regions if enabled
-        if config.filled {
-            let regions = contour_fill_regions(self);
-            for (level_low, level_high, polygons) in regions {
-                // Calculate color based on level position
-                let z_min = self.levels.first().copied().unwrap_or(0.0);
-                let z_max = self.levels.last().copied().unwrap_or(1.0);
-                let t = band_color_position(level_low, level_high, z_min, z_max);
-
-                let fill_color = cmap.sample(t).with_alpha(config.alpha);
-
-                for polygon in &polygons {
-                    draw_filled_contour_region(renderer, area, polygon, fill_color)?;
-                }
+        for (t, polygons) in self.filled_bands() {
+            let fill_color = cmap.sample(t).with_alpha(config.alpha);
+            for polygon in &polygons {
+                draw_filled_contour_region(renderer, area, polygon, fill_color)?;
             }
         }
 
@@ -694,20 +757,10 @@ impl PlotRender for ContourPlotData {
             line_width.unwrap_or_else(|| resolver.line_width(Some(config.line_width))),
         );
 
-        // Draw filled regions if enabled
-        if config.filled {
-            let regions = contour_fill_regions(self);
-            for (level_low, level_high, polygons) in regions {
-                // Calculate color based on level position
-                let z_min = self.levels.first().copied().unwrap_or(0.0);
-                let z_max = self.levels.last().copied().unwrap_or(1.0);
-                let t = band_color_position(level_low, level_high, z_min, z_max);
-
-                let fill_color = cmap.sample(t).with_alpha(effective_alpha);
-
-                for polygon in &polygons {
-                    draw_filled_contour_region(renderer, area, polygon, fill_color)?;
-                }
+        for (t, polygons) in self.filled_bands() {
+            let fill_color = cmap.sample(t).with_alpha(effective_alpha);
+            for polygon in &polygons {
+                draw_filled_contour_region(renderer, area, polygon, fill_color)?;
             }
         }
 

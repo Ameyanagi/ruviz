@@ -258,10 +258,12 @@ impl PooledRenderer {
         Ok((x_result, y_result))
     }
 
-    /// Generate tick marks using pooled memory
+    /// Generate tick marks into pooled memory
     ///
-    /// Replaces the frequent small allocations in tick generation with
-    /// pooled buffer reuse for better performance.
+    /// The tick *values* come from [`crate::axes::generate_ticks`], the single
+    /// canonical generator; this wrapper only chooses where they are stored, so
+    /// the pooled path can never produce a different axis from the raster, SVG
+    /// or layout paths.
     pub fn generate_ticks_pooled(&self, min: f64, max: f64, target_count: usize) -> PooledVec<f64> {
         let mut ticks = PooledVec::new(SharedMemoryPool::new(target_count.max(10)));
 
@@ -269,43 +271,8 @@ impl PooledRenderer {
             return ticks;
         }
 
-        if target_count <= 1 {
-            ticks.push(min);
-            return ticks;
-        }
-
-        if target_count == 2 {
-            ticks.push(min);
-            ticks.push(max);
-            return ticks;
-        }
-
-        let range = max - min;
-        let raw_step = range / (target_count - 1) as f64;
-
-        // Find nice step size
-        let magnitude = 10.0_f64.powf(raw_step.log10().floor());
-        let normalized_step = raw_step / magnitude;
-
-        let nice_step = if normalized_step <= 1.0 {
-            1.0
-        } else if normalized_step <= 2.0 {
-            2.0
-        } else if normalized_step <= 5.0 {
-            5.0
-        } else {
-            10.0
-        } * magnitude;
-
-        // Generate ticks
-        let start = (min / nice_step).ceil() * nice_step;
-        let mut current = start;
-
-        while current <= max + nice_step * 0.001 {
-            if current >= min - nice_step * 0.001 {
-                ticks.push(current);
-            }
-            current += nice_step;
+        for value in crate::axes::generate_ticks(min, max, target_count) {
+            ticks.push(value);
         }
 
         ticks
@@ -454,6 +421,33 @@ mod tests {
         assert!(ticks.len() >= 2); // At least min and max
         assert!(ticks[0] >= 0.0);
         assert!(ticks[ticks.len() - 1] <= 10.0);
+    }
+
+    /// The pooled path used to carry its own 1/2/5/10 ladder and so produced a
+    /// different axis from every other backend. It must now be nothing but a
+    /// storage choice over [`crate::axes::generate_ticks`].
+    #[test]
+    fn test_pooled_tick_generation_matches_canonical_generator() {
+        let renderer = PooledRenderer::new();
+
+        for (min, max, target) in [
+            (0.0, 10.0, 6),
+            (0.7, 9.3, 5),
+            (-5.0, 5.0, 8),
+            (0.0, 100.0, 6),
+            (1.0, 2.0, 10),
+        ] {
+            let pooled: Vec<f64> = renderer
+                .generate_ticks_pooled(min, max, target)
+                .iter()
+                .copied()
+                .collect();
+            assert_eq!(
+                pooled,
+                crate::axes::generate_ticks(min, max, target),
+                "pooled ticks diverged from the canonical generator for ({min}, {max}, {target})"
+            );
+        }
     }
 
     #[test]

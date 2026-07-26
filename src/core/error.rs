@@ -114,6 +114,18 @@ pub enum PlottingError {
     OutOfMemory,
     /// Feature not enabled (compile-time features)
     FeatureNotEnabled { feature: String, operation: String },
+    /// The operation exists but this build cannot carry it out.
+    ///
+    /// Distinct from [`PlottingError::FeatureNotEnabled`], which means "turn on
+    /// a cargo feature": this one means the capability is genuinely absent, so
+    /// no build flag will produce it. Returning it is preferable to inventing a
+    /// plausible-looking answer.
+    UnsupportedOperation {
+        /// The operation that was refused, e.g. `"RealTimeRenderer::get_points_in_region"`.
+        operation: &'static str,
+        /// Why it cannot be carried out.
+        reason: String,
+    },
 
     /// System-level error
     SystemError(String),
@@ -366,6 +378,9 @@ impl fmt::Display for PlottingError {
                     "Feature '{}' not enabled - required for operation: {}",
                     feature, operation
                 )
+            }
+            PlottingError::UnsupportedOperation { operation, reason } => {
+                write!(f, "{} is not supported: {}", operation, reason)
             }
             PlottingError::SystemError(msg) => {
                 write!(f, "System error: {}", msg)

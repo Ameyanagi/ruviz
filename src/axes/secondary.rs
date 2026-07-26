@@ -95,39 +95,19 @@ impl SecondaryAxis {
     /// Vec of (position, label) pairs
     pub fn generate_ticks(&self, range: (f64, f64), n_ticks: usize) -> Vec<(f64, String)> {
         let (min, max) = range;
-        let range_size = max - min;
-
-        if range_size <= 0.0 || n_ticks == 0 {
+        if max - min <= 0.0 || n_ticks == 0 {
             return vec![];
         }
 
-        // Calculate nice tick interval
-        let raw_step = range_size / n_ticks as f64;
-        let magnitude = 10.0_f64.powf(raw_step.log10().floor());
-        let residual = raw_step / magnitude;
-
-        let nice_step = if residual <= 1.5 {
-            1.0 * magnitude
-        } else if residual <= 3.0 {
-            2.0 * magnitude
-        } else if residual <= 7.0 {
-            5.0 * magnitude
-        } else {
-            10.0 * magnitude
-        };
-
-        // Generate ticks
-        let tick_min = (min / nice_step).ceil() * nice_step;
-        let mut ticks = Vec::new();
-        let mut tick = tick_min;
-
-        while tick <= max + nice_step * 1e-10 {
-            let label = format_tick(tick, nice_step);
-            ticks.push((tick, label));
-            tick += nice_step;
-        }
-
-        ticks
+        // Positions and labels both come from `axes::ticks`, the single tick
+        // generator and the single tick formatter. This used to carry its own
+        // 1/2/5/10 ladder and its own `{:.N}` formatter, so a secondary axis
+        // could be ticked and labelled differently from the primary axis it
+        // sits beside.
+        super::ticks::generate_ticks(min, max, n_ticks)
+            .into_iter()
+            .map(|tick| (tick, super::ticks::format_tick_label(tick)))
+            .collect()
     }
 
     /// Transform a value from data coordinates to normalized [0, 1] position
@@ -159,21 +139,6 @@ impl SecondaryAxis {
             }
             _ => min + norm * (max - min),
         }
-    }
-}
-
-/// Format a tick value with appropriate precision
-fn format_tick(value: f64, step: f64) -> String {
-    if step >= 1.0 && value.abs() < 1e10 {
-        format!("{:.0}", value)
-    } else if step >= 0.1 {
-        format!("{:.1}", value)
-    } else if step >= 0.01 {
-        format!("{:.2}", value)
-    } else if step >= 0.001 {
-        format!("{:.3}", value)
-    } else {
-        format!("{:.2e}", value)
     }
 }
 
@@ -248,6 +213,27 @@ mod tests {
         assert!(ticks[0].0 >= 0.0);
         // Last tick should be at or near 100
         assert!(ticks.last().unwrap().0 <= 100.0);
+    }
+
+    /// A secondary axis sits directly beside a primary one, so it must be
+    /// ticked and labelled by the same code. It used to carry its own 1/2/5/10
+    /// ladder and its own `{:.N}` formatter and could disagree with the axis
+    /// next to it.
+    #[test]
+    fn test_secondary_axis_uses_the_canonical_generator_and_formatter() {
+        let axis = SecondaryAxis::twinx().range(0.0, 100.0);
+
+        for (min, max, count) in [(0.0, 100.0, 5), (0.7, 9.3, 6), (-5.0, 5.0, 8)] {
+            let expected: Vec<(f64, String)> = super::super::ticks::generate_ticks(min, max, count)
+                .into_iter()
+                .map(|tick| (tick, super::super::ticks::format_tick_label(tick)))
+                .collect();
+            assert_eq!(
+                axis.generate_ticks((min, max), count),
+                expected,
+                "secondary axis diverged from the canonical tick pipeline for ({min}, {max}, {count})"
+            );
+        }
     }
 
     #[test]

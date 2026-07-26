@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod color;
+pub(crate) mod colorbar;
 pub mod cosmic_text_renderer;
 pub(crate) mod font_registry;
 #[cfg(feature = "gpu")]

@@ -657,8 +657,10 @@ impl HeatmapData {
         col: usize,
     ) -> (f32, f32, f32, f32) {
         let ((x1, x2), (y1, y2)) = self.cell_data_bounds(row, col);
-        let (sx1, sy1) = area.data_to_screen(x1, y2);
-        let (sx2, sy2) = area.data_to_screen(x2, y1);
+        // Cell corners are image edges: an extent that starts at zero on a log
+        // axis is clipped by the axis, not dropped.
+        let (sx1, sy1) = area.edge_data_to_screen(x1, y2);
+        let (sx2, sy2) = area.edge_data_to_screen(x2, y1);
         let x = sx1.min(sx2);
         let y = sy1.min(sy2);
         let width = (sx2 - sx1).abs();
@@ -673,17 +675,27 @@ impl HeatmapData {
     }
 
     pub fn should_mask_value(&self, value: f64) -> bool {
-        if !value.is_finite() {
-            return true;
-        }
-
-        matches!(self.config.value_scale, AxisScale::Log) && value <= 0.0
+        !self.config.value_scale.is_valid_value(value)
     }
 
+    /// Colour used for a cell [`Self::should_mask_value`] rejects.
+    ///
+    /// Fully transparent, matching the draw paths that skip masked cells
+    /// outright.
+    pub const MASKED_COLOR: Color = Color::from_rgba(0, 0, 0, 0);
+
     /// Get color for a specific cell value
+    ///
+    /// A value [`Self::should_mask_value`] rejects — non-finite, or
+    /// non-positive on a [`AxisScale::Log`] value scale — has no position on
+    /// the colour ramp, so it renders as the masked colour rather than
+    /// whatever `sample(NaN)` happens to produce.
     pub fn get_color(&self, value: f64) -> Color {
-        let normalized = self.normalized_value(value).clamp(0.0, 1.0);
-        self.config.colormap.sample(normalized)
+        let normalized = self.normalized_value(value);
+        if !normalized.is_finite() {
+            return Self::MASKED_COLOR;
+        }
+        self.config.colormap.sample(normalized.clamp(0.0, 1.0))
     }
 
     /// Render `value` through [`HeatmapConfig::annotation_format`].
@@ -727,7 +739,7 @@ impl HeatmapData {
         let x_edges = (0..=self.n_cols)
             .map(|index| {
                 let x = self.x_extent.0 + index as f64 * x_step;
-                area.data_to_screen(x, self.y_extent.0)
+                area.edge_data_to_screen(x, self.y_extent.0)
                     .0
                     .clamp(x_min, x_max)
                     .round() as i32
@@ -736,7 +748,7 @@ impl HeatmapData {
         let y_edges = (0..=self.n_rows)
             .map(|index| {
                 let y = self.row_boundary_data_y(index);
-                area.data_to_screen(self.x_extent.0, y)
+                area.edge_data_to_screen(self.x_extent.0, y)
                     .1
                     .clamp(y_min, y_max)
                     .round() as i32

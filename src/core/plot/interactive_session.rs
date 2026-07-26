@@ -2031,8 +2031,8 @@ impl InteractivePlotSession {
         InteractiveViewBoundsSnapshot {
             base_bounds: data_bounds_to_viewport_rect(state.base_bounds),
             visible_bounds: data_bounds_to_viewport_rect(state.visible_bounds),
-            x_scale: plot.layout.x_scale.clone(),
-            y_scale: plot.layout.y_scale.clone(),
+            x_scale: plot.layout.x_scale,
+            y_scale: plot.layout.y_scale,
         }
     }
 
@@ -3075,8 +3075,12 @@ fn compute_data_bounds_from_frame(plot: &Plot, frame: &ResolvedFrame<'_>) -> Res
         ));
     }
 
+    // Pair each resolved entry with its originating series, exactly as the
+    // static render path does: a resolved entry alone cannot see the error bars
+    // attached with `with_yerr`/`with_xerr`, so zoom-to-fit would clip their
+    // whiskers against the spine.
     let (mut x_min, mut x_max, mut y_min, mut y_max) =
-        plot.calculate_data_bounds_from_resolved(&frame.series)?;
+        plot.calculate_data_bounds_for_frame(&plot.series_mgr.series, &frame.series)?;
 
     (x_min, x_max) = expand_degenerate_range(x_min, x_max, &plot.layout.x_scale);
     (y_min, y_max) = expand_degenerate_range(y_min, y_max, &plot.layout.y_scale);
@@ -3371,7 +3375,9 @@ fn require_annotation_coord_in_scale_domain(
     label: &str,
 ) -> Result<()> {
     require_finite_annotation_f64(value, label)?;
-    if matches!(scale, crate::axes::AxisScale::Log) && value <= 0.0 {
+    // Same predicate the renderer projects through, so an annotation can never
+    // be accepted at a coordinate the axis then refuses to place.
+    if !scale.is_valid_value(value) {
         return Err(invalid_annotation(format!(
             "{label} must be positive on a logarithmic axis"
         )));
@@ -3517,8 +3523,11 @@ fn validate_dynamic_annotation(
                         "{label} contains a non-finite value at index {index}"
                     )));
                 }
-                if matches!(scale, crate::axes::AxisScale::Log)
-                    && let Some(index) = values.iter().position(|value| *value <= 0.0)
+                // Same predicate the renderer projects through, so a fill can
+                // never be accepted at a coordinate the axis then refuses.
+                if let Some(index) = values
+                    .iter()
+                    .position(|value| !scale.is_valid_value(*value))
                 {
                     return Err(invalid_annotation(format!(
                         "{label} contains a non-positive value at index {index} on a logarithmic axis"
@@ -3575,11 +3584,15 @@ fn clip_overlay_to_plot_area(pixels: &mut [u8], size_px: (u32, u32), plot_area: 
     }
 }
 
+/// Can this axis place `value` at all?
+///
+/// Delegates to [`AxisScale::is_valid_value`], the single home of the rule, so
+/// the hit test cannot accept a sample the renderer refuses to draw (or the
+/// reverse). The hand-written copy this replaced also let `NaN` and `inf`
+/// through on linear and symlog axes, making them hit-testable at a garbage
+/// screen position.
 fn axis_accepts_value(scale: &AxisScale, value: f64) -> bool {
-    match scale {
-        AxisScale::Linear | AxisScale::SymLog { .. } => true,
-        AxisScale::Log => value > 0.0,
-    }
+    scale.is_valid_value(value)
 }
 
 fn screen_distance(first: ViewportPoint, second: ViewportPoint) -> f64 {
@@ -3801,8 +3814,8 @@ fn geometry_snapshot_for_state(
         plot_area: layout.plot_area_rect,
         x_bounds: (visible.x_min, visible.x_max),
         y_bounds: (visible.y_min, visible.y_max),
-        x_scale: plot.layout.x_scale.clone(),
-        y_scale: plot.layout.y_scale.clone(),
+        x_scale: plot.layout.x_scale,
+        y_scale: plot.layout.y_scale,
         annotation_theme: layout.annotation_theme,
         annotation_font_family: layout.annotation_font_family,
         annotation_render_scale: layout.annotation_render_scale,
@@ -3924,8 +3937,8 @@ fn compute_plot_layout_from_frame(
         &renderer,
         &content,
         dpi,
-        &crate::render::skia::format_tick_labels(&x_ticks),
-        &crate::render::skia::format_tick_labels(&y_ticks),
+        &crate::axes::format_tick_labels_for_scale(&x_ticks, &layout_plot.layout.x_scale),
+        &crate::axes::format_tick_labels_for_scale(&y_ticks, &layout_plot.layout.y_scale),
     )?;
     let layout = layout_plot.compute_layout_from_measurements(
         size_px,

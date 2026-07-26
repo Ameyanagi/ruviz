@@ -441,6 +441,58 @@ impl PlotData for KdeData {
     }
 }
 
+impl KdeData {
+    /// The density curve, split into the runs the axis scales can place.
+    ///
+    /// On a logarithmic axis the evaluation grid can run past the axis — it
+    /// extends a few bandwidths beyond the data, which on a log x axis reaches
+    /// zero and below. Those samples have no position, so the curve breaks
+    /// there rather than being drawn through a fabricated coordinate.
+    pub(crate) fn projected_runs(&self, area: &PlotArea) -> Vec<Vec<(f32, f32)>> {
+        area.project_subpaths(self.x.iter().zip(self.y.iter()).map(|(&x, &y)| (x, y)))
+    }
+
+    /// Close one curve run down to the fill baseline.
+    pub(crate) fn fill_polygon(run: &[(f32, f32)], baseline_y: f32) -> Vec<(f32, f32)> {
+        let mut polygon = Vec::with_capacity(run.len() + 2);
+        polygon.push((run[0].0, baseline_y));
+        polygon.extend_from_slice(run);
+        polygon.push((run[run.len() - 1].0, baseline_y));
+        polygon
+    }
+
+    /// Draw the curve, its fill and its vertical markers.
+    ///
+    /// `render` and `render_styled` differ only in how they resolve colour and
+    /// line width, so the geometry lives here once.
+    fn draw(
+        &self,
+        renderer: &mut SkiaRenderer,
+        area: &PlotArea,
+        line_color: Color,
+        fill_color: Color,
+        line_width: f32,
+    ) -> Result<()> {
+        let runs = self.projected_runs(area);
+        if runs.is_empty() {
+            return Ok(());
+        }
+
+        if self.config.fill {
+            let baseline_y = area.fill_baseline_y();
+            for run in &runs {
+                renderer.draw_filled_polygon(&Self::fill_polygon(run, baseline_y), fill_color)?;
+            }
+        }
+
+        for run in &runs {
+            renderer.draw_polyline(run, line_color, line_width, LineStyle::Solid)?;
+        }
+
+        self.draw_vertical_lines(renderer, area, line_color)
+    }
+}
+
 impl PlotRender for KdeData {
     fn render(
         &self,
@@ -453,37 +505,16 @@ impl PlotRender for KdeData {
             return Ok(());
         }
 
-        // Transform data to screen coordinates
-        let points: Vec<(f32, f32)> = self
-            .x
-            .iter()
-            .zip(self.y.iter())
-            .map(|(&x, &y)| area.data_to_screen(x, y))
-            .collect();
-
-        // Draw fill if enabled
-        if self.config.fill {
-            let baseline_y = area.data_to_screen(0.0, 0.0).1;
-
-            // Create polygon for fill
-            let mut polygon: Vec<(f32, f32)> = Vec::with_capacity(points.len() + 2);
-            polygon.push((points[0].0, baseline_y));
-            polygon.extend_from_slice(&points);
-            polygon.push((points[points.len() - 1].0, baseline_y));
-
-            let fill_color = color.with_alpha(self.config.fill_alpha);
-            renderer.draw_filled_polygon(&polygon, fill_color)?;
-        }
-
-        // Draw the line
         let line_width = renderer
             .render_scale()
             .points_to_pixels(self.config.line_width);
-        renderer.draw_polyline(&points, color, line_width, LineStyle::Solid)?;
-
-        self.draw_vertical_lines(renderer, area, color)?;
-
-        Ok(())
+        self.draw(
+            renderer,
+            area,
+            color,
+            color.with_alpha(self.config.fill_alpha),
+            line_width,
+        )
     }
 
     fn render_styled(
@@ -503,37 +534,12 @@ impl PlotRender for KdeData {
         let actual_line_width = renderer.render_scale().points_to_pixels(
             line_width.unwrap_or_else(|| resolver.line_width(Some(self.config.line_width))),
         );
+        let alpha = alpha.clamp(0.0, 1.0);
+        let actual_color = color.with_alpha((f32::from(color.a) / 255.0) * alpha);
+        let fill_color =
+            color.with_alpha((f32::from(color.a) / 255.0) * self.config.fill_alpha * alpha);
 
-        // Transform data to screen coordinates
-        let points: Vec<(f32, f32)> = self
-            .x
-            .iter()
-            .zip(self.y.iter())
-            .map(|(&x, &y)| area.data_to_screen(x, y))
-            .collect();
-
-        // Draw fill if enabled
-        if self.config.fill {
-            let baseline_y = area.data_to_screen(0.0, 0.0).1;
-
-            let mut polygon: Vec<(f32, f32)> = Vec::with_capacity(points.len() + 2);
-            polygon.push((points[0].0, baseline_y));
-            polygon.extend_from_slice(&points);
-            polygon.push((points[points.len() - 1].0, baseline_y));
-
-            let fill_alpha =
-                (f32::from(color.a) / 255.0) * self.config.fill_alpha * alpha.clamp(0.0, 1.0);
-            let fill_color = color.with_alpha(fill_alpha);
-            renderer.draw_filled_polygon(&polygon, fill_color)?;
-        }
-
-        // Draw the line
-        let actual_color = color.with_alpha((f32::from(color.a) / 255.0) * alpha.clamp(0.0, 1.0));
-        renderer.draw_polyline(&points, actual_color, actual_line_width, LineStyle::Solid)?;
-
-        self.draw_vertical_lines(renderer, area, actual_color)?;
-
-        Ok(())
+        self.draw(renderer, area, actual_color, fill_color, actual_line_width)
     }
 }
 

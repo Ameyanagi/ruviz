@@ -524,6 +524,7 @@ mod config;
 mod configuration;
 mod construction;
 pub mod data;
+mod error_bars;
 mod image;
 mod interactive_session;
 mod layout_manager;

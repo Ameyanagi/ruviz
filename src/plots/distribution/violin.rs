@@ -97,7 +97,7 @@ impl BandwidthMethod {
     /// to Scott's rule rather than producing a degenerate density.
     pub fn resolve(self, data: &[f64]) -> f64 {
         match self {
-            BandwidthMethod::Fixed(bw) if bw.is_finite() && bw > 0.0 => bw,
+            BandwidthMethod::Fixed(bw) if crate::stats::kde::is_valid_bandwidth(bw) => bw,
             BandwidthMethod::Fixed(_) | BandwidthMethod::Scott => scotts_rule(data),
             BandwidthMethod::Silverman => silvermans_rule(data),
         }
@@ -371,9 +371,12 @@ impl ViolinData {
             if !value.is_finite() {
                 continue;
             }
-            let (px, py) = match self.config.orientation {
-                Orientation::Vertical => area.data_to_screen(center, value),
-                Orientation::Horizontal => area.data_to_screen(value, center),
+            let projected = match self.config.orientation {
+                Orientation::Vertical => area.try_data_to_screen(center, value),
+                Orientation::Horizontal => area.try_data_to_screen(value, center),
+            };
+            let Some((px, py)) = projected else {
+                continue;
             };
             renderer.draw_marker_clipped(
                 px,
@@ -566,11 +569,9 @@ impl PlotRender for ViolinData {
             return Ok(());
         }
 
-        // Convert to screen coordinates
-        let screen_points: Vec<(f32, f32)> = polygon
-            .iter()
-            .map(|(x, y)| area.data_to_screen(*x, *y))
-            .collect();
+        // Convert to screen coordinates, dropping vertices the axis scales
+        // cannot place (the KDE tails run past a log axis' floor).
+        let screen_points: Vec<(f32, f32)> = area.project_points(polygon.iter().copied());
 
         // Get clip rectangle from plot area bounds
         let clip_rect = (area.x, area.y, area.width, area.height);
@@ -696,11 +697,9 @@ impl PlotRender for ViolinData {
             return Ok(());
         }
 
-        // Convert to screen coordinates
-        let screen_points: Vec<(f32, f32)> = polygon
-            .iter()
-            .map(|(x, y)| area.data_to_screen(*x, *y))
-            .collect();
+        // Convert to screen coordinates, dropping vertices the axis scales
+        // cannot place (the KDE tails run past a log axis' floor).
+        let screen_points: Vec<(f32, f32)> = area.project_points(polygon.iter().copied());
 
         // Get clip rectangle from plot area bounds
         let clip_rect = (area.x, area.y, area.width, area.height);

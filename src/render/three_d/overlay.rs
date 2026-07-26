@@ -97,6 +97,10 @@ pub(crate) fn compose_svg(
         )?;
     }
     draw_decorations_svg(&mut renderer, layout, figure, theme)?;
+    // A shape with a non-finite dimension is dropped rather than emitted as
+    // `width="NaN"`; the renderer only latches it, so whoever hands the string
+    // out has to surface it.
+    renderer.check_geometry()?;
     Ok(renderer.to_svg_string())
 }
 
