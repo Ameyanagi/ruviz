@@ -16,9 +16,10 @@ use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, LineStyle, Theme};
 
 /// Where to place the step
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StepWhere {
     /// Step at the left of each point (pre)
+    #[default]
     Pre,
     /// Step at the right of each point (post)
     Post,

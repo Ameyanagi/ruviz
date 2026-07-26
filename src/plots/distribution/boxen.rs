@@ -38,8 +38,9 @@ pub struct BoxenConfig {
 }
 
 /// Orientation for boxen plots
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BoxenOrientation {
+    #[default]
     Vertical,
     Horizontal,
 }

@@ -63,7 +63,7 @@ fn bench_histogram_1m(c: &mut Criterion) {
     c.bench_function("histogram_1m", |b| {
         b.iter(|| {
             Plot::new()
-                .histogram(black_box(&data), None)
+                .histogram(black_box(&data))
                 .auto_optimize()
                 .save("generated/bench/bench_histogram_1m.png")
                 .expect("Failed to save plot");
@@ -79,7 +79,7 @@ fn bench_boxplot_100k(c: &mut Criterion) {
     c.bench_function("boxplot_100k", |b| {
         b.iter(|| {
             Plot::new()
-                .boxplot(black_box(&data), None)
+                .boxplot(black_box(&data))
                 .save("generated/bench/bench_boxplot_100k.png")
                 .expect("Failed to save plot");
         });

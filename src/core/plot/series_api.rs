@@ -239,36 +239,15 @@ impl Plot {
     ///     .save("stream_updated.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn line_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        let x_data = PlotData::Streaming(stream.x().clone());
-        let y_data = PlotData::Streaming(stream.y().clone());
-
-        let series = PlotSeries {
-            series_type: SeriesType::Line { x_data, y_data },
-            streaming_source: Some(stream.clone()),
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+    pub fn line_streaming(
+        self,
+        stream: &StreamingXY,
+    ) -> PlotBuilder<crate::plots::basic::LineConfig> {
+        PlotBuilder::new(
+            self,
+            PlotInput::Streaming(stream.clone()),
+            crate::plots::basic::LineConfig::default(),
+        )
     }
 
     /// Add a scatter plot series
@@ -376,36 +355,15 @@ impl Plot {
     ///     .save("stream_scatter.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn scatter_streaming(self, stream: &StreamingXY) -> PlotSeriesBuilder {
-        let x_data = PlotData::Streaming(stream.x().clone());
-        let y_data = PlotData::Streaming(stream.y().clone());
-
-        let series = PlotSeries {
-            series_type: SeriesType::Scatter { x_data, y_data },
-            streaming_source: Some(stream.clone()),
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: Some(MarkerStyle::Circle),
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+    pub fn scatter_streaming(
+        self,
+        stream: &StreamingXY,
+    ) -> PlotBuilder<crate::plots::basic::ScatterConfig> {
+        PlotBuilder::new(
+            self,
+            PlotInput::Streaming(stream.clone()),
+            crate::plots::basic::ScatterConfig::default(),
+        )
     }
 
     /// Add a step plot series.
@@ -631,9 +589,12 @@ impl Plot {
         )
     }
 
-    /// Add a histogram plot series
+    /// Add a histogram series.
     ///
-    /// Creates a histogram showing the distribution of data values.
+    /// Returns a [`PlotBuilder`]`<HistogramConfig>`, the same builder shape every
+    /// other series method returns: binning knobs, series styling, plot-level
+    /// settings, further series and the terminal `save`/`render` calls all chain
+    /// straight off it.
     ///
     /// # Example
     ///
@@ -643,107 +604,91 @@ impl Plot {
     /// let data: Vec<f64> = (0..1000).map(|i| (i as f64 / 100.0).sin()).collect();
     ///
     /// Plot::new()
-    ///     .histogram(&data, None)
-    ///     .end_series()
+    ///     .histogram(&data)
+    ///     .bins(30)
+    ///     .density(true)
+    ///     .label("Samples")
+    ///     .legend_best()
     ///     .save("histogram.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// ![Histogram example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/histogram.png)
-    pub fn histogram<D: NumericData1D>(
-        self,
+    pub fn histogram<D: NumericData1D>(self, data: &D) -> PlotBuilder<HistogramConfig> {
+        self.histogram_with(data, HistogramConfig::default())
+    }
+
+    /// Add a histogram series starting from an existing [`HistogramConfig`].
+    ///
+    /// [`Plot::histogram`] plus the builder's setters is the primary form; this
+    /// is for callers that already hold a fully built config value. The builder
+    /// setters still apply on top of `config`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    /// use ruviz::plots::histogram::HistogramConfig;
+    ///
+    /// let data: Vec<f64> = (0..1000).map(|i| (i as f64 / 100.0).sin()).collect();
+    ///
+    /// Plot::new()
+    ///     .histogram_with(&data, HistogramConfig::new().bins(20))
+    ///     .save("histogram.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn histogram_with<D: NumericData1D>(
+        mut self,
         data: &D,
-        config: Option<HistogramConfig>,
-    ) -> PlotSeriesBuilder {
-        let mut plot = self;
-        let data_vec = match collect_numeric_data_1d(data, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
-        let hist_config = config.unwrap_or_default();
-        let prepared = crate::plots::histogram::calculate_histogram(&data_vec, &hist_config)
-            .map_err(|err| {
-                plot.set_pending_ingestion_error(PlottingError::RenderError(err.to_string()))
-            })
-            .ok();
-
-        let series = PlotSeries {
-            series_type: SeriesType::Histogram {
-                data: PlotData::Static(data_vec),
-                config: hist_config,
-                prepared,
-            },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(plot, series)
+        config: HistogramConfig,
+    ) -> PlotBuilder<HistogramConfig> {
+        let values = self.collect_numeric_input(data);
+        PlotBuilder::new(self, PlotInput::Single(values), config)
     }
 
     /// Add a histogram series from source-backed values.
-    pub fn histogram_source<D: IntoPlotData>(
-        self,
-        data: D,
-        config: Option<HistogramConfig>,
-    ) -> PlotSeriesBuilder {
-        let series = PlotSeries {
-            series_type: SeriesType::Histogram {
-                data: data.into_plot_data(),
-                config: config.unwrap_or_default(),
-                prepared: None,
-            },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+    pub fn histogram_source<D: IntoPlotData>(self, data: D) -> PlotBuilder<HistogramConfig> {
+        self.histogram_source_with(data, HistogramConfig::default())
     }
 
-    /// Add a box plot series
+    /// Add a source-backed histogram series starting from an existing config.
+    pub fn histogram_source_with<D: IntoPlotData>(
+        self,
+        data: D,
+        config: HistogramConfig,
+    ) -> PlotBuilder<HistogramConfig> {
+        PlotBuilder::new(self, PlotInput::SingleSource(data.into_plot_data()), config)
+    }
+
+    /// Add a box plot series.
     ///
-    /// Creates a box plot showing the distribution of data with quartiles,
-    /// median, and outliers.
+    /// Returns a [`PlotBuilder`]`<BoxPlotConfig>`, the same builder shape every
+    /// other series method returns.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
+    ///                 11.0, 12.0, 35.0, 40.0, -5.0]; // includes outliers
+    ///
+    /// Plot::new()
+    ///     .boxplot(&data)
+    ///     .show_mean(true)
+    ///     .save("boxplot.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// ![Box plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/boxplot.png)
+    pub fn boxplot<D: NumericData1D>(self, data: &D) -> PlotBuilder<BoxPlotConfig> {
+        self.boxplot_with(data, BoxPlotConfig::default())
+    }
+
+    /// Add a box plot series starting from an existing [`BoxPlotConfig`].
+    ///
+    /// [`Plot::boxplot`] plus the builder's setters is the primary form; this is
+    /// for callers that already hold a fully built config value.
     ///
     /// # Example
     ///
@@ -751,103 +696,44 @@ impl Plot {
     /// use ruviz::prelude::*;
     /// use ruviz::plots::boxplot::BoxPlotConfig;
     ///
-    /// let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
-    ///                 11.0, 12.0, 35.0, 40.0, -5.0]; // includes outliers
+    /// let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
     ///
     /// Plot::new()
-    ///     .boxplot(&data, Some(BoxPlotConfig::new()))
-    ///     .end_series()
+    ///     .boxplot_with(&data, BoxPlotConfig::new())
     ///     .save("boxplot.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    ///
-    /// ![Box plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/boxplot.png)
-    pub fn boxplot<D: NumericData1D>(
-        self,
+    pub fn boxplot_with<D: NumericData1D>(
+        mut self,
         data: &D,
-        config: Option<BoxPlotConfig>,
-    ) -> PlotSeriesBuilder {
-        let mut plot = self;
-        let data_vec = match collect_numeric_data_1d(data, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
-        let box_config = config.unwrap_or_default();
-
-        let series = PlotSeries {
-            series_type: SeriesType::BoxPlot {
-                data: PlotData::Static(data_vec),
-                config: box_config,
-            },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(plot, series)
+        config: BoxPlotConfig,
+    ) -> PlotBuilder<BoxPlotConfig> {
+        let values = self.collect_numeric_input(data);
+        PlotBuilder::new(self, PlotInput::Single(values), config)
     }
 
     /// Add a box plot series from source-backed values.
-    pub fn boxplot_source<D: IntoPlotData>(
-        self,
-        data: D,
-        config: Option<BoxPlotConfig>,
-    ) -> PlotSeriesBuilder {
-        let series = PlotSeries {
-            series_type: SeriesType::BoxPlot {
-                data: data.into_plot_data(),
-                config: config.unwrap_or_default(),
-            },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+    pub fn boxplot_source<D: IntoPlotData>(self, data: D) -> PlotBuilder<BoxPlotConfig> {
+        self.boxplot_source_with(data, BoxPlotConfig::default())
     }
 
-    /// Add a heatmap visualization for 2D array data
+    /// Add a source-backed box plot series starting from an existing config.
+    pub fn boxplot_source_with<D: IntoPlotData>(
+        self,
+        data: D,
+        config: BoxPlotConfig,
+    ) -> PlotBuilder<BoxPlotConfig> {
+        PlotBuilder::new(self, PlotInput::SingleSource(data.into_plot_data()), config)
+    }
+
+    /// Add a heatmap visualization for 2D array data.
     ///
-    /// Creates a color-mapped visualization of 2D data.
+    /// Returns a [`PlotBuilder`]`<HeatmapConfig>`, the same builder
+    /// shape every other series method returns, so colormap, colorbar and
+    /// scaling knobs chain directly off the call.
+    ///
+    /// The grid is switched off for the plot, because grid lines behind heatmap
+    /// cells are never visible.
     ///
     /// # Example
     ///
@@ -858,32 +744,57 @@ impl Plot {
     ///     .map(|i| (0..10).map(|j| (i + j + 1) as f64).collect())
     ///     .collect();
     ///
-    /// let config = HeatmapConfig::new()
-    ///     .value_scale(AxisScale::Log)
-    ///     .colorbar_label("Intensity");
-    ///
     /// Plot::new()
-    ///     .heatmap(&data, Some(config))
-    ///     .end_series()
+    ///     .heatmap(&data)
+    ///     .value_scale(AxisScale::Log)
+    ///     .colorbar_label("Intensity")
     ///     .save("heatmap.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// ![Heatmap example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/heatmap.png)
-    pub fn heatmap<D>(
-        mut self,
-        data: &D,
-        config: Option<crate::plots::heatmap::HeatmapConfig>,
-    ) -> PlotSeriesBuilder
+    pub fn heatmap<D>(self, data: &D) -> PlotBuilder<crate::plots::heatmap::HeatmapConfig>
     where
         D: NumericData2D + ?Sized,
     {
-        let heatmap_config = config.unwrap_or_default();
+        self.heatmap_with(data, crate::plots::heatmap::HeatmapConfig::default())
+    }
 
-        // Disable grid for heatmaps (grid doesn't make sense behind heatmap cells)
+    /// Add a heatmap starting from an existing [`HeatmapConfig`](crate::plots::heatmap::HeatmapConfig).
+    ///
+    /// [`Plot::heatmap`] plus the builder's setters is the primary form; this is
+    /// for callers that already hold a fully built config value.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let data: Vec<Vec<f64>> = (0..4)
+    ///     .map(|i| (0..4).map(|j| (i + j + 1) as f64).collect())
+    ///     .collect();
+    ///
+    /// let config = HeatmapConfig::new()
+    ///     .value_scale(AxisScale::Log)
+    ///     .colorbar_label("Intensity");
+    ///
+    /// Plot::new()
+    ///     .heatmap_with(&data, config)
+    ///     .save("heatmap.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn heatmap_with<D>(
+        mut self,
+        data: &D,
+        config: crate::plots::heatmap::HeatmapConfig,
+    ) -> PlotBuilder<crate::plots::heatmap::HeatmapConfig>
+    where
+        D: NumericData2D + ?Sized,
+    {
+        // Grid lines behind heatmap cells are never visible, so a heatmap always
+        // turns the grid off for the plot it joins.
         self.layout.grid_style.visible = false;
 
-        // Process heatmap data
         let (flat, rows, cols) = match collect_numeric_data_2d(data) {
             Ok(values) => values,
             Err(err) => {
@@ -891,261 +802,141 @@ impl Plot {
                 (vec![], 0, 0)
             }
         };
-        match crate::plots::heatmap::process_heatmap_flat(&flat, rows, cols, heatmap_config) {
-            Ok(heatmap_data) => {
-                let series = PlotSeries {
-                    series_type: SeriesType::Heatmap {
-                        data: Arc::new(heatmap_data),
-                    },
-                    streaming_source: None,
-                    label: None,
-                    color: None,
-                    color_source: None,
-                    line_width: None,
-                    line_width_source: None,
-                    line_style: None,
-                    line_style_source: None,
-                    marker_style: None,
-                    marker_style_source: None,
-                    marker_size: None,
-                    marker_size_source: None,
-                    marker_edge: None,
-                    alpha: None,
-                    alpha_source: None,
-                    y_errors: None,
-                    x_errors: None,
-                    error_config: None,
-                    inset_layout: None,
-                    group_id: None,
-                    resolved_radar_colors: None,
-                };
-                PlotSeriesBuilder::new(self, series)
-            }
-            Err(err) => {
-                // Return empty plot if data processing fails
-                // This allows chaining to continue without panicking
-                self.set_pending_ingestion_error(PlottingError::DataExtractionFailed {
-                    source: "heatmap".to_string(),
-                    message: err,
-                });
-                let series = PlotSeries {
-                    series_type: SeriesType::Heatmap {
-                        data: Arc::new(crate::plots::heatmap::HeatmapData {
-                            values: vec![vec![0.0]],
-                            n_rows: 1,
-                            n_cols: 1,
-                            data_min: 0.0,
-                            data_max: 0.0,
-                            vmin: 0.0,
-                            vmax: 1.0,
-                            x_extent: (0.0, 1.0),
-                            y_extent: (0.0, 1.0),
-                            config: crate::plots::heatmap::HeatmapConfig::default(),
-                        }),
-                    },
-                    streaming_source: None,
-                    label: None,
-                    color: None,
-                    color_source: None,
-                    line_width: None,
-                    line_width_source: None,
-                    line_style: None,
-                    line_style_source: None,
-                    marker_style: None,
-                    marker_style_source: None,
-                    marker_size: None,
-                    marker_size_source: None,
-                    marker_edge: None,
-                    alpha: None,
-                    alpha_source: None,
-                    y_errors: None,
-                    x_errors: None,
-                    error_config: None,
-                    inset_layout: None,
-                    group_id: None,
-                    resolved_radar_colors: None,
-                };
-                PlotSeriesBuilder::new(self, series)
-            }
-        }
+
+        // The rows are kept unprocessed until `finalize()` so that every builder
+        // setter called after `heatmap()` still affects the colour mapping.
+        let values: Vec<Vec<f64>> = if cols == 0 {
+            Vec::new()
+        } else {
+            flat.chunks(cols).map(<[f64]>::to_vec).collect()
+        };
+        // `point_count()` (used by `auto_optimize`) reads the axis vectors, so
+        // they carry the grid dimensions even though `finalize()` only needs `z`.
+        let x = (0..cols).map(|i| i as f64).collect();
+        let y = (0..rows).map(|i| i as f64).collect();
+
+        PlotBuilder::new(self, PlotInput::Grid2D { x, y, z: values }, config)
     }
 
-    /// Add error bars (Y-direction only)
-    pub fn error_bars<X, Y, E>(self, x_data: &X, y_data: &Y, y_errors: &E) -> PlotSeriesBuilder
+    /// Add a series of Y-direction error bars.
+    ///
+    /// Returns a [`PlotBuilder`]`<ErrorBarConfig>`, the same builder
+    /// shape every other series method returns. Add X errors to the same series
+    /// with [`PlotBuilder::with_xerr`], or use [`Plot::error_bars_xy`].
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0];
+    /// let y = vec![2.0, 4.0, 3.0];
+    /// let yerr = vec![0.2, 0.3, 0.25];
+    ///
+    /// Plot::new()
+    ///     .error_bars(&x, &y, &yerr)
+    ///     .cap_size(6.0)
+    ///     .label("Measurement")
+    ///     .legend_best()
+    ///     .save("error_bars.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn error_bars<X, Y, E>(
+        mut self,
+        x_data: &X,
+        y_data: &Y,
+        y_errors: &E,
+    ) -> PlotBuilder<ErrorBarConfig>
     where
         X: NumericData1D,
         Y: NumericData1D,
         E: NumericData1D,
     {
-        let mut plot = self;
-        let x_vec = match collect_numeric_data_1d(x_data, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
-        let y_vec = match collect_numeric_data_1d(y_data, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
-        let e_vec = match collect_numeric_data_1d(y_errors, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
+        let x = self.collect_numeric_input(x_data);
+        let y = self.collect_numeric_input(y_data);
+        let y_errors = self.collect_numeric_input(y_errors);
 
-        let series = PlotSeries {
-            series_type: SeriesType::ErrorBars {
-                x_data: PlotData::Static(x_vec),
-                y_data: PlotData::Static(y_vec),
-                y_errors: PlotData::Static(e_vec),
+        PlotBuilder::new(
+            self,
+            PlotInput::ErrorBars {
+                x: PlotData::Static(x),
+                y: PlotData::Static(y),
+                x_errors: None,
+                y_errors: Some(PlotData::Static(y_errors)),
             },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(plot, series)
+            ErrorBarConfig::default(),
+        )
     }
 
-    /// Add error bars from source-backed X, Y, and Y-error data.
-    pub fn error_bars_source<X, Y, E>(self, x_data: X, y_data: Y, y_errors: E) -> PlotSeriesBuilder
+    /// Add Y-direction error bars from source-backed X, Y, and error data.
+    pub fn error_bars_source<X, Y, E>(
+        self,
+        x_data: X,
+        y_data: Y,
+        y_errors: E,
+    ) -> PlotBuilder<ErrorBarConfig>
     where
         X: IntoPlotData,
         Y: IntoPlotData,
         E: IntoPlotData,
     {
-        let series = PlotSeries {
-            series_type: SeriesType::ErrorBars {
-                x_data: x_data.into_plot_data(),
-                y_data: y_data.into_plot_data(),
-                y_errors: y_errors.into_plot_data(),
+        PlotBuilder::new(
+            self,
+            PlotInput::ErrorBars {
+                x: x_data.into_plot_data(),
+                y: y_data.into_plot_data(),
+                x_errors: None,
+                y_errors: Some(y_errors.into_plot_data()),
             },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+            ErrorBarConfig::default(),
+        )
     }
 
-    /// Add error bars in both X and Y directions
+    /// Add a series of error bars in both the X and Y directions.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ruviz::prelude::*;
+    ///
+    /// let x = vec![1.0, 2.0, 3.0];
+    /// let y = vec![2.0, 4.0, 3.0];
+    /// let xerr = vec![0.1, 0.1, 0.1];
+    /// let yerr = vec![0.2, 0.3, 0.25];
+    ///
+    /// Plot::new()
+    ///     .error_bars_xy(&x, &y, &xerr, &yerr)
+    ///     .save("error_bars_xy.png")?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn error_bars_xy<X, Y, EX, EY>(
-        self,
+        mut self,
         x_data: &X,
         y_data: &Y,
         x_errors: &EX,
         y_errors: &EY,
-    ) -> PlotSeriesBuilder
+    ) -> PlotBuilder<ErrorBarConfig>
     where
         X: NumericData1D,
         Y: NumericData1D,
         EX: NumericData1D,
         EY: NumericData1D,
     {
-        let mut plot = self;
-        let x_vec = match collect_numeric_data_1d(x_data, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
-        let y_vec = match collect_numeric_data_1d(y_data, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
-        let ex_vec = match collect_numeric_data_1d(x_errors, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
-        let ey_vec = match collect_numeric_data_1d(y_errors, plot.null_policy) {
-            Ok(values) => values,
-            Err(err) => {
-                plot.set_pending_ingestion_error(err);
-                vec![]
-            }
-        };
+        let x = self.collect_numeric_input(x_data);
+        let y = self.collect_numeric_input(y_data);
+        let x_errors = self.collect_numeric_input(x_errors);
+        let y_errors = self.collect_numeric_input(y_errors);
 
-        let series = PlotSeries {
-            series_type: SeriesType::ErrorBarsXY {
-                x_data: PlotData::Static(x_vec),
-                y_data: PlotData::Static(y_vec),
-                x_errors: PlotData::Static(ex_vec),
-                y_errors: PlotData::Static(ey_vec),
+        PlotBuilder::new(
+            self,
+            PlotInput::ErrorBars {
+                x: PlotData::Static(x),
+                y: PlotData::Static(y),
+                x_errors: Some(PlotData::Static(x_errors)),
+                y_errors: Some(PlotData::Static(y_errors)),
             },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(plot, series)
+            ErrorBarConfig::default(),
+        )
     }
 
     /// Add X/Y error bars from source-backed data.
@@ -1155,44 +946,23 @@ impl Plot {
         y_data: Y,
         x_errors: EX,
         y_errors: EY,
-    ) -> PlotSeriesBuilder
+    ) -> PlotBuilder<ErrorBarConfig>
     where
         X: IntoPlotData,
         Y: IntoPlotData,
         EX: IntoPlotData,
         EY: IntoPlotData,
     {
-        let series = PlotSeries {
-            series_type: SeriesType::ErrorBarsXY {
-                x_data: x_data.into_plot_data(),
-                y_data: y_data.into_plot_data(),
-                x_errors: x_errors.into_plot_data(),
-                y_errors: y_errors.into_plot_data(),
+        PlotBuilder::new(
+            self,
+            PlotInput::ErrorBars {
+                x: x_data.into_plot_data(),
+                y: y_data.into_plot_data(),
+                x_errors: Some(x_errors.into_plot_data()),
+                y_errors: Some(y_errors.into_plot_data()),
             },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        PlotSeriesBuilder::new(self, series)
+            ErrorBarConfig::default(),
+        )
     }
 
     /// Add a KDE (Kernel Density Estimation) plot
@@ -1502,7 +1272,7 @@ impl Plot {
     ///
     /// Plot::new()
     ///     .quiver(&x, &y, &u, &v)
-    ///     .scale(0.25)
+    ///     .arrow_scale(0.25)
     ///     .pivot(QuiverPivot::Middle)
     ///     .color_by_magnitude(true)
     ///     .save("quiver.png")?;
@@ -1626,6 +1396,229 @@ impl Plot {
             PlotInput::XY(r_vec, theta_vec),
             crate::plots::PolarPlotConfig::default(),
         )
+    }
+
+    /// Commit a finalized builder series, assigning the next palette slot.
+    ///
+    /// Every plot type spells series styling the same way, so the palette rule
+    /// lives here once: a series that chose no colour takes the next auto-colour
+    /// slot and advances the counter, an explicitly coloured one leaves the
+    /// counter alone so the next automatic series keeps the palette order the
+    /// caller sees.
+    pub(super) fn push_builder_series(mut self, series: PlotSeries) -> Self {
+        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
+            let slot = self.series_mgr.auto_color_index;
+            self.series_mgr.auto_color_index += 1;
+            Some(slot)
+        } else {
+            None
+        };
+
+        self.series_mgr
+            .push_with_auto_color_slot(series, auto_color_slot);
+        self
+    }
+}
+
+/// Build a [`PlotSeries`] from a series type and the builder's accumulated style.
+///
+/// The [`SeriesStyle`] to [`PlotSeries`] mapping is identical for every plot
+/// type, so it is written once here instead of being restated per plot type —
+/// which is what let the old per-type constructors drift apart.
+pub(super) fn series_from_style(series_type: SeriesType, style: SeriesStyle) -> PlotSeries {
+    PlotSeries {
+        series_type,
+        streaming_source: style.streaming_source,
+        label: style.label,
+        color: style.color,
+        color_source: style.color_source,
+        line_width: style.line_width,
+        line_width_source: style.line_width_source,
+        line_style: style.line_style,
+        line_style_source: style.line_style_source,
+        marker_style: style.marker_style,
+        marker_style_source: style.marker_style_source,
+        marker_size: style.marker_size,
+        marker_size_source: style.marker_size_source,
+        marker_edge: None,
+        alpha: style.alpha,
+        alpha_source: style.alpha_source,
+        y_errors: style.y_errors,
+        x_errors: style.x_errors,
+        error_config: style.error_config,
+        inset_layout: style.inset_layout,
+        group_id: None,
+        resolved_radar_colors: None,
+    }
+}
+
+impl PlotBuilder<HistogramConfig> {
+    /// Bin the data with the configuration as it stands and add the series.
+    ///
+    /// Binning happens here rather than in [`Plot::histogram`] so that every
+    /// builder setter called in between still affects the bins.
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            mut plot,
+            input,
+            config,
+            style,
+        } = self;
+
+        let (data, prepared) = match input {
+            PlotInput::Single(values) => {
+                let prepared = match crate::plots::histogram::calculate_histogram(&values, &config)
+                {
+                    Ok(prepared) => Some(prepared),
+                    Err(err) => {
+                        plot.set_pending_ingestion_error(PlottingError::RenderError(
+                            err.to_string(),
+                        ));
+                        None
+                    }
+                };
+                (PlotData::Static(values), prepared)
+            }
+            // Source-backed values are only known at render time, so they are
+            // binned then rather than here.
+            PlotInput::SingleSource(source) => (source, None),
+            _ => (PlotData::Static(Vec::new()), None),
+        };
+
+        plot.push_builder_series(series_from_style(
+            SeriesType::Histogram {
+                data,
+                config,
+                prepared,
+            },
+            style,
+        ))
+    }
+}
+
+impl PlotBuilder<BoxPlotConfig> {
+    /// Add the configured box plot series to the plot.
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+
+        let data = match input {
+            PlotInput::Single(values) => PlotData::Static(values),
+            PlotInput::SingleSource(source) => source,
+            _ => PlotData::Static(Vec::new()),
+        };
+
+        plot.push_builder_series(series_from_style(
+            SeriesType::BoxPlot { data, config },
+            style,
+        ))
+    }
+}
+
+impl PlotBuilder<crate::plots::heatmap::HeatmapConfig> {
+    /// Map the grid to colours with the configuration as it stands, then add it.
+    ///
+    /// The colour mapping happens here rather than in [`Plot::heatmap`] so that
+    /// every builder setter called in between still affects it.
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            mut plot,
+            input,
+            config,
+            style,
+        } = self;
+
+        let rows = match input {
+            PlotInput::Grid2D { z, .. } => z,
+            _ => Vec::new(),
+        };
+        let n_rows = rows.len();
+        let n_cols = rows.first().map_or(0, Vec::len);
+        let flat: Vec<f64> = rows.into_iter().flatten().collect();
+
+        let data = match crate::plots::heatmap::process_heatmap_flat(&flat, n_rows, n_cols, config)
+        {
+            Ok(data) => Arc::new(data),
+            Err(message) => {
+                // Chaining continues on invalid data; the error surfaces from
+                // the terminal render/save call.
+                plot.set_pending_ingestion_error(PlottingError::DataExtractionFailed {
+                    source: "heatmap".to_string(),
+                    message,
+                });
+                Arc::new(crate::plots::heatmap::HeatmapData {
+                    values: vec![vec![0.0]],
+                    n_rows: 1,
+                    n_cols: 1,
+                    data_min: 0.0,
+                    data_max: 0.0,
+                    vmin: 0.0,
+                    vmax: 1.0,
+                    x_extent: (0.0, 1.0),
+                    y_extent: (0.0, 1.0),
+                    config: crate::plots::heatmap::HeatmapConfig::default(),
+                })
+            }
+        };
+
+        plot.push_builder_series(series_from_style(SeriesType::Heatmap { data }, style))
+    }
+}
+
+impl PlotBuilder<ErrorBarConfig> {
+    /// Add the configured error bar series to the plot.
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            mut style,
+        } = self;
+
+        let (x_data, y_data, x_errors, y_errors) = match input {
+            PlotInput::ErrorBars {
+                x,
+                y,
+                x_errors,
+                y_errors,
+            } => (x, y, x_errors, y_errors),
+            _ => (
+                PlotData::Static(Vec::new()),
+                PlotData::Static(Vec::new()),
+                None,
+                None,
+            ),
+        };
+        let y_errors = y_errors.unwrap_or_else(|| PlotData::Static(Vec::new()));
+
+        // Whether X error data was supplied is what distinguishes the two error
+        // bar series types; `with_xerr()` on the builder attaches X errors to a
+        // Y-only series without changing which type it is.
+        let series_type = match x_errors {
+            Some(x_errors) => SeriesType::ErrorBarsXY {
+                x_data,
+                y_data,
+                x_errors,
+                y_errors,
+            },
+            None => SeriesType::ErrorBars {
+                x_data,
+                y_data,
+                y_errors,
+            },
+        };
+
+        // An explicit `error_config()` replaces the whole configuration, so it
+        // wins over the individual setters recorded on `config`.
+        if style.error_config.is_none() {
+            style.error_config = Some(config);
+        }
+
+        plot.push_builder_series(series_from_style(series_type, style))
     }
 }
 
@@ -1819,6 +1812,262 @@ mod tests {
         assert!(colors.iter().all(|color| *color == theme.get_color(2)));
         assert_ne!(colors[0], theme.get_color(1));
         assert_ne!(colors[0], theme.get_color(3));
+    }
+
+    // ===== Uniform-builder coverage for histogram/boxplot/heatmap/error bars ==
+
+    const SAMPLES: [f64; 8] = [1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 5.0];
+
+    fn grid() -> Vec<Vec<f64>> {
+        vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]
+    }
+
+    fn only_series(plot: &Plot) -> &PlotSeries {
+        assert_eq!(plot.series_mgr.len(), 1);
+        &plot.series_mgr.series()[0]
+    }
+
+    #[test]
+    fn test_histogram_builder_setters_apply_before_binning() {
+        let data = SAMPLES.to_vec();
+        // The bin count is chosen after `histogram()` returns, so binning has to
+        // be deferred to finalize for this to take effect.
+        let plot: Plot = Plot::new().histogram(&data).bins(4).into();
+
+        let SeriesType::Histogram {
+            config, prepared, ..
+        } = &only_series(&plot).series_type
+        else {
+            panic!("histogram() must push a Histogram series");
+        };
+        assert_eq!(config.bins, Some(4));
+        let prepared = prepared.as_ref().expect("histogram bins were computed");
+        assert_eq!(prepared.counts.len(), 4);
+    }
+
+    #[test]
+    fn test_histogram_with_starts_from_a_prebuilt_config() {
+        let data = SAMPLES.to_vec();
+        let plot: Plot = Plot::new()
+            .histogram_with(&data, HistogramConfig::new().bins(2).density(true))
+            .into();
+
+        let SeriesType::Histogram { config, .. } = &only_series(&plot).series_type else {
+            panic!("histogram_with() must push a Histogram series");
+        };
+        assert_eq!(config.bins, Some(2));
+        assert!(config.density);
+    }
+
+    #[test]
+    fn test_histogram_keeps_plot_level_and_series_level_chaining() {
+        let data = SAMPLES.to_vec();
+        // `.theme()` after a histogram used to fail to compile; `.label()` and
+        // `.legend_best()` are the pair that makes a legend entry appear.
+        let plot: Plot = Plot::new()
+            .histogram(&data)
+            .theme(Theme::dark())
+            .color(Color::RED)
+            .alpha(0.5)
+            .label("samples")
+            .legend_best()
+            .title("Distribution")
+            .into();
+
+        let series = only_series(&plot);
+        assert_eq!(series.label.as_deref(), Some("samples"));
+        assert_eq!(series.color, Some(Color::RED));
+        assert_eq!(series.alpha, Some(0.5));
+        assert!(plot.layout.legend.enabled);
+    }
+
+    #[test]
+    fn test_boxplot_builder_setters_reach_the_series_config() {
+        let data = SAMPLES.to_vec();
+        let plot: Plot = Plot::new().boxplot(&data).show_mean(true).into();
+
+        let SeriesType::BoxPlot { config, .. } = &only_series(&plot).series_type else {
+            panic!("boxplot() must push a BoxPlot series");
+        };
+        assert!(config.show_mean);
+    }
+
+    #[test]
+    fn test_heatmap_builder_setters_apply_before_color_mapping() {
+        let values = grid();
+        let plot: Plot = Plot::new().heatmap(&values).vmin(0.0).vmax(10.0).into();
+
+        let SeriesType::Heatmap { data } = &only_series(&plot).series_type else {
+            panic!("heatmap() must push a Heatmap series");
+        };
+        assert_eq!(data.n_rows, 2);
+        assert_eq!(data.n_cols, 3);
+        // Mapped with the bounds set after `heatmap()` returned, not the data's.
+        assert_eq!(data.vmin, 0.0);
+        assert_eq!(data.vmax, 10.0);
+    }
+
+    #[test]
+    fn test_heatmap_still_turns_the_grid_off() {
+        let values = grid();
+        let plot: Plot = Plot::new().grid(true).heatmap(&values).into();
+        assert!(!plot.layout.grid_style.visible);
+    }
+
+    #[test]
+    fn test_error_bars_config_setters_reach_the_rendered_config() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let errors = vec![0.1, 0.2, 0.3];
+        let plot: Plot = Plot::new()
+            .error_bars(&x, &y, &errors)
+            .cap_size(6.0)
+            .error_line_width(3.0)
+            .into();
+
+        let series = only_series(&plot);
+        assert!(matches!(series.series_type, SeriesType::ErrorBars { .. }));
+        let config = series.error_config.as_ref().expect("config was recorded");
+        assert_eq!(config.cap_size, 6.0);
+        assert_eq!(config.line_width, 3.0);
+    }
+
+    #[test]
+    fn test_error_bars_xy_keeps_its_own_series_type() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let errors = vec![0.1, 0.2, 0.3];
+        let plot: Plot = Plot::new().error_bars_xy(&x, &y, &errors, &errors).into();
+
+        assert!(matches!(
+            only_series(&plot).series_type,
+            SeriesType::ErrorBarsXY { .. }
+        ));
+    }
+
+    #[test]
+    fn test_error_bars_with_xerr_attaches_x_errors_without_changing_the_type() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let errors = vec![0.1, 0.2, 0.3];
+        let plot: Plot = Plot::new()
+            .error_bars(&x, &y, &errors)
+            .with_xerr(&errors)
+            .into();
+
+        let series = only_series(&plot);
+        assert!(matches!(series.series_type, SeriesType::ErrorBars { .. }));
+        assert!(series.x_errors.is_some());
+    }
+
+    #[test]
+    fn test_error_bars_markers_are_still_configurable() {
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let errors = vec![0.1, 0.2, 0.3];
+        let plot: Plot = Plot::new()
+            .error_bars(&x, &y, &errors)
+            .marker(crate::render::MarkerStyle::Square)
+            .marker_size(11.0)
+            .into();
+
+        let series = only_series(&plot);
+        assert_eq!(
+            series.marker_style,
+            Some(crate::render::MarkerStyle::Square)
+        );
+        assert_eq!(series.marker_size, Some(11.0));
+    }
+
+    #[test]
+    fn test_converted_series_keep_their_palette_slot_accounting() {
+        let data = SAMPLES.to_vec();
+        // An automatically coloured series consumes a slot; an explicitly
+        // coloured one does not, which is what the old builder did.
+        let plot: Plot = Plot::new().histogram(&data).into();
+        assert_eq!(plot.series_mgr.auto_color_index(), 1);
+
+        let plot: Plot = plot.boxplot(&data).color(Color::RED).into();
+        assert_eq!(plot.series_mgr.auto_color_index(), 1);
+
+        let plot: Plot = plot.boxplot(&data).into();
+        assert_eq!(plot.series_mgr.auto_color_index(), 2);
+    }
+
+    #[test]
+    fn test_converted_series_chain_into_other_series() {
+        let data = SAMPLES.to_vec();
+        let x = X.to_vec();
+        let y = Y.to_vec();
+        let plot: Plot = Plot::new()
+            .histogram(&data)
+            .boxplot(&data)
+            .line(&x, &y)
+            .into();
+
+        assert_eq!(plot.series_mgr.len(), 3);
+    }
+
+    // ===== Streaming series are ordinary line/scatter series =====
+
+    fn stream_of(points: &[(f64, f64)]) -> StreamingXY {
+        let stream = StreamingXY::new(16);
+        stream.push_many(points.to_vec());
+        stream
+    }
+
+    #[test]
+    fn test_line_streaming_is_a_line_builder_with_a_live_buffer() {
+        let stream = stream_of(&[(0.0, 0.0), (1.0, 1.0)]);
+        // `line_streaming` used to return a different builder type than `line`,
+        // which is why it spelled stroke width `.width()`. It is now the same
+        // `PlotBuilder<LineConfig>`, so it takes the same setters.
+        let plot: Plot = Plot::new()
+            .line_streaming(&stream)
+            .line_width(3.0)
+            .line_style(LineStyle::Dashed)
+            .label("live")
+            .into();
+
+        let series = only_series(&plot);
+        assert!(matches!(series.series_type, SeriesType::Line { .. }));
+        assert!(
+            series.streaming_source.is_some(),
+            "the live buffer must survive finalize"
+        );
+        assert_eq!(series.line_width, Some(3.0));
+        assert_eq!(series.line_style, Some(LineStyle::Dashed));
+        assert_eq!(series.label.as_deref(), Some("live"));
+    }
+
+    #[test]
+    fn test_scatter_streaming_is_a_scatter_builder_with_a_live_buffer() {
+        let stream = stream_of(&[(0.0, 0.0), (1.0, 1.0)]);
+        let plot: Plot = Plot::new()
+            .scatter_streaming(&stream)
+            .marker_size(9.0)
+            .into();
+
+        let series = only_series(&plot);
+        assert!(matches!(series.series_type, SeriesType::Scatter { .. }));
+        assert!(series.streaming_source.is_some());
+        // Scatter's default marker still applies, exactly as for `scatter()`.
+        assert_eq!(series.marker_style, Some(MarkerStyle::Circle));
+        assert_eq!(series.marker_size, Some(9.0));
+    }
+
+    #[test]
+    fn test_streaming_series_use_the_same_palette_rule_as_their_static_twin() {
+        let stream = stream_of(&[(0.0, 0.0), (1.0, 1.0)]);
+        let x = X.to_vec();
+        let y = Y.to_vec();
+
+        let streaming: Plot = Plot::new().line_streaming(&stream).into();
+        let static_: Plot = Plot::new().line(&x, &y).into();
+        assert_eq!(
+            streaming.series_mgr.auto_color_index(),
+            static_.series_mgr.auto_color_index()
+        );
     }
 
     #[test]

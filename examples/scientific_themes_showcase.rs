@@ -91,7 +91,7 @@ fn main() -> PlotResult<()> {
         .xlabel("Value")
         .ylabel("Frequency")
         .theme(Theme::ieee())
-        .histogram(&histogram_data, Some(hist_config))
+        .histogram_with(&histogram_data, hist_config)
         .save("generated/examples/scientific_palette_histogram.png")?;
 
     // 6. Theme comparison

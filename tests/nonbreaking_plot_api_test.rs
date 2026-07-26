@@ -59,9 +59,9 @@ fn builder_when_compiles_across_public_builder_families() {
         .line_width(2.0);
 
     let _series_builder = Plot::new()
-        .histogram(&data, None)
+        .histogram(&data)
         .when(true, |builder| builder.label("histogram"))
-        .width(2.0);
+        .line_width(2.0);
 
     let _grouped_plot = Plot::new().group(|group| {
         group
@@ -180,7 +180,7 @@ fn high_level_boxen_api_renders() {
     let boxen = Plot::new()
         .boxen(&data)
         .k_depth(4)
-        .width(0.7)
+        .box_width(0.7)
         .saturation(0.6)
         .edge_width(1.5)
         .outlier_size(3.0)
@@ -235,8 +235,8 @@ fn high_level_quiver_api_renders() {
 
     let quiver = Plot::new()
         .quiver(&x, &y, &u, &v)
-        .scale(0.25)
-        .width(1.2)
+        .arrow_scale(0.25)
+        .arrow_width(1.2)
         .pivot(QuiverPivot::Middle)
         .color_by_magnitude(true)
         .render();

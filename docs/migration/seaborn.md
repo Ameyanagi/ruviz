@@ -35,7 +35,7 @@ let data: Vec<f64> = (0..1000)
 
 Plot::new()
     .theme(Theme::seaborn())
-    .histogram(&data, None)
+    .histogram(&data)
     .save("distribution.png")?;
 ```
 
@@ -88,7 +88,7 @@ sns.histplot(data, bins=20, kde=True)
 use ruviz::{plots::HistogramConfig, prelude::*};
 
 Plot::new()
-    .histogram(&data, Some(HistogramConfig::new().bins(20)))
+    .histogram_with(&data, HistogramConfig::new().bins(20))
     .save("histogram.png")?;
 
 Plot::new()
@@ -106,7 +106,7 @@ sns.boxplot(data=df, y='value')
 **ruviz**:
 ```rust
 Plot::new()
-    .boxplot(&data, None)
+    .boxplot(&data)
     .ylabel("value")
     .save("boxplot.png")?;
 ```
@@ -125,8 +125,8 @@ let group_a: Vec<f64> = /* filter for category A */;
 let group_b: Vec<f64> = /* filter for category B */;
 
 // Create individual boxplots in subplot
-let plot_a = Plot::new().boxplot(&group_a, None).title("A").end_series();
-let plot_b = Plot::new().boxplot(&group_b, None).title("B").end_series();
+let plot_a = Plot::new().boxplot(&group_a).title("A").end_series();
+let plot_b = Plot::new().boxplot(&group_b).title("B").end_series();
 
 subplots(1, 2, 1200, 600)?
     .subplot(0, 0, plot_a)?
@@ -249,10 +249,10 @@ let data_b1: Vec<f64> = /* category B, group 1 */;
 let data_b2: Vec<f64> = /* category B, group 2 */;
 
 // Create individual plots
-let plot_a1 = Plot::new().histogram(&data_a1, None).title("A-1").end_series();
-let plot_a2 = Plot::new().histogram(&data_a2, None).title("A-2").end_series();
-let plot_b1 = Plot::new().histogram(&data_b1, None).title("B-1").end_series();
-let plot_b2 = Plot::new().histogram(&data_b2, None).title("B-2").end_series();
+let plot_a1 = Plot::new().histogram(&data_a1).title("A-1").end_series();
+let plot_a2 = Plot::new().histogram(&data_a2).title("A-2").end_series();
+let plot_b1 = Plot::new().histogram(&data_b1).title("B-1").end_series();
+let plot_b2 = Plot::new().histogram(&data_b2).title("B-2").end_series();
 
 // Compose into 2x2 grid
 subplots(2, 2, 1200, 900)?
@@ -392,13 +392,13 @@ let group_b: Vec<f64> = df
 // Create plots
 let plot1 = Plot::new()
     .theme(Theme::seaborn())
-    .histogram(&measurements, None)
+    .histogram(&measurements)
     .title("Distribution")
     .end_series();
 
 let plot2 = Plot::new()
     .theme(Theme::seaborn())
-    .boxplot(&group_a, None)
+    .boxplot(&group_a)
     .title("By Group")
     .end_series();
 

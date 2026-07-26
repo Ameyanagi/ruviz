@@ -108,7 +108,7 @@ mod platform_impl {
         core::plot::Image as RuvizImage,
         core::{
             Annotation, AnnotationId, FramePacing, FrameStats, HitResult, ImageTarget,
-            InteractivePlotSession, InteractiveViewportSnapshot, Plot, PlotInputEvent,
+            InteractivePlotSession, InteractiveViewportSnapshot, Plot, PlotInputEvent, PlotResult,
             PlottingError, PreparedPlot, QualityPolicy, ReactiveSubscription, RenderTargetKind,
             Result, SurfaceCapability, SurfaceTarget, ViewportPoint, ViewportRect,
         },
@@ -2218,9 +2218,9 @@ mod platform_impl {
             let events = Arc::new(Mutex::new(Vec::<PlotPointerEvent>::new()));
             let events_for_callback = Arc::clone(&events);
             let plot: Plot = Plot::new()
-                .heatmap(
+                .heatmap_with(
                     &vec![vec![1.0, 2.0], vec![3.0, 4.0]],
-                    Some(HeatmapConfig::new().colorbar(false)),
+                    HeatmapConfig::new().colorbar(false),
                 )
                 .xlim(0.0, 2.0)
                 .ylim(0.0, 2.0)

@@ -49,15 +49,13 @@ fn main() -> PlotResult<()> {
         .title("Synthetic Monte Carlo Absorbed Energy")
         .xlabel("Position in x (cells)")
         .ylabel("Depth (cells)")
-        .heatmap(
+        .heatmap_with(
             &data,
-            Some(
-                HeatmapConfig::new()
-                    .value_scale(AxisScale::Log)
-                    .colorbar(true)
-                    .colorbar_log_subticks(true)
-                    .colorbar_label("Absorbed Energy"),
-            ),
+            HeatmapConfig::new()
+                .value_scale(AxisScale::Log)
+                .colorbar(true)
+                .colorbar_log_subticks(true)
+                .colorbar_label("Absorbed Energy"),
         )
         .ylim(rows as f64, 0.0)
         .save("generated/examples/montecarlo_heatmap.png")?;

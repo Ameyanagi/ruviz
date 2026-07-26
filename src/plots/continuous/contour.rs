@@ -18,12 +18,16 @@ use crate::render::{Color, ColorMap, ColorMapSpec, LineStyle, Theme};
 use crate::stats::contour::{ContourLevel, auto_levels, contour_lines};
 
 /// Interpolation method for smoothing contour data
+///
+/// `ContourInterpolation::default()` is [`ContourInterpolation::Linear`], the
+/// same value [`ContourConfig`]`::default()` uses — every config enum in this
+/// crate defaults to whatever its owning config defaults to.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum ContourInterpolation {
-    /// No interpolation - use raw grid values (default)
-    #[default]
+    /// No interpolation - use raw grid values
     Nearest,
-    /// Bilinear interpolation for smoother transitions
+    /// Bilinear interpolation for smoother transitions (default)
+    #[default]
     Linear,
     /// Bicubic spline interpolation for smoothest appearance
     Cubic,
@@ -882,6 +886,22 @@ fn cubic_interp(p0: f64, p1: f64, p2: f64, p3: f64, t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A config enum and the config that owns it must agree on `default()`,
+    /// otherwise `ContourInterpolation::default()` silently means something
+    /// different from "the interpolation you get if you never call
+    /// `.interpolation(..)`".
+    #[test]
+    fn interpolation_default_matches_config_default() {
+        assert_eq!(
+            ContourInterpolation::default(),
+            ContourConfig::default().interpolation
+        );
+        assert_eq!(
+            ContourInterpolation::default(),
+            ContourInterpolation::Linear
+        );
+    }
 
     fn make_test_grid() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
         let x: Vec<f64> = (0..10).map(|i| i as f64).collect();

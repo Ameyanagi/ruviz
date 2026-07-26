@@ -13,7 +13,7 @@
 ///
 /// Plot::new()
 ///     .line(&x, &y)
-///     .style(LineStyle::Dashed)
+///     .line_style(LineStyle::Dashed)
 ///     .end_series()
 ///     .save("dashed_line.png")?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -74,7 +74,7 @@ impl LineStyle {
     ///
     /// Plot::new()
     ///     .line(&[1.0, 2.0, 3.0], &[1.0, 4.0, 9.0])
-    ///     .style(custom_style)
+    ///     .line_style(custom_style)
     ///     .end_series()
     ///     .save("custom_line.png")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())

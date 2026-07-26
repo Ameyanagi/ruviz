@@ -39,7 +39,7 @@ async fn async_main() -> PlotResult<()> {
         .title("Interactive Heatmap Explorer")
         .xlabel("Column")
         .ylabel("Row")
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .into();
 
     println!("Heatmap created with {} rows x {} columns", rows, cols);

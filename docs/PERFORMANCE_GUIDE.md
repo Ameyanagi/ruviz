@@ -117,7 +117,7 @@ When diagnosing a configured backend, print both `get_backend_name()` and
 ```rust
 // Good - histogram with automatic binning
 Plot::new()
-    .histogram(&data, None)  // 87ms for 1M points ✅
+    .histogram(&data)  // 87ms for 1M points ✅
     .save("distribution.png")?;
 
 // Slower - scatter plot for same purpose

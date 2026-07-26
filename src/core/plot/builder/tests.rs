@@ -118,7 +118,7 @@ fn test_static_source_setters_materialize_generic_builder_values() {
         .line(&[0.0, 1.0], &[1.0, 2.0])
         .color_source(Color::RED)
         .line_width_source(0.01_f32)
-        .style_source(LineStyle::Dashed)
+        .line_style_source(LineStyle::Dashed)
         .marker_source(MarkerStyle::Square)
         .marker_size_source(0.01_f32)
         .alpha_source(1.5_f32);

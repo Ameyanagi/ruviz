@@ -167,7 +167,7 @@ let data: Array1<f64> = Array::from_shape_fn(n, |_| {
 });
 
 Plot::new()
-    .histogram(&data.to_vec(), None)  // Convert to Vec
+    .histogram(&data.to_vec())  // Convert to Vec
     .title("Normal Distribution")
     .xlabel("Value")
     .ylabel("Frequency")
@@ -208,7 +208,7 @@ let heatmap_config = HeatmapConfig::new()
     .colorbar_label("Intensity");
 
 Plot::new()
-    .heatmap(&z, Some(heatmap_config))
+    .heatmap_with(&z, heatmap_config)
     .title("nalgebra DMatrix Heatmap")
     .save("nalgebra_heatmap.png")?;
 ```
@@ -618,7 +618,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let panel_b: Plot = Plot::new()
         .theme(Theme::seaborn())
-        .histogram(&signal_vec, None)
+        .histogram(&signal_vec)
         .title("B) Distribution")
         .xlabel("Amplitude")
         .ylabel("Frequency")
@@ -636,7 +636,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let panel_c: Plot = Plot::new()
         .theme(Theme::seaborn())
-        .boxplot(&group_a, None)
+        .boxplot(&group_a)
         .title("C) Group Analysis")
         .xlabel("Group")
         .ylabel("Value")

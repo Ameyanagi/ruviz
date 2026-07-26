@@ -1056,11 +1056,11 @@ fn test_resolved_svg_accepts_dedicated_series_variants() {
             .color(Color::RED)
             .into_plot(),
         Plot::new()
-            .boxplot(&[1.0, 2.0, 3.0], None)
+            .boxplot(&[1.0, 2.0, 3.0])
             .color(Color::RED)
             .into_plot(),
         Plot::new()
-            .histogram(&[1.0, 1.5, 2.0, 2.5], None)
+            .histogram(&[1.0, 1.5, 2.0, 2.5])
             .color(Color::RED)
             .into_plot(),
     ];
@@ -1112,9 +1112,7 @@ fn test_dedicated_error_bars_honor_asymmetric_overrides_in_svg_and_raster() {
 
 #[test]
 fn test_resolved_histogram_preserves_raw_sample_validation() {
-    let plot = Plot::new()
-        .histogram(&[1.0, f64::NAN, 2.0], None)
-        .into_plot();
+    let plot = Plot::new().histogram(&[1.0, f64::NAN, 2.0]).into_plot();
 
     assert!(matches!(
         plot.render(),
@@ -1125,7 +1123,7 @@ fn test_resolved_histogram_preserves_raw_sample_validation() {
 #[test]
 fn test_snapshot_bounds_cover_heatmap_and_pie_series() {
     let heatmap = Plot::new()
-        .heatmap(&vec![vec![1.0, 2.0], vec![3.0, 4.0]], None)
+        .heatmap(&vec![vec![1.0, 2.0], vec![3.0, 4.0]])
         .end_series();
     let heatmap_bounds = heatmap
         .calculate_data_bounds_for_series(&heatmap.snapshot_series(0.0))
@@ -1157,9 +1155,9 @@ fn test_heatmap_render_preserves_downsampled_vertical_feature() {
 
     let plot = Plot::new()
         .size_px(120, 120)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .end_series();
     let image = plot.render().expect("heatmap render should succeed");
@@ -1211,15 +1209,13 @@ fn test_heatmap_extent_maps_cells_into_physical_axis_limits() {
 
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .vmin(0.0)
-                    .vmax(1.0)
-                    .extent(0.0, 8.0, 0.0, 2.4),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .vmin(0.0)
+                .vmax(1.0)
+                .extent(0.0, 8.0, 0.0, 2.4),
         )
         .xlim(0.0, 8.0)
         .ylim(0.0, 2.4)
@@ -1248,14 +1244,12 @@ fn test_heatmap_render_default_has_no_cell_seams() {
     let values = vec![vec![0.5, 0.5], vec![0.5, 0.5]];
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .vmin(0.0)
-                    .vmax(1.0),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .vmin(0.0)
+                .vmax(1.0),
         )
         .end_series();
     let image = plot.render().expect("uniform heatmap should render");
@@ -1283,15 +1277,13 @@ fn test_heatmap_render_cell_borders_are_opt_in() {
     let values = vec![vec![0.5, 0.5], vec![0.5, 0.5]];
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .vmin(0.0)
-                    .vmax(1.0)
-                    .cell_borders(true),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .vmin(0.0)
+                .vmax(1.0)
+                .cell_borders(true),
         )
         .end_series();
     let image = plot.render().expect("heatmap with borders should render");
@@ -1312,9 +1304,9 @@ fn test_heatmap_render_cell_borders_are_opt_in() {
 fn test_heatmap_render_skips_non_finite_cells() {
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &vec![vec![0.0, f64::NAN, 1.0]],
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .end_series();
     let image = plot
@@ -1387,13 +1379,11 @@ fn test_filled_contour_without_lines_has_no_cell_seams() {
 fn test_heatmap_render_skips_nonpositive_cells_on_log_scale() {
     let plot = Plot::new()
         .size_px(240, 160)
-        .heatmap(
+        .heatmap_with(
             &vec![vec![0.0, 1.0, 10.0]],
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(false)
-                    .value_scale(crate::axes::AxisScale::Log),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(false)
+                .value_scale(crate::axes::AxisScale::Log),
         )
         .end_series();
     let image = plot
@@ -1429,25 +1419,21 @@ fn test_heatmap_log_colorbar_layout_reserves_right_margin() {
     let values = vec![vec![0.0, 1e-5, 1e-4, 1e-3], vec![1e-2, 1e-1, 1.0, 10.0]];
     let without_colorbar = Plot::new()
         .size_px(360, 220)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .value_scale(crate::axes::AxisScale::Log)
-                    .colorbar(false),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .value_scale(crate::axes::AxisScale::Log)
+                .colorbar(false),
         )
         .end_series();
     let with_colorbar = Plot::new()
         .size_px(360, 220)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .value_scale(crate::axes::AxisScale::Log)
-                    .colorbar(true)
-                    .colorbar_label("Absorbed Energy"),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .value_scale(crate::axes::AxisScale::Log)
+                .colorbar(true)
+                .colorbar_label("Absorbed Energy"),
         )
         .end_series();
 
@@ -1477,11 +1463,11 @@ fn test_heatmap_colorbar_layout_scales_with_dpi() {
 
     let low_dpi = Plot::new()
         .dpi(100)
-        .heatmap(&values, Some(config()))
+        .heatmap_with(&values, config())
         .end_series();
     let high_dpi = Plot::new()
         .dpi(200)
-        .heatmap(&values, Some(config()))
+        .heatmap_with(&values, config())
         .end_series();
 
     let low_layout = compute_render_layout(&low_dpi);
@@ -1540,7 +1526,7 @@ fn test_auto_datashader_policy_keeps_large_scatter_series_eligible() {
 #[test]
 fn test_auto_datashader_policy_excludes_large_histogram_series() {
     let samples: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0002).sin()).collect();
-    let plot = Plot::new().histogram(&samples, None).end_series();
+    let plot = Plot::new().histogram(&samples).end_series();
     let snapshot_series = plot.snapshot_series(0.0);
     let total_points = Plot::calculate_total_points_for_series(&snapshot_series);
 
@@ -2089,10 +2075,7 @@ fn test_bar_legend_key_is_flat_when_the_bars_are_flat() {
 #[test]
 fn test_histogram_legend_key_carries_the_bin_edge() {
     let data = vec![0.1, 0.4, 0.6, 0.9, 1.2, 1.5, 1.9, 2.4];
-    let plot = Plot::new()
-        .histogram(&data, None)
-        .label("hist")
-        .end_series();
+    let plot = Plot::new().histogram(&data).label("hist").end_series();
 
     let LegendItemType::Histogram { edge } = only_legend_item_type(&plot) else {
         panic!("a histogram series must produce a histogram legend key");
@@ -2388,13 +2371,11 @@ fn test_outside_right_legend_is_additive_with_colorbar_band() {
     let values = vec![vec![0.0, 0.5], vec![1.0, 1.5]];
     let base = Plot::new()
         .size_px(640, 480)
-        .heatmap(
+        .heatmap_with(
             &values,
-            Some(
-                crate::plots::heatmap::HeatmapConfig::new()
-                    .colorbar(true)
-                    .colorbar_label("Field"),
-            ),
+            crate::plots::heatmap::HeatmapConfig::new()
+                .colorbar(true)
+                .colorbar_label("Field"),
         )
         .line(&[0.0, 1.0], &[0.0, 1.0])
         .label("Overlay")
@@ -3760,7 +3741,7 @@ fn test_plot_series_builder_gpu_method() {
     let x_data: Vec<f64> = (0..100).map(|i| i as f64).collect();
     let y_data: Vec<f64> = x_data.iter().map(|x| x * 2.0).collect();
 
-    // Test that gpu() works on PlotSeriesBuilder
+    // Test that gpu() works on PlotBuilder<C>
     let plot = Plot::new().line(&x_data, &y_data).gpu(true);
 
     assert_eq!(plot.get_backend_name(), "gpu");
@@ -3912,7 +3893,7 @@ fn test_public_png_auto_optimize_refuses_unroutable_large_line_backend() {
 fn test_benchmark_save_png_bytes_keeps_large_histogram_on_skia() {
     let samples: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0002).sin()).collect();
 
-    let plot = Plot::new().histogram(&samples, None).end_series();
+    let plot = Plot::new().histogram(&samples).end_series();
     let (_, backend) = plot.benchmark_save_png_bytes().unwrap();
 
     assert_eq!(backend, "skia");
@@ -4166,9 +4147,9 @@ fn test_reference_save_png_reports_direct_rect_fill_for_large_heatmap() {
     let heatmap_values = large_heatmap_matrix();
     let plot = Plot::new()
         .size_px(640, 480)
-        .heatmap(
+        .heatmap_with(
             &heatmap_values,
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .into_plot();
 
@@ -4250,7 +4231,7 @@ fn test_render_large_line_and_histogram_png_preserve_background() {
     let histogram_input: Vec<f64> = (0..100_000).map(|i| (i as f64 * 0.0001).sin()).collect();
     let histogram_png = Plot::new()
         .size_px(640, 480)
-        .histogram(&histogram_input, None)
+        .histogram(&histogram_input)
         .render_png_bytes()
         .expect("large histogram should render as PNG");
     assert_png_background_preserved("large histogram", &histogram_png);
@@ -4382,14 +4363,14 @@ fn test_large_distribution_and_categorical_png_and_save_paths_stay_visually_sane
     let histogram = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .histogram(&samples, None)
+        .histogram(&samples)
         .into_plot();
     assert_large_plot_png_and_save("large-distribution-histogram", &histogram);
 
     let boxplot = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .boxplot(&samples, None)
+        .boxplot(&samples)
         .into_plot();
     assert_large_plot_png_and_save("large-distribution-boxplot", &boxplot);
 
@@ -4431,9 +4412,9 @@ fn test_large_grid_family_png_and_save_paths_stay_visually_sane() {
     let heatmap = Plot::new()
         .size_px(320, 200)
         .ticks(false)
-        .heatmap(
+        .heatmap_with(
             &heatmap_values,
-            Some(crate::plots::heatmap::HeatmapConfig::new().colorbar(false)),
+            crate::plots::heatmap::HeatmapConfig::new().colorbar(false),
         )
         .into_plot();
     assert_large_plot_png_and_save("large-grid-heatmap", &heatmap);
@@ -4797,7 +4778,7 @@ fn test_streaming_with_styling() {
     let plot = Plot::new()
         .line_streaming(&stream)
         .color(Color::from_rgb(255, 0, 0))
-        .width(3.0)
+        .line_width(3.0)
         .label("Styled Streaming")
         .title("Styled Streaming Plot")
         .xlabel("X Axis")
@@ -5217,7 +5198,7 @@ fn test_render_rejects_non_positive_figure_width_before_sanitizing() {
 fn test_plot_builder_can_chain_histogram_without_end_series() {
     let plot: Plot = Plot::new()
         .line(&[0.0, 10.0], &[0.0, 1.0])
-        .histogram(&[1.0, 2.0, 3.0, 4.0], None)
+        .histogram(&[1.0, 2.0, 3.0, 4.0])
         .into();
 
     assert_eq!(plot.series_mgr.series.len(), 2);
@@ -5233,7 +5214,7 @@ fn test_plot_builder_can_chain_histogram_without_end_series() {
 
 #[test]
 fn test_static_histogram_prepares_histogram_data() {
-    let plot: Plot = Plot::new().histogram(&[1.0, 2.0, 3.0, 4.0], None).into();
+    let plot: Plot = Plot::new().histogram(&[1.0, 2.0, 3.0, 4.0]).into();
 
     match &plot.series_mgr.series[0].series_type {
         SeriesType::Histogram { prepared, .. } => {
@@ -5248,7 +5229,7 @@ fn test_static_histogram_prepares_histogram_data() {
 #[test]
 fn test_histogram_source_keeps_prepared_histogram_lazy() {
     let plot: Plot = Plot::new()
-        .histogram_source(vec![1.0, 2.0, 3.0, 4.0], None)
+        .histogram_source(vec![1.0, 2.0, 3.0, 4.0])
         .into();
 
     match &plot.series_mgr.series[0].series_type {
@@ -5269,11 +5250,11 @@ fn test_histogram_prepared_and_source_backed_paths_match() {
 
     let static_plot: Plot = Plot::new()
         .size_px(320, 240)
-        .histogram(&data, Some(config.clone()))
+        .histogram_with(&data, config.clone())
         .into();
     let source_plot: Plot = Plot::new()
         .size_px(320, 240)
-        .histogram_source(data.clone(), Some(config))
+        .histogram_source_with(data.clone(), config)
         .into();
 
     let static_hist = static_plot.series_mgr.series[0]
@@ -5325,8 +5306,8 @@ fn test_plot_builder_can_add_styled_vline_without_end_series() {
 #[test]
 fn test_plot_series_builder_can_chain_boxplot_without_end_series() {
     let plot: Plot = Plot::new()
-        .histogram(&[1.0, 2.0, 3.0, 4.0], None)
-        .boxplot(&[2.0, 3.0, 5.0, 8.0], None)
+        .histogram(&[1.0, 2.0, 3.0, 4.0])
+        .boxplot(&[2.0, 3.0, 5.0, 8.0])
         .into();
 
     assert_eq!(plot.series_mgr.series.len(), 2);
@@ -5476,7 +5457,7 @@ fn test_quiver_svg_scales_stroke_width_with_dpi() {
     let plot: Plot = Plot::new()
         .dpi(200)
         .quiver(&x, &y, &u, &v)
-        .width(1.2)
+        .arrow_width(1.2)
         .into();
     let expected_stroke_width = match &plot.series_mgr.series[0].series_type {
         SeriesType::Quiver { data } => plot.render_scale().points_to_pixels(data.config.width),
@@ -5510,9 +5491,9 @@ fn test_quiver_png_uses_log_x_scale_for_geometry() {
         .marker_size(0.1)
         .quiver(&x, &y, &u, &v)
         .color(Color::RED)
-        .width(4.0)
-        .headlength(0.0)
-        .headwidth(0.0)
+        .arrow_width(4.0)
+        .arrow_head_length(0.0)
+        .arrow_head_width(0.0)
         .into();
 
     let image = plot.render().unwrap();
@@ -5565,8 +5546,8 @@ fn test_quiver_bounds_include_arrow_head_vertices() {
 
     let plot: Plot = Plot::new()
         .quiver(&x, &y, &u, &v)
-        .headlength(0.2)
-        .headwidth(1.0)
+        .arrow_head_length(0.2)
+        .arrow_head_width(1.0)
         .into();
 
     let (_, _, y_min, y_max) = plot.calculate_data_bounds().unwrap();
@@ -5785,7 +5766,7 @@ fn test_radar_top_level_reactive_color_styles_unconfigured_internal_series_once(
     let plot: Plot = Plot::new()
         .radar(&["A", "B", "C"])
         .add_series("configured", &[1.0, 2.0, 3.0])
-        .with_color(Color::GREEN)
+        .series_color(Color::GREEN)
         .add_series("reactive", &[3.0, 2.0, 1.0])
         .color_source(color)
         .into();
@@ -5864,7 +5845,7 @@ fn test_resolved_shell_shares_specialized_payloads() {
 
 #[test]
 fn test_from_plot_series_builder_for_plot() {
-    // Test From<PlotSeriesBuilder> for Plot
+    // Test From<PlotBuilder<C>> for Plot
     let x_data = vec![1.0, 2.0, 3.0];
     let y_data = vec![2.0, 4.0, 3.0];
 
@@ -5989,7 +5970,7 @@ fn test_generic_function_with_into_plot() {
     // Works with Plot
     assert_eq!(count_series(Plot::new()), 0);
 
-    // Works with PlotSeriesBuilder
+    // Works with PlotBuilder<C>
     let builder = Plot::new().line(&x_data, &y_data);
     assert_eq!(count_series(builder), 1);
 }
@@ -6797,7 +6778,7 @@ fn test_histogram_adjacent_bins_keep_a_visible_boundary() {
         .size_px(400, 300)
         .ticks(false)
         .grid(false)
-        .histogram(&samples, Some(config))
+        .histogram_with(&samples, config)
         .end_series()
         .render_png_bytes()
         .expect("histogram should render as PNG");

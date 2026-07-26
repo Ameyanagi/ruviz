@@ -23,11 +23,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .line(&x_data, &y2)
         .label("cos(x)")
         .color(Color::RED)
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         .line(&x_data, &y3)
         .label("sin(x/2)")
         .color(Color::GREEN)
-        .style(LineStyle::Dotted)
+        .line_style(LineStyle::Dotted)
         .legend(LegendPosition::UpperCenter)
         .legend_columns(3) // Single row with all 3 items
         .legend_corner_radius(4.0)

@@ -169,7 +169,7 @@ common_norm: True           # Normalize across groups
 ```
 
 **ruviz KdeConfig:**
-- `bandwidth: None` (uses Scott's rule)
+- `bandwidth: BandwidthMethod::Scott`
 - `fill: false` (line-only default)
 - Line width from theme (1.5)
 

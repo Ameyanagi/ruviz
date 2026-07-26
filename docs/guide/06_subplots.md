@@ -217,7 +217,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Value Bins")
         .ylabel("Frequency")
         .ylim(0.0, 550.0)
-        .histogram(&distribution, None)
+        .histogram(&distribution)
         .into_plot()
         .theme(Theme::seaborn());
 
@@ -226,7 +226,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .xlabel("Sample")
         .ylabel("Measured Value")
         .ylim(4.5, 11.5)
-        .boxplot(&group_data, None)
+        .boxplot(&group_data)
         .into_plot()
         .theme(Theme::seaborn());
 
@@ -287,17 +287,17 @@ subplots(1, 2, 1200, 600)?
 use ruviz::prelude::*;
 
 let group_a_plot = Plot::new()
-    .histogram(&group_a_data, None)
+    .histogram(&group_a_data)
     .title("Group A")
     .into_plot();
 
 let group_b_plot = Plot::new()
-    .histogram(&group_b_data, None)
+    .histogram(&group_b_data)
     .title("Group B")
     .into_plot();
 
 let group_c_plot = Plot::new()
-    .histogram(&group_c_data, None)
+    .histogram(&group_c_data)
     .title("Group C")
     .into_plot();
 
@@ -343,7 +343,7 @@ let categories_plot = Plot::new()
 
 // Distribution (histogram)
 let distribution_plot = Plot::new()
-    .histogram(&data, None)
+    .histogram(&data)
     .title("Distribution")
     .xlabel("Value")
     .ylabel("Frequency")
@@ -535,13 +535,13 @@ let panel_a = Plot::new()
     .theme(Theme::publication());
 
 let panel_b = Plot::new()
-    .histogram(&data_b, None)
+    .histogram(&data_b)
     .title("b")
     .into_plot()
     .theme(Theme::publication());
 
 let panel_c = Plot::new()
-    .boxplot(&data_c, None)
+    .boxplot(&data_c)
     .title("c")
     .into_plot()
     .theme(Theme::publication());
@@ -578,7 +578,7 @@ figure = figure.subplot(0, 1, plot2)?;
 let plot3 = Plot::new().bar(&cats, &vals).title("Panel 3").into_plot();
 figure = figure.subplot(1, 0, plot3)?;
 
-let plot4 = Plot::new().histogram(&data, None).title("Panel 4").into_plot();
+let plot4 = Plot::new().histogram(&data).title("Panel 4").into_plot();
 figure = figure.subplot(1, 1, plot4)?;
 
 // Save when complete
@@ -620,9 +620,9 @@ let overview = Plot::new()
     .title("System Overview")
     .into_plot();
 
-let detail1 = Plot::new().histogram(&metric1, None).title("Metric 1").into_plot();
-let detail2 = Plot::new().histogram(&metric2, None).title("Metric 2").into_plot();
-let detail3 = Plot::new().histogram(&metric3, None).title("Metric 3").into_plot();
+let detail1 = Plot::new().histogram(&metric1).title("Metric 1").into_plot();
+let detail2 = Plot::new().histogram(&metric2).title("Metric 2").into_plot();
+let detail3 = Plot::new().histogram(&metric3).title("Metric 3").into_plot();
 
 // For now, use separate rows (future: subplot span support)
 subplots(2, 3, 1800, 900)?

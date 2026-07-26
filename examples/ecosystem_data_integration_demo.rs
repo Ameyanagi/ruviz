@@ -27,7 +27,7 @@ fn main() -> PlotResult<()> {
         let z = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
         let heatmap_path = util::example_output_path("ecosystem_ndarray_heatmap.png");
         Plot::new()
-            .heatmap(&z.view(), None)
+            .heatmap(&z.view())
             .title("ndarray heatmap")
             .save(heatmap_path.to_string_lossy().as_ref())?;
         outputs.push(heatmap_path);
@@ -47,7 +47,7 @@ fn main() -> PlotResult<()> {
         let z = DMatrix::from_row_slice(2, 2, &[1.0, 2.0, 3.0, 4.0]);
         let heatmap_path = util::example_output_path("ecosystem_nalgebra_heatmap.png");
         Plot::new()
-            .heatmap(&z, None)
+            .heatmap(&z)
             .title("nalgebra heatmap")
             .save(heatmap_path.to_string_lossy().as_ref())?;
         outputs.push(heatmap_path);

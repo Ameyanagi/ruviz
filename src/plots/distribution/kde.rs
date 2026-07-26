@@ -25,6 +25,7 @@
 
 use crate::core::error::Result;
 use crate::core::style_utils::StyleResolver;
+use crate::plots::distribution::violin::BandwidthMethod;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::{Color, ColorMapSpec, LineStyle, SkiaRenderer, Theme};
 use crate::stats::kde::{kde_1d, kde_2d};
@@ -51,8 +52,12 @@ use crate::stats::kde::{kde_1d, kde_2d};
 #[allow(deprecated)] // the derives touch the deprecated `shade` field
 #[derive(Debug, Clone)]
 pub struct KdeConfig {
-    /// Bandwidth method (None = Scott's rule)
-    pub bandwidth: Option<f64>,
+    /// Bandwidth selection method (defaults to Scott's rule)
+    ///
+    /// Spelled exactly as it is on [`ViolinConfig`](crate::plots::ViolinConfig),
+    /// the other kernel-density plot type: a [`BandwidthMethod`], or a bare
+    /// number for a fixed bandwidth.
+    pub bandwidth: BandwidthMethod,
     /// Number of points for density curve
     pub n_points: usize,
     /// Fill under the curve
@@ -87,7 +92,7 @@ impl Default for KdeConfig {
     #[allow(deprecated)] // `shade` still has to be populated while it exists
     fn default() -> Self {
         Self {
-            bandwidth: None,
+            bandwidth: BandwidthMethod::Scott,
             n_points: 200,
             fill: true,
             fill_alpha: 0.3,
@@ -110,9 +115,12 @@ impl KdeConfig {
         Self::default()
     }
 
-    /// Set bandwidth
-    pub fn bandwidth(mut self, bw: f64) -> Self {
-        self.bandwidth = Some(bw);
+    /// Set the bandwidth selection method.
+    ///
+    /// Takes a [`BandwidthMethod`] or, via [`From<f64>`], a fixed bandwidth:
+    /// `.bandwidth(0.5)` is `.bandwidth(BandwidthMethod::Fixed(0.5))`.
+    pub fn bandwidth(mut self, bw: impl Into<BandwidthMethod>) -> Self {
+        self.bandwidth = bw.into();
         self
     }
 
@@ -302,7 +310,13 @@ pub fn compute_kde(data: &[f64], config: &KdeConfig) -> KdeData {
         };
     }
 
-    let kde = kde_1d(data, config.bandwidth, Some(config.n_points));
+    // Resolving here rather than letting `kde_1d` apply its own `None` fallback
+    // keeps one bandwidth rule for both kernel-density plot types.
+    let kde = kde_1d(
+        data,
+        Some(config.bandwidth.resolve(data)),
+        Some(config.n_points),
+    );
 
     let (x, y) = if config.cumulative {
         // Convert to cumulative distribution
@@ -752,13 +766,49 @@ mod tests {
             .clip(0.0, 10.0)
             .vertical_line(5.0);
 
-        assert_eq!(config.bandwidth, Some(0.5));
+        assert_eq!(config.bandwidth, BandwidthMethod::Fixed(0.5));
         assert_eq!(config.n_points, 100);
         assert!(config.fill);
         assert_eq!(config.fill_alpha, 0.5);
         assert!(!config.cumulative);
         assert_eq!(config.clip, Some((0.0, 10.0)));
         assert_eq!(config.vertical_lines.len(), 1);
+    }
+
+    #[test]
+    fn kde_and_violin_spell_bandwidth_the_same_way() {
+        use crate::plots::distribution::ViolinConfig;
+
+        // Both kernel-density plot types take a rule...
+        assert_eq!(
+            KdeConfig::new()
+                .bandwidth(BandwidthMethod::Silverman)
+                .bandwidth,
+            ViolinConfig::new()
+                .bandwidth(BandwidthMethod::Silverman)
+                .bandwidth,
+        );
+        // ...and both take a bare number for a fixed bandwidth.
+        assert_eq!(
+            KdeConfig::new().bandwidth(0.5).bandwidth,
+            ViolinConfig::new().bandwidth(0.5).bandwidth,
+        );
+        assert_eq!(
+            KdeConfig::new().bandwidth(0.5).bandwidth,
+            BandwidthMethod::Fixed(0.5)
+        );
+    }
+
+    #[test]
+    fn default_kde_bandwidth_still_resolves_to_scotts_rule() {
+        // `KdeConfig.bandwidth` used to be `Option<f64>` with `None` meaning
+        // "let kde_1d apply Scott's rule". The enum default must produce the
+        // identical number, or every unconfigured KDE plot changes shape.
+        let data: Vec<f64> = (0..64).map(|i| (i as f64 * 0.37).sin()).collect();
+        assert_eq!(
+            KdeConfig::default().bandwidth.resolve(&data),
+            crate::stats::kde::scotts_rule(&data),
+        );
     }
 
     // ------------------------------------------------------------------

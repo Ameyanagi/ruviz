@@ -156,7 +156,7 @@ let data: Vec<f64> = (0..1000)
     .collect();
 
 Plot::new()
-    .histogram(&data, None)  // Auto bin count
+    .histogram(&data)  // Auto bin count
     .title("Histogram")
     .xlabel("Value")
     .ylabel("Frequency")

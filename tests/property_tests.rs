@@ -1,3 +1,5 @@
+#![allow(deprecated)] // exercises the deprecated `ruviz::simple` module on purpose
+
 // Property-based testing - TDD approach
 // These tests verify robustness properties with randomized inputs
 // Run with: cargo test --test property_tests -- --ignored

@@ -46,7 +46,7 @@ Plot::new()
 | `plt.plot(x, y)` | `Plot::new().line(&x, &y)` | Builder pattern |
 | `plt.scatter(x, y)` | `Plot::new().scatter(&x, &y)` | |
 | `plt.bar(x, y)` | `Plot::new().bar(&categories, &values)` | |
-| `plt.hist(data)` | `Plot::new().histogram(&data, None)` | |
+| `plt.hist(data)` | `Plot::new().histogram(&data)` | |
 | `plt.title('text')` | `.title("text")` | Method chaining |
 | `plt.xlabel('text')` | `.xlabel("text")` | |
 | `plt.ylabel('text')` | `.ylabel("text")` | |
@@ -116,7 +116,7 @@ plt.savefig('subplots.png')
 let plot1 = Plot::new().line(&x, &y1).title("Plot 1").into_plot();
 let plot2 = Plot::new().scatter(&x, &y2).title("Plot 2").into_plot();
 let plot3 = Plot::new().bar(&cats, &vals).title("Plot 3").into_plot();
-let plot4 = Plot::new().histogram(&data, None).title("Plot 4").into_plot();
+let plot4 = Plot::new().histogram(&data).title("Plot 4").into_plot();
 
 subplots(2, 2, 1200, 900)?
     .subplot(0, 0, plot1)?

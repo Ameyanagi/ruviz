@@ -107,7 +107,7 @@ fn test_kde_visual() {
             .title("KDE Plot (placeholder)")
             .xlabel("Value")
             .ylabel("Density")
-            .histogram(&data, Some(hist_config))
+            .histogram_with(&data, hist_config)
             .grid(true)
             .save(path)?;
         Ok(())
@@ -247,7 +247,7 @@ fn test_histogram_visual() {
             .title("Histogram")
             .xlabel("Value")
             .ylabel("Frequency")
-            .histogram(&data, Some(hist_config))
+            .histogram_with(&data, hist_config)
             .grid(true)
             .save(path)?;
         Ok(())
@@ -272,7 +272,7 @@ fn test_boxplot_visual() {
         Plot::new()
             .title("Box Plot")
             .ylabel("Value")
-            .boxplot(&data, None)
+            .boxplot(&data)
             .grid(true)
             .save(path)?;
         Ok(())
@@ -372,7 +372,7 @@ fn test_boxplot_visual() {
 //
 //         Plot::new()
 //             .title("Heatmap")
-//             .heatmap(&matrix, None)
+//             .heatmap(&matrix)
 //
 //             .save(path)?;
 //         Ok(())

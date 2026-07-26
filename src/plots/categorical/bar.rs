@@ -56,8 +56,9 @@ pub struct GroupedBarConfig {
 }
 
 /// Orientation for bar charts
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BarOrientation {
+    #[default]
     Vertical,
     Horizontal,
 }

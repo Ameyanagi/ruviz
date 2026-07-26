@@ -33,9 +33,10 @@ pub struct AreaConfig {
 }
 
 /// Interpolation method for area fill
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AreaInterpolation {
     /// Linear interpolation between points
+    #[default]
     Linear,
     /// Step function (constant until next point)
     Step,
@@ -231,9 +232,10 @@ pub struct StackPlotConfig {
 }
 
 /// Baseline mode for stack plot
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StackBaseline {
     /// Zero baseline (standard stacked area)
+    #[default]
     Zero,
     /// Symmetric around zero (streamgraph style)
     Symmetric,

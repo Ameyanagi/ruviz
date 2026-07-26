@@ -139,4 +139,5 @@ fn create_circle_plot(x: f64, y: f64, r: f64, time: f64, label: &str) -> Plot {
         .xlim(-2.0, 12.0)
         .ylim(-2.0, 10.0)
         .legend_position(LegendPosition::UpperRight)
+        .into_plot()
 }

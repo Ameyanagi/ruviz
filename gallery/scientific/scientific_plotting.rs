@@ -52,7 +52,7 @@ fn generate_error_bars_example() -> std::result::Result<(), Box<dyn std::error::
         // Theoretical curve (smooth line)
         .line(&x_data, &theoretical)
         .label("Theoretical Model")
-        .style(LineStyle::Solid)
+        .line_style(LineStyle::Solid)
         // Experimental data with error bars
         .error_bars(&x_data, &experimental, &y_errors)
         .label("Experimental Data")
@@ -117,13 +117,13 @@ fn generate_statistical_plots() -> std::result::Result<(), Box<dyn std::error::E
         .legend(LegendPosition::UpperRight)
         .line(&x_range, &normal_1)
         .label("μ=0, σ=1.0")
-        .style(LineStyle::Solid)
+        .line_style(LineStyle::Solid)
         .line(&x_range, &normal_2)
         .label("μ=1, σ=0.5")
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         .line(&x_range, &normal_3)
         .label("μ=-0.5, σ=1.5")
-        .style(LineStyle::Dotted)
+        .line_style(LineStyle::Dotted)
         .save_with_size("generated/bench/scientific_distributions.png", 1200, 900)?;
 
     Ok(())
@@ -169,15 +169,15 @@ fn generate_publication_figure() -> std::result::Result<(), Box<dyn std::error::
         // Primary continuous signal
         .line(&time, &primary_signal)
         .label("Primary Signal (f₁)")
-        .style(LineStyle::Solid)
+        .line_style(LineStyle::Solid)
         // Secondary continuous signal
         .line(&time, &secondary_signal)
         .label("Secondary Signal (f₂)")
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         // Background noise level
         .line(&time, &noise_floor)
         .label("Noise Floor")
-        .style(LineStyle::Dotted)
+        .line_style(LineStyle::Dotted)
         // Discrete measurements with error bars
         .error_bars(&measurement_times, &measurements, &measurement_errors)
         .label("Measured Data Points")

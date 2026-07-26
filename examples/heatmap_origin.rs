@@ -21,12 +21,12 @@ fn main() -> PlotResult<()> {
         .title("Upper: row 0 at y = 16")
         .xlabel("column")
         .ylabel("physical Y")
-        .heatmap(&values, Some(config.clone().origin(HeatmapOrigin::Upper)));
+        .heatmap_with(&values, config.clone().origin(HeatmapOrigin::Upper));
     let lower = Plot::new()
         .title("Lower: row 0 at y = 10")
         .xlabel("column")
         .ylabel("physical Y")
-        .heatmap(&values, Some(config.origin(HeatmapOrigin::Lower)));
+        .heatmap_with(&values, config.origin(HeatmapOrigin::Lower));
 
     subplots(1, 2, 1000, 440)?
         .suptitle("Heatmap row-origin policy")

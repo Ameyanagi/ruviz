@@ -35,8 +35,9 @@ pub struct StripConfig {
 }
 
 /// Orientation for strip plots
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StripOrientation {
+    #[default]
     Vertical,
     Horizontal,
 }

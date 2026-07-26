@@ -17,7 +17,7 @@ fn main() -> ruviz::core::Result<()> {
         .ylabel("Frequency")
         .size_px(800, 600)
         .theme(Theme::publication())
-        .histogram(&data, Some(HistogramConfig::new()))
+        .histogram_with(&data, HistogramConfig::new())
         .save("generated/examples/histogram_example.png")?;
 
     println!("Professional histogram saved as generated/examples/histogram_example.png");

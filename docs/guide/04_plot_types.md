@@ -102,13 +102,26 @@ Plot::new()
 
 ```rust
 use ruviz::prelude::*;
+
+let data: Vec<f64> = (0..1000).map(|i| /* sample data */).collect();
+
+Plot::new()
+    .histogram(&data)
+    .bins(30)
+    .title("Distribution")
+    .save("histogram.png")?;
+```
+
+Already holding a `HistogramConfig`? `histogram_with` takes one by value:
+
+```rust
+use ruviz::prelude::*;
 use ruviz::plots::histogram::HistogramConfig;
 
 let data: Vec<f64> = (0..1000).map(|i| /* sample data */).collect();
 
 Plot::new()
-    .histogram(&data, Some(HistogramConfig { bins: Some(30), ..Default::default() }))
-    .title("Distribution")
+    .histogram_with(&data, HistogramConfig::new().bins(30))
     .save("histogram.png")?;
 ```
 
@@ -118,12 +131,12 @@ Plot::new()
 
 ```rust
 use ruviz::prelude::*;
-use ruviz::plots::boxplot::BoxPlotConfig;
 
 let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 35.0];
 
 Plot::new()
-    .boxplot(&data, Some(BoxPlotConfig::new()))
+    .boxplot(&data)
+    .show_mean(true)
     .title("Box Plot")
     .save("boxplot.png")?;
 ```
@@ -604,11 +617,11 @@ use ruviz::prelude::*;
 
 Plot::new()
     .quiver(&x, &y, &u, &v)
-    .scale(1.0)
-    .width(1.5)
+    .arrow_scale(1.0)
+    .arrow_width(1.5)
     .pivot(QuiverPivot::Tail)
-    .headwidth(0.25)
-    .headlength(0.35)
+    .arrow_head_width(0.25)
+    .arrow_head_length(0.35)
     .color_by_magnitude(true)
     .save("quiver.png")?;
 ```

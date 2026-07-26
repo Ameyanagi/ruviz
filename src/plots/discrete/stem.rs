@@ -37,8 +37,9 @@ pub struct StemConfig {
 }
 
 /// Marker style for stem heads
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StemMarker {
+    #[default]
     Circle,
     Square,
     Diamond,
@@ -47,8 +48,9 @@ pub enum StemMarker {
 }
 
 /// Orientation for stem plots
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StemOrientation {
+    #[default]
     Vertical,
     Horizontal,
 }

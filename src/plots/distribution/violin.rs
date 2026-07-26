@@ -68,14 +68,26 @@ pub struct ViolinConfig {
 }
 
 /// Bandwidth selection method
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BandwidthMethod {
     /// Scott's rule: `1.06 * sigma * n^(-1/5)` (default)
+    #[default]
     Scott,
     /// Silverman's robust rule: `0.9 * min(sigma, IQR/1.34) * n^(-1/5)`
     Silverman,
     /// Fixed bandwidth value
     Fixed(f64),
+}
+
+/// A bare number is a fixed bandwidth.
+///
+/// This is what lets `bandwidth` mean the same thing on every builder that has
+/// one: `.bandwidth(0.5)` and `.bandwidth(BandwidthMethod::Silverman)` are both
+/// accepted by KDE and violin plots alike.
+impl From<f64> for BandwidthMethod {
+    fn from(value: f64) -> Self {
+        BandwidthMethod::Fixed(value)
+    }
 }
 
 impl BandwidthMethod {
@@ -95,19 +107,21 @@ impl BandwidthMethod {
 /// Scaling method for violin width
 ///
 /// Only [`ViolinScale::Width`] is implemented; see [`ViolinConfig::scale`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViolinScale {
     /// Same area for all violins
     Area,
     /// Same maximum width for all violins
+    #[default]
     Width,
     /// Width proportional to sample count
     Count,
 }
 
 /// Orientation for violin
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Orientation {
+    #[default]
     Vertical,
     Horizontal,
 }
@@ -149,9 +163,12 @@ impl ViolinConfig {
         self
     }
 
-    /// Set bandwidth method
-    pub fn bandwidth(mut self, method: BandwidthMethod) -> Self {
-        self.bandwidth = method;
+    /// Set the bandwidth selection method.
+    ///
+    /// Takes a [`BandwidthMethod`] or, via [`From<f64>`], a fixed bandwidth:
+    /// `.bandwidth(0.5)` is `.bandwidth(BandwidthMethod::Fixed(0.5))`.
+    pub fn bandwidth(mut self, method: impl Into<BandwidthMethod>) -> Self {
+        self.bandwidth = method.into();
         self
     }
 

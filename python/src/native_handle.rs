@@ -199,20 +199,18 @@ fn apply_series(plot: Plot, series: NativeSeriesState) -> Result<Plot, String> {
                 .into_plot())
         }
         NativeSeriesState::Histogram { data } => match data {
-            NumericSourceState::Static(values) => Ok(plot.histogram(&values, None).into_plot()),
-            NumericSourceState::Observable(values) => {
-                Ok(plot.histogram_source(values, None).into_plot())
-            }
+            NumericSourceState::Static(values) => Ok(plot.histogram(&values).into_plot()),
+            NumericSourceState::Observable(values) => Ok(plot.histogram_source(values).into_plot()),
         },
         NativeSeriesState::Boxplot { data } => {
-            Ok(plot.boxplot_source(data.into_plot_data(), None).into_plot())
+            Ok(plot.boxplot_source(data.into_plot_data()).into_plot())
         }
         NativeSeriesState::Heatmap { values, rows, cols } => {
             if rows == 0 || cols == 0 || values.len() != rows.saturating_mul(cols) {
                 return Err("heatmap values length must match rows * cols".to_string());
             }
             let matrix: Vec<Vec<f64>> = values.chunks(cols).map(|chunk| chunk.to_vec()).collect();
-            Ok(plot.heatmap(&matrix, None).into_plot())
+            Ok(plot.heatmap(&matrix).into_plot())
         }
         NativeSeriesState::ErrorBars { x, y, y_errors } => {
             ensure_same_len(

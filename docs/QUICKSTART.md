@@ -251,7 +251,7 @@ let data: Vec<f64> = (0..1000)
     .collect();
 
 Plot::new()
-    .histogram(&data, None)
+    .histogram(&data)
     .title("Data Distribution")
     .xlabel("Value")
     .ylabel("Frequency")

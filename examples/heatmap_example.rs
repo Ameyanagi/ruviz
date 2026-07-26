@@ -37,7 +37,7 @@ fn basic_heatmap() -> PlotResult<()> {
     ];
 
     Plot::new()
-        .heatmap(&data, Some(HeatmapConfig::default()))
+        .heatmap_with(&data, HeatmapConfig::default())
         .title("Basic Heatmap")
         .save("generated/examples/heatmap_basic.png")?;
 
@@ -65,7 +65,7 @@ fn correlation_matrix() -> PlotResult<()> {
         .colorbar_label("Correlation");
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("Correlation Matrix")
         .save("generated/examples/heatmap_correlation.png")?;
 
@@ -94,7 +94,7 @@ fn scientific_heatmap() -> PlotResult<()> {
         .colorbar_label("sin(sin(x)*cos(y))");
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("2D Sine Wave Surface")
         .xlabel("X")
         .ylabel("Y")
@@ -140,7 +140,7 @@ fn masked_log_heatmap() -> PlotResult<()> {
         .colorbar_label("Absorbed Energy");
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("Masked Log Heatmap")
         .xlabel("Position in x (cells)")
         .ylabel("Depth (cells)")
@@ -173,7 +173,7 @@ fn large_heatmap() -> PlotResult<()> {
         .vmax(1.0);
 
     Plot::new()
-        .heatmap(&data, Some(config))
+        .heatmap_with(&data, config)
         .title("2D Gaussian Distribution")
         .xlabel("X")
         .ylabel("Y")

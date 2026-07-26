@@ -5,7 +5,7 @@
 
 use ruviz::core::*;
 use ruviz::data::*;
-use ruviz::prelude::{Plot, Position};
+use ruviz::prelude::Plot;
 use ruviz::render::gpu::{GpuRenderer, initialize_gpu_backend};
 use ruviz::render::pooled::PooledRenderer;
 use std::time::Instant;

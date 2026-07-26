@@ -31,6 +31,7 @@
 
 use crate::axes::AxisScale;
 use crate::core::Result as PlotResult;
+use crate::core::plot::PlotBuilder;
 use crate::core::style_utils::StyleResolver;
 use crate::plots::traits::{PlotArea, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
@@ -373,6 +374,194 @@ impl HeatmapConfig {
 
 // Implement PlotConfig marker trait
 impl PlotConfig for HeatmapConfig {}
+
+/// Heatmap configuration reachable straight from [`Plot::heatmap`].
+///
+/// [`Plot::heatmap`] returns `PlotBuilder<HeatmapConfig>`, exactly like the
+/// other series methods return their own `PlotBuilder<C>`, so these mirror
+/// [`HeatmapConfig`]'s own setters and can be interleaved freely with the
+/// shared styling and plot-level methods on the builder.
+///
+/// Two config knobs are renamed here because the generic builder already spells
+/// those names for the whole plot: `HeatmapConfig::alpha` is
+/// [`Self::heatmap_alpha`] (the builder's `alpha()` sets the series alpha, and
+/// the two multiply), and `HeatmapConfig::annotate` is [`Self::annotate_cells`]
+/// (the builder's `annotate()` adds a plot annotation).
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let data: Vec<Vec<f64>> = (0..8)
+///     .map(|i| (0..8).map(|j| (i * j) as f64).collect())
+///     .collect();
+///
+/// Plot::new()
+///     .heatmap(&data)
+///     .cmap("viridis")
+///     .colorbar(true)
+///     .colorbar_label("Intensity")
+///     .save("heatmap.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// [`Plot::heatmap`]: crate::core::Plot::heatmap
+impl PlotBuilder<HeatmapConfig> {
+    /// Set the colormap by name (`"viridis"`) or [`ColorMap`] value.
+    pub fn cmap(mut self, cmap: impl Into<ColorMapSpec>) -> Self {
+        self.config = std::mem::take(&mut self.config).cmap(cmap);
+        self
+    }
+
+    /// Set the colormap from a [`ColorMap`] value.
+    #[deprecated(
+        since = "0.6.0",
+        note = "renamed: use `cmap(colormap)`, which also accepts a name such as `cmap(\"viridis\")`"
+    )]
+    pub fn colormap(self, colormap: ColorMap) -> Self {
+        self.cmap(colormap)
+    }
+
+    /// Set the lower bound of the value-to-colour mapping.
+    pub fn vmin(mut self, vmin: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).vmin(vmin);
+        self
+    }
+
+    /// Set the upper bound of the value-to-colour mapping.
+    pub fn vmax(mut self, vmax: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).vmax(vmax);
+        self
+    }
+
+    /// Set the scale used for the colour mapping and colorbar ticks.
+    pub fn value_scale(mut self, scale: AxisScale) -> Self {
+        self.config = std::mem::take(&mut self.config).value_scale(scale);
+        self
+    }
+
+    /// Show or hide the colorbar.
+    pub fn colorbar(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).colorbar(show);
+        self
+    }
+
+    /// Set the colorbar label.
+    pub fn colorbar_label<S: Into<String>>(mut self, label: S) -> Self {
+        self.config = std::mem::take(&mut self.config).colorbar_label(label);
+        self
+    }
+
+    /// Set the colorbar tick label font size in points.
+    pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).colorbar_tick_font_size(size);
+        self
+    }
+
+    /// Set the colorbar label font size in points.
+    pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).colorbar_label_font_size(size);
+        self
+    }
+
+    /// Draw minor subticks on logarithmic colorbars.
+    pub fn colorbar_log_subticks(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).colorbar_log_subticks(show);
+        self
+    }
+
+    /// Set the cell interpolation method.
+    pub fn interpolation(mut self, method: Interpolation) -> Self {
+        self.config = std::mem::take(&mut self.config).interpolation(method);
+        self
+    }
+
+    /// Write each cell's value inside the cell.
+    ///
+    /// Named apart from the builder's `annotate()`, which adds a plot-level
+    /// annotation.
+    pub fn annotate_cells(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).annotate(show);
+        self
+    }
+
+    /// Set the format string used for cell annotations.
+    pub fn annotation_format<S: Into<String>>(mut self, format: S) -> Self {
+        self.config = std::mem::take(&mut self.config).annotation_format(format);
+        self
+    }
+
+    /// Set the heatmap's own opacity (0.0-1.0).
+    ///
+    /// Named apart from the builder's `alpha()`, which sets the series alpha;
+    /// the two multiply.
+    pub fn heatmap_alpha(mut self, alpha: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).alpha(alpha);
+        self
+    }
+
+    /// Draw visible borders around heatmap cells.
+    pub fn cell_borders(mut self, enabled: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).cell_borders(enabled);
+        self
+    }
+
+    /// Derive a SymLog `linthresh` from the smallest positive finite value.
+    pub fn symlog_auto_linthresh(mut self, enabled: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).symlog_auto_linthresh(enabled);
+        self
+    }
+
+    /// Set the physical extent covered by the grid as `(xmin, xmax, ymin, ymax)`.
+    pub fn extent(mut self, xmin: f64, xmax: f64, ymin: f64, ymax: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).extent(xmin, xmax, ymin, ymax);
+        self
+    }
+
+    /// Set the physical Y edge adjacent to row 0.
+    pub fn origin(mut self, origin: HeatmapOrigin) -> Self {
+        self.config = std::mem::take(&mut self.config).origin(origin);
+        self
+    }
+
+    /// Set the cell aspect ratio (height / width).
+    ///
+    /// Currently inert; see [`HeatmapConfig::aspect`].
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. Size the figure so the plot area has the ratio you want (Plot::size_px)"
+    )]
+    #[allow(deprecated)]
+    pub fn aspect(mut self, ratio: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).aspect(ratio);
+        self
+    }
+
+    /// Set custom X axis tick labels, one per column.
+    ///
+    /// Currently inert; see [`HeatmapConfig::xticklabels`].
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. There is no replacement yet: x tick labels come from the axis, via HeatmapConfig::extent"
+    )]
+    #[allow(deprecated)]
+    pub fn xticklabels(mut self, labels: Vec<String>) -> Self {
+        self.config = std::mem::take(&mut self.config).xticklabels(labels);
+        self
+    }
+
+    /// Set custom Y axis tick labels, one per row.
+    ///
+    /// Currently inert; see [`HeatmapConfig::yticklabels`].
+    #[deprecated(
+        since = "0.6.0",
+        note = "not yet implemented; tracked for a future release. There is no replacement yet: y tick labels come from the axis, via HeatmapConfig::extent"
+    )]
+    #[allow(deprecated)]
+    pub fn yticklabels(mut self, labels: Vec<String>) -> Self {
+        self.config = std::mem::take(&mut self.config).yticklabels(labels);
+        self
+    }
+}
 
 /// Processed heatmap data ready for rendering
 #[derive(Debug, Clone)]

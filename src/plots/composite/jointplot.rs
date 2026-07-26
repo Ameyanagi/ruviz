@@ -28,9 +28,10 @@ pub struct JointPlotConfig {
 }
 
 /// Type of central plot in joint plot
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JointKind {
     /// Scatter plot
+    #[default]
     Scatter,
     /// Regression plot
     Reg,

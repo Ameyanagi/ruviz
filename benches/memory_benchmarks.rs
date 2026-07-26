@@ -162,7 +162,7 @@ fn bench_memory_large_dataset(c: &mut Criterion) {
             let data: Vec<f64> = (0..1_000_000).map(|i| (i as f64).sin() * 100.0).collect();
 
             Plot::new()
-                .histogram(black_box(&data), None)
+                .histogram(black_box(&data))
                 .auto_optimize()
                 .save("generated/bench/bench_mem_large.png")
                 .expect("Failed to save plot");

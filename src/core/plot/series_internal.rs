@@ -79,7 +79,7 @@ impl Plot {
             series_type: SeriesType::Kde {
                 data: Arc::new(kde_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -120,7 +120,7 @@ impl Plot {
             series_type: SeriesType::Ecdf {
                 data: Arc::new(ecdf_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -161,7 +161,7 @@ impl Plot {
             series_type: SeriesType::Contour {
                 data: Arc::new(contour_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -202,7 +202,7 @@ impl Plot {
             series_type: SeriesType::Pie {
                 data: Arc::new(pie_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -243,7 +243,7 @@ impl Plot {
             series_type: SeriesType::Radar {
                 data: Arc::new(radar_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -284,7 +284,7 @@ impl Plot {
             series_type: SeriesType::Violin {
                 data: Arc::new(violin_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -332,7 +332,7 @@ impl Plot {
             series_type: SeriesType::Boxen {
                 data: Arc::new(boxen_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -373,7 +373,7 @@ impl Plot {
             series_type: SeriesType::Polar {
                 data: Arc::new(polar_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -421,7 +421,7 @@ impl Plot {
             series_type: SeriesType::Quiver {
                 data: Arc::new(quiver_data),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -477,7 +477,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Line { x_data, y_data },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -544,7 +544,7 @@ impl Plot {
     ) -> Self {
         let series = PlotSeries {
             series_type: SeriesType::Scatter { x_data, y_data },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color,
             color_source: style.color_source,
@@ -615,7 +615,7 @@ impl Plot {
                 values,
                 config: config.clone(),
             },
-            streaming_source: None,
+            streaming_source: style.streaming_source,
             label: style.label,
             color: style.color.or(config.color),
             color_source: style.color_source,

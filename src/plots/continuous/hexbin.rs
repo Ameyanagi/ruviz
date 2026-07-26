@@ -40,9 +40,10 @@ pub struct HexbinConfig {
 }
 
 /// Aggregation function for hexbin values
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReduceFunction {
     /// Count points in each bin
+    #[default]
     Count,
     /// Mean of values
     Mean,

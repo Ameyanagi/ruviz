@@ -18,7 +18,7 @@ fn main() -> ruviz::core::Result<()> {
         .xlabel("Distribution")
         .ylabel("Values")
         .size_px(800, 600)
-        .boxplot(&data, Some(BoxPlotConfig::new()))
+        .boxplot_with(&data, BoxPlotConfig::new())
         .save(&output)?;
 
     println!("Box plot saved as {}", output.display());

@@ -14,7 +14,7 @@ fn test_solid_line_style() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .style(LineStyle::Solid)
+        .line_style(LineStyle::Solid)
         .save("generated/tests/render/line_solid.png");
 
     assert!(result.is_ok(), "Solid line style should work");
@@ -31,7 +31,7 @@ fn test_dashed_line_style() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         .color(Color::from_rgb(255, 0, 0)) // Red dashed line
         .save("generated/tests/render/line_dashed.png");
 
@@ -49,7 +49,7 @@ fn test_dotted_line_style() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .style(LineStyle::Dotted)
+        .line_style(LineStyle::Dotted)
         .color(Color::from_rgb(0, 128, 255)) // Blue dotted line
         .save("generated/tests/render/line_dotted.png");
 
@@ -67,7 +67,7 @@ fn test_dash_dot_line_style() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .style(LineStyle::DashDot)
+        .line_style(LineStyle::DashDot)
         .color(Color::from_rgb(0, 200, 0)) // Green dash-dot line
         .save("generated/tests/render/line_dashdot.png");
 
@@ -85,7 +85,7 @@ fn test_dash_dot_dot_line_style() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .style(LineStyle::DashDotDot)
+        .line_style(LineStyle::DashDotDot)
         .color(Color::from_rgb(128, 0, 128)) // Purple dash-dot-dot line
         .save("generated/tests/render/line_dashdotdot.png");
 
@@ -106,7 +106,7 @@ fn test_custom_line_style() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y_data)
-        .style(LineStyle::Custom(custom_pattern))
+        .line_style(LineStyle::Custom(custom_pattern))
         .color(Color::from_rgb(255, 128, 0)) // Orange custom line
         .save("generated/tests/render/line_custom.png");
 
@@ -126,15 +126,15 @@ fn test_multiple_line_styles() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y1_data)
-        .style(LineStyle::Solid)
+        .line_style(LineStyle::Solid)
         .color(Color::from_rgb(255, 0, 0))
         .label("Solid")
         .line(&x_data, &y2_data)
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         .color(Color::from_rgb(0, 255, 0))
         .label("Dashed")
         .line(&x_data, &y3_data)
-        .style(LineStyle::Dotted)
+        .line_style(LineStyle::Dotted)
         .color(Color::from_rgb(0, 0, 255))
         .label("Dotted")
         .legend(LegendPosition::UpperRight)
@@ -155,12 +155,12 @@ fn test_line_width_with_styles() {
         .xlabel("X Values")
         .ylabel("Y Values")
         .line(&x_data, &y1_data)
-        .style(LineStyle::Dashed)
+        .line_style(LineStyle::Dashed)
         .line_width(3.0)
         .color(Color::from_rgb(255, 0, 0))
         .label("Thick Dashed")
         .line(&x_data, &y2_data)
-        .style(LineStyle::Dotted)
+        .line_style(LineStyle::Dotted)
         .line_width(2.0)
         .color(Color::from_rgb(0, 0, 255))
         .label("Medium Dotted")

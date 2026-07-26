@@ -150,7 +150,7 @@ let timeseries = Plot::new()
     .into_plot();
 
 let distribution = Plot::new()
-    .histogram(&data, None)
+    .histogram(&data)
     .title("Distribution (Tall)")
     .into_plot();
 
@@ -344,7 +344,7 @@ impl PlotTemplate {
         Plot::new()
             .size_px(600, 400) // Exact dashboard pixels; do not change DPI afterward
             .theme(Theme::light())
-            .histogram(data, None)
+            .histogram(data)
             .color(Color::from_rgb(70, 130, 180))
             .title(label)
             .xlabel("Value")

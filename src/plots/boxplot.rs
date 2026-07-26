@@ -1,4 +1,5 @@
 /// Box plot implementation with statistical analysis and outlier detection
+use crate::core::plot::PlotBuilder;
 use crate::core::style_utils::{StyleResolver, defaults};
 use crate::core::{PlottingError, Result};
 use crate::data::Data1D;
@@ -43,9 +44,10 @@ pub struct BoxPlotConfig {
 
 /// Methods for detecting outliers
 #[allow(clippy::upper_case_acronyms)] // IQR is the standard statistics acronym
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum OutlierMethod {
     /// Standard IQR method: outliers beyond 1.5 * IQR from quartiles
+    #[default]
     IQR,
     /// Modified IQR method: outliers beyond 2.5 * IQR from quartiles
     ModifiedIQR,
@@ -56,18 +58,20 @@ pub enum OutlierMethod {
 }
 
 /// Box plot orientation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BoxOrientation {
     /// Vertical box plots
+    #[default]
     Vertical,
     /// Horizontal box plots
     Horizontal,
 }
 
 /// Methods for calculating whiskers
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WhiskerMethod {
     /// Whiskers extend to min/max values within 1.5 * IQR from quartiles
+    #[default]
     Tukey,
     /// Whiskers extend to actual min/max of data
     MinMax,
@@ -598,6 +602,107 @@ impl BoxPlotConfig {
     /// Set outlier marker size
     pub fn flier_size(mut self, size: f32) -> Self {
         self.flier_size = Some(size);
+        self
+    }
+}
+
+/// Box plot configuration reachable straight from [`Plot::boxplot`].
+///
+/// [`Plot::boxplot`] returns `PlotBuilder<BoxPlotConfig>`, exactly like the
+/// other series methods return their own `PlotBuilder<C>`, so these mirror
+/// [`BoxPlotConfig`]'s own setters one for one and can be interleaved freely
+/// with the shared styling and plot-level methods on the builder.
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 20.0];
+///
+/// Plot::new()
+///     .boxplot(&data)
+///     .show_mean(true)
+///     .width_ratio(0.4)
+///     .save("boxplot.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// [`Plot::boxplot`]: crate::core::Plot::boxplot
+impl PlotBuilder<BoxPlotConfig> {
+    /// Choose how outliers are detected.
+    pub fn outlier_method(mut self, method: OutlierMethod) -> Self {
+        self.config = std::mem::take(&mut self.config).outlier_method(method);
+        self
+    }
+
+    /// Show or hide outliers as individual points.
+    pub fn show_outliers(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_outliers(show);
+        self
+    }
+
+    /// Show or hide the mean marker.
+    pub fn show_mean(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).show_mean(show);
+        self
+    }
+
+    /// Set the box orientation.
+    pub fn orientation(mut self, orientation: BoxOrientation) -> Self {
+        self.config = std::mem::take(&mut self.config).orientation(orientation);
+        self
+    }
+
+    /// Choose how the whisker ends are calculated.
+    pub fn whisker_method(mut self, method: WhiskerMethod) -> Self {
+        self.config = std::mem::take(&mut self.config).whisker_method(method);
+        self
+    }
+
+    /// Set the box fill opacity (0.0-1.0).
+    pub fn fill_alpha(mut self, alpha: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).fill_alpha(alpha);
+        self
+    }
+
+    /// Set the box edge colour explicitly.
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Set the box edge width in points.
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_width(width);
+        self
+    }
+
+    /// Set the box width as a fraction of the available slot.
+    pub fn width_ratio(mut self, ratio: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).width_ratio(ratio);
+        self
+    }
+
+    /// Set the whisker line width in points.
+    pub fn whisker_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).whisker_width(width);
+        self
+    }
+
+    /// Set the median line width in points.
+    pub fn median_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).median_width(width);
+        self
+    }
+
+    /// Set the whisker cap width as a fraction of the box width.
+    pub fn cap_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).cap_width(width);
+        self
+    }
+
+    /// Set the outlier marker size in points.
+    pub fn flier_size(mut self, size: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).flier_size(size);
         self
     }
 }

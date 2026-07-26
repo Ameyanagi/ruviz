@@ -68,15 +68,13 @@ fn main() -> PlotResult<()> {
         .title("Heatmap Log Scale + Masking")
         .xlabel("Column")
         .ylabel("Row")
-        .heatmap(
+        .heatmap_with(
             &heatmap_data,
-            Some(
-                HeatmapConfig::new()
-                    .value_scale(AxisScale::Log)
-                    .colorbar(true)
-                    .colorbar_log_subticks(true)
-                    .colorbar_label("Absorbed Energy"),
-            ),
+            HeatmapConfig::new()
+                .value_scale(AxisScale::Log)
+                .colorbar(true)
+                .colorbar_log_subticks(true)
+                .colorbar_label("Absorbed Energy"),
         );
 
     subplots(1, 3, 1800, 560)?

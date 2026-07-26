@@ -263,7 +263,7 @@ impl Default for LegendFrame {
 // Builder pattern for legend configuration
 Plot::new()
     .line(&x, &y1).label("sin(x)")
-    .line(&x, &y2).label("cos(x)").style(LineStyle::Dashed)
+    .line(&x, &y2).label("cos(x)").line_style(LineStyle::Dashed)
     .legend(|l| l
         .position(LegendPosition::Best)      // or UpperRight, OutsideRight, etc.
         .columns(1)                          // Single column

@@ -532,7 +532,7 @@ mod tests {
                     .collect()
             })
             .collect();
-        let plot: Plot = Plot::new().heatmap(&matrix, None).into();
+        let plot: Plot = Plot::new().heatmap(&matrix).into();
         let prepared = plot.prepare();
 
         let cached = prepared

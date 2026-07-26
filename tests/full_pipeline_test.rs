@@ -119,7 +119,7 @@ fn test_histogram_pipeline() {
 
     // WHEN: Creating histogram
     let result = Plot::new()
-        .histogram(&data, None)
+        .histogram(&data)
         .title("Histogram Test")
         .xlabel("Value")
         .ylabel("Frequency")
@@ -141,7 +141,7 @@ fn test_boxplot_pipeline() {
 
     // WHEN: Creating boxplot
     let result = Plot::new()
-        .boxplot(&data, None)
+        .boxplot(&data)
         .title("Box Plot Test")
         .ylabel("Value")
         .save("generated/tests/render/integration_boxplot.png");
@@ -172,10 +172,7 @@ fn test_subplot_composition() {
 
     let plot3: Plot = Plot::new().bar(&categories, &values).title("Bar").into();
 
-    let plot4: Plot = Plot::new()
-        .histogram(&hist_data, None)
-        .title("Histogram")
-        .into();
+    let plot4: Plot = Plot::new().histogram(&hist_data).title("Histogram").into();
 
     // WHEN: Creating subplots
     let result = subplots(2, 2, 1200, 900);

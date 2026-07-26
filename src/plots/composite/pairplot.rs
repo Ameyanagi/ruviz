@@ -30,9 +30,10 @@ pub struct PairPlotConfig {
 }
 
 /// Type of plot on diagonal
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiagKind {
     /// Histogram
+    #[default]
     Hist,
     /// Kernel density estimate
     Kde,
@@ -41,9 +42,10 @@ pub enum DiagKind {
 }
 
 /// Type of plot on off-diagonal
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OffDiagKind {
     /// Scatter plot
+    #[default]
     Scatter,
     /// Regression plot
     Reg,

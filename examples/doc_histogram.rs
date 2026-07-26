@@ -20,7 +20,7 @@ fn main() -> PlotResult<()> {
         .xlabel("Value")
         .ylabel("Frequency")
         .max_resolution(1920, 1440)
-        .histogram(&data, None)
+        .histogram(&data)
         .save("docs/assets/rustdoc/histogram.png")?;
 
     println!("✓ Generated docs/assets/rustdoc/histogram.png");

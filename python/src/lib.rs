@@ -299,16 +299,14 @@ fn apply_series(plot: Plot, series: SeriesSnapshot) -> Result<Plot, String> {
             )?;
             Ok(plot.bar(&categories, &values).into_plot())
         }
-        SeriesSnapshot::Histogram { data } => {
-            Ok(plot.histogram(&data.into_values(), None).into_plot())
-        }
-        SeriesSnapshot::Boxplot { data } => Ok(plot.boxplot(&data.into_values(), None).into_plot()),
+        SeriesSnapshot::Histogram { data } => Ok(plot.histogram(&data.into_values()).into_plot()),
+        SeriesSnapshot::Boxplot { data } => Ok(plot.boxplot(&data.into_values()).into_plot()),
         SeriesSnapshot::Heatmap { values, rows, cols } => {
             if rows == 0 || cols == 0 || values.len() != rows.saturating_mul(cols) {
                 return Err("heatmap values length must match rows * cols".to_string());
             }
             let matrix: Vec<Vec<f64>> = values.chunks(cols).map(|chunk| chunk.to_vec()).collect();
-            Ok(plot.heatmap(&matrix, None).into_plot())
+            Ok(plot.heatmap(&matrix).into_plot())
         }
         SeriesSnapshot::ErrorBars { x, y, y_errors } => {
             let x = x.into_values();
@@ -503,7 +501,7 @@ impl Plot3DSnapshot {
             let dpi = self.dpi.unwrap_or(100).max(1);
             builder = map_3d_builder!(
                 builder,
-                figure_size(width as f32 / dpi as f32, height as f32 / dpi as f32)
+                size(width as f32 / dpi as f32, height as f32 / dpi as f32)
             );
         }
         if let Some(dpi) = self.dpi {
@@ -885,12 +883,9 @@ mod tests {
         let expected = base_plot("Histogram parity")
             .xlabel("value")
             .ylabel("count")
-            .histogram(
-                &[
-                    -2.3, -1.9, -1.1, -0.4, 0.2, 0.8, 1.0, 1.4, 1.7, 2.1, 2.5, 2.9,
-                ],
-                None,
-            )
+            .histogram(&[
+                -2.3, -1.9, -1.1, -0.4, 0.2, 0.8, 1.0, 1.4, 1.7, 2.1, 2.5, 2.9,
+            ])
             .into_plot();
 
         let actual_png = render_snapshot_png(snapshot);
@@ -927,7 +922,7 @@ mod tests {
             .theme(Theme::dark())
             .ticks(false)
             .title("Heatmap parity")
-            .heatmap(&heatmap_values, None)
+            .heatmap(&heatmap_values)
             .into_plot();
 
         let actual_png = render_snapshot_png(heatmap_snapshot);

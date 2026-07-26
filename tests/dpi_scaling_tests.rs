@@ -123,7 +123,7 @@ fn test_dpi_scaling_dashed_line_spacing() {
             .size(6.4, 4.8)
             .dpi(100)
             .line(&x, &y)
-            .style(ruviz::render::LineStyle::Dashed);
+            .line_style(ruviz::render::LineStyle::Dashed);
 
         let image = plot.render().expect("Render should succeed");
         image::RgbaImage::from_raw(image.width, image.height, image.pixels)
@@ -137,7 +137,7 @@ fn test_dpi_scaling_dashed_line_spacing() {
             .size(6.4, 4.8)
             .dpi(200)
             .line(&x, &y)
-            .style(ruviz::render::LineStyle::Dashed);
+            .line_style(ruviz::render::LineStyle::Dashed);
 
         let image = plot.render().expect("Render should succeed");
         image::RgbaImage::from_raw(image.width, image.height, image.pixels)

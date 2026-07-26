@@ -23,7 +23,7 @@ fn main() -> PlotResult<()> {
         .xlabel("Value")
         .ylabel("Proportion")
         .max_resolution(1920, 1440)
-        .ecdf_line_width(2.0)
+        .line_width(2.0)
         .label("Sample Distribution")
         .color(Color::from_palette(0))
         .legend_best()

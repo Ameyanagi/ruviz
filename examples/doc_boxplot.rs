@@ -18,7 +18,7 @@ fn main() -> PlotResult<()> {
         .xlabel("Distribution")
         .ylabel("Values")
         .max_resolution(1920, 1440)
-        .boxplot(&data, Some(BoxPlotConfig::new()))
+        .boxplot_with(&data, BoxPlotConfig::new())
         .save("docs/assets/rustdoc/boxplot.png")?;
 
     println!("✓ Generated docs/assets/rustdoc/boxplot.png");

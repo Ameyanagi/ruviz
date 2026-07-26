@@ -37,9 +37,13 @@ pub struct EcdfConfig {
 }
 
 /// Statistic for ECDF
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `EcdfStat::default()` is [`EcdfStat::Proportion`], the same value
+/// [`EcdfConfig`]`::default()` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EcdfStat {
-    /// Standard step function
+    /// Standard step function, y in `0..=1` (default)
+    #[default]
     Proportion,
     /// Count instead of proportion
     Count,
@@ -391,6 +395,14 @@ impl PlotRender for EcdfData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `EcdfStat` is constructible the same way its sibling config enums are,
+    /// and `default()` agrees with the config that owns it.
+    #[test]
+    fn stat_default_matches_config_default() {
+        assert_eq!(EcdfStat::default(), EcdfConfig::default().stat);
+        assert_eq!(EcdfStat::default(), EcdfStat::Proportion);
+    }
 
     #[test]
     fn test_ecdf_basic() {

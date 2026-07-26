@@ -83,7 +83,8 @@ fn main() -> PlotResult<()> {
 }
 ```
 
-Top-level helpers are available for line, scatter, and bar plots:
+Every plot is built the same way — `Plot::new()`, a series method, setters,
+`save`. There is no second entry point to learn:
 
 ```rust,check
 use ruviz::prelude::*;
@@ -92,7 +93,8 @@ fn main() -> PlotResult<()> {
     let x = vec![0.0, 1.0, 2.0];
     let y = vec![0.0, 1.0, 4.0];
 
-    line(&x, &y)
+    Plot::new()
+        .line(&x, &y)
         .title("Line")
         .save("line.png")?;
 
@@ -100,8 +102,9 @@ fn main() -> PlotResult<()> {
 }
 ```
 
-The `ruviz::simple` module also provides file-oriented helper functions such as
-`line_plot`, `scatter_plot`, `bar_chart`, and `histogram`.
+The top-level `line`/`scatter`/`bar` functions and the `ruviz::simple` module are
+deprecated in favour of that chain; see
+[docs/migration/0.6-builder-api.md](docs/migration/0.6-builder-api.md).
 
 ## Plot Types
 

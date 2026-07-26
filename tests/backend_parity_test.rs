@@ -114,7 +114,7 @@ fn test_backend_consistency_histogram() {
     // WHEN: Rendering histogram
     let result = Plot::new()
         .title("Backend Consistency - Histogram")
-        .histogram(&data, None)
+        .histogram(&data)
         .save("generated/tests/render/backend_histogram.png");
 
     // THEN: Should produce consistent output
@@ -137,7 +137,7 @@ fn test_backend_consistency_boxplot() {
     // WHEN: Rendering boxplot
     let result = Plot::new()
         .title("Backend Consistency - Boxplot")
-        .boxplot(&data, None)
+        .boxplot(&data)
         .save("generated/tests/render/backend_boxplot.png");
 
     // THEN: Should produce consistent output

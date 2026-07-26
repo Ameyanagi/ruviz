@@ -1,4 +1,5 @@
 /// Histogram plot implementation with automatic binning and statistical analysis
+use crate::core::plot::PlotBuilder;
 use crate::core::style_utils::{StyleResolver, defaults};
 use crate::core::{PlottingError, Result};
 use crate::data::Data1D;
@@ -29,11 +30,12 @@ pub struct HistogramConfig {
 }
 
 /// Methods for calculating histogram bin edges
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BinMethod {
-    /// Equal-width bins (default)
+    /// Equal-width bins
     Uniform,
-    /// Sturges' rule: ceil(log2(n) + 1)
+    /// Sturges' rule: ceil(log2(n) + 1) (default)
+    #[default]
     Sturges,
     /// Scott's rule: 3.5 * std / n^(1/3)
     Scott,
@@ -272,6 +274,84 @@ impl HistogramConfig {
     /// Set bar width as fraction of bin width (0.0-1.0)
     pub fn bar_width(mut self, width: f32) -> Self {
         self.bar_width = Some(width.clamp(0.0, 1.0));
+        self
+    }
+}
+
+/// Histogram configuration reachable straight from [`Plot::histogram`].
+///
+/// [`Plot::histogram`] returns `PlotBuilder<HistogramConfig>`, exactly like the
+/// other series methods return their own `PlotBuilder<C>`, so these mirror
+/// [`HistogramConfig`]'s own setters one for one and can be interleaved freely
+/// with the shared styling and plot-level methods on the builder.
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let data: Vec<f64> = (0..500).map(|i| (i as f64 / 50.0).sin()).collect();
+///
+/// Plot::new()
+///     .histogram(&data)
+///     .bins(25)
+///     .density(true)
+///     .fill_alpha(0.7)
+///     .save("histogram.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// [`Plot::histogram`]: crate::core::Plot::histogram
+impl PlotBuilder<HistogramConfig> {
+    /// Set the number of bins explicitly (overrides [`Self::bin_method`]).
+    pub fn bins(mut self, bins: usize) -> Self {
+        self.config = std::mem::take(&mut self.config).bins(bins);
+        self
+    }
+
+    /// Restrict binning to `[min, max]` instead of the data's own range.
+    pub fn range(mut self, min: f64, max: f64) -> Self {
+        self.config = std::mem::take(&mut self.config).range(min, max);
+        self
+    }
+
+    /// Normalize the bars to a probability density instead of raw counts.
+    pub fn density(mut self, density: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).density(density);
+        self
+    }
+
+    /// Accumulate counts across bins to show a cumulative distribution.
+    pub fn cumulative(mut self, cumulative: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).cumulative(cumulative);
+        self
+    }
+
+    /// Choose the automatic bin-count rule used when [`Self::bins`] is unset.
+    pub fn bin_method(mut self, method: BinMethod) -> Self {
+        self.config = std::mem::take(&mut self.config).bin_method(method);
+        self
+    }
+
+    /// Set the bar fill opacity (0.0-1.0).
+    pub fn fill_alpha(mut self, alpha: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).fill_alpha(alpha);
+        self
+    }
+
+    /// Set the bar edge colour explicitly.
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Set the bar edge width in points; `0.0` turns the edge off.
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_width(width);
+        self
+    }
+
+    /// Set bar width as a fraction of the bin width (0.0-1.0).
+    pub fn bar_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).bar_width(width);
         self
     }
 }

@@ -36,8 +36,9 @@ pub struct SwarmConfig {
 }
 
 /// Orientation for swarm plots
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SwarmOrientation {
+    #[default]
     Vertical,
     Horizontal,
 }

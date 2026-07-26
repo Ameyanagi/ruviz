@@ -2302,7 +2302,7 @@ mod autoscale_margin_tests {
     #[test]
     fn histogram_keeps_its_zero_baseline_sticky() {
         let plot = Plot::new()
-            .histogram(&[1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0], None)
+            .histogram(&[1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0])
             .end_series();
 
         let (_, _, y_min, y_max) = plot
@@ -2333,7 +2333,7 @@ mod autoscale_margin_tests {
     #[test]
     fn heatmap_fills_its_axes_without_a_margin_band() {
         let values = vec![vec![0.0, 1.0], vec![1.0, 0.0]];
-        let plot = Plot::new().heatmap(&values, None).end_series();
+        let plot = Plot::new().heatmap(&values).end_series();
 
         let raw = plot
             .calculate_data_bounds()

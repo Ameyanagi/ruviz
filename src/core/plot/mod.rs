@@ -239,48 +239,91 @@ macro_rules! impl_series_continuation_methods {
         pub fn histogram<D: $crate::data::NumericData1D>(
             $self_,
             data: &D,
-            config: Option<$crate::plots::HistogramConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().histogram(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram(data)
+        }
+
+        /// Continue with a histogram series built from an existing config.
+        pub fn histogram_with<D: $crate::data::NumericData1D>(
+            $self_,
+            data: &D,
+            config: $crate::plots::HistogramConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram_with(data, config)
         }
 
         /// Continue with a histogram series from source-backed values.
         pub fn histogram_source<D: $crate::core::plot::IntoPlotData>(
             $self_,
             data: D,
-            config: Option<$crate::plots::HistogramConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().histogram_source(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram_source(data)
+        }
+
+        /// Continue with a source-backed histogram series built from an existing config.
+        pub fn histogram_source_with<D: $crate::core::plot::IntoPlotData>(
+            $self_,
+            data: D,
+            config: $crate::plots::HistogramConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::HistogramConfig> {
+            $self_.$finalize().histogram_source_with(data, config)
         }
 
         /// Continue with a box plot series.
         pub fn boxplot<D: $crate::data::NumericData1D>(
             $self_,
             data: &D,
-            config: Option<$crate::plots::BoxPlotConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().boxplot(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot(data)
+        }
+
+        /// Continue with a box plot series built from an existing config.
+        pub fn boxplot_with<D: $crate::data::NumericData1D>(
+            $self_,
+            data: &D,
+            config: $crate::plots::BoxPlotConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot_with(data, config)
         }
 
         /// Continue with a box plot series from source-backed values.
         pub fn boxplot_source<D: $crate::core::plot::IntoPlotData>(
             $self_,
             data: D,
-            config: Option<$crate::plots::BoxPlotConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
-            $self_.$finalize().boxplot_source(data, config)
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot_source(data)
+        }
+
+        /// Continue with a source-backed box plot series built from an existing config.
+        pub fn boxplot_source_with<D: $crate::core::plot::IntoPlotData>(
+            $self_,
+            data: D,
+            config: $crate::plots::BoxPlotConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::BoxPlotConfig> {
+            $self_.$finalize().boxplot_source_with(data, config)
         }
 
         /// Continue with a heatmap series.
         pub fn heatmap<D>(
             $self_,
             data: &D,
-            config: Option<$crate::plots::heatmap::HeatmapConfig>,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::heatmap::HeatmapConfig>
         where
             D: $crate::data::NumericData2D + ?Sized,
         {
-            $self_.$finalize().heatmap(data, config)
+            $self_.$finalize().heatmap(data)
+        }
+
+        /// Continue with a heatmap series built from an existing config.
+        pub fn heatmap_with<D>(
+            $self_,
+            data: &D,
+            config: $crate::plots::heatmap::HeatmapConfig,
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::heatmap::HeatmapConfig>
+        where
+            D: $crate::data::NumericData2D + ?Sized,
+        {
+            $self_.$finalize().heatmap_with(data, config)
         }
 
         /// Continue with a KDE series.
@@ -395,7 +438,7 @@ macro_rules! impl_series_continuation_methods {
         pub fn line_streaming(
             $self_,
             stream: &$crate::data::StreamingXY,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::LineConfig> {
             $self_.$finalize().line_streaming(stream)
         }
 
@@ -403,7 +446,7 @@ macro_rules! impl_series_continuation_methods {
         pub fn scatter_streaming(
             $self_,
             stream: &$crate::data::StreamingXY,
-        ) -> $crate::core::plot::PlotSeriesBuilder {
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::basic::ScatterConfig> {
             $self_.$finalize().scatter_streaming(stream)
         }
 
@@ -413,7 +456,7 @@ macro_rules! impl_series_continuation_methods {
             x_data: &X,
             y_data: &Y,
             y_errors: &E,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::data::NumericData1D,
             Y: $crate::data::NumericData1D,
@@ -428,7 +471,7 @@ macro_rules! impl_series_continuation_methods {
             x_data: X,
             y_data: Y,
             y_errors: E,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::core::plot::IntoPlotData,
             Y: $crate::core::plot::IntoPlotData,
@@ -444,7 +487,7 @@ macro_rules! impl_series_continuation_methods {
             y_data: &Y,
             x_errors: &EX,
             y_errors: &EY,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::data::NumericData1D,
             Y: $crate::data::NumericData1D,
@@ -461,7 +504,7 @@ macro_rules! impl_series_continuation_methods {
             y_data: Y,
             x_errors: EX,
             y_errors: EY,
-        ) -> $crate::core::plot::PlotSeriesBuilder
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::error::ErrorBarConfig>
         where
             X: $crate::core::plot::IntoPlotData,
             Y: $crate::core::plot::IntoPlotData,
@@ -518,7 +561,7 @@ pub use interactive_session::{
 pub use layout_manager::LayoutManager;
 pub use prepared::{PreparedPlot, ReactiveSubscription};
 pub use render_pipeline::RenderPipeline;
-pub use series_builders::{PlotSeriesBuilder, SeriesGroupBuilder};
+pub use series_builders::SeriesGroupBuilder;
 pub use series_manager::SeriesManager;
 pub use types::{InsetAnchor, InsetLayout, Plot};
 

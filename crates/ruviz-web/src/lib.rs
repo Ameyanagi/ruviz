@@ -440,21 +440,21 @@ mod wasm {
         }
 
         pub fn histogram(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.histogram(&data, None).into_plot());
+            self.replace_with_series(|plot| plot.histogram(&data).into_plot());
         }
 
         pub fn histogram_observable(&mut self, data: &ObservableVecF64) {
             let data_source = data.inner.clone();
-            self.replace_with_series(|plot| plot.histogram_source(data_source, None).into_plot());
+            self.replace_with_series(|plot| plot.histogram_source(data_source).into_plot());
         }
 
         pub fn boxplot(&mut self, data: Vec<f64>) {
-            self.replace_with_series(|plot| plot.boxplot(&data, None).into_plot());
+            self.replace_with_series(|plot| plot.boxplot(&data).into_plot());
         }
 
         pub fn boxplot_observable(&mut self, data: &ObservableVecF64) {
             let data_source = data.inner.clone();
-            self.replace_with_series(|plot| plot.boxplot_source(data_source, None).into_plot());
+            self.replace_with_series(|plot| plot.boxplot_source(data_source).into_plot());
         }
 
         pub fn heatmap(
@@ -464,7 +464,7 @@ mod wasm {
             cols: usize,
         ) -> Result<(), JsValue> {
             let matrix = Self::flatten_grid(values, rows, cols)?;
-            self.replace_with_series(|plot| plot.heatmap(&matrix, None).into_plot());
+            self.replace_with_series(|plot| plot.heatmap(&matrix).into_plot());
             Ok(())
         }
 

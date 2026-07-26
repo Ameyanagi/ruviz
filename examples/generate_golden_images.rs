@@ -165,7 +165,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
         .title("Histogram")
         .xlabel("Value")
         .ylabel("Frequency")
-        .histogram(&data, None)
+        .histogram(&data)
         .save("tests/fixtures/golden/05_histogram.png")?;
     count += 1;
 
@@ -175,7 +175,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     stable_plot()
         .title("Box Plot")
         .ylabel("Value")
-        .boxplot(&boxdata, None)
+        .boxplot(&boxdata)
         .save("tests/fixtures/golden/06_boxplot.png")?;
     count += 1;
 
@@ -232,10 +232,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     let cats_sub = vec!["A", "B", "C"];
     let vals_sub = vec![25.0, 40.0, 30.0];
     let plot3: Plot = stable_plot().title("Bar").bar(&cats_sub, &vals_sub).into();
-    let plot4: Plot = stable_plot()
-        .title("Histogram")
-        .histogram(&data, None)
-        .into();
+    let plot4: Plot = stable_plot().title("Histogram").histogram(&data).into();
 
     // Keep figure-level dark-theme behavior, including the light suptitle,
     // under the same exact-pixel contract as the rest of the golden suite.

@@ -11,9 +11,10 @@
 //! - [`PlotRender`] for `ErrorBarData`
 
 use crate::core::Result;
+use crate::core::plot::PlotBuilder;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
-use crate::render::{Color, LineStyle, Theme};
+use crate::render::{Color, LineStyle, MarkerStyle, Theme};
 
 /// Configuration for error bars
 #[derive(Debug, Clone)]
@@ -35,8 +36,9 @@ pub struct ErrorBarConfig {
 }
 
 /// Line style for error bars
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ErrorLineStyle {
+    #[default]
     Solid,
     Dashed,
 }
@@ -100,6 +102,103 @@ impl ErrorBarConfig {
 
 // Implement PlotConfig marker trait
 impl PlotConfig for ErrorBarConfig {}
+
+/// Error bar configuration reachable straight from [`Plot::error_bars`].
+///
+/// [`Plot::error_bars`] and [`Plot::error_bars_xy`] return
+/// `PlotBuilder<ErrorBarConfig>`, exactly like the other series methods return
+/// their own `PlotBuilder<C>`, so these mirror [`ErrorBarConfig`]'s own setters
+/// and can be interleaved freely with the shared styling and plot-level methods
+/// on the builder.
+///
+/// Three config knobs are renamed here because the generic builder already
+/// spells those names for the series as a whole: `ErrorBarConfig::color`,
+/// `line_width` and `alpha` are [`Self::error_color`],
+/// [`Self::error_line_width`] and [`Self::error_alpha`].
+///
+/// ```rust,no_run
+/// use ruviz::prelude::*;
+///
+/// let x = vec![1.0, 2.0, 3.0];
+/// let y = vec![2.0, 4.0, 3.0];
+/// let yerr = vec![0.2, 0.3, 0.25];
+///
+/// Plot::new()
+///     .error_bars(&x, &y, &yerr)
+///     .cap_size(6.0)
+///     .error_line_width(2.0)
+///     .marker(MarkerStyle::Square)
+///     .save("error_bars.png")?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// [`Plot::error_bars`]: crate::core::Plot::error_bars
+/// [`Plot::error_bars_xy`]: crate::core::Plot::error_bars_xy
+impl PlotBuilder<ErrorBarConfig> {
+    /// Set the error bar colour, overriding the series colour.
+    ///
+    /// Named apart from the builder's `color()`, which sets the series colour
+    /// that the markers use and the bars inherit by default.
+    pub fn error_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).color(color);
+        self
+    }
+
+    /// Set the error bar line width.
+    ///
+    /// Named apart from the builder's `line_width()`, which sets the series
+    /// line width.
+    pub fn error_line_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).line_width(width);
+        self
+    }
+
+    /// Set the width of the caps drawn at the ends of each bar.
+    pub fn cap_size(mut self, size: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).cap_size(size);
+        self
+    }
+
+    /// Set the error bar opacity (0.0-1.0).
+    ///
+    /// Named apart from the builder's `alpha()`, which sets the series alpha.
+    pub fn error_alpha(mut self, alpha: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).alpha(alpha);
+        self
+    }
+
+    /// Set the marker drawn at each data point.
+    pub fn marker(mut self, marker: MarkerStyle) -> Self {
+        self.style.marker_style = Some(marker);
+        self.style.marker_style_source = None;
+        self
+    }
+
+    /// Set a reactive marker style sampled at render time.
+    pub fn marker_source<S>(mut self, marker: S) -> Self
+    where
+        S: Into<crate::core::plot::ReactiveValue<MarkerStyle>>,
+    {
+        self.style.set_marker_style_source_value(marker.into());
+        self
+    }
+
+    /// Set the size in points of the marker drawn at each data point.
+    pub fn marker_size(mut self, size: f32) -> Self {
+        self.style.marker_size = Some(size.max(0.1));
+        self.style.marker_size_source = None;
+        self
+    }
+
+    /// Set a reactive marker size sampled at render time.
+    pub fn marker_size_source<S>(mut self, size: S) -> Self
+    where
+        S: Into<crate::core::plot::ReactiveValue<f32>>,
+    {
+        self.style.set_marker_size_source_value(size.into());
+        self
+    }
+}
 
 /// Marker struct for ErrorBar plot type
 pub struct ErrorBarPlot;

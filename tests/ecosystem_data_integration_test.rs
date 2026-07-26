@@ -20,7 +20,7 @@ fn test_ndarray_view_line_and_heatmap() {
     assert!(line_result.is_ok(), "ndarray ArrayView1 line failed");
 
     let matrix = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
-    let heatmap_result = Plot::new().heatmap(&matrix.view(), None).render();
+    let heatmap_result = Plot::new().heatmap(&matrix.view()).render();
     assert!(heatmap_result.is_ok(), "ndarray ArrayView2 heatmap failed");
 }
 
@@ -34,7 +34,7 @@ fn test_nalgebra_vector_and_matrix() {
     assert!(line_result.is_ok(), "nalgebra vector line failed");
 
     let matrix = nalgebra::DMatrix::from_row_slice(2, 2, &[1.0, 2.0, 3.0, 4.0]);
-    let heatmap_result = Plot::new().heatmap(&matrix, None).render();
+    let heatmap_result = Plot::new().heatmap(&matrix).render();
     assert!(heatmap_result.is_ok(), "nalgebra matrix heatmap failed");
 }
 

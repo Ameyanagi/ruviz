@@ -39,9 +39,13 @@ pub struct QuiverConfig {
 }
 
 /// Pivot point for arrows
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `QuiverPivot::default()` is [`QuiverPivot::Tail`], the same value
+/// [`QuiverConfig`]`::default()` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuiverPivot {
-    /// Arrow starts at (x, y)
+    /// Arrow starts at (x, y) (default)
+    #[default]
     Tail,
     /// Arrow centered at (x, y)
     Middle,
@@ -404,6 +408,14 @@ pub fn quiver_range(data: &QuiverPlotData) -> ((f64, f64), (f64, f64)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `QuiverPivot` is constructible the same way its sibling config enums
+    /// are, and `default()` agrees with the config that owns it.
+    #[test]
+    fn pivot_default_matches_config_default() {
+        assert_eq!(QuiverPivot::default(), QuiverConfig::default().pivot);
+        assert_eq!(QuiverPivot::default(), QuiverPivot::Tail);
+    }
 
     #[test]
     fn test_quiver_basic() {

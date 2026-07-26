@@ -68,8 +68,9 @@ pub struct DendrogramConfig {
 }
 
 /// Orientation for dendrogram
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DendrogramOrientation {
+    #[default]
     Top,
     Bottom,
     Left,
