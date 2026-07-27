@@ -35,6 +35,7 @@ fn production() {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     #[test]
     fn unit() {
@@ -66,6 +67,35 @@ fn later_production() {
         self.assertIn(test_expect, excluded)
         self.assertNotIn(production_expect, excluded)
         self.assertNotIn(later_unwrap, excluded)
+
+    def test_risky_code_lines_ignore_comments_and_literals(self) -> None:
+        source = '''
+/// Example: `value.unwrap()`
+fn production() {
+    let message = "panic!(not code)";
+    value.expect("must be reported");
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "sample.rs"
+            path.write_text(source, encoding="utf-8")
+            with mock.patch.object(CHECKER, "ROOT", root):
+                risky = CHECKER.risky_code_lines("sample.rs")
+
+        lines = source.splitlines()
+        expected = next(
+            index for index, line in enumerate(lines, start=1) if "must be reported" in line
+        )
+        comment = next(
+            index for index, line in enumerate(lines, start=1) if "Example:" in line
+        )
+        literal = next(
+            index for index, line in enumerate(lines, start=1) if "let message" in line
+        )
+        self.assertIn(expected, risky)
+        self.assertNotIn(comment, risky)
+        self.assertNotIn(literal, risky)
 
 
 if __name__ == "__main__":

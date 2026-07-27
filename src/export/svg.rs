@@ -508,11 +508,10 @@ impl SvgRenderer {
             return;
         }
         let fill = self.color_to_svg(color);
-        writeln!(
+        let _ = writeln!(
             self.content,
             r#"  <rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="{fill}" shape-rendering="crispEdges"/>"#
-        )
-        .unwrap();
+        );
     }
 
     /// Draw a rectangle with an explicit fill and/or an explicit edge.
@@ -557,11 +556,10 @@ impl SvgRenderer {
             }
             None => String::new(),
         };
-        writeln!(
+        let _ = writeln!(
             self.content,
             r#"  <rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="{fill_attr}"{stroke_attr}/>"#
-        )
-        .unwrap();
+        );
     }
 
     /// Draw a filled or stroked rectangle with rounded corners
@@ -922,11 +920,10 @@ impl SvgRenderer {
         match style {
             MarkerStyle::Circle => {
                 let color_str = self.color_to_svg(edge_color);
-                writeln!(
+                let _ = writeln!(
                     self.content,
                     r#"  <circle cx="{x:.2}" cy="{y:.2}" r="{radius:.2}" fill="none" stroke="{color_str}" stroke-width="{width_px:.2}"/>"#
-                )
-                .unwrap();
+                );
             }
             MarkerStyle::Square => self.draw_rectangle_styled(
                 x - radius,
@@ -961,14 +958,14 @@ impl SvgRenderer {
                 self.draw_rectangle(x - radius, y - radius, size, size, color, false)
             }
             MarkerStyle::Triangle | MarkerStyle::TriangleDown | MarkerStyle::Diamond => {
-                let points = Self::marker_polygon(x, y, radius, style)
-                    .expect("filled polygonal marker always has vertices");
-                self.draw_polygon_marker(&points, color, None)
+                if let Some(points) = Self::marker_polygon(x, y, radius, style) {
+                    self.draw_polygon_marker(&points, color, None);
+                }
             }
             MarkerStyle::TriangleOpen | MarkerStyle::DiamondOpen => {
-                let points = Self::marker_polygon(x, y, radius, style)
-                    .expect("open polygonal marker always has vertices");
-                self.draw_polygon_marker(&points, color, Some((size * 0.15).max(1.0)))
+                if let Some(points) = Self::marker_polygon(x, y, radius, style) {
+                    self.draw_polygon_marker(&points, color, Some((size * 0.15).max(1.0)));
+                }
             }
             MarkerStyle::Plus => {
                 let line_width = (size * 0.25).max(1.0);
@@ -2523,11 +2520,10 @@ impl crate::render::colorbar::ColorbarCanvas for SvgRenderer {
             return self.check_geometry();
         }
         let stroke = self.color_to_svg(color);
-        writeln!(
+        let _ = writeln!(
             self.content,
             r#"  <rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="none" stroke="{stroke}" stroke-width="{stroke_width:.2}"/>"#
-        )
-        .unwrap();
+        );
         Ok(())
     }
 

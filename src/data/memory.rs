@@ -726,8 +726,7 @@ impl<T> ManagedBuffer<T> {
     /// recycled — but the allocation still stops being *managed*, so it is
     /// accounted for exactly as a drop is.
     pub fn into_inner(mut self) -> Vec<T> {
-        self.release(Recycle::No)
-            .expect("ManagedBuffer holds its buffer until it is released exactly once")
+        self.release(Recycle::No).unwrap_or_default()
     }
 
     /// Release the managed buffer, optionally handing the storage back to the

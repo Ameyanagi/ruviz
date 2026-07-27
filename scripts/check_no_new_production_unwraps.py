@@ -135,6 +135,10 @@ def test_only_lines(path: str) -> set[int]:
             continue
         if not cfg_test_pending or not stripped:
             continue
+        # Attributes such as `#[allow(deprecated)]` may sit between
+        # `#[cfg(test)]` and the module declaration.
+        if stripped.startswith("#["):
+            continue
         if not TEST_MODULE.search(stripped):
             cfg_test_pending = False
             continue
@@ -155,6 +159,16 @@ def test_only_lines(path: str) -> set[int]:
     return excluded
 
 
+def risky_code_lines(path: str) -> set[int]:
+    """Return risky-call line numbers after masking comments and literals."""
+    source = (ROOT / path).read_text(encoding="utf-8")
+    return {
+        line_number
+        for line_number, line in enumerate(rust_code_mask(source).splitlines(), start=1)
+        if RISKY_CALL.search(line)
+    }
+
+
 def changed_lines(base: str) -> list[tuple[str, int | None, str]]:
     diff = subprocess.check_output(
         ["git", "diff", "--unified=0", base, "--", "*.rs"],
@@ -163,6 +177,7 @@ def changed_lines(base: str) -> list[tuple[str, int | None, str]]:
     )
     findings: list[tuple[str, int | None, str]] = []
     excluded_lines: dict[str, set[int]] = {}
+    risky_lines: dict[str, set[int]] = {}
     current_path = ""
     current_line: int | None = None
 
@@ -178,15 +193,20 @@ def changed_lines(base: str) -> list[tuple[str, int | None, str]]:
         if line.startswith("+") and not line.startswith("+++"):
             if current_path and current_path not in excluded_lines:
                 excluded_lines[current_path] = test_only_lines(current_path)
+                risky_lines[current_path] = risky_code_lines(current_path)
             is_test_only = (
                 current_line is not None
                 and current_line in excluded_lines.get(current_path, set())
+            )
+            is_risky_code = (
+                current_line is not None
+                and current_line in risky_lines.get(current_path, set())
             )
             if (
                 current_path
                 and is_production_path(current_path)
                 and not is_test_only
-                and RISKY_CALL.search(line)
+                and is_risky_code
             ):
                 findings.append((current_path, current_line, line[1:].strip()))
             if current_line is not None:
@@ -210,8 +230,9 @@ def untracked_rust_lines() -> list[tuple[str, int | None, str]]:
             continue
         source = (ROOT / path).read_text(encoding="utf-8")
         excluded = test_only_lines(path)
+        risky = risky_code_lines(path)
         for line_number, line in enumerate(source.splitlines(), start=1):
-            if line_number not in excluded and RISKY_CALL.search(line):
+            if line_number not in excluded and line_number in risky:
                 findings.append((path, line_number, line.strip()))
 
     return findings
