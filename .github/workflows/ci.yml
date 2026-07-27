@@ -313,6 +313,9 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-feature-contract-${{ matrix.contract.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
       - name: Create test output directory
         run: mkdir -p generated/tests/render
 
