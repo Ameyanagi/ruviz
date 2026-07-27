@@ -139,17 +139,25 @@ av1-grain = { version = "0.4", optional = true }
 # FreeBSD support
 [target.'cfg(target_os = "freebsd")'.dependencies]
 ctor = "0.8"
-rfd = { version = "=0.15.4", optional = true, default-features = false, features = ["gtk3"] } # pinned while keeping Linux dialogs on the repo MSRV
+# A range, not `=0.15.4`: an exact pin on a dependency reachable from the public
+# `window` feature makes any downstream needing ^0.15.5 unresolvable, with no
+# workaround short of forking. Cargo.lock pins the exact build this repo tests.
+rfd = { version = "0.15", optional = true, default-features = false, features = ["gtk3"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rfd = { version = "=0.15.4", optional = true, default-features = false, features = ["gtk3"] } # pinned while keeping Linux dialogs on the repo MSRV
+# A range, not `=0.15.4`: an exact pin on a dependency reachable from the public
+# `window` feature makes any downstream needing ^0.15.5 unresolvable, with no
+# workaround short of forking. Cargo.lock pins the exact build this repo tests.
+rfd = { version = "0.15", optional = true, default-features = false, features = ["gtk3"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-rfd = { version = "=0.15.4", optional = true, default-features = false } # pinned while keeping desktop dialogs on the repo MSRV
+# See the linux block above for why this is a range rather than an exact pin.
+rfd = { version = "0.15", optional = true, default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
-rfd = { version = "=0.15.4", optional = true, default-features = false } # pinned while keeping desktop dialogs on the repo MSRV
+# See the linux block above for why this is a range rather than an exact pin.
+rfd = { version = "0.15", optional = true, default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
