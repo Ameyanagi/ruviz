@@ -184,6 +184,8 @@ pub struct SkiaRenderer {
     theme: Theme,
     text_renderer: TextRenderer,
     font_config: FontConfig,
+    /// How the x tick label row is drawn; see [`XTickLabelPlan`].
+    x_tick_label_plan: XTickLabelPlan,
     /// Shared render scale for unit conversion.
     render_scale: RenderScale,
     /// Active text rendering engine.
@@ -228,6 +230,7 @@ impl SkiaRenderer {
             theme,
             text_renderer,
             font_config,
+            x_tick_label_plan: XTickLabelPlan::default(),
             render_scale: RenderScale::from_canvas_size(width, height, crate::core::REFERENCE_DPI),
             text_engine_mode: TextEngineMode::Plain,
             clip_mask_cache: HashMap::new(),
@@ -245,6 +248,21 @@ impl SkiaRenderer {
     /// Get the render scale context used for unit conversion.
     pub fn render_scale(&self) -> RenderScale {
         self.render_scale
+    }
+
+    /// Set how the x tick label row is drawn.
+    ///
+    /// The plan is resolved once, against the margin the layout actually
+    /// granted, and then held here — so the row that was measured is the row
+    /// that is drawn. Left at its default a row is horizontal and complete,
+    /// which is what every caller that never measured one wants.
+    pub fn set_x_tick_label_plan(&mut self, plan: XTickLabelPlan) {
+        self.x_tick_label_plan = plan;
+    }
+
+    /// How the x tick label row is drawn.
+    pub fn x_tick_label_plan(&self) -> XTickLabelPlan {
+        self.x_tick_label_plan
     }
 
     /// Legacy compatibility shim for callers that still pass `dpi / 100.0`.
@@ -1771,6 +1789,69 @@ impl SkiaRenderer {
         Ok(())
     }
 
+    /// Pixel centre of every categorical slot, in axis order.
+    ///
+    /// One formula for the measurement, the raster row and the SVG row: a label
+    /// measured at one x and drawn at another is the collision this row exists
+    /// to avoid, dressed up as a rounding difference.
+    pub fn categorical_label_centers(
+        plot_area: &LayoutRect,
+        x_positions: &[f64],
+        x_min: f64,
+        x_max: f64,
+    ) -> Vec<f32> {
+        x_positions
+            .iter()
+            .map(|&x_position| Self::x_label_center(plot_area, x_position, x_min, x_max))
+            .collect()
+    }
+
+    /// Measure an x tick label row: how much room it needs, and how far apart
+    /// its labels have to be spaced to stop overlapping.
+    ///
+    /// Labels are measured as the text engine will lay them out, and an empty
+    /// label measures nothing — an unnamed slot holds its place on the axis
+    /// without writing under it.
+    pub fn measure_x_tick_row(
+        &self,
+        labels: &[String],
+        centers: &[f32],
+        size: f32,
+        bounds: XTickRowBounds,
+    ) -> Result<XTickRowMetrics> {
+        let mut widths = Vec::with_capacity(labels.len());
+        let mut heights = Vec::with_capacity(labels.len());
+        let mut horizontal_extent = 0.0_f32;
+        let mut max_label_width = 0.0_f32;
+
+        for label in labels {
+            if label.is_empty() {
+                widths.push(0.0);
+                heights.push(0.0);
+                continue;
+            }
+            let (width, height) = self.measure_label_text(label, size)?;
+            widths.push(width);
+            heights.push(height);
+            horizontal_extent = horizontal_extent.max(height);
+            max_label_width = max_label_width.max(width);
+        }
+
+        let gap = size * X_TICK_LABEL_GAP_EM;
+        // One gutter for the whole row: the same clearance a label keeps from
+        // its neighbour it also keeps from the figure edge.
+        let bounds = bounds.inset(gap);
+        Ok(XTickRowMetrics {
+            horizontal_extent,
+            max_label_width,
+            horizontal_stride: clearing_stride(centers, &widths, gap, bounds),
+            // Turned a quarter turn, a label is only as wide as it is tall, so
+            // its neighbours are cleared by its height rather than its width.
+            rotated_stride: clearing_stride(centers, &heights, gap, bounds),
+            bounds,
+        })
+    }
+
     /// Draw axis tick labels with a categorical x axis.
     ///
     /// Every categorical plot type — bar, box plot, violin, boxen — reaches this
@@ -1781,6 +1862,9 @@ impl SkiaRenderer {
     ///
     /// A slot whose series carries no category name has an empty label and draws
     /// nothing — it still holds its place on the axis.
+    ///
+    /// The label row follows [`SkiaRenderer::x_tick_label_plan`], so ten region
+    /// names turn a quarter turn instead of overlapping into one illegible run.
     ///
     /// [`CategoryAxis::harvest`]: crate::core::plot::series_internal::CategoryAxis::harvest
     ///
@@ -1828,21 +1912,17 @@ impl SkiaRenderer {
         })?;
 
         if show_tick_labels {
-            for (category, &x_pos) in categories.iter().zip(x_positions.iter()) {
-                // An unnamed slot holds its place but writes nothing under it.
-                if category.is_empty() {
-                    continue;
-                }
-                let x_center = Self::x_label_center(plot_area, x_pos, x_min, x_max);
-
-                let label_snippet = self.generated_label(category);
-                let (text_width, _) = self.measure_text(&label_snippet, tick_size)?;
-                let label_x = (x_center - text_width / 2.0)
-                    .max(0.0)
-                    .min(self.width() as f32 - text_width);
-
-                self.draw_text(&label_snippet, label_x, xtick_baseline_y, tick_size, color)?;
-            }
+            let centers = Self::categorical_label_centers(plot_area, x_positions, x_min, x_max);
+            let plan = self.x_tick_label_plan;
+            draw_x_tick_label_row(
+                self,
+                categories,
+                &centers,
+                xtick_baseline_y,
+                tick_size,
+                color,
+                plan,
+            )?;
 
             self.draw_y_tick_labels(
                 plot_area,
@@ -2775,6 +2855,295 @@ impl SkiaRenderer {
     }
 }
 
+/// Gutter kept between two neighbouring x tick labels, in ems of their size.
+const X_TICK_LABEL_GAP_EM: f32 = 0.35;
+
+/// How the x tick label row is oriented.
+///
+/// Ten region names under one axis run into each other at any font size a
+/// figure would actually use, so the row has to be able to turn — and it turns
+/// as a *row*: every label horizontal or every label rotated, never the mix a
+/// per-label rule would produce.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum XTickRotation {
+    /// Horizontal while the labels fit, a quarter turn when they stop fitting,
+    /// and every k-th label when even a rotated row does not fit the margin.
+    #[default]
+    Auto,
+    /// Always horizontal; colliding labels are thinned to every k-th.
+    Horizontal,
+    /// Always a quarter turn counter-clockwise.
+    Vertical,
+}
+
+/// The horizontal range one x tick label row's ink may occupy, in pixels.
+///
+/// The first and last labels of a categorical axis are centred on slots that
+/// sit close to the plot area's edges, so a label wider than the outer margin
+/// runs off the canvas — a 35-character category name under the first bar of a
+/// 400 px figure is not an edge case. A label that would fall outside is slid
+/// back inside instead of being cut off.
+///
+/// The same range is applied when the row is *measured*, which is the point of
+/// having a type for it: [`label_left`](Self::label_left) is the one formula
+/// [`clearing_stride`] and [`draw_x_tick_label_row`] both ask, so sliding an
+/// end label inwards can never create the overlap the stride was chosen to
+/// avoid.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct XTickRowBounds {
+    /// Leftmost pixel the row's ink may touch.
+    pub left: f32,
+    /// One past the rightmost pixel the row's ink may touch.
+    pub right: f32,
+}
+
+impl XTickRowBounds {
+    /// No clamping at all — what a row measured against no particular canvas
+    /// gets, and what [`XTickLabelPlan::default`] carries.
+    pub const UNBOUNDED: Self = Self {
+        left: f32::NEG_INFINITY,
+        right: f32::INFINITY,
+    };
+
+    /// The full width of a `width` pixel canvas.
+    pub fn canvas(width: f32) -> Self {
+        Self {
+            left: 0.0,
+            right: width,
+        }
+    }
+
+    /// The same range pulled `inset` pixels in from both edges.
+    ///
+    /// A label flush against the figure edge reads as clipped even when every
+    /// glyph is present, so the row keeps the same gutter from the canvas that
+    /// it keeps from its neighbours. An unbounded range stays unbounded.
+    pub fn inset(&self, inset: f32) -> Self {
+        if self.right - self.left <= inset * 2.0 {
+            return *self;
+        }
+        Self {
+            left: self.left + inset,
+            right: self.right - inset,
+        }
+    }
+
+    /// Where a label `extent` pixels wide and centred on `center` starts.
+    ///
+    /// Centred when it fits, slid inwards when it does not, and pinned to the
+    /// left edge when it is wider than the whole range — a label too wide for
+    /// the canvas has to lose one end, and losing the tail is the readable
+    /// choice.
+    pub fn label_left(&self, center: f32, extent: f32) -> f32 {
+        (center - extent / 2.0)
+            .min(self.right - extent)
+            .max(self.left)
+    }
+}
+
+impl Default for XTickRowBounds {
+    fn default() -> Self {
+        Self::UNBOUNDED
+    }
+}
+
+/// What one x tick label row measures, before it is decided how to draw it.
+///
+/// Produced by [`SkiaRenderer::measure_x_tick_row`]; turned into an
+/// [`XTickLabelPlan`] by [`XTickRowMetrics::plan`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct XTickRowMetrics {
+    /// Vertical pixels a horizontal row occupies.
+    pub horizontal_extent: f32,
+    /// The widest label, in pixels — and so the vertical pixels a rotated row
+    /// occupies, since a quarter turn trades a label's width for its height.
+    pub max_label_width: f32,
+    /// Smallest stride at which a horizontal row stops overlapping.
+    pub horizontal_stride: usize,
+    /// Smallest stride at which a rotated row stops overlapping.
+    pub rotated_stride: usize,
+    /// The range the strides above were measured against, carried into the
+    /// plan so the row that was measured is the row that is drawn.
+    pub bounds: XTickRowBounds,
+}
+
+impl XTickRowMetrics {
+    /// Whether the caller has to find out if a rotated row fits.
+    ///
+    /// Answering that costs a trial layout, so it is only worth asking when
+    /// rotation is on the table at all.
+    pub fn wants_rotation(&self, rotation: XTickRotation) -> bool {
+        match rotation {
+            XTickRotation::Horizontal => false,
+            XTickRotation::Vertical => true,
+            XTickRotation::Auto => self.horizontal_stride > 1,
+        }
+    }
+
+    /// The plan this row is drawn with.
+    ///
+    /// `rotated_fits` answers "does a row [`max_label_width`] pixels tall fit
+    /// the bottom margin the layout grants?" — the caller asks the layout,
+    /// because only the layout knows what the margin config allows. An explicit
+    /// [`XTickRotation::Vertical`] is honoured either way: a knob that silently
+    /// does nothing is worse than one that costs a little room.
+    ///
+    /// [`max_label_width`]: Self::max_label_width
+    pub fn plan(&self, rotation: XTickRotation, rotated_fits: bool) -> XTickLabelPlan {
+        let rotated = match rotation {
+            XTickRotation::Horizontal => false,
+            XTickRotation::Vertical => true,
+            XTickRotation::Auto => self.horizontal_stride > 1 && rotated_fits,
+        };
+        if rotated {
+            XTickLabelPlan {
+                rotated: true,
+                stride: self.rotated_stride,
+                extent: self.max_label_width,
+                bounds: self.bounds,
+            }
+        } else {
+            XTickLabelPlan {
+                rotated: false,
+                stride: self.horizontal_stride,
+                extent: self.horizontal_extent,
+                bounds: self.bounds,
+            }
+        }
+    }
+}
+
+/// The resolved orientation and thinning of one x tick label row.
+///
+/// [`extent`](Self::extent) is the vertical room the row needs, and it is what
+/// the bottom margin has to be reserved from *before* the plot area is
+/// computed. Reserve it afterwards and the labels are clipped instead of
+/// overlapping, which is not an improvement.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct XTickLabelPlan {
+    /// Whether the row is drawn a quarter turn counter-clockwise.
+    pub rotated: bool,
+    /// Only every `stride`-th label is drawn; `1` draws them all.
+    pub stride: usize,
+    /// Vertical pixels the row occupies.
+    pub extent: f32,
+    /// The horizontal range the row's ink is kept inside; see
+    /// [`XTickRowBounds`].
+    pub bounds: XTickRowBounds,
+}
+
+impl Default for XTickLabelPlan {
+    /// Every label, horizontal, reserving nothing, clamped to nothing — what a
+    /// row that was never measured is entitled to assume.
+    fn default() -> Self {
+        Self {
+            rotated: false,
+            stride: 1,
+            extent: 0.0,
+            bounds: XTickRowBounds::UNBOUNDED,
+        }
+    }
+}
+
+/// Smallest stride at which the drawn labels stop overlapping.
+///
+/// `extents` is each label's size along the axis: its width for a horizontal
+/// row, its height for a rotated one. A label with no extent draws nothing and
+/// so collides with nothing.
+///
+/// `bounds` is where the labels will actually be drawn, not where they would
+/// like to be: an end label slid off the canvas edge is measured where it lands.
+fn clearing_stride(centers: &[f32], extents: &[f32], gap: f32, bounds: XTickRowBounds) -> usize {
+    let count = centers.len().min(extents.len());
+    if count <= 1 {
+        return 1;
+    }
+    (1..=count)
+        .find(|&stride| stride_clears(centers, extents, gap, stride, bounds))
+        .unwrap_or(count)
+}
+
+fn stride_clears(
+    centers: &[f32],
+    extents: &[f32],
+    gap: f32,
+    stride: usize,
+    bounds: XTickRowBounds,
+) -> bool {
+    let mut previous_right: Option<f32> = None;
+    for (&center, &extent) in centers.iter().zip(extents.iter()).step_by(stride) {
+        if extent <= 0.0 || !center.is_finite() {
+            continue;
+        }
+        let left = bounds.label_left(center, extent);
+        let right = left + extent;
+        if let Some(previous) = previous_right {
+            if left < previous + gap {
+                return false;
+            }
+            previous_right = Some(previous.max(right));
+        } else {
+            previous_right = Some(right);
+        }
+    }
+    true
+}
+
+/// Draw one x tick label row onto any backend, following `plan`.
+///
+/// The raster and SVG backends share this body, so a figure cannot be labelled
+/// one way as a PNG and another way as an SVG — the SVG twin used not to
+/// measure its category labels at all. `top_y` is the top of the row in both
+/// orientations.
+///
+/// The canvas is [`ColorbarCanvas`](crate::render::colorbar::ColorbarCanvas),
+/// the crate's one backend-neutral text canvas, named for its first client.
+pub(crate) fn draw_x_tick_label_row<C>(
+    canvas: &mut C,
+    labels: &[String],
+    centers: &[f32],
+    top_y: f32,
+    size: f32,
+    color: Color,
+    plan: XTickLabelPlan,
+) -> Result<()>
+where
+    C: crate::render::colorbar::ColorbarCanvas + ?Sized,
+{
+    let stride = plan.stride.max(1);
+    // A thinned row writes only every stride-th name, and an unnamed slot holds
+    // its place on the axis without writing under it.
+    for (label, &center) in labels.iter().zip(centers.iter()).step_by(stride) {
+        if label.is_empty() {
+            continue;
+        }
+        let snippet = canvas.colorbar_label_snippet(label);
+        let (width, height) = canvas.colorbar_measure_text(&snippet, size)?;
+        if plan.rotated {
+            // A quarter turn trades the label's width for its height, so the
+            // row hangs from `top_y` and takes up only `height` sideways. The
+            // rotated primitive centres its block on the x it is given.
+            let left = plan.bounds.label_left(center, height);
+            canvas.colorbar_text_rotated(
+                &snippet,
+                left + height / 2.0,
+                top_y + width / 2.0,
+                size,
+                color,
+            )?;
+        } else {
+            canvas.colorbar_text(
+                &snippet,
+                plan.bounds.label_left(center, width),
+                top_y,
+                size,
+                color,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -3031,5 +3400,302 @@ mod legend_patch_tests {
                 renderer.measure_legend(&items, &legend).expect("reserve")
             );
         }
+    }
+}
+
+/// The x tick label row: what it measures, what it decides, and what it draws.
+#[cfg(test)]
+mod x_tick_label_row_tests {
+    use super::*;
+
+    const REGIONS: [&str; 10] = [
+        "North America",
+        "South America",
+        "Western Europe",
+        "Eastern Europe",
+        "Middle East",
+        "North Africa",
+        "Sub-Saharan Africa",
+        "Central Asia",
+        "South East Asia",
+        "Australasia",
+    ];
+
+    fn renderer() -> SkiaRenderer {
+        SkiaRenderer::new(600, 400, Theme::default()).expect("renderer")
+    }
+
+    fn labels(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_string()).collect()
+    }
+
+    /// Evenly spaced slot centres across `[left, right]`, the way a categorical
+    /// axis lays its slots out.
+    fn centers(count: usize, left: f32, right: f32) -> Vec<f32> {
+        let span = right - left;
+        (0..count)
+            .map(|index| left + span * (index as f32 + 0.5) / count as f32)
+            .collect()
+    }
+
+    fn dark_pixels(image: &crate::core::plot::Image) -> Vec<(u32, u32)> {
+        let mut found = Vec::new();
+        for y in 0..image.height {
+            for x in 0..image.width {
+                let index = ((y * image.width + x) * 4) as usize;
+                if image.pixels[index] < 128 {
+                    found.push((x, y));
+                }
+            }
+        }
+        found
+    }
+
+    /// Ten region names in one 500 px axis cannot be drawn horizontally without
+    /// overlapping — the figure this row exists for. Turned a quarter turn they
+    /// clear each other completely, because a label's height is a fraction of
+    /// its width.
+    #[test]
+    fn ten_region_names_collide_horizontally_and_clear_when_rotated() {
+        let renderer = renderer();
+        let names = labels(&REGIONS);
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(REGIONS.len(), 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        assert!(
+            metrics.horizontal_stride > 1,
+            "ten region names should not fit horizontally, got stride {}",
+            metrics.horizontal_stride
+        );
+        assert_eq!(metrics.rotated_stride, 1, "rotated names clear each other");
+        assert!(
+            metrics.max_label_width > metrics.horizontal_extent,
+            "a rotated row is taller than a horizontal one for these labels"
+        );
+    }
+
+    /// Short names in the same axis are left alone: no rotation, no thinning,
+    /// and the row reserves exactly the height it draws at.
+    #[test]
+    fn short_names_stay_horizontal_and_complete() {
+        let renderer = renderer();
+        let names = labels(&["A", "B", "C", "D"]);
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(4, 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        assert_eq!(metrics.horizontal_stride, 1);
+        let plan = metrics.plan(XTickRotation::Auto, true);
+        assert!(!plan.rotated);
+        assert_eq!(plan.stride, 1);
+        assert_eq!(plan.extent, metrics.horizontal_extent);
+    }
+
+    /// An empty slot label writes nothing, so it cannot collide with anything —
+    /// otherwise a nameless slot would thin its named neighbours out.
+    #[test]
+    fn unnamed_slots_do_not_collide() {
+        let renderer = renderer();
+        let mut names = labels(&[""; 10]);
+        names[0] = "Western Europe".to_string();
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(10, 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        assert_eq!(metrics.horizontal_stride, 1);
+    }
+
+    /// The policy in one place: `Auto` rotates only when the margin can hold a
+    /// rotated row and falls back to every k-th label when it cannot, while the
+    /// explicit settings are honoured either way.
+    #[test]
+    fn auto_rotates_only_when_the_rotated_row_fits() {
+        let renderer = renderer();
+        let names = labels(&REGIONS);
+        let metrics = renderer
+            .measure_x_tick_row(
+                &names,
+                &centers(REGIONS.len(), 60.0, 560.0),
+                12.0,
+                XTickRowBounds::UNBOUNDED,
+            )
+            .expect("measure");
+
+        let rotated = metrics.plan(XTickRotation::Auto, true);
+        assert!(rotated.rotated);
+        assert_eq!(rotated.stride, metrics.rotated_stride);
+        assert_eq!(rotated.extent, metrics.max_label_width);
+
+        let thinned = metrics.plan(XTickRotation::Auto, false);
+        assert!(!thinned.rotated);
+        assert_eq!(thinned.stride, metrics.horizontal_stride);
+        assert!(thinned.stride > 1);
+        assert_eq!(thinned.extent, metrics.horizontal_extent);
+
+        assert!(!metrics.plan(XTickRotation::Horizontal, true).rotated);
+        assert!(metrics.plan(XTickRotation::Vertical, false).rotated);
+        assert!(!metrics.wants_rotation(XTickRotation::Horizontal));
+        assert!(metrics.wants_rotation(XTickRotation::Vertical));
+    }
+
+    /// The plan is what gets drawn: a stride of two draws half the names, and a
+    /// rotated row hangs down from the same baseline instead of spreading
+    /// sideways.
+    #[test]
+    fn the_plan_is_what_the_row_draws() {
+        let names = labels(&REGIONS);
+        let centers = centers(REGIONS.len(), 60.0, 560.0);
+
+        let ink = |plan: XTickLabelPlan| {
+            let mut renderer = renderer();
+            draw_x_tick_label_row(
+                &mut renderer,
+                &names,
+                &centers,
+                100.0,
+                12.0,
+                Color::BLACK,
+                plan,
+            )
+            .expect("draw");
+            dark_pixels(&renderer.into_image())
+        };
+
+        let complete = ink(XTickLabelPlan::default());
+        let thinned = ink(XTickLabelPlan {
+            stride: 2,
+            ..XTickLabelPlan::default()
+        });
+        assert!(
+            thinned.len() * 4 < complete.len() * 3,
+            "every second label should be dropped: {} vs {}",
+            thinned.len(),
+            complete.len()
+        );
+
+        let rotated = ink(XTickLabelPlan {
+            rotated: true,
+            stride: 1,
+            ..XTickLabelPlan::default()
+        });
+        let lowest = |pixels: &[(u32, u32)]| pixels.iter().map(|&(_, y)| y).max().unwrap_or(0);
+        assert!(
+            lowest(&rotated) > lowest(&complete) + 20,
+            "a rotated row hangs below a horizontal one: {} vs {}",
+            lowest(&rotated),
+            lowest(&complete)
+        );
+        assert!(
+            rotated.iter().all(|&(_, y)| y >= 99),
+            "a rotated row hangs from the baseline, it does not rise above it"
+        );
+    }
+
+    /// The end labels of a categorical axis are centred on slots that sit near
+    /// the plot area's edges, so a name wider than the outer margin runs off the
+    /// canvas. It is slid back inside instead of being cut in half.
+    #[test]
+    fn end_labels_are_slid_inside_the_canvas_rather_than_cut() {
+        let names = labels(&["A very long first category name indeed", "B", "C"]);
+        // A narrow figure's slots: the first centre sits well inside the widest
+        // name, which is the whole point.
+        let centers = centers(3, 20.0, 320.0);
+        let renderer = renderer();
+        let bounds = XTickRowBounds::canvas(renderer.width() as f32);
+        let metrics = renderer
+            .measure_x_tick_row(&names, &centers, 12.0, bounds)
+            .expect("measure");
+        let plan = metrics.plan(XTickRotation::Horizontal, false);
+
+        let (width, _) = renderer
+            .measure_text(&names[0], 12.0)
+            .expect("measure first label");
+        assert!(
+            centers[0] - width / 2.0 < 0.0,
+            "the figure under test must have an end label wider than its margin"
+        );
+        assert_eq!(
+            plan.bounds.label_left(centers[0], width),
+            plan.bounds.left,
+            "an over-hanging first label starts at the row's left gutter, not \
+             outside the canvas"
+        );
+        assert!(
+            plan.bounds.left > 0.0 && plan.bounds.right < renderer.width() as f32,
+            "the row keeps a gutter from the figure edge"
+        );
+
+        let mut renderer = renderer;
+        draw_x_tick_label_row(
+            &mut renderer,
+            &names,
+            &centers,
+            100.0,
+            12.0,
+            Color::BLACK,
+            plan,
+        )
+        .expect("draw");
+        let image = renderer.into_image();
+        let ink = dark_pixels(&image);
+        assert!(!ink.is_empty(), "the row should draw something");
+        assert!(
+            ink.iter().all(|&(x, _)| x < image.width),
+            "no label ink may fall outside the canvas"
+        );
+        assert!(
+            ink.iter().any(|&(x, _)| x < 20),
+            "the slid label should still sit hard against the left edge"
+        );
+    }
+
+    /// Sliding an end label inwards moves it towards its neighbour, so the
+    /// stride has to be measured where the labels land — otherwise the row that
+    /// was measured as clearing is drawn overlapping.
+    #[test]
+    fn the_stride_is_measured_where_the_labels_land() {
+        let renderer = renderer();
+        // Two wide names whose first is pushed right by the canvas edge: unclamped
+        // they clear each other, clamped they do not.
+        let names = labels(&["Sub-Saharan Africa", "Sub-Saharan Africa"]);
+        let (width, _) = renderer.measure_text(&names[0], 12.0).expect("measure");
+        let gap = 12.0 * X_TICK_LABEL_GAP_EM;
+        // Place the first label so that half of it hangs off the canvas, and the
+        // second exactly one clearing width to its right.
+        let first = width / 4.0;
+        let centers = vec![first, first + width + gap + 1.0];
+
+        let unclamped = renderer
+            .measure_x_tick_row(&names, &centers, 12.0, XTickRowBounds::UNBOUNDED)
+            .expect("measure");
+        assert_eq!(
+            unclamped.horizontal_stride, 1,
+            "where they are asked to be drawn, the two names clear each other"
+        );
+
+        let clamped = renderer
+            .measure_x_tick_row(&names, &centers, 12.0, XTickRowBounds::canvas(600.0))
+            .expect("measure");
+        assert_eq!(
+            clamped.horizontal_stride, 2,
+            "slid inside the canvas the first name runs into the second, so the \
+             row has to thin"
+        );
     }
 }

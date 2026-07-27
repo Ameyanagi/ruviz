@@ -179,6 +179,17 @@ impl Plot {
         self
     }
 
+    /// How the x tick labels are oriented when they would collide.
+    ///
+    /// [`Auto`](crate::render::XTickRotation::Auto) — the default — keeps them
+    /// horizontal while they fit, turns the row a quarter turn when they stop
+    /// fitting, and draws every k-th label when even a rotated row will not fit
+    /// the bottom margin the margin configuration allows.
+    pub fn xtick_rotation(mut self, rotation: crate::render::XTickRotation) -> Self {
+        self.layout.tick_config.xtick_rotation = rotation;
+        self
+    }
+
     /// Show ticks on all four sides of the plot area.
     pub fn ticks_all_sides(mut self) -> Self {
         self.layout.tick_config.sides = TickSides::all();

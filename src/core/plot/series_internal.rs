@@ -7,6 +7,7 @@ use crate::core::plot::raster_batches::{
 use crate::core::plot::raster_fast_path::{
     canonicalize_line_points_exact, reduce_line_points_for_raster, should_reduce_line_series,
 };
+use crate::core::plot::series_api::series_from_style;
 use crate::core::plot::types::MarkerEdge;
 use crate::plots::boxplot::{CATEGORY_SLOT_HALF_WIDTH, category_slot_span};
 use crate::plots::traits::{AxisScaleSupport, ComputedSeries};
@@ -33,36 +34,16 @@ impl Plot {
             return Err(PlottingError::EmptyDataSet);
         }
 
-        let series = PlotSeries {
-            series_type: SeriesType::Line {
+        let series = series_from_style(
+            SeriesType::Line {
                 x_data: PlotData::Static(x_vec),
                 y_data: PlotData::Static(y_vec),
             },
-            streaming_source: None,
-            label: None,
-            color: None,
-            color_source: None,
-            line_width: None,
-            line_width_source: None,
-            line_style: None,
-            line_style_source: None,
-            marker_style: None,
-            marker_style_source: None,
-            marker_size: None,
-            marker_size_source: None,
-            marker_edge: None,
-            alpha: None,
-            alpha_source: None,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
+            SeriesStyle::default(),
+        );
 
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
+        let auto_color_slot =
+            (!series.props.color.is_set()).then_some(self.series_mgr.auto_color_index);
         self.series_mgr
             .push_with_auto_color_slot(series, auto_color_slot);
         self.series_mgr.auto_color_index += 1;
@@ -74,207 +55,72 @@ impl Plot {
     ///
     /// This method is called by the PlotBuilder when finalizing a KDE series.
     pub(crate) fn add_kde_series(
-        mut self,
+        self,
         kde_data: crate::plots::KdeData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Kde {
+        self.push_builder_series(series_from_style(
+            SeriesType::Kde {
                 data: Arc::new(kde_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add an ECDF series
     pub(crate) fn add_ecdf_series(
-        mut self,
+        self,
         ecdf_data: crate::plots::EcdfData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Ecdf {
+        self.push_builder_series(series_from_style(
+            SeriesType::Ecdf {
                 data: Arc::new(ecdf_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Contour series
     pub(crate) fn add_contour_series(
-        mut self,
+        self,
         contour_data: crate::plots::continuous::contour::ContourPlotData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Contour {
+        self.push_builder_series(series_from_style(
+            SeriesType::Contour {
                 data: Arc::new(contour_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Pie series
     pub(crate) fn add_pie_series(
-        mut self,
+        self,
         pie_data: crate::plots::composition::pie::PieData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Pie {
+        self.push_builder_series(series_from_style(
+            SeriesType::Pie {
                 data: Arc::new(pie_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Radar series
     pub(crate) fn add_radar_series(
-        mut self,
+        self,
         radar_data: crate::plots::polar::radar::RadarPlotData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Radar {
+        self.push_builder_series(series_from_style(
+            SeriesType::Radar {
                 data: Arc::new(radar_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Box Plot series
@@ -294,7 +140,7 @@ impl Plot {
             .unwrap_or_else(|| self.next_category_slot(config.category.as_deref()));
         config.x_position = Some(slot);
 
-        self.push_builder_series(super::series_api::series_from_style(
+        self.push_builder_series(series_from_style(
             SeriesType::BoxPlot { data, config },
             style,
         ))
@@ -302,7 +148,7 @@ impl Plot {
 
     /// Internal method to add a Violin series
     pub(crate) fn add_violin_series(
-        mut self,
+        self,
         mut violin_data: crate::plots::ViolinData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
@@ -312,51 +158,24 @@ impl Plot {
             .unwrap_or_else(|| self.next_category_slot(violin_data.config.category.as_deref()));
         violin_data.config.x_position = Some(slot);
 
-        let series = PlotSeries {
-            series_type: SeriesType::Violin {
+        self.push_builder_series(series_from_style(
+            SeriesType::Violin {
                 data: Arc::new(violin_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Boxen series
     pub(crate) fn add_boxen_series(
-        mut self,
+        self,
         mut boxen_data: crate::plots::BoxenData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        if let Some(line_width) = style.line_width {
+        if let Some(line_width) = style.props.line_width.cloned() {
             boxen_data.config.line_width = line_width.max(0.0);
         }
-        if let Some(marker_size) = style.marker_size {
+        if let Some(marker_size) = style.props.marker_size.cloned() {
             boxen_data.config.outlier_size = marker_size.max(0.0);
         }
         let slot = boxen_data
@@ -365,128 +184,47 @@ impl Plot {
             .unwrap_or_else(|| self.next_category_slot(boxen_data.config.category.as_deref()));
         boxen_data.config.x_position = Some(slot);
 
-        let series = PlotSeries {
-            series_type: SeriesType::Boxen {
+        self.push_builder_series(series_from_style(
+            SeriesType::Boxen {
                 data: Arc::new(boxen_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Polar series
     pub(crate) fn add_polar_series(
-        mut self,
+        self,
         polar_data: crate::plots::polar::polar_plot::PolarPlotData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Polar {
+        self.push_builder_series(series_from_style(
+            SeriesType::Polar {
                 data: Arc::new(polar_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: Some(style.inset_layout.unwrap_or_default().normalized()),
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Quiver series
     pub(crate) fn add_quiver_series(
-        mut self,
+        self,
         mut quiver_data: crate::plots::QuiverPlotData,
         style: crate::core::plot::builder::SeriesStyle,
     ) -> Self {
-        if let Some(color) = style.color {
+        if let Some(color) = style.props.color.cloned() {
             quiver_data.config.color = Some(color);
         }
-        if let Some(line_width) = style.line_width {
+        if let Some(line_width) = style.props.line_width.cloned() {
             quiver_data.config.width = line_width.max(0.1);
         }
 
-        let series = PlotSeries {
-            series_type: SeriesType::Quiver {
+        self.push_builder_series(series_from_style(
+            SeriesType::Quiver {
                 data: Arc::new(quiver_data),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha,
-            alpha_source: style.alpha_source,
-            y_errors: None,
-            x_errors: None,
-            error_config: None,
-            inset_layout: None,
-            group_id: None,
-            resolved_radar_colors: None,
-        };
-
-        let auto_color_slot = (series.color.is_none() && series.color_source.is_none())
-            .then_some(self.series_mgr.auto_color_index);
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        self.series_mgr.auto_color_index += 1;
-        self
+            style,
+        ))
     }
 
     /// Internal method to add a Line series (used by PlotBuilder<LineConfig>)
@@ -504,7 +242,7 @@ impl Plot {
 
     /// Internal method to add a Line series with optional grouped-series metadata.
     pub(crate) fn add_line_series_grouped(
-        mut self,
+        self,
         x_data: PlotData,
         y_data: PlotData,
         config: &crate::plots::basic::LineConfig,
@@ -512,48 +250,19 @@ impl Plot {
         group_id: Option<usize>,
         consume_palette_index: bool,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Line { x_data, y_data },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style.or(Some(config.line_style.clone())),
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style.or(config.marker),
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: config
-                .resolved_marker_edge_spec()
-                .map(|(color, width)| MarkerEdge { color, width }),
-            alpha: style.alpha.or(Some(config.alpha)),
-            alpha_source: style.alpha_source,
-            y_errors: style.y_errors,
-            x_errors: style.x_errors,
-            error_config: style.error_config,
-            inset_layout: None,
-            group_id,
-            resolved_radar_colors: None,
-        };
+        let mut series = series_from_style(SeriesType::Line { x_data, y_data }, style);
+        series
+            .props
+            .line_style
+            .or_value(Some(config.line_style.clone()));
+        series.props.marker_style.or_value(config.marker);
+        series.props.alpha.or_value(Some(config.alpha));
+        series.marker_edge = config
+            .resolved_marker_edge_spec()
+            .map(|(color, width)| MarkerEdge { color, width });
+        series.group_id = group_id;
 
-        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
-            Some(if consume_palette_index {
-                self.series_mgr.auto_color_index
-            } else {
-                self.series_mgr.auto_color_index.saturating_sub(1)
-            })
-        } else {
-            None
-        };
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        if consume_palette_index {
-            self.series_mgr.auto_color_index += 1;
-        }
-        self
+        self.push_grouped_series(series, consume_palette_index)
     }
 
     /// Internal method to add a Scatter series (used by PlotBuilder<ScatterConfig>)
@@ -571,7 +280,7 @@ impl Plot {
 
     /// Internal method to add a Scatter series with optional grouped-series metadata.
     pub(crate) fn add_scatter_series_grouped(
-        mut self,
+        self,
         x_data: PlotData,
         y_data: PlotData,
         config: &crate::plots::basic::ScatterConfig,
@@ -579,48 +288,15 @@ impl Plot {
         group_id: Option<usize>,
         consume_palette_index: bool,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Scatter { x_data, y_data },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color,
-            color_source: style.color_source,
-            line_width: style.line_width,
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style.or(Some(config.marker)),
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: config
-                .resolved_edge_spec()
-                .map(|(color, width)| MarkerEdge { color, width }),
-            alpha: style.alpha.or(Some(config.alpha)),
-            alpha_source: style.alpha_source,
-            y_errors: style.y_errors,
-            x_errors: style.x_errors,
-            error_config: style.error_config,
-            inset_layout: None,
-            group_id,
-            resolved_radar_colors: None,
-        };
+        let mut series = series_from_style(SeriesType::Scatter { x_data, y_data }, style);
+        series.props.marker_style.or_value(Some(config.marker));
+        series.props.alpha.or_value(Some(config.alpha));
+        series.marker_edge = config
+            .resolved_edge_spec()
+            .map(|(color, width)| MarkerEdge { color, width });
+        series.group_id = group_id;
 
-        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
-            Some(if consume_palette_index {
-                self.series_mgr.auto_color_index
-            } else {
-                self.series_mgr.auto_color_index.saturating_sub(1)
-            })
-        } else {
-            None
-        };
-        self.series_mgr
-            .push_with_auto_color_slot(series, auto_color_slot);
-        if consume_palette_index {
-            self.series_mgr.auto_color_index += 1;
-        }
-        self
+        self.push_grouped_series(series, consume_palette_index)
     }
 
     /// Internal method to add a Bar series (used by PlotBuilder<BarConfig>)
@@ -638,7 +314,7 @@ impl Plot {
 
     /// Internal method to add a Bar series with optional grouped-series metadata.
     pub(crate) fn add_bar_series_grouped(
-        mut self,
+        self,
         categories: Vec<String>,
         values: PlotData,
         config: &crate::plots::basic::BarConfig,
@@ -646,44 +322,37 @@ impl Plot {
         group_id: Option<usize>,
         consume_palette_index: bool,
     ) -> Self {
-        let series = PlotSeries {
-            series_type: SeriesType::Bar {
+        let mut series = series_from_style(
+            SeriesType::Bar {
                 categories,
                 values,
                 config: config.clone(),
             },
-            streaming_source: style.streaming_source,
-            label: style.label,
-            color: style.color.or(config.color),
-            color_source: style.color_source,
-            line_width: style.line_width.or(Some(config.edge_width)),
-            line_width_source: style.line_width_source,
-            line_style: style.line_style,
-            line_style_source: style.line_style_source,
-            marker_style: style.marker_style,
-            marker_style_source: style.marker_style_source,
-            marker_size: style.marker_size,
-            marker_size_source: style.marker_size_source,
-            marker_edge: None,
-            alpha: style.alpha.or(Some(config.alpha)),
-            alpha_source: style.alpha_source,
-            y_errors: style.y_errors,
-            x_errors: style.x_errors,
-            error_config: style.error_config,
-            inset_layout: None,
-            group_id,
-            resolved_radar_colors: None,
-        };
+            style,
+        );
+        series.props.color.or_value(config.color);
+        series.props.line_width.or_value(Some(config.edge_width));
+        series.props.alpha.or_value(Some(config.alpha));
+        series.group_id = group_id;
 
-        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
-            Some(if consume_palette_index {
+        self.push_grouped_series(series, consume_palette_index)
+    }
+
+    /// Commit a series built by one of the grouped constructors above.
+    ///
+    /// The palette rule is written once here rather than per plot type: a series
+    /// that chose no colour takes an auto-colour slot, and `consume_palette_index`
+    /// says whether this series advances the palette (a standalone series does; a
+    /// member of a group that shares one slot does not, and points back at the
+    /// slot the group already took).
+    fn push_grouped_series(mut self, series: PlotSeries, consume_palette_index: bool) -> Self {
+        let auto_color_slot = (!series.props.color.is_set()).then(|| {
+            if consume_palette_index {
                 self.series_mgr.auto_color_index
             } else {
                 self.series_mgr.auto_color_index.saturating_sub(1)
-            })
-        } else {
-            None
-        };
+            }
+        });
         self.series_mgr
             .push_with_auto_color_slot(series, auto_color_slot);
         if consume_palette_index {
@@ -720,8 +389,8 @@ impl Plot {
         mode: RenderExecutionMode,
     ) -> Result<Option<SeriesRasterPlan>> {
         let color = series.color_with_alpha(Color::from_rgb(0, 0, 0));
-        let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
-        let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let line_width = self.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
+        let line_style = series.props.line_style.value_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
 
         let plan = match (&series.series_type, resolved) {
@@ -746,7 +415,7 @@ impl Plot {
                 let mut marker_points: Vec<Point2f> = Vec::new();
 
                 for mut points in subpaths {
-                    if series.marker_style.is_none()
+                    if series.props.marker_style.value().is_none()
                         && series.x_errors.is_none()
                         && series.y_errors.is_none()
                         && let Some(canonicalized) = canonicalize_line_points_exact(points.as_ref())
@@ -767,7 +436,7 @@ impl Plot {
                         points = reduced.into();
                     }
 
-                    if series.marker_style.is_some() {
+                    if series.props.marker_style.value().is_some() {
                         marker_points.extend_from_slice(points.as_ref());
                     }
 
@@ -780,8 +449,9 @@ impl Plot {
                     );
                 }
 
-                if let Some(marker_style) = series.marker_style {
-                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                if let Some(marker_style) = series.props.marker_style.cloned() {
+                    let marker_size =
+                        self.dpi_scaled_line_width(series.props.marker_size.value_or(8.0));
                     let marker_edge = self.resolved_marker_edge(series, color);
                     raster_plan.push_markers(
                         marker_points.into(),
@@ -795,8 +465,9 @@ impl Plot {
                 Some(raster_plan)
             }
             (SeriesType::Scatter { .. }, ResolvedSeries::Scatter { x, y }) => {
-                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0));
-                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_size =
+                    self.dpi_scaled_line_width(series.props.marker_size.value_or(10.0));
+                let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
                 let points = project_xy_points(
                     x,
                     y,
@@ -833,7 +504,7 @@ impl Plot {
                 RectGridBatch::from_heatmap_data(
                     data,
                     heatmap_plot_area,
-                    data.config.alpha * series.alpha.unwrap_or(1.0),
+                    data.config.alpha * series.props.alpha.value_or(1.0),
                 )
                 .map(|rect_grid| {
                     let mut raster_plan = SeriesRasterPlan::default();
@@ -845,6 +516,29 @@ impl Plot {
         };
 
         Ok(plan)
+    }
+
+    /// Draw the colour key this series asks for, if it asks for one.
+    ///
+    /// The request comes from [`Plot::series_colorbar_request`] — the same
+    /// dispatcher the right-margin reservation and the SVG export read. Routing
+    /// the raster draw through it too is what stops a plot type from reserving
+    /// room for a key that is never drawn, which is exactly how quiver shipped a
+    /// `colorbar` setting that did nothing.
+    fn draw_series_colorbar(
+        &self,
+        renderer: &mut SkiaRenderer,
+        series_type: &SeriesType,
+        plot_area: tiny_skia::Rect,
+    ) -> Result<()> {
+        let Some(request) = self.series_colorbar_request(series_type) else {
+            return Ok(());
+        };
+        let (x, y, width, height) = self.colorbar_rect(plot_area);
+        crate::render::colorbar::draw_colorbar(
+            renderer,
+            &request.spec_at(x, y, width, height, self.display.theme.foreground),
+        )
     }
 
     pub(super) fn render_series_overlays_after_raster(
@@ -906,7 +600,7 @@ impl Plot {
                             continue;
                         }
 
-                        let alpha = data.config.alpha * series.alpha.unwrap_or(1.0);
+                        let alpha = data.config.alpha * series.props.alpha.value_or(1.0);
                         let cell_color = if alpha < 1.0 {
                             data.get_color(value).with_alpha(alpha)
                         } else {
@@ -926,13 +620,7 @@ impl Plot {
                     }
                 }
 
-                if let Some(request) = Self::heatmap_colorbar_request(data, &self.display.theme) {
-                    let (x, y, width, height) = self.colorbar_rect(plot_area);
-                    crate::render::colorbar::draw_colorbar(
-                        renderer,
-                        &request.spec_at(x, y, width, height, self.display.theme.foreground),
-                    )?;
-                }
+                self.draw_series_colorbar(renderer, &series.series_type, plot_area)?;
             }
             _ => {}
         }
@@ -1061,11 +749,11 @@ impl Plot {
         y_max: f64,
         mode: RenderExecutionMode,
     ) -> Result<()> {
-        let base_color = series.color.unwrap_or(Color::from_rgb(0, 0, 0));
-        let alpha = series.alpha.unwrap_or(1.0);
+        let base_color = series.props.color.value_or(Color::from_rgb(0, 0, 0));
+        let alpha = series.props.alpha.value_or(1.0);
         let color = series.color_with_alpha(Color::from_rgb(0, 0, 0)); // Default black
-        let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
-        let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let line_width = self.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
+        let line_style = series.props.line_style.value_or(LineStyle::Solid);
         let clip_rect = clip_rect_from_plot_area(plot_area);
 
         if let Some(raster_plan) = self.build_prepared_series_raster_plan(
@@ -1342,8 +1030,9 @@ impl Plot {
             }
             (SeriesType::ErrorBars { .. }, ResolvedSeries::ErrorBars { x, y, y_errors }) => {
                 // Draw markers at data points
-                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_size =
+                    self.dpi_scaled_line_width(series.props.marker_size.value_or(8.0));
+                let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
                 let marker_edge = self.resolved_marker_edge(series, color);
 
                 for (&x_value, &y_value) in x.iter().zip(y.iter()) {
@@ -1403,8 +1092,9 @@ impl Plot {
                 },
             ) => {
                 // Draw markers at data points
-                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
-                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_size =
+                    self.dpi_scaled_line_width(series.props.marker_size.value_or(8.0));
+                let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
                 let marker_edge = self.resolved_marker_edge(series, color);
 
                 for (&x_value, &y_value) in x.iter().zip(y.iter()) {
@@ -1475,7 +1165,7 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
                 if let Some(request) = data.colorbar(&self.display.theme) {
                     let (x, y, width, height) = self.colorbar_rect(plot_area_rect);
@@ -1502,7 +1192,7 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
             }
             (SeriesType::Ecdf { data }, ResolvedSeries::Other(_)) => {
@@ -1522,7 +1212,7 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
             }
             (SeriesType::Violin { data }, ResolvedSeries::Other(_)) => {
@@ -1542,7 +1232,7 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
             }
             (SeriesType::Boxen { data }, ResolvedSeries::Other(_)) => {
@@ -1562,7 +1252,7 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
             }
             (SeriesType::Quiver { data }, ResolvedSeries::Other(_)) => {
@@ -1576,8 +1266,10 @@ impl Plot {
                     y_max,
                     color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
+
+                self.draw_series_colorbar(renderer, &series.series_type, plot_area)?;
             }
             (SeriesType::Contour { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Contour
@@ -1596,16 +1288,10 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
 
-                if let Some(request) = Self::contour_colorbar_request(data, &self.display.theme) {
-                    let (x, y, width, height) = self.colorbar_rect(plot_area);
-                    crate::render::colorbar::draw_colorbar(
-                        renderer,
-                        &request.spec_at(x, y, width, height, self.display.theme.foreground),
-                    )?;
-                }
+                self.draw_series_colorbar(renderer, &series.series_type, plot_area)?;
             }
             (SeriesType::Pie { data }, ResolvedSeries::Other(_)) => {
                 // Use PlotRender trait to render Pie with 1:1 aspect ratio
@@ -1625,7 +1311,7 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                 )?;
             }
             (SeriesType::Radar { data }, ResolvedSeries::Other(_)) => {
@@ -1642,7 +1328,7 @@ impl Plot {
                     &radar_theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                     Some(&self.layout.grid_style),
                 )?;
             }
@@ -1666,7 +1352,7 @@ impl Plot {
                     &self.display.theme,
                     base_color,
                     alpha,
-                    series.line_width,
+                    series.props.line_width.cloned(),
                     Some(&self.layout.grid_style),
                 )?;
             }
@@ -1695,8 +1381,8 @@ impl Plot {
         mode: RenderExecutionMode,
     ) -> Result<()> {
         let color = series.color_with_alpha(Color::from_rgb(0, 0, 0));
-        let line_width = self.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
-        let line_style = series.line_style.clone().unwrap_or(LineStyle::Solid);
+        let line_width = self.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
+        let line_style = series.props.line_style.value_or(LineStyle::Solid);
         let clip_rect = (
             plot_area.x(),
             plot_area.y(),
@@ -1735,8 +1421,9 @@ impl Plot {
 
                 renderer
                     .draw_polyline_clipped(&points, color, line_width, line_style, clip_rect)?;
-                if let Some(marker_style) = series.marker_style {
-                    let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(8.0));
+                if let Some(marker_style) = series.props.marker_style.cloned() {
+                    let marker_size =
+                        self.dpi_scaled_line_width(series.props.marker_size.value_or(8.0));
                     let marker_edge = self.resolved_marker_edge(series, color);
                     for &(px, py) in &points {
                         renderer.draw_marker_styled_clipped(
@@ -1772,8 +1459,9 @@ impl Plot {
                         PlottingError::RenderError(format!("GPU transform failed: {}", e))
                     })?;
 
-                let marker_size = self.dpi_scaled_line_width(series.marker_size.unwrap_or(10.0));
-                let marker_style = series.marker_style.unwrap_or(MarkerStyle::Circle);
+                let marker_size =
+                    self.dpi_scaled_line_width(series.props.marker_size.value_or(10.0));
+                let marker_style = series.props.marker_style.value_or(MarkerStyle::Circle);
                 let marker_edge = self.resolved_marker_edge(series, color);
 
                 // Draw markers at transformed coordinates
@@ -2387,6 +2075,7 @@ impl Plot {
         match series_type {
             SeriesType::Heatmap { data } => Self::heatmap_colorbar_request(data, theme),
             SeriesType::Contour { data } => Self::contour_colorbar_request(data, theme),
+            SeriesType::Quiver { data } => data.colorbar(theme),
             SeriesType::Computed { data } => data.colorbar(theme),
             _ => None,
         }

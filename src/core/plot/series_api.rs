@@ -1614,12 +1614,12 @@ impl Plot {
     /// counter alone so the next automatic series keeps the palette order the
     /// caller sees.
     pub(super) fn push_builder_series(mut self, series: PlotSeries) -> Self {
-        let auto_color_slot = if series.color.is_none() && series.color_source.is_none() {
+        let auto_color_slot = if series.props.color.is_set() {
+            None
+        } else {
             let slot = self.series_mgr.auto_color_index;
             self.series_mgr.auto_color_index += 1;
             Some(slot)
-        } else {
-            None
         };
 
         self.series_mgr
@@ -1634,27 +1634,26 @@ impl Plot {
 /// type, so it is written once here instead of being restated per plot type —
 /// which is what let the old per-type constructors drift apart.
 pub(super) fn series_from_style(series_type: SeriesType, style: SeriesStyle) -> PlotSeries {
+    // A non-Cartesian series is always drawn into an inset, so it always carries
+    // a placement — an untouched one being `None` here and the default there is
+    // exactly the drift that had pie, radar and polar each defaulting it in
+    // their own constructor while every other plot type did not.
+    let inset_layout = if Plot::is_non_cartesian_series_type(&series_type) {
+        Some(style.inset_layout.unwrap_or_default().normalized())
+    } else {
+        style.inset_layout
+    };
+
     PlotSeries {
         series_type,
         streaming_source: style.streaming_source,
         label: style.label,
-        color: style.color,
-        color_source: style.color_source,
-        line_width: style.line_width,
-        line_width_source: style.line_width_source,
-        line_style: style.line_style,
-        line_style_source: style.line_style_source,
-        marker_style: style.marker_style,
-        marker_style_source: style.marker_style_source,
-        marker_size: style.marker_size,
-        marker_size_source: style.marker_size_source,
+        props: style.props,
         marker_edge: None,
-        alpha: style.alpha,
-        alpha_source: style.alpha_source,
         y_errors: style.y_errors,
         x_errors: style.x_errors,
         error_config: style.error_config,
-        inset_layout: style.inset_layout,
+        inset_layout,
         group_id: None,
         resolved_radar_colors: None,
     }
@@ -1754,7 +1753,7 @@ impl PlotBuilder<crate::plots::heatmap::HeatmapConfig> {
                 // Chaining continues on invalid data; the error surfaces from
                 // the terminal render/save call.
                 plot.set_pending_ingestion_error(PlottingError::DataExtractionFailed {
-                    source: "heatmap".to_string(),
+                    origin: "heatmap".to_string(),
                     message,
                 });
                 Arc::new(crate::plots::heatmap::HeatmapData {
@@ -2002,18 +2001,9 @@ impl PlotBuilder<crate::plots::continuous::hexbin::HexbinConfig> {
         self
     }
 
-    /// Show or hide the colorbar. It is on by default, because the colour of a
-    /// hexagon is the whole reading and nothing else decodes it.
-    pub fn colorbar(mut self, show: bool) -> Self {
-        self.config = std::mem::take(&mut self.config).colorbar(show);
-        self
-    }
-
-    /// Caption for the colorbar — what the colours are counting or measuring.
-    pub fn colorbar_label(mut self, label: impl Into<String>) -> Self {
-        self.config = std::mem::take(&mut self.config).colorbar_label(label);
-        self
-    }
+    // `colorbar`, `colorbar_label`, `colorbar_tick_font_size` and
+    // `colorbar_label_font_size` come from `impl_colorbar_builder_methods!`,
+    // which every plot type that draws a colour key shares.
 
     pub(super) fn finalize(self) -> Plot {
         let PlotBuilder {
@@ -2358,8 +2348,8 @@ mod tests {
 
         let series = only_series(&plot);
         assert_eq!(series.label.as_deref(), Some("samples"));
-        assert_eq!(series.color, Some(Color::RED));
-        assert_eq!(series.alpha, Some(0.5));
+        assert_eq!(series.props.color.cloned(), Some(Color::RED));
+        assert_eq!(series.props.alpha.cloned(), Some(0.5));
         assert!(plot.layout.legend.enabled);
     }
 
@@ -2455,10 +2445,10 @@ mod tests {
 
         let series = only_series(&plot);
         assert_eq!(
-            series.marker_style,
+            series.props.marker_style.cloned(),
             Some(crate::render::MarkerStyle::Square)
         );
-        assert_eq!(series.marker_size, Some(11.0));
+        assert_eq!(series.props.marker_size.cloned(), Some(11.0));
     }
 
     #[test]
@@ -2517,8 +2507,8 @@ mod tests {
             series.streaming_source.is_some(),
             "the live buffer must survive finalize"
         );
-        assert_eq!(series.line_width, Some(3.0));
-        assert_eq!(series.line_style, Some(LineStyle::Dashed));
+        assert_eq!(series.props.line_width.cloned(), Some(3.0));
+        assert_eq!(series.props.line_style.cloned(), Some(LineStyle::Dashed));
         assert_eq!(series.label.as_deref(), Some("live"));
     }
 
@@ -2534,8 +2524,11 @@ mod tests {
         assert!(matches!(series.series_type, SeriesType::Scatter { .. }));
         assert!(series.streaming_source.is_some());
         // Scatter's default marker still applies, exactly as for `scatter()`.
-        assert_eq!(series.marker_style, Some(MarkerStyle::Circle));
-        assert_eq!(series.marker_size, Some(9.0));
+        assert_eq!(
+            series.props.marker_style.cloned(),
+            Some(MarkerStyle::Circle)
+        );
+        assert_eq!(series.props.marker_size.cloned(), Some(9.0));
     }
 
     #[test]
@@ -2667,7 +2660,7 @@ mod computed_series_tests {
         for series in &plot.series_mgr.series {
             assert!(matches!(series.series_type, SeriesType::Computed { .. }));
             assert!(series.label.is_some());
-            assert!(series.color.is_some());
+            assert!(series.props.color.value().is_some());
         }
     }
 

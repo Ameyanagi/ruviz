@@ -158,13 +158,13 @@ impl HexbinConfig {
 
     /// Colorbar tick label size, in points.
     pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
-        self.colorbar_tick_font_size = Some(size);
+        self.colorbar_tick_font_size = Some(size.max(1.0));
         self
     }
 
     /// Colorbar caption size, in points.
     pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
-        self.colorbar_label_font_size = Some(size);
+        self.colorbar_label_font_size = Some(size.max(1.0));
         self
     }
 

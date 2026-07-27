@@ -322,11 +322,11 @@ impl PreparedPlot {
                             let color =
                                 series.color_with_alpha(crate::render::Color::from_rgb(0, 0, 0));
                             let line_width =
-                                plot.dpi_scaled_line_width(series.line_width.unwrap_or(2.0));
+                                plot.dpi_scaled_line_width(series.props.line_width.value_or(2.0));
                             let line_style = series
+                                .props
                                 .line_style
-                                .clone()
-                                .unwrap_or(crate::render::LineStyle::Solid);
+                                .value_or(crate::render::LineStyle::Solid);
                             plan.execute(renderer)?;
                             plot.render_series_overlays_after_raster(
                                 series,
@@ -810,7 +810,10 @@ mod tests {
         let cached = cache.as_ref().expect("style shell should be cached");
         assert_eq!(cached.key, key_before);
         assert_ne!(cached.key, key_after);
-        assert_eq!(cached.plot.series_mgr.series[0].color, Some(Color::RED));
+        assert_eq!(
+            cached.plot.series_mgr.series[0].props.color.cloned(),
+            Some(Color::RED)
+        );
     }
 
     #[test]

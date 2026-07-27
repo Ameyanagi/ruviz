@@ -6,24 +6,6 @@ struct CachedResolvedData {
     values: Arc<[f64]>,
 }
 
-fn resolve_reactive_style<T: Clone>(
-    source: &ReactiveValue<T>,
-    time: f64,
-    cache: &mut HashMap<data::ReactiveSourceId, T>,
-) -> T {
-    if let Some(source_id) = source.source_id() {
-        if let Some(value) = cache.get(&source_id) {
-            return value.clone();
-        }
-
-        let value = source.resolve(time);
-        cache.insert(source_id, value.clone());
-        return value;
-    }
-
-    source.resolve(time)
-}
-
 fn resolve_plot_data<'a>(
     source: &'a PlotData,
     time: f64,
@@ -1253,39 +1235,21 @@ impl Plot {
                 .flatten()
                 .unwrap_or(series_index);
 
-            let color = series
-                .color_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut color_cache))
-                .or(series.color);
-            let line_width = series
-                .line_width_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
-                .or(series.line_width);
+            let color = series.props.color.resolve(time, &mut color_cache);
+            let line_width = series.props.line_width.resolve(time, &mut f32_cache);
             let line_style = series
-                .line_style_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut line_style_cache))
-                .or_else(|| series.line_style.clone())
+                .props
+                .line_style
+                .resolve(time, &mut line_style_cache)
                 .unwrap_or_else(|| theme.line_style.clone());
             let marker_style = series
-                .marker_style_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut marker_style_cache))
-                .or(series.marker_style);
-            let marker_size = series
-                .marker_size_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
-                .or(series.marker_size);
-            let alpha = series
-                .alpha_source
-                .as_ref()
-                .map(|source| resolve_reactive_style(source, time, &mut f32_cache))
-                .or(series.alpha);
+                .props
+                .marker_style
+                .resolve(time, &mut marker_style_cache);
+            let marker_size = series.props.marker_size.resolve(time, &mut f32_cache);
+            let alpha = series.props.alpha.resolve(time, &mut f32_cache);
             let resolved_color = resolver.series_color(color, palette_slot);
-            let has_top_level_color = series.color.is_some() || series.color_source.is_some();
+            let has_top_level_color = series.props.color.is_set();
             let radar_colors = match &series.series_type {
                 SeriesType::Radar { data } => Some(Arc::from(
                     data.series
@@ -1466,19 +1430,36 @@ impl Plot {
 
         debug_assert_eq!(resolved.series_mgr.series.len(), style.series.len());
         for (series, series_style) in resolved.series_mgr.series.iter_mut().zip(&style.series) {
-            series.color = Some(series_style.color);
-            series.color_source = None;
-            series.line_width = series_style.line_width;
-            series.line_width_source = None;
-            series.line_style = Some(series_style.line_style.clone());
-            series.line_style_source = None;
-            series.marker_style = series_style.marker_style;
-            series.marker_style_source = None;
-            series.marker_size = series_style.marker_size;
-            series.marker_size_source = None;
-            series.alpha = Some(series_style.alpha);
-            series.alpha_source = None;
+            // Each write installs this frame's answer and retires the source
+            // that produced it; `clear_sources` then catches any property
+            // this loop does not name, so a newly declared one cannot survive as
+            // a live source that re-samples over the frame.
+            series
+                .props
+                .color
+                .replace_resolved(Some(series_style.color));
+            series
+                .props
+                .line_width
+                .replace_resolved(series_style.line_width);
+            series
+                .props
+                .line_style
+                .replace_resolved(Some(series_style.line_style.clone()));
+            series
+                .props
+                .marker_style
+                .replace_resolved(series_style.marker_style);
+            series
+                .props
+                .marker_size
+                .replace_resolved(series_style.marker_size);
+            series
+                .props
+                .alpha
+                .replace_resolved(Some(series_style.alpha));
             series.resolved_radar_colors = series_style.radar_colors.clone();
+            series.props.clear_sources();
         }
         resolved
     }
@@ -1611,14 +1592,12 @@ impl Plot {
     }
 
     pub(super) fn has_dynamic_style_sources(&self) -> bool {
-        self.series_mgr.series.iter().any(|series| {
-            series.color_source.is_some()
-                || series.line_width_source.is_some()
-                || series.line_style_source.is_some()
-                || series.marker_style_source.is_some()
-                || series.marker_size_source.is_some()
-                || series.alpha_source.is_some()
-        })
+        // One traversal, on `PlotSeries` itself: a `*_source` field only ever
+        // holds a non-static value, so "is set" and "is reactive" agree.
+        self.series_mgr
+            .series
+            .iter()
+            .any(PlotSeries::has_reactive_style_sources)
     }
 
     pub(crate) fn collect_reactive_versions(&self) -> Vec<u64> {

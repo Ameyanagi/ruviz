@@ -5,7 +5,7 @@ use std::fs;
 #[cfg(feature = "typst-math")]
 fn run() -> PlotResult<()> {
     let out_dir = "generated/examples";
-    fs::create_dir_all(out_dir).map_err(ruviz::core::PlottingError::IoError)?;
+    fs::create_dir_all(out_dir).map_err(ruviz::core::PlottingError::from)?;
 
     let x: Vec<f64> = (0..80).map(|i| i as f64 * 0.05).collect();
     let y: Vec<f64> = x.iter().map(|&v| (-v).exp()).collect();

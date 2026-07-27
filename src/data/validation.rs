@@ -41,11 +41,21 @@ where
         return Err(PlottingError::EmptyDataSet);
     }
 
-    let values: Vec<f64> = (0..data.len())
-        .filter_map(|i| data.get(i))
-        .map(|v| (*v).into())
-        .filter(|v: &f64| v.is_finite())
-        .collect();
+    // Contiguous storage is walked as a slice, which LLVM can vectorise;
+    // everything else falls back to the bounds-checked index path. Both arms
+    // yield the same values in the same order, so only the speed differs.
+    let values: Vec<f64> = match data.as_slice() {
+        Some(slice) => slice
+            .iter()
+            .map(|v| (*v).into())
+            .filter(|v: &f64| v.is_finite())
+            .collect(),
+        None => (0..data.len())
+            .filter_map(|i| data.get(i))
+            .map(|v| (*v).into())
+            .filter(|v: &f64| v.is_finite())
+            .collect(),
+    };
 
     if values.is_empty() {
         return Err(PlottingError::InvalidData {
@@ -130,5 +140,49 @@ mod tests {
         let data: Vec<i32> = vec![1, 2, 3, 4, 5];
         let result = collect_finite_values(&data).unwrap();
         assert_eq!(result, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+    }
+
+    /// A type with no contiguous view must produce exactly what the slice fast
+    /// path produces, non-finite payload and all — otherwise the optimisation
+    /// would be a behaviour change wearing a performance label.
+    #[test]
+    fn test_both_arms_agree_on_a_payload_full_of_holes() {
+        /// `Vec<f64>` with `as_slice` deliberately left at its default `None`,
+        /// so this exercises the index path on identical bytes.
+        struct NoSlice(Vec<f64>);
+
+        impl Data1D<f64> for NoSlice {
+            fn len(&self) -> usize {
+                self.0.len()
+            }
+
+            fn get(&self, index: usize) -> Option<&f64> {
+                self.0.get(index)
+            }
+
+            fn iter(&self) -> Box<dyn Iterator<Item = &f64> + '_> {
+                Box::new(self.0.iter())
+            }
+        }
+
+        let payload = vec![
+            1.5,
+            f64::NAN,
+            -0.0,
+            f64::INFINITY,
+            2.5,
+            f64::NEG_INFINITY,
+            0.0,
+        ];
+
+        let fast = collect_finite_values(&payload).expect("contiguous arm");
+        let slow = collect_finite_values(&NoSlice(payload.clone())).expect("index arm");
+
+        assert_eq!(
+            fast.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            slow.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            "the two arms must agree bit for bit, including on -0.0"
+        );
+        assert_eq!(fast, vec![1.5, -0.0, 2.5, 0.0]);
     }
 }

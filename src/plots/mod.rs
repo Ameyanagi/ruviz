@@ -361,6 +361,42 @@ mod catalog_is_true {
              and the builder now exposes {expected} plot types"
         );
 
+        // Asserting one exact sentence is not a guard: the same fact is stated
+        // more than once, in different words. An earlier version of this test
+        // checked only the sentence above, and the feature bullet near the top
+        // of src/lib.rs went on saying "19 Plot Types" for three commits after
+        // the catalogue reached 26. Find EVERY "<n> plot type(s)" claim in the
+        // documents and require each number to be one we actually stand behind.
+        let with_3d = expected + CATALOG_3D.len();
+        for (doc_name, doc) in [
+            ("src/lib.rs", crate_doc),
+            ("README.md", include_str!("../../README.md")),
+        ] {
+            let lowered = doc.to_lowercase();
+            for (offset, _) in lowered.match_indices("plot type") {
+                // Walk back over the whitespace and grab the preceding token.
+                let head = &lowered[..offset];
+                let token: String = head
+                    .trim_end_matches(|c: char| c.is_whitespace() || c == '*')
+                    .chars()
+                    .rev()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                let Ok(claimed) = token.parse::<usize>() else {
+                    continue; // not a numeric claim, e.g. "each plot type"
+                };
+                assert!(
+                    claimed == expected || claimed == with_3d,
+                    "{doc_name} claims \"{claimed} plot types\", but the builder \
+                     exposes {expected} ({with_3d} with the `3d` feature). Every \
+                     statement of the count has to move together."
+                );
+            }
+        }
+
         let readme = include_str!("../../README.md");
         assert!(
             readme.contains(&format!("{expected} plot types"))

@@ -80,7 +80,7 @@ Also in scope for "one obvious way to do it": four entry points currently draw a
 
 ## Status (2026-07-27)
 
-Phases 1–8 have landed on `feat/3d-implementation` except §6.1; Phases 9 and 10
+Phases 1–8 have landed on `feat/3d-implementation`; Phases 9 and 10
 are partly done. **The phase sections below describe each problem as it was
 found, not as the code is now** — every one carries a status line naming the
 commit that closed it. Read the status line first.
@@ -100,19 +100,19 @@ name their commit.
 | 3.6 — `BarConfig` threading | done | `846977e` |
 | 4 — Correctness hazards | done | `e2cd5ca` |
 | 5 — Truth in advertising | done | `258f3e8` |
-| 6 — Rendering presentation | **mostly done** | 6.2 (`Option<f32>` colorbar fonts), 6.3 (`POLAR_LABEL_RADIUS`/`POLAR_BOUNDS_RADIUS`, real polar grid) and 6.4 (z-axis edge from the corner hull, orthographic fit) landed alongside Phase 10. **Open: 6.1** — categorical tick-label collisions, and the quiver colour key |
+| 6 — Rendering presentation | done | 6.2 (`Option<f32>` colorbar fonts), 6.3 (`POLAR_LABEL_RADIUS`/`POLAR_BOUNDS_RADIUS`, real polar grid) and 6.4 (z-axis edge from the corner hull, orthographic fit) landed alongside Phase 10. §6.1 — the measured/rotated/thinned x tick label row and the quiver colour key — closed in this tranche |
 | 7 — 3D correctness | done | `258f3e8` |
 | 8 — Test and CI credibility | done | `258f3e8` |
-| 9 — Structural | **partly done** | builder unification `d027f46`; duplicate `PlotArea` retired with the parallel renderer in `258f3e8`; `ARCHITECTURE.md` now matches the tree. `Styled<T>`, `thiserror`, the `Vec<f64>` fast path, the gpui workspace split and the `rfd` pin are open |
+| 9 — Structural | **partly done** | builder unification `d027f46`; duplicate `PlotArea` retired with the parallel renderer in `258f3e8`; `ARCHITECTURE.md` now matches the tree. `thiserror`, the `Vec<f64>` fast path and the owned-field `Styled<T>` are closed. The gpui workspace split and the `rfd` pin are open |
 | 10 — Unwired plot types | done | `flow` deleted, regplot CI fixed and the catalog made self-checking in this tranche; the five renderer-only types (`rug`, `strip`, `swarm`, `hexbin`, `dendrogram`) are wired through one `SeriesType::Computed` variant and the `ComputedSeries` trait |
 
 Documentation assets were regenerated twice as the renderer changed: `21bf2d1`
 and `e8c9266`.
 
-Open, in rough order of value: §6.1 categorical tick-label collisions and the
-quiver colour key, the grouped/stacked bar and stacked-area builders (which need
-their own multi-series shape, not another `ComputedSeries`), the 3D colorbar
-caption, `add_axes`, then the rest of Phase 9.
+Open, in rough order of value: the grouped/stacked bar and stacked-area builders
+(which need their own multi-series shape, not another `ComputedSeries`), the 3D
+colorbar caption, `add_axes`, then the rest of Phase 9 (the gpui workspace
+split, the `rfd` pin).
 
 The `Plot` builder now exposes **26** plot types, plus 4 from `Plot3D` — 30 in
 total. `src/plots/mod.rs::catalog_is_true` reads the builder's own source and
@@ -398,32 +398,59 @@ real — so regressions there are invisible. `docs/BENCHMARK_RESULTS.md` should 
 
 ## Phase 6 — Rendering presentation (M)
 
-> **Status: mostly done**, landed alongside Phase 10. 6.2 — both
+> **Status: done.** 6.2, 6.3 and 6.4 landed alongside Phase 10 — both
 > `colorbar_tick_font_size` and `colorbar_label_font_size` are `Option<f32>`
-> defaulting to the theme on heatmap and contour alike. 6.3 —
+> defaulting to the theme on heatmap and contour alike;
 > `POLAR_LABEL_RADIUS`/`POLAR_BOUNDS_RADIUS` mirror the radar pair and
-> `show_rgrid`/`show_thetagrid` reach a real grid. 6.4 — the z axis is anchored
-> from the projected corner hull and the orthographic camera fits the box to the
-> frame.
->
-> **Still open, and now the largest remaining block of visible quality:**
-> - **6.1 categorical tick-label collisions.** There is still no
->   `xtick_rotation` anywhere in the tree, and nothing measures label extents
->   before laying out the bottom margin. `system__longlabels.png` is still an
->   illegible run of ten region names.
-> - **The quiver colour key.** `QuiverConfig` still has no `colorbar` field, so
->   `.color_by_magnitude(true)` still produces an undecodable colour channel.
+> `show_rgrid`/`show_thetagrid` reach a real grid; the z axis is anchored from
+> the projected corner hull and the orthographic camera fits the box to the
+> frame. §6.1 and the quiver colour key closed in the following tranche.
 
 ### 6.1 Categorical tick-label collisions
 
-`system__longlabels.png` is an illegible solid run of ten region names, and the canvas clamp
-at `src/render/skia.rs:2134-2145` additionally shifts end labels off their own bars. The SVG
-path (`render.rs:2837-2843`) does not measure at all.
+> **Status: done.**
 
-Accumulate `[label_x, label_x + width]` intervals; on overlap re-emit rotated −45° (rotated
-text already exists for the y label), falling back to every k-th label; reserve the bottom
-margin from the measured rotated extent **before** computing the plot area. Expose
-`xtick_rotation` — today there is no knob at all.
+`system__longlabels.png` was an illegible solid run of ten region names, and the canvas clamp
+at `src/render/skia.rs:2134-2145` additionally shifted end labels off their own bars. Neither
+backend measured the categorical row at all, and the bottom margin was reserved from the
+numeric x tick labels a bar chart never draws.
+
+What landed is one mechanism rather than a fix per backend:
+
+- one measurement — `SkiaRenderer::measure_x_tick_row` → `XTickRowMetrics`;
+- one policy — `XTickRowMetrics::plan` → `XTickLabelPlan { rotated, stride, extent, bounds }`;
+- one centre formula — `SkiaRenderer::categorical_label_centers`, which replaced the SVG
+  path's hand-rolled copy;
+- one horizontal-placement formula — `XTickRowBounds::label_left`;
+- one row drawer — `draw_x_tick_label_row`, generic over the backend-neutral
+  `ColorbarCanvas`, called by both the raster drawer and the SVG path.
+
+The old canvas clamp was replaced rather than simply deleted. Deleting it outright let a
+first or last label wider than the outer margin run off the figure and be cut by the canvas
+edge — a 400×240 bar chart with 35-character category names lost the left end of its first
+label. `XTickRowBounds` is the replacement: the row is kept inside the canvas less one
+`X_TICK_LABEL_GAP_EM` gutter — the same clearance a label keeps from its neighbour it also
+keeps from the figure edge — and `XTickRowBounds::label_left` is asked by `clearing_stride`
+*and* by `draw_x_tick_label_row`, so a label is measured where it will actually land. That
+last part is the difference from the clamp that was removed: sliding an end label inwards can
+no longer create the overlap the stride was chosen to avoid.
+
+The plan is resolved once in `Plot::resolve_x_tick_label_row`, shared by the raster and SVG
+entry points, so the row that was measured is the row that is drawn. The row is measured
+against the horizontal pass's plot area, then the layout is **re-computed** with
+`plan.extent` as the reserved x-tick height before `plot_area_from_layout`. "Does a rotated
+row fit?" is answered by computing a trial layout and asking it (`x_tick_row_fits`), so it is
+correct for content-driven margins (capped by canvas fraction) and for fixed/proportional
+margins that cannot grow at all; the latter fall back to every k-th label.
+
+The knob is `xtick_rotation(XTickRotation)` on both `Plot` and `PlotBuilder<C>`, with
+`XTickRotation` re-exported from `ruviz::render` and the prelude:
+`Auto` (default) / `Horizontal` / `Vertical`.
+
+Two deviations from the sketch above, both deliberate: the turn is a quarter turn rather than
+−45°, because `draw_text_rotated` is 90°-only in the raster text engine and an SVG-only −45°
+would put the two backends back out of step; and the SVG path needed no measurement code of
+its own, because it already builds a `SkiaRenderer` to measure with.
 
 ### 6.2 One colorbar
 
@@ -433,9 +460,18 @@ fields `Option<f32>` defaulting to `None` → theme values, so `Theme::ieee()`'s
 getting a 12pt colorbar. Add `label: Option<String>` to `Colorbar3D`
 (`src/core/plot3d/types.rs:88-95`).
 
-Give quiver a colour key: `QuiverConfig` has `color_by_magnitude` and `cmap` but no `colorbar`
-field, and `colorbar_measurement_spec` (`render.rs:1243-1281`) matches only Heatmap and
-Contour — so `.color_by_magnitude(true)` produces an undecodable colour channel.
+Give quiver a colour key: `QuiverConfig` had `color_by_magnitude` and `cmap` but no
+`colorbar` field, and `colorbar_measurement_spec` matched only Heatmap and Contour — so
+`.color_by_magnitude(true)` produced an undecodable colour channel. **Done:** `QuiverConfig`
+carries the same four colorbar fields and the same `colorbar_font_sizes(&Theme)` resolver as
+contour/heatmap/hexbin, `QuiverPlotData::colorbar(&Theme) -> Option<ColorbarRequest>` is fed
+from the existing `magnitude_range`, and `series_colorbar_request` dispatches to it — which
+gives the right-margin reservation, the raster draw and the SVG draw together. The four
+builder-side setters are no longer written per plot type at all: one
+`impl_colorbar_builder_methods!` generates `colorbar`, `colorbar_label`,
+`colorbar_tick_font_size` and `colorbar_label_font_size` for all four colour-key builders,
+which is what stopped heatmap and quiver shipping a colorbar their builders could not reach
+while contour and hexbin exposed two of the four.
 
 ### 6.3 Polar grid
 
@@ -505,9 +541,10 @@ square where radar fills ~80%.
 > `Deref` are deleted, and `legend_position` is defined once on the generic
 > impl instead of being macro-generated 13 times. The duplicate public
 > `PlotArea` went with the parallel renderer in `258f3e8`, and
-> `ARCHITECTURE.md` now describes files that exist. Still open: `Styled<T>`,
-> the `thiserror` derive, the `Vec<f64>` dynamic-dispatch fast path, moving
-> `crates/ruviz-gpui` to its own workspace, and relaxing the `rfd` pin.
+> `ARCHITECTURE.md` now describes files that exist. The `thiserror` derive and
+> the `Vec<f64>` fast path and the owned-field `Styled<T>` closed in the
+> following tranches. Still open: moving `crates/ruviz-gpui` to its own
+> workspace, and relaxing the `rfd` pin.
 
 Do these only after Phases 1–3; several become much smaller once the duplication is gone.
 
@@ -525,12 +562,82 @@ Do these only after Phases 1–3; several become much smaller once the duplicati
   instantiations and ~61 hand-written forwarders.
 - **`Styled<T>`** to replace the 12 hand-expanded `Option<T>`/`Option<ReactiveValue<T>>` field
   pairs duplicated across `types.rs:275-397` and `builder.rs:432-508`, plus the six-way
-  expansion repeated in six traversals. Adding a seventh reactive property is currently 11
-  mechanical edit sites, each silently omissible — omit one from `collect_source_versions` and
-  you get a permanently stale plot with no error. ~200 lines deleted.
+  expansion repeated in six traversals. Adding a seventh reactive property was 11 mechanical
+  edit sites, each silently omissible — omit one from `collect_source_versions` and you get a
+  permanently stale plot with no error.
+
+  A first tranche introduced the borrowing `Styled<'a, T>` write half and the type-erased
+  `StyleSource` read half, which got the six traversals iterating instead of naming six fields
+  each and folded `construction.rs`'s `has_dynamic_style_sources` and `apply_resolved_style`
+  into single calls. That took the silently-omissible edit sites from ~11 to 0, but a seventh
+  property still cost 7 compile-forced edits.
+
+  The `PlotSeries { .. }` literals in `series_internal.rs` are gone: the nine `add_*_series`
+  constructors for kde, ecdf, contour, pie, radar, violin, boxen, polar and quiver each
+  restated the same twelve-field `SeriesStyle` → `PlotSeries` copy and the same palette
+  block, and all nine now call the `series_from_style` + `push_builder_series` funnels the
+  rest of the crate already used (−300 lines). That cut the edit sites for a seventh reactive
+  property in that file from nine to zero. Two drifts died with them: those nine advanced the
+  auto-colour counter even for an explicitly coloured series while every other plot type did
+  not, and pie/radar/polar each defaulted their inset placement in their own constructor —
+  the placement rule now lives in `series_from_style`, keyed on
+  `Plot::is_non_cartesian_series_type`.
+
+  **Done.** `Styled<T>` is now one *owned* field: `value`, `source` and the property's
+  `normalize` rule, all private, so the "exactly one half is set" invariant has no bypass.
+  The twelve field pairs on `PlotSeries` and `SeriesStyle` collapsed into one
+  `props: SeriesStyleProps` on each, and both hold the *same* type — they can no longer
+  disagree about what a property is or what setting it means.
+
+  The property list is declared once, by `series_style_properties!` in `types.rs`. From that
+  one list the macro generates the fields, `Default` (which is where each property's range
+  rule is attached, so a setter cannot forget to clamp), `Clone`/`Debug`, the `sources()`
+  destructure, and every traversal built on it — `collect_versions`, `has_reactive_sources`,
+  `has_temporal_sources`, `subscribe`, `clear_sources` — plus the traversal tests' per-property
+  fixtures. **Adding a reactive style property is now literally one edit**: measured by adding
+  a seventh (`zorder: f32, normalize = |z| z.max(0.0)`) to a copy of the tree and running
+  `cargo check --all-targets --all-features`, which passed with that single line as the whole
+  diff, and `reactive_style_tests` then covered the new property automatically (8/8, the
+  fixtures being generated from the same list). The 12 hand-written setters are gone with it:
+  every setter is `props.<name>.set(value.into())`.
+
+  `resolve_style` collapsed too — `Styled::resolve(time, cache)` owns the source-vs-value
+  precedence and the per-frame de-duplication, so `construction.rs`'s six five-line blocks are
+  six one-liners and its `resolve_reactive_style` helper is deleted. `apply_resolved_style`
+  writes through `replace_resolved` (value in, source out) and still calls `clear_sources()`
+  as the catch-all, so a property this loop does not name cannot survive as a live source.
+
+  The three remaining `PlotSeries { .. }` literals (one production funnel, two test fixtures)
+  name no style property at all. `series_internal.rs`'s three remaining hand-expanded
+  constructors — line, scatter and bar — now call `series_from_style` and apply their config
+  defaults through `Styled::or_value`, and the palette block those three each restated is one
+  `push_grouped_series` funnel.
 - **`thiserror` derive** on the 60-variant error enum with its 330-line hand-written `Display`
   and hand-written `Error::source`; `IoError(Arc<std::io::Error>)` to unblock `Clone` and
-  delete the 150-line `PendingIngestionErrorKind` mirror. ~450 lines deleted.
+  delete the 150-line `PendingIngestionErrorKind` mirror. ~450 lines deleted. **Done.** All 55
+  variants carry their own `#[error("…")]`, the six messages whose wording depends on an
+  optional field share one `optional_clause` helper, and every variant's own message text is
+  unchanged (verified by set-diff of the 61 old format strings against the new attributes,
+  empty both ways — including the log-axis rejection wording, which reaches the user through
+  `InvalidInput(String)` from a `const` in `src/axes/scale.rs`). Two
+  breaking changes fell out and are intended: `PlottingError::IoError` holds
+  `Arc<std::io::Error>`, so build it with `PlottingError::from(io_error)`; and the `source`
+  *field* of `DataTypeUnsupported`/`NullValueNotAllowed`/`DataExtractionFailed` is renamed to
+  `origin`, because `thiserror` claims any field literally named `source` as the
+  `Error::source` and `String: Error` does not hold — `origin` is the honester name anyway.
+  `PendingIngestionError` now holds the real `PlottingError`, so a deferred ingestion failure
+  keeps its variant instead of being flattened into a string.
+
+  **One composed message did change**, and it is the only one: the deleted mirror enum had no
+  `RaggedData2D` arm, so a ragged 2D input was flattened into
+  `DataExtractionFailed { origin: "ruviz::plot-ingestion" }` on the way in and then wrapped in
+  that same prefix again by the multi-error wrapper on the way out.
+  `Plot::new().heatmap(&vec![vec![1.0, 2.0], vec![3.0]])` used to report
+  `Failed to extract numeric data from ruviz::plot-ingestion: Failed to extract numeric data
+  from ruviz::plot-ingestion: NumericData2D: row 1 has 1 values, expected 2 (and 1 additional
+  ingestion error)` and now reports it with the prefix once. Nothing asserted the stutter,
+  which is how it survived; `test_pending_ingestion_error_wraps_the_first_error_exactly_once`
+  now pins the single-prefix form so the wrapper cannot grow a second one back.
 - **Unify the six rectangle types** — two of them publicly named `PlotArea`
   (`src/plots/traits.rs:41`, in the prelude, and `src/render/parallel.rs:638`) with
   incompatible field sets, plus `LayoutRect`, `Rectangle`, and 41 bare `(f32,f32,f32,f32)`
@@ -539,6 +646,24 @@ Do these only after Phases 1–3; several become much smaller once the duplicati
   `Box<dyn Iterator>`** (`src/data/traits.rs:364-366` omits f64, falling to the blanket impl at
   `:236-250`). A 1M-point `line(&x,&y)` does ~2M dynamically-dispatched `next()` calls where
   two memcpys would do, on top of ~5 full copies before a pixel is drawn.
+
+  **Done — but not the way sketched here.** Adding `f64` to
+  `impl_numeric_data_1d_for_primitive_collections!` produces eight simultaneous E0119s, not
+  one, and the only way through is deleting the `impl<T: Data1D<f64> + ?Sized> NumericData1D`
+  blanket — which silently un-plots `DataView<f64>` and every downstream `Data1D<f64>`
+  implementor, and replaces one mechanism with ten hand-written impls that can drift from the
+  f32/i64 set. Instead `Data1D` gained one defaulted `as_slice(&self) -> Option<&[T]>` bulk
+  hook, overridden by the ten contiguous implementors (Vec, `&Vec`, `[T; N]`, `&[T; N]`,
+  `&[T]`, `[T]`, `Array1`, `ArrayView1`, `DVector`, `SVector`, plus `DataView`). Contiguous
+  f64 storage now ingests as one `to_vec()`; only genuinely non-contiguous sources still walk
+  the boxed iterator. Purely additive, so nothing downstream breaks, and it de-boxes ndarray,
+  nalgebra and downstream types too. The same hook now short-circuits
+  `collect_finite_values` (histogram/boxplot/kde/ecdf/violin/boxen), the radar
+  `series`/`add_series` ingestion, and the pooled coordinate transform.
+  **The GAT conversion should be dropped rather than deferred:** the only production caller of
+  `Data1D::iter` was the blanket impl the hook now bypasses, so a GAT would cost a breaking
+  change to a prelude-exported trait and object safety to de-box a call site that no longer
+  runs.
 - **Move `crates/ruviz-gpui` into its own workspace.** The root `[patch.crates-io]` gpui
   override is workspace-scoped and `default-members` does not exempt it, so even
   `cargo check -p ruviz` needs the zed checkout. `Cargo.lock` carries 38 `git+` entries from 6
@@ -657,7 +782,7 @@ nothing to draw with, so they stay hidden.
 
 ## Suggested sequencing
 
-Batches 1–10 below are **complete except for §6.1 and the remainder of Phase 9** — see the status table at the top for what landed
+Batches 1–10 below are **complete except for the remainder of Phase 9** — see the status table at the top for what landed
 where. Kept for the reasoning about ordering, which still applies to what is
 left.
 
@@ -669,19 +794,20 @@ left.
 | 4 | Phase 3.3 tick generator → unblocks colorbar and contour levels | M | done |
 | 5 | Phase 3.2 bounds → unblocks error whiskers and categorical positions | M | done |
 | 6 | Phase 3.1 bar geometry + 3.6 `BarConfig` → SVG alignment, horizontal/grouped/stacked bar | M | done |
-| 7 | Phase 3.4 legend + 3.5 categorical + Phase 6 presentation | M | legend and categorical done; Phase 6 all but §6.1 |
+| 7 | Phase 3.4 legend + 3.5 categorical + Phase 6 presentation | M | done |
 | 8 | Phase 5 truth-in-advertising + Phase 8 CI credibility | M | done |
 | 9 | Phase 7 3D correctness (independent; can start any time after Batch 1) | M | done |
-| 10 | Phase 9 structural, then Phase 10 unwired types | L | builder unification done; Phase 10 done, including the five `Plot::` builders; `Styled<T>`/`thiserror`/`add_axes` open |
+| 10 | Phase 9 structural, then Phase 10 unwired types | L | builder unification, `thiserror`, the `Vec<f64>` fast path and the owned-field `Styled<T>` done; Phase 10 done, including the five `Plot::` builders; `add_axes` open |
 
 ### What to do next
 
-1. **§6.1 categorical tick-label collisions and the quiver colour key** — the
-   only open items a user would notice in an image.
-2. **`add_axes`** — one feature that unblocks jointplot, pairplot, regplot,
+1. **`add_axes`** — one feature that unblocks jointplot, pairplot, regplot,
    residplot and clustermaps at once, and retires two `#[doc(hidden)]` modules.
-3. **Grouped/stacked bar builders** — the compute and `BarConfig` plumbing are
+2. **Grouped/stacked bar builders** — the compute and `BarConfig` plumbing are
    already there; this is the last row of the Phase 10 table that is pure
    wiring.
-4. **The rest of Phase 9** — `Styled<T>`, the `thiserror` derive, the `Vec<f64>`
-   fast path, the gpui workspace split, the `rfd` pin.
+3. **The rest of Phase 9** — the gpui workspace split and the `rfd` pin.
+4. **Regenerate the goldens and gallery assets** if any categorical figure
+   moved: the bottom margin of a categorical plot is now measured from the
+   category strings rather than from numeric x tick labels that were never
+   drawn.

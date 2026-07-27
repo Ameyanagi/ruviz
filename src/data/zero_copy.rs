@@ -95,6 +95,15 @@ impl<'a, T> Data1D<T> for DataView<'a, T> {
     fn iter(&self) -> Box<dyn Iterator<Item = &T> + '_> {
         Box::new(self.slice.iter())
     }
+
+    /// A `DataView` *is* a borrowed slice, so it is the most obviously
+    /// contiguous implementor in the crate and takes the bulk ingestion path.
+    ///
+    /// The field is read directly rather than through the inherent
+    /// `DataView::as_slice`, which shares this method's name.
+    fn as_slice(&self) -> Option<&[T]> {
+        Some(self.slice)
+    }
 }
 
 /// Owned view storage for materialized data sources.
@@ -240,6 +249,23 @@ mod tests {
         assert_eq!(collected.len(), 5);
         assert_eq!(*collected[0], 1.0);
         assert_eq!(*collected[4], 5.0);
+    }
+
+    /// A `DataView` takes the bulk ingestion path, and takes it on the very
+    /// bytes it was built from — no copy is made to satisfy the hook.
+    #[test]
+    fn test_data_view_offers_its_own_bytes_as_one_slice() {
+        use crate::data::{Data1D, NumericData1D};
+
+        let data = vec![1.0f64, 2.0, 3.0];
+        let view = DataView::from_slice(&data);
+
+        assert_eq!(
+            Data1D::as_slice(&view).map(<[f64]>::as_ptr),
+            Some(data.as_ptr()),
+            "the fast path must borrow the caller's buffer, not a copy of it"
+        );
+        assert_eq!(view.try_collect_f64().expect("f64 ingestion"), data);
     }
 
     #[test]

@@ -50,6 +50,7 @@
 //! ```
 
 use super::data::{PlotData, ReactiveValue};
+use super::types::SeriesStyleProps;
 use crate::render::{Color, LineStyle, MarkerStyle};
 
 /// Extension trait providing a generic conditional combinator for fluent builders.
@@ -315,6 +316,83 @@ macro_rules! impl_inset_builder_methods {
     };
 }
 
+/// Generate the four colour-key setters for every plot type that draws one.
+///
+/// A colour key is the whole reading of a heatmap, a contour, a hexbin or a
+/// magnitude-coloured quiver, so all four spell it identically. Writing the
+/// setters by hand is what let heatmap and quiver ship with a colorbar their
+/// builders could not reach while contour and hexbin exposed two of the four —
+/// generating them from one list makes that divergence impossible.
+///
+/// The four `*Config` types all carry `colorbar: bool`,
+/// `colorbar_label: Option<String>`, `colorbar_tick_font_size: Option<f32>` and
+/// `colorbar_label_font_size: Option<f32>`; the font sizes are normalised here
+/// so one plot type cannot accept a 0 pt caption that another rejects.
+macro_rules! impl_colorbar_builder_methods {
+    ($(($config:ty, $series_name:literal, $reads:literal)),+ $(,)?) => {
+        $(
+            impl PlotBuilder<$config> {
+                #[doc = concat!("Show or hide the colorbar. It is on by default, because ", $reads, ".")]
+                pub fn colorbar(mut self, show: bool) -> Self {
+                    self.config.colorbar = show;
+                    self
+                }
+
+                #[doc = concat!(
+                    "Caption for the colorbar — what this ",
+                    $series_name,
+                    "'s colours are measuring."
+                )]
+                ///
+                /// The caption is drawn rotated a quarter turn beside the bar.
+                pub fn colorbar_label<S: Into<String>>(mut self, label: S) -> Self {
+                    self.config.colorbar_label = Some(label.into());
+                    self
+                }
+
+                /// Set the colorbar tick font size, in points.
+                ///
+                /// Leave it unset to follow the figure's theme.
+                pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
+                    self.config.colorbar_tick_font_size = Some(size.max(1.0));
+                    self
+                }
+
+                /// Set the colorbar caption font size, in points.
+                ///
+                /// Leave it unset to follow the figure's theme.
+                pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
+                    self.config.colorbar_label_font_size = Some(size.max(1.0));
+                    self
+                }
+            }
+        )+
+    };
+}
+
+impl_colorbar_builder_methods!(
+    (
+        crate::plots::heatmap::HeatmapConfig,
+        "heatmap",
+        "the colour of a cell is the whole reading and nothing else decodes it"
+    ),
+    (
+        crate::plots::ContourConfig,
+        "contour",
+        "the colour of a band is the whole reading and nothing else decodes it"
+    ),
+    (
+        crate::plots::continuous::hexbin::HexbinConfig,
+        "hexbin",
+        "the colour of a hexagon is the whole reading and nothing else decodes it"
+    ),
+    (
+        crate::plots::QuiverConfig,
+        "quiver",
+        "an arrow's colour is the only thing that reports its magnitude"
+    ),
+);
+
 /// Marker type for plot input data
 ///
 /// This enum captures the different input types that plot series can have.
@@ -446,30 +524,13 @@ fn validate_quiver_input(x: &[f64], y: &[f64], u: &[f64], v: &[f64]) -> crate::c
 pub struct SeriesStyle {
     /// Series label for legend
     pub label: Option<String>,
-    /// Series color
-    pub color: Option<Color>,
-    /// Reactive series color source
-    pub color_source: Option<ReactiveValue<Color>>,
-    /// Line width override
-    pub line_width: Option<f32>,
-    /// Reactive line width source
-    pub line_width_source: Option<ReactiveValue<f32>>,
-    /// Line style override
-    pub line_style: Option<LineStyle>,
-    /// Reactive line style source
-    pub line_style_source: Option<ReactiveValue<LineStyle>>,
-    /// Marker style (for scatter-like plots)
-    pub marker_style: Option<MarkerStyle>,
-    /// Reactive marker style source
-    pub marker_style_source: Option<ReactiveValue<MarkerStyle>>,
-    /// Marker size
-    pub marker_size: Option<f32>,
-    /// Reactive marker size source
-    pub marker_size_source: Option<ReactiveValue<f32>>,
-    /// Alpha/transparency (0.0 = transparent, 1.0 = opaque)
-    pub alpha: Option<f32>,
-    /// Reactive alpha/transparency source
-    pub alpha_source: Option<ReactiveValue<f32>>,
+    /// The reactive style properties, declared once by
+    /// [`series_style_properties!`](super::types::SeriesStyleProps).
+    ///
+    /// `PlotSeries` holds the same type, and building a series moves this
+    /// straight across — so the two cannot come to disagree about what a
+    /// property is or what setting it means.
+    pub(crate) props: SeriesStyleProps,
     /// Y-axis error bar values
     pub y_errors: Option<crate::plots::error::ErrorValues>,
     /// X-axis error bar values
@@ -480,86 +541,6 @@ pub struct SeriesStyle {
     pub inset_layout: Option<super::InsetLayout>,
     /// Live buffer this series re-reads at render time (streaming series only).
     pub streaming_source: Option<crate::data::StreamingXY>,
-}
-
-impl SeriesStyle {
-    pub(crate) fn set_color_source_value(&mut self, color: ReactiveValue<Color>) {
-        match color {
-            ReactiveValue::Static(color) => {
-                self.color = Some(color);
-                self.color_source = None;
-            }
-            source => {
-                self.color = None;
-                self.color_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_line_width_source_value(&mut self, width: ReactiveValue<f32>) {
-        match width {
-            ReactiveValue::Static(width) => {
-                self.line_width = Some(width.max(0.1));
-                self.line_width_source = None;
-            }
-            source => {
-                self.line_width = None;
-                self.line_width_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_line_style_source_value(&mut self, style: ReactiveValue<LineStyle>) {
-        match style {
-            ReactiveValue::Static(style) => {
-                self.line_style = Some(style);
-                self.line_style_source = None;
-            }
-            source => {
-                self.line_style = None;
-                self.line_style_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_marker_style_source_value(&mut self, style: ReactiveValue<MarkerStyle>) {
-        match style {
-            ReactiveValue::Static(style) => {
-                self.marker_style = Some(style);
-                self.marker_style_source = None;
-            }
-            source => {
-                self.marker_style = None;
-                self.marker_style_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_marker_size_source_value(&mut self, size: ReactiveValue<f32>) {
-        match size {
-            ReactiveValue::Static(size) => {
-                self.marker_size = Some(size.max(0.1));
-                self.marker_size_source = None;
-            }
-            source => {
-                self.marker_size = None;
-                self.marker_size_source = Some(source);
-            }
-        }
-    }
-
-    pub(crate) fn set_alpha_source_value(&mut self, alpha: ReactiveValue<f32>) {
-        match alpha {
-            ReactiveValue::Static(alpha) => {
-                self.alpha = Some(alpha.clamp(0.0, 1.0));
-                self.alpha_source = None;
-            }
-            source => {
-                self.alpha = None;
-                self.alpha_source = Some(source);
-            }
-        }
-    }
 }
 
 /// Generic plot builder for trait-based plot types
@@ -650,8 +631,7 @@ where
     ///     .save("colored.png")?;
     /// ```
     pub fn color(mut self, color: Color) -> Self {
-        self.style.color = Some(color);
-        self.style.color_source = None;
+        self.style.props.color.set(color.into());
         self
     }
 
@@ -660,7 +640,7 @@ where
     where
         S: Into<ReactiveValue<Color>>,
     {
-        self.style.set_color_source_value(color.into());
+        self.style.props.color.set(color.into());
         self
     }
 
@@ -675,8 +655,7 @@ where
     ///     .save("thick.png")?;
     /// ```
     pub fn line_width(mut self, width: f32) -> Self {
-        self.style.line_width = Some(width.max(0.1));
-        self.style.line_width_source = None;
+        self.style.props.line_width.set(width.into());
         self
     }
 
@@ -685,7 +664,7 @@ where
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_line_width_source_value(width.into());
+        self.style.props.line_width.set(width.into());
         self
     }
 
@@ -700,8 +679,7 @@ where
     ///     .save("dashed.png")?;
     /// ```
     pub fn line_style(mut self, style: LineStyle) -> Self {
-        self.style.line_style = Some(style);
-        self.style.line_style_source = None;
+        self.style.props.line_style.set(style.into());
         self
     }
 
@@ -710,7 +688,7 @@ where
     where
         S: Into<ReactiveValue<LineStyle>>,
     {
-        self.style.set_line_style_source_value(style.into());
+        self.style.props.line_style.set(style.into());
         self
     }
 
@@ -727,8 +705,7 @@ where
     ///     .save("transparent.png")?;
     /// ```
     pub fn alpha(mut self, alpha: f32) -> Self {
-        self.style.alpha = Some(alpha.clamp(0.0, 1.0));
-        self.style.alpha_source = None;
+        self.style.props.alpha.set(alpha.into());
         self
     }
 
@@ -737,7 +714,7 @@ where
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_alpha_source_value(alpha.into());
+        self.style.props.alpha.set(alpha.into());
         self
     }
 
@@ -1045,6 +1022,14 @@ where
     /// This method forwards to the inner Plot.
     pub fn tick_sides(mut self, sides: crate::core::TickSides) -> Self {
         self.plot = self.plot.tick_sides(sides);
+        self
+    }
+
+    /// How the x tick labels are oriented when they would collide.
+    ///
+    /// This method forwards to the inner Plot.
+    pub fn xtick_rotation(mut self, rotation: crate::render::XTickRotation) -> Self {
+        self.plot = self.plot.xtick_rotation(rotation);
         self
     }
 
@@ -1659,32 +1644,9 @@ impl PlotBuilder<crate::plots::ContourConfig> {
         self
     }
 
-    /// Enable/disable colorbar for the contour plot
-    ///
-    /// When enabled, a colorbar showing the value-to-color mapping is displayed
-    /// to the right of the contour plot.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// Plot::new()
-    ///     .contour(&x, &y, &z)
-    ///     .colorbar(true)
-    ///     .colorbar_label("Temperature (°C)")
-    ///     .save("contour_with_colorbar.png")?;
-    /// ```
-    pub fn colorbar(mut self, show: bool) -> Self {
-        self.config.colorbar = show;
-        self
-    }
-
-    /// Set the colorbar label
-    ///
-    /// The label is displayed rotated 90° next to the colorbar.
-    pub fn colorbar_label<S: Into<String>>(mut self, label: S) -> Self {
-        self.config.colorbar_label = Some(label.into());
-        self
-    }
+    // `colorbar`, `colorbar_label`, `colorbar_tick_font_size` and
+    // `colorbar_label_font_size` come from `impl_colorbar_builder_methods!`,
+    // which every plot type that draws a colour key shares.
 
     /// Finalize the contour series and add it to the plot
     fn finalize(self) -> super::Plot {
@@ -1858,9 +1820,14 @@ impl PlotBuilder<crate::plots::RadarConfig> {
     ///     .save("radar.png")?;
     /// ```
     pub fn series<V: crate::data::Data1D<f64>>(mut self, values: &V) -> Self {
-        let values_vec: Vec<f64> = (0..values.len())
-            .filter_map(|i| values.get(i).copied())
-            .collect();
+        // Contiguous storage copies in one memcpy; anything else keeps the
+        // per-element path. Same values either way.
+        let values_vec: Vec<f64> = match values.as_slice() {
+            Some(slice) => slice.to_vec(),
+            None => (0..values.len())
+                .filter_map(|i| values.get(i).copied())
+                .collect(),
+        };
 
         // Capture any pending label from the previous .label() call for the PREVIOUS series
         // Pattern: .series([...]).label("A").series([...]).label("B")
@@ -1941,9 +1908,14 @@ impl PlotBuilder<crate::plots::RadarConfig> {
         S: Into<String>,
         V: crate::data::Data1D<f64>,
     {
-        let values_vec: Vec<f64> = (0..values.len())
-            .filter_map(|i| values.get(i).copied())
-            .collect();
+        // Contiguous storage copies in one memcpy; anything else keeps the
+        // per-element path. Same values either way.
+        let values_vec: Vec<f64> = match values.as_slice() {
+            Some(slice) => slice.to_vec(),
+            None => (0..values.len())
+                .filter_map(|i| values.get(i).copied())
+                .collect(),
+        };
 
         let name_string = name.into();
 
@@ -2614,8 +2586,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = Some(style);
         self.config.show_markers = true;
-        self.style.marker_style = Some(style);
-        self.style.marker_style_source = None;
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2625,7 +2596,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
         S: Into<ReactiveValue<crate::render::MarkerStyle>>,
     {
         self.config.show_markers = true;
-        self.style.set_marker_style_source_value(style.into());
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2635,8 +2606,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.marker_size = size.max(0.1);
-        self.style.marker_size = Some(size.max(0.1));
-        self.style.marker_size_source = None;
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -2645,7 +2615,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_marker_size_source_value(size.into());
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -2742,8 +2712,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// ```
     pub fn marker(mut self, style: crate::render::MarkerStyle) -> Self {
         self.config.marker = style;
-        self.style.marker_style = Some(style);
-        self.style.marker_style_source = None;
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2752,7 +2721,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     where
         S: Into<ReactiveValue<crate::render::MarkerStyle>>,
     {
-        self.style.set_marker_style_source_value(style.into());
+        self.style.props.marker_style.set(style.into());
         self
     }
 
@@ -2762,8 +2731,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// * `size` - Marker size in points (default: 6.0)
     pub fn marker_size(mut self, size: f32) -> Self {
         self.config.size = size.max(0.1);
-        self.style.marker_size = Some(size.max(0.1));
-        self.style.marker_size_source = None;
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -2772,7 +2740,7 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_marker_size_source_value(size.into());
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -2950,7 +2918,7 @@ mod api_consistency_tests {
             .line_width(2.5)
             .label("series");
 
-        assert_eq!(builder.style.line_width, Some(2.5));
+        assert_eq!(builder.style.props.line_width.cloned(), Some(2.5));
         assert_eq!(builder.style.label.as_deref(), Some("series"));
         assert!(builder.get_plot().layout.legend.enabled);
         assert_eq!(
@@ -3067,9 +3035,15 @@ mod api_consistency_tests {
             .line(&[0.0, 1.0], &[0.0, 1.0])
             .style(LineStyle::Dashed);
 
-        assert_eq!(renamed.style.line_style, Some(LineStyle::Dashed));
-        assert_eq!(legacy.style.line_style, renamed.style.line_style);
-        assert!(legacy.style.line_style_source.is_none());
+        assert_eq!(
+            renamed.style.props.line_style.cloned(),
+            Some(LineStyle::Dashed)
+        );
+        assert_eq!(
+            legacy.style.props.line_style.cloned(),
+            renamed.style.props.line_style.cloned()
+        );
+        assert!(legacy.style.props.line_style.source().is_none());
     }
 
     #[test]
@@ -3082,8 +3056,14 @@ mod api_consistency_tests {
             .line(&[0.0, 1.0], &[0.0, 1.0])
             .style_source(LineStyle::Dotted);
 
-        assert_eq!(renamed.style.line_style, Some(LineStyle::Dotted));
-        assert_eq!(legacy.style.line_style, renamed.style.line_style);
+        assert_eq!(
+            renamed.style.props.line_style.cloned(),
+            Some(LineStyle::Dotted)
+        );
+        assert_eq!(
+            legacy.style.props.line_style.cloned(),
+            renamed.style.props.line_style.cloned()
+        );
     }
 
     #[test]
@@ -3100,9 +3080,9 @@ mod api_consistency_tests {
             .contour(&contour_x, &contour_y, &contour_z)
             .line_width(3.0);
 
-        assert_eq!(kde.style.line_width, Some(3.0));
-        assert_eq!(ecdf.style.line_width, Some(3.0));
-        assert_eq!(contour.style.line_width, Some(3.0));
+        assert_eq!(kde.style.props.line_width.cloned(), Some(3.0));
+        assert_eq!(ecdf.style.props.line_width.cloned(), Some(3.0));
+        assert_eq!(contour.style.props.line_width.cloned(), Some(3.0));
     }
 
     // ===== Renamed-for-clarity accessors =====

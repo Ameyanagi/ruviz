@@ -496,29 +496,9 @@ impl PlotBuilder<HeatmapConfig> {
         self
     }
 
-    /// Show or hide the colorbar.
-    pub fn colorbar(mut self, show: bool) -> Self {
-        self.config = std::mem::take(&mut self.config).colorbar(show);
-        self
-    }
-
-    /// Set the colorbar label.
-    pub fn colorbar_label<S: Into<String>>(mut self, label: S) -> Self {
-        self.config = std::mem::take(&mut self.config).colorbar_label(label);
-        self
-    }
-
-    /// Set the colorbar tick label font size in points.
-    pub fn colorbar_tick_font_size(mut self, size: f32) -> Self {
-        self.config = std::mem::take(&mut self.config).colorbar_tick_font_size(size);
-        self
-    }
-
-    /// Set the colorbar label font size in points.
-    pub fn colorbar_label_font_size(mut self, size: f32) -> Self {
-        self.config = std::mem::take(&mut self.config).colorbar_label_font_size(size);
-        self
-    }
+    // `colorbar`, `colorbar_label`, `colorbar_tick_font_size` and
+    // `colorbar_label_font_size` come from `impl_colorbar_builder_methods!`,
+    // which every plot type that draws a colour key shares.
 
     /// Draw minor subticks on logarithmic colorbars.
     pub fn colorbar_log_subticks(mut self, show: bool) -> Self {

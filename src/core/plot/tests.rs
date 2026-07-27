@@ -19,7 +19,7 @@ impl crate::data::NumericData1D for FailingIngestionData {
         _null_policy: crate::data::NullPolicy,
     ) -> crate::core::Result<Vec<f64>> {
         Err(PlottingError::DataExtractionFailed {
-            source: "test::failing-ingestion".to_string(),
+            origin: "test::failing-ingestion".to_string(),
             message: "forced ingestion failure".to_string(),
         })
     }
@@ -420,19 +420,8 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         },
         streaming_source: None,
         label: None,
-        color: None,
-        color_source: None,
-        line_width: None,
-        line_width_source: None,
-        line_style: None,
-        line_style_source: None,
-        marker_style: None,
-        marker_style_source: None,
-        marker_size: None,
-        marker_size_source: None,
+        props: SeriesStyleProps::default(),
         marker_edge: None,
-        alpha: None,
-        alpha_source: None,
         y_errors: None,
         x_errors: None,
         error_config: None,
@@ -441,25 +430,28 @@ fn test_plot_series_static_source_helpers_materialize_values() {
         resolved_radar_colors: None,
     };
 
-    series.set_color_source_value(Color::RED.into());
-    series.set_line_width_source_value(0.01_f32.into());
-    series.set_line_style_source_value(LineStyle::Dashed.into());
-    series.set_marker_style_source_value(MarkerStyle::Square.into());
-    series.set_marker_size_source_value(0.01_f32.into());
-    series.set_alpha_source_value(1.5_f32.into());
+    series.props.color.set(Color::RED.into());
+    series.props.line_width.set(0.01_f32.into());
+    series.props.line_style.set(LineStyle::Dashed.into());
+    series.props.marker_style.set(MarkerStyle::Square.into());
+    series.props.marker_size.set(0.01_f32.into());
+    series.props.alpha.set(1.5_f32.into());
 
-    assert_eq!(series.color, Some(Color::RED));
-    assert!(series.color_source.is_none());
-    assert_eq!(series.line_width, Some(0.1));
-    assert!(series.line_width_source.is_none());
-    assert_eq!(series.line_style, Some(LineStyle::Dashed));
-    assert!(series.line_style_source.is_none());
-    assert_eq!(series.marker_style, Some(MarkerStyle::Square));
-    assert!(series.marker_style_source.is_none());
-    assert_eq!(series.marker_size, Some(0.1));
-    assert!(series.marker_size_source.is_none());
-    assert_eq!(series.alpha, Some(1.0));
-    assert!(series.alpha_source.is_none());
+    assert_eq!(series.props.color.cloned(), Some(Color::RED));
+    assert!(series.props.color.source().is_none());
+    assert_eq!(series.props.line_width.cloned(), Some(0.1));
+    assert!(series.props.line_width.source().is_none());
+    assert_eq!(series.props.line_style.cloned(), Some(LineStyle::Dashed));
+    assert!(series.props.line_style.source().is_none());
+    assert_eq!(
+        series.props.marker_style.cloned(),
+        Some(MarkerStyle::Square)
+    );
+    assert!(series.props.marker_style.source().is_none());
+    assert_eq!(series.props.marker_size.cloned(), Some(0.1));
+    assert!(series.props.marker_size.source().is_none());
+    assert_eq!(series.props.alpha.cloned(), Some(1.0));
+    assert!(series.props.alpha.source().is_none());
 }
 
 #[test]
@@ -474,14 +466,14 @@ fn test_series_group_builder_static_source_setters_materialize_values() {
     });
 
     let series = &plot.series_mgr.series[0];
-    assert_eq!(series.color, Some(Color::RED));
-    assert!(series.color_source.is_none());
-    assert_eq!(series.line_width, Some(0.1));
-    assert!(series.line_width_source.is_none());
-    assert_eq!(series.line_style, Some(LineStyle::Dashed));
-    assert!(series.line_style_source.is_none());
-    assert_eq!(series.alpha, Some(1.0));
-    assert!(series.alpha_source.is_none());
+    assert_eq!(series.props.color.cloned(), Some(Color::RED));
+    assert!(series.props.color.source().is_none());
+    assert_eq!(series.props.line_width.cloned(), Some(0.1));
+    assert!(series.props.line_width.source().is_none());
+    assert_eq!(series.props.line_style.cloned(), Some(LineStyle::Dashed));
+    assert!(series.props.line_style.source().is_none());
+    assert_eq!(series.props.alpha.cloned(), Some(1.0));
+    assert!(series.props.alpha.source().is_none());
 }
 
 fn extract_svg_root_attr(svg: &str, attr: &str) -> f32 {
@@ -811,8 +803,8 @@ fn test_pending_ingestion_error_preserves_single_error_shape() {
 
     let err = Plot::new().line(&bad, &y).render().unwrap_err();
     match err {
-        PlottingError::DataExtractionFailed { source, message } => {
-            assert_eq!(source, "test::failing-ingestion");
+        PlottingError::DataExtractionFailed { origin, message } => {
+            assert_eq!(origin, "test::failing-ingestion");
             assert_eq!(message, "forced ingestion failure");
         }
         other => panic!("expected DataExtractionFailed, got {other:?}"),
@@ -859,8 +851,8 @@ fn test_quiver_preserves_ingestion_error_before_length_validation() {
         .unwrap_err();
 
     match err {
-        PlottingError::DataExtractionFailed { source, message } => {
-            assert_eq!(source, "test::failing-ingestion");
+        PlottingError::DataExtractionFailed { origin, message } => {
+            assert_eq!(origin, "test::failing-ingestion");
             assert_eq!(message, "forced ingestion failure");
         }
         other => panic!("expected DataExtractionFailed, got {other:?}"),
@@ -1877,13 +1869,40 @@ fn test_pending_ingestion_error_reports_additional_failures() {
 
     let err = Plot::new().line(&bad, &bad).render().unwrap_err();
     match err {
-        PlottingError::DataExtractionFailed { source, message } => {
-            assert_eq!(source, "ruviz::plot-ingestion");
+        PlottingError::DataExtractionFailed { origin, message } => {
+            assert_eq!(origin, "ruviz::plot-ingestion");
             assert!(message.contains("forced ingestion failure"));
             assert!(message.contains("1 additional ingestion error"));
         }
         other => panic!("expected DataExtractionFailed, got {other:?}"),
     }
+}
+
+/// The multi-error wrapper prefixes the first error exactly once.
+///
+/// This pins a message that CHANGED when [`PendingIngestionError`] started
+/// holding the real [`PlottingError`]. The mirror enum it replaced had no
+/// `RaggedData2D` arm, so a ragged grid was flattened into
+/// `DataExtractionFailed { origin: "ruviz::plot-ingestion" }` on the way in and
+/// then wrapped in that same prefix again on the way out — the message read
+/// `Failed to extract numeric data from ruviz::plot-ingestion: Failed to
+/// extract numeric data from ruviz::plot-ingestion: …`. Nothing asserted the
+/// stutter, which is how it survived; this asserts its absence so the wrapper
+/// cannot grow a second prefix back.
+///
+/// [`PendingIngestionError`]: super::types::PendingIngestionError
+#[test]
+fn test_pending_ingestion_error_wraps_the_first_error_exactly_once() {
+    let ragged = vec![vec![1.0, 2.0], vec![3.0]];
+
+    let err = Plot::new().heatmap(&ragged).render().unwrap_err();
+
+    assert_eq!(
+        err.to_string(),
+        "Failed to extract numeric data from ruviz::plot-ingestion: \
+         NumericData2D: row 1 has 1 values, expected 2 \
+         (and 1 additional ingestion error)"
+    );
 }
 
 #[test]
@@ -1906,29 +1925,47 @@ fn test_group_scopes_shared_style_and_does_not_leak() {
         .end_series();
 
     assert_eq!(plot.series_mgr.series.len(), 3);
-    assert_eq!(plot.series_mgr.series[0].color, Some(Color::RED));
-    assert_eq!(plot.series_mgr.series[1].color, Some(Color::RED));
-    assert_eq!(plot.series_mgr.series[0].line_width, Some(3.0));
-    assert_eq!(plot.series_mgr.series[1].line_width, Some(3.0));
+    assert_eq!(
+        plot.series_mgr.series[0].props.color.cloned(),
+        Some(Color::RED)
+    );
+    assert_eq!(
+        plot.series_mgr.series[1].props.color.cloned(),
+        Some(Color::RED)
+    );
+    assert_eq!(
+        plot.series_mgr.series[0].props.line_width.cloned(),
+        Some(3.0)
+    );
+    assert_eq!(
+        plot.series_mgr.series[1].props.line_width.cloned(),
+        Some(3.0)
+    );
     assert!(matches!(
-        plot.series_mgr.series[0].line_style,
+        plot.series_mgr.series[0].props.line_style.cloned(),
         Some(LineStyle::Dashed)
     ));
     assert!(matches!(
-        plot.series_mgr.series[1].line_style,
+        plot.series_mgr.series[1].props.line_style.cloned(),
         Some(LineStyle::Dashed)
     ));
-    assert_eq!(plot.series_mgr.series[0].alpha, Some(0.35));
-    assert_eq!(plot.series_mgr.series[1].alpha, Some(0.35));
+    assert_eq!(plot.series_mgr.series[0].props.alpha.cloned(), Some(0.35));
+    assert_eq!(plot.series_mgr.series[1].props.alpha.cloned(), Some(0.35));
 
     // Outside the group, styles should fall back to normal per-series defaults.
-    assert_ne!(plot.series_mgr.series[2].color, Some(Color::RED));
-    assert_ne!(plot.series_mgr.series[2].line_width, Some(3.0));
+    assert_ne!(
+        plot.series_mgr.series[2].props.color.cloned(),
+        Some(Color::RED)
+    );
+    assert_ne!(
+        plot.series_mgr.series[2].props.line_width.cloned(),
+        Some(3.0)
+    );
     assert!(matches!(
-        plot.series_mgr.series[2].line_style,
+        plot.series_mgr.series[2].props.line_style.cloned(),
         Some(LineStyle::Solid)
     ));
-    assert_eq!(plot.series_mgr.series[2].alpha, Some(1.0));
+    assert_eq!(plot.series_mgr.series[2].props.alpha.cloned(), Some(1.0));
 }
 
 #[test]
@@ -4742,10 +4779,13 @@ fn test_streaming_with_styling() {
         .end_series();
 
     assert_eq!(
-        plot.series_mgr.series[0].color,
+        plot.series_mgr.series[0].props.color.cloned(),
         Some(Color::from_rgb(255, 0, 0))
     );
-    assert_eq!(plot.series_mgr.series[0].line_width, Some(3.0));
+    assert_eq!(
+        plot.series_mgr.series[0].props.line_width.cloned(),
+        Some(3.0)
+    );
 
     let result = plot.render();
     assert!(result.is_ok());
@@ -4765,10 +4805,13 @@ fn test_streaming_scatter_with_styling() {
         .end_series();
 
     assert_eq!(
-        plot.series_mgr.series[0].color,
+        plot.series_mgr.series[0].props.color.cloned(),
         Some(Color::from_rgb(0, 255, 0))
     );
-    assert_eq!(plot.series_mgr.series[0].marker_size, Some(10.0));
+    assert_eq!(
+        plot.series_mgr.series[0].props.marker_size.cloned(),
+        Some(10.0)
+    );
 
     let result = plot.render();
     assert!(result.is_ok());
@@ -6520,14 +6563,17 @@ fn test_absent_series_metrics_preserve_established_fallbacks() {
     let mut plot = Plot::new();
     plot.add_line(&[0.0, 1.0], &[0.0, 1.0])
         .expect("line should be added");
-    plot.series_mgr.series[0].marker_style = Some(MarkerStyle::Circle);
+    plot.series_mgr.series[0]
+        .props
+        .marker_style
+        .set(MarkerStyle::Circle.into());
     let frame = plot.resolve_frame(0.0).expect("frame should resolve");
     assert_eq!(frame.style.series[0].line_width, None);
     assert_eq!(frame.style.series[0].marker_size, None);
 
     let shell = plot.resolved_style_shell(&frame.style);
-    assert_eq!(shell.series_mgr.series[0].line_width, None);
-    assert_eq!(shell.series_mgr.series[0].marker_size, None);
+    assert_eq!(shell.series_mgr.series[0].props.line_width.cloned(), None);
+    assert_eq!(shell.series_mgr.series[0].props.marker_size.cloned(), None);
 
     let line: Plot = Plot::new()
         .line(&[0.0, 1.0], &[0.0, 1.0])
@@ -6622,7 +6668,7 @@ fn test_auto_palette_color_is_resolved_after_late_theme_change() {
     let x = vec![0.0, 1.0];
     let y = vec![1.0, 2.0];
     let plot: Plot = Plot::new().line(&x, &y).into();
-    assert_eq!(plot.series_mgr.series[0].color, None);
+    assert_eq!(plot.series_mgr.series[0].props.color.cloned(), None);
 
     let mut theme = Theme::dark();
     theme.color_palette = vec![Color::RED, Color::BLUE];
@@ -6647,9 +6693,9 @@ fn test_resolved_series_metrics_stay_in_points_across_backend_shells() {
 
     for backend_shell in [&style_shell, &prepared_shell] {
         let series = &backend_shell.series_mgr.series[0];
-        assert_eq!(series.line_width, resolved.line_width);
-        assert_eq!(series.marker_size, resolved.marker_size);
-        assert_eq!(series.marker_style, resolved.marker_style);
+        assert_eq!(series.props.line_width.cloned(), resolved.line_width);
+        assert_eq!(series.props.marker_size.cloned(), resolved.marker_size);
+        assert_eq!(series.props.marker_style.cloned(), resolved.marker_style);
     }
 
     let svg = plot.render_to_svg().expect("SVG should render");
@@ -6853,4 +6899,192 @@ fn test_log_axis_without_gaps_stays_one_polyline() {
         .expect("log-axis line should render");
 
     assert_eq!(svg.matches("<polyline").count(), 1);
+}
+
+/// The x tick rotation knob reaches the row that is actually drawn, in the SVG
+/// backend as well as the raster one.
+///
+/// Both backends resolve one plan through `Plot::resolve_x_tick_label_row`, so
+/// asserting on the SVG markup asserts on the shared decision, not on an
+/// SVG-only branch. A rotated row emits `rotate(-90` per label; a horizontal
+/// one emits none.
+mod xtick_rotation_knob {
+    use super::*;
+    use crate::render::XTickRotation;
+
+    /// Names long enough that a horizontal row of them cannot fit 640 px.
+    fn colliding_categories() -> (Vec<String>, Vec<f64>) {
+        let names: Vec<String> = [
+            "North Atlantic Basin",
+            "South Atlantic Basin",
+            "Eastern Pacific Basin",
+            "Western Pacific Basin",
+            "Northern Indian Basin",
+            "Southern Indian Basin",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        let values = vec![3.0, 5.0, 2.0, 8.0, 4.0, 6.0];
+        (names, values)
+    }
+
+    fn bar_svg(rotation: XTickRotation) -> String {
+        let (names, values) = colliding_categories();
+        Plot::new()
+            .size_px(640, 480)
+            .bar(&names, &values)
+            .into_plot()
+            .xtick_rotation(rotation)
+            .render_to_svg()
+            .expect("a categorical bar chart should render to SVG")
+    }
+
+    #[test]
+    fn vertical_turns_the_row_a_quarter_turn() {
+        let svg = bar_svg(XTickRotation::Vertical);
+        assert_eq!(
+            svg.matches("rotate(-90").count(),
+            6,
+            "every category label must be drawn rotated: {svg}"
+        );
+    }
+
+    #[test]
+    fn horizontal_never_rotates_however_badly_the_labels_collide() {
+        let svg = bar_svg(XTickRotation::Horizontal);
+        assert_eq!(
+            svg.matches("rotate(-90").count(),
+            0,
+            "an explicit `Horizontal` must thin the row, never turn it"
+        );
+    }
+
+    #[test]
+    fn auto_rotates_a_row_that_would_collide() {
+        let svg = bar_svg(XTickRotation::Auto);
+        assert!(
+            svg.contains("rotate(-90"),
+            "six long names under a 640 px axis collide, so `Auto` must rotate them"
+        );
+    }
+
+    /// The knob is a no-op on a row that already fits, so short labels keep the
+    /// horizontal presentation every existing figure has.
+    #[test]
+    fn auto_leaves_a_row_that_fits_alone() {
+        let svg = Plot::new()
+            .size_px(640, 480)
+            .bar(&["A", "B", "C"], &[1.0, 2.0, 3.0])
+            .into_plot()
+            .xtick_rotation(XTickRotation::Auto)
+            .render_to_svg()
+            .expect("a short categorical bar chart should render to SVG");
+
+        assert_eq!(
+            svg.matches("rotate(-90").count(),
+            0,
+            "three one-character labels fit, so nothing may be rotated"
+        );
+    }
+
+    /// `Plot` and `PlotBuilder` spell the knob the same way and mean the same
+    /// thing — the builder forwards rather than keeping its own copy.
+    #[test]
+    fn the_builder_forwards_to_the_plot() {
+        let (names, values) = colliding_categories();
+
+        let via_builder = Plot::new()
+            .size_px(640, 480)
+            .bar(&names, &values)
+            .xtick_rotation(XTickRotation::Vertical)
+            .render_to_svg()
+            .expect("builder-side knob should render");
+        let via_plot = bar_svg(XTickRotation::Vertical);
+
+        assert_eq!(via_builder, via_plot);
+    }
+}
+
+/// A magnitude-coloured quiver reserves room for, and draws, the same colour key
+/// heatmap/contour/hexbin draw — in both backends, through the one dispatcher.
+mod quiver_colour_key {
+    use super::*;
+
+    fn field() -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>) {
+        let x = vec![0.0, 1.0, 2.0, 3.0];
+        let y = vec![0.0, 1.0, 0.0, 1.0];
+        let u = vec![1.0, 0.5, -1.0, 0.25];
+        let v = vec![0.0, 1.0, 0.5, -1.0];
+        (x, y, u, v)
+    }
+
+    #[test]
+    fn magnitude_colours_reserve_the_right_margin_a_colorbar_needs() {
+        let (x, y, u, v) = field();
+        let without = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .colorbar(false)
+            .into_plot();
+        let with = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .colorbar_label("wind speed (m/s)")
+            .into_plot();
+
+        let without_layout = compute_render_layout(&without);
+        let with_layout = compute_render_layout(&with);
+
+        assert!(
+            with_layout.margins.right > without_layout.margins.right + 40.0,
+            "a quiver colour key must reserve right margin like every other one: \
+             without={} with={}",
+            without_layout.margins.right,
+            with_layout.margins.right
+        );
+    }
+
+    /// The default is on, exactly as it is for heatmap, contour and hexbin — an
+    /// arrow's colour is the only thing reporting its magnitude.
+    #[test]
+    fn the_key_is_on_by_default_but_only_when_colour_carries_meaning() {
+        let (x, y, u, v) = field();
+        let plain = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .into_plot();
+        let coloured = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .into_plot();
+
+        assert!(
+            compute_render_layout(&coloured).margins.right
+                > compute_render_layout(&plain).margins.right,
+            "one uniform colour decodes nothing, so a plain quiver must not grow a key"
+        );
+    }
+
+    /// Both backends read the same `series_colorbar_request`, so the SVG export
+    /// cannot silently lose the value scale the PNG shows.
+    #[test]
+    fn the_svg_export_draws_the_same_key() {
+        let (x, y, u, v) = field();
+        let svg = Plot::new()
+            .size_px(360, 220)
+            .quiver(&x, &y, &u, &v)
+            .color_by_magnitude(true)
+            .colorbar_label("wind speed (m/s)")
+            .render_to_svg()
+            .expect("a magnitude-coloured quiver should render to SVG");
+
+        assert!(
+            svg.contains("wind speed (m/s)"),
+            "the colorbar caption must reach the SVG export"
+        );
+    }
 }

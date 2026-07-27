@@ -62,89 +62,23 @@ pub(crate) struct SeriesGroupMeta {
     pub(super) label: Option<String>,
 }
 
+/// The first ingestion error a builder chain hit, plus a count of the ones that
+/// followed it.
+///
+/// Builder methods cannot return `Result`, so the first failure is parked here
+/// and re-raised by the terminal call. [`PlottingError`] is `Clone`, so this
+/// holds the real error - variant identity and all - rather than a mirror enum
+/// whose catch-all flattened unrecognised variants into a string.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingIngestionError {
-    kind: PendingIngestionErrorKind,
+    first: PlottingError,
     additional_count: usize,
-}
-
-#[derive(Clone, Debug)]
-enum PendingIngestionErrorKind {
-    EmptyDataSet,
-    DataLengthMismatch {
-        x_len: usize,
-        y_len: usize,
-        series_index: Option<usize>,
-    },
-    DataTypeUnsupported {
-        source: String,
-        dtype: String,
-        expected: String,
-    },
-    NullValueNotAllowed {
-        source: String,
-        column: Option<String>,
-        null_count: usize,
-    },
-    DataExtractionFailed {
-        source: String,
-        message: String,
-    },
-    InvalidData {
-        message: String,
-        position: Option<usize>,
-    },
-    InvalidInput(String),
 }
 
 impl PendingIngestionError {
     pub(super) fn from_plotting_error(err: PlottingError) -> Self {
-        let kind = match err {
-            PlottingError::EmptyDataSet => PendingIngestionErrorKind::EmptyDataSet,
-            PlottingError::DataLengthMismatch {
-                x_len,
-                y_len,
-                series_index,
-            } => PendingIngestionErrorKind::DataLengthMismatch {
-                x_len,
-                y_len,
-                series_index,
-            },
-            PlottingError::DataTypeUnsupported {
-                source,
-                dtype,
-                expected,
-            } => PendingIngestionErrorKind::DataTypeUnsupported {
-                source,
-                dtype,
-                expected,
-            },
-            PlottingError::NullValueNotAllowed {
-                source,
-                column,
-                null_count,
-            } => PendingIngestionErrorKind::NullValueNotAllowed {
-                source,
-                column,
-                null_count,
-            },
-            PlottingError::DataExtractionFailed { source, message } => {
-                PendingIngestionErrorKind::DataExtractionFailed { source, message }
-            }
-            PlottingError::InvalidData { message, position } => {
-                PendingIngestionErrorKind::InvalidData { message, position }
-            }
-            PlottingError::InvalidInput(message) => {
-                PendingIngestionErrorKind::InvalidInput(message)
-            }
-            other => PendingIngestionErrorKind::DataExtractionFailed {
-                source: "ruviz::plot-ingestion".to_string(),
-                message: other.to_string(),
-            },
-        };
-
         Self {
-            kind,
+            first: err,
             additional_count: 0,
         }
     }
@@ -154,61 +88,15 @@ impl PendingIngestionError {
     }
 
     pub(super) fn to_plotting_error(&self) -> PlottingError {
-        let primary_error = match &self.kind {
-            PendingIngestionErrorKind::EmptyDataSet => PlottingError::EmptyDataSet,
-            PendingIngestionErrorKind::DataLengthMismatch {
-                x_len,
-                y_len,
-                series_index,
-            } => PlottingError::DataLengthMismatch {
-                x_len: *x_len,
-                y_len: *y_len,
-                series_index: *series_index,
-            },
-            PendingIngestionErrorKind::DataTypeUnsupported {
-                source,
-                dtype,
-                expected,
-            } => PlottingError::DataTypeUnsupported {
-                source: source.clone(),
-                dtype: dtype.clone(),
-                expected: expected.clone(),
-            },
-            PendingIngestionErrorKind::NullValueNotAllowed {
-                source,
-                column,
-                null_count,
-            } => PlottingError::NullValueNotAllowed {
-                source: source.clone(),
-                column: column.clone(),
-                null_count: *null_count,
-            },
-            PendingIngestionErrorKind::DataExtractionFailed { source, message } => {
-                PlottingError::DataExtractionFailed {
-                    source: source.clone(),
-                    message: message.clone(),
-                }
-            }
-            PendingIngestionErrorKind::InvalidData { message, position } => {
-                PlottingError::InvalidData {
-                    message: message.clone(),
-                    position: *position,
-                }
-            }
-            PendingIngestionErrorKind::InvalidInput(message) => {
-                PlottingError::InvalidInput(message.clone())
-            }
-        };
-
         if self.additional_count == 0 {
-            return primary_error;
+            return self.first.clone();
         }
 
         PlottingError::DataExtractionFailed {
-            source: "ruviz::plot-ingestion".to_string(),
+            origin: "ruviz::plot-ingestion".to_string(),
             message: format!(
                 "{} (and {} additional ingestion error{})",
-                primary_error,
+                self.first,
                 self.additional_count,
                 if self.additional_count == 1 { "" } else { "s" }
             ),
@@ -296,6 +184,427 @@ impl MarkerEdge {
     }
 }
 
+/// One style property: a static value **or** the live source it is sampled
+/// from, held as a single owned field.
+///
+/// The two halves are mutually exclusive and this type owns that rule: storing
+/// a static value retires the source, storing a reactive one retires the value.
+/// Both halves are private, so there is no way to reach a state where a stale
+/// source silently overwrites a value that was set after it.
+///
+/// A property with a legal range carries its own `normalize` function, supplied
+/// once where the property is declared (see [`series_style_properties!`]).
+/// Normalisation runs on a *static* value only: a reactive source is used
+/// exactly as it samples, which is the behaviour these properties have always
+/// had — the range is applied where the value is written, not where it is read.
+pub(crate) struct Styled<T> {
+    value: Option<T>,
+    source: Option<ReactiveValue<T>>,
+    normalize: fn(T) -> T,
+}
+
+impl<T> Styled<T> {
+    /// An unset property that normalises static values with `normalize`.
+    ///
+    /// Only [`series_style_properties!`] calls this, so a property's range rule
+    /// is fixed at its declaration and cannot vary by construction site.
+    pub(crate) fn unset(normalize: fn(T) -> T) -> Self {
+        Self {
+            value: None,
+            source: None,
+            normalize,
+        }
+    }
+
+    /// The static value, if this property is not driven by a live source.
+    pub(crate) fn value(&self) -> Option<&T> {
+        self.value.as_ref()
+    }
+
+    /// The live source, if this property is driven by one.
+    pub(crate) fn source(&self) -> Option<&ReactiveValue<T>> {
+        self.source.as_ref()
+    }
+
+    /// Whether the property has been given a value or a source at all.
+    pub(crate) fn is_set(&self) -> bool {
+        self.value.is_some() || self.source.is_some()
+    }
+
+    /// Store `incoming`, keeping the two halves mutually exclusive.
+    pub(crate) fn set(&mut self, incoming: ReactiveValue<T>) {
+        match incoming {
+            ReactiveValue::Static(value) => {
+                self.value = Some((self.normalize)(value));
+                self.source = None;
+            }
+            reactive => {
+                self.value = None;
+                self.source = Some(reactive);
+            }
+        }
+    }
+
+    /// Supply a fallback for a property whose static value is still unset.
+    ///
+    /// This deliberately looks at the *value* only, never the source: a plot
+    /// type's config default fills the slot a user has not written, and a live
+    /// source still wins at resolve time.
+    pub(crate) fn or_value(&mut self, fallback: Option<T>) {
+        if self.value.is_none() {
+            self.value = fallback;
+        }
+    }
+
+    /// Install a frame-resolved value, retiring the source that produced it.
+    pub(crate) fn replace_resolved(&mut self, value: Option<T>) {
+        self.value = value;
+        self.source = None;
+    }
+
+    /// Retire the live source, keeping the static value.
+    pub(crate) fn clear_source(&mut self) {
+        self.source = None;
+    }
+}
+
+impl<T: Clone> Styled<T> {
+    /// The static value, cloned.
+    pub(crate) fn cloned(&self) -> Option<T> {
+        self.value.clone()
+    }
+
+    /// The static value, or `default` if unset.
+    pub(crate) fn value_or(&self, default: T) -> T {
+        self.value.clone().unwrap_or(default)
+    }
+
+    /// Sample this property for the frame at `time`.
+    ///
+    /// A live source wins over the static value; `cache` de-duplicates repeated
+    /// samples of the same source within one frame.
+    pub(crate) fn resolve(
+        &self,
+        time: f64,
+        cache: &mut std::collections::HashMap<data::ReactiveSourceId, T>,
+    ) -> Option<T> {
+        let Some(source) = &self.source else {
+            return self.value.clone();
+        };
+
+        if let Some(source_id) = source.source_id() {
+            if let Some(value) = cache.get(&source_id) {
+                return Some(value.clone());
+            }
+            let value = source.resolve(time);
+            cache.insert(source_id, value.clone());
+            return Some(value);
+        }
+
+        Some(source.resolve(time))
+    }
+}
+
+impl<T: Send + Sync + 'static> Styled<T> {
+    /// This property's live source with its value type erased, if it has one.
+    fn erased_source(&self) -> Option<&dyn StyleSource> {
+        match &self.source {
+            Some(source) => Some(source),
+            None => None,
+        }
+    }
+}
+
+impl<T: Clone> Clone for Styled<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            source: self.source.clone(),
+            normalize: self.normalize,
+        }
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Styled<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The normaliser is a function pointer with no useful rendering.
+        f.debug_struct("Styled")
+            .field("value", &self.value)
+            .field("source", &self.source)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Declare the reactive style properties every series carries — **once**.
+///
+/// This is the whole mechanism behind "adding a reactive style property is one
+/// edit". The invocation below is the single list; from it this macro generates
+///
+/// - the [`SeriesStyleProps`] fields, so no struct literal anywhere names a
+///   style property and none can be forgotten,
+/// - `Default`, which is where each property's range rule is attached, so a
+///   setter cannot forget to clamp,
+/// - `sources`, whose destructure covers exactly the declared properties, and
+/// - every traversal built on it: version collection, reactivity and temporality
+///   tests, push subscription, and source clearing.
+///
+/// Before this existed each of those was written out property by property, and
+/// a property left out of one of them produced a permanently stale plot with no
+/// error at all. Now there is nowhere to leave it out.
+///
+/// # Adding a property
+///
+/// Add one line to the invocation below:
+///
+/// ```text
+/// /// What the property means.
+/// zorder: f32, normalize = |z| z.max(0.0);
+/// ```
+///
+/// That is the whole edit. The field, its range rule, every traversal and the
+/// traversal tests' fixtures all follow. A property whose type is new to this
+/// list additionally needs a `TestStyleValue` impl — a compile error until you
+/// write one, which is how a new type is made to say how it is tested.
+///
+/// Two things are deliberately *not* generated, because they are per-property
+/// by nature rather than by duplication: reading the property in the renderer,
+/// and folding it into `ResolvedSeriesStyle` (a struct literal, so also
+/// compile-checked).
+macro_rules! series_style_properties {
+    (
+        $(
+            $(#[$doc:meta])*
+            $name:ident: $ty:ty $(, normalize = $normalize:expr)?;
+        )*
+    ) => {
+        /// The reactive style properties shared by [`PlotSeries`] and
+        /// `SeriesStyle`.
+        ///
+        /// Both structs hold one of these rather than their own copy of the
+        /// property list, so they cannot come to disagree about what a property
+        /// is or what setting it means.
+        ///
+        /// Generated by [`series_style_properties!`]; see there for how to add
+        /// a property.
+        pub(crate) struct SeriesStyleProps {
+            $(
+                $(#[$doc])*
+                pub(crate) $name: Styled<$ty>,
+            )*
+        }
+
+        impl Default for SeriesStyleProps {
+            fn default() -> Self {
+                Self {
+                    $(
+                        // A property with no declared range keeps its value
+                        // verbatim; `normalize = ..` above replaces the
+                        // identity with the declared rule.
+                        $name: Styled::unset({
+                            #[allow(unused_assignments, unused_mut)]
+                            let mut normalize: fn($ty) -> $ty = |value| value;
+                            $( normalize = $normalize; )?
+                            normalize
+                        }),
+                    )*
+                }
+            }
+        }
+
+        impl Clone for SeriesStyleProps {
+            fn clone(&self) -> Self {
+                Self { $( $name: self.$name.clone(), )* }
+            }
+        }
+
+        impl fmt::Debug for SeriesStyleProps {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("SeriesStyleProps")
+                    $( .field(stringify!($name), &self.$name) )*
+                    .finish()
+            }
+        }
+
+        impl SeriesStyleProps {
+            /// The declared property names, in declaration order.
+            #[cfg(test)]
+            pub(crate) const NAMES: &'static [&'static str] = &[$(stringify!($name)),*];
+
+            /// Every live style source, in declaration order.
+            ///
+            /// The destructure names exactly the generated fields, so this
+            /// cannot fall behind the declaration list.
+            fn sources(&self) -> impl Iterator<Item = &dyn StyleSource> {
+                let Self { $( $name, )* } = self;
+                [ $( $name.erased_source(), )* ].into_iter().flatten()
+            }
+
+            /// Retire every live source; frame-resolved values replace them.
+            pub(crate) fn clear_sources(&mut self) {
+                $( self.$name.clear_source(); )*
+            }
+
+            /// Whether any property has to be re-sampled at render time.
+            pub(crate) fn has_reactive_sources(&self) -> bool {
+                self.sources().any(StyleSource::is_reactive)
+            }
+
+            /// Whether any property varies with animation time.
+            pub(crate) fn has_temporal_sources(&self) -> bool {
+                self.sources().any(StyleSource::is_temporal)
+            }
+
+            /// Push each push-based source's version onto `versions`.
+            pub(crate) fn collect_versions(&self, versions: &mut Vec<u64>) {
+                for source in self.sources() {
+                    if let Some(version) = source.current_version() {
+                        versions.push(version);
+                    }
+                }
+            }
+
+            /// Register `callback` with every push-based source.
+            pub(crate) fn subscribe(
+                &self,
+                callback: &SharedReactiveCallback,
+                teardowns: &mut Vec<ReactiveTeardown>,
+            ) {
+                for source in self.sources() {
+                    source.subscribe(Arc::clone(callback), teardowns);
+                }
+            }
+
+            /// One `Self` per declared property, each with that property — and
+            /// only that property — driven by a source of the given kind.
+            ///
+            /// Generated from the same list as the properties themselves, so
+            /// the traversal tests cover a newly declared property without
+            /// anyone remembering to extend a fixture.
+            #[cfg(test)]
+            pub(crate) fn each_property_sourced(
+                kind: TestSourceKind,
+            ) -> Vec<(&'static str, Self)> {
+                vec![$({
+                    let mut props = Self::default();
+                    props.$name.set(<$ty as TestStyleValue>::source(kind));
+                    (stringify!($name), props)
+                }),*]
+            }
+        }
+    };
+}
+
+series_style_properties! {
+    /// Series color (`None` for auto-color from the palette).
+    color: Color;
+    /// Line width override, in points.
+    line_width: f32, normalize = |width| width.max(0.1);
+    /// Line dash pattern override.
+    line_style: LineStyle;
+    /// Marker shape for scatter-like series.
+    marker_style: MarkerStyle;
+    /// Marker size, in points.
+    marker_size: f32, normalize = |size| size.max(0.1);
+    /// Opacity, where 0.0 is transparent and 1.0 opaque.
+    alpha: f32, normalize = |alpha| alpha.clamp(0.0, 1.0);
+}
+
+/// Which kind of reactive source a traversal test should attach.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TestSourceKind {
+    /// Push-based: has a version, marks the plot dirty when it changes.
+    Push,
+    /// Time-varying: has no version, must be re-sampled every frame.
+    Temporal,
+}
+
+/// How to build a reactive source of a style property's value type, for tests.
+///
+/// [`SeriesStyleProps::each_property_sourced`] needs one value per declared
+/// property type. Declaring a property of a type with no impl here is a compile
+/// error, which is the point: a new property type has to say how it is tested.
+#[cfg(test)]
+pub(crate) trait TestStyleValue: Sized + Send + Sync + 'static {
+    /// A representative value of this type.
+    fn sample() -> Self;
+
+    /// A reactive source of `kind` yielding [`Self::sample`].
+    fn source(kind: TestSourceKind) -> ReactiveValue<Self>
+    where
+        Self: Clone,
+    {
+        match kind {
+            TestSourceKind::Push => crate::data::Observable::new(Self::sample()).into(),
+            TestSourceKind::Temporal => crate::data::Signal::new(|_| Self::sample()).into(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl TestStyleValue for Color {
+    fn sample() -> Self {
+        Color::RED
+    }
+}
+
+#[cfg(test)]
+impl TestStyleValue for f32 {
+    fn sample() -> Self {
+        0.5
+    }
+}
+
+#[cfg(test)]
+impl TestStyleValue for LineStyle {
+    fn sample() -> Self {
+        LineStyle::Dashed
+    }
+}
+
+#[cfg(test)]
+impl TestStyleValue for MarkerStyle {
+    fn sample() -> Self {
+        MarkerStyle::Square
+    }
+}
+
+/// The read half of one style property, with its value type erased.
+///
+/// The six style properties carry four different `T`s, so a traversal that asks
+/// all of them the same question needs a trait object. Before this existed each
+/// question was written out six times over, and a property left out of
+/// `collect_source_versions` produced a permanently stale plot with no error at
+/// all.
+pub(crate) trait StyleSource {
+    /// Observable version, or `None` for a source that is not push-based.
+    fn current_version(&self) -> Option<u64>;
+    /// Whether this source has to be re-sampled at render time.
+    fn is_reactive(&self) -> bool;
+    /// Whether this source varies with animation time.
+    fn is_temporal(&self) -> bool;
+    /// Register `callback` for push updates, recording the teardown.
+    fn subscribe(&self, callback: SharedReactiveCallback, teardowns: &mut Vec<ReactiveTeardown>);
+}
+
+impl<T: Send + Sync + 'static> StyleSource for ReactiveValue<T> {
+    fn current_version(&self) -> Option<u64> {
+        ReactiveValue::current_version(self)
+    }
+
+    fn is_reactive(&self) -> bool {
+        ReactiveValue::is_reactive(self)
+    }
+
+    fn is_temporal(&self) -> bool {
+        ReactiveValue::is_temporal(self)
+    }
+
+    fn subscribe(&self, callback: SharedReactiveCallback, teardowns: &mut Vec<ReactiveTeardown>) {
+        self.subscribe_push_updates(callback, teardowns);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PlotSeries {
     /// Series type
@@ -304,32 +613,11 @@ pub(crate) struct PlotSeries {
     pub(super) streaming_source: Option<StreamingXY>,
     /// Series label for legend
     pub(super) label: Option<String>,
-    /// Series color (None for auto-color)
-    pub(super) color: Option<Color>,
-    /// Reactive series color sampled at render time.
-    pub(super) color_source: Option<ReactiveValue<Color>>,
-    /// Line width override
-    pub(super) line_width: Option<f32>,
-    /// Reactive line width sampled at render time.
-    pub(super) line_width_source: Option<ReactiveValue<f32>>,
-    /// Line style override
-    pub(super) line_style: Option<LineStyle>,
-    /// Reactive line style sampled at render time.
-    pub(super) line_style_source: Option<ReactiveValue<LineStyle>>,
-    /// Marker style for scatter plots
-    pub(super) marker_style: Option<MarkerStyle>,
-    /// Reactive marker style sampled at render time.
-    pub(super) marker_style_source: Option<ReactiveValue<MarkerStyle>>,
-    /// Marker size for scatter plots
-    pub(super) marker_size: Option<f32>,
-    /// Reactive marker size sampled at render time.
-    pub(super) marker_size_source: Option<ReactiveValue<f32>>,
+    /// The reactive style properties, declared once by
+    /// [`series_style_properties!`].
+    pub(super) props: SeriesStyleProps,
     /// Marker edge styling, or `None` for bare markers.
     pub(super) marker_edge: Option<MarkerEdge>,
-    /// Alpha/transparency override
-    pub(super) alpha: Option<f32>,
-    /// Reactive alpha sampled at render time.
-    pub(super) alpha_source: Option<ReactiveValue<f32>>,
     /// Optional Y error bar data (attached to series)
     pub(super) y_errors: Option<ErrorValues>,
     /// Optional X error bar data (attached to series)
@@ -345,84 +633,6 @@ pub(crate) struct PlotSeries {
 }
 
 impl PlotSeries {
-    pub(super) fn set_color_source_value(&mut self, color: ReactiveValue<Color>) {
-        match color {
-            ReactiveValue::Static(color) => {
-                self.color = Some(color);
-                self.color_source = None;
-            }
-            source => {
-                self.color = None;
-                self.color_source = Some(source);
-            }
-        }
-    }
-
-    pub(super) fn set_line_width_source_value(&mut self, width: ReactiveValue<f32>) {
-        match width {
-            ReactiveValue::Static(width) => {
-                self.line_width = Some(width.max(0.1));
-                self.line_width_source = None;
-            }
-            source => {
-                self.line_width = None;
-                self.line_width_source = Some(source);
-            }
-        }
-    }
-
-    pub(super) fn set_line_style_source_value(&mut self, style: ReactiveValue<LineStyle>) {
-        match style {
-            ReactiveValue::Static(style) => {
-                self.line_style = Some(style);
-                self.line_style_source = None;
-            }
-            source => {
-                self.line_style = None;
-                self.line_style_source = Some(source);
-            }
-        }
-    }
-
-    pub(super) fn set_marker_style_source_value(&mut self, marker: ReactiveValue<MarkerStyle>) {
-        match marker {
-            ReactiveValue::Static(marker) => {
-                self.marker_style = Some(marker);
-                self.marker_style_source = None;
-            }
-            source => {
-                self.marker_style = None;
-                self.marker_style_source = Some(source);
-            }
-        }
-    }
-
-    pub(super) fn set_marker_size_source_value(&mut self, size: ReactiveValue<f32>) {
-        match size {
-            ReactiveValue::Static(size) => {
-                self.marker_size = Some(size.max(0.1));
-                self.marker_size_source = None;
-            }
-            source => {
-                self.marker_size = None;
-                self.marker_size_source = Some(source);
-            }
-        }
-    }
-
-    pub(super) fn set_alpha_source_value(&mut self, alpha: ReactiveValue<f32>) {
-        match alpha {
-            ReactiveValue::Static(alpha) => {
-                self.alpha = Some(alpha.clamp(0.0, 1.0));
-                self.alpha_source = None;
-            }
-            source => {
-                self.alpha = None;
-                self.alpha_source = Some(source);
-            }
-        }
-    }
-
     pub(super) fn to_legend_item_with_label(
         &self,
         label: String,
@@ -451,10 +661,10 @@ impl PlotSeries {
         theme: &Theme,
     ) -> Option<LegendItem> {
         let color = self.color_with_alpha(default_color);
-        let line_width = self.line_width.unwrap_or(theme.line_width);
-        let line_style = self.line_style.clone().unwrap_or(LineStyle::Solid);
-        let marker_style = self.marker_style.unwrap_or(MarkerStyle::Circle);
-        let marker_size = self.marker_size.unwrap_or(6.0);
+        let line_width = self.props.line_width.value_or(theme.line_width);
+        let line_style = self.props.line_style.value_or(LineStyle::Solid);
+        let marker_style = self.props.marker_style.value_or(MarkerStyle::Circle);
+        let marker_size = self.props.marker_size.value_or(6.0);
 
         // The key carries the *same* resolved rim the renderer strokes the
         // markers with, so a legend swatch cannot disagree with its series.
@@ -462,7 +672,7 @@ impl PlotSeries {
 
         let item_type = match &self.series_type {
             SeriesType::Line { .. } => {
-                if self.marker_style.is_some() || self.marker_style_source.is_some() {
+                if self.props.marker_style.is_set() {
                     LegendItemType::LineMarker {
                         line_style,
                         line_width,
@@ -574,7 +784,7 @@ impl PlotSeries {
                             .unwrap_or_else(|| theme.get_color(base_color_idx + idx));
                         // Use a more visible alpha for legend swatches (0.6 instead of fill_alpha)
                         // This ensures legend items are clearly visible while still showing fill style
-                        let series_alpha = self.alpha.unwrap_or(1.0);
+                        let series_alpha = self.props.alpha.value_or(1.0);
                         let color_alpha = f32::from(color.a) / 255.0;
                         let edge_color = color.with_alpha(color_alpha * series_alpha);
                         let fill_color = color.with_alpha(color_alpha * 0.6 * series_alpha);
@@ -608,150 +818,35 @@ impl PlotSeries {
         } else {
             self.series_type.collect_source_versions(versions);
         }
-        if let Some(version) = self
-            .color_source
-            .as_ref()
-            .and_then(ReactiveValue::current_version)
-        {
-            versions.push(version);
-        }
-        if let Some(version) = self
-            .line_width_source
-            .as_ref()
-            .and_then(ReactiveValue::current_version)
-        {
-            versions.push(version);
-        }
-        if let Some(version) = self
-            .line_style_source
-            .as_ref()
-            .and_then(ReactiveValue::current_version)
-        {
-            versions.push(version);
-        }
-        if let Some(version) = self
-            .marker_style_source
-            .as_ref()
-            .and_then(ReactiveValue::current_version)
-        {
-            versions.push(version);
-        }
-        if let Some(version) = self
-            .marker_size_source
-            .as_ref()
-            .and_then(ReactiveValue::current_version)
-        {
-            versions.push(version);
-        }
-        if let Some(version) = self
-            .alpha_source
-            .as_ref()
-            .and_then(ReactiveValue::current_version)
-        {
-            versions.push(version);
-        }
+        self.props.collect_versions(versions);
     }
 
     pub(super) fn is_reactive(&self) -> bool {
-        self.series_type.is_reactive()
-            || self
-                .color_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .line_width_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .line_style_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .marker_style_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .marker_size_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .alpha_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
+        self.series_type.is_reactive() || self.has_reactive_style_sources()
     }
 
     pub(super) fn has_temporal_sources(&self) -> bool {
-        self.series_type.has_temporal_sources()
-            || self
-                .color_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_temporal)
-            || self
-                .line_width_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_temporal)
-            || self
-                .line_style_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_temporal)
-            || self
-                .marker_style_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_temporal)
-            || self
-                .marker_size_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_temporal)
-            || self
-                .alpha_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_temporal)
+        self.series_type.has_temporal_sources() || self.props.has_temporal_sources()
     }
 
     pub(super) fn has_reactive_style_sources(&self) -> bool {
-        self.color_source
-            .as_ref()
-            .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .line_width_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .line_style_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .marker_style_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .marker_size_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
-            || self
-                .alpha_source
-                .as_ref()
-                .is_some_and(ReactiveValue::is_reactive)
+        self.props.has_reactive_sources()
     }
 
+    /// Clone this series for a resolved frame, shedding the static data payload.
+    ///
+    /// Spelled out field by field on purpose: `Self { series_type: .., ..self.clone() }`
+    /// would clone the static `Vec<f64>` lanes only to throw them away, which is
+    /// a per-frame copy of the whole dataset in an animation. A struct literal
+    /// is exhaustively checked anyway, so a new field cannot be dropped here
+    /// silently — it simply will not compile.
     pub(super) fn clone_for_resolved_frame(&self) -> Self {
         Self {
             series_type: self.series_type.clone_without_static_values(),
             streaming_source: self.streaming_source.clone(),
             label: self.label.clone(),
-            color: self.color,
-            color_source: self.color_source.clone(),
-            line_width: self.line_width,
-            line_width_source: self.line_width_source.clone(),
-            line_style: self.line_style.clone(),
-            line_style_source: self.line_style_source.clone(),
-            marker_style: self.marker_style,
-            marker_style_source: self.marker_style_source.clone(),
-            marker_size: self.marker_size,
-            marker_size_source: self.marker_size_source.clone(),
+            props: self.props.clone(),
             marker_edge: self.marker_edge,
-            alpha: self.alpha,
-            alpha_source: self.alpha_source.clone(),
             y_errors: self.y_errors.clone(),
             x_errors: self.x_errors.clone(),
             error_config: self.error_config.clone(),
@@ -849,29 +944,12 @@ impl PlotSeries {
         } else {
             self.series_type.subscribe_push_updates(callback, teardowns);
         }
-        if let Some(color_source) = &self.color_source {
-            color_source.subscribe_push_updates(Arc::clone(callback), teardowns);
-        }
-        if let Some(line_width_source) = &self.line_width_source {
-            line_width_source.subscribe_push_updates(Arc::clone(callback), teardowns);
-        }
-        if let Some(line_style_source) = &self.line_style_source {
-            line_style_source.subscribe_push_updates(Arc::clone(callback), teardowns);
-        }
-        if let Some(marker_style_source) = &self.marker_style_source {
-            marker_style_source.subscribe_push_updates(Arc::clone(callback), teardowns);
-        }
-        if let Some(marker_size_source) = &self.marker_size_source {
-            marker_size_source.subscribe_push_updates(Arc::clone(callback), teardowns);
-        }
-        if let Some(alpha_source) = &self.alpha_source {
-            alpha_source.subscribe_push_updates(Arc::clone(callback), teardowns);
-        }
+        self.props.subscribe(callback, teardowns);
     }
 
     pub(super) fn color_with_alpha(&self, default_color: Color) -> Color {
-        let color = self.color.unwrap_or(default_color);
-        let alpha = self.alpha.unwrap_or(1.0).clamp(0.0, 1.0);
+        let color = self.props.color.value_or(default_color);
+        let alpha = self.props.alpha.value_or(1.0).clamp(0.0, 1.0);
         color.with_alpha((f32::from(color.a) / 255.0) * alpha)
     }
 }
@@ -1594,6 +1672,8 @@ pub(crate) struct TickConfig {
     pub(crate) minor_ticks_y: usize,
     /// Grid display mode
     pub(crate) grid_mode: GridMode,
+    /// How the x tick labels are oriented when they would collide.
+    pub(crate) xtick_rotation: crate::render::skia::XTickRotation,
 }
 
 impl Default for TickConfig {
@@ -1607,6 +1687,7 @@ impl Default for TickConfig {
             major_ticks_y: 8,
             minor_ticks_y: 0,
             grid_mode: GridMode::MajorOnly,
+            xtick_rotation: crate::render::skia::XTickRotation::Auto,
         }
     }
 }
@@ -1659,5 +1740,193 @@ mod marker_edge_tests {
             None,
             "a zero-width edge is no edge, not a hairline"
         );
+    }
+}
+
+/// The safety net under `PlotSeries::style_sources`.
+///
+/// Every reactive style property has to be visible to *every* traversal. The
+/// failure this guards against is silent: a property left out of
+/// `collect_source_versions` renders once and then never updates again, with no
+/// error anywhere. These tests set each property in turn and assert that all
+/// four traversals notice, so a seventh property that is only half-wired fails
+/// here instead of in a user's animation.
+#[cfg(test)]
+mod reactive_style_tests {
+    use super::*;
+    use crate::data::Observable;
+
+    fn bare_series() -> PlotSeries {
+        PlotSeries {
+            series_type: SeriesType::Line {
+                x_data: PlotData::Static(vec![0.0, 1.0]),
+                y_data: PlotData::Static(vec![0.0, 1.0]),
+            },
+            streaming_source: None,
+            label: None,
+            props: SeriesStyleProps::default(),
+            marker_edge: None,
+            y_errors: None,
+            x_errors: None,
+            error_config: None,
+            inset_layout: None,
+            group_id: None,
+            resolved_radar_colors: None,
+        }
+    }
+
+    /// One series per *declared* style property, each carrying a source of
+    /// `kind` on that property alone.
+    ///
+    /// The property list comes from [`series_style_properties!`], not from a
+    /// hand-written fixture, so a newly declared property is covered by every
+    /// test below the moment it is declared.
+    fn series_per_property(kind: TestSourceKind) -> Vec<(&'static str, PlotSeries)> {
+        SeriesStyleProps::each_property_sourced(kind)
+            .into_iter()
+            .map(|(name, props)| {
+                let mut series = bare_series();
+                series.props = props;
+                (name, series)
+            })
+            .collect()
+    }
+
+    /// The fixtures really do cover every declared property.
+    #[test]
+    fn the_traversal_fixtures_cover_every_declared_property() {
+        let covered: Vec<&str> = series_per_property(TestSourceKind::Push)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(covered, SeriesStyleProps::NAMES);
+        assert!(!SeriesStyleProps::NAMES.is_empty());
+    }
+
+    #[test]
+    fn a_static_style_property_contributes_no_reactive_source() {
+        let series = bare_series();
+        let mut versions = Vec::new();
+        series.collect_source_versions(&mut versions);
+
+        assert!(versions.is_empty());
+        assert!(!series.is_reactive());
+        assert!(!series.has_reactive_style_sources());
+        assert!(!series.has_temporal_sources());
+    }
+
+    #[test]
+    fn every_push_style_property_is_seen_by_every_traversal() {
+        for (name, series) in series_per_property(TestSourceKind::Push) {
+            assert!(series.is_reactive(), "{name} must be reactive");
+            assert!(
+                series.has_reactive_style_sources(),
+                "{name}: has_reactive_style_sources missed the source"
+            );
+
+            let mut versions = Vec::new();
+            series.collect_source_versions(&mut versions);
+            assert_eq!(
+                versions.len(),
+                1,
+                "{name}: collect_source_versions missed the source, so a change \
+                 to it would never mark the plot dirty"
+            );
+
+            let callback: SharedReactiveCallback = Arc::new(|| {});
+            let mut teardowns: Vec<ReactiveTeardown> = Vec::new();
+            series.subscribe_push_updates(&callback, &mut teardowns);
+            assert_eq!(
+                teardowns.len(),
+                1,
+                "{name}: subscribe_push_updates missed the source"
+            );
+        }
+    }
+
+    #[test]
+    fn every_temporal_style_property_is_seen_by_the_temporal_traversal() {
+        for (name, series) in series_per_property(TestSourceKind::Temporal) {
+            assert!(
+                series.has_temporal_sources(),
+                "{name}: has_temporal_sources missed the source"
+            );
+            assert!(series.is_reactive(), "{name} must be reactive");
+            // A temporal source is not push-based, so it has no version.
+            let mut versions = Vec::new();
+            series.collect_source_versions(&mut versions);
+            assert!(versions.is_empty(), "{name}: a signal has no version");
+        }
+    }
+
+    #[test]
+    fn a_static_value_and_a_source_are_mutually_exclusive() {
+        let mut series = bare_series();
+
+        series.props.alpha.set(Observable::new(0.25_f32).into());
+        assert_eq!(
+            series.props.alpha.cloned(),
+            None,
+            "a source retires the static value"
+        );
+        assert!(series.props.alpha.source().is_some());
+
+        series.props.alpha.set(1.5_f32.into());
+        assert_eq!(
+            series.props.alpha.cloned(),
+            Some(1.0),
+            "a static alpha is clamped"
+        );
+        assert!(
+            series.props.alpha.source().is_none(),
+            "a static value must retire the source"
+        );
+    }
+
+    /// The range rule attached to a property at its declaration is applied by
+    /// the only path that can write it.
+    ///
+    /// `PlotSeries` and `SeriesStyle` share one [`SeriesStyleProps`], so they
+    /// cannot normalise differently — this pins the ranges themselves.
+    #[test]
+    fn a_declared_range_is_applied_to_every_static_write() {
+        let mut props = SeriesStyleProps::default();
+
+        props.line_width.set((-4.0_f32).into());
+        assert_eq!(props.line_width.cloned(), Some(0.1));
+
+        props.marker_size.set(0.0_f32.into());
+        assert_eq!(props.marker_size.cloned(), Some(0.1));
+
+        props.alpha.set(1.5_f32.into());
+        assert_eq!(props.alpha.cloned(), Some(1.0));
+
+        props.alpha.set((-0.5_f32).into());
+        assert_eq!(props.alpha.cloned(), Some(0.0));
+
+        // A property with no declared range is stored verbatim.
+        props.color.set(Color::RED.into());
+        assert_eq!(props.color.cloned(), Some(Color::RED));
+    }
+
+    /// Cloning a property carries its range rule, so a cloned series still
+    /// clamps.
+    #[test]
+    fn cloning_a_property_carries_its_range() {
+        let props = SeriesStyleProps::default();
+        let mut cloned = props.clone();
+        cloned.alpha.set(9.0_f32.into());
+        assert_eq!(cloned.alpha.cloned(), Some(1.0));
+    }
+
+    /// A live source survives `or_value`; only an unset static value is filled.
+    #[test]
+    fn a_config_fallback_never_displaces_a_live_source() {
+        let mut props = SeriesStyleProps::default();
+        props.alpha.set(Observable::new(0.25_f32).into());
+        props.alpha.or_value(Some(0.8));
+
+        assert!(props.alpha.source().is_some(), "the source must survive");
+        assert!(props.has_reactive_sources());
     }
 }

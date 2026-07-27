@@ -21,8 +21,8 @@
 //! - **Performance-Oriented**: Built for release-mode plotting workloads
 //!   with benchmarkable output paths
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
-//! - **19 Plot Types (23 with the `3d` feature)**: basic, distribution, continuous,
-//!   composition, polar and vector families, plus subplot layout helpers
+//! - **26 Plot Types (30 with the `3d` feature)**: basic, distribution, continuous,
+//!   composition, polar, vector and hierarchical families, plus subplot layout helpers
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: Streaming-friendly data structures and
 //!   practical downsampling workflows
@@ -888,7 +888,7 @@ pub mod prelude {
     };
     pub use crate::render::{
         Color, ColorMap, ColorMapSpec, FontConfig, FontFamily, FontStyle, FontWeight, LineStyle,
-        MarkerStyle, Theme,
+        MarkerStyle, Theme, XTickRotation,
     };
 
     // Deprecated 2D shortcuts, kept re-exported so existing `use
@@ -991,7 +991,7 @@ where
 ///
 /// This is a second spelling of `Plot::new().line(x, y)` that returns the exact
 /// same [`PlotBuilder`]. Write the builder chain instead — it is the one entry
-/// point that works for all 21 plot types, whereas only three of them ever had
+/// point that works for all 26 plot types, whereas only three of them ever had
 /// a free function:
 ///
 /// ```rust,no_run

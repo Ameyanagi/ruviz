@@ -207,7 +207,8 @@ pub(super) fn streaming_draw_op(
         line_style,
         marker_style,
         marker_size_px,
-        draw_markers: kind == StreamingDrawKind::Scatter || series.marker_style.is_some(),
+        draw_markers: kind == StreamingDrawKind::Scatter
+            || series.props.marker_style.value().is_some(),
     }))
 }
 

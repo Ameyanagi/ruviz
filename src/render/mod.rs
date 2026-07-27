@@ -29,7 +29,7 @@ pub use pooled::{LineSegment, PooledRenderer, PooledRendererStats, get_pooled_re
 pub use primitives::{Arc, Arrow, Polygon, Wedge};
 #[cfg(feature = "simd")]
 pub use simd::{CoordinateBounds, PixelViewport, SIMDPerformanceInfo, SIMDTransformer};
-pub use skia::SkiaRenderer;
+pub use skia::{SkiaRenderer, XTickLabelPlan, XTickRotation, XTickRowBounds, XTickRowMetrics};
 pub use style::{LineStyle, MarkerStyle};
 pub use text::{FontConfig, FontFamily, FontStyle, FontWeight};
 pub use text::{

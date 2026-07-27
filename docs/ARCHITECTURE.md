@@ -284,13 +284,18 @@ Fallible plotting operations use `PlottingError` through the crate's `Result<T>`
 ```rust,ignore,reason=abridged-api-sketch
 pub type Result<T> = std::result::Result<T, PlottingError>;
 
+// `Display` and `Error::source` are derived: every variant carries its own
+// `#[error("...")]`, so a new variant cannot forget its message.
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum PlottingError {
     InvalidData {
         message: String,
         position: Option<usize>,
     },
     RenderError(String),
-    IoError(std::io::Error),
+    // `Arc` rather than the bare `io::Error`, so the enum can derive `Clone`;
+    // build one with `PlottingError::from(io_error)`.
+    IoError(Arc<std::io::Error>),
     // Other real variants omitted from this abridged sketch.
 }
 ```

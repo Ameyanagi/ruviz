@@ -219,7 +219,7 @@ fn rename_temp_into_place(
             Ok(())
         } else {
             let err = std::io::Error::last_os_error();
-            Err(AtomicWriteFailure::preserve_temp(PlottingError::IoError(
+            Err(AtomicWriteFailure::preserve_temp(PlottingError::from(
                 std::io::Error::new(
                     err.kind(),
                     format!(
@@ -235,22 +235,22 @@ fn rename_temp_into_place(
     #[cfg(not(windows))]
     {
         fs::rename(temp_path, path)
-            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::from(err)))
     }
 }
 
 pub(crate) fn write_bytes_atomic<P: AsRef<Path>>(path: P, bytes: &[u8]) -> Result<()> {
     let path = path.as_ref();
-    let destination_path = resolve_atomic_destination(path).map_err(PlottingError::IoError)?;
-    ensure_parent_dir(&destination_path).map_err(PlottingError::IoError)?;
+    let destination_path = resolve_atomic_destination(path).map_err(PlottingError::from)?;
+    ensure_parent_dir(&destination_path).map_err(PlottingError::from)?;
     let (temp_path, mut file) =
-        create_atomic_temp_file(&destination_path).map_err(PlottingError::IoError)?;
+        create_atomic_temp_file(&destination_path).map_err(PlottingError::from)?;
 
     let write_result = (|| -> std::result::Result<(), AtomicWriteFailure> {
         file.write_all(bytes)
-            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::from(err)))?;
         file.sync_all()
-            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::from(err)))?;
         #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
         drop(file);
         rename_temp_into_place(&temp_path, &destination_path)?;
@@ -293,10 +293,10 @@ where
     F: FnOnce(&mut BufWriter<File>) -> Result<()>,
 {
     let path = path.as_ref();
-    let destination_path = resolve_atomic_destination(path).map_err(PlottingError::IoError)?;
-    ensure_parent_dir(&destination_path).map_err(PlottingError::IoError)?;
+    let destination_path = resolve_atomic_destination(path).map_err(PlottingError::from)?;
+    ensure_parent_dir(&destination_path).map_err(PlottingError::from)?;
     let (temp_path, file) =
-        create_atomic_temp_file(&destination_path).map_err(PlottingError::IoError)?;
+        create_atomic_temp_file(&destination_path).map_err(PlottingError::from)?;
 
     let write_result = (|| -> std::result::Result<(), AtomicWriteFailure> {
         let mut writer_handle = BufWriter::new(file);
@@ -304,12 +304,12 @@ where
         writer(&mut writer_handle).map_err(AtomicWriteFailure::cleanup)?;
         writer_handle
             .flush()
-            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::from(err)))?;
         let file = writer_handle
             .into_inner()
-            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err.into_error())))?;
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::from(err.into_error())))?;
         file.sync_all()
-            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::IoError(err)))?;
+            .map_err(|err| AtomicWriteFailure::cleanup(PlottingError::from(err)))?;
         #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
         drop(file);
         rename_temp_into_place(&temp_path, &destination_path)?;

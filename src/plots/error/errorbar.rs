@@ -169,8 +169,7 @@ impl PlotBuilder<ErrorBarConfig> {
 
     /// Set the marker drawn at each data point.
     pub fn marker(mut self, marker: MarkerStyle) -> Self {
-        self.style.marker_style = Some(marker);
-        self.style.marker_style_source = None;
+        self.style.props.marker_style.set(marker.into());
         self
     }
 
@@ -179,14 +178,13 @@ impl PlotBuilder<ErrorBarConfig> {
     where
         S: Into<crate::core::plot::ReactiveValue<MarkerStyle>>,
     {
-        self.style.set_marker_style_source_value(marker.into());
+        self.style.props.marker_style.set(marker.into());
         self
     }
 
     /// Set the size in points of the marker drawn at each data point.
     pub fn marker_size(mut self, size: f32) -> Self {
-        self.style.marker_size = Some(size.max(0.1));
-        self.style.marker_size_source = None;
+        self.style.props.marker_size.set(size.into());
         self
     }
 
@@ -195,7 +193,7 @@ impl PlotBuilder<ErrorBarConfig> {
     where
         S: Into<crate::core::plot::ReactiveValue<f32>>,
     {
-        self.style.set_marker_size_source_value(size.into());
+        self.style.props.marker_size.set(size.into());
         self
     }
 }

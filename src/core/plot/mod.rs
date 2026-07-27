@@ -638,6 +638,7 @@ use crate::{
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    fmt,
     path::Path,
     sync::Arc,
 };
@@ -645,8 +646,8 @@ use std::{
 use self::data::{ReactiveTeardown, SharedReactiveCallback};
 pub(crate) use self::types::{
     LegendConfig, PendingIngestionError, PlotSeries, ResolvedData, ResolvedFrame, ResolvedSeries,
-    ResolvedSeriesStyle, ResolvedStreamingPair, ResolvedStyle, SeriesGroupMeta, SeriesType,
-    TickConfig,
+    ResolvedSeriesStyle, ResolvedStreamingPair, ResolvedStyle, SeriesGroupMeta, SeriesStyleProps,
+    SeriesType, TickConfig,
 };
 
 #[cfg(feature = "gpu")]

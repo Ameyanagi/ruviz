@@ -1,4 +1,5 @@
 use super::*;
+use crate::render::skia::{XTickLabelPlan, XTickRowBounds, XTickRowMetrics, draw_x_tick_label_row};
 
 /// Where the data actually is, for [`LegendPosition::Best`].
 ///
@@ -649,16 +650,21 @@ impl Plot {
         let is_categorical = category_axis.is_some();
 
         let content = self.create_plot_content_from_resolved_text(y_min, y_max, frame);
-        let (layout, x_ticks, y_ticks) = self.compute_layout_with_configured_ticks(
-            &renderer,
-            (scaled_width, scaled_height),
-            &content,
-            dpi,
-            x_min,
-            x_max,
-            y_min,
-            y_max,
-        )?;
+        let (layout, x_ticks, y_ticks, x_tick_label_plan) = self
+            .compute_layout_with_categorical_ticks(
+                &renderer,
+                (scaled_width, scaled_height),
+                &content,
+                dpi,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                category_labels,
+                category_positions,
+            )?;
+        // The row that was measured is the row that is drawn.
+        renderer.set_x_tick_label_plan(x_tick_label_plan);
         let plot_area = Self::plot_area_from_layout(&layout)?;
 
         let x_tick_pixels: Vec<f32> = x_ticks
@@ -1913,16 +1919,72 @@ impl Plot {
         y_min: f64,
         y_max: f64,
     ) -> Result<(ResolvedLayout, Vec<f64>, Vec<f64>)> {
+        let (measurements, x_ticks, y_ticks) =
+            self.measure_configured_ticks(renderer, content, dpi, x_min, x_max, y_min, y_max)?;
+        let layout =
+            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
+
+        Ok((layout, x_ticks, y_ticks))
+    }
+
+    /// The same layout, plus the plan its categorical x tick labels are drawn
+    /// with.
+    ///
+    /// Categorical labels are user strings: ten region names collide into one
+    /// illegible run that no tick-count budget can prevent. This is where that
+    /// row is measured and where the bottom margin is reserved from the answer —
+    /// before the plot area is computed, so the labels are given room rather
+    /// than clipped. `category_labels` empty (a numeric axis) leaves both the
+    /// layout and the plan exactly as they were.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compute_layout_with_categorical_ticks(
+        &self,
+        renderer: &SkiaRenderer,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        category_labels: &[String],
+        category_positions: &[f64],
+    ) -> Result<(ResolvedLayout, Vec<f64>, Vec<f64>, XTickLabelPlan)> {
+        let (measurements, x_ticks, y_ticks) =
+            self.measure_configured_ticks(renderer, content, dpi, x_min, x_max, y_min, y_max)?;
+        let layout =
+            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
+        let (layout, plan) = self.resolve_x_tick_label_row(
+            renderer,
+            canvas_size,
+            content,
+            dpi,
+            measurements.as_ref(),
+            layout,
+            category_labels,
+            category_positions,
+            x_min,
+            x_max,
+        )?;
+
+        Ok((layout, x_ticks, y_ticks, plan))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn measure_configured_ticks(
+        &self,
+        renderer: &SkiaRenderer,
+        content: &PlotContent,
+        dpi: f32,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Result<(Option<LayoutMeasurements>, Vec<f64>, Vec<f64>)> {
         if !content.show_tick_labels {
             let measurements =
                 self.measure_layout_text_with_ticks(renderer, content, dpi, &[], &[])?;
-            let layout = self.compute_layout_from_measurements(
-                canvas_size,
-                content,
-                dpi,
-                measurements.as_ref(),
-            );
-            return Ok((layout, Vec::new(), Vec::new()));
+            return Ok((measurements, Vec::new(), Vec::new()));
         }
 
         let (x_ticks, y_ticks) = self.configured_major_ticks(x_min, x_max, y_min, y_max);
@@ -1933,10 +1995,112 @@ impl Plot {
         let y_labels = crate::axes::format_tick_labels_for_scale(&y_ticks, &self.layout.y_scale);
         let measurements =
             self.measure_layout_text_with_ticks(renderer, content, dpi, &x_labels, &y_labels)?;
-        let layout =
-            self.compute_layout_from_measurements(canvas_size, content, dpi, measurements.as_ref());
 
-        Ok((layout, x_ticks, y_ticks))
+        Ok((measurements, x_ticks, y_ticks))
+    }
+
+    /// Decide how the categorical x tick label row is drawn, and re-reserve the
+    /// bottom margin from that decision.
+    ///
+    /// The row is measured against the plot area the horizontal pass produced.
+    /// That is sound because the only margin this can change is the bottom one,
+    /// and the bottom margin does not move the plot area's left or right edge —
+    /// so a label measured here is drawn at the same x.
+    ///
+    /// Whether a rotated row *fits* is a question only the layout can answer:
+    /// a content-driven layout caps its margins by canvas fraction and a fixed
+    /// one does not grow at all. So the trial layout below is computed and then
+    /// asked, rather than the margin arithmetic being restated here.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_x_tick_label_row(
+        &self,
+        renderer: &SkiaRenderer,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        measurements: Option<&LayoutMeasurements>,
+        layout: ResolvedLayout,
+        category_labels: &[String],
+        category_positions: &[f64],
+        x_min: f64,
+        x_max: f64,
+    ) -> Result<(ResolvedLayout, XTickLabelPlan)> {
+        if category_labels.is_empty() || !content.show_tick_labels {
+            return Ok((layout, XTickLabelPlan::default()));
+        }
+
+        let tick_size_px =
+            RenderScale::new(dpi).points_to_pixels(self.display.config.typography.tick_size());
+        let centers = SkiaRenderer::categorical_label_centers(
+            &layout.plot_area,
+            category_positions,
+            x_min,
+            x_max,
+        );
+        // The row is kept inside the canvas, not inside the plot area: an end
+        // label is allowed to overhang its own slot into the outer margin (that
+        // is where a first or last category name lives), it is only stopped
+        // from running off the figure.
+        let metrics = renderer.measure_x_tick_row(
+            category_labels,
+            &centers,
+            tick_size_px,
+            XTickRowBounds::canvas(canvas_size.0 as f32),
+        )?;
+        if metrics.horizontal_extent <= 0.0 {
+            // Every slot is unnamed: nothing is drawn, so nothing is reserved.
+            return Ok((layout, XTickLabelPlan::default()));
+        }
+
+        let rotation = self.layout.tick_config.xtick_rotation;
+        let rotated_fits = metrics.wants_rotation(rotation) && {
+            let trial = self.layout_with_x_tick_extent(
+                canvas_size,
+                content,
+                dpi,
+                measurements,
+                &metrics,
+                metrics.max_label_width,
+            );
+            Self::x_tick_row_fits(&trial, canvas_size.1 as f32, metrics.max_label_width)
+        };
+
+        let plan = metrics.plan(rotation, rotated_fits);
+        let layout = self.layout_with_x_tick_extent(
+            canvas_size,
+            content,
+            dpi,
+            measurements,
+            &metrics,
+            plan.extent,
+        );
+
+        Ok((layout, plan))
+    }
+
+    /// The layout that reserves `extent` vertical pixels for the x tick labels.
+    fn layout_with_x_tick_extent(
+        &self,
+        canvas_size: (u32, u32),
+        content: &PlotContent,
+        dpi: f32,
+        measurements: Option<&LayoutMeasurements>,
+        metrics: &XTickRowMetrics,
+        extent: f32,
+    ) -> ResolvedLayout {
+        let mut measurements = measurements.cloned().unwrap_or_default();
+        measurements.xtick = Some((metrics.max_label_width, extent));
+        self.compute_layout_from_measurements(canvas_size, content, dpi, Some(&measurements))
+    }
+
+    /// Whether a label row `extent` pixels tall clears the x label and the
+    /// bottom of the canvas.
+    fn x_tick_row_fits(layout: &ResolvedLayout, canvas_height: f32, extent: f32) -> bool {
+        let limit = layout
+            .xlabel_pos
+            .as_ref()
+            .map_or(canvas_height, |position| position.y);
+        layout.xtick_baseline_y + extent <= limit
     }
 
     fn measure_tick_label_extent(
@@ -2777,6 +2941,32 @@ impl Plot {
             self.display.config.figure.dpi,
             measured_dimensions.as_ref(),
         );
+
+        // The same harvest the raster backend runs, so PNG and SVG cannot label
+        // the same figure differently: bars, box plots, violins and boxen plots
+        // all report the unit-wide slots they occupy.
+        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
+        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
+            Some(axis) => (&axis.labels, &axis.positions),
+            None => (&[], &[]),
+        };
+        let is_categorical = category_axis.is_some();
+
+        // ...and the same label row, measured with the same renderer, so the
+        // bottom margin is reserved from the row both backends will draw.
+        let (layout, x_tick_label_plan) = self.resolve_x_tick_label_row(
+            &measurement_renderer,
+            (width_px, height_px),
+            &content,
+            self.display.config.figure.dpi,
+            measured_dimensions.as_ref(),
+            layout,
+            category_labels,
+            category_positions,
+            x_min,
+            x_max,
+        )?;
+
         let plot_left = layout.plot_area.left;
         let plot_right = layout.plot_area.right;
         let plot_top = layout.plot_area.top;
@@ -2793,16 +2983,6 @@ impl Plot {
 
         // Draw background
         svg.draw_rectangle(0.0, 0.0, width, height, self.display.theme.background, true);
-
-        // The same harvest the raster backend runs, so PNG and SVG cannot label
-        // the same figure differently: bars, box plots, violins and boxen plots
-        // all report the unit-wide slots they occupy.
-        let category_axis = super::series_internal::CategoryAxis::harvest(&self.series_mgr.series);
-        let (category_labels, category_positions): (&[String], &[f64]) = match &category_axis {
-            Some(axis) => (&axis.labels, &axis.positions),
-            None => (&[], &[]),
-        };
-        let is_categorical = category_axis.is_some();
 
         // Compute Y-axis tick layout (fix parameter order: pixel_top then pixel_bottom)
         let y_tick_layout = TickLayout::compute_y_axis(
@@ -2925,17 +3105,12 @@ impl Plot {
         // Draw axes and tick labels
         if draw_axes {
             if is_categorical {
-                let x_range = x_max - x_min;
-                let category_x_tick_positions: Vec<f32> = category_positions
-                    .iter()
-                    .map(|&position| {
-                        if x_range.abs() < f64::EPSILON {
-                            plot_left + plot_width * 0.5
-                        } else {
-                            plot_left + ((position - x_min) / x_range) as f32 * plot_width
-                        }
-                    })
-                    .collect();
+                let category_x_tick_positions = SkiaRenderer::categorical_label_centers(
+                    &layout.plot_area,
+                    category_positions,
+                    x_min,
+                    x_max,
+                );
 
                 // Categorical axis: ticks at the slot centres, labels under them.
                 if self.layout.tick_config.enabled {
@@ -2982,21 +3157,18 @@ impl Plot {
                         tick_size_px,
                     )?;
 
-                    // Draw category labels on X-axis. An unnamed slot holds its
-                    // place on the axis but writes nothing under it.
-                    for (category, &x) in category_labels
-                        .iter()
-                        .zip(category_x_tick_positions.iter())
-                        .filter(|(category, _)| !category.is_empty())
-                    {
-                        svg.draw_text_centered(
-                            category,
-                            x,
-                            layout.xtick_baseline_y,
-                            tick_size_px,
-                            self.display.theme.foreground,
-                        )?;
-                    }
+                    // Draw the category labels on the x axis through the one row
+                    // drawer both backends use, following the one plan both
+                    // backends resolved.
+                    draw_x_tick_label_row(
+                        &mut svg,
+                        category_labels,
+                        &category_x_tick_positions,
+                        layout.xtick_baseline_y,
+                        tick_size_px,
+                        self.display.theme.foreground,
+                        x_tick_label_plan,
+                    )?;
                 }
             } else {
                 // Normal chart: draw axes with numeric labels
@@ -3075,8 +3247,9 @@ impl Plot {
             self.series_mgr.series.iter().zip(&frame.series).enumerate()
         {
             let default_color = series
+                .props
                 .color
-                .unwrap_or_else(|| self.display.theme.get_color(idx));
+                .value_or(self.display.theme.get_color(idx));
             let inset_rect = inset_rects[idx];
             let (series_area, series_bounds) = if let Some(inset_rect) = inset_rect {
                 (inset_rect, self.inset_bounds_from_resolved(resolved)?)
@@ -3664,5 +3837,163 @@ mod log_axis_validity_tests {
             !svg.contains("NaN"),
             "a skipped mark must not reach the SVG output: {svg}"
         );
+    }
+}
+
+/// The categorical x tick label row: measured, then given room, then drawn.
+#[cfg(test)]
+mod categorical_tick_label_tests {
+    use super::*;
+    use crate::core::plot::builder::IntoPlot;
+
+    const REGIONS: [&str; 10] = [
+        "North America",
+        "South America",
+        "Western Europe",
+        "Eastern Europe",
+        "Middle East",
+        "North Africa",
+        "Sub-Saharan Africa",
+        "Central Asia",
+        "South East Asia",
+        "Australasia",
+    ];
+
+    const INITIALS: [&str; 10] = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+
+    fn bar_plot(categories: &[&str]) -> Plot {
+        let values: Vec<f64> = (0..categories.len())
+            .map(|index| index as f64 + 1.0)
+            .collect();
+        Plot::new()
+            .size_px(800, 600)
+            .bar(categories, &values)
+            .into_plot()
+    }
+
+    /// Resolve the layout exactly as `render()` does.
+    fn resolved(plot: &Plot) -> (ResolvedLayout, XTickLabelPlan) {
+        let (x_min, x_max, y_min, y_max) = plot
+            .effective_data_bounds()
+            .expect("data bounds should be available");
+        let content = plot.create_plot_content(y_min, y_max);
+        let mut renderer = SkiaRenderer::new(
+            plot.display.dimensions.0,
+            plot.display.dimensions.1,
+            plot.display.theme.clone(),
+        )
+        .expect("measurement renderer");
+        renderer.set_render_scale(plot.render_scale());
+        renderer.set_text_engine_mode(plot.display.text_engine);
+        let axis = super::super::series_internal::CategoryAxis::harvest(&plot.series_mgr.series)
+            .expect("a bar chart has a category axis");
+        let (layout, _, _, plan) = plot
+            .compute_layout_with_categorical_ticks(
+                &renderer,
+                plot.display.dimensions,
+                &content,
+                plot.display.config.figure.dpi,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+                &axis.labels,
+                &axis.positions,
+            )
+            .expect("categorical layout");
+        (layout, plan)
+    }
+
+    /// Ten region names in one 800 px figure are rotated rather than drawn on
+    /// top of each other, and every one of them is still drawn.
+    #[test]
+    fn ten_region_names_rotate_instead_of_colliding() {
+        let (_, plan) = resolved(&bar_plot(&REGIONS));
+
+        assert!(plan.rotated, "ten region names must not stay horizontal");
+        assert_eq!(plan.stride, 1, "rotated names all fit, so none is dropped");
+    }
+
+    /// The room the rotated row needs is reserved *before* the plot area is
+    /// computed — reserve it afterwards and the labels are clipped instead of
+    /// overlapping, which is not an improvement.
+    #[test]
+    fn the_rotated_row_is_given_its_room_before_the_plot_area() {
+        let (long, plan) = resolved(&bar_plot(&REGIONS));
+        let (short, _) = resolved(&bar_plot(&INITIALS));
+
+        assert!(
+            plan.extent <= long.margins.bottom,
+            "the reserved bottom margin has to hold the whole row: {} into {}",
+            plan.extent,
+            long.margins.bottom
+        );
+        assert!(
+            long.margins.bottom > short.margins.bottom + 20.0,
+            "the rotated row must widen the bottom margin: {} vs {}",
+            long.margins.bottom,
+            short.margins.bottom
+        );
+        assert!(
+            long.plot_area.bottom < short.plot_area.bottom,
+            "and that room has to come out of the plot area, not off the canvas"
+        );
+    }
+
+    /// Short names are left alone: no rotation, no thinning, and the same
+    /// margins the figure had before any of this existed.
+    #[test]
+    fn short_names_are_left_exactly_as_they_were() {
+        let (layout, plan) = resolved(&bar_plot(&INITIALS));
+
+        assert!(!plan.rotated);
+        assert_eq!(plan.stride, 1);
+        assert!(
+            layout.margins.bottom < 90.0,
+            "single letters should not inflate the bottom margin: {}",
+            layout.margins.bottom
+        );
+    }
+
+    /// A figure whose bottom margin is fixed cannot grow, so the row is thinned
+    /// instead of rotated into a margin that was never going to appear. This is
+    /// why "does it fit?" is a question for the layout and not for arithmetic
+    /// restated next to the labels.
+    #[test]
+    fn a_fixed_margin_thins_the_row_instead_of_clipping_it() {
+        let values: Vec<f64> = (0..REGIONS.len()).map(|index| index as f64 + 1.0).collect();
+        let plot = Plot::new()
+            .size_px(800, 600)
+            .tight_layout_pad(4.0)
+            .bar(&REGIONS, &values)
+            .into_plot();
+
+        let (_, plan) = resolved(&plot);
+
+        assert!(!plan.rotated, "a 30 px margin cannot hold a rotated row");
+        assert!(
+            plan.stride > 1,
+            "so the row has to be thinned to stay legible"
+        );
+    }
+
+    /// Both backends draw the row the same way, because both take it from the
+    /// same plan: the SVG twin used not to measure its category labels at all.
+    #[test]
+    fn the_svg_twin_rotates_the_same_row() {
+        let svg = bar_plot(&REGIONS)
+            .render_to_svg()
+            .expect("a bar chart renders to SVG");
+
+        assert!(
+            svg.contains("rotate(-90.0)"),
+            "the SVG row must be rotated too"
+        );
+        for region in REGIONS {
+            assert!(
+                svg.contains(region),
+                "{region} must survive into the SVG output"
+            );
+        }
     }
 }

@@ -47,7 +47,7 @@ fn test_plot_builder_creation() {
     let builder = PlotBuilder::new(plot, input, config);
 
     assert!(builder.style.label.is_none());
-    assert!(builder.style.color.is_none());
+    assert!(builder.style.props.color.value().is_none());
 }
 
 #[test]
@@ -63,9 +63,9 @@ fn test_plot_builder_styling() {
         .alpha(0.8);
 
     assert_eq!(builder.style.label, Some("Test".to_string()));
-    assert!(builder.style.color.is_some());
-    assert_eq!(builder.style.line_width, Some(2.0));
-    assert_eq!(builder.style.alpha, Some(0.8));
+    assert!(builder.style.props.color.value().is_some());
+    assert_eq!(builder.style.props.line_width.cloned(), Some(2.0));
+    assert_eq!(builder.style.props.alpha.cloned(), Some(0.8));
 }
 
 #[test]
@@ -92,14 +92,14 @@ fn test_plot_builder_alpha_clamping() {
     let config = TestConfig::default();
 
     let builder = PlotBuilder::new(plot, input, config).alpha(1.5); // Should clamp to 1.0
-    assert_eq!(builder.style.alpha, Some(1.0));
+    assert_eq!(builder.style.props.alpha.cloned(), Some(1.0));
 
     let plot = super::super::Plot::new();
     let input = PlotInput::Single(vec![1.0, 2.0, 3.0]);
     let config = TestConfig::default();
 
     let builder = PlotBuilder::new(plot, input, config).alpha(-0.5); // Should clamp to 0.0
-    assert_eq!(builder.style.alpha, Some(0.0));
+    assert_eq!(builder.style.props.alpha.cloned(), Some(0.0));
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn test_plot_builder_line_width_min() {
     let config = TestConfig::default();
 
     let builder = PlotBuilder::new(plot, input, config).line_width(0.01); // Should clamp to 0.1
-    assert_eq!(builder.style.line_width, Some(0.1));
+    assert_eq!(builder.style.props.line_width.cloned(), Some(0.1));
 }
 
 #[test]
@@ -123,18 +123,24 @@ fn test_static_source_setters_materialize_generic_builder_values() {
         .marker_size_source(0.01_f32)
         .alpha_source(1.5_f32);
 
-    assert_eq!(builder.style.color, Some(Color::RED));
-    assert!(builder.style.color_source.is_none());
-    assert_eq!(builder.style.line_width, Some(0.1));
-    assert!(builder.style.line_width_source.is_none());
-    assert_eq!(builder.style.line_style, Some(LineStyle::Dashed));
-    assert!(builder.style.line_style_source.is_none());
-    assert_eq!(builder.style.marker_style, Some(MarkerStyle::Square));
-    assert!(builder.style.marker_style_source.is_none());
-    assert_eq!(builder.style.marker_size, Some(0.1));
-    assert!(builder.style.marker_size_source.is_none());
-    assert_eq!(builder.style.alpha, Some(1.0));
-    assert!(builder.style.alpha_source.is_none());
+    assert_eq!(builder.style.props.color.cloned(), Some(Color::RED));
+    assert!(builder.style.props.color.source().is_none());
+    assert_eq!(builder.style.props.line_width.cloned(), Some(0.1));
+    assert!(builder.style.props.line_width.source().is_none());
+    assert_eq!(
+        builder.style.props.line_style.cloned(),
+        Some(LineStyle::Dashed)
+    );
+    assert!(builder.style.props.line_style.source().is_none());
+    assert_eq!(
+        builder.style.props.marker_style.cloned(),
+        Some(MarkerStyle::Square)
+    );
+    assert!(builder.style.props.marker_style.source().is_none());
+    assert_eq!(builder.style.props.marker_size.cloned(), Some(0.1));
+    assert!(builder.style.props.marker_size.source().is_none());
+    assert_eq!(builder.style.props.alpha.cloned(), Some(1.0));
+    assert!(builder.style.props.alpha.source().is_none());
 }
 
 #[test]

@@ -42,8 +42,7 @@ impl SeriesGroupBuilder {
 
     /// Set shared color applied to all group member series.
     pub fn color(mut self, color: Color) -> Self {
-        self.style.color = Some(color);
-        self.style.color_source = None;
+        self.style.props.color.set(color.into());
         self
     }
 
@@ -52,14 +51,13 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<Color>>,
     {
-        self.style.set_color_source_value(color.into());
+        self.style.props.color.set(color.into());
         self
     }
 
     /// Set shared line width applied to all group member series.
     pub fn line_width(mut self, width: f32) -> Self {
-        self.style.line_width = Some(width.max(0.1));
-        self.style.line_width_source = None;
+        self.style.props.line_width.set(width.into());
         self
     }
 
@@ -68,14 +66,13 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_line_width_source_value(width.into());
+        self.style.props.line_width.set(width.into());
         self
     }
 
     /// Set shared line style applied to all group member series.
     pub fn line_style(mut self, style: LineStyle) -> Self {
-        self.style.line_style = Some(style);
-        self.style.line_style_source = None;
+        self.style.props.line_style.set(style.into());
         self
     }
 
@@ -84,14 +81,13 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<LineStyle>>,
     {
-        self.style.set_line_style_source_value(style.into());
+        self.style.props.line_style.set(style.into());
         self
     }
 
     /// Set shared alpha/transparency applied to all group member series.
     pub fn alpha(mut self, alpha: f32) -> Self {
-        self.style.alpha = Some(alpha.clamp(0.0, 1.0));
-        self.style.alpha_source = None;
+        self.style.props.alpha.set(alpha.into());
         self
     }
 
@@ -100,7 +96,7 @@ impl SeriesGroupBuilder {
     where
         S: Into<ReactiveValue<f32>>,
     {
-        self.style.set_alpha_source_value(alpha.into());
+        self.style.props.alpha.set(alpha.into());
         self
     }
 
@@ -126,7 +122,7 @@ impl SeriesGroupBuilder {
         };
 
         let style = self.style.clone();
-        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let uses_auto_color = !self.style.props.color.is_set();
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_line_series_grouped(
@@ -151,7 +147,7 @@ impl SeriesGroupBuilder {
         Y: IntoPlotData,
     {
         let style = self.style.clone();
-        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let uses_auto_color = !self.style.props.color.is_set();
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_line_series_grouped(
@@ -191,7 +187,7 @@ impl SeriesGroupBuilder {
         };
 
         let style = self.style.clone();
-        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let uses_auto_color = !self.style.props.color.is_set();
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_scatter_series_grouped(
@@ -216,7 +212,7 @@ impl SeriesGroupBuilder {
         Y: IntoPlotData,
     {
         let style = self.style.clone();
-        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let uses_auto_color = !self.style.props.color.is_set();
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_scatter_series_grouped(
@@ -250,7 +246,7 @@ impl SeriesGroupBuilder {
         };
 
         let style = self.style.clone();
-        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let uses_auto_color = !self.style.props.color.is_set();
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_bar_series_grouped(
@@ -275,7 +271,7 @@ impl SeriesGroupBuilder {
         V: IntoPlotData,
     {
         let style = self.style.clone();
-        let uses_auto_color = self.style.color.is_none() && self.style.color_source.is_none();
+        let uses_auto_color = !self.style.props.color.is_set();
         let consume_palette_index = !uses_auto_color || !self.auto_palette_slot_consumed;
 
         self.plot = self.plot.add_bar_series_grouped(
