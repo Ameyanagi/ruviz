@@ -1,19 +1,25 @@
 [workspace]
-members = ["crates/ruviz-gpui", "crates/ruviz-web", "python"]
+members = ["crates/ruviz-web", "python"]
+# `crates/ruviz-gpui` is deliberately NOT a member: it is its own workspace so
+# that its `[patch.crates-io]` GPUI override — a pin to a zed monorepo git rev —
+# cannot reach anything built here. `[patch]` is workspace-scoped and
+# `default-members` does not exempt it, so while the adapter was a member *every*
+# cargo invocation in this repository, `cargo check -p ruviz` included, resolved
+# the zed checkout: 38 `git+` lockfile entries from 6 repositories and two
+# separate wgpu builds, paid by roughly 22 CI jobs on a cold cache. The root
+# lockfile now resolves entirely from crates.io, and
+# `scripts/verify_packaged_crates.py` fails the publish gate if a single `git+`
+# source reappears in it.
+#
+# Build the adapter with `--manifest-path crates/ruviz-gpui/Cargo.toml`.
+exclude = ["crates/ruviz-gpui"]
 # Keep plain root cargo commands focused on the cross-platform core crate.
 default-members = ["."]
 resolver = "2"
 
-# Temporary workspace-wide GPUI override while crates.io still ships gpui 0.2.2.
-# This applies on every target because `[patch.crates-io]` cannot be target-gated;
-# the specific fix we need is the macOS right-drag delivery change from
-# https://github.com/zed-industries/zed/pull/49637.
-[patch.crates-io]
-gpui = { git = "https://github.com/zed-industries/zed", rev = "3060e4170ea5ef0e6886b9ac1853aaead9ddd59f" }
-
 [package]
 name = "ruviz"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Ruviz Contributors"]

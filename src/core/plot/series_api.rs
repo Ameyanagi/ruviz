@@ -1,4 +1,8 @@
 use super::*;
+// The multi-series input shape (grouped bar, stacked bar, stacked area). It is
+// not part of the `super::*` re-export set because nothing outside this file
+// and `PlotInput` names it.
+use super::types::{MultiSeriesAxis, MultiSeriesInput};
 
 /// Opacity of the band [`Plot::area`] paints under its curve.
 ///
@@ -1555,6 +1559,206 @@ impl Plot {
         )
     }
 
+    // =======================================================================
+    // Multi-series plot types
+    //
+    // Grouped bar, stacked bar and stacked area are the only plot types that
+    // take *several* value columns. They take them as `(name, values)` pairs
+    // because there are N of them and `PlotBuilder::label` holds one — and
+    // each pair becomes an ordinary series when the builder finalizes: its own
+    // `PlotSeries`, its own palette slot from `push_builder_series`, its own
+    // legend entry. So the series count is the only thing that changes about
+    // these three; the chain does not:
+    //
+    //     .grouped_bar(&categories, &[("2023", &a), ("2024", &b)])
+    //         .label(..).color(..).legend_best().save(..)
+    //
+    // The alternative — one series holding the whole chart — would have needed
+    // its own palette rule, its own legend expansion and its own bounds arm,
+    // which is exactly the per-plot-type divergence the rest of this file
+    // exists to prevent.
+    // =======================================================================
+
+    /// Start building a grouped bar chart: several named value columns drawn
+    /// side by side within each category.
+    ///
+    /// `categories` names the columns of the x axis; each entry of `series` is
+    /// one named value column with one value per category. Every column takes
+    /// the next palette colour and gets its own legend entry, which is the
+    /// point of a grouped chart.
+    ///
+    /// A group occupies exactly one category slot — the same one-unit-wide slot
+    /// a single [`Plot::bar`] bar, a box plot or a violin takes — subdivided
+    /// between the columns.
+    ///
+    /// # Naming and styling
+    ///
+    /// The name in each pair is that column's legend label. `.label(..)` names
+    /// any column passed an empty name, and `.color(..)` colours every column
+    /// the same (leave it off to get one palette colour per column) — the usual
+    /// "an explicit setting wins over the palette" rule, applied N times.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .grouped_bar(&["Q1", "Q2", "Q3"], &[("2023", &last), ("2024", &this)])
+    ///     .bar_gap(0.05)
+    ///     .legend_best()
+    ///     .save("grouped_bar.png")?;
+    /// ```
+    pub fn grouped_bar<C, S, V>(
+        mut self,
+        categories: &[C],
+        series: &[(S, V)],
+    ) -> PlotBuilder<crate::plots::categorical::GroupedBarConfig>
+    where
+        C: ToString,
+        S: ToString,
+        V: NumericData1D,
+    {
+        let input = self.collect_named_series(
+            MultiSeriesAxis::Categories(categories.iter().map(ToString::to_string).collect()),
+            series,
+        );
+        PlotBuilder::new(
+            self,
+            PlotInput::MultiSeries(input),
+            crate::plots::categorical::GroupedBarConfig::default(),
+        )
+    }
+
+    /// Start building a stacked bar chart: several named value columns stacked
+    /// on top of one another within each category.
+    ///
+    /// Takes exactly the same pair of arguments as [`Plot::grouped_bar`], and
+    /// follows the same naming and styling rules; the only difference is where
+    /// the bars end up.
+    ///
+    /// Positive contributions stack upwards from the baseline and negative ones
+    /// downwards, so a column that dips below zero does not eat into the stack
+    /// above it.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .stacked_bar(&["Q1", "Q2"], &[("hardware", &hw), ("services", &sv)])
+    ///     .legend_best()
+    ///     .save("stacked_bar.png")?;
+    /// ```
+    pub fn stacked_bar<C, S, V>(
+        mut self,
+        categories: &[C],
+        series: &[(S, V)],
+    ) -> PlotBuilder<crate::plots::categorical::StackedBarConfig>
+    where
+        C: ToString,
+        S: ToString,
+        V: NumericData1D,
+    {
+        let input = self.collect_named_series(
+            MultiSeriesAxis::Categories(categories.iter().map(ToString::to_string).collect()),
+            series,
+        );
+        PlotBuilder::new(
+            self,
+            PlotInput::MultiSeries(input),
+            crate::plots::categorical::StackedBarConfig::default(),
+        )
+    }
+
+    /// Start building a stacked area chart: several named value columns filled
+    /// on top of one another over a shared numeric x axis.
+    ///
+    /// The categorical twin is [`Plot::stacked_bar`]; this one shares
+    /// [`Plot::grouped_bar`]'s naming and styling rules, with numeric `x`
+    /// positions in place of category names.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// Plot::new()
+    ///     .stacked_area(&years, &[("solar", &solar), ("wind", &wind)])
+    ///     .legend_best()
+    ///     .save("stacked_area.png")?;
+    /// ```
+    pub fn stacked_area<X, S, V>(
+        mut self,
+        x: &X,
+        series: &[(S, V)],
+    ) -> PlotBuilder<crate::plots::continuous::StackPlotConfig>
+    where
+        X: NumericData1D,
+        S: ToString,
+        V: NumericData1D,
+    {
+        let positions = self.collect_numeric_input(x);
+        let input = self.collect_named_series(MultiSeriesAxis::Positions(positions), series);
+        PlotBuilder::new(
+            self,
+            PlotInput::MultiSeries(input),
+            crate::plots::continuous::StackPlotConfig::default(),
+        )
+    }
+
+    /// Collect `(name, values)` pairs into the one multi-series input shape.
+    ///
+    /// Shared by [`Plot::grouped_bar`], [`Plot::stacked_bar`] and
+    /// [`Plot::stacked_area`] so the three cannot come to disagree about what a
+    /// short or long value column means: a column has to be as long as the
+    /// shared axis, and one that is not is reported as a length mismatch rather
+    /// than silently truncated to fit.
+    fn collect_named_series<S, V>(
+        &mut self,
+        axis: MultiSeriesAxis,
+        series: &[(S, V)],
+    ) -> MultiSeriesInput
+    where
+        S: ToString,
+        V: NumericData1D,
+    {
+        let expected = axis.len();
+        let mut collected = Vec::with_capacity(series.len());
+        for (name, values) in series {
+            let values = self.collect_numeric_input(values);
+            if values.len() != expected {
+                self.set_pending_ingestion_error(PlottingError::DataLengthMismatch {
+                    x_len: expected,
+                    y_len: values.len(),
+                    series_index: Some(collected.len()),
+                });
+            }
+            collected.push((name.to_string(), values));
+        }
+        MultiSeriesInput {
+            axis,
+            series: collected,
+        }
+    }
+
+    /// Commit one multi-series plot type's columns as N ordinary series.
+    ///
+    /// The name each column was passed is its own label; the builder's
+    /// `.label(..)` supplies one for a column that was passed an empty name.
+    /// Everything else — the palette slot, the styling, the legend entry —
+    /// comes from the same `push_computed_series` funnel every single-series
+    /// plot type uses, so a grouped chart's columns are styled
+    /// and coloured exactly like N separate `.line(..)` calls.
+    fn push_named_sub_series<D>(mut self, columns: Vec<(String, D)>, style: SeriesStyle) -> Self
+    where
+        D: crate::plots::traits::ComputedSeries + 'static,
+    {
+        for (name, data) in columns {
+            let mut column_style = style.clone();
+            if !name.is_empty() {
+                column_style.label = Some(name);
+            }
+            self = self.push_computed_series(data, column_style);
+        }
+        self
+    }
+
     /// Collect one `(category name, value)` observation per element.
     ///
     /// Shared by [`Plot::strip`] and [`Plot::swarm`] so the two cannot disagree
@@ -2055,6 +2259,201 @@ impl PlotBuilder<crate::plots::hierarchical::DendrogramConfig> {
 
         let data = crate::plots::hierarchical::compute_dendrogram(&linkage, &config);
         plot.push_computed_series(data, style)
+    }
+}
+
+// ===========================================================================
+// Multi-series plot types: builder setters and `finalize()`
+//
+// Each of the three computes in `finalize()` rather than in the `Plot::`
+// method, so a setter called anywhere in the chain still affects the geometry,
+// and each ends by handing its columns to `push_named_sub_series` — the one
+// place N columns become N ordinary series.
+// ===========================================================================
+
+/// The `(axis, names, values)` a multi-series builder finalizes from.
+///
+/// `None` for an empty chart or an input shape the builder never constructs,
+/// which the callers turn into an error rather than a silently blank figure.
+fn take_multi_series(input: PlotInput) -> Option<(MultiSeriesAxis, Vec<String>, Vec<Vec<f64>>)> {
+    let PlotInput::MultiSeries(MultiSeriesInput { axis, series }) = input else {
+        return None;
+    };
+    if series.is_empty() || axis.is_empty() {
+        return None;
+    }
+    let (names, values) = series.into_iter().unzip();
+    Some((axis, names, values))
+}
+
+/// The category names a bar-shaped multi-series builder was given.
+fn multi_series_categories(axis: MultiSeriesAxis) -> Vec<String> {
+    match axis {
+        MultiSeriesAxis::Categories(names) => names,
+        // `grouped_bar`/`stacked_bar` only ever build `Categories`; a numeric
+        // axis here would mean the builder was constructed by something else.
+        MultiSeriesAxis::Positions(positions) => {
+            positions.iter().map(|value| value.to_string()).collect()
+        }
+    }
+}
+
+impl PlotBuilder<crate::plots::categorical::GroupedBarConfig> {
+    /// Fraction of a category slot the whole group fills (default `0.8`).
+    ///
+    /// The remainder is the gutter between neighbouring groups, exactly as
+    /// `.bar_width(..)` works for a single bar series.
+    pub fn group_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).group_width(f64::from(width));
+        self
+    }
+
+    /// Gap between bars inside one group, as a fraction of a category slot
+    /// (default `0.05`).
+    pub fn bar_gap(mut self, gap: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).bar_gap(f64::from(gap));
+        self
+    }
+
+    /// Outline colour for every bar. Bars have no outline unless one is set.
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Outline width in points (default `0.0`, i.e. no outline).
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.config.edge_width = width.max(0.0);
+        self
+    }
+
+    /// Lay the categories along the y axis, so the bars run left to right.
+    ///
+    /// The shared category axis is the x axis, so a horizontal chart's
+    /// categories are not labelled yet — the same gap a horizontal strip plot
+    /// has.
+    pub fn horizontal(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).horizontal();
+        self
+    }
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let Some((axis, names, values)) = take_multi_series(input) else {
+            return plot.with_ingestion_error(PlottingError::EmptyDataSet);
+        };
+        let categories = multi_series_categories(axis);
+
+        let columns = crate::plots::categorical::bar::grouped_bar_series(
+            &categories,
+            &names,
+            &values,
+            &config,
+        );
+        plot.push_named_sub_series(columns, style)
+    }
+}
+
+impl PlotBuilder<crate::plots::categorical::StackedBarConfig> {
+    /// Bar width as a fraction of a category slot (default `0.8`).
+    ///
+    /// Spelled and typed exactly like `.bar_width(..)` on a single bar series,
+    /// because it is the same knob.
+    pub fn bar_width(mut self, width: f32) -> Self {
+        self.config = std::mem::take(&mut self.config).width(f64::from(width));
+        self
+    }
+
+    /// Outline colour for every bar. Bars have no outline unless one is set.
+    pub fn edge_color(mut self, color: Color) -> Self {
+        self.config = std::mem::take(&mut self.config).edge_color(color);
+        self
+    }
+
+    /// Outline width in points (default `0.0`, i.e. no outline).
+    pub fn edge_width(mut self, width: f32) -> Self {
+        self.config.edge_width = width.max(0.0);
+        self
+    }
+
+    /// Lay the categories along the y axis, so the bars run left to right.
+    ///
+    /// The shared category axis is the x axis, so a horizontal chart's
+    /// categories are not labelled yet — the same gap a horizontal strip plot
+    /// has.
+    pub fn horizontal(mut self) -> Self {
+        self.config = std::mem::take(&mut self.config).horizontal();
+        self
+    }
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let Some((axis, names, values)) = take_multi_series(input) else {
+            return plot.with_ingestion_error(PlottingError::EmptyDataSet);
+        };
+        let categories = multi_series_categories(axis);
+
+        let columns = crate::plots::categorical::bar::stacked_bar_series(
+            &categories,
+            &names,
+            &values,
+            &config,
+        );
+        plot.push_named_sub_series(columns, style)
+    }
+}
+
+impl PlotBuilder<crate::plots::continuous::StackPlotConfig> {
+    /// Where the stack sits: on zero, or centred like a streamgraph.
+    pub fn baseline(mut self, baseline: crate::plots::continuous::StackBaseline) -> Self {
+        self.config = std::mem::take(&mut self.config).baseline(baseline);
+        self
+    }
+
+    /// Stroke a separator along the top of every band but the last.
+    ///
+    /// The top band's upper edge is the silhouette of the chart rather than a
+    /// boundary between two bands, so it is never stroked. The stroke width
+    /// comes from the chain's `.line_width(..)` when one is set, and from the
+    /// config's own otherwise.
+    pub fn lines(mut self, show: bool) -> Self {
+        self.config = std::mem::take(&mut self.config).lines(show);
+        self
+    }
+
+    /// Colour of the separators drawn by [`lines`](Self::lines).
+    pub fn line_color(mut self, color: Color) -> Self {
+        self.config.line_color = color;
+        self
+    }
+
+    pub(super) fn finalize(self) -> Plot {
+        let PlotBuilder {
+            plot,
+            input,
+            config,
+            style,
+        } = self;
+        let Some((axis, names, values)) = take_multi_series(input) else {
+            return plot.with_ingestion_error(PlottingError::EmptyDataSet);
+        };
+        let MultiSeriesAxis::Positions(x) = axis else {
+            return plot.with_ingestion_error(PlottingError::EmptyDataSet);
+        };
+
+        let columns =
+            crate::plots::continuous::area::stacked_area_bands(&x, &names, &values, &config);
+        plot.push_named_sub_series(columns, style)
     }
 }
 
@@ -2751,6 +3150,257 @@ mod computed_series_tests {
         assert!(
             plot.render().is_err(),
             "a strip plot with more values than categories rendered anyway"
+        );
+    }
+}
+
+/// The three multi-series plot types: grouped bar, stacked bar, stacked area.
+///
+/// What is worth asserting is not that each has its own code path — it is that
+/// none of them does. N named value columns become N ordinary series, so the
+/// palette rule, the legend, the category axis and both backends behave
+/// exactly as they do for N separate single-series calls.
+#[cfg(test)]
+mod multi_series_tests {
+    use super::*;
+    use crate::render::Color;
+
+    fn categories() -> [&'static str; 3] {
+        ["Q1", "Q2", "Q3"]
+    }
+
+    fn first() -> Vec<f64> {
+        vec![3.0, 5.0, 4.0]
+    }
+
+    fn second() -> Vec<f64> {
+        vec![2.0, 1.0, 6.0]
+    }
+
+    fn x() -> Vec<f64> {
+        vec![0.0, 1.0, 2.0]
+    }
+
+    /// Every multi-series builder, finalized, with the SVG element its geometry
+    /// must produce and how many of them.
+    fn every_multi_series_plot() -> Vec<(&'static str, Plot, &'static str, usize)> {
+        let (a, b) = (first(), second());
+        vec![
+            (
+                "grouped_bar",
+                Plot::new()
+                    .grouped_bar(&categories(), &[("2023", &a), ("2024", &b)])
+                    .into(),
+                "<polygon",
+                6,
+            ),
+            (
+                "stacked_bar",
+                Plot::new()
+                    .stacked_bar(&categories(), &[("2023", &a), ("2024", &b)])
+                    .into(),
+                "<polygon",
+                6,
+            ),
+            (
+                "stacked_area",
+                Plot::new()
+                    .stacked_area(&x(), &[("solar", &a), ("wind", &b)])
+                    .into(),
+                "<polygon",
+                2,
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_multi_series_plot_type_joins_the_standard_chain() {
+        // `.<series>(..).label(..).color(..).legend_best().save(..)` has to
+        // compile for these exactly as it does for every other plot type.
+        let (a, b) = (first(), second());
+        let plot: Plot = Plot::new()
+            .grouped_bar(&categories(), &[("2023", &a), ("2024", &b)])
+            .label("unused — both columns are named")
+            .legend_best()
+            .stacked_area(&x(), &[("solar", &a), ("wind", &b)])
+            .label("unused — both columns are named")
+            .into();
+
+        assert_eq!(plot.series_mgr.series.len(), 4);
+        for series in &plot.series_mgr.series {
+            assert!(matches!(series.series_type, SeriesType::Computed { .. }));
+        }
+    }
+
+    #[test]
+    fn each_named_column_becomes_its_own_series() {
+        for (name, plot, _, _) in every_multi_series_plot() {
+            assert_eq!(
+                plot.series_mgr.series.len(),
+                2,
+                "`Plot::{name}` did not add one series per named value column"
+            );
+            let labels: Vec<Option<&str>> = plot
+                .series_mgr
+                .series
+                .iter()
+                .map(|series| series.label.as_deref())
+                .collect();
+            assert!(
+                labels.iter().all(Option::is_some) && labels[0] != labels[1],
+                "`Plot::{name}` gave its columns {labels:?}; each needs its own \
+                 legend entry, which is the point of a multi-series chart"
+            );
+        }
+    }
+
+    #[test]
+    fn each_column_takes_the_next_palette_slot_like_any_other_series() {
+        // The palette rule lives in `push_builder_series`; a multi-series plot
+        // type must not grow a second one.
+        for (name, plot, _, _) in every_multi_series_plot() {
+            assert_eq!(
+                plot.series_mgr.auto_color_index(),
+                2,
+                "`Plot::{name}` did not advance the palette once per column"
+            );
+        }
+
+        let (a, b) = (first(), second());
+        let after = Plot::new()
+            .line(&x(), &a)
+            .grouped_bar(&categories(), &[("2023", &a), ("2024", &b)])
+            .into_plot();
+        assert_eq!(after.series_mgr.auto_color_index(), 3);
+    }
+
+    #[test]
+    fn an_explicit_colour_applies_to_every_column_and_takes_no_palette_slot() {
+        let (a, b) = (first(), second());
+        let plot: Plot = Plot::new()
+            .grouped_bar(&categories(), &[("2023", &a), ("2024", &b)])
+            .color(Color::from_rgb(1, 2, 3))
+            .into();
+
+        assert_eq!(plot.series_mgr.series.len(), 2);
+        assert_eq!(plot.series_mgr.auto_color_index(), 0);
+        for series in &plot.series_mgr.series {
+            assert_eq!(series.props.color.cloned(), Some(Color::from_rgb(1, 2, 3)));
+        }
+    }
+
+    #[test]
+    fn label_names_a_column_that_was_not_named_and_never_overrides_one_that_was() {
+        let (a, b) = (first(), second());
+        let plot: Plot = Plot::new()
+            .stacked_bar(&categories(), &[("hardware", &a), ("", &b)])
+            .label("everything else")
+            .into();
+
+        let labels: Vec<Option<&str>> = plot
+            .series_mgr
+            .series
+            .iter()
+            .map(|series| series.label.as_deref())
+            .collect();
+        assert_eq!(labels, vec![Some("hardware"), Some("everything else")]);
+    }
+
+    #[test]
+    fn a_group_shares_the_one_category_axis() {
+        // Not a second positioning story: the slots a grouped chart claims are
+        // harvested by exactly the routine that harvests a bar chart's.
+        let (a, b) = (first(), second());
+        let plot: Plot = Plot::new()
+            .grouped_bar(&categories(), &[("2023", &a), ("2024", &b)])
+            .into();
+
+        let axis = super::super::series_internal::CategoryAxis::harvest(&plot.series_mgr.series)
+            .expect("a grouped bar chart must claim category slots");
+        assert_eq!(axis.labels, vec!["Q1", "Q2", "Q3"]);
+        assert_eq!(axis.positions, vec![0.0, 1.0, 2.0]);
+        assert_eq!(axis.x_span(), (-0.5, 2.5));
+    }
+
+    #[test]
+    fn a_stack_autoscales_to_its_cumulative_total() {
+        // The bounds routine is not extended per plot type: each column states
+        // its own extent through `PlotData`, and the union of those is the
+        // total. 5 + 1 is the tallest column of `first()`/`second()`.
+        let (a, b) = (first(), second());
+        let plot = Plot::new()
+            .stacked_bar(&categories(), &[("lower", &a), ("upper", &b)])
+            .into_plot();
+
+        let (_, _, _, y_max) = plot.calculate_data_bounds().expect("bounds");
+        assert!(
+            (y_max - 10.0).abs() < 1e-9,
+            "expected the stack total of 4 + 6, got {y_max}"
+        );
+
+        let grouped = Plot::new()
+            .grouped_bar(&categories(), &[("lower", &a), ("upper", &b)])
+            .into_plot();
+        let (_, _, _, grouped_max) = grouped.calculate_data_bounds().expect("bounds");
+        assert!(
+            (grouped_max - 6.0).abs() < 1e-9,
+            "a grouped chart autoscales to its tallest bar, got {grouped_max}"
+        );
+    }
+
+    #[test]
+    fn every_multi_series_plot_type_draws_in_both_backends() {
+        // A plot type that renders in PNG but not SVG is exactly the divergence
+        // `PlotPrimitive` exists to make impossible.
+        for (name, plot, element, minimum) in every_multi_series_plot() {
+            let image = plot
+                .clone()
+                .size_px(320, 240)
+                .render()
+                .unwrap_or_else(|error| panic!("`Plot::{name}` failed to render: {error}"));
+            let ink = image
+                .pixels
+                .chunks_exact(4)
+                .filter(|p| p[3] > 0 && (p[0] < 250 || p[1] < 250 || p[2] < 250))
+                .count();
+            assert!(ink > 0, "`Plot::{name}` rendered a blank PNG");
+
+            let svg = plot
+                .size_px(320, 240)
+                .render_to_svg()
+                .unwrap_or_else(|error| panic!("`Plot::{name}` failed to export SVG: {error}"));
+            let drawn = svg.matches(element).count();
+            assert!(
+                drawn >= minimum,
+                "`Plot::{name}` exported {drawn} `{element}` elements, expected at \
+                 least {minimum} — its geometry did not reach the SVG backend"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chart_with_no_value_columns_is_an_error_not_a_blank_figure() {
+        let empty: [(&str, &Vec<f64>); 0] = [];
+        assert!(
+            Plot::new()
+                .grouped_bar(&categories(), &empty)
+                .render()
+                .is_err()
+        );
+        assert!(Plot::new().stacked_area(&x(), &empty).render().is_err());
+    }
+
+    #[test]
+    fn a_column_that_does_not_match_the_axis_is_reported_not_truncated() {
+        // `compute_grouped_bars` would silently `.take(categories)`, so a short
+        // or long column has to be caught on the way in.
+        let short = vec![1.0, 2.0];
+        assert!(
+            Plot::new()
+                .grouped_bar(&categories(), &[("short", &short)])
+                .render()
+                .is_err(),
+            "a value column shorter than the category axis rendered anyway"
         );
     }
 }

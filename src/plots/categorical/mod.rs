@@ -12,9 +12,10 @@ pub mod strip;
 pub mod swarm;
 
 pub use bar::{
-    BarInput, BarOrientation, BarRect, GroupedBar, GroupedBarConfig, GroupedBarData, StackedBar,
-    StackedBarConfig, StackedBarData, compute_grouped_bars, compute_stacked_bars,
-    grouped_bar_range, stacked_bar_range,
+    BarInput, BarLayout, BarOrientation, BarRect, BarSeriesData, GroupedBar, GroupedBarConfig,
+    GroupedBarData, StackedBar, StackedBarConfig, StackedBarData, compute_grouped_bars,
+    compute_stacked_bars, grouped_bar_range, grouped_bar_series, stacked_bar_range,
+    stacked_bar_series,
 };
 pub use strip::{
     Strip, StripConfig, StripData, StripInput, StripOrientation, StripPoint, compute_strip_points,

@@ -98,6 +98,9 @@ fn sticky_edges_of(series_type: &SeriesType) -> StickyEdges {
         SeriesType::Pie { .. } | SeriesType::Radar { .. } | SeriesType::Polar { .. } => {
             StickyEdges::BY_CONSTRUCTION
         }
+        // A computed series answers for itself — grouped and stacked bars are
+        // bar-shaped and pin the baseline the same way `SeriesType::Bar` does.
+        SeriesType::Computed { data } if data.pins_zero_baseline() => StickyEdges::ZERO_BASELINE,
         _ => StickyEdges::NONE,
     }
 }

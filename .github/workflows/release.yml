@@ -198,11 +198,14 @@ jobs:
       - name: Build documentation
         run: cargo doc --no-deps --all-features
 
+      # ruviz-gpui is its own Cargo workspace, so that the zed-pinned
+      # [patch.crates-io] gpui override stops applying to every root cargo
+      # command. It is not a root member: reach it by manifest path.
       - name: Verify ruviz-gpui compiles
-        run: cargo check -p ruviz-gpui
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml
 
       - name: Verify ruviz-gpui examples compile
-        run: cargo check -p ruviz-gpui --examples
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --examples
 
       - name: Validate npm tarball
         run: bun run --cwd packages/ruviz-web verify:pack
@@ -590,7 +593,7 @@ jobs:
       - name: Detect published ruviz-gpui version
         id: gpui-version
         run: |
-          VERSION="$(cargo pkgid -p ruviz-gpui | sed 's/.*[#@]//')"
+          VERSION="$(cargo pkgid --package ruviz-gpui --manifest-path crates/ruviz-gpui/Cargo.toml | sed 's/.*[#@]//')"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           if curl --silent --fail \
@@ -607,7 +610,7 @@ jobs:
 
       - name: Publish ruviz-gpui to crates.io
         if: steps.gpui-version.outputs.published != 'true'
-        run: cargo publish --package ruviz-gpui --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --package ruviz-gpui --manifest-path crates/ruviz-gpui/Cargo.toml --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Skip ruviz-gpui publish
         if: steps.gpui-version.outputs.published == 'true'

@@ -441,6 +441,10 @@ pub enum PlotInput {
     Streaming(crate::data::StreamingXY),
     /// A hierarchical clustering result (dendrogram series).
     Linkage(crate::stats::clustering::Linkage),
+    /// N named value series over one shared axis (grouped bar, stacked bar,
+    /// stacked area). The axis is category names for the bar charts and
+    /// numeric x positions for stacked area.
+    MultiSeries(super::types::MultiSeriesInput),
 }
 
 impl PlotInput {
@@ -457,6 +461,7 @@ impl PlotInput {
             PlotInput::Quiver { x, .. } => x.len(),
             PlotInput::ErrorBars { x, .. } => x.len(),
             PlotInput::Streaming(stream) => stream.len(),
+            PlotInput::MultiSeries(input) => input.point_count(),
             // One "point" per merge in the tree, which is what the renderer draws.
             PlotInput::Linkage(linkage) => linkage.matrix.len(),
         }
@@ -2659,7 +2664,8 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
 
     /// Set the marker edge colour
     ///
-    /// Turns the edge on; see [`LineConfig::marker_edge_color`].
+    /// Turns the edge on; see
+    /// [`LineConfig::marker_edge_color`](crate::plots::basic::LineConfig::marker_edge_color).
     pub fn marker_edge_color(mut self, color: Color) -> Self {
         self.config = std::mem::take(&mut self.config).marker_edge_color(color);
         self
@@ -2668,7 +2674,7 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// Set the marker edge width in points
     ///
     /// A positive width turns the edge on and `0.0` turns it off; see
-    /// [`LineConfig::marker_edge_width`].
+    /// [`LineConfig::marker_edge_width`](crate::plots::basic::LineConfig::marker_edge_width).
     pub fn marker_edge_width(mut self, width: f32) -> Self {
         self.config = std::mem::take(&mut self.config).marker_edge_width(width);
         self
@@ -2677,7 +2683,8 @@ impl PlotBuilder<crate::plots::basic::LineConfig> {
     /// Show or hide the marker edge
     ///
     /// Line markers follow the same default scatter markers do — bare unless
-    /// asked otherwise; see [`LineConfig::show_marker_edge`].
+    /// asked otherwise; see
+    /// [`LineConfig::show_marker_edge`](crate::plots::basic::LineConfig::show_marker_edge).
     pub fn show_marker_edge(mut self, show: bool) -> Self {
         self.config = std::mem::take(&mut self.config).show_marker_edge(show);
         self
@@ -2747,7 +2754,8 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// Set marker edge width
     ///
     /// A positive width turns the edge on and `0.0` turns it off. Delegates to
-    /// [`ScatterConfig::edge_width`] so that rule lives in exactly one place.
+    /// [`ScatterConfig::edge_width`](crate::plots::basic::ScatterConfig::edge_width)
+    /// so that rule lives in exactly one place.
     ///
     /// # Arguments
     /// * `width` - Edge width in points (default: 0.8)
@@ -2758,7 +2766,8 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
 
     /// Set marker edge color
     ///
-    /// Turns the edge on; see [`ScatterConfig::edge_color`].
+    /// Turns the edge on; see
+    /// [`ScatterConfig::edge_color`](crate::plots::basic::ScatterConfig::edge_color).
     pub fn edge_color(mut self, color: Color) -> Self {
         self.config = std::mem::take(&mut self.config).edge_color(color);
         self
@@ -2769,7 +2778,8 @@ impl PlotBuilder<crate::plots::basic::ScatterConfig> {
     /// Markers are bare by default; `.show_edge(true)` rims a filled marker
     /// with its own fill darkened by 30%. A rim is drawn over the marker's
     /// boundary, so it darkens overlapping neighbours and dominates markers of
-    /// a few points — see [`ScatterConfig::show_edge`].
+    /// a few points — see
+    /// [`ScatterConfig::show_edge`](crate::plots::basic::ScatterConfig::show_edge).
     pub fn show_edge(mut self, show: bool) -> Self {
         self.config = std::mem::take(&mut self.config).show_edge(show);
         self
@@ -2887,6 +2897,13 @@ impl_terminal_methods!(crate::plots::categorical::StripConfig);
 impl_terminal_methods!(crate::plots::categorical::SwarmConfig);
 impl_terminal_methods!(crate::plots::continuous::hexbin::HexbinConfig);
 impl_terminal_methods!(crate::plots::hierarchical::DendrogramConfig);
+
+// The multi-series plot types (grouped bar, stacked bar, stacked area). Their
+// `finalize()`s are in `series_api.rs` for the same reason as the ones above:
+// they touch `Plot`'s `pub(super)` fields.
+impl_terminal_methods!(crate::plots::categorical::GroupedBarConfig);
+impl_terminal_methods!(crate::plots::categorical::StackedBarConfig);
+impl_terminal_methods!(crate::plots::continuous::StackPlotConfig);
 
 #[cfg(test)]
 mod tests;

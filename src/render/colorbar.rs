@@ -5,7 +5,7 @@
 //! only backend-dependent parts are "put a rectangle here", "put a line here",
 //! "put text here" and "how wide is this text?".
 //!
-//! [`ColorbarCanvas`] is exactly that set of operations, and [`draw_colorbar`]
+//! `ColorbarCanvas` is exactly that set of operations, and `draw_colorbar`
 //! is the geometry, written once against it. The raster backend used to own the
 //! whole routine and the SVG backend simply had no colorbar at all: a heatmap
 //! exported to SVG silently lost its value scale. Both now call the same body,

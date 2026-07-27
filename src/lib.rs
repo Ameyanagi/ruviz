@@ -21,7 +21,7 @@
 //! - **Performance-Oriented**: Built for release-mode plotting workloads
 //!   with benchmarkable output paths
 //! - **Zero Unsafe Public API**: Memory safety without compromising performance
-//! - **26 Plot Types (30 with the `3d` feature)**: basic, distribution, continuous,
+//! - **29 Plot Types (33 with the `3d` feature)**: basic, distribution, continuous,
 //!   composition, polar, vector and hierarchical families, plus subplot layout helpers
 //! - **Publication Quality**: PNG/SVG export with custom themes
 //! - **Large Dataset Support**: Streaming-friendly data structures and
@@ -267,7 +267,8 @@
 //! |----------|------------|
 //! | **Basic** | Line, Scatter, Bar |
 //! | **Distribution** | Histogram, Box Plot, Violin, Boxen, KDE, ECDF, Rug, Strip, Swarm |
-//! | **Continuous** | Heatmap, Contour, Hexbin, Fill Between, Area |
+//! | **Categorical (multi-series)** | Grouped Bar, Stacked Bar |
+//! | **Continuous** | Heatmap, Contour, Hexbin, Fill Between, Area, Stacked Area |
 //! | **Discrete** | Step, Stem |
 //! | **Error** | Error Bars |
 //! | **Composition** | Pie, Donut |
@@ -276,7 +277,7 @@
 //! | **Hierarchical** | Dendrogram |
 //! | **3D** (`3d` feature) | Scatter3D, Line3D, Surface3D, Wireframe3D |
 //!
-//! That is the complete list: 26 types from [`Plot`], 4 more from `Plot3D`.
+//! That is the complete list: 29 types from [`Plot`], 4 more from `Plot3D`.
 //! `src/plots/mod.rs::catalog_is_true` reads the builder's own source and fails
 //! if this table drifts from the API.
 //!
@@ -286,9 +287,13 @@
 //! is an annotation rather than a series — it returns the plot itself, so it
 //! takes plot-level setters instead of series-level ones.
 //!
-//! [`plots`] also exposes compute helpers (grouped and stacked bar, stacked
-//! area, 2D KDE, regression) that have **no** builder method and cannot be
-//! drawn — see the [`plots`] module docs. See the
+//! Joint plots and pair plots are *figures* rather than series:
+//! [`plots::composite::jointplot()`] and [`plots::composite::pairplot()`] return a
+//! [`SubplotFigure`](core::SubplotFigure), like [`core::subplots`] does, so they
+//! are not counted above.
+//!
+//! [`plots`] also exposes compute helpers (2D KDE, regression) that have **no**
+//! builder method and cannot be drawn — see the [`plots`] module docs. See the
 //! [Plot Types Guide](https://github.com/Ameyanagi/ruviz/blob/main/docs/guide/04_plot_types.md)
 //! for details.
 //!
@@ -848,15 +853,15 @@ pub mod prelude {
     // prelude so existing `use ruviz::prelude::*` code keeps resolving it.
     #[allow(deprecated)]
     pub use crate::core::{
-        Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FillStyle,
-        FramePacing, FrameStats, GridSpec, HatchPattern, HitResult, Image, ImageTarget,
+        Annotation, AnnotationId, ArrowHead, ArrowStyle, BackendType, BuilderWhen, FigureRect,
+        FillStyle, FramePacing, FrameStats, GridSpec, HatchPattern, HitResult, Image, ImageTarget,
         InsetAnchor, InsetLayout, InteractiveFrame, InteractivePlotSession,
         InteractiveViewportSnapshot, IntoPlot, LayerRenderState, Legend, LegendAnchor, LegendItem,
         LegendItemType, LegendPosition, Plot, PlotBuilder, PlotInputEvent, PlotResult, PlotSource,
         PlottingError, Position, PreparedPlot, QualityPolicy, ReactiveSubscription, ReactiveValue,
         RenderTargetKind, ShapeStyle, SubplotFigure, SurfaceCapability, SurfaceTarget, TextAlign,
-        TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect, subplots,
-        subplots_default,
+        TextStyle, TextVAlign, TickDirection, TickSides, ViewportPoint, ViewportRect, figure,
+        subplots, subplots_default,
     };
     #[cfg(feature = "3d")]
     pub use crate::core::{
@@ -991,7 +996,7 @@ where
 ///
 /// This is a second spelling of `Plot::new().line(x, y)` that returns the exact
 /// same [`PlotBuilder`]. Write the builder chain instead — it is the one entry
-/// point that works for all 26 plot types, whereas only three of them ever had
+/// point that works for all 29 plot types, whereas only three of them ever had
 /// a free function:
 ///
 /// ```rust,no_run

@@ -1647,7 +1647,7 @@ impl SkiaRenderer {
     /// Uses the computed positions from LayoutCalculator for precise placement.
     /// Draw axis tick labels and border on a linear axis pair.
     ///
-    /// Thin wrapper over [`Self::draw_axis_labels_at_scaled`] with linear
+    /// Thin wrapper over `draw_axis_labels_at_scaled` with linear
     /// scales — it exists only so callers that genuinely have no scale to hand
     /// keep working. It is deliberately not a second implementation.
     #[allow(clippy::too_many_arguments)]
@@ -1855,7 +1855,7 @@ impl SkiaRenderer {
     /// Draw axis tick labels with a categorical x axis.
     ///
     /// Every categorical plot type — bar, box plot, violin, boxen — reaches this
-    /// one drawer, with the slot centres [`CategoryAxis::harvest`] collected. A
+    /// one drawer, with the slot centres from `CategoryAxis::harvest`. A
     /// bar chart's slots happen to be `0..n-1`; there used to be a second copy of
     /// this function that assumed that and could not express anything else, which
     /// is why a violin needed its own.
@@ -1865,8 +1865,6 @@ impl SkiaRenderer {
     ///
     /// The label row follows [`SkiaRenderer::x_tick_label_plan`], so ten region
     /// names turn a quarter turn instead of overlapping into one illegible run.
-    ///
-    /// [`CategoryAxis::harvest`]: crate::core::plot::series_internal::CategoryAxis::harvest
     ///
     /// # Arguments
     /// * `plot_area` - The computed plot area
@@ -2804,7 +2802,7 @@ impl SkiaRenderer {
 
     /// Compose a straight-alpha RGBA image onto the canvas.
     ///
-    /// This is the only way an [`Image`](crate::core::plot::Image) is put on
+    /// This is the only way an [`Image`] is put on
     /// the canvas — [`Self::draw_subplot`] is a thin alias — so the 2D subplot
     /// compositor and the 3D overlay compositor cannot drift apart.
     ///
@@ -2886,7 +2884,7 @@ pub enum XTickRotation {
 ///
 /// The same range is applied when the row is *measured*, which is the point of
 /// having a type for it: [`label_left`](Self::label_left) is the one formula
-/// [`clearing_stride`] and [`draw_x_tick_label_row`] both ask, so sliding an
+/// `clearing_stride` and `draw_x_tick_label_row` both ask, so sliding an
 /// end label inwards can never create the overlap the stride was chosen to
 /// avoid.
 #[derive(Clone, Copy, Debug, PartialEq)]

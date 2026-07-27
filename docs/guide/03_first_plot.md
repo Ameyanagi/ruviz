@@ -304,7 +304,7 @@ Plot::new()
 Add to `Cargo.toml`:
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["ndarray_support"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support"] }
 ndarray = "0.17"
 ```
 

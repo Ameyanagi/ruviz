@@ -1,7 +1,7 @@
 //! Plot type implementations
 //!
-//! **26 plot types are reachable from the [`Plot`](crate::core::Plot)
-//! builder**, plus 4 more from `Plot3D` when the `3d` feature is enabled — 30
+//! **29 plot types are reachable from the [`Plot`](crate::core::Plot)
+//! builder**, plus 4 more from `Plot3D` when the `3d` feature is enabled — 33
 //! in total. The first table below is the complete list. If a type is not in
 //! it, it has no builder entry point and *cannot* be drawn through the public
 //! API, however many types this source tree appears to contain.
@@ -38,9 +38,9 @@
 //! | Basic | [`basic`] | Line, Scatter, Bar | `line`, `scatter`, `bar` |
 //! | Statistical | [`histogram`], [`boxplot`] | Histogram, Box Plot | `histogram`, `boxplot` |
 //! | Distribution | [`distribution`] | KDE, ECDF, Violin, Boxen, Rug | `kde`, `ecdf`, `violin`, `boxen`, `rug` |
-//! | Categorical | [`categorical`] | Strip, Swarm | `strip`, `swarm` |
+//! | Categorical | [`categorical`] | Strip, Swarm, Grouped Bar, Stacked Bar | `strip`, `swarm`, `grouped_bar`, `stacked_bar` |
 //! | Composition | [`composition`] | Pie, Donut | `pie`, `donut` |
-//! | Continuous | [`continuous`] | Contour, Area, Fill Between, Hexbin | `contour`, `area`, `fill_between` (annotation), `hexbin` |
+//! | Continuous | [`continuous`] | Contour, Area, Fill Between, Hexbin, Stacked Area | `contour`, `area`, `fill_between` (annotation), `hexbin`, `stacked_area` |
 //! | Discrete | [`discrete`] | Step, Stem | `step`, `stem` |
 //! | Grid | [`heatmap`] | Heatmap | `heatmap` |
 //! | Hierarchical | [`hierarchical`] | Dendrogram | `dendrogram` |
@@ -48,6 +48,17 @@
 //! | Polar | [`polar`] | Polar Line, Radar | `polar_line`, `radar` |
 //! | Vector | [`vector`] | Quiver | `quiver` |
 //! | 3D (`3d` feature) | `three_d` | Scatter3D, Line3D, Surface, Wireframe | `Plot3D::{scatter3d, line3d, surface, wireframe}` |
+//!
+//! Grouped bar, stacked bar and stacked area take N named value columns over
+//! one shared axis — `.grouped_bar(&categories, &[("Q1", &q1), ("Q2", &q2)])` —
+//! and push one ordinary series per column, so each column gets its own palette
+//! slot, its own legend entry and the same `.color()`/`.label()` rules as a
+//! line. The chain is unchanged; only the series count is.
+//!
+//! Joint plots and pair plots are *figures*, not series:
+//! [`composite::jointplot()`] and [`composite::pairplot()`] return a
+//! [`SubplotFigure`](crate::core::SubplotFigure) like
+//! [`subplots`](crate::core::subplots) does, so they are not in the count above.
 //!
 //! ## Not available: implemented but unreachable
 //!
@@ -63,11 +74,7 @@
 //!
 //! | Type | Module | Compute | Renderer | `Plot` builder |
 //! |------|--------|---------|----------|----------------|
-//! | Grouped Bar | [`categorical`] | yes | yes | **no** |
-//! | Stacked Bar | [`categorical`] | yes | yes | **no** |
-//! | Stacked Area | [`continuous`] | yes | yes | **no** |
 //! | 2D KDE | [`distribution`] | yes | **no** | **no** |
-//! | Joint plot, Pair plot | `composite` | layout only | **no** | **no** |
 //! | Reg plot, Resid plot | `regression` | yes | **no** | **no** |
 //!
 //! Sankey diagrams and streamplots are **not implemented in any form**. The
@@ -103,16 +110,17 @@ pub mod vector;
 // if and only if it has no renderer at all.** A type with a `PlotRender` impl is
 // something a user can draw today by driving the trait directly, so its docs are
 // worth reading and its module stays visible — with an honest "no builder" row
-// in the second table above if it has no `Plot::` entry point yet, as
-// `categorical`'s grouped and stacked bars do. A module that returns only
-// rectangles or only numbers has nothing to draw with, so listing it on docs.rs
-// advertises a plot type that does not exist.
+// in the second table above if it has no `Plot::` entry point yet. A module that
+// returns only rectangles or only numbers has nothing to draw with, so listing
+// it on docs.rs advertises a plot type that does not exist.
 //
-// The two below are in the second category. They stay `pub` because their
-// functions are correct, usable, and referenced by
-// docs/guide/04_plot_types.md; they are hidden so docs.rs stops implying they
-// are plot types. Un-hide each at the point where it grows a renderer — see
-// Phase 10 of docs/roadmaps/ruviz-audit-remediation-plan.md.
+// `composite` used to be hidden under that rule and no longer is: `jointplot`
+// and `pairplot` draw, through `SubplotFigure::add_axes`. `regression` below is
+// still in the second category. It stays `pub` because its functions are
+// correct, usable, and referenced by docs/guide/04_plot_types.md; it is hidden
+// so docs.rs stops implying it is a plot type. Un-hide it at the point where it
+// grows a renderer — see Phase 10 of
+// docs/roadmaps/ruviz-audit-remediation-plan.md.
 //
 // Why `#[doc(hidden)]` and not an `unstable-plots` cargo feature: a feature is a
 // promise about a *compilation* boundary, and there is nothing here to compile
@@ -127,9 +135,8 @@ pub mod vector;
 // their own, they are simply not a rendering feature yet.
 // ---------------------------------------------------------------------------
 
-/// Multi-panel composites (joint plot, pair plot). Layout math only — no
-/// renderer and no `Plot` builder; not reachable as a plot type.
-#[doc(hidden)]
+/// Multi-panel composites (joint plot, pair plot). Figure composers built on
+/// [`SubplotFigure::add_axes`](crate::core::subplot::SubplotFigure::add_axes).
 pub mod composite;
 
 /// Regression plots (regplot, residplot). Compute only — no renderer and no
@@ -234,22 +241,25 @@ mod catalog_is_true {
         ("Swarm", &["swarm"]),
         ("Hexbin", &["hexbin"]),
         ("Dendrogram", &["dendrogram"]),
+        ("Grouped Bar", &["grouped_bar"]),
+        ("Stacked Bar", &["stacked_bar"]),
+        ("Stacked Area", &["stacked_area"]),
     ];
 
     /// Types that have a renderer but no `Plot` builder, with the method name
     /// they would take.
     ///
-    /// This list exists so nobody has to guess.
-    /// `no_builder_exists_yet_for_the_types_listed_as_unreachable` below
-    /// asserts these methods are *absent*; the day one lands, that test fails
-    /// and tells you the four edits that go with it. Without it, wiring
-    /// `Plot::rug` would leave rug advertised as unreachable in the second doc
-    /// table and missing from the first, silently.
-    const AWAITING_A_BUILDER: &[(&str, &str)] = &[
-        ("Grouped Bar", "grouped_bar"),
-        ("Stacked Bar", "stacked_bar"),
-        ("Stacked Area", "stacked_area"),
-    ];
+    /// **Empty**: every renderable type in this tree is now reachable from the
+    /// builder. The constant and its two tests stay because the mechanism is
+    /// the point — add a renderer without a builder and you list it here, and
+    /// `no_builder_exists_yet_for_the_types_listed_as_unreachable` asserts the
+    /// method is *absent* until you wire it, then fails with the four edits
+    /// that go with wiring it. Without it, wiring `Plot::rug` would leave rug
+    /// advertised as unreachable in the second doc table and missing from the
+    /// first, silently. The types left in the `Not available` table (2D KDE,
+    /// reg plot, resid plot) have no renderer at all, so they do not belong
+    /// here.
+    const AWAITING_A_BUILDER: &[(&str, &str)] = &[];
 
     /// Plot types reachable only from `Plot3D`, behind the `3d` feature.
     const CATALOG_3D: &[(&str, &str)] = &[

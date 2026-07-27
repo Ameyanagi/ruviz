@@ -480,6 +480,48 @@ macro_rules! impl_series_continuation_methods {
             $self_.$finalize().dendrogram(linkage)
         }
 
+        /// Continue with a grouped bar series.
+        pub fn grouped_bar<C, S, V>(
+            $self_,
+            categories: &[C],
+            series: &[(S, V)],
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::GroupedBarConfig>
+        where
+            C: ToString,
+            S: ToString,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().grouped_bar(categories, series)
+        }
+
+        /// Continue with a stacked bar series.
+        pub fn stacked_bar<C, S, V>(
+            $self_,
+            categories: &[C],
+            series: &[(S, V)],
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::categorical::StackedBarConfig>
+        where
+            C: ToString,
+            S: ToString,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().stacked_bar(categories, series)
+        }
+
+        /// Continue with a stacked area series.
+        pub fn stacked_area<X, S, V>(
+            $self_,
+            x: &X,
+            series: &[(S, V)],
+        ) -> $crate::core::plot::PlotBuilder<$crate::plots::continuous::StackPlotConfig>
+        where
+            X: $crate::data::NumericData1D,
+            S: ToString,
+            V: $crate::data::NumericData1D,
+        {
+            $self_.$finalize().stacked_area(x, series)
+        }
+
         /// Continue with a new streaming line series.
         pub fn line_streaming(
             $self_,

@@ -16,7 +16,7 @@ use crate::plots::heatmap::ColorbarFontSizes;
 use crate::plots::traits::{PlotArea, PlotCompute, PlotConfig, PlotData, PlotRender};
 use crate::render::skia::SkiaRenderer;
 use crate::render::{Color, ColorMap, ColorMapSpec, LineStyle, Theme};
-use crate::stats::contour::{ContourLevel, auto_levels, contour_lines};
+use crate::stats::contour::{ContourLevel, auto_levels, contour_bands, contour_lines};
 
 /// Interpolation method for smoothing contour data
 ///
@@ -370,20 +370,6 @@ pub fn compute_contour_plot(
     }
 }
 
-/// Does a cell average belong to the half-open band `[level_low, level_high)`?
-///
-/// The topmost band is open-ended (`level_high` is `+inf`) and is treated as
-/// closed on the right so that even an infinite cell average is claimed. NaN
-/// averages belong to no band and stay unpainted, like matplotlib's masked
-/// values.
-fn cell_in_band(z_avg: f64, level_low: f64, level_high: f64) -> bool {
-    if z_avg.is_nan() {
-        return false;
-    }
-
-    z_avg >= level_low && (z_avg < level_high || level_high.is_infinite())
-}
-
 /// Colormap position for a filled band, in `[0, 1]`
 ///
 /// Interior bands use their midpoint normalized over the level span. The two
@@ -410,68 +396,41 @@ fn band_color_position(level_low: f64, level_high: f64, z_min: f64, z_max: f64) 
 ///
 /// Returns polygons for each region as `(level_low, level_high, polygons)`.
 ///
+/// The polygons are true isobands from [`contour_bands`]: a cell a level runs
+/// through is cut along that level's interpolated crossing, so a filled contour
+/// is a set of smooth bands. It used to colour whole cells by their corner
+/// average, which made every filled contour a mosaic of squares.
+///
 /// Besides the bands between consecutive levels, the first and last entries are
 /// open-ended (`level_low` is `-inf`, `level_high` is `+inf`), mirroring
-/// matplotlib's `extend="both"`. Without them every cell below the lowest level
+/// matplotlib's `extend="both"`. Without them everything below the lowest level
 /// or above the highest one - i.e. every local minimum and maximum - would match
 /// no band and be left unpainted, punching holes into the fill. Together the
-/// bands cover the whole value axis, so each cell with a non-NaN average is
-/// claimed by exactly one band.
+/// bands cover the whole value axis, so every point of the grid is painted by
+/// exactly one band. Cells with a non-finite corner are the one exception: they
+/// stay unpainted, exactly as they stay untraced by the contour lines.
+///
+/// Bands with no polygons are dropped, so the returned list can be shorter than
+/// `levels.len() + 1`.
 #[allow(clippy::type_complexity)]
 pub fn contour_fill_regions(data: &ContourPlotData) -> Vec<(f64, f64, Vec<Vec<(f64, f64)>>)> {
-    // For filled contours, we need regions between each pair of levels
-    // This is complex - typically done by tracing filled regions
-    // For now, return a simplified version using grid cells
-
-    let mut regions = Vec::new();
-
-    if data.levels.is_empty() || data.x.len() < 2 || data.y.len() < 2 {
-        return regions;
-    }
-
     let nx = data.x.len();
     let ny = data.y.len();
 
-    // Band bounds: (-inf, l0), [l0, l1), ... , [l_last, +inf)
-    // A single level still yields the two open-ended bands.
-    let mut bands: Vec<(f64, f64)> = Vec::with_capacity(data.levels.len() + 1);
-    bands.push((f64::NEG_INFINITY, data.levels[0]));
-    for pair in data.levels.windows(2) {
-        bands.push((pair[0], pair[1]));
-    }
-    bands.push((data.levels[data.levels.len() - 1], f64::INFINITY));
-
-    for (level_low, level_high) in bands {
-        let mut polygons = Vec::new();
-
-        // Create filled cells for this level range
-        for iy in 0..ny - 1 {
-            for ix in 0..nx - 1 {
-                let z00 = data.z[iy * nx + ix];
-                let z10 = data.z[iy * nx + ix + 1];
-                let z01 = data.z[(iy + 1) * nx + ix];
-                let z11 = data.z[(iy + 1) * nx + ix + 1];
-
-                let z_avg = (z00 + z10 + z01 + z11) / 4.0;
-
-                if cell_in_band(z_avg, level_low, level_high) {
-                    // This cell is in this level range
-                    let x0 = data.x[ix];
-                    let x1 = data.x[ix + 1];
-                    let y0 = data.y[iy];
-                    let y1 = data.y[iy + 1];
-
-                    polygons.push(vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]);
-                }
-            }
-        }
-
-        if !polygons.is_empty() {
-            regions.push((level_low, level_high, polygons));
-        }
+    if data.levels.is_empty() || nx < 2 || ny < 2 || data.z.len() != nx * ny {
+        return Vec::new();
     }
 
-    regions
+    let rows: Vec<Vec<f64>> = (0..ny)
+        .map(|iy| data.z[iy * nx..(iy + 1) * nx].to_vec())
+        .collect();
+
+    contour_bands(&data.x, &data.y, &rows, &data.levels)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|band| !band.polygons.is_empty())
+        .map(|band| (band.lower, band.upper, band.polygons))
+        .collect()
 }
 
 fn axis_aligned_rectangle_bounds(polygon: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
@@ -548,11 +507,14 @@ impl ContourPlotData {
     /// clipped to the axis rather than dropped, so a band whose cell starts at
     /// zero on a log axis still covers what the axis can show of it.
     ///
-    /// Most bands are single axis-aligned cells. Drawn as anti-aliased polygons
-    /// those leave a pale seam wherever two of them meet, so they come back as
-    /// [`BandShape::Rect`] and each backend draws them without anti-aliasing.
-    /// Deciding that here is what keeps the PNG and the SVG from disagreeing
-    /// about which bands are seamless.
+    /// A cell that lies wholly inside one band comes back from the isoband
+    /// tracer as its own axis-aligned rectangle, which is the common case in the
+    /// interior of a band. Drawn as anti-aliased polygons those would leave a
+    /// pale seam wherever two of them meet, so they come back as
+    /// [`BandShape::Rect`] and each backend draws them without anti-aliasing;
+    /// only the cells a level actually cuts are drawn as polygons. Deciding that
+    /// here is what keeps the PNG and the SVG from disagreeing about which bands
+    /// are seamless.
     pub(crate) fn band_shape(area: &PlotArea, polygon: &[(f64, f64)]) -> BandShape {
         if let Some((min_x, min_y, max_x, max_y)) = axis_aligned_rectangle_bounds(polygon) {
             let (x1, y1) = area.edge_data_to_screen(min_x, max_y);
@@ -961,6 +923,7 @@ fn cubic_interp(p0: f64, p1: f64, p2: f64, p3: f64, t: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stats::contour::polygon_area;
 
     /// A config enum and the config that owns it must agree on `default()`,
     /// otherwise `ContourInterpolation::default()` silently means something
@@ -1082,38 +1045,31 @@ mod tests {
         assert_eq!(data.shape, (0, 0));
     }
 
-    /// Map each fill polygon back to its grid cell index, assuming an integer
-    /// grid where `data.x[ix] == ix as f64`.
-    fn cell_claim_counts(data: &ContourPlotData) -> Vec<usize> {
+    /// How much of each grid cell the fill paints, assuming an integer grid
+    /// where `data.x[ix] == ix as f64` so every cell has unit area.
+    ///
+    /// A band polygon never spans more than one cell, so attributing it to the
+    /// cell containing its centroid is exact. This replaces a count of whole
+    /// cells: now that a cell a level crosses is *cut* between two bands, the
+    /// invariant is no longer "one polygon per cell" but "one cell's worth of
+    /// area per cell".
+    fn cell_painted_areas(data: &ContourPlotData) -> Vec<f64> {
         let nx = data.x.len();
         let ny = data.y.len();
-        let mut claims = vec![0usize; (nx - 1) * (ny - 1)];
+        let mut areas = vec![0.0; (nx - 1) * (ny - 1)];
 
         for (_, _, polygons) in contour_fill_regions(data) {
             for polygon in &polygons {
-                let x0 = polygon
-                    .iter()
-                    .map(|(px, _)| *px)
-                    .fold(f64::INFINITY, f64::min);
-                let y0 = polygon
-                    .iter()
-                    .map(|(_, py)| *py)
-                    .fold(f64::INFINITY, f64::min);
-                let ix = data
-                    .x
-                    .iter()
-                    .position(|v| (v - x0).abs() < 1e-12)
-                    .expect("polygon x corner on grid");
-                let iy = data
-                    .y
-                    .iter()
-                    .position(|v| (v - y0).abs() < 1e-12)
-                    .expect("polygon y corner on grid");
-                claims[iy * (nx - 1) + ix] += 1;
+                let vertices = polygon.len() as f64;
+                let cx = polygon.iter().map(|(px, _)| *px).sum::<f64>() / vertices;
+                let cy = polygon.iter().map(|(_, py)| *py).sum::<f64>() / vertices;
+                let ix = (cx.floor() as usize).min(nx - 2);
+                let iy = (cy.floor() as usize).min(ny - 2);
+                areas[iy * (nx - 1) + ix] += polygon_area(polygon);
             }
         }
 
-        claims
+        areas
     }
 
     #[test]
@@ -1155,7 +1111,11 @@ mod tests {
             "cells above the highest level must fill"
         );
 
-        assert!(cell_claim_counts(&data).iter().all(|c| *c == 1));
+        assert!(
+            cell_painted_areas(&data)
+                .iter()
+                .all(|area| (area - 1.0).abs() < 1e-9)
+        );
     }
 
     #[test]
@@ -1164,10 +1124,39 @@ mod tests {
         let config = ContourConfig::default().n_levels(4).interpolation_factor(1);
         let data = compute_contour_plot(&x, &y, &z, &config);
 
-        let claims = cell_claim_counts(&data);
+        let areas = cell_painted_areas(&data);
         assert!(
-            claims.iter().all(|c| *c == 1),
-            "every cell must be claimed by exactly one band, got {claims:?}"
+            areas.iter().all(|area| (area - 1.0).abs() < 1e-9),
+            "every cell must be painted exactly once over, got {areas:?}"
+        );
+    }
+
+    /// The visible change: a cell a level runs through is cut between the two
+    /// bands instead of being painted whole in the colour of its average, which
+    /// is what made filled contours a mosaic of squares.
+    #[test]
+    fn test_contour_fill_regions_cut_cells_along_levels() {
+        let (x, y, z) = make_test_grid();
+        let config = ContourConfig::default().n_levels(4).interpolation_factor(1);
+        let data = compute_contour_plot(&x, &y, &z, &config);
+
+        let partial = contour_fill_regions(&data)
+            .iter()
+            .flat_map(|(_, _, polygons)| polygons.iter())
+            .filter(|polygon| (polygon_area(polygon.as_slice()) - 1.0).abs() > 1e-9)
+            .count();
+        assert!(
+            partial > 0,
+            "a level crossing a cell must cut it, not claim the whole square"
+        );
+
+        // A cut lands between grid lines, which a whole-cell fill never does.
+        assert!(
+            contour_fill_regions(&data)
+                .iter()
+                .flat_map(|(_, _, polygons)| polygons.iter())
+                .flatten()
+                .any(|(px, py)| px.fract() > 1e-9 || py.fract() > 1e-9)
         );
     }
 
@@ -1182,7 +1171,11 @@ mod tests {
 
         // Only the two open-ended bands exist, and they still cover the grid.
         assert_eq!(regions.len(), 2);
-        assert!(cell_claim_counts(&data).iter().all(|c| *c == 1));
+        assert!(
+            cell_painted_areas(&data)
+                .iter()
+                .all(|area| (area - 1.0).abs() < 1e-9)
+        );
     }
 
     #[test]
@@ -1194,11 +1187,15 @@ mod tests {
         let data = compute_contour_plot(&x, &y, &z, &config);
 
         // The four cells touching the NaN vertex stay unpainted; every other
-        // cell is still claimed exactly once.
-        let claims = cell_claim_counts(&data);
-        let unpainted = claims.iter().filter(|c| **c == 0).count();
+        // cell is still painted exactly once over.
+        let areas = cell_painted_areas(&data);
+        let unpainted = areas.iter().filter(|area| **area < 1e-9).count();
         assert_eq!(unpainted, 4);
-        assert!(claims.iter().all(|c| *c <= 1));
+        assert!(
+            areas
+                .iter()
+                .all(|area| *area < 1e-9 || (area - 1.0).abs() < 1e-9)
+        );
     }
 
     #[test]
@@ -1213,17 +1210,6 @@ mod tests {
 
         // Degenerate level span falls back to the colormap midpoint.
         assert_eq!(band_color_position(1.0, 1.0, 1.0, 1.0), 0.5);
-    }
-
-    #[test]
-    fn test_cell_in_band_membership() {
-        assert!(cell_in_band(-5.0, f64::NEG_INFINITY, 0.0));
-        assert!(!cell_in_band(0.0, f64::NEG_INFINITY, 0.0));
-        assert!(cell_in_band(0.0, 0.0, 1.0));
-        assert!(!cell_in_band(1.0, 0.0, 1.0));
-        assert!(cell_in_band(1.0, 1.0, f64::INFINITY));
-        assert!(cell_in_band(f64::INFINITY, 1.0, f64::INFINITY));
-        assert!(!cell_in_band(f64::NAN, f64::NEG_INFINITY, f64::INFINITY));
     }
 
     #[test]

@@ -69,7 +69,7 @@ Or with specific features:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["ndarray_support", "parallel"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support", "parallel"] }
 ```
 
 ## Feature Flags
@@ -110,40 +110,40 @@ SVG export is available without an extra feature flag. The legacy `svg` feature 
 
 ```toml
 # High performance (parallel + SIMD)
-ruviz = { version = "0.5.0", features = ["performance"] }
+ruviz = { version = "0.6.0", features = ["performance"] }
 
 # Maximum capability (all features)
-ruviz = { version = "0.5.0", features = ["full"] }
+ruviz = { version = "0.6.0", features = ["full"] }
 
 # Minimal (no default features)
-ruviz = { version = "0.5.0", default-features = false }
+ruviz = { version = "0.6.0", default-features = false }
 ```
 
 ### Feature Combinations
 
 **Scientific Computing**:
 ```toml
-ruviz = { version = "0.5.0", features = ["ndarray_support", "parallel"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support", "parallel"] }
 ```
 
 **Data Analysis**:
 ```toml
-ruviz = { version = "0.5.0", features = ["polars_support", "performance"] }
+ruviz = { version = "0.6.0", features = ["polars_support", "performance"] }
 ```
 
 **Publication Quality**:
 ```toml
-ruviz = { version = "0.5.0", features = ["serde", "pdf"] }
+ruviz = { version = "0.6.0", features = ["serde", "pdf"] }
 ```
 
 **Real-time Visualization**:
 ```toml
-ruviz = { version = "0.5.0", features = ["interactive-gpu"] }
+ruviz = { version = "0.6.0", features = ["interactive-gpu"] }
 ```
 
 **Large Datasets**:
 ```toml
-ruviz = { version = "0.5.0", features = ["parallel", "simd", "gpu"] }
+ruviz = { version = "0.6.0", features = ["parallel", "simd", "gpu"] }
 ```
 
 ## Verification
@@ -189,7 +189,7 @@ Test specific features:
 **ndarray**:
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["ndarray_support"] }
+ruviz = { version = "0.6.0", features = ["ndarray_support"] }
 ndarray = "0.17"
 ```
 
@@ -306,7 +306,7 @@ vulkaninfo
 
 Or disable GPU features:
 ```toml
-ruviz = { version = "0.5.0", default-features = false, features = ["parallel"] }
+ruviz = { version = "0.6.0", default-features = false, features = ["parallel"] }
 ```
 
 ### Memory Issues (Large Datasets)

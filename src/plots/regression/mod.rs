@@ -1,6 +1,8 @@
 //! Regression plot types — **compute only, not drawable**.
 //!
-//! [`compute_regplot`] and [`compute_residplot`] return fitted values and a
+//! [`compute_regplot()`](crate::plots::regression::compute_regplot) and
+//! [`compute_residplot()`](crate::plots::regression::compute_residplot) return
+//! fitted values and a
 //! confidence band. There is **no renderer and no `Plot` builder method**, so
 //! neither can be drawn through the public API. Point plots do not exist at
 //! all.

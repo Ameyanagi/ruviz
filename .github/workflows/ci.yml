@@ -31,6 +31,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # `--all` means "all members of this workspace", and ruviz-gpui is its own
+      # workspace now, so without this step its sources would stop being format
+      # checked. `cargo fmt` only reads the manifest, so this costs nothing —
+      # it never resolves the zed GPUI checkout.
+      - name: Check ruviz-gpui formatting
+        run: cargo fmt --all --manifest-path crates/ruviz-gpui/Cargo.toml -- --check
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -55,6 +62,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            crates/ruviz-gpui/target
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run clippy
@@ -63,8 +71,11 @@ jobs:
       - name: Run clippy for the 3D GPU feature surface
         run: cargo clippy -p ruviz --no-default-features --features 3d,gpu -- -D warnings
 
+      # ruviz-gpui is its own workspace (see the root Cargo.toml), so it is not
+      # reachable by `-p` from here and needs an explicit manifest path. This is
+      # the only CI step that resolves the zed GPUI checkout.
       - name: Run clippy for the GPUI 3D feature surface
-        run: cargo clippy -p ruviz-gpui --all-targets --all-features -- -D warnings
+        run: cargo clippy --manifest-path crates/ruviz-gpui/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Test production unwrap checker
         run: python3 -m unittest scripts/test_check_no_new_production_unwraps.py
@@ -511,6 +522,13 @@ jobs:
   msrv:
     name: MSRV (1.92)
     runs-on: ubuntu-latest
+    # `rust-toolchain.toml` pins 1.94.1, and rustup ranks a toolchain file ABOVE
+    # `rustup default` — which is all `dtolnay/rust-toolchain` sets. So this job
+    # silently compiled with 1.94.1 while reporting that it tested the MSRV.
+    # `RUSTUP_TOOLCHAIN` outranks the toolchain file, so it is what actually
+    # makes the selection stick; the assertion below proves it did.
+    env:
+      RUSTUP_TOOLCHAIN: 1.92.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -782,6 +800,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            crates/ruviz-gpui/target
           key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install GPUI Linux build dependencies
@@ -816,17 +835,20 @@ jobs:
         if: ${{ !matrix.platform.cross }}
         run: cargo check --target ${{ matrix.platform.target }} --features interactive
 
+      # ruviz-gpui is a separate workspace (see the root Cargo.toml): `-p` cannot
+      # reach it, and that is deliberate — every step above this point now
+      # resolves from crates.io alone instead of dragging in the zed checkout.
       - name: Check ruviz-gpui desktop build
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --target ${{ matrix.platform.target }} -p ruviz-gpui
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }}
 
       - name: Check ruviz-gpui 3D GPU desktop build
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --target ${{ matrix.platform.target }} -p ruviz-gpui --no-default-features --features 3d-gpu
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --no-default-features --features 3d-gpu
 
       - name: Check ruviz-gpui desktop examples
         if: ${{ !matrix.platform.cross }}
-        run: cargo check --target ${{ matrix.platform.target }} -p ruviz-gpui --examples
+        run: cargo check --manifest-path crates/ruviz-gpui/Cargo.toml --target ${{ matrix.platform.target }} --examples
 
   wasm-web:
     name: WASM + Web

@@ -1404,7 +1404,7 @@ impl SvgRenderer {
     /// Draw a colorbar for heatmaps and filled contours.
     ///
     /// Twin of [`SkiaRenderer::draw_colorbar`](crate::render::SkiaRenderer::draw_colorbar):
-    /// both hand the same [`crate::render::colorbar::ColorbarSpec`] to the same
+    /// both hand the same internal `ColorbarSpec` to the same
     /// routine, so the SVG export carries the value scale the PNG shows instead
     /// of dropping it.
     #[allow(clippy::too_many_arguments)]

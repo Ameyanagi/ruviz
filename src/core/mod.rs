@@ -73,7 +73,7 @@ pub use plot3d::{GpuSurfacePresentStatus3D, GpuSurfaceSession3D};
 pub use position::Position;
 pub use style::PlotStyle;
 pub use style_utils::StyleResolver;
-pub use subplot::{GridSpec, SubplotFigure, subplots, subplots_default};
+pub use subplot::{FigureRect, GridSpec, SubplotFigure, figure, subplots, subplots_default};
 pub use tick_formatter::TickFormatter;
 pub use transform::CoordinateTransform;
 pub use types::{BoundingBox, Orientation, Point2f};

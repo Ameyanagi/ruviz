@@ -82,10 +82,11 @@ headers before building desktop examples.
 Runnable examples live in the crate:
 
 ```sh
-cargo run -p ruviz-gpui --example static_embed
-cargo run -p ruviz-gpui --example observable_embed
-cargo run -p ruviz-gpui --example streaming_embed
-cargo run -p ruviz-gpui --example coordinate_events
+# from crates/ruviz-gpui/ (it is its own Cargo workspace)
+cargo run --example static_embed
+cargo run --example observable_embed
+cargo run --example streaming_embed
+cargo run --example coordinate_events
 ```
 
 ## Updating Data and Replacing Plots

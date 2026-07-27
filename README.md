@@ -108,13 +108,13 @@ deprecated in favour of that chain; see
 
 ## Plot Types
 
-The root `Plot` builder exposes 26 plot types, and that list is complete:
+The root `Plot` builder exposes 29 plot types, and that list is complete:
 
 - Basic: line, scatter, bar, histogram, box plot, heatmap
 - Distribution: KDE, ECDF, violin, boxen, rug
-- Categorical: strip, swarm
+- Categorical: strip, swarm, grouped bar, stacked bar
 - Composition and polar: pie, donut styling, radar, polar line
-- Continuous, discrete, and error plots: contour, area, fill between, hexbin, step, stem, symmetric/asymmetric error bars
+- Continuous, discrete, and error plots: contour, area, stacked area, fill between, hexbin, step, stem, symmetric/asymmetric error bars
 - Hierarchical: dendrogram
 - Vector: quiver
 - Layout helpers: subplots, legends, grid/tick controls, annotations, insets
@@ -129,15 +129,19 @@ of them. `fill_between` is an annotation rather than a series: it returns the
 plot itself, so it takes plot-level setters (`.title(..)`, `.xlabel(..)`) rather
 than series-level ones.
 
+Grouped bar, stacked bar and stacked area take N named value columns over one
+shared axis — `.grouped_bar(&categories, &[("Q1", &q1), ("Q2", &q2)])` — and
+push one ordinary series per column, so each column gets its own palette colour,
+its own legend entry, and the same `.color()`/`.label()` rules as a line.
+
+Joint plots and pair plots are *figures*, not series: `plots::composite::{jointplot,
+pairplot}` return a `SubplotFigure`, the same type `subplots` returns, so they are
+composed with `.suptitle(..).save(..)` rather than with the series chain.
+
 Anything not in that list has no builder method and cannot be drawn with that
 chain, even though the source tree contains implementations of it. Specifically,
-**grouped bar, stacked bar, stacked area, 2D KDE, joint plot, pair plot,
-regression plot and residual plot have no `Plot` builder**, and Sankey diagrams
-and streamplots are not implemented at all.
-
-Several of those do have a working renderer and can be drawn by calling
-`PlotCompute` and `PlotRender::render` yourself; the missing piece is only the
-one-line entry point.
+**2D KDE, regression plot and residual plot have no `Plot` builder**, and Sankey
+diagrams and streamplots are not implemented at all.
 The [ruviz::plots module docs](https://docs.rs/ruviz/latest/ruviz/plots/) list
 which is which, and a test keeps that list in step with the builder.
 
@@ -211,7 +215,7 @@ Enable Typst-backed text rendering with:
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["typst-math"] }
+ruviz = { version = "0.6.0", features = ["typst-math"] }
 ```
 
 Then call `.typst(true)`. The configured family is passed to plain raster,
@@ -246,7 +250,7 @@ compiled. If Typst is optional in your crate, forward and guard your own feature
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", default-features = false }
+ruviz = { version = "0.6.0", default-features = false }
 
 [features]
 default = []

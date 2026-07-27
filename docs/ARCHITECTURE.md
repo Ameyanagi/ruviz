@@ -2,6 +2,48 @@
 
 This document describes the internal architecture of ruviz.
 
+## Repository Layout
+
+The repository holds **two independent Cargo workspaces**, not one.
+
+| Path | Workspace | Notes |
+| --- | --- | --- |
+| `/` (`ruviz`) | root | The core crate. Members: `crates/ruviz-web`, `python`; `default-members = ["."]`. |
+| `crates/ruviz-web` (`ruviz-web`) | root | Browser/wasm adapter. |
+| `python` (`ruviz-py`) | root | PyO3 bindings. |
+| `crates/ruviz-gpui` (`ruviz-gpui`) | **its own** | Native GPUI adapter. Listed in the root `exclude`. |
+
+`crates/ruviz-gpui` is split out on purpose. It needs a `[patch.crates-io]`
+override pinning `gpui` to a zed monorepo git revision, and `[patch]` is
+**workspace-scoped**: `default-members` does not exempt it, so while the adapter
+was a root member that pin applied to every cargo invocation in the repository —
+`cargo check -p ruviz` included. The root lockfile carried 38 `git+` entries from
+six repositories (zed, zed's wgpu fork, zed's font-kit, scap, xim-rs, proptest)
+and resolved two separate wgpu builds, and roughly 22 CI jobs paid for it on a
+cold cache. With the split the root workspace resolves **entirely from
+crates.io**.
+
+Consequences for day-to-day work:
+
+- `-p ruviz-gpui` does not work from the repository root. Pass
+  `--manifest-path crates/ruviz-gpui/Cargo.toml` instead, or run
+  `make clippy-gpui`.
+- `cargo fmt --all` and `cargo clippy --all-targets` at the root do not cover the
+  adapter; `make fmt` and the CI `fmt`/`clippy` jobs run it explicitly.
+- The two workspaces have separate lockfiles: `/Cargo.lock` and
+  `crates/ruviz-gpui/Cargo.lock`.
+- The adapter still depends on the core crate with both a version and
+  `path = "../.."`. A path dependency may cross a workspace boundary, so the
+  adapter still builds against unpublished core changes.
+
+`scripts/verify_packaged_crates.py` is the mechanism that keeps this from
+drifting. Before it packages anything it asserts that `crates/ruviz-gpui` is
+absent from the root `members` and present in the root `exclude`, that the root
+declares no `[patch]` table at all, that **no package in the root lockfile has a
+`git+` source**, that the adapter declares its own `[workspace]`, and that every
+git dependency in the adapter names the same zed repository and revision as its
+`[patch.crates-io]` pin.
+
 ## Core Components
 
 ### Plot Structure

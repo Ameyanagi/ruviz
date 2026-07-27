@@ -4,13 +4,15 @@ Comprehensive guide to all plot types available in ruviz.
 
 ## Overview
 
-ruviz provides **21 drawable plot types** from the `Plot` builder, plus 4 more from
+ruviz provides **29 drawable plot types** from the `Plot` builder, plus 4 more from
 `Plot3D` when the `3d` feature is enabled.
 
-`ruviz::plots::*` additionally exposes compute helpers for several more chart
+`ruviz::plots::*` additionally exposes compute helpers for a couple of chart
 families. Those helpers are correct and usable, but they have **no renderer and
 no `Plot` builder method**, so they cannot produce an image. They are marked
-⚠️ **compute only** below.
+⚠️ **compute only** below. The canonical list is
+[the `ruviz::plots` module docs](https://docs.rs/ruviz/latest/ruviz/plots/),
+which a test keeps in step with the builder's own source.
 
 The examples further down mix the high-level `Plot` builder with those low-level
 helpers; the symbol names and signatures match the current exported APIs.
@@ -19,18 +21,23 @@ helpers; the symbol names and signatures match the current exported APIs.
 
 | Category | Drawable from `Plot` | ⚠️ Compute only — no `Plot` builder |
 |----------|----------------------|--------------------------------------|
-| **Basic** | Line, Scatter, Bar, Histogram, Box Plot, Heatmap | Grouped Bar, Stacked Bar, Horizontal Bar |
-| **Distribution** | Violin, KDE (1D), Boxen, ECDF | KDE 2D, Strip, Swarm |
-| **Composition** | Pie, Donut, Area | Stacked Area |
-| **Continuous** | Contour, Fill Between | Hexbin |
+| **Basic** | Line, Scatter, Bar, Histogram, Box Plot, Heatmap | — |
+| **Distribution** | Violin, KDE (1D), Boxen, ECDF, Rug | KDE 2D |
+| **Categorical** | Strip, Swarm, Grouped Bar, Stacked Bar | — |
+| **Composition** | Pie, Donut, Area | — |
+| **Continuous** | Contour, Fill Between, Hexbin, Stacked Area | — |
 | **Error** | Error Bars (symmetric/asymmetric) | — |
 | **Discrete** | Step, Stem | — |
 | **Polar** | Polar Plot, Radar/Spider Chart | — |
 | **Vector** | Quiver Plot | — |
 | **Regression** | — | Regression Plot, Residual Plot |
-| **Composite** | — | Joint Plot, Pair Plot |
-| **Hierarchical** | — | Dendrogram |
+| **Composite** | Joint Plot, Pair Plot (figures, via `plots::composite`) | — |
+| **Hierarchical** | Dendrogram | — |
 | **3D** (`3d` feature) | Scatter3D, Line3D, Surface3D, Wireframe3D | — |
+
+Joint plots and pair plots are *figures*, not series: `plots::composite::{jointplot,
+pairplot}` return a `SubplotFigure`, the same type `subplots` returns, so they are
+not part of the 29 above.
 
 ---
 
@@ -224,38 +231,33 @@ let ecdf = compute_ecdf(&data, &config);
 
 ### Strip Plots
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
-
 **Use for**: Jittered categorical scatter plots
 
 ```rust
-use ruviz::plots::categorical::{StripConfig, compute_strip_points};
+use ruviz::prelude::*;
 
-let categories = vec![0, 0, 0, 1, 1, 1];
-let config = StripConfig::new()
-    .jitter(0.1);
-
-let strip_points = compute_strip_points(&categories, &values, None, &config);
-// strip_points contains jittered positions
+Plot::new()
+    .strip(&["a", "a", "b", "b"], &vec![1.0, 2.0, 3.0, 4.0])
+    .jitter(0.1)
+    .label("samples")
+    .save("strip.png")?;
 ```
 
-### Swarm Plots (Beeswarm)
+The compute helper behind it is `ruviz::plots::categorical::compute_strip_points`,
+if you want the jittered positions without a figure.
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
+### Swarm Plots (Beeswarm)
 
 **Use for**: Non-overlapping categorical scatter
 
 ```rust
-use ruviz::plots::categorical::{SwarmConfig, compute_swarm_points};
+use ruviz::prelude::*;
 
-let categories = vec![0, 0, 0, 1, 1, 1];
-let config = SwarmConfig::new()
-    .size(5.0);
-
-let swarm_points = compute_swarm_points(&categories, &values, None, &config);
-// swarm_points are positioned to avoid overlap
+Plot::new()
+    .swarm(&["a", "a", "b", "b"], &vec![1.0, 2.0, 3.0, 4.0])
+    .marker_size(5.0)
+    .label("samples")
+    .save("swarm.png")?;
 ```
 
 ---
@@ -264,49 +266,64 @@ let swarm_points = compute_swarm_points(&categories, &values, None, &config);
 
 ### Grouped Bar Charts
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
-
 **Use for**: Side-by-side comparison of multiple series
 
+Grouped bars, stacked bars and stacked areas are the crate's only *multi*-series
+plot types: they take N `(name, values)` pairs over one shared axis and push one
+ordinary series per pair. Each column therefore gets its own palette colour, its
+own legend entry, and the same chain as everything else.
+
 ```rust
-use ruviz::plots::categorical::{GroupedBarConfig, compute_grouped_bars};
+use ruviz::prelude::*;
 
-let groups = vec![
-    vec![10.0, 20.0, 30.0],  // Series 1
-    vec![15.0, 25.0, 35.0],  // Series 2
-];
+let last: Vec<f64> = vec![10.0, 20.0, 30.0];
+let this: Vec<f64> = vec![15.0, 25.0, 35.0];
 
-let config = GroupedBarConfig::new().group_width(0.8).bar_gap(0.05);
-let bars = compute_grouped_bars(&groups, 3, &config);
+Plot::new()
+    .grouped_bar(&["Q1", "Q2", "Q3"], &[("2023", &last), ("2024", &this)])
+    .group_width(0.8)
+    .bar_gap(0.05)
+    .legend_best()
+    .save("grouped_bar.png")?;
 ```
 
 ### Stacked Bar Charts
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
-
 **Use for**: Part-to-whole relationships across categories
 
-```rust
-use ruviz::plots::categorical::{StackedBarConfig, compute_stacked_bars};
+Positive contributions stack upwards from the baseline and negative ones
+downwards, so a column that dips below zero does not eat into the stack above it.
 
-let config = StackedBarConfig::new().width(0.8);
-let bars = compute_stacked_bars(&groups, 3, &config);
+```rust
+use ruviz::prelude::*;
+
+let hardware: Vec<f64> = vec![10.0, 20.0, 30.0];
+let services: Vec<f64> = vec![5.0, 8.0, 12.0];
+
+Plot::new()
+    .stacked_bar(&["Q1", "Q2", "Q3"], &[("hardware", &hardware), ("services", &services)])
+    .bar_width(0.8)
+    .legend_best()
+    .save("stacked_bar.png")?;
 ```
 
 ### Horizontal Bar Charts
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
-
 **Use for**: Long category labels, ranked data
 
-```rust
-use ruviz::plots::categorical::{GroupedBarConfig, compute_grouped_bars};
+`.horizontal()` is available on both bar builders. Note that the shared category
+axis is the x axis, so a horizontal chart's categories are not yet labelled —
+the same gap `strip` and `swarm` have in their horizontal orientation.
 
-let config = GroupedBarConfig::new().horizontal();
-let bars = compute_grouped_bars(&groups, 3, &config);
+```rust
+use ruviz::prelude::*;
+
+let last: Vec<f64> = vec![10.0, 20.0, 30.0];
+
+Plot::new()
+    .grouped_bar(&["Q1", "Q2", "Q3"], &[("2023", &last)])
+    .horizontal()
+    .save("horizontal_bar.png")?;
 ```
 
 ---
@@ -360,16 +377,24 @@ let area = area_polygon(&x, &y, config.baseline);
 
 ### Stacked Area Charts
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
-
 **Use for**: Part-to-whole over continuous axis
 
-```rust
-use ruviz::plots::continuous::{StackBaseline, StackPlotConfig, compute_stack};
+The numeric twin of the stacked bar chart: same `(name, values)` pairs, numeric x
+positions in place of category names.
 
-let config = StackPlotConfig::new().baseline(StackBaseline::Zero);
-let areas = compute_stack(&x, &series, config.baseline);
+```rust
+use ruviz::prelude::*;
+use ruviz::plots::continuous::StackBaseline;
+
+let years: Vec<f64> = vec![2020.0, 2021.0, 2022.0];
+let solar: Vec<f64> = vec![1.0, 2.0, 4.0];
+let wind: Vec<f64> = vec![3.0, 3.5, 4.5];
+
+Plot::new()
+    .stacked_area(&years, &[("solar", &solar), ("wind", &wind)])
+    .baseline(StackBaseline::Zero)
+    .legend_best()
+    .save("stacked_area.png")?;
 ```
 
 ---
@@ -393,20 +418,16 @@ let contour = compute_contour_plot(&x, &y, &z_data, &config);
 
 ### Hexbin Plots
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
-
 **Use for**: Large scatter datasets, 2D histogram with hexagonal bins
 
 ```rust
-use ruviz::plots::continuous::{HexbinConfig, ReduceFunction, compute_hexbin};
+use ruviz::prelude::*;
 
-let config = HexbinConfig::new()
+Plot::new()
+    .hexbin(&x, &y)
     .gridsize(20)
-    .reduce_fn(ReduceFunction::Count);  // or Mean, Sum, Max, Min, Std
-
-let hexbin = compute_hexbin(&x, &y, None, &config);
-// hexbin.bins contains bin positions and aggregated values
+    .label("density")
+    .save("hexbin.png")?;
 ```
 
 ---
@@ -552,12 +573,26 @@ let radar = compute_radar_chart(&values, &config);
 
 ## Composite Plots
 
-### Joint Plot Helpers
+### Joint Plots
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
+**Use for**: A bivariate panel with its two marginal distributions
 
-**Use for**: Joint-plot style layout and marginal histogram helpers
+`jointplot` returns a `SubplotFigure` — the same figure type `subplots` returns —
+so it is finished with `.suptitle(..)` / `.theme(..)` / `.save(..)` rather than
+with the series chain.
+
+```rust
+use ruviz::plots::composite::jointplot;
+
+jointplot(&x, &y, 800, 800)?
+    .suptitle("x vs y")
+    .save("jointplot.png")?;
+```
+
+#### Joint plot layout helpers
+
+The geometry those composers use, if you want to place the panels yourself with
+[`SubplotFigure::add_axes`](https://docs.rs/ruviz/latest/ruviz/core/subplot/struct.SubplotFigure.html#method.add_axes).
 
 ```rust
 use ruviz::plots::composite::{
@@ -572,15 +607,31 @@ let config = JointPlotConfig::new()
 let layout = joint_plot_layout(config.marginal_ratio);
 let x_hist = compute_marginal_histogram(&x, config.bins);
 let y_hist = compute_marginal_histogram(&y, config.bins);
-// layout plus x_hist / y_hist can be used to assemble a joint-plot style figure
+// layout plus x_hist / y_hist is what `jointplot(&x, &y, 800, 800)?` assembles
+// for you; use them directly only if you want a different arrangement.
 ```
 
-### Pair Plot Helpers
+### Pair Plots
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
+**Use for**: A scatterplot matrix over several variables
 
-**Use for**: Scatterplot-matrix layout and labeling helpers
+Like `jointplot`, `pairplot` returns a `SubplotFigure`.
+
+```rust
+use ruviz::plots::composite::pairplot;
+
+let columns = vec![
+    vec![1.0, 2.0, 3.0],
+    vec![4.0, 5.0, 6.0],
+    vec![7.0, 8.0, 9.0],
+];
+
+pairplot(&columns, 900, 900)?
+    .suptitle("pairwise")
+    .save("pairplot.png")?;
+```
+
+#### Pair plot layout helpers
 
 ```rust
 use ruviz::plots::composite::{
@@ -632,10 +683,10 @@ Plot::new()
 
 ### Dendrograms
 
-> ⚠️ **Compute only.** This returns data, not a drawable plot — there is no
-> `Plot` builder method and no renderer behind it.
-
 **Use for**: Hierarchical clustering visualization
+
+`Plot::new().dendrogram(&linkage_result).save("tree.png")?` draws one; the
+compute helpers below give you the raw link segments instead.
 
 ```rust
 use ruviz::plots::hierarchical::{DendrogramConfig, DendrogramOrientation, compute_dendrogram};
@@ -670,7 +721,7 @@ Use `performance` only after benchmarking a path that benefits from SIMD support
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["simd"] }
+ruviz = { version = "0.6.0", features = ["simd"] }
 ```
 
 ### Very Large Datasets (> 100K points)
@@ -696,18 +747,21 @@ DataShader output. See [Performance](08_performance.md).
 | Distribution | ECDF | Cumulative distribution |
 | Categorical | Strip | Jittered scatter by category |
 | Categorical | Swarm | Non-overlapping scatter |
+| Categorical | Grouped Bar | Side-by-side series comparison |
+| Categorical | Stacked Bar | Part-to-whole across categories |
 | Composition | Pie/Donut | Part-to-whole |
 | Composition | Area | Cumulative over time |
 | Continuous | Contour | 2D level curves |
 | Continuous | Hexbin | Large scatter binning |
+| Continuous | Stacked Area | Part-to-whole over a numeric axis |
 | Error | Error Bars | Uncertainty visualization |
 | Discrete | Step | Discrete sequences |
 | Discrete | Stem | Lollipop charts |
 | Regression | Regplot | Fitted line + CI |
 | Polar | Polar | Circular coordinates |
 | Polar | Radar | Multi-axis radial |
-| Composite | Joint helpers | Bivariate layout + marginals |
-| Composite | Pair helpers | Scatterplot-matrix layout |
+| Composite | Joint plot (figure) | Bivariate panel + marginals |
+| Composite | Pair plot (figure) | Scatterplot matrix |
 | Vector | Quiver | Vector fields |
 | Hierarchical | Dendrogram | Clustering trees |
 

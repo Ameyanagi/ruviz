@@ -234,7 +234,7 @@ fn interquartile_range(data: &[f64]) -> f64 {
 /// Scott, D. W. (1992). *Multivariate Density Estimation*, eq. 6.42 — the
 /// normal-reference bandwidth that minimises AMISE for Gaussian data.
 ///
-/// Returns [`FALLBACK_BANDWIDTH`] for fewer than two points, and for
+/// Returns the internal fallback bandwidth for fewer than two points, and for
 /// zero-variance or non-finite samples, so callers always receive a strictly
 /// positive, finite bandwidth (see [`is_valid_bandwidth`]).
 pub fn scotts_rule(data: &[f64]) -> f64 {
@@ -261,7 +261,7 @@ pub fn scotts_rule(data: &[f64]) -> f64 {
 /// numerically identical to [`scotts_rule`] and would make the two methods
 /// indistinguishable.
 ///
-/// Returns [`FALLBACK_BANDWIDTH`] for fewer than two points, and for degenerate
+/// Returns the internal fallback bandwidth for fewer than two points, and for degenerate
 /// samples where both scale estimates collapse to zero — the same floor
 /// [`scotts_rule`] uses, so the two estimators cannot diverge on degenerate
 /// input.

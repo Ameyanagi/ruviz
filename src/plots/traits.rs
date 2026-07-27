@@ -825,6 +825,17 @@ pub trait ComputedSeries: PlotRender + std::fmt::Debug + Send + Sync {
     ) -> Option<crate::render::colorbar::ColorbarRequest> {
         None
     }
+
+    /// Whether this geometry is drawn from the `y = 0` baseline, so the
+    /// baseline must keep touching the axis edge (matplotlib `sticky_edges`).
+    ///
+    /// True for anything bar-shaped; false — the default — for everything else.
+    /// It is answered here rather than in the bounds code so that a computed
+    /// plot type pins its baseline by the same one-method mechanism it uses to
+    /// answer every other "what does this geometry need?" question.
+    fn pins_zero_baseline(&self) -> bool {
+        false
+    }
 }
 
 /// The swatch shape a [`ComputedSeries`] wants in the legend.

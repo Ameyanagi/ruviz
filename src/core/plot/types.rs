@@ -159,6 +159,67 @@ impl Default for InsetLayout {
     }
 }
 
+/// The shared axis a [`MultiSeriesInput`] lays its value series along.
+///
+/// A grouped or stacked bar chart shares a *category* axis; a stacked area
+/// chart shares a *numeric* one. Nothing else about the three differs, which is
+/// why they share one input shape instead of one each.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MultiSeriesAxis {
+    /// One named category per slot, in slot order — `["Q1", "Q2", "Q3"]`.
+    Categories(Vec<String>),
+    /// One numeric x position per sample, in order.
+    Positions(Vec<f64>),
+}
+
+impl MultiSeriesAxis {
+    /// How many samples every value series is expected to carry.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Categories(names) => names.len(),
+            Self::Positions(values) => values.len(),
+        }
+    }
+
+    /// Whether the axis carries no slots at all.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// N named value series sharing one axis.
+///
+/// This is the input shape of the crate's only *multi*-series plot types —
+/// [`Plot::grouped_bar`](crate::core::Plot::grouped_bar),
+/// [`Plot::stacked_bar`](crate::core::Plot::stacked_bar) and
+/// [`Plot::stacked_area`](crate::core::Plot::stacked_area). Every other series
+/// method takes one column of values; these take several, each with a name of
+/// its own, because a grouped chart whose sub-series cannot be told apart in
+/// the legend is not a grouped chart.
+///
+/// The name is carried here rather than on the builder because there are N of
+/// them and `PlotBuilder::label` holds one. Each pair becomes an ordinary
+/// series when the builder finalizes — its own `PlotSeries`, its own palette
+/// slot, its own legend entry — so the series *count* is the only thing these
+/// plot types change; the chain, the styling and the legend behave exactly as
+/// they do for a line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultiSeriesInput {
+    /// The axis every value series is drawn against.
+    pub axis: MultiSeriesAxis,
+    /// `(series name, values)`, in draw order. An empty name means the series
+    /// was not named, and [`PlotBuilder::label`](crate::core::PlotBuilder::label)
+    /// supplies one for it.
+    pub series: Vec<(String, Vec<f64>)>,
+}
+
+impl MultiSeriesInput {
+    /// Total number of samples across every value series.
+    pub fn point_count(&self) -> usize {
+        self.series.iter().map(|(_, values)| values.len()).sum()
+    }
+}
+
 /// Marker edge styling carried from a plot config to the renderer.
 ///
 /// The fill colour is not known when a series is added (auto-palette series

@@ -543,7 +543,7 @@ impl SkiaRenderer {
     ///
     /// * `fill` — painted verbatim (exact RGB, exact alpha). `None` skips the fill.
     /// * `edge` — `(colour, width_in_points)`. The width is converted with the
-    ///   renderer's [`RenderScale`](crate::core::RenderScale), like every other
+    ///   renderer's [`RenderScale`], like every other
     ///   stroke in this backend, so the edge is DPI-invariant.
     ///
     /// Passing `None` for both is a no-op.
@@ -1154,7 +1154,7 @@ impl SkiaRenderer {
     /// [`SkiaRenderer::draw_marker`] with an explicit marker edge.
     ///
     /// `edge` is `(colour, width_in_points)`; the width is converted through the
-    /// renderer's [`RenderScale`](crate::core::RenderScale), so the rim is
+    /// renderer's [`RenderScale`], so the rim is
     /// DPI-invariant. See [`SkiaRenderer::draw_marker_styled_clipped`].
     pub fn draw_marker_styled(
         &mut self,
@@ -1185,7 +1185,7 @@ impl SkiaRenderer {
     /// [`SkiaRenderer::draw_marker_clipped`] with an explicit marker edge.
     ///
     /// `edge` is `(colour, width_in_points)`; the width is converted through the
-    /// renderer's [`RenderScale`](crate::core::RenderScale) like every other
+    /// renderer's [`RenderScale`] like every other
     /// stroke here, so the rim is DPI-invariant. Only the closed filled shapes
     /// take an edge — the open styles already *are* an outline and the
     /// line-drawn styles (plus/cross/star) have no interior to rim.
