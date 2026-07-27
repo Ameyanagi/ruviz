@@ -159,8 +159,8 @@ impl Plot {
     /// ![Line plot example](https://raw.githubusercontent.com/Ameyanagi/ruviz/main/docs/assets/rustdoc/line_plot.png)
     pub fn line<X, Y>(self, x_data: &X, y_data: &Y) -> PlotBuilder<crate::plots::basic::LineConfig>
     where
-        X: NumericData1D,
-        Y: NumericData1D,
+        X: NumericData1D + ?Sized,
+        Y: NumericData1D + ?Sized,
     {
         let mut plot = self;
         let x_vec = match collect_numeric_data_1d(x_data, plot.null_policy) {
