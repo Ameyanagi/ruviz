@@ -514,8 +514,8 @@ impl SubplotFigure {
                 scaled_plot.render_to_renderer(&mut subplot_renderer, dpi)?;
 
                 // Copy subplot renderer to main renderer at correct position
-                renderer.draw_subplot(
-                    subplot_renderer.into_image(),
+                renderer.draw_image_layer(
+                    &subplot_renderer.into_image_demultiplied(),
                     Self::rect_pixel(subplot_rect.left(), "x position")?,
                     Self::rect_pixel(subplot_rect.top(), "y position")?,
                 )?;

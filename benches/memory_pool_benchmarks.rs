@@ -3,7 +3,6 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ruviz::core::Plot;
 use ruviz::data::Data1D;
 use ruviz::render::PooledRenderer;
 
@@ -148,39 +147,6 @@ fn benchmark_memory_reuse_patterns(c: &mut Criterion) {
     group.finish();
 }
 
-// Benchmark plotting pipeline with memory pooling enabled
-fn benchmark_plot_pipeline(c: &mut Criterion) {
-    let mut group = c.benchmark_group("plot_pipeline");
-
-    for size in [1000, 5000, 10000].iter() {
-        let x_data = generate_test_data(*size);
-        let y_data = generate_test_data(*size);
-
-        group.bench_with_input(BenchmarkId::new("with_pooling", size), size, |b, &_size| {
-            b.iter(|| {
-                let plot = Plot::new()
-                    .with_memory_pooling(true)
-                    .line(black_box(&x_data), black_box(&y_data));
-                black_box(plot);
-            })
-        });
-
-        group.bench_with_input(
-            BenchmarkId::new("without_pooling", size),
-            size,
-            |b, &_size| {
-                b.iter(|| {
-                    let plot = Plot::new()
-                        .with_memory_pooling(false)
-                        .line(black_box(&x_data), black_box(&y_data));
-                    black_box(plot);
-                })
-            },
-        );
-    }
-    group.finish();
-}
-
 // Memory allocation tracking benchmark
 fn benchmark_allocation_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("allocation_tracking");
@@ -212,7 +178,6 @@ criterion_group!(
     benchmark_coordinate_transformation,
     benchmark_tick_generation,
     benchmark_memory_reuse_patterns,
-    benchmark_plot_pipeline,
     benchmark_allocation_patterns
 );
 criterion_main!(benches);

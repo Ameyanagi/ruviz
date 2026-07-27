@@ -7,7 +7,7 @@ use ruviz::prelude::*;
 const GOLDEN_FONT_BYTES: &[u8] = include_bytes!("../src/dejavu-sans.ttf");
 pub const GOLDEN_FONT_FAMILY: &str = "DejaVu Sans";
 
-pub const GOLDEN_FIXTURES: [&str; 25] = [
+pub const GOLDEN_FIXTURES: [&str; 26] = [
     "01_basic_line.png",
     "02_multi_series.png",
     "03_scatter.png",
@@ -33,6 +33,7 @@ pub const GOLDEN_FIXTURES: [&str; 25] = [
     "23_long_title.png",
     "24_unicode.png",
     "25_complex_multi.png",
+    "26_log_axis.png",
 ];
 
 fn stable_plot() -> Plot {
@@ -104,7 +105,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     let mut count = 0;
 
     // 1. Basic line plot
-    println!("[{}/25] Basic line plot...", count + 1);
+    println!("[{}/26] Basic line plot...", count + 1);
     let x = vec![0.0, 1.0, 2.0, 3.0, 4.0];
     let y = vec![0.0, 1.0, 4.0, 9.0, 16.0];
     stable_plot()
@@ -116,7 +117,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 2. Multi-series line plot
-    println!("[{}/25] Multi-series plot...", count + 1);
+    println!("[{}/26] Multi-series plot...", count + 1);
     stable_plot()
         .title("Multi-Series Plot")
         .xlabel("X")
@@ -132,7 +133,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 3. Scatter plot
-    println!("[{}/25] Scatter plot...", count + 1);
+    println!("[{}/26] Scatter plot...", count + 1);
     let x_s = vec![1.0, 2.0, 3.0, 4.0, 5.0];
     let y_s = vec![2.3, 3.1, 2.8, 4.2, 3.9];
     stable_plot()
@@ -146,7 +147,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 4. Bar chart
-    println!("[{}/25] Bar chart...", count + 1);
+    println!("[{}/26] Bar chart...", count + 1);
     let categories = vec!["A", "B", "C", "D", "E"];
     let values = vec![25.0, 40.0, 30.0, 55.0, 45.0];
     stable_plot()
@@ -157,7 +158,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 5. Histogram
-    println!("[{}/25] Histogram...", count + 1);
+    println!("[{}/26] Histogram...", count + 1);
     let data = vec![
         1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0, 1.5, 2.5, 2.5, 3.5, 3.5, 3.5, 4.5, 4.5, 5.5,
     ];
@@ -170,7 +171,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 6. Box plot
-    println!("[{}/25] Box plot...", count + 1);
+    println!("[{}/26] Box plot...", count + 1);
     let boxdata = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 25.0];
     stable_plot()
         .title("Box Plot")
@@ -186,7 +187,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
         (Theme::publication(), "publication"),
         (Theme::seaborn(), "seaborn"),
     ] {
-        println!("[{}/25] {} theme...", count + 1, name);
+        println!("[{}/26] {} theme...", count + 1, name);
         stable_plot()
             .title(format!("{} Theme", name.to_uppercase()))
             .xlabel("X")
@@ -203,7 +204,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
 
     // 11-13. DPI variations
     for dpi in [72, 150, 300] {
-        println!("[{}/25] {} DPI...", count + 1, dpi);
+        println!("[{}/26] {} DPI...", count + 1, dpi);
         stable_plot()
             .title(format!("{} DPI", dpi))
             .dpi(dpi)
@@ -217,7 +218,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     }
 
     // 14. Custom dimensions
-    println!("[{}/25] Custom dimensions...", count + 1);
+    println!("[{}/26] Custom dimensions...", count + 1);
     stable_plot()
         .title("Custom Dimensions")
         .size_px(1200, 900)
@@ -226,7 +227,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 15. Subplots
-    println!("[{}/25] Subplots...", count + 1);
+    println!("[{}/26] Subplots...", count + 1);
     let plot1: Plot = stable_plot().title("Linear").line(&x, &y).into();
     let plot2: Plot = stable_plot().title("Scatter").scatter(&x, &y).into();
     let cats_sub = vec!["A", "B", "C"];
@@ -247,7 +248,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 16. Large dataset
-    println!("[{}/25] Large dataset (1K)...", count + 1);
+    println!("[{}/26] Large dataset (1K)...", count + 1);
     let x_large: Vec<f64> = (0..1000).map(|i| i as f64 * 0.01).collect();
     let y_large: Vec<f64> = x_large.iter().map(|&t| t.sin()).collect();
     stable_plot()
@@ -257,7 +258,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 17. Scientific notation
-    println!("[{}/25] Scientific notation...", count + 1);
+    println!("[{}/26] Scientific notation...", count + 1);
     let x_sci: Vec<f64> = (0..50).map(|i| i as f64 * 100.0).collect();
     let y_sci: Vec<f64> = x_sci.iter().map(|&t| t * t).collect();
     stable_plot()
@@ -269,7 +270,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 18. Negative values
-    println!("[{}/25] Negative values...", count + 1);
+    println!("[{}/26] Negative values...", count + 1);
     let x_neg = vec![-2.0, -1.0, 0.0, 1.0, 2.0];
     let y_neg = vec![-4.0, -1.0, 0.0, 1.0, 4.0];
     stable_plot()
@@ -281,7 +282,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 19. Zero-crossing
-    println!("[{}/25] Zero-crossing...", count + 1);
+    println!("[{}/26] Zero-crossing...", count + 1);
     let x_zero: Vec<f64> = (0..100).map(|i| (i as f64 - 50.0) * 0.1).collect();
     let y_zero: Vec<f64> = x_zero.iter().map(|&t| t.sin()).collect();
     stable_plot()
@@ -291,7 +292,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 20. Dense scatter
-    println!("[{}/25] Dense scatter...", count + 1);
+    println!("[{}/26] Dense scatter...", count + 1);
     let x_dense: Vec<f64> = (0..200).map(|i| i as f64 * 0.05).collect();
     let y_dense: Vec<f64> = x_dense.iter().map(|&t| t.sin() + (t * 0.5).cos()).collect();
     stable_plot()
@@ -303,7 +304,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 21. Wide bar chart
-    println!("[{}/25] Wide bar chart...", count + 1);
+    println!("[{}/26] Wide bar chart...", count + 1);
     let cats: Vec<String> = (0..20).map(|i| format!("C{}", i)).collect();
     let vals: Vec<f64> = (0..20)
         .map(|i| (i as f64 * 1.5).sin() * 50.0 + 50.0)
@@ -316,7 +317,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 22. Minimal plot
-    println!("[{}/25] Minimal plot...", count + 1);
+    println!("[{}/26] Minimal plot...", count + 1);
     let x_min = vec![0.0, 1.0];
     let y_min = vec![0.0, 1.0];
     stable_plot()
@@ -325,7 +326,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 23. Long title
-    println!("[{}/25] Long title...", count + 1);
+    println!("[{}/26] Long title...", count + 1);
     stable_plot()
         .title("This is a Very Long Title That Tests Text Wrapping and Layout Behavior")
         .xlabel("X-axis with longer label")
@@ -335,7 +336,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 24. Unicode text
-    println!("[{}/25] Unicode text...", count + 1);
+    println!("[{}/26] Unicode text...", count + 1);
     stable_plot()
         .title("Unicode: α β γ δ ε θ λ π σ ω")
         .xlabel("Température (°C)")
@@ -345,7 +346,7 @@ pub fn generate_golden_images() -> PlotResult<()> {
     count += 1;
 
     // 25. Complex multi-series
-    println!("[{}/25] Complex multi-series...", count + 1);
+    println!("[{}/26] Complex multi-series...", count + 1);
     let x_comp: Vec<f64> = (0..100).map(|i| i as f64 * 0.1).collect();
     stable_plot()
         .title("Complex Multi-Series")
@@ -366,6 +367,26 @@ pub fn generate_golden_images() -> PlotResult<()> {
         )
         .label("sin(x/2)")
         .save("tests/fixtures/golden/25_complex_multi.png")?;
+    count += 1;
+
+    // 26. Log axis, including a sample the axis cannot represent
+    println!("[{}/26] Log axis...", count + 1);
+    let x_log: Vec<f64> = (1..=6).map(|i| i as f64).collect();
+    let decades = vec![1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0];
+    // The 0.0 is deliberate: a log axis cannot place it, so the polyline has
+    // to break at the gap and keep drawing the rest of the series.
+    let with_gap = vec![2.0, 20.0, 0.0, 2_000.0, 20_000.0, 200_000.0];
+    stable_plot()
+        .title("Log Y Axis")
+        .xlabel("X")
+        .ylabel("Y (log)")
+        .yscale(AxisScale::Log)
+        .legend(LegendPosition::UpperLeft)
+        .line(&x_log, &decades)
+        .label("decades")
+        .line(&x_log, &with_gap)
+        .label("with an unplaceable 0")
+        .save("tests/fixtures/golden/26_log_axis.png")?;
     count += 1;
 
     println!("\nGenerated {} golden images successfully!", count);

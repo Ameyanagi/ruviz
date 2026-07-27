@@ -106,7 +106,7 @@ fn test_large_dataset_performance() {
 
     // Should maintain reasonable FPS even with large dataset
     monitor.assert_min_fps(30.0); // Minimum 30fps for large data
-    handler.assert_60fps_compliance(Duration::from_secs(2));
+    handler.assert_no_frames_dropped(monitor.frame_count());
 }
 
 /// Test event processing order and consistency

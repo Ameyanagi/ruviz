@@ -184,7 +184,12 @@ fn create_pipeline(
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: COLOR_FORMAT,
-                blend: None,
+                // Every scene shader emits premultiplied colour, so translucent
+                // fragments composite correctly and the MSAA resolve produces a
+                // coverage-premultiplied value the readback can divide back out.
+                // `blend: None` silently made partly covered silhouettes read as
+                // straight alpha, haloing every edge.
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),

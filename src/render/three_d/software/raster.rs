@@ -8,10 +8,11 @@ use crate::core::plot::Image;
 use crate::core::plot3d::layout::{Axis3Layout, Viewport3D};
 use crate::core::{PlottingError, Result};
 use crate::plots::SurfaceShading;
+use crate::render::three_d::color::{aspect_corrected_normal, unpremultiply_encoded};
 use crate::render::three_d::scene::{MeshColor3D, Scene3D};
 use crate::render::{Color, ColorMap, LineStyle, MarkerStyle};
 
-use super::clip::{ClipVertex3D, clip_segment, clip_triangle, is_inside_clip_volume};
+use super::clip::{ClipVertex3D, clip_segment, clip_triangle, is_inside_depth_range};
 use super::shading::shade;
 
 const TILE_SIZE: u32 = 32;
@@ -228,6 +229,15 @@ impl TileSamples3D {
         }
     }
 
+    /// Resolve the sample grid to straight-alpha RGBA.
+    ///
+    /// Coverage antialiasing is inherently premultiplied: an uncovered sample
+    /// contributes nothing to either the colour sum or the alpha sum. Averaging
+    /// the raw colour bytes therefore darkened every silhouette, because the
+    /// compositor then read the coverage-weighted colour as if it were straight
+    /// alpha. Accumulate premultiplied and divide the coverage back out exactly
+    /// once, so the layer honours the straight-alpha contract in
+    /// [`crate::render::three_d::color`].
     fn resolve(self) -> TileResult3D {
         let pixel_count = self.width as usize * self.height as usize;
         let mut pixels = vec![0; pixel_count * 4];
@@ -235,14 +245,14 @@ impl TileSamples3D {
             let mut accumulated = [0_u32; 4];
             for sample in 0..self.sample_count {
                 let color = self.colors[pixel * self.sample_count + sample];
-                for channel in 0..4 {
-                    accumulated[channel] += u32::from(color[channel]);
+                let alpha = u32::from(color[3]);
+                for channel in 0..3 {
+                    accumulated[channel] += u32::from(color[channel]) * alpha;
                 }
+                accumulated[3] += alpha;
             }
-            for channel in 0..4 {
-                pixels[pixel * 4 + channel] =
-                    (accumulated[channel] / self.sample_count as u32) as u8;
-            }
+            let resolved = unpremultiply_encoded(accumulated, self.sample_count as u32);
+            pixels[pixel * 4..pixel * 4 + 4].copy_from_slice(&resolved);
         }
         TileResult3D {
             x: self.x,
@@ -351,12 +361,24 @@ fn prepare_primitives(
         };
         for &position in batch.geometry.positions.iter() {
             let clip = clip_vertex(layout, position, [0.0, 0.0, 1.0], 0.0);
-            if !is_inside_clip_volume(clip.clip_position) {
+            // A billboard is culled on depth only. Rejecting it because its
+            // *centre* left the side planes threw away markers whose glyph
+            // still overlapped the viewport, so edge markers popped in and out
+            // during an orbit while the GPU — which clips per pixel — kept
+            // drawing them. `point_bounds` below does the real screen-space
+            // rejection.
+            if !is_inside_depth_range(clip.clip_position) {
                 culled += 1;
                 primitive_id = primitive_id.saturating_add(1);
                 continue;
             }
-            let center = raster_vertex(clip, layout.viewport)?;
+            // A billboard is not clipped against the side planes, so an extreme
+            // projection is a reason to cull rather than a topology error.
+            let Ok(center) = raster_vertex(clip, layout.viewport) else {
+                culled += 1;
+                primitive_id = primitive_id.saturating_add(1);
+                continue;
+            };
             if let Some(bounds) = point_bounds(center.screen, radius, layout.viewport) {
                 primitives.push(RasterPrimitive3D::Point(RasterPoint3D {
                     center,
@@ -501,7 +523,10 @@ fn clip_vertex(
         clip_position: layout.camera.view_projection
             * (local * layout.camera.axis_aspect).extend(1.0),
         local_position: local,
-        normal: Vec3::from_array(normal),
+        // Positions are stretched by `axis_aspect`, so normals have to be
+        // transformed by the inverse transpose of that scale. `shaders/mesh.wgsl`
+        // performs the identical correction.
+        normal: aspect_corrected_normal(Vec3::from_array(normal), layout.camera.axis_aspect),
         color: Vec4::ONE,
         scalar,
     }
@@ -669,8 +694,13 @@ fn rasterize_point(point: &RasterPoint3D, tile: &mut TileSamples3D, offsets: &[V
     for y in bounds.min_y..=bounds.max_y {
         for x in bounds.min_x..=bounds.max_x {
             for (sample_index, offset) in offsets.iter().enumerate() {
-                let delta =
+                let screen_delta =
                     Vec2::new(x as f32 + offset.x, y as f32 + offset.y) - point.center.screen;
+                // `marker_contains` works in the y-up marker space shared with
+                // `shaders/point.wgsl` and the 2D marker paths; screen space is
+                // y-down. Without this flip every triangle marker rendered
+                // upside down on the CPU only.
+                let delta = Vec2::new(screen_delta.x, -screen_delta.y);
                 if marker_contains(point.material.marker, delta, point.material.radius) {
                     tile.write(
                         x,
@@ -686,6 +716,12 @@ fn rasterize_point(point: &RasterPoint3D, tile: &mut TileSamples3D, offsets: &[V
     }
 }
 
+/// Whether a marker glyph covers `delta`, expressed in **y-up** pixels from the
+/// marker centre.
+///
+/// The same predicate — same constants, same orientation — lives in
+/// `shaders/point.wgsl`; `tests/three_d_parity_test.rs` is what keeps them
+/// honest.
 fn marker_contains(marker: MarkerStyle, delta: Vec2, radius: f32) -> bool {
     if radius <= 0.0 {
         return false;
@@ -814,20 +850,29 @@ fn clipped_bounds(
     max_y: f32,
     viewport: Viewport3D,
 ) -> Option<PixelBounds3D> {
-    if ![min_x, min_y, max_x, max_y].into_iter().all(f32::is_finite) {
+    if ![min_x, min_y, max_x, max_y].into_iter().all(f32::is_finite)
+        || viewport.width == 0
+        || viewport.height == 0
+    {
         return None;
     }
-    let viewport_max_x = viewport.x + viewport.width - 1;
-    let viewport_max_y = viewport.y + viewport.height - 1;
-    let min_x = min_x.floor().max(viewport.x as f32) as u32;
-    let min_y = min_y.floor().max(viewport.y as f32) as u32;
-    let max_x = max_x.ceil().min(viewport_max_x as f32) as u32;
-    let max_y = max_y.ceil().min(viewport_max_y as f32) as u32;
-    (min_x <= max_x && min_y <= max_y).then_some(PixelBounds3D {
-        min_x,
-        min_y,
-        max_x,
-        max_y,
+    let left = viewport.x as f32;
+    let top = viewport.y as f32;
+    let right = viewport.right();
+    let bottom = viewport.bottom();
+    // Reject before clamping. Saturating a far-off-screen box into the viewport
+    // used to collapse it onto the edge pixel, which reported the primitive as
+    // drawn instead of culled and binned it into a tile it never touches.
+    if max_x < left || min_x >= right || max_y < top || min_y >= bottom {
+        return None;
+    }
+    let last_x = right - 1.0;
+    let last_y = bottom - 1.0;
+    Some(PixelBounds3D {
+        min_x: min_x.floor().clamp(left, last_x) as u32,
+        min_y: min_y.floor().clamp(top, last_y) as u32,
+        max_x: max_x.ceil().clamp(left, last_x) as u32,
+        max_y: max_y.ceil().clamp(top, last_y) as u32,
     })
 }
 
@@ -982,47 +1027,191 @@ mod tests {
     }
 
     #[test]
-    fn isolated_depth_layer_has_a_stable_export_hash() {
+    fn primitives_entirely_outside_the_viewport_have_no_bounds() {
         let viewport = Viewport3D {
             x: 0,
             y: 0,
             width: 8,
             height: 8,
         };
-        let triangle = triangle([(0.5, 0.5), (7.5, 0.5), (0.5, 7.5)], 0.6, Color::BLUE, 8);
-        let line_material = Arc::new(LineMaterial3D {
-            color: Color::GREEN,
-            width: 1.5,
-            dash_pattern: None,
-        });
-        let line = RasterPrimitive3D::Line(RasterLine3D {
-            start: vertex(0.5, 7.0, 0.4),
-            end: vertex(7.0, 0.5, 0.4),
-            material: line_material,
-            primitive_id: 4,
-            bounds: line_bounds(Vec2::new(0.5, 7.0), Vec2::new(7.0, 0.5), 0.75, viewport)
-                .expect("line bounds"),
-        });
-        let point = RasterPrimitive3D::Point(RasterPoint3D {
-            center: vertex(4.0, 4.0, 0.2),
-            material: PointMaterial3D {
-                color: Color::RED,
-                radius: 1.5,
-                marker: MarkerStyle::Circle,
-            },
-            primitive_id: 1,
-            bounds: point_bounds(Vec2::new(4.0, 4.0), 1.5, viewport).expect("point bounds"),
-        });
-        let pixels = raster_test_primitives(vec![triangle, line, point], &EXPORT_SAMPLE_OFFSETS);
-        assert_eq!(fnv1a64(&pixels), 0x3591_6942_3a5e_c98f);
+        assert!(clipped_bounds(-5000.0, 0.0, -4900.0, 8.0, viewport).is_none());
+        assert!(clipped_bounds(9.0, 0.0, 5000.0, 8.0, viewport).is_none());
+        assert!(clipped_bounds(0.0, -20.0, 8.0, -1.5, viewport).is_none());
+        assert!(clipped_bounds(0.0, f32::NAN, 8.0, 8.0, viewport).is_none());
+        // A shape that starts inside the last pixel still covers it.
+        let bounds = clipped_bounds(7.5, 0.5, 20.0, 1.5, viewport).expect("overlapping bounds");
+        assert_eq!((bounds.min_x, bounds.max_x), (7, 7));
+        assert_eq!((bounds.min_y, bounds.max_y), (0, 2));
     }
 
-    fn fnv1a64(bytes: &[u8]) -> u64 {
-        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-        for &byte in bytes {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    #[test]
+    fn triangle_markers_point_up_like_the_2d_and_gpu_glyphs() {
+        // Screen space is y-down, so the apex has to sit at a *smaller* y than
+        // the base. Before the y-flip the CPU drew every triangle upside down
+        // relative to the 2D marker paths and `shaders/point.wgsl`.
+        let viewport = Viewport3D {
+            x: 0,
+            y: 0,
+            width: 16,
+            height: 16,
+        };
+        let center = Vec2::new(8.0, 8.0);
+        let point = RasterPrimitive3D::Point(RasterPoint3D {
+            center: vertex(center.x, center.y, 0.5),
+            material: PointMaterial3D {
+                color: Color::RED,
+                radius: 6.0,
+                marker: MarkerStyle::Triangle,
+            },
+            primitive_id: 0,
+            bounds: point_bounds(center, 6.0, viewport).expect("point bounds"),
+        });
+        let bin = vec![0_usize];
+        let pixels =
+            render_tile(0, 1, viewport, &bin, &[point], &INTERACTIVE_SAMPLE_OFFSETS).pixels;
+        let width_at = |row: usize| {
+            (0..16)
+                .filter(|column| pixels[(row * 16 + column) * 4 + 3] > 0)
+                .count()
+        };
+        let above = width_at(4);
+        let below = width_at(12);
+        assert!(
+            below > above,
+            "an upward triangle is narrow near the top ({above}) and wide near the bottom ({below})"
+        );
+    }
+
+    #[test]
+    fn markers_whose_centre_leaves_the_viewport_still_draw_their_visible_edge() {
+        // The GPU clips point sprites per pixel; the CPU used to reject the
+        // whole billboard as soon as its centre left the side planes, so edge
+        // markers popped during an orbit.
+        let viewport = Viewport3D {
+            x: 0,
+            y: 0,
+            width: 16,
+            height: 16,
+        };
+        let center = Vec2::new(-2.0, 8.0);
+        let bounds = point_bounds(center, 6.0, viewport)
+            .expect("a marker straddling the left edge still has visible pixels");
+        let point = RasterPrimitive3D::Point(RasterPoint3D {
+            center: vertex(center.x, center.y, 0.5),
+            material: PointMaterial3D {
+                color: Color::RED,
+                radius: 6.0,
+                marker: MarkerStyle::Circle,
+            },
+            primitive_id: 0,
+            bounds,
+        });
+        let bin = vec![0_usize];
+        let pixels =
+            render_tile(0, 1, viewport, &bin, &[point], &INTERACTIVE_SAMPLE_OFFSETS).pixels;
+        assert!(
+            pixels.chunks_exact(4).any(|pixel| pixel[3] > 0),
+            "the visible sliver of an off-centre marker must survive"
+        );
+    }
+
+    #[test]
+    fn half_covered_pixels_resolve_to_straight_alpha_not_premultiplied_colour() {
+        // The four export sample offsets straddle x = 0.5, so a half-plane at
+        // x <= 0.5 covers exactly two of the four samples in column zero.
+        let covered: Vec<_> = EXPORT_SAMPLE_OFFSETS
+            .iter()
+            .filter(|offset| offset.x < 0.5)
+            .collect();
+        assert_eq!(covered.len(), 2, "the analytic setup needs 50% coverage");
+
+        let first = triangle([(-2.0, -2.0), (0.5, -2.0), (0.5, 9.0)], 0.5, Color::RED, 0);
+        let second = triangle([(-2.0, -2.0), (0.5, 9.0), (-2.0, 9.0)], 0.5, Color::RED, 1);
+        let pixels = raster_test_primitives(vec![first, second], &EXPORT_SAMPLE_OFFSETS);
+
+        // Straight alpha: the colour is the *unattenuated* source colour and
+        // the coverage lives entirely in the alpha channel.
+        assert_eq!(&pixels[0..4], &[255, 0, 0, 127]);
+
+        // Compositing that over white with the straight-alpha `src-over` the
+        // PNG round-trip and every SVG viewer apply must brighten, not halo.
+        let over_white = |channel: u8, alpha: u8| {
+            let alpha = f32::from(alpha) / 255.0;
+            (f32::from(channel) * alpha + 255.0 * (1.0 - alpha)).round() as u8
+        };
+        let composited = [
+            over_white(pixels[0], pixels[3]),
+            over_white(pixels[1], pixels[3]),
+            over_white(pixels[2], pixels[3]),
+        ];
+        assert!(
+            composited[0] >= 254,
+            "a red silhouette over white must stay saturated red, got {composited:?}"
+        );
+        assert!((126..=129).contains(&composited[1]), "{composited:?}");
+        assert_eq!(composited[1], composited[2]);
+        assert_ne!(
+            composited[0], 191,
+            "191 is the haloed value produced when coverage is folded into RGB"
+        );
+    }
+
+    #[test]
+    fn fully_transparent_pixels_stay_zeroed() {
+        let primitive = triangle([(0.0, 0.0), (2.0, 0.0), (0.0, 2.0)], 0.5, Color::RED, 0);
+        let pixels = raster_test_primitives(vec![primitive], &EXPORT_SAMPLE_OFFSETS);
+        for pixel in pixels.chunks_exact(4) {
+            if pixel[3] == 0 {
+                assert_eq!(&pixel[..3], &[0, 0, 0]);
+            }
         }
-        hash
+    }
+
+    #[test]
+    fn isolated_depth_layer_export_is_deterministic() {
+        let viewport = Viewport3D {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 8,
+        };
+        let build = || {
+            let triangle = triangle([(0.5, 0.5), (7.5, 0.5), (0.5, 7.5)], 0.6, Color::BLUE, 8);
+            let line_material = Arc::new(LineMaterial3D {
+                color: Color::GREEN,
+                width: 1.5,
+                dash_pattern: None,
+            });
+            let line = RasterPrimitive3D::Line(RasterLine3D {
+                start: vertex(0.5, 7.0, 0.4),
+                end: vertex(7.0, 0.5, 0.4),
+                material: line_material,
+                primitive_id: 4,
+                bounds: line_bounds(Vec2::new(0.5, 7.0), Vec2::new(7.0, 0.5), 0.75, viewport)
+                    .expect("line bounds"),
+            });
+            let point = RasterPrimitive3D::Point(RasterPoint3D {
+                center: vertex(4.0, 4.0, 0.2),
+                material: PointMaterial3D {
+                    color: Color::RED,
+                    radius: 1.5,
+                    marker: MarkerStyle::Circle,
+                },
+                primitive_id: 1,
+                bounds: point_bounds(Vec2::new(4.0, 4.0), 1.5, viewport).expect("point bounds"),
+            });
+            raster_test_primitives(vec![triangle, line, point], &EXPORT_SAMPLE_OFFSETS)
+        };
+        let pixels = build();
+        assert_eq!(pixels, build(), "the export raster must be deterministic");
+        // Depth ordering: the nearest primitive is the red marker at (4, 4).
+        let center = (4 * 8 + 4) * 4;
+        assert_eq!(&pixels[center..center + 4], &[255, 0, 0, 255]);
+        // Straight alpha everywhere, including the antialiased silhouette.
+        for pixel in pixels.chunks_exact(4) {
+            if pixel[3] == 0 {
+                assert_eq!(&pixel[..3], &[0, 0, 0]);
+            }
+        }
     }
 }

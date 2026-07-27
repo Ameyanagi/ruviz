@@ -5,7 +5,7 @@ Get started with ruviz in less than 5 minutes!
 ## What's New in v0.5.0
 
 - Streaming data can be replaced atomically with `StreamingXY::replace`, and acknowledgement watermarks are tracked per consumer so shared streams never composite stale frames.
-- Outside legend positions (`OutsideRight`, `OutsideLeft`, `OutsideUpper`, `OutsideLower`) are honored across PNG, SVG, parallel, interactive, and subplot rendering.
+- Outside legend positions (`OutsideRight`, `OutsideLeft`, `OutsideUpper`, `OutsideLower`) are honored across PNG, SVG, interactive, and subplot rendering.
 - Interactive annotations can be added, updated, and removed at runtime, and heatmaps accept a configurable row origin.
 - Builders gain a conditional `.when(...)` combinator, and the GPUI adapter gains coordinate mapping, pointer events, and view-preserving plot replacement.
 
@@ -387,8 +387,8 @@ Plot::new()
 ## Performance Tips
 
 ### For Larger Native Builds
-The default feature set already includes `parallel`. Add `performance` only
-when you have benchmarked a path that benefits from the extra SIMD support:
+2D rendering is single-threaded and needs no feature flags. Add `performance`
+only when you have benchmarked a path that benefits from the extra SIMD support:
 ```toml
 [dependencies]
 ruviz = { version = "0.5.0", features = ["performance"] }

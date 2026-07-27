@@ -1,11 +1,12 @@
 use crate::{
     core::{
         ComputedMargins, CoordinateTransform, LayoutRect, Legend, LegendItem, LegendItemType,
-        LegendPosition, LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result,
-        SpacingConfig, SpineConfig, TextPosition, find_best_position,
+        LegendSpacingPixels, LegendStyle, PlottingError, RenderScale, Result, SpacingConfig,
+        SpineConfig, TextPosition,
         legend::{
             LEGACY_LEGEND_SWATCH_EDGE_DARK, LEGACY_LEGEND_SWATCH_EDGE_LIGHT,
-            LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, legacy_legend_swatch_edge,
+            LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, LegendLayout, LegendOccupancy, LegendPlacement,
+            layout_legend, legacy_legend_swatch_edge, measure_legend_size,
         },
         plot::{Image, RenderDiagnostics, TextEngineMode, TickDirection, TickSides},
         pt_to_px,
@@ -303,10 +304,6 @@ impl SkiaRenderer {
 
     pub(crate) fn set_render_mode_diagnostics(&mut self, mode: &'static str) {
         self.render_diagnostics.render_mode = mode;
-    }
-
-    pub(crate) fn note_parallel_render(&mut self) {
-        self.render_diagnostics.used_parallel = true;
     }
 
     pub(crate) fn note_auto_datashader(&mut self) {
@@ -1283,21 +1280,23 @@ impl SkiaRenderer {
 
         let tint = self.theme.foreground;
 
-        // Convert the density mask to tiny-skia's native tinted premultiplied format.
+        // Convert the density mask to tiny-skia's native tinted premultiplied
+        // format. `Pixmap::data_mut` is premultiplied **RGBA**, not BGRA: this
+        // used to write B, G, R, A and so swapped red and blue. It went
+        // unnoticed because every theme's `foreground` is black, white or grey,
+        // where the swap is invisible.
         let pixmap_data = datashader_pixmap.data_mut();
         for (i, chunk) in image.pixels.chunks_exact(4).enumerate() {
             let a = chunk[3];
 
-            // tiny-skia uses premultiplied alpha BGRA format
             let alpha_f = a as f32 / 255.0;
             let premult_r = (tint.r as f32 * alpha_f).round() as u8;
             let premult_g = (tint.g as f32 * alpha_f).round() as u8;
             let premult_b = (tint.b as f32 * alpha_f).round() as u8;
 
-            // BGRA order for tiny-skia
-            pixmap_data[i * 4] = premult_b;
+            pixmap_data[i * 4] = premult_r;
             pixmap_data[i * 4 + 1] = premult_g;
-            pixmap_data[i * 4 + 2] = premult_r;
+            pixmap_data[i * 4 + 2] = premult_b;
             pixmap_data[i * 4 + 3] = a;
         }
 
@@ -2461,7 +2460,12 @@ impl SkiaRenderer {
     }
 
     /// Draw legend frame with background and optional border
-    fn draw_legend_frame(
+    /// Paint a legend frame: shadow, face and edge, from one [`LegendStyle`].
+    ///
+    /// `pub(crate)` so the 3D overlay paints its legend box with this exact
+    /// code rather than a themed look-alike of it. `style` must already be in
+    /// device pixels (see `Legend::scaled_for_render`).
+    pub(crate) fn draw_legend_frame(
         &mut self,
         x: f32,
         y: f32,
@@ -2531,28 +2535,57 @@ impl SkiaRenderer {
         Ok(())
     }
 
-    /// Calculate legend dimensions from items
-    fn calculate_legend_dimensions(
+    /// Size and place the legend through the one shared layout.
+    ///
+    /// `legend` must already be scaled for this renderer. The measurement
+    /// callback is this backend's own, which is how a Typst-shaped label and a
+    /// cosmic-text one stay honestly different without duplicating the layout.
+    fn legend_layout(
         &self,
         items: &[LegendItem],
         legend: &Legend,
-        char_width: f32,
-    ) -> (f32, f32) {
-        legend.calculate_size(items, char_width)
+        plot_area: (f32, f32, f32, f32),
+        placement: LegendPlacement<'_>,
+    ) -> Result<LegendLayout> {
+        layout_legend(items, legend, plot_area, placement, |text| {
+            Ok(self.measure_label_text(text, legend.font_size)?.0)
+        })
+    }
+
+    /// The room this legend needs, measured exactly as it will be drawn.
+    ///
+    /// The figure-level margin reservation calls this; it shares
+    /// [`layout_legend`] with [`SkiaRenderer::draw_legend_full`], so an outside
+    /// legend can no longer be reserved at one width and drawn at another.
+    ///
+    /// `legend` is in points and is scaled for this renderer internally.
+    pub(crate) fn measure_legend(
+        &self,
+        items: &[LegendItem],
+        legend: &Legend,
+    ) -> Result<(f32, f32)> {
+        let legend = legend.scaled_for_render(self.render_scale);
+        measure_legend_size(items, &legend, |text| {
+            Ok(self.measure_label_text(text, legend.font_size)?.0)
+        })
     }
 
     /// Draw legend with full LegendItem support
     ///
     /// This is the new legend drawing method that properly renders different
     /// series types with their correct visual handles.
+    ///
+    /// `occupancy` is only consulted for
+    /// [`LegendPosition::Best`](crate::core::LegendPosition::Best); `None`
+    /// means "no idea where the data is", which degrades to `UpperRight`.
     pub fn draw_legend_full(
         &mut self,
         items: &[LegendItem],
         legend: &Legend,
         plot_area: Rect,
-        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        occupancy: Option<&LegendOccupancy>,
     ) -> Result<()> {
-        self.draw_legend_full_resolved(items, legend, plot_area, data_bboxes, None)
+        self.draw_legend_full_resolved(items, legend, plot_area, occupancy, None)
     }
 
     pub(crate) fn draw_legend_full_resolved(
@@ -2560,7 +2593,7 @@ impl SkiaRenderer {
         items: &[LegendItem],
         legend: &Legend,
         plot_area: Rect,
-        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        occupancy: Option<&LegendOccupancy>,
         resolved_rect: Option<(f32, f32, f32, f32)>,
     ) -> Result<()> {
         if items.is_empty() || !legend.enabled {
@@ -2568,130 +2601,46 @@ impl SkiaRenderer {
         }
 
         let legend = legend.scaled_for_render(self.render_scale);
-        let legend = &legend;
-        let spacing = legend.spacing.to_pixels(legend.font_size);
-
-        // Estimate character width for size calculation
-        let char_width = legend.font_size * 0.6;
-
-        // Calculate legend size
-        let (legend_width, legend_height) = resolved_rect
-            .map(|(left, top, right, bottom)| (right - left, bottom - top))
-            .unwrap_or_else(|| self.calculate_legend_dimensions(items, legend, char_width));
-
-        // Determine position
-        let plot_bounds = (
+        let bounds = (
             plot_area.left(),
             plot_area.top(),
             plot_area.right(),
             plot_area.bottom(),
         );
-
-        let position = if resolved_rect.is_none() && matches!(legend.position, LegendPosition::Best)
-        {
-            // Use best position algorithm
-            let bboxes = data_bboxes.unwrap_or(&[]);
-            if bboxes.iter().map(|b| 1).sum::<usize>() > 100000 {
-                // Performance guard: skip for very large datasets
-                LegendPosition::UpperRight
-            } else {
-                find_best_position(
-                    (legend_width, legend_height),
-                    plot_bounds,
-                    bboxes,
-                    &legend.spacing,
-                    legend.font_size,
-                )
-            }
-        } else {
-            legend.position
+        let placement = LegendPlacement {
+            reserved: resolved_rect,
+            occupancy,
         };
+        let layout = self.legend_layout(items, &legend, bounds, placement)?;
 
-        // Create a temporary legend with the resolved position to calculate coordinates
-        let resolved_legend = Legend {
-            position,
-            ..legend.clone()
-        };
-
-        let (legend_x, legend_y) = resolved_rect
-            .map(|(left, top, _, _)| (left, top))
-            .unwrap_or_else(|| {
-                resolved_legend.calculate_position((legend_width, legend_height), plot_bounds)
-            });
-
-        // Draw frame
         self.draw_legend_frame(
-            legend_x,
-            legend_y,
-            legend_width,
-            legend_height,
+            layout.x,
+            layout.y,
+            layout.width,
+            layout.height,
             &legend.style,
         )?;
 
-        // Starting position for items (inside padding)
-        let item_x = legend_x + spacing.border_pad;
-        let mut item_y = legend_y + spacing.border_pad + legend.font_size / 2.0;
-
-        // Draw title if present
-        if let Some(ref title) = legend.title {
-            let title_x = legend_x + legend_width / 2.0;
-            self.draw_text_centered(title, title_x, item_y, legend.font_size, legend.text_color)?;
-            item_y += legend.font_size + spacing.label_spacing;
+        if let (Some(title_layout), Some(title)) = (layout.title, legend.title.as_deref()) {
+            self.draw_text_centered(
+                title,
+                title_layout.center_x,
+                title_layout.top_y,
+                layout.font_size,
+                legend.text_color,
+            )?;
         }
 
-        // Calculate items per column
-        let items_per_col = items.len().div_ceil(legend.columns);
-
-        // Calculate column width
-        let col_width = if resolved_rect.is_some() {
-            (legend_width
-                - spacing.border_pad * 2.0
-                - legend.columns.saturating_sub(1) as f32 * spacing.column_spacing)
-                / legend.columns.max(1) as f32
-        } else {
-            let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
-            spacing.handle_length + spacing.handle_text_pad + max_label_len as f32 * char_width
-        };
-
-        // When drawing into a resolved (possibly capped) rectangle, clip rows
-        // that would extend past the frame instead of overwriting the plot.
-        let max_row_y = resolved_rect
-            .map(|(_, _, _, bottom)| bottom - spacing.border_pad)
-            .unwrap_or(f32::INFINITY);
-
-        // Draw items column by column
-        for col in 0..legend.columns {
-            let col_x = item_x + col as f32 * (col_width + spacing.column_spacing);
-            let mut row_y = item_y;
-
-            for row in 0..items_per_col {
-                let idx = col * items_per_col + row;
-                if idx >= items.len() {
-                    break;
-                }
-                if row_y > max_row_y {
-                    break;
-                }
-
-                let item = &items[idx];
-
-                // Draw handle
-                self.draw_legend_handle(item, col_x, row_y, &spacing)?;
-
-                // Draw label - vertically centered with handle
-                let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
-                // Center text vertically on handle
-                let centered_y = row_y - legend.font_size * 0.65;
-                self.draw_text(
-                    &item.label,
-                    text_x,
-                    centered_y,
-                    legend.font_size,
-                    legend.text_color,
-                )?;
-
-                row_y += legend.font_size + spacing.label_spacing;
-            }
+        for entry in &layout.entries {
+            let item = &items[entry.item_index];
+            self.draw_legend_handle(item, entry.handle_x, entry.handle_center_y, &layout.spacing)?;
+            self.draw_text(
+                &item.label,
+                entry.label_x,
+                entry.label_top_y,
+                layout.font_size,
+                legend.text_color,
+            )?;
         }
 
         Ok(())
@@ -2822,23 +2771,65 @@ impl SkiaRenderer {
         self.height
     }
 
-    /// Draw a subplot image at the specified position
+    /// Draw a subplot image at the specified position.
+    ///
+    /// Alias for [`Self::draw_image_layer`]; `subplot_image` must carry
+    /// straight (non-premultiplied) alpha, which is what the PNG round-trip
+    /// this used to perform already assumed. Prefer `draw_image_layer`, which
+    /// borrows instead of consuming.
     pub fn draw_subplot(
         &mut self,
         subplot_image: crate::core::plot::Image,
         x: u32,
         y: u32,
     ) -> Result<()> {
-        let subplot_png = subplot_image.encode_png()?;
-        let subplot_pixmap = tiny_skia::Pixmap::decode_png(&subplot_png).map_err(|error| {
-            PlottingError::RenderError(format!("Failed to decode subplot image: {error}"))
-        })?;
+        self.draw_image_layer(&subplot_image, x, y)
+    }
 
-        // Draw the subplot pixmap onto our main pixmap at the specified position
+    /// Compose a straight-alpha RGBA image onto the canvas.
+    ///
+    /// This is the only way an [`Image`](crate::core::plot::Image) is put on
+    /// the canvas — [`Self::draw_subplot`] is a thin alias — so the 2D subplot
+    /// compositor and the 3D overlay compositor cannot drift apart.
+    ///
+    /// It used to go through `encode_png` + `decode_png`, which cost a full
+    /// deflate *and* inflate of the whole canvas for every composited frame
+    /// (~11 MB per 1920x1440 3D orbit frame) purely to change alpha
+    /// representation. The premultiply below is that conversion, done directly.
+    pub fn draw_image_layer(
+        &mut self,
+        image: &crate::core::plot::Image,
+        x: u32,
+        y: u32,
+    ) -> Result<()> {
+        let expected = (image.width as usize)
+            .saturating_mul(image.height as usize)
+            .saturating_mul(4);
+        if image.pixels.len() != expected {
+            return Err(PlottingError::RenderError(
+                "image layer pixel buffer does not match its dimensions".to_string(),
+            ));
+        }
+
+        let mut premultiplied = vec![0_u8; expected];
+        for (destination, source) in premultiplied
+            .chunks_exact_mut(4)
+            .zip(image.pixels.chunks_exact(4))
+        {
+            let alpha = u32::from(source[3]);
+            destination[0] = ((u32::from(source[0]) * alpha + 127) / 255) as u8;
+            destination[1] = ((u32::from(source[1]) * alpha + 127) / 255) as u8;
+            destination[2] = ((u32::from(source[2]) * alpha + 127) / 255) as u8;
+            destination[3] = source[3];
+        }
+
+        let size = tiny_skia::IntSize::from_wh(image.width, image.height)
+            .ok_or(PlottingError::OutOfMemory)?;
+        let layer = Pixmap::from_vec(premultiplied, size).ok_or(PlottingError::OutOfMemory)?;
         self.pixmap.draw_pixmap(
             x as i32,
             y as i32,
-            subplot_pixmap.as_ref(),
+            layer.as_ref(),
             &tiny_skia::PixmapPaint::default(),
             tiny_skia::Transform::identity(),
             None,
@@ -3055,5 +3046,54 @@ mod legend_patch_tests {
             !has_dark_pixel(&image, 0, 0, 60, 40),
             "a patch with no configured edge must not grow an implicit one"
         );
+    }
+
+    /// The bug this layout exists to kill.
+    ///
+    /// The frame used to be sized as `label.len() * font_size * 0.6` — a
+    /// **byte** count against a guessed advance. `"WWWWWWWWWW"` is ten bytes of
+    /// glyphs each far wider than 0.6 em, so the label ran out of the frame;
+    /// `"日本語"` is three glyphs in nine bytes, so the frame was drawn about
+    /// three times too wide. Now the frame comes from the same measurement the
+    /// renderer draws with, so the label has to fit inside it.
+    #[test]
+    fn legend_frame_fits_the_measured_label_not_its_byte_count() {
+        let renderer = SkiaRenderer::new(400, 300, Theme::default()).unwrap();
+        let legend = Legend {
+            enabled: true,
+            position: crate::core::LegendPosition::UpperLeft,
+            ..Default::default()
+        };
+        let scaled = legend.scaled_for_render(renderer.render_scale());
+
+        for label in ["WWWWWWWWWW", "日本語ラベル", "Ünïcödé", "iiii"] {
+            let items = vec![LegendItem::line(label, Color::BLUE, LineStyle::Solid, 1.5)];
+            let layout = renderer
+                .legend_layout(
+                    &items,
+                    &scaled,
+                    (0.0, 0.0, 400.0, 300.0),
+                    LegendPlacement::default(),
+                )
+                .expect("legend layout");
+            let text_width = renderer
+                .measure_label_text(label, scaled.font_size)
+                .expect("measure")
+                .0;
+            let entry = layout.entries[0];
+            let inner_right = layout.x + layout.width - layout.spacing.border_pad;
+
+            assert!(
+                entry.label_x + text_width <= inner_right + 0.01,
+                "{label:?} runs past the frame: label ends at {}, frame ends at {inner_right}",
+                entry.label_x + text_width
+            );
+            // The reservation and the drawing are the same call, so the size the
+            // figure layout reserves is the size the frame is drawn at.
+            assert_eq!(
+                layout.size(),
+                renderer.measure_legend(&items, &legend).expect("reserve")
+            );
+        }
     }
 }

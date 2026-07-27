@@ -4,9 +4,12 @@
 //! This renderer is also used as the intermediate format for PDF export.
 
 use crate::core::{
-    Legend, LegendItem, LegendItemType, LegendPosition, LegendSpacingPixels, LegendStyle,
-    PlottingError, RenderScale, Result, SpineConfig, TextAlign, TextStyle, find_best_position,
-    legend::{LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, legacy_legend_swatch_edge},
+    Legend, LegendItem, LegendItemType, LegendSpacingPixels, LegendStyle, PlottingError,
+    RenderScale, Result, SpineConfig, TextAlign, TextStyle,
+    legend::{
+        LEGACY_LEGEND_SWATCH_EDGE_WIDTH_PT, LegendLayout, LegendOccupancy, LegendPlacement,
+        layout_legend, legacy_legend_swatch_edge, measure_legend_size,
+    },
     plot::{TextEngineMode, TickDirection, TickSides},
 };
 use crate::render::{
@@ -2208,7 +2211,19 @@ impl SvgRenderer {
     }
 
     /// Draw legend frame with background and optional border
-    fn draw_legend_frame(&mut self, x: f32, y: f32, width: f32, height: f32, style: &LegendStyle) {
+    /// Paint a legend frame: shadow, face and edge, from one [`LegendStyle`].
+    ///
+    /// `pub(crate)` so the 3D overlay emits its legend box from this exact
+    /// code rather than a themed look-alike of it. `style` must already be in
+    /// device pixels (see `Legend::scaled_for_render`).
+    pub(crate) fn draw_legend_frame(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        style: &LegendStyle,
+    ) {
         if !style.visible {
             return;
         }
@@ -2258,18 +2273,56 @@ impl SvgRenderer {
         }
     }
 
+    /// Size and place the legend through the one shared layout.
+    ///
+    /// `legend` must already be scaled for this renderer. The measurement
+    /// callback is this backend's own — including its Typst branch — which is
+    /// how the two backends keep honest text metrics without either of them
+    /// owning a second copy of the layout.
+    fn legend_layout(
+        &self,
+        items: &[LegendItem],
+        legend: &Legend,
+        plot_area: (f32, f32, f32, f32),
+        placement: LegendPlacement<'_>,
+    ) -> Result<LegendLayout> {
+        layout_legend(items, legend, plot_area, placement, |text| {
+            Ok(self.measure_text_for_layout(text, legend.font_size)?.0)
+        })
+    }
+
+    /// The room this legend needs, measured exactly as it will be drawn.
+    ///
+    /// Shares [`layout_legend`] with [`SvgRenderer::draw_legend_full`], so an
+    /// SVG legend cannot be reserved at one width and drawn at another.
+    /// `legend` is in points and is scaled for this renderer internally.
+    pub(crate) fn measure_legend(
+        &self,
+        items: &[LegendItem],
+        legend: &Legend,
+    ) -> Result<(f32, f32)> {
+        let legend = legend.scaled_for_render(self.render_scale);
+        measure_legend_size(items, &legend, |text| {
+            Ok(self.measure_text_for_layout(text, legend.font_size)?.0)
+        })
+    }
+
     /// Draw legend with full LegendItem support
     ///
     /// This is the new legend drawing method that properly renders different
     /// series types with their correct visual handles.
+    ///
+    /// `occupancy` is only consulted for
+    /// [`LegendPosition::Best`](crate::core::LegendPosition::Best); `None`
+    /// means "no idea where the data is", which degrades to `UpperRight`.
     pub fn draw_legend_full(
         &mut self,
         items: &[LegendItem],
         legend: &Legend,
         plot_area: (f32, f32, f32, f32), // (left, top, right, bottom)
-        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        occupancy: Option<&LegendOccupancy>,
     ) -> Result<()> {
-        self.draw_legend_full_resolved(items, legend, plot_area, data_bboxes, None)
+        self.draw_legend_full_resolved(items, legend, plot_area, occupancy, None)
     }
 
     pub(crate) fn draw_legend_full_resolved(
@@ -2277,7 +2330,7 @@ impl SvgRenderer {
         items: &[LegendItem],
         legend: &Legend,
         plot_area: (f32, f32, f32, f32),
-        data_bboxes: Option<&[(f32, f32, f32, f32)]>,
+        occupancy: Option<&LegendOccupancy>,
         resolved_rect: Option<(f32, f32, f32, f32)>,
     ) -> Result<()> {
         if items.is_empty() || !legend.enabled {
@@ -2285,143 +2338,40 @@ impl SvgRenderer {
         }
 
         let legend = legend.scaled_for_render(self.render_scale);
-        let legend = &legend;
-        let spacing = legend.spacing.to_pixels(legend.font_size);
-        let (measured_width, measured_height, label_width) = match self.text_engine_mode {
-            TextEngineMode::Plain => {
-                let char_width = legend.font_size * 0.6;
-                let (width, height) = legend.calculate_size(items, char_width);
-                let max_label_len = items.iter().map(|item| item.label.len()).max().unwrap_or(0);
-                (width, height, max_label_len as f32 * char_width)
-            }
-            #[cfg(feature = "typst-math")]
-            TextEngineMode::Typst => {
-                let mut max_label_width = 0.0_f32;
-                for item in items {
-                    let (w, _) = self.measure_text_for_layout(&item.label, legend.font_size)?;
-                    max_label_width = max_label_width.max(w);
-                }
-                let item_width = spacing.handle_length + spacing.handle_text_pad + max_label_width;
-                let items_per_col = items.len().div_ceil(legend.columns);
-                let content_width = item_width * legend.columns as f32
-                    + (legend.columns.saturating_sub(1)) as f32 * spacing.column_spacing;
-                let content_height = items_per_col as f32 * legend.font_size
-                    + (items_per_col.saturating_sub(1)) as f32 * spacing.label_spacing;
-                let title_height = if legend.title.is_some() {
-                    legend.font_size + spacing.label_spacing
-                } else {
-                    0.0
-                };
-                let width = content_width + spacing.border_pad * 2.0;
-                let height = content_height + title_height + spacing.border_pad * 2.0;
-                (width, height, max_label_width)
-            }
+        let placement = LegendPlacement {
+            reserved: resolved_rect,
+            occupancy,
         };
-        let (legend_width, legend_height) = resolved_rect
-            .map(|(left, top, right, bottom)| (right - left, bottom - top))
-            .unwrap_or((measured_width, measured_height));
+        let layout = self.legend_layout(items, &legend, plot_area, placement)?;
 
-        // Determine position
-        let position = if resolved_rect.is_none() && matches!(legend.position, LegendPosition::Best)
-        {
-            let bboxes = data_bboxes.unwrap_or(&[]);
-            if bboxes.len() > 100000 {
-                LegendPosition::UpperRight
-            } else {
-                find_best_position(
-                    (legend_width, legend_height),
-                    plot_area,
-                    bboxes,
-                    &legend.spacing,
-                    legend.font_size,
-                )
-            }
-        } else {
-            legend.position
-        };
-
-        let resolved_legend = Legend {
-            position,
-            ..legend.clone()
-        };
-
-        let (legend_x, legend_y) = resolved_rect
-            .map(|(left, top, _, _)| (left, top))
-            .unwrap_or_else(|| {
-                resolved_legend.calculate_position((legend_width, legend_height), plot_area)
-            });
-
-        // Draw frame
         self.draw_legend_frame(
-            legend_x,
-            legend_y,
-            legend_width,
-            legend_height,
+            layout.x,
+            layout.y,
+            layout.width,
+            layout.height,
             &legend.style,
         );
 
-        // Starting position for items
-        let item_x = legend_x + spacing.border_pad;
-        let mut item_y = legend_y + spacing.border_pad + legend.font_size / 2.0;
-
-        // Draw title if present
-        if let Some(ref title) = legend.title {
-            let title_x = legend_x + legend_width / 2.0;
-            self.draw_text_centered(title, title_x, item_y, legend.font_size, legend.text_color)?;
-            item_y += legend.font_size + spacing.label_spacing;
+        if let (Some(title_layout), Some(title)) = (layout.title, legend.title.as_deref()) {
+            self.draw_text_centered(
+                title,
+                title_layout.center_x,
+                title_layout.top_y,
+                layout.font_size,
+                legend.text_color,
+            )?;
         }
 
-        // Calculate items per column
-        let items_per_col = items.len().div_ceil(legend.columns);
-
-        // Calculate column width
-        let col_width = if resolved_rect.is_some() {
-            (legend_width
-                - spacing.border_pad * 2.0
-                - legend.columns.saturating_sub(1) as f32 * spacing.column_spacing)
-                / legend.columns.max(1) as f32
-        } else {
-            spacing.handle_length + spacing.handle_text_pad + label_width
-        };
-
-        // When drawing into a resolved (possibly capped) rectangle, clip rows
-        // that would extend past the frame instead of overwriting the plot.
-        let max_row_y = resolved_rect
-            .map(|(_, _, _, bottom)| bottom - spacing.border_pad)
-            .unwrap_or(f32::INFINITY);
-
-        // Draw items column by column
-        for col in 0..legend.columns {
-            let col_x = item_x + col as f32 * (col_width + spacing.column_spacing);
-            let mut row_y = item_y;
-
-            for row in 0..items_per_col {
-                let idx = col * items_per_col + row;
-                if idx >= items.len() {
-                    break;
-                }
-                if row_y > max_row_y {
-                    break;
-                }
-
-                let item = &items[idx];
-
-                // Draw handle
-                self.draw_legend_handle(item, col_x, row_y, &spacing);
-
-                // Draw label
-                let text_x = col_x + spacing.handle_length + spacing.handle_text_pad;
-                let centered_y = row_y - legend.font_size * 0.65;
-                self.draw_text(
-                    &item.label,
-                    text_x,
-                    centered_y,
-                    legend.font_size,
-                    legend.text_color,
-                )?;
-
-                row_y += legend.font_size + spacing.label_spacing;
-            }
+        for entry in &layout.entries {
+            let item = &items[entry.item_index];
+            self.draw_legend_handle(item, entry.handle_x, entry.handle_center_y, &layout.spacing);
+            self.draw_text(
+                &item.label,
+                entry.label_x,
+                entry.label_top_y,
+                layout.font_size,
+                legend.text_color,
+            )?;
         }
 
         Ok(())

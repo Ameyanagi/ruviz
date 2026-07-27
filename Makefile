@@ -3,7 +3,7 @@ SHELL := /bin/bash
 RELEASE_DOCS_BRANCH := docs/release-0.4.0-refresh
 PYTHON_SITE_DIR := ../generated/python/site
 
-.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
+.PHONY: help setup-hooks assert-release-branch clean-generated release-docs release-docs-rust release-docs-python release-docs-web rust-gallery check-rust-gallery build-generated-preview build-generated-preview-rust build-generated-preview-python build-generated-preview-web generated-manifest check-doc-asset-refs check-docs check-ci-test-coverage fmt clippy check-web check bench-plotting bench-plotting-smoke bench-rust-features bench-rust-features-smoke
 
 help:
 	@echo "ruviz release documentation workflow"
@@ -29,7 +29,8 @@ help:
 	@echo "  make fmt                 cargo fmt --all -- --check"
 	@echo "  make clippy              cargo clippy --all-targets --all-features -- -D warnings"
 	@echo "  make check-web           bun run check:web"
-	@echo "  make check               Run fmt, clippy, and check-web"
+	@echo "  make check-ci-test-coverage Fail if CI compiles a test target it never runs"
+	@echo "  make check               Run fmt, clippy, check-web, check-docs, and CI test coverage"
 	@echo ""
 	@echo "Benchmark targets:"
 	@echo "  make bench-plotting"
@@ -117,6 +118,16 @@ check-doc-asset-refs:
 check-docs:
 	uv run python scripts/check_docs.py
 
+# tests/integration/ci_test_coverage.rs fails when .github/workflows/ci.yml
+# compiles a tests/*.rs target that no pull-request job names in a `--test`
+# flag, and when a job pins a toolchain without asserting the rustc it actually
+# got. Adding a test file therefore requires assigning it to a CI lane; the
+# whole-suite `--all-features --tests` run is a safety net and does not count,
+# because a run that executes every target by construction could never let the
+# guard fail.
+check-ci-test-coverage:
+	cargo test --test integration
+
 fmt:
 	cargo fmt --all -- --check
 
@@ -126,7 +137,7 @@ clippy:
 check-web:
 	bun run check:web
 
-check: fmt clippy check-web check-docs
+check: fmt clippy check-web check-docs check-ci-test-coverage
 
 bench-plotting:
 	bun install --frozen-lockfile --ignore-scripts

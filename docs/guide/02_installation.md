@@ -84,7 +84,7 @@ ruviz = "0.5.0"  # Includes: ndarray_support, parallel
 
 **Enabled by default**:
 - `ndarray_support` - ndarray support for scientific computing
-- `parallel` - internal parallel renderer support and backend metadata
+- `parallel` - multi-threaded tile rasterization for the software 3D backend
 
 ### Core Features
 
@@ -92,13 +92,15 @@ ruviz = "0.5.0"  # Includes: ndarray_support, parallel
 |---------|-------------|----------|
 | `ndarray_support` | ndarray integration (canonical) | Scientific computing, numpy-like arrays |
 | `ndarray` | Compatibility alias for `ndarray_support` | Existing manifests using the historical name |
-| `nalgebra_support` | nalgebra integration | Dense vectors/matrices, linear algebra |
-| `polars_support` | polars integration | Data analysis, DataFrame support |
-| `parallel` | Internal parallel renderer support | Opt-in renderer experiments, metadata |
+| `nalgebra_support` | nalgebra integration (canonical) | Dense vectors/matrices, linear algebra |
+| `nalgebra` | Compatibility alias for `nalgebra_support` | Existing manifests using the historical name |
+| `polars_support` | polars integration (canonical) | Data analysis, DataFrame support |
+| `polars` | Compatibility alias for `polars_support` | Existing manifests using the historical name |
+| `parallel` | Multi-threaded 3D software tile rasterization | 3D surface/scatter rendering |
 | `simd` | SIMD support | Measured performance-sensitive paths |
 | `gpu` | GPU types and metadata | GPU-capable interactive work |
 | `interactive` | Interactive plots | Real-time exploration, data brushing |
-| `window` | Window support | Desktop applications |
+| `window` | Compatibility alias for `interactive` | Existing manifests using the historical name |
 | `serde` | Serialization | Save/load plot configurations |
 | `pdf` | PDF export | Publication-ready vector output |
 
@@ -351,14 +353,6 @@ let y = vec![0.0, 1.0, 4.0];
 let _image = Plot::new()
     .line(&x, &y)
     .render()?;
-```
-
-**Memory pooling** (opt-in):
-```rust
-Plot::new()
-    .with_memory_pooling(true)
-    .line(&x, &y)
-    .save("pooled.png")?;
 ```
 
 ## Platform-Specific Notes

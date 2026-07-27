@@ -58,15 +58,26 @@ impl MockEventHandler {
         self.render_calls += 1;
     }
 
-    /// Verify that render was called within expected timeframe for 60fps
-    pub fn assert_60fps_compliance(&self, duration: Duration) {
-        let expected_frames = (duration.as_secs_f64() * 60.0) as usize;
-        let tolerance = expected_frames / 10; // 10% tolerance
-
-        assert!(
-            self.render_calls >= expected_frames - tolerance,
-            "Expected ~{} render calls for 60fps, got {}",
-            expected_frames,
+    /// Verify the handler dropped nothing: one render and one update per frame.
+    ///
+    /// This replaces an `assert_60fps_compliance(duration)` that derived an
+    /// expected frame count from `duration * 60`. Its only caller paces itself
+    /// with `thread::sleep(16ms)`, which always overshoots, so an iteration
+    /// costs strictly more than a 60fps budget and the count could never be
+    /// reached — the assertion demanded the machine sleep *faster than asked*
+    /// and measured `thread::sleep` accuracy rather than anything about this
+    /// crate. What is worth asserting is that the pipeline drops nothing: the
+    /// handler's own counters agree, and they agree with the independent frame
+    /// count the [`PerformanceMonitor`] recorded. The achieved rate is a
+    /// separate question, and [`PerformanceMonitor::assert_min_fps`] answers it.
+    pub fn assert_no_frames_dropped(&self, frames_recorded: usize) {
+        assert_eq!(
+            self.render_calls, self.update_calls,
+            "every simulated update must produce exactly one render"
+        );
+        assert_eq!(
+            self.render_calls, frames_recorded,
+            "the handler rendered {} frames but the performance monitor recorded {frames_recorded}",
             self.render_calls
         );
     }
@@ -174,15 +185,21 @@ impl PerformanceMonitor {
         }
     }
 
+    /// Record the interval since the previous frame.
+    ///
+    /// The first call has no previous frame, so it measures from the monitor's
+    /// creation — which is what every later call measures too. It used to push
+    /// a fabricated 16.67ms "~60fps" sample instead, which quietly moved
+    /// [`Self::average_fps`] towards the answer the caller was hoping for.
     pub fn record_frame(&mut self) {
         let now = Instant::now();
-        if let Some(&last_time) = self.frame_times.last() {
-            // This is a simplified version - in real impl we'd track actual frame intervals
-            self.frame_times.push(now.duration_since(self.start_time));
-        } else {
-            self.frame_times.push(Duration::from_nanos(16_666_667)); // ~60fps
-        }
+        self.frame_times.push(now.duration_since(self.start_time));
         self.start_time = now;
+    }
+
+    /// How many frames have been recorded.
+    pub fn frame_count(&self) -> usize {
+        self.frame_times.len()
     }
 
     pub fn average_fps(&self) -> f64 {

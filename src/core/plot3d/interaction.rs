@@ -196,6 +196,11 @@ impl InteractivePlot3DSession {
             projected.depth,
         )?;
         let moved_target = self.frame.bounds.denormalize(moved_local, Vec3::ONE);
+        // `Camera3D::prepare` clamps the look-at target to the plotting box.
+        // Store the clamped value too, so a long drag cannot accumulate a
+        // target the view will never honour and that takes as many drags to
+        // undo.
+        let moved_target = clamp_to_bounds(moved_target, self.frame.bounds);
         self.set_camera(self.frame.camera.look_at(moved_target))
     }
 
@@ -394,7 +399,12 @@ impl InteractivePlot3DSession {
             self.frame.figure.dpi,
             SoftwareRenderOptions3D::interactive(),
         )?;
-        compose_image(&layout, &self.frame.figure, &self.frame.theme, output.layer)
+        compose_image(
+            &layout,
+            &self.frame.figure,
+            &self.frame.theme,
+            &output.layer,
+        )
     }
 
     /// Render one retained GPU frame and read it back for image presentation.
@@ -409,7 +419,12 @@ impl InteractivePlot3DSession {
             None => self.gpu_renderer.insert(Wgpu3DRenderer::new()?),
         };
         let output = renderer.render_to_image(&self.scene, &layout, self.frame.figure.dpi)?;
-        let image = compose_image(&layout, &self.frame.figure, &self.frame.theme, output.layer)?;
+        let image = compose_image(
+            &layout,
+            &self.frame.figure,
+            &self.frame.theme,
+            &output.layer,
+        )?;
         let mut diagnostics = RenderDiagnostics3D {
             points_submitted: self.scene.point_count() as u64,
             triangles_submitted: self.scene.triangle_count() as u64,
@@ -425,6 +440,7 @@ impl InteractivePlot3DSession {
         diagnostics.index_upload_bytes = output.resource_update.index_upload_bytes;
         diagnostics.texture_upload_bytes = output.resource_update.texture_upload_bytes;
         diagnostics.buffer_creations = output.resource_update.buffer_creations;
+        diagnostics.buffer_evictions = output.resource_update.evictions;
         diagnostics.camera_uniform_writes = output.camera_uniform_writes;
         diagnostics.draw_calls = output.draw_calls;
         diagnostics.readback_bytes = output.readback_bytes;
@@ -677,6 +693,15 @@ impl GpuSurfaceSession3D {
     pub fn render_png_bytes(&self) -> Result<Vec<u8>> {
         self.session.render()?.encode_png()
     }
+}
+
+/// Clamp a data-space point into the resolved plot bounds.
+fn clamp_to_bounds(point: super::Point3D, bounds: super::Bounds3D) -> super::Point3D {
+    super::Point3D::new(
+        point.x.clamp(bounds.min.x, bounds.max.x),
+        point.y.clamp(bounds.min.y, bounds.max.y),
+        point.z.clamp(bounds.min.z, bounds.max.z),
+    )
 }
 
 fn validate_delta(delta_x: f32, delta_y: f32) -> Result<()> {

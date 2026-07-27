@@ -10,7 +10,7 @@
 //! - [`PlotConfiguration`] - Display settings (title, labels, dimensions, theme)
 //! - [`SeriesManager`] - Data series storage and auto-coloring
 //! - [`LayoutManager`] - Legend, grid, ticks, margins, axis limits/scales
-//! - [`RenderPipeline`] - Backend selection, parallel/pooled rendering
+//! - [`RenderPipeline`] - Backend selection and output-size overrides
 //!
 //! # Usage
 //!
@@ -90,13 +90,6 @@ pub(super) enum RenderExecutionMode {
 }
 
 impl RenderExecutionMode {
-    pub(super) fn allows_parallel(self) -> bool {
-        // The reference-parity branch keeps the parallel renderer out of the
-        // candidate image path until that backend can satisfy the same visual
-        // tolerance as the reference raster pipeline.
-        false
-    }
-
     pub(super) fn allows_auto_datashader(self) -> bool {
         matches!(self, Self::Optimized)
     }
@@ -112,6 +105,9 @@ impl RenderExecutionMode {
 #[doc(hidden)]
 pub struct RenderDiagnostics {
     pub render_mode: &'static str,
+    /// Always `false`: there is no 2D series-parallel raster path. Kept so
+    /// existing readers of this struct keep compiling, and asserted false by
+    /// `nonbreaking_plot_api_test`.
     pub used_parallel: bool,
     pub used_auto_datashader: bool,
     pub used_exact_line_canonicalization: bool,
@@ -519,6 +515,7 @@ macro_rules! impl_series_continuation_methods {
 }
 
 mod annotations;
+mod bounds;
 mod builder;
 mod config;
 mod configuration;
@@ -529,7 +526,6 @@ mod image;
 mod interactive_session;
 mod layout_manager;
 mod mixed_render;
-mod parallel_render;
 mod prepared;
 mod raster_batches;
 mod raster_fast_path;
@@ -570,10 +566,10 @@ use crate::{
     axes::AxisScale,
     core::{
         Annotation, ArrowStyle, FillStyle, GridStyle, LayoutCalculator, LayoutConfig,
-        LayoutMeasurements, Legend, LegendItem, LegendItemType, LegendPosition, MarginConfig,
-        MeasuredDimensions, PlotConfig, PlotContent, PlotLayout, PlotStyle, PlottingError,
-        REFERENCE_DPI, RenderScale, ResolvedLayout, Result, ShapeStyle, StyleResolver, TextStyle,
-        pt_to_px,
+        LayoutMeasurements, Legend, LegendItem, LegendItemType, LegendOccupancy, LegendPosition,
+        MarginConfig, MeasuredDimensions, PlotConfig, PlotContent, PlotLayout, PlotStyle,
+        PlottingError, REFERENCE_DPI, RenderScale, ResolvedLayout, Result, ShapeStyle,
+        StyleResolver, TextStyle, pt_to_px,
     },
     data::{
         Data1D, DataShader, NullPolicy, NumericData1D, NumericData2D, StreamingXY,
@@ -585,7 +581,7 @@ use crate::{
     plots::traits::PlotRender,
     render::skia::{
         SkiaRenderer, calculate_plot_area_config, calculate_plot_area_dpi, generate_ticks,
-        map_data_to_pixels,
+        map_data_to_pixels, try_map_data_to_pixels_scaled,
     },
     render::{Color, LineStyle, MarkerStyle, Theme},
 };
@@ -602,9 +598,6 @@ pub(crate) use self::types::{
     ResolvedSeriesStyle, ResolvedStreamingPair, ResolvedStyle, SeriesGroupMeta, SeriesType,
     TickConfig,
 };
-
-#[cfg(feature = "parallel")]
-use crate::render::{ParallelRenderer, SeriesRenderData};
 
 #[cfg(feature = "gpu")]
 use crate::render::gpu::GpuRenderer;

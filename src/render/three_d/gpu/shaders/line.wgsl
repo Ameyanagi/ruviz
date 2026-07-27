@@ -23,6 +23,12 @@ struct VertexOutput {
     @location(1) @interpolate(flat) segment_length: f32,
 };
 
+/// Smallest homogeneous divisor a perspective divide may use.
+const W_EPSILON: f32 = 1.0e-6;
+
+/// In front of the near plane (z < 0), so the primitive is discarded whole.
+const DEGENERATE_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+
 @vertex
 fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
@@ -37,6 +43,18 @@ fn vs_main(
         end.xyz * camera.axis_aspect.xyz,
         1.0,
     );
+    // Either endpoint at or behind the eye makes the perspective divide below
+    // meaningless: a negative `w` mirrors the segment and smears the expanded
+    // quad across the whole frame. Emit a degenerate, fully clipped quad
+    // instead. The CPU rasterizer reaches the same conclusion by clipping the
+    // segment against the near plane before it projects.
+    if !(start_clip.w > W_EPSILON && end_clip.w > W_EPSILON) {
+        var clipped: VertexOutput;
+        clipped.clip_position = DEGENERATE_POSITION;
+        clipped.segment_coordinate = vec2<f32>(0.0, 0.0);
+        clipped.segment_length = 0.0;
+        return clipped;
+    }
     let start_ndc = start_clip.xy / start_clip.w;
     let end_ndc = end_clip.xy / end_clip.w;
     let half_viewport = camera.viewport.xy * 0.5;
@@ -111,5 +129,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if !dash_is_on(along) {
         discard;
     }
-    return material.color;
+    // The scene pipelines blend and resolve premultiplied.
+    return vec4<f32>(material.color.rgb * material.color.a, material.color.a);
 }

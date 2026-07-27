@@ -1,8 +1,14 @@
 #![allow(deprecated)] // exercises the deprecated `ruviz::simple` module on purpose
 
-// Property-based testing - TDD approach
-// These tests verify robustness properties with randomized inputs
-// Run with: cargo test --test property_tests -- --ignored
+//! Property-based robustness tests, run by `cargo test --test property_tests`.
+//!
+//! These were all `#[ignore]`d with no CI job passing `--ignored`, so they had
+//! never run in CI — even though `tests/property_tests.proptest-regressions`
+//! records a case proptest shrank to `values = [0.0]`, proving the suite finds
+//! real failures when it is allowed to run. The seeds in that file are replayed
+//! before any new case, so keeping these tests off was exactly as good as
+//! deleting them. They run for real now; keep `PROPTEST_CASES` small enough
+//! that they stay a fast lane.
 
 use proptest::prelude::*;
 use proptest::test_runner::Config as ProptestConfig;
@@ -15,11 +21,14 @@ fn ensure_output_dir() {
         .expect("failed to create generated/tests/render");
 }
 
+fn png_dimensions(path: &str) -> (u32, u32) {
+    image::image_dimensions(path).expect("a rendered PNG must be readable")
+}
+
 // Property 1: Plot should handle any valid f64 data without panicking
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn plot_never_panics_on_valid_data(
         x in prop::collection::vec(
             any::<f64>().prop_filter("finite", |x| x.is_finite()),
@@ -43,7 +52,6 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn auto_optimize_always_selects_backend(
         size in 1usize..10000,
     ) {
@@ -72,7 +80,6 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn deterministic_output(
         x in prop::collection::vec(-1000.0..1000.0, 10..50),
         y in prop::collection::vec(-1000.0..1000.0, 10..50),
@@ -99,7 +106,6 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn bounds_contain_all_data(
         x in prop::collection::vec(-1000.0..1000.0, 10..100),
         y in prop::collection::vec(-1000.0..1000.0, 10..100),
@@ -124,11 +130,14 @@ proptest! {
     }
 }
 
-// Property 5: Simple API should match full API output
+// Property 5: The deprecated `simple` wrapper must stay equivalent to the full
+// API call its documentation says it is. `simple::line_plot` is defined as
+// `Plot::new().line(x, y).auto_optimize().save(path)`, so the two outputs have
+// to agree pixel-for-pixel; comparing sizes to within 10%, as this property
+// used to, would have accepted a wrapper that quietly diverged.
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn simple_api_matches_full_api(
         x in prop::collection::vec(-100.0..100.0, 10..50),
         y in prop::collection::vec(-100.0..100.0, 10..50),
@@ -139,33 +148,32 @@ proptest! {
 
         ensure_output_dir();
 
+        let simple_path = "generated/tests/render/prop_simple.png";
+        let full_path = "generated/tests/render/prop_full.png";
+
         // Simple API
-        let simple_result = ruviz::simple::line_plot(
-            &x,
-            &y,
-            "generated/tests/render/prop_simple.png"
-        );
+        ruviz::simple::line_plot(&x, &y, simple_path)?;
 
         // Full API with auto-optimize
-        let full_result = Plot::new()
+        Plot::new()
             .line(&x, &y)
             .auto_optimize()
-            .save("generated/tests/render/prop_full.png");
+            .save(full_path)?;
 
-        // Both should succeed
-        prop_assert!(simple_result.is_ok());
-        prop_assert!(full_result.is_ok());
+        prop_assert_eq!(
+            png_dimensions(simple_path),
+            png_dimensions(full_path),
+            "the simple wrapper and the full API disagree on output size"
+        );
 
-        // Should produce similar-sized outputs (within 10% due to compression variance)
-        let simple_size = std::fs::metadata("generated/tests/render/prop_simple.png")?.len();
-        let full_size = std::fs::metadata("generated/tests/render/prop_full.png")?.len();
-
-        let ratio = simple_size as f64 / full_size as f64;
+        let simple_bytes = std::fs::read(simple_path)?;
+        let full_bytes = std::fs::read(full_path)?;
         prop_assert!(
-            ratio > 0.9 && ratio < 1.1,
-            "File sizes differ too much: {} vs {}",
-            simple_size,
-            full_size
+            simple_bytes == full_bytes,
+            "simple::line_plot produced {} bytes and the equivalent full-API call \
+             produced {}; the wrapper no longer matches what it documents",
+            simple_bytes.len(),
+            full_bytes.len()
         );
     }
 }
@@ -174,7 +182,6 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn empty_data_errors_gracefully(
         has_x in prop::bool::ANY,
         has_y in prop::bool::ANY,
@@ -201,7 +208,6 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn scatter_plot_robust(
         x in prop::collection::vec(-1e10_f64..1e10_f64, 5..100),
         y in prop::collection::vec(-1e10_f64..1e10_f64, 5..100),
@@ -221,7 +227,6 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(PROPTEST_CASES))]
     #[test]
-    #[ignore] // Slow property test - run manually
     fn bar_chart_handles_values(
         values in prop::collection::vec(0.0..1000.0, 1..20),
     ) {
@@ -238,14 +243,5 @@ proptest! {
         let result = Plot::new().bar(&categories, &values).render();
 
         prop_assert!(result.is_ok(), "Bar chart should handle positive values");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn proptest_module_compiles() {
-        // Ensure module compiles and proptest is available.
     }
 }

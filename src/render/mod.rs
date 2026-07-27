@@ -7,8 +7,6 @@ pub mod cosmic_text_renderer;
 pub(crate) mod font_registry;
 #[cfg(feature = "gpu")]
 pub mod gpu;
-#[cfg(feature = "parallel")]
-pub mod parallel;
 pub mod pooled;
 pub mod primitives;
 #[cfg(feature = "simd")]
@@ -27,10 +25,6 @@ pub use color::{Color, ColorError, ColorMap, ColorMapSpec};
 pub use cosmic_text_renderer::CosmicTextRenderer;
 #[cfg(feature = "gpu")]
 pub use gpu::{GpuBackend, GpuRenderer, initialize_gpu_backend, is_gpu_available};
-#[cfg(feature = "parallel")]
-pub use parallel::{
-    DetailedPerformanceInfo, ParallelConfig, ParallelRenderer, PerformanceStats, SeriesRenderData,
-};
 pub use pooled::{LineSegment, PooledRenderer, PooledRendererStats, get_pooled_renderer};
 pub use primitives::{Arc, Arrow, Polygon, Wedge};
 #[cfg(feature = "simd")]

@@ -126,16 +126,54 @@ fn aggressive_camera_clipping_is_deterministic_for_both_projection_modes() {
             diagnostics.primitives_culled,
             repeated_diagnostics.primitives_culled
         );
+        // At this zoom the eight cube corners project far outside the viewport
+        // and only the origin marker can be seen. Culling is a conservative
+        // bounding-square test (`clipped_bounds` on centre +/- radius), so a
+        // corner whose glyph square overlaps the viewport edge by a fraction of
+        // a pixel survives the test and then rasterizes to zero coverage. The
+        // exact counter therefore depends on knife-edge projection geometry and
+        // legitimately differs between the two modes (8 orthographic, 7
+        // perspective), so assert the visual contract the counter stood in for:
+        // no corner puts a single pixel on the canvas.
         assert!(
-            diagnostics.primitives_culled >= 8,
-            "the eight cube corners should be clipped at high zoom"
+            diagnostics.primitives_culled >= 7,
+            "the cube corners should be clipped at high zoom, culled={}",
+            diagnostics.primitives_culled
         );
+
+        let width = first.width;
+        let height = first.height;
+        let red: Vec<(u32, u32)> = first
+            .pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, pixel)| pixel[0] > 150 && pixel[1] < 100 && pixel[2] < 100)
+            .map(|(index, _)| (index as u32 % width, index as u32 / width))
+            .collect();
         assert!(
             first
                 .pixels
                 .chunks_exact(4)
                 .any(|pixel| pixel == [255, 0, 0, 255]),
             "the center marker should remain visible"
+        );
+
+        let min_x = red.iter().map(|(x, _)| *x).min().expect("red ink");
+        let max_x = red.iter().map(|(x, _)| *x).max().expect("red ink");
+        let min_y = red.iter().map(|(_, y)| *y).min().expect("red ink");
+        let max_y = red.iter().map(|(_, y)| *y).max().expect("red ink");
+        // The marker is 8pt at 72 dpi; anything wider than this means a second
+        // marker survived, and a corner marker would sit against a canvas edge
+        // tens of pixels away from the origin one.
+        assert!(
+            max_x - min_x <= 12 && max_y - min_y <= 12,
+            "only the origin marker may be visible, but red ink spans \
+             ({min_x}..={max_x}, {min_y}..={max_y}) on a {width}x{height} canvas"
+        );
+        assert!(
+            red.iter()
+                .all(|(x, y)| *x > 0 && *y > 0 && *x < width - 1 && *y < height - 1),
+            "a clipped corner marker inked the canvas edge"
         );
     }
 }

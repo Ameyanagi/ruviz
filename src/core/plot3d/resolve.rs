@@ -1,4 +1,4 @@
-use crate::core::{Bounds3D, FigureConfig, PlottingError, Point3D, Result};
+use crate::core::{Bounds3D, FigureConfig, Legend, PlottingError, Point3D, Result};
 use crate::plots::{SurfaceSampling, SurfaceShading};
 use crate::render::{Color, ColorMap, LineStyle, Theme};
 
@@ -27,6 +27,8 @@ pub(crate) struct ResolvedFrame3D {
     pub(crate) xlabel: Option<String>,
     pub(crate) ylabel: Option<String>,
     pub(crate) zlabel: Option<String>,
+    /// User legend configuration, or `None` to derive one from the theme.
+    pub(crate) legend: Option<Legend>,
     pub(crate) keys: FrameKeys3D,
 }
 
@@ -62,6 +64,7 @@ impl Plot3D {
             self.xlabel.as_deref(),
             self.ylabel.as_deref(),
             self.zlabel.as_deref(),
+            self.legend.as_ref(),
         );
 
         Ok(ResolvedFrame3D {
@@ -74,6 +77,7 @@ impl Plot3D {
             xlabel: self.xlabel,
             ylabel: self.ylabel,
             zlabel: self.zlabel,
+            legend: self.legend,
             keys,
         })
     }
@@ -89,6 +93,7 @@ fn frame_keys(
     xlabel: Option<&str>,
     ylabel: Option<&str>,
     zlabel: Option<&str>,
+    legend: Option<&Legend>,
 ) -> FrameKeys3D {
     let mut geometry = StableHasher3D::new();
     let mut appearance = StableHasher3D::new();
@@ -179,6 +184,7 @@ fn frame_keys(
     hash_bounds(&mut layout, bounds);
     hash_theme_appearance(&mut appearance, theme);
     hash_layout(&mut layout, figure, theme, title, xlabel, ylabel, zlabel);
+    hash_legend(&mut layout, legend);
 
     let mut view = StableHasher3D::new();
     hash_camera(&mut view, camera);
@@ -307,6 +313,22 @@ fn hash_layout(
     hasher.f32(theme.tick_label_font_size);
     hasher.f32(theme.margin);
     hasher.f32(theme.padding);
+}
+
+/// Fold the user legend configuration into the layout key.
+///
+/// Anything `legend_config` in `plot3d::layout` reads has to be hashed here, or
+/// a cached frame outlives the legend it was laid out for.
+fn hash_legend(hasher: &mut StableHasher3D, legend: Option<&Legend>) {
+    let Some(legend) = legend else {
+        hasher.byte(0);
+        return;
+    };
+    hasher.byte(1);
+    // Hashed through `Debug` on purpose: every field of `Legend` reaches the
+    // layout, so enumerating them here would be a second list to keep in sync
+    // with the struct. A field added to `Legend` is folded in automatically.
+    hasher.str(&format!("{legend:?}"));
 }
 
 struct StableHasher3D(u64);

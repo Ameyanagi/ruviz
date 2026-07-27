@@ -20,6 +20,12 @@ struct VertexOutput {
     @location(0) local: vec2<f32>,
 };
 
+/// Smallest homogeneous divisor a billboard may be sized against.
+const W_EPSILON: f32 = 1.0e-6;
+
+/// In front of the near plane (z < 0), so the primitive is discarded whole.
+const DEGENERATE_POSITION: vec4<f32> = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+
 @vertex
 fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
@@ -36,15 +42,28 @@ fn vs_main(
         position.xyz * camera.axis_aspect.xyz,
         1.0,
     );
+    var output: VertexOutput;
+    // A centre at or behind the eye makes `center.w` useless as a pixel-to-clip
+    // scale — the sprite would invert and stretch across the frame. The CPU
+    // rasterizer rejects the same billboards on depth alone.
+    if !(center.w > W_EPSILON) {
+        output.clip_position = DEGENERATE_POSITION;
+        output.local = corner;
+        return output;
+    }
     let ndc_per_pixel = vec2<f32>(2.0 / camera.viewport.x, 2.0 / camera.viewport.y);
     let radius = max(material.parameters.x * camera.viewport.z / 72.0 * 0.5, 0.5);
-    var output: VertexOutput;
     let clip_offset = corner * radius * ndc_per_pixel * center.w;
     output.clip_position = vec4<f32>(center.xy + clip_offset, center.z, center.w);
     output.local = corner;
     return output;
 }
 
+/// Whether a marker glyph covers `point`, expressed in **y-up** units of the
+/// marker radius.
+///
+/// The same predicate — same constants, same orientation — lives in
+/// `software/raster.rs`; `tests/three_d_parity_test.rs` keeps them honest.
 fn marker_contains(marker: u32, point: vec2<f32>) -> bool {
     let x = abs(point.x);
     let y = abs(point.y);
@@ -99,5 +118,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if !marker_contains(marker, input.local) {
         discard;
     }
-    return material.color;
+    // The scene pipelines blend and resolve premultiplied.
+    return vec4<f32>(material.color.rgb * material.color.a, material.color.a);
 }

@@ -13,12 +13,12 @@ pub(crate) fn compose_image(
     layout: &Axis3Layout,
     figure: &FigureConfig,
     theme: &Theme,
-    raster_layer: Image,
+    raster_layer: &Image,
 ) -> Result<Image> {
     let mut renderer = SkiaRenderer::new(layout.canvas_width, layout.canvas_height, theme.clone())?;
     renderer.set_render_scale(figure.render_scale());
     draw_background_skia(&mut renderer, layout, figure, theme)?;
-    renderer.draw_subplot(raster_layer, 0, 0)?;
+    renderer.draw_image_layer(raster_layer, 0, 0)?;
     draw_foreground_skia(&mut renderer, layout, figure, theme)?;
     Ok(renderer.into_image_demultiplied())
 }
@@ -172,28 +172,23 @@ fn draw_decorations_skia(
     theme: &Theme,
 ) -> Result<()> {
     if let Some(legend) = &layout.legend {
-        renderer.draw_solid_rectangle(
+        renderer.draw_legend_frame(
             legend.bounds.x,
             legend.bounds.y,
             legend.bounds.width,
             legend.bounds.height,
-            theme.background,
+            &legend.style,
         )?;
-        renderer.draw_rectangle(
-            legend.bounds.x,
-            legend.bounds.y,
-            legend.bounds.width,
-            legend.bounds.height,
-            theme.grid_color,
-            false,
-        )?;
+        if let Some(title) = &legend.title {
+            draw_skia_text(renderer, title, legend.font_size, legend.text_color, layout)?;
+        }
         for item in &legend.items {
             draw_legend_item_skia(renderer, item, figure)?;
             draw_skia_text(
                 renderer,
                 &item.label,
-                legend_font_size(figure, theme),
-                theme.foreground,
+                legend.font_size,
+                legend.text_color,
                 layout,
             )?;
         }
@@ -279,29 +274,23 @@ fn draw_decorations_svg(
     theme: &Theme,
 ) -> Result<()> {
     if let Some(legend) = &layout.legend {
-        renderer.draw_rectangle(
+        renderer.draw_legend_frame(
             legend.bounds.x,
             legend.bounds.y,
             legend.bounds.width,
             legend.bounds.height,
-            theme.background,
-            true,
+            &legend.style,
         );
-        renderer.draw_rectangle(
-            legend.bounds.x,
-            legend.bounds.y,
-            legend.bounds.width,
-            legend.bounds.height,
-            theme.grid_color,
-            false,
-        );
+        if let Some(title) = &legend.title {
+            draw_svg_text(renderer, title, legend.font_size, legend.text_color, layout)?;
+        }
         for item in &legend.items {
             draw_legend_item_svg(renderer, item, figure);
             draw_svg_text(
                 renderer,
                 &item.label,
-                legend_font_size(figure, theme),
-                theme.foreground,
+                legend.font_size,
+                legend.text_color,
                 layout,
             )?;
         }
@@ -516,10 +505,6 @@ fn axis_font_size(figure: &FigureConfig, theme: &Theme) -> f32 {
 
 fn title_font_size(figure: &FigureConfig, theme: &Theme) -> f32 {
     theme.title_font_size * figure.dpi / 72.0
-}
-
-fn legend_font_size(figure: &FigureConfig, theme: &Theme) -> f32 {
-    theme.legend_font_size * figure.dpi / 72.0
 }
 
 #[cfg(test)]

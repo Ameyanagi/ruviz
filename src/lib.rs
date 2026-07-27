@@ -853,7 +853,7 @@ pub mod prelude {
         AxisAspect3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
         InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D,
         PointerButton3D, ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder,
-        ScreenRay3D, Surface3DBuilder, Wireframe3DBuilder,
+        ScreenRay3D, Surface3DBuilder, Wireframe3DBuilder, release_3d_gpu_resources,
     };
     pub use crate::data::{
         Data1D, DataShader, DataShaderCanvas, NullPolicy, NumericData1D, NumericData2D,

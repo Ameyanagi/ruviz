@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::legend::LegendPosition;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -949,6 +950,27 @@ fn test_draw_datashader_image_scales_into_plot_area() {
     assert!(!pixel_is_bright_rgba(&rendered, 50, 45));
 }
 
+/// The density mask is tinted with the theme foreground, red channel included.
+///
+/// tiny-skia's pixmap buffer is premultiplied RGBA; writing B, G, R, A into it
+/// swapped red and blue. Every stock theme's foreground is black, white or
+/// grey, so the two existing datashader tests could not see it — this one uses
+/// a colour where R, G and B all differ.
+#[test]
+fn test_draw_datashader_image_tints_with_the_foreground_channels_in_order() {
+    let mut theme = Theme::light();
+    theme.foreground = Color::from_rgb(200, 120, 40);
+    let mut renderer = SkiaRenderer::new(4, 4, theme).unwrap();
+    renderer.clear();
+
+    let image = crate::data::DataShaderImage::new(1, 1, vec![255, 255, 255, 255]);
+    let plot_area = Rect::from_xywh(0.0, 0.0, 4.0, 4.0).unwrap();
+    renderer.draw_datashader_image(&image, plot_area).unwrap();
+
+    let rendered = renderer.into_image_demultiplied();
+    assert_eq!(image_pixel_rgba(&rendered, 2, 2), [200, 120, 40, 255]);
+}
+
 #[test]
 fn test_draw_datashader_image_preserves_transparent_bins() {
     let theme = Theme::light();
@@ -1441,6 +1463,100 @@ fn test_renderer_dimensions() {
 
     assert_eq!(renderer.width(), 800);
     assert_eq!(renderer.height(), 600);
+}
+
+/// `draw_image_layer` must compose exactly like the PNG round-trip it replaced.
+///
+/// The old `draw_subplot` encoded the whole layer to PNG and immediately
+/// decoded it, paying a full deflate + inflate per composited frame purely to
+/// convert straight alpha to premultiplied. This is that conversion, done
+/// directly, so the pixels have to match.
+#[test]
+fn draw_image_layer_matches_the_png_round_trip_it_replaced() {
+    use crate::core::plot::Image;
+
+    // Straight-alpha RGBA, deliberately including partial coverage: with a
+    // fully opaque layer a double premultiply or a channel swap is invisible.
+    let layer = Image {
+        width: 4,
+        height: 2,
+        pixels: (0..8_u8)
+            .flat_map(|index| [index * 31, 255 - index * 31, index * 17, index * 36])
+            .collect(),
+    };
+
+    let mut direct = SkiaRenderer::new(6, 4, Theme::light()).unwrap();
+    direct.clear();
+    direct.draw_image_layer(&layer, 1, 1).unwrap();
+
+    let mut via_png = SkiaRenderer::new(6, 4, Theme::light()).unwrap();
+    via_png.clear();
+    let decoded = tiny_skia::Pixmap::decode_png(&layer.encode_png().unwrap()).unwrap();
+    via_png.pixmap.draw_pixmap(
+        1,
+        1,
+        decoded.as_ref(),
+        &tiny_skia::PixmapPaint::default(),
+        tiny_skia::Transform::identity(),
+        None,
+    );
+
+    let direct = direct.into_image_demultiplied();
+    let expected = via_png.into_image_demultiplied();
+    assert_eq!(direct.pixels.len(), expected.pixels.len());
+    for (index, (actual, expected)) in direct.pixels.iter().zip(&expected.pixels).enumerate() {
+        assert!(
+            actual.abs_diff(*expected) <= 1,
+            "byte {index}: {actual} vs {expected} from the PNG round-trip"
+        );
+    }
+}
+
+/// Half-covered red over white is pink, not half-dark red.
+///
+/// Straight alpha in, correctly premultiplied composite out. A layer handed to
+/// the compositor already premultiplied would darken to (255, 64, 64).
+#[test]
+fn draw_image_layer_treats_its_input_as_straight_alpha() {
+    use crate::core::plot::Image;
+
+    let mut renderer = SkiaRenderer::new(2, 1, Theme::light()).unwrap();
+    renderer.clear();
+    renderer
+        .draw_image_layer(
+            &Image {
+                width: 2,
+                height: 1,
+                pixels: vec![255, 0, 0, 128, 0, 255, 0, 255],
+            },
+            0,
+            0,
+        )
+        .unwrap();
+
+    let composed = renderer.into_image_demultiplied();
+    let half = image_pixel_rgba(&composed, 0, 0);
+    assert_eq!(half[0], 255);
+    assert!(half[1].abs_diff(127) <= 2, "{half:?}");
+    assert!(half[2].abs_diff(127) <= 2, "{half:?}");
+    assert_eq!(image_pixel_rgba(&composed, 1, 0), [0, 255, 0, 255]);
+}
+
+#[test]
+fn draw_image_layer_rejects_a_buffer_that_does_not_match_its_dimensions() {
+    use crate::core::plot::Image;
+
+    let mut renderer = SkiaRenderer::new(4, 4, Theme::light()).unwrap();
+    let result = renderer.draw_image_layer(
+        &Image {
+            width: 2,
+            height: 2,
+            pixels: vec![0; 4 * 4 * 3],
+        },
+        0,
+        0,
+    );
+    assert!(result.is_err());
 }
 
 #[test]

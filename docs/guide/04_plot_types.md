@@ -661,14 +661,8 @@ let dendro = compute_dendrogram(&linkage_result, &config);
 Default rendering is optimal. No special configuration needed.
 
 ### Medium Datasets (1K - 100K points)
-Use release builds first. The default feature set already includes `parallel`,
-but the public static output path is conservative; benchmark your actual plot
-before adding more feature flags.
-
-```toml
-[dependencies]
-ruviz = { version = "0.5.0", features = ["parallel"] }
-```
+Use release builds first. 2D rendering is single-threaded and needs no feature
+flags; benchmark your actual plot before adding any.
 
 ### Large Datasets (20K+ points)
 Consider downsampling or aggregating where visual density is already saturated.
@@ -676,7 +670,7 @@ Use `performance` only after benchmarking a path that benefits from SIMD support
 
 ```toml
 [dependencies]
-ruviz = { version = "0.5.0", features = ["parallel", "simd"] }
+ruviz = { version = "0.5.0", features = ["simd"] }
 ```
 
 ### Very Large Datasets (> 100K points)

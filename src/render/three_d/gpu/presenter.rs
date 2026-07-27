@@ -11,6 +11,7 @@ use crate::core::plot3d::layout::{
     Axis3Layout, LegendGlyph3D, OverlayLine3D, OverlayRect3D, OverlayText3D,
 };
 use crate::core::{FigureConfig, PlottingError, Result};
+use crate::render::three_d::color::linear_color;
 use crate::render::three_d::scene::Scene3D;
 use crate::render::{Color, SkiaRenderer, Theme};
 
@@ -338,6 +339,9 @@ impl VertexBufferState {
 
 pub(crate) struct PresentationCompositor3D {
     solid_pipeline: wgpu::RenderPipeline,
+    /// Composites the premultiplied offscreen scene texture.
+    scene_pipeline: wgpu::RenderPipeline,
+    /// Composites the straight-alpha text atlas.
     texture_pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -382,7 +386,20 @@ impl PresentationCompositor3D {
             ..wgpu::SamplerDescriptor::default()
         });
         let solid_pipeline = create_solid_pipeline(device, target_format);
-        let texture_pipeline = create_texture_pipeline(device, target_format, &texture_layout);
+        let scene_pipeline = create_texture_pipeline(
+            device,
+            target_format,
+            &texture_layout,
+            "ruviz 3d presentation scene pipeline",
+            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+        );
+        let texture_pipeline = create_texture_pipeline(
+            device,
+            target_format,
+            &texture_layout,
+            "ruviz 3d presentation text pipeline",
+            wgpu::BlendState::ALPHA_BLENDING,
+        );
         let scene_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ruviz 3d presentation scene vertices"),
             contents: bytemuck::cast_slice(&full_screen_texture_vertices()),
@@ -390,6 +407,7 @@ impl PresentationCompositor3D {
         });
         Self {
             solid_pipeline,
+            scene_pipeline,
             texture_pipeline,
             texture_layout,
             sampler,
@@ -519,7 +537,10 @@ impl PresentationCompositor3D {
             }
 
             pass.set_scissor_rect(0, 0, layout.canvas_width, layout.canvas_height);
-            pass.set_pipeline(&self.texture_pipeline);
+            // The offscreen scene texture is premultiplied; blending it with
+            // straight-alpha `src-over` is what haloed every silhouette on
+            // screen while the same figure looked correct in a PNG.
+            pass.set_pipeline(&self.scene_pipeline);
             pass.set_bind_group(0, scene_bind_group, &[]);
             pass.set_vertex_buffer(0, self.scene_buffer.slice(..));
             pass.draw(0..6, 0..1);
@@ -1206,23 +1227,6 @@ fn color_to_wgpu(color: Color) -> wgpu::Color {
     }
 }
 
-fn linear_color(color: Color) -> [f32; 4] {
-    let convert = |value: u8| {
-        let value = f32::from(value) / 255.0;
-        if value <= 0.04045 {
-            value / 12.92
-        } else {
-            ((value + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    [
-        convert(color.r),
-        convert(color.g),
-        convert(color.b),
-        f32::from(color.a) / 255.0,
-    ]
-}
-
 fn create_solid_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
@@ -1273,6 +1277,8 @@ fn create_texture_pipeline(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
     texture_layout: &wgpu::BindGroupLayout,
+    label: &'static str,
+    blend: wgpu::BlendState,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ruviz 3d presentation texture shader"),
@@ -1286,7 +1292,7 @@ fn create_texture_pipeline(
     const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
         wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("ruviz 3d presentation texture pipeline"),
+        label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
             module: &shader,
@@ -1303,7 +1309,7 @@ fn create_texture_pipeline(
             entry_point: Some("fs_main"),
             targets: &[Some(wgpu::ColorTargetState {
                 format: target_format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                blend: Some(blend),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),

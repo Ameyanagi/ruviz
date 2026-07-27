@@ -9,6 +9,7 @@ mod prepared;
 mod resolve;
 mod types;
 
+pub use crate::render::three_d::release_3d_gpu_resources;
 pub use builder::{Line3DBuilder, Scatter3DBuilder, Surface3DBuilder, Wireframe3DBuilder};
 pub use diagnostics::RenderDiagnostics3D;
 pub use interaction::{

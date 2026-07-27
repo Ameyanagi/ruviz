@@ -60,9 +60,6 @@ classDiagram
     }
 
     class RenderPipeline {
-        -ParallelRenderer parallel_renderer
-        -Option~PooledRenderer~ pooled_renderer
-        -bool enable_pooled_rendering
         -Option~BackendType~ backend
         -bool auto_optimized
         -bool allow_subminimum_dpi
@@ -72,13 +69,11 @@ classDiagram
         +new() RenderPipeline
         +set_backend(backend)
         +backend() Option~BackendType~
-        +set_pooled_rendering(enabled)
-        +pooled_rendering_enabled() bool
         +set_auto_optimized(optimized)
         +is_auto_optimized() bool
     }
 
-    note for RenderPipeline "parallel_renderer and enable_gpu are feature-gated; operation-specific backend_resolution is implemented on Plot"
+    note for RenderPipeline "enable_gpu is feature-gated; operation-specific backend_resolution is implemented on Plot"
 
     Plot *-- PlotConfiguration
     Plot *-- SeriesManager
@@ -305,7 +300,7 @@ pub enum PlottingError {
 ```mermaid
 graph LR
     subgraph Features
-        A[parallel] --> B[Parallel renderer types<br/>rayon]
+        A[parallel] --> B[Multi-threaded 3D software<br/>tile rasterization<br/>rayon]
         C[simd] --> D[SIMD renderer utilities]
         E[gpu] --> F[GPU types and preference metadata<br/>wgpu]
         G[interactive] --> H[winit window<br/>events]
@@ -317,7 +312,7 @@ graph LR
 
 | Feature | Components Enabled |
 |---------|-------------------|
-| `parallel` | Parallel renderer types and rayon integration; not a public raster routing guarantee |
+| `parallel` | Multi-threaded tile rasterization in the software 3D backend (rayon); no effect on 2D output or timing |
 | `simd` | SIMD renderer utilities; not a public raster routing guarantee |
 | `gpu` | GPU types and preference metadata; static public raster output currently resolves to Skia |
 | `interactive` | winit window, event handling |

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
@@ -6,10 +5,17 @@ use wgpu::util::DeviceExt;
 
 use crate::core::{PlottingError, Result};
 use crate::plots::SurfaceShading;
+use crate::render::three_d::color::linear_color;
 use crate::render::three_d::scene::{MeshColor3D, Scene3D, SceneGeometry3D};
 use crate::render::{Color, MarkerStyle};
 
 use super::pipelines::PipelineLibrary3D;
+
+/// How many scenes' GPU buffers the shared renderer keeps warm.
+///
+/// One entry meant an alternating pair of scenes rebuilt every buffer every
+/// frame; unbounded growth meant a long-lived process never gave memory back.
+pub(super) const RESOURCE_CACHE_CAPACITY: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ResourceUpdate3D {
@@ -17,6 +23,8 @@ pub(crate) struct ResourceUpdate3D {
     pub(crate) index_upload_bytes: u64,
     pub(crate) texture_upload_bytes: u64,
     pub(crate) buffer_creations: u64,
+    /// Cache entries dropped to stay within [`RESOURCE_CACHE_CAPACITY`].
+    pub(crate) evictions: u64,
 }
 
 #[repr(C)]
@@ -92,10 +100,81 @@ pub(super) struct AppearanceResources3D {
     pub(super) meshes: Vec<MaterialGpu>,
 }
 
+/// A bounded least-recently-used map keyed by `Arc` identity.
+///
+/// Entries own the `Arc` they were keyed on, so a cached pointer can never be
+/// reused by a different allocation while it is still reachable here.
+pub(super) struct BoundedLru<V> {
+    capacity: usize,
+    /// Most-recently-used last.
+    entries: Vec<(usize, V)>,
+}
+
+impl<V> BoundedLru<V> {
+    pub(super) fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            entries: Vec::new(),
+        }
+    }
+
+    pub(super) fn contains(&self, key: usize) -> bool {
+        self.entries.iter().any(|(entry, _)| *entry == key)
+    }
+
+    pub(super) fn get(&self, key: usize) -> Option<&V> {
+        self.entries
+            .iter()
+            .find(|(entry, _)| *entry == key)
+            .map(|(_, value)| value)
+    }
+
+    /// Move an existing key to the most-recently-used end.
+    pub(super) fn touch(&mut self, key: usize) {
+        if let Some(index) = self.entries.iter().position(|(entry, _)| *entry == key) {
+            let entry = self.entries.remove(index);
+            self.entries.push(entry);
+        }
+    }
+
+    /// Insert `value`, evicting the least-recently-used entries as needed.
+    ///
+    /// Returns how many entries were dropped, and hands each one to `on_evict`
+    /// before it is released so callers can account for the freed resources.
+    pub(super) fn insert(&mut self, key: usize, value: V, mut on_evict: impl FnMut(V)) -> u64 {
+        if let Some(index) = self.entries.iter().position(|(entry, _)| *entry == key) {
+            self.entries.remove(index);
+        }
+        self.entries.push((key, value));
+        let mut evicted = 0;
+        while self.entries.len() > self.capacity {
+            let (_, value) = self.entries.remove(0);
+            on_evict(value);
+            evicted += 1;
+        }
+        evicted
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn keys(&self) -> Vec<usize> {
+        self.entries.iter().map(|(key, _)| *key).collect()
+    }
+}
+
+impl<V> Default for BoundedLru<V> {
+    fn default() -> Self {
+        Self::new(RESOURCE_CACHE_CAPACITY)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ResourceCache3D {
-    geometries: HashMap<usize, GeometryResources3D>,
-    appearances: HashMap<usize, AppearanceResources3D>,
+    geometries: BoundedLru<GeometryResources3D>,
+    appearances: BoundedLru<AppearanceResources3D>,
 }
 
 impl ResourceCache3D {
@@ -108,11 +187,16 @@ impl ResourceCache3D {
     ) -> Result<ResourceUpdate3D> {
         let geometry_key = arc_key(&scene.geometry);
         let mut update = ResourceUpdate3D::default();
-        if !self.geometries.contains_key(&geometry_key) {
+        if self.geometries.contains(geometry_key) {
+            self.geometries.touch(geometry_key);
+        } else {
             let (resources, geometry_update) =
                 create_geometry_resources(device, Arc::clone(&scene.geometry))?;
-            self.geometries.clear();
-            self.geometries.insert(geometry_key, resources);
+            update.evictions = update.evictions.saturating_add(self.geometries.insert(
+                geometry_key,
+                resources,
+                drop,
+            ));
             update.vertex_upload_bytes = update
                 .vertex_upload_bytes
                 .saturating_add(geometry_update.vertex_upload_bytes);
@@ -125,11 +209,16 @@ impl ResourceCache3D {
         }
 
         let appearance_key = arc_key(scene);
-        if !self.appearances.contains_key(&appearance_key) {
+        if self.appearances.contains(appearance_key) {
+            self.appearances.touch(appearance_key);
+        } else {
             let (resources, appearance_update) =
                 create_appearance_resources(device, queue, pipelines, Arc::clone(scene))?;
-            self.appearances.clear();
-            self.appearances.insert(appearance_key, resources);
+            update.evictions = update.evictions.saturating_add(self.appearances.insert(
+                appearance_key,
+                resources,
+                drop,
+            ));
             update.texture_upload_bytes = update
                 .texture_upload_bytes
                 .saturating_add(appearance_update.texture_upload_bytes);
@@ -146,12 +235,18 @@ impl ResourceCache3D {
     ) -> Result<(&GeometryResources3D, &AppearanceResources3D)> {
         let geometry = self
             .geometries
-            .get(&arc_key(&scene.geometry))
+            .get(arc_key(&scene.geometry))
             .ok_or_else(|| PlottingError::RenderError("missing retained 3d GPU geometry".into()))?;
-        let appearance = self.appearances.get(&arc_key(scene)).ok_or_else(|| {
+        let appearance = self.appearances.get(arc_key(scene)).ok_or_else(|| {
             PlottingError::RenderError("missing retained 3d GPU appearance".into())
         })?;
         Ok((geometry, appearance))
+    }
+
+    /// Drop every retained scene buffer, keeping the device and pipelines.
+    pub(super) fn release(&mut self) {
+        self.geometries.clear();
+        self.appearances.clear();
     }
 }
 
@@ -505,23 +600,6 @@ fn create_vertex_buffer<T: Pod>(
     })
 }
 
-fn linear_color(color: Color) -> [f32; 4] {
-    [
-        srgb_to_linear(f32::from(color.r) / 255.0),
-        srgb_to_linear(f32::from(color.g) / 255.0),
-        srgb_to_linear(f32::from(color.b) / 255.0),
-        f32::from(color.a) / 255.0,
-    ]
-}
-
-fn srgb_to_linear(channel: f32) -> f32 {
-    if channel <= 0.04045 {
-        channel / 12.92
-    } else {
-        ((channel + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 fn marker_code(marker: MarkerStyle) -> u32 {
     match marker {
         MarkerStyle::Circle => 0,
@@ -598,7 +676,47 @@ mod tests {
 
     #[test]
     fn srgb_endpoints_are_preserved() {
-        assert_eq!(srgb_to_linear(0.0), 0.0);
-        assert_eq!(srgb_to_linear(1.0), 1.0);
+        assert_eq!(linear_color(Color::BLACK)[0], 0.0);
+        assert_eq!(linear_color(Color::WHITE)[0], 1.0);
+    }
+
+    #[test]
+    fn bounded_lru_keeps_the_hot_entries_and_reports_every_eviction() {
+        let mut cache = BoundedLru::new(2);
+        let mut evicted = Vec::new();
+        assert_eq!(cache.insert(1, "a", |value| evicted.push(value)), 0);
+        assert_eq!(cache.insert(2, "b", |value| evicted.push(value)), 0);
+        // Touching key 1 makes key 2 the least recently used.
+        cache.touch(1);
+        assert_eq!(cache.insert(3, "c", |value| evicted.push(value)), 1);
+        assert_eq!(evicted, vec!["b"]);
+        assert_eq!(cache.keys(), vec![1, 3]);
+        assert_eq!(cache.get(1), Some(&"a"));
+        assert_eq!(cache.get(2), None);
+    }
+
+    #[test]
+    fn bounded_lru_replaces_rather_than_duplicates_a_known_key() {
+        let mut cache = BoundedLru::new(2);
+        assert_eq!(cache.insert(7, 1, drop), 0);
+        assert_eq!(cache.insert(7, 2, drop), 0);
+        assert_eq!(cache.keys(), vec![7]);
+        assert_eq!(cache.get(7), Some(&2));
+    }
+
+    #[test]
+    fn bounded_lru_never_degenerates_to_zero_capacity() {
+        let mut cache = BoundedLru::new(0);
+        assert_eq!(cache.insert(1, (), drop), 0);
+        assert!(cache.contains(1));
+    }
+
+    #[test]
+    fn releasing_the_cache_drops_every_retained_scene() {
+        let mut cache = ResourceCache3D::default();
+        assert!(!cache.geometries.contains(1));
+        cache.release();
+        assert!(cache.geometries.keys().is_empty());
+        assert!(cache.appearances.keys().is_empty());
     }
 }

@@ -53,7 +53,7 @@ ruviz = "0.5.0"
 
 Useful opt-in features:
 
-- `parallel`: enables the internal parallel renderer and backend metadata.
+- `parallel`: multi-threaded tile rasterization in the software 3D backend. On by default; no effect on 2D.
 - `simd`: enables SIMD support used by performance-oriented code paths.
 - `performance`: shorthand for `["parallel", "simd"]`.
 - `gpu`: enables GPU types and `.gpu(true)` metadata.
@@ -100,21 +100,6 @@ println!("public PNG backend: {}", plot.resolved_backend_name());
 
 Use explicit `BackendType::DataShader` only when you deliberately want density
 aggregation instead of per-point scatter markers.
-
-## Memory Pooling
-
-Memory pooling is opt-in:
-
-```rust
-use ruviz::prelude::*;
-
-Plot::new()
-    .with_memory_pooling(true)
-    .line(&x, &y)
-    .save("pooled.png")?;
-```
-
-Use it when repeated large renders are spending noticeable time in allocation.
 
 ## Benchmark Template
 

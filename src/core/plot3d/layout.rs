@@ -1,8 +1,12 @@
 use glam::{Vec2, Vec3};
 
 use crate::axes::{format_tick_labels, generate_ticks};
+use crate::core::legend::{
+    Legend, LegendItem, LegendPlacement, LegendPosition, LegendStyle, estimated_label_width,
+    layout_legend, measure_legend_size,
+};
 use crate::core::{PlottingError, Result};
-use crate::render::{Color, ColorMap};
+use crate::render::{Color, ColorMap, LineStyle, MarkerStyle};
 
 use super::builder::Series3D;
 use super::resolve::ResolvedFrame3D;
@@ -79,9 +83,23 @@ pub(crate) struct LegendItem3D {
     pub(crate) label: OverlayText3D,
 }
 
+/// A laid-out 3D legend: the frame, and everything inside it.
+///
+/// Every value here comes from the resolved [`Legend`] via `layout_legend`, so
+/// the overlay paints what the layout measured. Nothing downstream may go back
+/// to the theme for a font size or a colour — that split is exactly how the
+/// frame used to be sized for one font size and the label drawn at another.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Legend3D {
     pub(crate) bounds: OverlayRect3D,
+    /// Label and title size in device pixels, from [`Legend::font_size`].
+    pub(crate) font_size: f32,
+    /// Label and title colour, from [`Legend::text_color`].
+    pub(crate) text_color: Color,
+    /// Frame paint, from [`Legend::style`], already scaled to device pixels.
+    pub(crate) style: LegendStyle,
+    /// Centred title, from [`Legend::title`].
+    pub(crate) title: Option<OverlayText3D>,
     pub(crate) items: Vec<LegendItem3D>,
 }
 
@@ -122,7 +140,7 @@ impl Axis3Layout {
         }
 
         let decorations = decoration_sources(frame);
-        let decoration_width = decoration_band_width(frame, &decorations, canvas_width);
+        let decoration_width = decoration_band_width(frame, &decorations, canvas_width)?;
         let viewport = axis_viewport(frame, canvas_width, canvas_height, decoration_width);
         let camera = frame
             .camera
@@ -268,7 +286,7 @@ impl Axis3Layout {
                 position: Vec2::new(canvas_width as f32 * 0.5, 8.0 * line_scale),
                 centered: true,
             });
-        let (legend, colorbars) = resolve_decorations(frame, viewport, canvas_width, &decorations);
+        let (legend, colorbars) = resolve_decorations(frame, viewport, canvas_width, &decorations)?;
 
         Ok(Self {
             canvas_width,
@@ -472,34 +490,186 @@ fn palette_color(frame: &ResolvedFrame3D, series_index: usize) -> Color {
     }
 }
 
+/// The legend configuration a 3D frame is drawn with, in pixels.
+///
+/// `Plot3D::legend` is honoured verbatim when the user set one; otherwise the
+/// legend is derived from the theme. Either way it is the same [`Legend`] the
+/// 2D API takes, with the same
+/// [`LegendSpacing`](crate::core::LegendSpacing) and
+/// [`LegendStyle`](crate::core::LegendStyle), scaled to device pixels by the
+/// same `Legend::scaled_for_render` the 2D backends use, and it goes through
+/// the same `layout_legend` — so there is one legend layout in the crate, not a
+/// 3D look-alike with its own hardcoded padding.
+fn legend_config(frame: &ResolvedFrame3D) -> Legend {
+    let scale = frame.figure.render_scale();
+    let configured = frame.legend.clone().unwrap_or_else(|| Legend {
+        enabled: true,
+        // No user legend: the theme's legend lives in the decoration band
+        // beside the plotting box, which is what 3D has always drawn.
+        position: LegendPosition::OutsideRight,
+        font_size: frame.theme.legend_font_size,
+        text_color: frame.theme.foreground,
+        style: LegendStyle {
+            visible: true,
+            // Opaque, square, hairline: the themed 3D frame, expressed as a
+            // `LegendStyle` so the overlay has one frame painter, not two.
+            alpha: 1.0,
+            face_color: frame.theme.background,
+            edge_color: Some(frame.theme.grid_color),
+            border_width: scale.pixels_to_points(1.0),
+            fancy_box: false,
+            corner_radius: 0.0,
+            shadow: false,
+            ..LegendStyle::default()
+        },
+        ..Legend::default()
+    });
+    configured.scaled_for_render(scale)
+}
+
+/// Whether this legend is drawn in the decoration band beside the plotting box.
+///
+/// The 3D decoration band is on the right, and it is also where colorbars go,
+/// so every *outside* position resolves to it; every inside position (and
+/// [`LegendPosition::Best`], which resolves to one) is laid out within the
+/// plotting viewport exactly as it would be in 2D.
+fn legend_uses_decoration_band(position: LegendPosition) -> bool {
+    position.is_outside()
+}
+
+/// The legend to draw for this frame, or `None` when there is nothing to draw.
+///
+/// One gate for both the band reservation and the legend box drawn inside it,
+/// so the figure cannot reserve room for a legend it then declines to draw.
+fn resolved_legend(
+    frame: &ResolvedFrame3D,
+    sources: &[LegendSource3D],
+) -> Option<(Legend, Vec<LegendItem>)> {
+    let config = legend_config(frame);
+    if sources.is_empty() || !config.enabled {
+        return None;
+    }
+    Some((config, legend_items(sources)))
+}
+
+/// The shared legend items behind the 3D glyph list.
+///
+/// The glyph kind stays on [`LegendSource3D`] because the 3D overlay draws its
+/// own keys; these items exist so the *geometry* comes from `layout_legend`.
+fn legend_items(sources: &[LegendSource3D]) -> Vec<LegendItem> {
+    sources.iter().map(legend_item).collect()
+}
+
+fn legend_item(source: &LegendSource3D) -> LegendItem {
+    let label = source.label.clone();
+    let color = source.color;
+    match source.glyph {
+        LegendGlyph3D::Line => LegendItem::line(label, color, LineStyle::Solid, 1.5),
+        LegendGlyph3D::Marker => LegendItem::scatter(label, color, MarkerStyle::Square, 6.0),
+        LegendGlyph3D::Fill => LegendItem::bar(label, color),
+    }
+}
+
+/// Estimate a label's width for the 3D layout.
+///
+/// `Axis3Layout::resolve` runs before any renderer exists, so there is no text
+/// engine to ask; [`estimated_label_width`] is the shared fallback, and it
+/// counts wide glyphs double so a CJK legend is not sized for half its text.
+fn estimate_3d_label(text: &str, font_size: f32) -> Result<f32> {
+    Ok(estimated_label_width(text, font_size))
+}
+
 fn decoration_band_width(
     frame: &ResolvedFrame3D,
     decorations: &DecorationSources3D,
     canvas_width: u32,
-) -> f32 {
-    if decorations.legend.is_empty() && decorations.colorbars.is_empty() {
-        return 0.0;
-    }
+) -> Result<f32> {
     let dpi_scale = frame.figure.dpi / 72.0;
-    let legend_width = decorations
-        .legend
-        .iter()
-        .map(|item| {
-            34.0 * dpi_scale
-                + item.label.chars().count() as f32
-                    * frame.theme.legend_font_size
-                    * dpi_scale
-                    * 0.58
-        })
-        .fold(0.0_f32, f32::max);
+    // Reserve exactly what `resolve_decorations` will lay out below — the band
+    // and the legend inside it are sized by one call, not two formulas.
+    let legend_width = match resolved_legend(frame, &decorations.legend) {
+        // A legend placed inside the plotting box needs no band; reserving one
+        // for it would shrink the very viewport it is drawn over.
+        Some((config, keys)) if legend_uses_decoration_band(config.position) => {
+            let (width, _) = measure_legend_size(&keys, &config, |text| {
+                estimate_3d_label(text, config.font_size)
+            })?;
+            width
+        }
+        _ => 0.0,
+    };
     let colorbar_width = if decorations.colorbars.is_empty() {
         0.0
     } else {
         76.0 * dpi_scale
     };
+    if legend_width <= 0.0 && colorbar_width <= 0.0 {
+        return Ok(0.0);
+    }
     let maximum = (canvas_width as f32 * 0.36).max(1.0);
     let minimum = (70.0 * dpi_scale).min(maximum);
-    (legend_width.max(colorbar_width) + 14.0 * dpi_scale).clamp(minimum, maximum)
+    Ok((legend_width.max(colorbar_width) + 14.0 * dpi_scale).clamp(minimum, maximum))
+}
+
+/// Run one legend through the shared layout and keep everything it computed.
+///
+/// The frame, the font size, the colours and every glyph position leave this
+/// function together, so the overlay never has to re-derive any of them.
+fn build_legend_3d(
+    config: &Legend,
+    keys: &[LegendItem],
+    sources: &[LegendSource3D],
+    plot_area: (f32, f32, f32, f32),
+    placement: LegendPlacement<'_>,
+) -> Result<Legend3D> {
+    let layout = layout_legend(keys, config, plot_area, placement, |text| {
+        estimate_3d_label(text, config.font_size)
+    })?;
+    let items = layout
+        .entries
+        .iter()
+        .map(|entry| {
+            let source = &sources[entry.item_index];
+            LegendItem3D {
+                glyph: source.glyph,
+                color: source.color,
+                glyph_rect: OverlayRect3D {
+                    x: entry.handle_x,
+                    y: entry.handle_center_y - layout.spacing.handle_height * 0.5,
+                    width: layout.spacing.handle_length,
+                    height: layout.spacing.handle_height,
+                },
+                label: OverlayText3D {
+                    text: source.label.clone(),
+                    position: Vec2::new(entry.label_x, entry.handle_center_y),
+                    centered: false,
+                },
+            }
+        })
+        .collect();
+    let title = layout
+        .title
+        .zip(config.title.as_deref())
+        .map(|(title, text)| OverlayText3D {
+            text: text.to_string(),
+            // `OverlayText3D` positions text by its vertical centre; the shared
+            // layout hands back the top of the box.
+            position: Vec2::new(title.center_x, title.top_y + layout.font_size * 0.5),
+            centered: true,
+        });
+    Ok(Legend3D {
+        bounds: OverlayRect3D {
+            x: layout.x,
+            y: layout.y,
+            width: layout.width,
+            height: layout.height,
+        },
+        font_size: layout.font_size,
+        text_color: config.text_color,
+        style: config.style.clone(),
+        title,
+        items,
+    })
 }
 
 fn resolve_decorations(
@@ -507,57 +677,67 @@ fn resolve_decorations(
     viewport: Viewport3D,
     canvas_width: u32,
     sources: &DecorationSources3D,
-) -> (Option<Legend3D>, Vec<Colorbar3D>) {
+) -> Result<(Option<Legend3D>, Vec<Colorbar3D>)> {
     let dpi_scale = frame.figure.dpi / 72.0;
     let band_x = (viewport.right() + 10.0 * dpi_scale).min(canvas_width.saturating_sub(1) as f32);
     let band_right = canvas_width as f32 - 6.0 * dpi_scale;
     let band_width = (band_right - band_x)
         .max(1.0)
         .min(canvas_width as f32 - band_x);
-    let item_height =
-        (frame.theme.legend_font_size * dpi_scale + 7.0 * dpi_scale).max(14.0 * dpi_scale);
-    let legend = (!sources.legend.is_empty()).then(|| {
-        let padding = 6.0 * dpi_scale;
-        let height = padding * 2.0 + item_height * sources.legend.len() as f32;
-        let bounds = OverlayRect3D {
-            x: band_x,
-            y: viewport.y as f32,
-            width: band_width,
-            height,
-        };
-        let items = sources
-            .legend
-            .iter()
-            .enumerate()
-            .map(|(index, source)| {
-                let row_top = bounds.y + padding + index as f32 * item_height;
-                let glyph_size = 10.0 * dpi_scale;
-                LegendItem3D {
-                    glyph: source.glyph,
-                    color: source.color,
-                    glyph_rect: OverlayRect3D {
-                        x: bounds.x + padding,
-                        y: row_top + (item_height - glyph_size) * 0.5,
-                        width: 16.0 * dpi_scale,
-                        height: glyph_size,
-                    },
-                    label: OverlayText3D {
-                        text: source.label.clone(),
-                        position: Vec2::new(
-                            bounds.x + padding + 23.0 * dpi_scale,
-                            row_top + item_height * 0.5,
-                        ),
-                        centered: false,
-                    },
-                }
-            })
-            .collect();
-        Legend3D { bounds, items }
-    });
+    let mut band_legend_bottom = None;
+    let legend = match resolved_legend(frame, &sources.legend) {
+        Some((config, keys)) if legend_uses_decoration_band(config.position) => {
+            let (natural_width, height) = measure_legend_size(&keys, &config, |text| {
+                estimate_3d_label(text, config.font_size)
+            })?;
+            // Reserve a rectangle anchored to the right of the canvas, then
+            // fill it — the same reserve-then-draw path the 2D outside legend
+            // takes. It is normally exactly the band; when the legend needs
+            // more than `decoration_band_width` was allowed to give it, it
+            // grows *leftwards* over the plotting box rather than painting its
+            // label off the edge of the canvas. Overlapping the scene is
+            // recoverable; clipped text is not.
+            let width = natural_width.max(band_width).min(band_right.max(1.0));
+            let reserved = (
+                (band_right - width).max(0.0),
+                viewport.y as f32,
+                band_right,
+                viewport.y as f32 + height,
+            );
+            let legend = build_legend_3d(
+                &config,
+                &keys,
+                &sources.legend,
+                reserved,
+                LegendPlacement {
+                    reserved: Some(reserved),
+                    occupancy: None,
+                },
+            )?;
+            // Only a banded legend pushes the colorbars down; one drawn inside
+            // the plotting box shares no space with them.
+            band_legend_bottom = Some(legend.bounds.bottom());
+            Some(legend)
+        }
+        // Every inside position — and `Best`, which resolves to one — is placed
+        // within the plotting viewport, exactly as the 2D layout would.
+        Some((config, keys)) => Some(build_legend_3d(
+            &config,
+            &keys,
+            &sources.legend,
+            (
+                viewport.x as f32,
+                viewport.y as f32,
+                viewport.right(),
+                viewport.bottom(),
+            ),
+            LegendPlacement::default(),
+        )?),
+        None => None,
+    };
 
-    let colorbar_top = legend.as_ref().map_or(viewport.y as f32, |legend| {
-        legend.bounds.bottom() + 12.0 * dpi_scale
-    });
+    let colorbar_top =
+        band_legend_bottom.map_or(viewport.y as f32, |bottom| bottom + 12.0 * dpi_scale);
     let colorbar_bottom = viewport.bottom();
     let colorbar_count = sources.colorbars.len();
     let colorbar_gap = 10.0 * dpi_scale;
@@ -598,7 +778,7 @@ fn resolve_decorations(
             tick_labels,
         });
     }
-    (legend, colorbars)
+    Ok((legend, colorbars))
 }
 
 /// Target tick count handed to the shared locator.
@@ -769,8 +949,10 @@ fn push_text_avoiding_overlap(
 }
 
 fn estimated_text_overlap(left: &OverlayText3D, right: &OverlayText3D, font_size: f32) -> bool {
-    let left_half_width = left.text.chars().count() as f32 * font_size * 0.31;
-    let right_half_width = right.text.chars().count() as f32 * font_size * 0.31;
+    // Same estimate the 3D legend is sized with, so a tick label and a legend
+    // label of the same text can never be assumed two different widths.
+    let left_half_width = estimated_label_width(&left.text, font_size) * 0.5;
+    let right_half_width = estimated_label_width(&right.text, font_size) * 0.5;
     let horizontal = (left.position.x - right.position.x).abs()
         < left_half_width + right_half_width + font_size * 0.2;
     let vertical = (left.position.y - right.position.y).abs() < font_size * 0.9;
@@ -828,6 +1010,99 @@ mod tests {
                     .all(|other| label.position.distance(other.position) > 0.25)
             );
         }
+    }
+
+    /// The right-hand band is reserved by the same call that lays the legend
+    /// out inside it, so the reservation grows with the *rendered* label, not
+    /// with a character count. Six CJK glyphs are about twice as wide as six
+    /// Latin ones and must claim a wider band.
+    #[test]
+    fn wide_script_legend_labels_reserve_a_wider_band() {
+        fn viewport_width(label: &str) -> u32 {
+            let frame = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+                .label(label)
+                .finalize()
+                .resolve()
+                .expect("frame");
+            Axis3Layout::resolve(&frame).expect("layout").viewport.width
+        }
+
+        assert!(
+            viewport_width("日本語ラベル") < viewport_width("abcdef"),
+            "a CJK legend label must reserve more band than the same glyph count in Latin"
+        );
+    }
+
+    /// The legend keys are laid out inside the box the band reserved for them,
+    /// which is the whole point of routing 3D through the shared layout.
+    #[test]
+    fn legend_keys_sit_inside_the_reserved_legend_box() {
+        let frame = surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]])
+            .label("terrain")
+            .finalize()
+            .resolve()
+            .expect("frame");
+        let layout = Axis3Layout::resolve(&frame).expect("layout");
+        let legend = layout.legend.as_ref().expect("legend");
+
+        assert!(!legend.items.is_empty());
+        for item in &legend.items {
+            assert!(item.glyph_rect.x >= legend.bounds.x, "{item:?}");
+            assert!(item.glyph_rect.right() <= legend.bounds.right(), "{item:?}");
+            assert!(item.label.position.x > item.glyph_rect.right(), "{item:?}");
+            assert!(item.label.position.y >= legend.bounds.y, "{item:?}");
+            assert!(item.label.position.y <= legend.bounds.bottom(), "{item:?}");
+        }
+    }
+
+    /// `Plot3D::legend` is the user's knob, and it reaches the layout.
+    ///
+    /// Before this landed the only 3D legend setting was `Theme::legend_font_size`
+    /// and the layout hardcoded everything else, so a caller could not turn the
+    /// legend off, retitle it or widen it. All three must now change the layout.
+    #[test]
+    fn user_legend_configuration_reaches_the_3d_layout() {
+        fn layout_with(legend: Option<Legend>) -> Axis3Layout {
+            let plot =
+                surface(&[0.0, 1.0], &[0.0, 1.0], &[[0.0, 1.0], [2.0, 3.0]]).label("terrain");
+            let plot = match legend {
+                Some(legend) => plot.legend(legend),
+                None => plot,
+            };
+            let frame = plot.finalize().resolve().expect("frame");
+            Axis3Layout::resolve(&frame).expect("layout")
+        }
+
+        let default = layout_with(None);
+        assert!(default.legend.is_some(), "a labelled series gets a legend");
+
+        // `enabled: false` suppresses the legend *and* the band it reserved,
+        // so the viewport grows back into the space.
+        let disabled = layout_with(Some(Legend::new()));
+        assert!(disabled.legend.is_none());
+        assert!(disabled.viewport.width > default.viewport.width);
+
+        // A title has to widen the reservation, not overhang the box.
+        let titled = layout_with(Some(Legend {
+            enabled: true,
+            position: LegendPosition::OutsideRight,
+            title: Some("a legend title far wider than `terrain`".to_string()),
+            ..Legend::default()
+        }));
+        let titled_legend = titled.legend.as_ref().expect("legend");
+        let default_legend = default.legend.as_ref().expect("legend");
+        assert!(titled.viewport.width < default.viewport.width);
+        assert!(titled_legend.bounds.width > default_legend.bounds.width);
+
+        // A bigger font makes bigger keys.
+        let large = layout_with(Some(Legend {
+            enabled: true,
+            position: LegendPosition::OutsideRight,
+            font_size: Legend::default().font_size * 3.0,
+            ..Legend::default()
+        }));
+        let large_legend = large.legend.as_ref().expect("legend");
+        assert!(large_legend.bounds.height > default_legend.bounds.height);
     }
 
     #[test]
@@ -956,6 +1231,144 @@ mod tests {
                 .screen_ray_local(0.0, 0.0)
                 .expect("outside")
                 .is_none()
+        );
+    }
+
+    /// The label is painted at the size its frame was measured for.
+    ///
+    /// The frame came from `Legend::font_size` while the label was painted at
+    /// `Theme::legend_font_size`, so the two disagreed for every user font
+    /// size: a small one produced a label wider than its own box (clipped by
+    /// the canvas edge), a large one produced a box full of air. Both sides now
+    /// read the single resolved font size, so the ink has to grow with it and
+    /// stay inside the frame at every size.
+    #[test]
+    fn legend_label_ink_scales_with_the_user_font_size_and_stays_inside_its_frame() {
+        /// `(frame bounds, ink bounds)` — ink is the magenta label text, a
+        /// colour nothing else in the figure paints.
+        fn measure(font_size: f32) -> (OverlayRect3D, (u32, u32, u32, u32)) {
+            let legend = || Legend {
+                enabled: true,
+                position: LegendPosition::OutsideRight,
+                font_size,
+                text_color: Color::from_rgb(255, 0, 255),
+                ..Legend::default()
+            };
+            let plot = || {
+                crate::line3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+                    .size_px(700, 500)
+                    .legend(legend())
+                    .label("a long legend label")
+            };
+            let frame = plot().finalize().resolve().expect("frame");
+            let bounds = Axis3Layout::resolve(&frame)
+                .expect("layout")
+                .legend
+                .expect("legend")
+                .bounds;
+
+            let image = plot().render().expect("image");
+            let (mut left, mut top, mut right, mut bottom) = (u32::MAX, u32::MAX, 0, 0);
+            for y in 0..image.height {
+                for x in 0..image.width {
+                    let offset = ((y * image.width + x) * 4) as usize;
+                    let (r, g, b) = (
+                        image.pixels[offset],
+                        image.pixels[offset + 1],
+                        image.pixels[offset + 2],
+                    );
+                    if r > 150 && b > 150 && g < 100 {
+                        left = left.min(x);
+                        top = top.min(y);
+                        right = right.max(x);
+                        bottom = bottom.max(y);
+                    }
+                }
+            }
+            assert!(
+                left <= right,
+                "no legend label ink at font size {font_size}"
+            );
+            (bounds, (left, top, right, bottom))
+        }
+
+        let (small_frame, small_ink) = measure(8.0);
+        let (large_frame, large_ink) = measure(22.0);
+
+        assert!(
+            large_ink.2 - large_ink.0 > small_ink.2 - small_ink.0,
+            "a larger legend font must paint wider label ink: {small_ink:?} vs {large_ink:?}"
+        );
+        assert!(
+            large_ink.3 - large_ink.1 > small_ink.3 - small_ink.1,
+            "a larger legend font must paint taller label ink: {small_ink:?} vs {large_ink:?}"
+        );
+
+        for (frame, ink, font_size) in [
+            (small_frame, small_ink, 8.0),
+            (large_frame, large_ink, 22.0),
+        ] {
+            assert!(
+                ink.0 as f32 >= frame.x && (ink.2 as f32) <= frame.right(),
+                "label ink {ink:?} escapes its frame {frame:?} at font size {font_size}"
+            );
+            assert!(
+                ink.1 as f32 >= frame.y && (ink.3 as f32) <= frame.bottom(),
+                "label ink {ink:?} escapes its frame {frame:?} at font size {font_size}"
+            );
+        }
+    }
+
+    /// `Legend::position` is consulted: an inside position puts the legend
+    /// inside the plotting box instead of the right-hand decoration band, and
+    /// stops reserving band width the legend no longer occupies.
+    #[test]
+    fn inside_legend_positions_move_the_3d_legend_out_of_the_decoration_band() {
+        fn layout_at(position: LegendPosition) -> Axis3Layout {
+            let frame = crate::line3d(&[0.0, 1.0], &[0.0, 1.0], &[0.0, 1.0])
+                .size_px(700, 500)
+                .legend(Legend {
+                    enabled: true,
+                    position,
+                    ..Legend::default()
+                })
+                .label("series")
+                .finalize()
+                .resolve()
+                .expect("frame");
+            Axis3Layout::resolve(&frame).expect("layout")
+        }
+
+        let banded = layout_at(LegendPosition::OutsideRight);
+        let band_legend = banded.legend.as_ref().expect("legend");
+        assert!(band_legend.bounds.x > banded.viewport.right());
+
+        for position in [
+            LegendPosition::UpperLeft,
+            LegendPosition::LowerRight,
+            LegendPosition::Center,
+        ] {
+            let inside = layout_at(position);
+            let legend = inside.legend.as_ref().expect("legend");
+            assert!(
+                legend.bounds.x >= inside.viewport.x as f32
+                    && legend.bounds.right() <= inside.viewport.right(),
+                "{position:?} must place the legend inside the viewport, got {:?}",
+                legend.bounds
+            );
+            // No band is reserved for a legend that is not in it.
+            assert!(
+                inside.viewport.width > banded.viewport.width,
+                "{position:?} must give the plotting box the band back"
+            );
+        }
+
+        // Two different inside corners must actually differ.
+        let upper_left = layout_at(LegendPosition::UpperLeft);
+        let lower_right = layout_at(LegendPosition::LowerRight);
+        assert!(
+            upper_left.legend.expect("legend").bounds.x
+                < lower_right.legend.expect("legend").bounds.x
         );
     }
 }

@@ -146,22 +146,32 @@ Default features are `ndarray_support` and `parallel`.
 |---------|-------------|
 | `ndarray_support` | ndarray data support (canonical) |
 | `ndarray` | compatibility alias for `ndarray_support` |
-| `polars_support` | polars data support |
-| `nalgebra_support` | nalgebra data support |
-| `parallel` | enables the internal parallel renderer and backend metadata |
+| `polars_support` | polars data support (canonical) |
+| `polars` | compatibility alias for `polars_support` |
+| `nalgebra_support` | nalgebra data support (canonical) |
+| `nalgebra` | compatibility alias for `nalgebra_support` |
+| `parallel` | multi-threaded tile rasterization for the software 3D backend |
 | `simd` | SIMD support used by performance-oriented paths |
 | `performance` | shorthand for `parallel` + `simd` |
 | `gpu` | enables GPU types and `.gpu(true)` metadata |
-| `window` | desktop window dependencies |
-| `interactive` | standalone interactive window support |
+| `interactive` | standalone interactive window support (canonical) |
+| `window` | compatibility alias for `interactive` |
 | `interactive-gpu` | `interactive` + `gpu` |
 | `serde` | serialize themes/configuration types |
 | `pdf` | PDF export via SVG-to-PDF |
 | `typst-math` | Typst-backed text rendering |
 | `animation` | GIF recording support |
+| `svg` | no-op, retained for compatibility (see below) |
 | `full` | broad feature set for native builds |
 
-SVG export is available without enabling the legacy `svg` feature.
+SVG export is always compiled in: `render_to_svg()` and `export_svg()` need no
+feature flag, and the `svg` feature gates nothing.
+
+`parallel` is enabled by default because the software 3D rasterizer renders its
+tiles across a rayon pool. It does **not** currently affect the 2D raster path,
+and the crate's own measurements put it between 0.94x and 1.05x on 2D workloads
+— see [docs/benchmarks/rust-feature-impact.md](docs/benchmarks/rust-feature-impact.md).
+Measure your own workload before turning on `performance`.
 
 ## Backend Notes
 

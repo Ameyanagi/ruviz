@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::core::{Bounds3D, FigureConfig, Image, PlottingError, Result};
+use crate::core::{Bounds3D, FigureConfig, Image, Legend, PlottingError, Result};
 use crate::data::{NumericData1D, NumericData2D};
 use crate::plots::three_d::{Grid3DData, Points3DData};
 use crate::plots::{
@@ -30,6 +30,12 @@ pub(crate) struct Plot3D {
     pub(super) xlim: Option<(f64, f64)>,
     pub(super) ylim: Option<(f64, f64)>,
     pub(super) zlim: Option<(f64, f64)>,
+    /// User legend configuration, or `None` to derive one from the theme.
+    ///
+    /// `Some` is honoured verbatim — including `Legend::enabled == false`,
+    /// which turns the 3D legend off — and is the same [`Legend`] type the 2D
+    /// legend uses, laid out by the same `layout_legend`.
+    pub(super) legend: Option<Legend>,
     pub(super) pending_error: Option<PlottingError>,
 }
 
@@ -263,7 +269,7 @@ fn compose_software_image(
         &prepared.layout,
         &prepared.frame.figure,
         &prepared.frame.theme,
-        prepared.output.layer,
+        &prepared.output.layer,
     )?;
     Ok((image, prepared.diagnostics))
 }
@@ -276,7 +282,7 @@ fn compose_gpu_image(
         &prepared.layout,
         &prepared.frame.figure,
         &prepared.frame.theme,
-        prepared.layer,
+        &prepared.layer,
     )?;
     Ok((image, prepared.diagnostics))
 }
@@ -347,6 +353,9 @@ macro_rules! impl_common_builder {
             }
 
             /// Orbit around an explicit point in data coordinates.
+            ///
+            /// A target outside the resolved bounds is clamped to the plotting
+            /// box, so the plot always stays in front of the camera.
             pub fn look_at(mut self, x: f64, y: f64, z: f64) -> Self {
                 self.plot.camera = self.plot.camera.look_at(Point3D::new(x, y, z));
                 self
@@ -435,6 +444,26 @@ macro_rules! impl_common_builder {
             /// Set the plot theme.
             pub fn theme(mut self, theme: Theme) -> Self {
                 self.plot.theme = theme;
+                self
+            }
+
+            /// Configure the legend.
+            ///
+            /// Takes the same [`Legend`] the 2D API takes, and it is laid out
+            /// by the same routine, so position, font size, columns, title,
+            /// spacing and box style mean exactly what they mean in 2D. Without
+            /// this call the legend is derived from the theme and appears
+            /// whenever any series carries a label; pass `Legend::new()` (or any
+            /// legend with `enabled` false) to suppress it.
+            ///
+            /// An inside position — including
+            /// [`LegendPosition::Best`](crate::core::LegendPosition::Best),
+            /// which resolves to one — places the legend within the plotting
+            /// box. Every *outside* position resolves to the decoration band on
+            /// the right of the figure, which is the only band a 3D figure
+            /// reserves and the one the theme-derived default uses.
+            pub fn legend(mut self, legend: Legend) -> Self {
+                self.plot.legend = Some(legend);
                 self
             }
 

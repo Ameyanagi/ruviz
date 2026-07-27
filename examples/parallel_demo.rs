@@ -2,10 +2,14 @@ use ruviz::prelude::*;
 use std::thread;
 use std::time::Instant;
 
-/// Parallel rendering demonstration showing multi-threaded performance
+/// Raster render timings at increasing dataset sizes.
+///
+/// 2D rendering is single-threaded: the `parallel` feature only parallelizes
+/// the software 3D tile rasterizer. This example measures the real 2D path, it
+/// does not demonstrate multi-threading.
 fn main() -> PlotResult<()> {
-    println!("Parallel Rendering Demo");
-    println!("=======================");
+    println!("2D Render Scaling Demo");
+    println!("======================");
     std::fs::create_dir_all("generated/examples").ok();
 
     let cpu_count = thread::available_parallelism()
@@ -55,7 +59,7 @@ fn main() -> PlotResult<()> {
     }
 
     // Multi-series test
-    println!("\nMulti-series parallel rendering test...");
+    println!("\nMulti-series render test...");
     let multi_start = Instant::now();
 
     let size = 25_000;
@@ -122,7 +126,10 @@ fn main() -> PlotResult<()> {
     println!("Scatter plot completed in {:?}", scatter_time);
 
     println!("\nPerformance Summary:");
-    println!("  CPU cores utilized: {} threads", cpu_count);
+    println!(
+        "  CPU cores available: {} (2D rendering uses one)",
+        cpu_count
+    );
     println!("  Largest dataset: 100K points");
     println!("  Multi-series: 3 series x 25K points");
     println!("  Scatter plot: 20K points");

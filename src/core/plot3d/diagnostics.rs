@@ -10,6 +10,8 @@ pub struct RenderDiagnostics3D {
     pub index_upload_bytes: u64,
     pub texture_upload_bytes: u64,
     pub buffer_creations: u64,
+    /// Cached scenes the retained GPU renderer dropped to stay bounded.
+    pub buffer_evictions: u64,
     pub camera_uniform_writes: u64,
     pub draw_calls: u64,
     pub points_submitted: u64,
@@ -39,6 +41,7 @@ impl Default for RenderDiagnostics3D {
             index_upload_bytes: 0,
             texture_upload_bytes: 0,
             buffer_creations: 0,
+            buffer_evictions: 0,
             camera_uniform_writes: 0,
             draw_calls: 0,
             points_submitted: 0,

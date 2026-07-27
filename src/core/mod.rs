@@ -38,8 +38,10 @@ pub(crate) use layout::{LayoutMeasurements, ResolvedLayout};
 #[allow(deprecated)]
 pub use legend::LegendFrame; // Deprecated alias for backward compatibility
 pub use legend::{
-    Legend, LegendAnchor, LegendItem, LegendItemType, LegendPosition, LegendSpacing,
-    LegendSpacingPixels, LegendStyle, find_best_position,
+    LEGEND_OCCUPANCY_RESOLUTION, Legend, LegendAnchor, LegendEntryLayout, LegendItem,
+    LegendItemType, LegendLayout, LegendOccupancy, LegendPlacement, LegendPosition, LegendSpacing,
+    LegendSpacingPixels, LegendStyle, LegendTitleLayout, estimated_label_width, find_best_position,
+    layout_legend, measure_legend_size,
 };
 pub use plot::{
     AnnotationId, BackendFallbackReason, BackendOperation, BackendResolution, BackendType,
@@ -62,7 +64,7 @@ pub use plot3d::{
     AxisAspect3D, Bounds3D, Camera3D, CameraSnapshot3D, InputEvent3D, InteractionResult3D,
     InteractivePlot3DSession, Line3DBuilder, PickHit3D, PickPrimitive3D, Point3D, PointerButton3D,
     ProjectedPoint3D, Projection3D, RenderDiagnostics3D, Scatter3DBuilder, ScreenRay3D,
-    Surface3DBuilder, Wireframe3DBuilder,
+    Surface3DBuilder, Wireframe3DBuilder, release_3d_gpu_resources,
 };
 #[cfg(all(feature = "3d", feature = "gpu"))]
 #[doc(hidden)]

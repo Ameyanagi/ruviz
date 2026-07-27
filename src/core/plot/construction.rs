@@ -437,63 +437,6 @@ impl Plot {
         self
     }
 
-    /// Configure parallel rendering settings
-    #[cfg(feature = "parallel")]
-    pub fn with_parallel(mut self, threads: Option<usize>) -> Self {
-        if let Some(thread_count) = threads {
-            self.render.parallel_renderer = ParallelRenderer::with_threads(thread_count);
-        }
-        self
-    }
-
-    /// Set parallel processing threshold
-    #[cfg(feature = "parallel")]
-    pub fn parallel_threshold(mut self, threshold: usize) -> Self {
-        self.render.parallel_renderer = self.render.parallel_renderer.with_threshold(threshold);
-        self
-    }
-
-    /// Enable memory pooled rendering for allocation optimization
-    ///
-    /// This reduces allocation overhead by 30-50% for large datasets by reusing
-    /// memory buffers for coordinate transformations and rendering operations.
-    pub fn with_memory_pooling(mut self, enable: bool) -> Self {
-        self.render.enable_pooled_rendering = enable;
-        if enable && self.render.pooled_renderer.is_none() {
-            self.render.pooled_renderer = Some(crate::render::PooledRenderer::new());
-        }
-        self
-    }
-
-    /// Configure memory pool sizes for specific workloads
-    ///
-    /// # Arguments
-    /// * `f32_pool_size` - Initial capacity for coordinate transformation pools
-    /// * `position_pool_size` - Initial capacity for position/point pools  
-    /// * `segment_pool_size` - Initial capacity for line segment pools
-    pub fn with_pool_sizes(
-        mut self,
-        f32_pool_size: usize,
-        position_pool_size: usize,
-        segment_pool_size: usize,
-    ) -> Self {
-        self.render.pooled_renderer = Some(crate::render::PooledRenderer::with_pool_sizes(
-            f32_pool_size,
-            position_pool_size,
-            segment_pool_size,
-        ));
-        self.render.enable_pooled_rendering = true;
-        self
-    }
-
-    /// Get memory pool statistics for monitoring and optimization
-    pub fn pool_stats(&self) -> Option<crate::render::PooledRendererStats> {
-        self.render
-            .pooled_renderer
-            .as_ref()
-            .map(|renderer| renderer.get_pool_stats())
-    }
-
     /// Set the plot title
     ///
     /// # Example

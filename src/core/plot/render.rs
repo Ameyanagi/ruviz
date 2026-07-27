@@ -11,6 +11,53 @@ struct ColorbarMeasurementSpec {
     show_log_subticks: bool,
 }
 
+/// Where the data actually is, for [`LegendPosition::Best`].
+///
+/// One function, called by every backend that draws a legend, so raster and SVG
+/// cannot answer `Best` with different corners. Samples are projected through
+/// the same mapper the drawing code uses and a sample the axis scales cannot
+/// place is dropped, exactly as the drawing code drops it — a log axis must not
+/// push a legend away from a point it never drew.
+///
+/// Only the series that carry explicit `(x, y)` samples are binned. Bars,
+/// histograms and box plots contribute nothing yet, which leaves the grid empty
+/// for a bar-only figure and makes `Best` degrade to `UpperRight` — the
+/// behaviour those plots already had.
+fn legend_occupancy(
+    series: &[ResolvedSeries<'_>],
+    plot_area: tiny_skia::Rect,
+    (x_min, x_max, y_min, y_max): (f64, f64, f64, f64),
+    x_scale: &AxisScale,
+    y_scale: &AxisScale,
+) -> LegendOccupancy {
+    let points = series
+        .iter()
+        .filter_map(|series| match series {
+            ResolvedSeries::Line { x, y }
+            | ResolvedSeries::Scatter { x, y }
+            | ResolvedSeries::ErrorBars { x, y, .. }
+            | ResolvedSeries::ErrorBarsXY { x, y, .. } => Some((x, y)),
+            _ => None,
+        })
+        .flat_map(|(x, y)| {
+            x.iter().zip(y.iter()).filter_map(|(&x, &y)| {
+                try_map_data_to_pixels_scaled(
+                    x, y, x_min, x_max, y_min, y_max, plot_area, x_scale, y_scale,
+                )
+            })
+        });
+
+    LegendOccupancy::from_screen_points(
+        (
+            plot_area.left(),
+            plot_area.top(),
+            plot_area.right(),
+            plot_area.bottom(),
+        ),
+        points,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AnnotationRenderLayer {
     Underlay,
@@ -889,89 +936,24 @@ impl Plot {
 
         let legend_items = self.collect_legend_items();
         if !legend_items.is_empty() && frame.style.legend.enabled {
+            let occupancy = legend_occupancy(
+                &frame.series,
+                plot_area,
+                (x_min, x_max, y_min, y_max),
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
             renderer.draw_legend_full_resolved(
                 &legend_items,
                 &frame.style.legend,
                 plot_area,
-                None,
+                Some(&occupancy),
                 layout.legend_rect.as_ref().map(|rect| rect.bounds()),
             )?;
         }
 
         let diagnostics = renderer.render_diagnostics().clone();
         Ok((renderer, diagnostics))
-    }
-
-    #[cfg(feature = "parallel")]
-    fn try_render_parallel_image_with_diagnostics(
-        &self,
-        mode: RenderExecutionMode,
-        frame: &ResolvedFrame<'_>,
-    ) -> Result<Option<(Image, RenderDiagnostics)>> {
-        if !mode.allows_parallel() {
-            return Ok(None);
-        }
-
-        self.validate_runtime_environment()?;
-        if let Some(err) = self.pending_ingestion_error() {
-            return Err(err);
-        }
-
-        if !frame.series.is_empty() {
-            self.validate_resolved_series(&frame.series)?;
-        }
-
-        let total_points = Self::calculate_total_points_from_resolved(&frame.series);
-        let series_count = frame.series.len();
-        let has_mixed_coordinates = Self::has_mixed_coordinate_series(&self.series_mgr.series);
-        let parallel_safe_for_markers =
-            self.series_mgr
-                .series
-                .iter()
-                .all(|series| match &series.series_type {
-                    SeriesType::Line { .. } => {
-                        series.marker_style.is_none()
-                            && series.x_errors.is_none()
-                            && series.y_errors.is_none()
-                    }
-                    SeriesType::Scatter { .. }
-                    | SeriesType::Bar { .. }
-                    | SeriesType::ErrorBars { .. }
-                    | SeriesType::ErrorBarsXY { .. }
-                    | SeriesType::Histogram { .. }
-                    | SeriesType::BoxPlot { .. } => true,
-                    SeriesType::Heatmap { .. }
-                    | SeriesType::Kde { .. }
-                    | SeriesType::Ecdf { .. }
-                    | SeriesType::Violin { .. }
-                    | SeriesType::Boxen { .. }
-                    | SeriesType::Contour { .. }
-                    | SeriesType::Pie { .. }
-                    | SeriesType::Radar { .. }
-                    | SeriesType::Polar { .. }
-                    | SeriesType::Quiver { .. } => false,
-                });
-
-        if has_mixed_coordinates
-            || !parallel_safe_for_markers
-            || !self
-                .render
-                .parallel_renderer
-                .should_use_parallel(series_count, total_points)
-        {
-            return Ok(None);
-        }
-
-        let image = self.render_with_parallel_resolved(frame)?;
-        let diagnostics = RenderDiagnostics {
-            render_mode: match mode {
-                RenderExecutionMode::Reference => "reference",
-                RenderExecutionMode::Optimized => "optimized",
-            },
-            used_parallel: true,
-            ..RenderDiagnostics::default()
-        };
-        Ok(Some((image, diagnostics)))
     }
 
     pub(super) fn render_image_with_mode_and_series_renderer<F>(
@@ -998,14 +980,6 @@ impl Plot {
         self.validate_before_frame_resolution()?;
         let frame = self.resolve_frame(time)?;
         let style_shell = self.resolved_style_shell(&frame.style);
-        #[cfg(feature = "parallel")]
-        if let Some(parallel_render) =
-            style_shell.try_render_parallel_image_with_diagnostics(mode, &frame)?
-        {
-            frame.acknowledge_rendered(self);
-            return Ok(parallel_render);
-        }
-
         let result = style_shell
             .render_renderer_with_resolved_frame(mode, &frame, draw_series)
             .map(|(renderer, diagnostics)| (renderer.into_image(), diagnostics));
@@ -1148,15 +1122,12 @@ impl Plot {
 
         match requested_backend {
             BackendType::Skia => unreachable!("Skia resolution returned above"),
+            // There is no 2D series-parallel raster backend in any build
+            // configuration; the `parallel` cargo feature only parallelizes the
+            // software 3D tile rasterizer. So this is always a fallback, and the
+            // reason never depends on the feature flag.
             BackendType::Parallel => {
-                #[cfg(not(feature = "parallel"))]
-                {
-                    self.backend_fallback(BackendFallbackReason::FeatureDisabled)
-                }
-                #[cfg(feature = "parallel")]
-                {
-                    self.backend_fallback(BackendFallbackReason::UnsupportedOperation)
-                }
+                self.backend_fallback(BackendFallbackReason::UnsupportedOperation)
             }
             BackendType::GPU => {
                 #[cfg(not(feature = "gpu"))]
@@ -1438,7 +1409,7 @@ impl Plot {
         let mode = plot.render_execution_mode(BackendOperation::RasterImage);
         let (subplot_renderer, _) =
             plot.render_renderer_with_frame_and_diagnostics(mode, &frame)?;
-        renderer.draw_subplot(subplot_renderer.into_image(), 0, 0)?;
+        renderer.draw_image_layer(&subplot_renderer.into_image_demultiplied(), 0, 0)?;
         frame.acknowledge_rendered(self);
         Ok(())
     }
@@ -1656,45 +1627,10 @@ impl Plot {
             .to_legend(self.display.config.typography.legend_size());
         let legend_items = self.collect_legend_items();
         if legend.enabled && legend.position.is_outside() && !legend_items.is_empty() {
-            measurements.legend = Some(Self::measure_legend(renderer, &legend, &legend_items)?);
+            measurements.legend = Some(renderer.measure_legend(&legend_items, &legend)?);
         }
 
         Ok(Some(measurements))
-    }
-
-    fn measure_legend(
-        renderer: &SkiaRenderer,
-        legend: &Legend,
-        items: &[LegendItem],
-    ) -> Result<(f32, f32)> {
-        let legend = legend.scaled_for_render(renderer.render_scale());
-        let spacing = legend.spacing.to_pixels(legend.font_size);
-        let mut max_label_width = 0.0_f32;
-        for item in items {
-            max_label_width = max_label_width.max(
-                renderer
-                    .measure_label_text(&item.label, legend.font_size)?
-                    .0,
-            );
-        }
-        let columns = legend.columns.max(1);
-        let rows = items.len().div_ceil(columns);
-        let item_width = spacing.handle_length + spacing.handle_text_pad + max_label_width;
-        let content_width =
-            item_width * columns as f32 + columns.saturating_sub(1) as f32 * spacing.column_spacing;
-        let content_height =
-            rows as f32 * legend.font_size + rows.saturating_sub(1) as f32 * spacing.label_spacing;
-        let title_size = if let Some(title) = legend.title.as_deref() {
-            let title_width = renderer.measure_label_text(title, legend.font_size)?.0;
-            (title_width, legend.font_size + spacing.label_spacing)
-        } else {
-            (0.0, 0.0)
-        };
-
-        Ok((
-            content_width.max(title_size.0) + spacing.border_pad * 2.0,
-            content_height + title_size.1 + spacing.border_pad * 2.0,
-        ))
     }
 
     pub(super) fn compute_layout_from_measurements(
@@ -3306,11 +3242,18 @@ impl Plot {
         // Draw legend if we have labeled series and legend is enabled
         if !legend_items.is_empty() && frame.style.legend.enabled {
             let plot_bounds = (plot_left, plot_top, plot_right, plot_bottom);
+            let occupancy = legend_occupancy(
+                &frame.series,
+                plot_area,
+                (x_min, x_max, y_min, y_max),
+                &self.layout.x_scale,
+                &self.layout.y_scale,
+            );
             svg.draw_legend_full_resolved(
                 &legend_items,
                 &frame.style.legend,
                 plot_bounds,
-                None,
+                Some(&occupancy),
                 layout.legend_rect.as_ref().map(|rect| rect.bounds()),
             )?;
         }

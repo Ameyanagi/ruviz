@@ -689,7 +689,6 @@ println!("Rendered 2×2 subplot in {:?}", start.elapsed());
 ### Large Grid Optimization
 
 For grids larger than 3×3, consider:
-- Using `parallel` feature for independent panel rendering
 - Reducing DPI for draft versions
 - Simplifying individual plot complexity
 

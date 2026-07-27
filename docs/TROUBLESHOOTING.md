@@ -24,7 +24,7 @@ A: **Yes!** This is "cold start" performance. The time breakdown:
 
 **Q: My 100K point plot is slow**
 
-A: Measure the public output path you actually use. `render()` and ordinary `save()` preserve the Skia reference path; enabling parallel or GPU preferences does not by itself change that execution path.
+A: Measure the public output path you actually use. `render()` and ordinary `save()` preserve the Skia reference path; stating a backend preference does not by itself change that execution path.
 
 ```rust
 let plot = Plot::new()

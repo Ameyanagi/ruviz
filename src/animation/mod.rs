@@ -71,7 +71,6 @@
 //! # Feature Flags
 //!
 //! - `animation` - Core animation system with GIF export
-//! - `animation-hq-gif` - High-quality GIF via gifski
 //! - `animation-video` - MP4/WebM via pure Rust AV1 (rav1e)
 
 mod builder;

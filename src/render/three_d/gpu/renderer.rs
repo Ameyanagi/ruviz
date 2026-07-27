@@ -9,6 +9,7 @@ use wgpu::util::DeviceExt;
 use crate::core::plot::Image;
 use crate::core::plot3d::layout::Axis3Layout;
 use crate::core::{PlottingError, Result};
+use crate::render::three_d::color::unpremultiply_linear_srgb_bytes;
 use crate::render::three_d::scene::Scene3D;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -92,6 +93,27 @@ pub(crate) fn render_with_shared_renderer(
         || PlottingError::RenderError("direct 3d GPU renderer lock was poisoned".to_string()),
         |renderer| renderer.render_to_image(scene, layout, dpi),
     )
+}
+
+/// Tear down the process-wide 3D renderer, freeing every retained resource.
+///
+/// The shared renderer pins the last scene's vertex, index, and uniform buffers
+/// plus the offscreen colour, depth, and readback attachments — well over
+/// 100 MB for a large surface. Nothing else ever dropped them, so a caller that
+/// was finished with 3D output still paid for it. The next render rebuilds
+/// whatever it needs.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn release_shared_renderer() {
+    // A poisoned lock means some other thread panicked mid-render; there is
+    // nothing useful to release and nothing to report from a `()` API.
+    if let Some(slot) = SHARED_RENDERER.get()
+        && let Ok(mut slot) = slot.lock()
+    {
+        if let Some(renderer) = slot.as_mut() {
+            renderer.release_retained_resources();
+        }
+        *slot = None;
+    }
 }
 
 impl Wgpu3DRenderer {
@@ -216,6 +238,12 @@ impl Wgpu3DRenderer {
 
     pub(crate) const fn attachment_generation(&self) -> u64 {
         self.attachment_generation
+    }
+
+    /// Drop the retained scene buffers and offscreen attachments.
+    pub(crate) fn release_retained_resources(&mut self) {
+        self.resources.release();
+        self.attachments = None;
     }
 
     fn render_internal(
@@ -639,6 +667,12 @@ fn readback_image(
     }
     drop(mapped);
     buffer.unmap();
+    // The scene pass writes premultiplied colour and the MSAA resolve averages
+    // it in linear light, so the readback is coverage-premultiplied. Every
+    // consumer of an `Image` (PNG, the SVG data URI, the Skia compositor) wants
+    // straight alpha, so divide the coverage back out here — in linear space,
+    // because that is the space the resolve averaged in.
+    unpremultiply_linear_srgb_bytes(&mut pixels);
     Ok(Image::new(width, height, pixels))
 }
 

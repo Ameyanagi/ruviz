@@ -11,6 +11,6 @@ pub(crate) use context::GpuContext3D;
 pub(crate) use presenter::{PresentationCompositor3D, select_surface_format};
 #[cfg(all(feature = "interactive-gpu", not(target_arch = "wasm32")))]
 pub(crate) use presenter::{PresentedFrame3D, SurfacePresentOutcome3D, SurfacePresenter3D};
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use renderer::render_with_shared_renderer;
 pub(crate) use renderer::{GpuFrameOutput3D, Wgpu3DRenderer};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use renderer::{release_shared_renderer, render_with_shared_renderer};

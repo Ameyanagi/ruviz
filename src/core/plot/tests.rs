@@ -1857,9 +1857,8 @@ fn test_render_with_datashader_uses_captured_snapshot_for_reactive_series() {
     assert!(image.height > 0);
 }
 
-#[cfg(feature = "parallel")]
 #[test]
-fn test_render_parallel_path_still_validates_empty_series() {
+fn test_render_path_still_validates_empty_series() {
     let empty: Vec<f64> = Vec::new();
 
     let err = Plot::new()
@@ -1867,7 +1866,7 @@ fn test_render_parallel_path_still_validates_empty_series() {
         .end_series()
         .line(&[0.0, 1.0], &[1.0, 2.0])
         .render()
-        .expect_err("parallel path should reject empty inputs");
+        .expect_err("render path should reject empty inputs");
 
     assert!(matches!(err, PlottingError::EmptyDataSet));
 }
@@ -2488,70 +2487,6 @@ fn test_legacy_position_api_keeps_inside_layout_behavior() {
         compute_render_layout(&modern)
     );
     assert!(compute_render_layout(&legacy).legend_rect.is_none());
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn test_parallel_render_honors_resolved_outside_legend_rect() {
-    let x: Vec<f64> = (0..25_000).map(|index| index as f64 / 250.0).collect();
-    let y: Vec<f64> = x.iter().map(|value| value.sin()).collect();
-    let plot = Plot::new()
-        .size_px(640, 480)
-        .with_parallel(None)
-        .legend_position(LegendPosition::OutsideRight)
-        .scatter(&x, &y)
-        .label("Parallel samples")
-        .end_series();
-
-    let layout = compute_render_layout(&plot);
-    assert!(layout.legend_rect.unwrap().left > layout.plot_area.right);
-    plot.render_with_parallel()
-        .expect("parallel outside legend should render");
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn test_parallel_render_draws_enabled_legend() {
-    let x: Vec<f64> = (0..25_000).map(|index| index as f64 / 250.0).collect();
-    let y: Vec<f64> = x.iter().map(|value| value.sin() * 0.2 + 0.5).collect();
-
-    let make_plot = |legend: bool| -> Plot {
-        let plot = Plot::new()
-            .scatter(&x, &y)
-            .label("Samples")
-            .end_series()
-            .xlim(0.0, 100.0)
-            .ylim(0.0, 1.0)
-            .set_output_pixels(420, 320);
-
-        if legend { plot.legend_best() } else { plot }
-    };
-
-    let with_legend = make_plot(true)
-        .render_with_parallel()
-        .expect("parallel render with legend should succeed");
-    let without_legend = make_plot(false)
-        .render_with_parallel()
-        .expect("parallel render without legend should succeed");
-
-    assert_eq!(with_legend.width, without_legend.width);
-    assert_eq!(with_legend.height, without_legend.height);
-
-    let differing_pixels = with_legend
-        .pixels
-        .chunks_exact(4)
-        .zip(without_legend.pixels.chunks_exact(4))
-        .filter(|(left, right)| {
-            left.iter()
-                .zip(right.iter())
-                .any(|(lhs, rhs)| (*lhs as i16 - *rhs as i16).abs() > 8)
-        })
-        .count();
-
-    assert!(
-        differing_pixels > 250,
-        "legend should visibly change parallel render output; differing pixels={differing_pixels}"
-    );
 }
 
 #[test]
@@ -6134,6 +6069,69 @@ fn differing_pixel_count(left: &Image, right: &Image) -> usize {
         .count()
 }
 
+/// `LegendPosition::Best` must actually look at the data.
+///
+/// The occupancy grid existed and was unit-tested, but no production call site
+/// fed it, so `Best` silently answered `UpperRight` in every real figure. Data
+/// packed into the top-right corner therefore got a legend sitting on top of
+/// it. `find_best_position` breaks ties towards the first candidate, so with the
+/// top-right occupied the answer must be `UpperLeft` — and it must be reached
+/// through the public render path, on both backends.
+#[test]
+fn best_legend_avoids_the_data_on_both_backends() {
+    // Every sample in the top-right corner of the axes, nothing anywhere else.
+    let x: Vec<f64> = (0..200).map(|index| 0.6 + index as f64 * 0.002).collect();
+    let y: Vec<f64> = x.iter().map(|value| 0.7 + value * 0.25).collect();
+
+    let build = |position: LegendPosition| -> Plot {
+        let plot = Plot::new()
+            .size_px(640, 480)
+            .xlim(0.0, 1.0)
+            .ylim(0.0, 1.0)
+            .line(&x, &y)
+            .label("top right")
+            .end_series();
+        match position {
+            LegendPosition::Best => plot.legend_best(),
+            explicit => plot.legend_position(explicit),
+        }
+    };
+
+    let best = build(LegendPosition::Best).render().expect("best raster");
+    let upper_left = build(LegendPosition::UpperLeft)
+        .render()
+        .expect("upper-left raster");
+    let upper_right = build(LegendPosition::UpperRight)
+        .render()
+        .expect("upper-right raster");
+
+    assert_eq!(
+        differing_pixel_count(&best, &upper_left),
+        0,
+        "`Best` should have picked the empty upper-left corner"
+    );
+    assert!(
+        differing_pixel_count(&best, &upper_right) > 0,
+        "`Best` degraded to `UpperRight`, which is where the data is"
+    );
+
+    let best_svg = build(LegendPosition::Best)
+        .render_to_svg()
+        .expect("best svg");
+    let upper_left_svg = build(LegendPosition::UpperLeft)
+        .render_to_svg()
+        .expect("upper-left svg");
+    let upper_right_svg = build(LegendPosition::UpperRight)
+        .render_to_svg()
+        .expect("upper-right svg");
+
+    assert_eq!(
+        best_svg, upper_left_svg,
+        "the SVG backend must resolve `Best` the same way the raster backend does"
+    );
+    assert_ne!(best_svg, upper_right_svg);
+}
+
 #[test]
 fn plain_svg_multiline_title_uses_weighted_measurement_and_reserves_each_line() {
     let build = |title: &str| {
@@ -6207,24 +6205,6 @@ fn serial_raster_title_honors_weight_without_changing_annotation_weight() {
         blue_dominant_pixel_indices(&normal),
         blue_dominant_pixel_indices(&bold),
         "title weight must not leak into annotation text"
-    );
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn parallel_raster_title_honors_weight_without_changing_annotation_weight() {
-    let normal = plot_with_weighted_title(crate::render::FontWeight::Normal)
-        .render_with_parallel()
-        .expect("normal-weight parallel raster");
-    let bold = plot_with_weighted_title(crate::render::FontWeight::Bold)
-        .render_with_parallel()
-        .expect("bold parallel raster");
-
-    assert!(differing_pixel_count(&normal, &bold) > 20);
-    assert_eq!(
-        blue_dominant_pixel_indices(&normal),
-        blue_dominant_pixel_indices(&bold),
-        "title weight must not leak into parallel annotation text"
     );
 }
 
@@ -6569,36 +6549,6 @@ fn test_absent_series_metrics_preserve_established_fallbacks() {
         .expect("scatter frame should resolve");
     assert_eq!(scatter_frame.style.series[0].line_width, None);
     assert_eq!(scatter_frame.style.series[0].marker_size, None);
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn test_parallel_marker_size_uses_resolved_points_and_dpi() {
-    let mut plot: Plot = Plot::new()
-        .dpi(200)
-        .scatter(&[0.0, 1.0], &[0.0, 1.0])
-        .into();
-    plot.series_mgr.series[0].marker_size = Some(9.0);
-    let frame = plot.resolve_frame(0.0).expect("frame should resolve");
-    let shell = plot.resolved_style_shell(&frame.style);
-    let series = &shell.series_mgr.series[0];
-    assert_eq!(
-        shell.parallel_marker_size_px(series, 10.0),
-        shell.render_scale().points_to_pixels(9.0)
-    );
-
-    let fallback_plot: Plot = Plot::new()
-        .dpi(200)
-        .scatter(&[0.0, 1.0], &[0.0, 1.0])
-        .into();
-    let fallback_frame = fallback_plot
-        .resolve_frame(0.0)
-        .expect("frame should resolve");
-    let fallback_shell = fallback_plot.resolved_style_shell(&fallback_frame.style);
-    assert_eq!(
-        fallback_shell.parallel_marker_size_px(&fallback_shell.series_mgr.series[0], 10.0),
-        fallback_shell.render_scale().points_to_pixels(10.0)
-    );
 }
 
 #[test]

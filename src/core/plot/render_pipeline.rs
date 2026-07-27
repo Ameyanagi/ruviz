@@ -5,15 +5,11 @@
 
 use super::BackendType;
 
-#[cfg(feature = "parallel")]
-use crate::render::ParallelRenderer;
-
 /// Manages rendering configuration for plots
 ///
 /// The RenderPipeline handles:
 /// - Backend selection (Skia, etc.)
-/// - Parallel rendering configuration
-/// - Memory pooling for performance
+/// - Output sizing overrides used by internal render targets
 /// - GPU acceleration settings
 ///
 /// # Example
@@ -23,17 +19,9 @@ use crate::render::ParallelRenderer;
 ///
 /// let mut pipeline = RenderPipeline::new();
 /// pipeline.set_backend(BackendType::Skia);
-/// pipeline.enable_pooled_rendering(true);
 /// ```
 #[derive(Clone, Debug)]
 pub struct RenderPipeline {
-    /// Parallel renderer for performance optimization
-    #[cfg(feature = "parallel")]
-    pub(crate) parallel_renderer: ParallelRenderer,
-    /// Memory pool renderer for allocation optimization
-    pub(crate) pooled_renderer: Option<crate::render::PooledRenderer>,
-    /// Enable memory pooled rendering for performance
-    pub(crate) enable_pooled_rendering: bool,
     /// Selected backend (None = auto-select)
     pub(crate) backend: Option<BackendType>,
     /// Whether auto-optimization has been applied
@@ -59,10 +47,6 @@ impl RenderPipeline {
     /// Create a new render pipeline with default settings
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "parallel")]
-            parallel_renderer: ParallelRenderer::new(),
-            pooled_renderer: None,
-            enable_pooled_rendering: false,
             backend: None,
             auto_optimized: false,
             allow_subminimum_dpi: false,
@@ -81,16 +65,6 @@ impl RenderPipeline {
     /// Get the selected backend
     pub fn backend(&self) -> Option<BackendType> {
         self.backend
-    }
-
-    /// Enable or disable pooled rendering
-    pub fn set_pooled_rendering(&mut self, enabled: bool) {
-        self.enable_pooled_rendering = enabled;
-    }
-
-    /// Check if pooled rendering is enabled
-    pub fn pooled_rendering_enabled(&self) -> bool {
-        self.enable_pooled_rendering
     }
 
     /// Mark that auto-optimization has been applied
@@ -114,33 +88,6 @@ impl RenderPipeline {
     pub fn gpu_enabled(&self) -> bool {
         self.enable_gpu
     }
-
-    /// Get reference to parallel renderer
-    #[cfg(feature = "parallel")]
-    pub fn parallel_renderer(&self) -> &ParallelRenderer {
-        &self.parallel_renderer
-    }
-
-    /// Get mutable reference to parallel renderer
-    #[cfg(feature = "parallel")]
-    pub fn parallel_renderer_mut(&mut self) -> &mut ParallelRenderer {
-        &mut self.parallel_renderer
-    }
-
-    /// Set or clear the pooled renderer
-    pub fn set_pooled_renderer(&mut self, renderer: Option<crate::render::PooledRenderer>) {
-        self.pooled_renderer = renderer;
-    }
-
-    /// Get reference to pooled renderer
-    pub fn pooled_renderer(&self) -> Option<&crate::render::PooledRenderer> {
-        self.pooled_renderer.as_ref()
-    }
-
-    /// Get mutable reference to pooled renderer
-    pub fn pooled_renderer_mut(&mut self) -> Option<&mut crate::render::PooledRenderer> {
-        self.pooled_renderer.as_mut()
-    }
 }
 
 #[cfg(test)]
@@ -151,7 +98,6 @@ mod tests {
     fn test_default_render_pipeline() {
         let pipeline = RenderPipeline::new();
         assert!(pipeline.backend().is_none());
-        assert!(!pipeline.pooled_rendering_enabled());
         assert!(!pipeline.is_auto_optimized());
     }
 
@@ -160,18 +106,6 @@ mod tests {
         let mut pipeline = RenderPipeline::new();
         pipeline.set_backend(BackendType::Skia);
         assert_eq!(pipeline.backend(), Some(BackendType::Skia));
-    }
-
-    #[test]
-    fn test_pooled_rendering() {
-        let mut pipeline = RenderPipeline::new();
-        assert!(!pipeline.pooled_rendering_enabled());
-
-        pipeline.set_pooled_rendering(true);
-        assert!(pipeline.pooled_rendering_enabled());
-
-        pipeline.set_pooled_rendering(false);
-        assert!(!pipeline.pooled_rendering_enabled());
     }
 
     #[test]

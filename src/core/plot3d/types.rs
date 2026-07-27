@@ -271,6 +271,8 @@ impl Camera3D {
     /// Orbit around an explicit point in data coordinates.
     ///
     /// By default the camera looks at the center of the resolved plot bounds.
+    /// A target outside the resolved bounds is clamped to the plotting box, so
+    /// the plot always stays in front of the camera.
     pub fn look_at(mut self, target: Point3D) -> Self {
         self.target = Some(target);
         self
@@ -492,7 +494,16 @@ impl Camera3D {
         }
 
         let axis_aspect = self.aspect.resolved();
-        let target = bounds.normalize(self.target.unwrap_or_else(|| bounds.center()), axis_aspect);
+        // The look-at target is clamped to the plotting box. `look_at(1e6, 0, 0)`
+        // is a valid call today, and without this it normalizes to a point far
+        // outside the box, putting every primitive behind the eye where the
+        // perspective divide is meaningless.
+        let target = bounds
+            .normalize(self.target.unwrap_or_else(|| bounds.center()), axis_aspect)
+            .clamp(-axis_aspect, axis_aspect);
+        // Bound the scene by the worst-case aspect-scaled box corner rather than
+        // a constant that silently assumed `AxisAspect3D::Auto`.
+        let scene_radius = scene_radius_about(target, axis_aspect);
         let azimuth = self.azimuth_deg.to_radians();
         let elevation = self.elevation_deg.to_radians();
         let eye_direction = Vec3::new(
@@ -525,7 +536,6 @@ impl Camera3D {
                 let base_half_y = vertical_fov_deg.to_radians() * 0.5;
                 let base_half_x = (base_half_y.tan() * viewport_aspect).atan();
                 let limiting_half_fov = base_half_x.min(base_half_y);
-                let scene_radius = Vec3::new(1.0, 1.0, 0.75).length();
                 let eye_distance = scene_radius / limiting_half_fov.sin() * 1.05;
                 let effective_half_y = (base_half_y.tan() / self.zoom).atan();
                 let near = (eye_distance - scene_radius * 1.25).max(0.001);
@@ -547,6 +557,20 @@ impl Camera3D {
             axis_aspect,
         })
     }
+}
+
+/// Distance from `target` to the farthest corner of the aspect-scaled box.
+///
+/// The plotting box spans `-aspect ..= aspect` on every axis, so this is the
+/// radius of the smallest sphere around the target that still contains every
+/// drawable vertex — exactly what the near and far planes have to bracket.
+fn scene_radius_about(target: Vec3, axis_aspect: Vec3) -> f32 {
+    let farthest = Vec3::new(
+        target.x.abs() + axis_aspect.x,
+        target.y.abs() + axis_aspect.y,
+        target.z.abs() + axis_aspect.z,
+    );
+    farthest.length().max(f32::MIN_POSITIVE)
 }
 
 fn validate_viewport(width: u32, height: u32) -> Result<()> {
@@ -672,6 +696,83 @@ mod tests {
         assert_eq!(camera.get_roll_deg(), 0.0);
         assert_eq!(camera.projection(), Projection3D::Orthographic);
         camera.validate().expect("default camera is valid");
+    }
+
+    fn unit_bounds() -> Bounds3D {
+        Bounds3D::new(Point3D::new(-1.0, -1.0, -1.0), Point3D::new(1.0, 1.0, 1.0))
+            .expect("unit bounds")
+    }
+
+    #[test]
+    fn scene_radius_tracks_the_aspect_scaled_box_instead_of_a_constant() {
+        // The old hard-coded constant happened to be right for `Auto`, so the
+        // default camera must be bit-identical.
+        assert_abs_diff_eq!(
+            scene_radius_about(Vec3::ZERO, AxisAspect3D::Auto.resolved()),
+            Vec3::new(1.0, 1.0, 0.75).length(),
+            epsilon = 1.0e-6
+        );
+        // Equal proportions genuinely need a larger sphere...
+        assert!(
+            scene_radius_about(Vec3::ZERO, AxisAspect3D::Equal.resolved())
+                > scene_radius_about(Vec3::ZERO, AxisAspect3D::Auto.resolved())
+        );
+        // ...and a squashed z axis needs a smaller one.
+        assert!(
+            scene_radius_about(Vec3::ZERO, AxisAspect3D::fixed(1.0, 1.0, 0.2).resolved())
+                < scene_radius_about(Vec3::ZERO, AxisAspect3D::Auto.resolved())
+        );
+        // An off-centre target has to widen the sphere, not shrink it.
+        let aspect = AxisAspect3D::Auto.resolved();
+        assert!(
+            scene_radius_about(Vec3::new(1.0, 0.0, 0.0), aspect)
+                > scene_radius_about(Vec3::ZERO, aspect)
+        );
+    }
+
+    #[test]
+    fn an_absurd_look_at_target_keeps_the_box_in_front_of_the_eye() {
+        for projection in [
+            Camera3D::default().orthographic(),
+            Camera3D::default().perspective_deg(45.0),
+        ] {
+            let camera = projection.look_at(Point3D::new(1.0e6, -1.0e6, 1.0e6));
+            let projected = camera
+                .project(Point3D::new(0.0, 0.0, 0.0), unit_bounds(), 640, 480)
+                .expect("clamped target still projects");
+            assert!(
+                projected.visible,
+                "an out-of-bounds look-at target must not push the plot behind the eye"
+            );
+            assert!(projected.depth.is_finite() && (0.0..=1.0).contains(&projected.depth));
+        }
+    }
+
+    #[test]
+    fn every_box_corner_stays_between_the_near_and_far_planes() {
+        for aspect in [
+            AxisAspect3D::Auto,
+            AxisAspect3D::Equal,
+            AxisAspect3D::fixed(1.0, 1.0, 0.2),
+            AxisAspect3D::fixed(0.25, 4.0, 1.0),
+        ] {
+            let camera = Camera3D::default()
+                .perspective_deg(45.0)
+                .axis_aspect(aspect);
+            for x in [-1.0, 1.0] {
+                for y in [-1.0, 1.0] {
+                    for z in [-1.0, 1.0] {
+                        let projected = camera
+                            .project(Point3D::new(x, y, z), unit_bounds(), 640, 480)
+                            .expect("corner projects");
+                        assert!(
+                            (0.0..=1.0).contains(&projected.depth),
+                            "{aspect:?} corner ({x}, {y}, {z}) fell outside the depth range"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

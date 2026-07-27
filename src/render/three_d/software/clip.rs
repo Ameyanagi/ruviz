@@ -62,6 +62,19 @@ pub(crate) fn is_inside_clip_volume(position: Vec4) -> bool {
             .all(|plane| plane.distance(position) >= 0.0)
 }
 
+/// Whether a vertex survives the near and far planes and can be divided by `w`.
+///
+/// Screen-space billboards (markers) are sized in pixels, so a centre outside
+/// the side planes can still have visible fragments. They are rejected on depth
+/// only and clipped afterwards in screen space, which is what the GPU point
+/// pipeline does.
+pub(crate) fn is_inside_depth_range(position: Vec4) -> bool {
+    position.is_finite()
+        && position.w > f32::EPSILON
+        && ClipPlane::Near.distance(position) >= 0.0
+        && ClipPlane::Far.distance(position) >= 0.0
+}
+
 /// Clip a triangle against the wgpu homogeneous clip volume.
 ///
 /// The returned fan contains zero or more triangles whose vertices satisfy
@@ -177,6 +190,19 @@ mod tests {
             color: Vec4::ONE,
             scalar: 0.5,
         }
+    }
+
+    #[test]
+    fn depth_range_ignores_the_side_planes_but_not_near_far_or_w() {
+        // A marker whose centre is far off to the side is still drawable.
+        assert!(is_inside_depth_range(Vec4::new(9.0, -9.0, 0.5, 1.0)));
+        assert!(!is_inside_clip_volume(Vec4::new(9.0, -9.0, 0.5, 1.0)));
+        // Behind the eye, past the far plane, or with an unusable divisor.
+        assert!(!is_inside_depth_range(Vec4::new(0.0, 0.0, -0.1, 1.0)));
+        assert!(!is_inside_depth_range(Vec4::new(0.0, 0.0, 1.1, 1.0)));
+        assert!(!is_inside_depth_range(Vec4::new(0.0, 0.0, 0.5, 0.0)));
+        assert!(!is_inside_depth_range(Vec4::new(0.0, 0.0, 0.5, -1.0)));
+        assert!(!is_inside_depth_range(Vec4::new(f32::NAN, 0.0, 0.5, 1.0)));
     }
 
     #[test]

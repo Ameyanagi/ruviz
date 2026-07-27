@@ -160,11 +160,35 @@ jobs:
       - name: Compile integration tests
         run: cargo test --tests --no-run --verbose
 
+      # `ndarray` is the historical alias for `ndarray_support`; the ingestion
+      # suite gates a test on `any(ndarray_support, ndarray)`, so the alias has
+      # to be on for that test to be more than a compile check.
       - name: Run fast deterministic integration suites
-        run: cargo test --test simple_api_test --test data_format_compatibility_test --test backend_parity_test --verbose
+        run: cargo test --features ndarray --test simple_api_test --test data_format_compatibility_test --test backend_parity_test --verbose
 
-      - name: Run scientific Unicode dark-background regression
-        run: cargo test --test international_text_tests scientific_unicode_preserves_light_on_dark_edges_and_rotation -- --exact
+      # The suites below need nothing beyond the default features, so they run
+      # here rather than as feature-matrix jobs: this lane has already built the
+      # crate and compiled every target above. Each is named explicitly because
+      # tests/integration/ci_test_coverage.rs requires every target to be
+      # assigned to a lane -- the whole-suite `--all-features` run in
+      # `test-feature-matrix` is a safety net and deliberately does not count.
+      - name: Run styling and rendering suites
+        run: cargo test --test color_palette_tests --test line_style_tests --test scatter_plot_tests --test tick_system_tests --test visual_traits_test --test mixed_coordinate_visual_test --verbose
+
+      - name: Run DPI and typography suites
+        run: cargo test --test dpi_api_test --test dpi_scaling_test --test dpi_scaling_tests --test dpi_typography_scaling_test --verbose
+
+      - name: Run pipeline, runtime and hygiene suites
+        run: cargo test --test full_pipeline_test --test runtime_hardening_test --test memory_pool_tests --test small_dataset_optimization_test --test datashader_basic_test --test config_enum_defaults_test --test feature_hygiene_test --verbose
+
+      # tests/integration/ci_test_coverage.rs fails when a tests/*.rs target is
+      # compiled but never executed by this workflow, so run it in the cheapest
+      # lane where a contributor sees the failure straight away.
+      - name: Verify CI runs every test target it compiles
+        run: cargo test --test integration --verbose
+
+      - name: Run international text suite
+        run: cargo test --test international_text_tests --verbose
 
       - name: Run doc tests
         run: cargo test --doc --verbose
@@ -181,6 +205,16 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.94.1
+
+      - name: Assert the pinned rustc is the one that runs
+        env:
+          EXPECTED_RUSTC: "1.94.1"
+        run: |
+          actual="$(rustc --version | cut -d' ' -f2)"
+          if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
+            echo "::error::expected rustc ${EXPECTED_RUSTC}, got ${actual}; the tracked rust-toolchain.toml is outranking this job's toolchain selection"
+            exit 1
+          fi
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -249,6 +283,16 @@ jobs:
         with:
           toolchain: 1.94.1
 
+      - name: Assert the pinned rustc is the one that runs
+        env:
+          EXPECTED_RUSTC: "1.94.1"
+        run: |
+          actual="$(rustc --version | cut -d' ' -f2)"
+          if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
+            echo "::error::expected rustc ${EXPECTED_RUSTC}, got ${actual}; the tracked rust-toolchain.toml is outranking this job's toolchain selection"
+            exit 1
+          fi
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -263,6 +307,127 @@ jobs:
 
       - name: Verify feature contract
         run: ${{ matrix.contract.command }}
+
+  test-feature-matrix:
+    # The lane that actually runs the optional feature surfaces. Before it
+    # existed, no `cargo test` in this workflow enabled `pdf`, `gpu`,
+    # `interactive`, `polars_support` or `nalgebra_support`, so CI never
+    # produced a PDF byte, never ingested a polars DataFrame, never exercised
+    # the interactive event pipeline, and never ran the geometric assertions in
+    # tests/three_d_correctness_test.rs.
+    #
+    # Every target under tests/ must be named by a `--test` flag of some lane
+    # that runs on a pull request, in a job that enables the features the
+    # target's cfgs need; tests/integration/ci_test_coverage.rs fails when one
+    # is not. The `Every target` entry runs the whole suite under every feature
+    # as a safety net so that a target nobody remembered to assign is still
+    # executed while the guard is red -- it deliberately does not satisfy the
+    # guard on its own, because a run that executes every target by
+    # construction could never let the guard fail.
+    name: Feature Matrix (${{ matrix.suite.name }})
+    runs-on: ubuntu-24.04
+    needs: [fmt, clippy]
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      WGPU_BACKEND: vulkan
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - name: Every target, every feature
+            cache-key: all-features
+            command: cargo test --all-features --tests
+          - name: PDF export
+            cache-key: pdf
+            command: cargo test --features pdf --test pdf_export_test --test export_format_tests
+          - name: polars ingestion
+            cache-key: polars
+            command: cargo test --features polars_support --test ecosystem_data_integration_test
+          # Every ingestion backend at once, including the `nalgebra` alias.
+          # The suite gates each backend's tests on its own cfg, so only a run
+          # that enables all of them executes all of them.
+          - name: Ecosystem ingestion (every backend)
+            cache-key: ecosystem
+            command: cargo test --features polars_support,nalgebra_support,nalgebra --test ecosystem_data_integration_test
+          - name: Interactive event pipeline
+            cache-key: interactive
+            command: cargo test --features interactive --test interactive_tests
+          # The geometric assertions on the headline 3D feature. Before this
+          # entry existed no job ran them at all. `pdf` is enabled because the
+          # PDF export assertions in both suites are cfg'd on it.
+          - name: 3D correctness
+            cache-key: 3d
+            command: cargo test --no-default-features --features 3d,pdf --test three_d_correctness_test
+          - name: 3D public API and static output
+            cache-key: 3d-api
+            command: cargo test --features 3d,pdf,nalgebra,nalgebra_support --test three_d_api_test --test three_d_api_ui --test three_d_visual_test
+          - name: GPU backend
+            cache-key: gpu
+            command: cargo test --features gpu,interactive --test gpu_backend_test --test nonbreaking_plot_api_test
+          # `typst-math` also gates most of visual_output_tests_fixed, which ran
+          # only on a schedule and so never gated a pull request.
+          - name: Typst math typesetting
+            cache-key: typst
+            command: cargo test --features typst-math --test typst_feature_gate_ui --test visual_output_tests_fixed
+          - name: SIMD and parallel validation
+            cache-key: performance
+            command: cargo test --features simd --test performance_validation
+          - name: Property tests
+            cache-key: proptest
+            command: cargo test --test property_tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
+
+      - name: Assert the pinned rustc is the one that runs
+        env:
+          EXPECTED_RUSTC: "1.94.1"
+        run: |
+          actual="$(rustc --version | cut -d' ' -f2)"
+          if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
+            echo "::error::expected rustc ${EXPECTED_RUSTC}, got ${actual}; the tracked rust-toolchain.toml is outranking this job's toolchain selection"
+            exit 1
+          fi
+
+      - name: Install Linux desktop build dependencies
+        uses: ./.github/actions/install-linux-desktop-build-deps
+
+      - name: Install Vulkan software adapter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-feature-matrix-${{ matrix.suite.cache-key }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-feature-matrix-${{ matrix.suite.cache-key }}-
+
+      - name: Create test output directories
+        run: |
+          mkdir -p generated/tests/render
+          mkdir -p generated/tests/export/{png,svg,raw,direct}
+
+      - name: Run feature suite
+        run: ${{ matrix.suite.command }}
+
+      - name: Upload rendered output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-matrix-failure-${{ matrix.suite.cache-key }}-${{ github.run_id }}
+          path: generated/tests
+          if-no-files-found: warn
+          retention-days: 7
 
   test-3d-gpu-required-adapter:
     name: 3D GPU Required Adapter (Vulkan llvmpipe)
@@ -293,7 +458,7 @@ jobs:
       - name: Run direct 3D GPU suite with a required adapter
         run: |
           mkdir -p generated/tests/render
-          cargo test --no-default-features --features 3d,gpu --test three_d_gpu_test
+          cargo test --no-default-features --features 3d,gpu --test three_d_gpu_test --test three_d_parity_test
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           RUVIZ_3D_GPU_TEST_OUTPUT: generated/tests/render/three_d_gpu_required_adapter.png
@@ -354,6 +519,19 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.92.0
+
+      # rust-toolchain.toml pins 1.94.1 and a toolchain file outranks
+      # `rustup default`. Without this assertion the MSRV job can compile with
+      # 1.94.1 and go green while the crate no longer builds on its rust-version.
+      - name: Assert the pinned rustc is the one that runs
+        env:
+          EXPECTED_RUSTC: "1.92.0"
+        run: |
+          actual="$(rustc --version | cut -d' ' -f2)"
+          if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
+            echo "::error::expected rustc ${EXPECTED_RUSTC}, got ${actual}; the tracked rust-toolchain.toml is outranking this job's toolchain selection"
+            exit 1
+          fi
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -858,6 +1036,16 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.94.1
+
+      - name: Assert the pinned rustc is the one that runs
+        env:
+          EXPECTED_RUSTC: "1.94.1"
+        run: |
+          actual="$(rustc --version | cut -d' ' -f2)"
+          if [[ "${actual}" != "${EXPECTED_RUSTC}" ]]; then
+            echo "::error::expected rustc ${EXPECTED_RUSTC}, got ${actual}; the tracked rust-toolchain.toml is outranking this job's toolchain selection"
+            exit 1
+          fi
 
       - name: Cache cargo
         uses: actions/cache@v4
